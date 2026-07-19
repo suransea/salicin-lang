@@ -11,6 +11,9 @@ pub enum TokenKind {
     If,
     Else,
     Return,
+    Struct,
+    Enum,
+    Match,
     True,
     False,
     Ident(String),
@@ -20,10 +23,12 @@ pub enum TokenKind {
     LBrace,
     RBrace,
     Colon,
+    Dot,
     Comma,
     Semicolon,
     Newline,
     Arrow,
+    FatArrow,
     Equal,
     EqualEqual,
     Bang,
@@ -126,6 +131,7 @@ impl Lexer {
                     '{' => TokenKind::LBrace,
                     '}' => TokenKind::RBrace,
                     ':' => TokenKind::Colon,
+                    '.' => TokenKind::Dot,
                     ',' => TokenKind::Comma,
                     ';' => TokenKind::Semicolon,
                     '+' => TokenKind::Plus,
@@ -134,6 +140,7 @@ impl Lexer {
                     '-' if self.take('>') => TokenKind::Arrow,
                     '-' => TokenKind::Minus,
                     '=' if self.take('=') => TokenKind::EqualEqual,
+                    '=' if self.take('>') => TokenKind::FatArrow,
                     '=' => TokenKind::Equal,
                     '!' if self.take('=') => TokenKind::BangEqual,
                     '!' => TokenKind::Bang,
@@ -172,8 +179,10 @@ impl Lexer {
             matches!(
                 token.kind,
                 TokenKind::Colon
+                    | TokenKind::Dot
                     | TokenKind::Comma
                     | TokenKind::Arrow
+                    | TokenKind::FatArrow
                     | TokenKind::Equal
                     | TokenKind::EqualEqual
                     | TokenKind::Bang
@@ -264,6 +273,9 @@ impl Lexer {
             "if" => TokenKind::If,
             "else" => TokenKind::Else,
             "return" => TokenKind::Return,
+            "struct" => TokenKind::Struct,
+            "enum" => TokenKind::Enum,
+            "match" => TokenKind::Match,
             "true" => TokenKind::True,
             "false" => TokenKind::False,
             _ => TokenKind::Ident(text),

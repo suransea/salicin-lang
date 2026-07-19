@@ -1,7 +1,9 @@
 use std::fmt;
 
 use crate::ast::{
-    BinaryOp, Binding, Expr, Function, Item, Param, PassMode, Program, Stmt, Type, UnaryOp,
+    BinaryOp, Binding, CallArg, EnumDef, Expr, Field, Function, Item, MatchArm, Param, PassMode,
+    Pattern, PatternField, PatternFields, Program, Stmt, StructDef, Type, UnaryOp, VariantDef,
+    VariantFields,
 };
 use crate::lexer::{lex, LexError, Token, TokenKind};
 
@@ -92,6 +94,18 @@ impl Parser {
 
         self.expect(&TokenKind::Equal, "`=`")?;
 
+        if self.at(&TokenKind::Struct) || self.at(&TokenKind::Enum) {
+            if mutable || annotation.is_some() || !groups.is_empty() {
+                return Err(self
+                    .error_here("M1 data declarations cannot be mutable, annotated, or generic"));
+            }
+            return if self.at(&TokenKind::Struct) {
+                self.struct_definition(name).map(Item::Struct)
+            } else {
+                self.enum_definition(name).map(Item::Enum)
+            };
+        }
+
         if groups.is_empty() {
             let value = self.expression(true)?;
             Ok(Item::Global(Binding {
@@ -113,6 +127,96 @@ impl Parser {
                 body: Some(body),
             }))
         }
+    }
+
+    fn struct_definition(&mut self, name: String) -> Result<StructDef, ParseError> {
+        self.expect(&TokenKind::Struct, "`struct`")?;
+        self.expect(&TokenKind::LParen, "`(` after `struct`")?;
+        let fields = self.named_type_fields()?;
+        Ok(StructDef { name, fields })
+    }
+
+    fn enum_definition(&mut self, name: String) -> Result<EnumDef, ParseError> {
+        self.expect(&TokenKind::Enum, "`enum`")?;
+        self.expect(&TokenKind::LBrace, "`{` after `enum`")?;
+        self.skip_separators();
+        let mut variants = Vec::new();
+
+        while !self.at(&TokenKind::RBrace) {
+            if self.at(&TokenKind::Eof) {
+                return Err(self.error_here("expected `}` before end of enum declaration"));
+            }
+
+            let variant_name = self.expect_ident("a variant name")?;
+            let fields = if self.take(&TokenKind::LParen) {
+                if self.take(&TokenKind::RParen) {
+                    VariantFields::Positional(Vec::new())
+                } else if self.ident_followed_by_colon() {
+                    VariantFields::Named(self.named_type_fields_after_open()?)
+                } else {
+                    let mut types = Vec::new();
+                    loop {
+                        types.push(self.type_expr()?);
+                        if self.take(&TokenKind::Comma) {
+                            if self.take(&TokenKind::RParen) {
+                                break;
+                            }
+                        } else {
+                            self.expect(&TokenKind::RParen, "`)` after variant fields")?;
+                            break;
+                        }
+                    }
+                    VariantFields::Positional(types)
+                }
+            } else {
+                VariantFields::Unit
+            };
+            variants.push(VariantDef {
+                name: variant_name,
+                fields,
+            });
+
+            if self.take(&TokenKind::Comma) {
+                self.skip_separators();
+                continue;
+            }
+
+            self.skip_separators();
+            if !self.at(&TokenKind::RBrace) {
+                return Err(self.error_here("expected `,` between enum variants"));
+            }
+        }
+
+        self.expect(&TokenKind::RBrace, "`}` after enum variants")?;
+        Ok(EnumDef { name, variants })
+    }
+
+    fn named_type_fields(&mut self) -> Result<Vec<Field>, ParseError> {
+        if self.take(&TokenKind::RParen) {
+            return Ok(Vec::new());
+        }
+        self.named_type_fields_after_open()
+    }
+
+    fn named_type_fields_after_open(&mut self) -> Result<Vec<Field>, ParseError> {
+        let mut fields = Vec::new();
+        loop {
+            let name = self.expect_ident("a field name")?;
+            self.expect(&TokenKind::Colon, "`:` after field name")?;
+            fields.push(Field {
+                name,
+                ty: self.type_expr()?,
+            });
+            if self.take(&TokenKind::Comma) {
+                if self.take(&TokenKind::RParen) {
+                    break;
+                }
+            } else {
+                self.expect(&TokenKind::RParen, "`)` after fields")?;
+                break;
+            }
+        }
+        Ok(fields)
     }
 
     fn local_binding(&mut self) -> Result<Binding, ParseError> {
@@ -222,17 +326,170 @@ impl Parser {
     }
 
     fn assignment(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
-        let left = self.logical_or(allow_trailing_closure)?;
+        let left = self.match_expression(allow_trailing_closure)?;
         if self.take(&TokenKind::Equal) {
             let equals = self.previous().clone();
             let right = self.assignment(allow_trailing_closure)?;
-            if let Expr::Name(name) = left {
-                Ok(Expr::Assign(name, Box::new(right)))
+            if Self::is_assignable_place(&left) {
+                Ok(Expr::Assign(Box::new(left), Box::new(right)))
             } else {
-                Err(self.error_at(&equals, "left side of assignment must be a name"))
+                Err(self.error_at(
+                    &equals,
+                    "left side of assignment must be a name or member chain",
+                ))
             }
         } else {
             Ok(left)
+        }
+    }
+
+    fn match_expression(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
+        let scrutinee = self.logical_or(allow_trailing_closure)?;
+        if !self.take(&TokenKind::Match) {
+            return Ok(scrutinee);
+        }
+
+        self.expect(&TokenKind::LBrace, "`{` after `match`")?;
+        self.skip_separators();
+        let mut arms = Vec::new();
+        while !self.at(&TokenKind::RBrace) {
+            if self.at(&TokenKind::Eof) {
+                return Err(self.error_here("expected `}` before end of match expression"));
+            }
+
+            let pattern = self.pattern()?;
+            let guard = if self.take(&TokenKind::If) {
+                Some(self.expression(true)?)
+            } else {
+                None
+            };
+            self.expect(&TokenKind::FatArrow, "`=>` after match pattern")?;
+            let body = self.expression(true)?;
+            arms.push(MatchArm {
+                pattern,
+                guard,
+                body,
+            });
+
+            if self.take(&TokenKind::Comma) {
+                self.skip_separators();
+                continue;
+            }
+
+            self.skip_separators();
+            if !self.at(&TokenKind::RBrace) {
+                return Err(self.error_here("expected `,` between match arms"));
+            }
+        }
+        self.expect(&TokenKind::RBrace, "`}` after match arms")?;
+
+        Ok(Expr::Match {
+            scrutinee: Box::new(scrutinee),
+            arms,
+        })
+    }
+
+    fn pattern(&mut self) -> Result<Pattern, ParseError> {
+        let token = self.current().clone();
+        match token.kind {
+            TokenKind::Integer(value) => {
+                self.advance();
+                Ok(Pattern::Integer(value))
+            }
+            TokenKind::Minus => {
+                self.advance();
+                let integer = self.current().clone();
+                let TokenKind::Integer(value) = integer.kind else {
+                    return Err(self.error_at(&integer, "expected integer literal after `-`"));
+                };
+                self.advance();
+                let value = value.checked_neg().ok_or_else(|| {
+                    self.error_at(&token, "negative integer pattern is out of range")
+                })?;
+                Ok(Pattern::Integer(value))
+            }
+            TokenKind::True => {
+                self.advance();
+                Ok(Pattern::Bool(true))
+            }
+            TokenKind::False => {
+                self.advance();
+                Ok(Pattern::Bool(false))
+            }
+            TokenKind::Ident(name) if name == "_" => {
+                self.advance();
+                Ok(Pattern::Wildcard)
+            }
+            TokenKind::Ident(_) => self.named_pattern(),
+            _ => Err(self.error_at(
+                &token,
+                format!("expected a pattern, found {}", describe(&token.kind)),
+            )),
+        }
+    }
+
+    fn named_pattern(&mut self) -> Result<Pattern, ParseError> {
+        let mut path = vec![self.expect_ident("a pattern name")?];
+        while self.take(&TokenKind::Dot) {
+            path.push(self.expect_ident("a name after `.`")?);
+        }
+
+        let has_payload = self.at(&TokenKind::LParen);
+        let looks_like_constructor =
+            path.len() > 1 || has_payload || path[0].chars().next().is_some_and(char::is_uppercase);
+        if !looks_like_constructor {
+            return Ok(Pattern::Binding(path.pop().expect("path has one element")));
+        }
+
+        let fields = if self.take(&TokenKind::LParen) {
+            if self.take(&TokenKind::RParen) {
+                PatternFields::Positional(Vec::new())
+            } else if self.ident_followed_by_colon() {
+                let mut fields = Vec::new();
+                loop {
+                    let name = self.expect_ident("a pattern field name")?;
+                    self.expect(&TokenKind::Colon, "`:` after pattern field name")?;
+                    fields.push(PatternField {
+                        name,
+                        pattern: self.pattern()?,
+                    });
+                    if self.take(&TokenKind::Comma) {
+                        if self.take(&TokenKind::RParen) {
+                            break;
+                        }
+                    } else {
+                        self.expect(&TokenKind::RParen, "`)` after pattern fields")?;
+                        break;
+                    }
+                }
+                PatternFields::Named(fields)
+            } else {
+                let mut patterns = Vec::new();
+                loop {
+                    patterns.push(self.pattern()?);
+                    if self.take(&TokenKind::Comma) {
+                        if self.take(&TokenKind::RParen) {
+                            break;
+                        }
+                    } else {
+                        self.expect(&TokenKind::RParen, "`)` after patterns")?;
+                        break;
+                    }
+                }
+                PatternFields::Positional(patterns)
+            }
+        } else {
+            PatternFields::Unit
+        };
+
+        Ok(Pattern::Constructor { path, fields })
+    }
+
+    fn is_assignable_place(expression: &Expr) -> bool {
+        match expression {
+            Expr::Name(_) => true,
+            Expr::Member(base, _) => Self::is_assignable_place(base),
+            _ => false,
         }
     }
 
@@ -361,9 +618,32 @@ impl Parser {
         loop {
             if self.take(&TokenKind::LParen) {
                 let mut arguments = Vec::new();
+                let mut labeled = None;
                 if !self.take(&TokenKind::RParen) {
                     loop {
-                        arguments.push(self.expression(true)?);
+                        let argument_start = self.current().clone();
+                        let label = if self.ident_followed_by_colon() {
+                            let label = self.expect_ident("an argument label")?;
+                            self.expect(&TokenKind::Colon, "`:` after argument label")?;
+                            Some(label)
+                        } else {
+                            None
+                        };
+                        let is_labeled = label.is_some();
+                        if let Some(expected_labeled) = labeled {
+                            if expected_labeled != is_labeled {
+                                return Err(self.error_at(
+                                    &argument_start,
+                                    "labeled and positional arguments cannot be mixed",
+                                ));
+                            }
+                        } else {
+                            labeled = Some(is_labeled);
+                        }
+                        arguments.push(CallArg {
+                            label,
+                            value: self.expression(true)?,
+                        });
                         if self.take(&TokenKind::Comma) {
                             if self.take(&TokenKind::RParen) {
                                 break;
@@ -376,13 +656,22 @@ impl Parser {
                 }
                 expression = Expr::Call(Box::new(expression), arguments);
                 has_call_group = true;
+            } else if self.take(&TokenKind::Dot) {
+                let member = self.expect_ident("a member name after `.`")?;
+                expression = Expr::Member(Box::new(expression), member);
             } else if allow_trailing_closure
                 && has_call_group
                 && !used_trailing_closure
                 && self.at(&TokenKind::LBrace)
             {
                 let closure = self.closure()?;
-                expression = Expr::Call(Box::new(expression), vec![closure]);
+                expression = Expr::Call(
+                    Box::new(expression),
+                    vec![CallArg {
+                        label: None,
+                        value: closure,
+                    }],
+                );
                 used_trailing_closure = true;
             } else {
                 break;
@@ -589,6 +878,16 @@ impl Parser {
         self.at(&TokenKind::Newline) || self.at(&TokenKind::Semicolon)
     }
 
+    fn ident_followed_by_colon(&self) -> bool {
+        matches!(self.current().kind, TokenKind::Ident(_)) && self.at_offset(1, &TokenKind::Colon)
+    }
+
+    fn at_offset(&self, offset: usize, kind: &TokenKind) -> bool {
+        self.tokens.get(self.index + offset).is_some_and(|token| {
+            std::mem::discriminant(&token.kind) == std::mem::discriminant(kind)
+        })
+    }
+
     fn expect_ident(&mut self, expected: &str) -> Result<String, ParseError> {
         let token = self.current().clone();
         if let TokenKind::Ident(name) = token.kind {
@@ -664,6 +963,9 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::If => "`if`",
         TokenKind::Else => "`else`",
         TokenKind::Return => "`return`",
+        TokenKind::Struct => "`struct`",
+        TokenKind::Enum => "`enum`",
+        TokenKind::Match => "`match`",
         TokenKind::True => "`true`",
         TokenKind::False => "`false`",
         TokenKind::Ident(_) => "an identifier",
@@ -673,10 +975,12 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::LBrace => "`{`",
         TokenKind::RBrace => "`}`",
         TokenKind::Colon => "`:`",
+        TokenKind::Dot => "`.`",
         TokenKind::Comma => "`,`",
         TokenKind::Semicolon => "`;`",
         TokenKind::Newline => "a newline",
         TokenKind::Arrow => "`->`",
+        TokenKind::FatArrow => "`=>`",
         TokenKind::Equal => "`=`",
         TokenKind::EqualEqual => "`==`",
         TokenKind::Bang => "`!`",
@@ -727,8 +1031,24 @@ mod tests {
         let Expr::Call(inner, second) = function.body.as_ref().unwrap() else {
             panic!("expected outer call");
         };
-        assert_eq!(second, &vec![Expr::Integer(2)]);
-        assert!(matches!(inner.as_ref(), Expr::Call(_, first) if first == &vec![Expr::Integer(1)]));
+        assert!(matches!(
+            second.as_slice(),
+            [CallArg {
+                label: None,
+                value: Expr::Integer(2)
+            }]
+        ));
+        assert!(matches!(
+            inner.as_ref(),
+            Expr::Call(_, first)
+                if matches!(
+                    first.as_slice(),
+                    [CallArg {
+                        label: None,
+                        value: Expr::Integer(1)
+                    }]
+                )
+        ));
     }
 
     #[test]
@@ -766,7 +1086,14 @@ mod tests {
         };
         assert!(matches!(
             statements.as_slice(),
-            [Stmt::Expr(Expr::Call(_, arguments))] if arguments == &vec![Expr::Integer(1)]
+            [Stmt::Expr(Expr::Call(_, arguments))]
+                if matches!(
+                    arguments.as_slice(),
+                    [CallArg {
+                        label: None,
+                        value: Expr::Integer(1)
+                    }]
+                )
         ));
         assert_eq!(tail.as_ref(), &Expr::Integer(2));
     }
@@ -826,6 +1153,107 @@ mod tests {
         };
         assert_eq!(trailing_group.len(), 1);
         assert!(matches!(first_call.as_ref(), Expr::Call(_, _)));
+    }
+
+    #[test]
+    fn parses_structs_and_enum_field_shapes() {
+        let program = parse(
+            "let Point = struct(x: i32, y: i32)\n\
+             let Shape = enum {\n\
+               Circle(radius: i32),\n\
+               Pair(i32, i32),\n\
+               Unit,\n\
+             }\n",
+        )
+        .unwrap();
+
+        let Item::Struct(point) = &program.items[0] else {
+            panic!("expected struct");
+        };
+        assert_eq!(point.name, "Point");
+        assert_eq!(point.fields.len(), 2);
+
+        let Item::Enum(shape) = &program.items[1] else {
+            panic!("expected enum");
+        };
+        assert_eq!(shape.variants.len(), 3);
+        assert!(matches!(shape.variants[0].fields, VariantFields::Named(_)));
+        assert!(matches!(
+            shape.variants[1].fields,
+            VariantFields::Positional(_)
+        ));
+        assert_eq!(shape.variants[2].fields, VariantFields::Unit);
+    }
+
+    #[test]
+    fn parses_labeled_construction_member_access_and_assignment() {
+        let program = parse(
+            "let Point = struct(x: i32, y: i32)\n\
+             let main(): i32 = {\n\
+               let mut point = Point(x: 1, y: 2)\n\
+               point.x = 3\n\
+               point.x\n\
+             }\n",
+        )
+        .unwrap();
+
+        let Item::Function(main) = &program.items[1] else {
+            panic!("expected function");
+        };
+        let Some(Expr::Block(statements, Some(tail))) = &main.body else {
+            panic!("expected block");
+        };
+        let Stmt::Let(binding) = &statements[0] else {
+            panic!("expected binding");
+        };
+        assert!(matches!(
+            &binding.value,
+            Expr::Call(_, arguments)
+                if arguments.iter().map(|argument| argument.label.as_deref()).collect::<Vec<_>>()
+                    == vec![Some("x"), Some("y")]
+        ));
+        assert!(matches!(
+            &statements[1],
+            Stmt::Expr(Expr::Assign(left, right))
+                if matches!(left.as_ref(), Expr::Member(_, field) if field == "x")
+                    && right.as_ref() == &Expr::Integer(3)
+        ));
+        assert!(matches!(tail.as_ref(), Expr::Member(_, field) if field == "x"));
+    }
+
+    #[test]
+    fn parses_postfix_match_patterns_and_guards() {
+        let program = parse(
+            "let classify(shape: Shape): i32 = shape match {\n\
+               Shape.Circle(radius: value) if value > 0 => value,\n\
+               Shape.Unit => 0,\n\
+               _ => -1,\n\
+             }\n",
+        )
+        .unwrap();
+
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        let Some(Expr::Match { scrutinee, arms }) = &function.body else {
+            panic!("expected match");
+        };
+        assert_eq!(scrutinee.as_ref(), &Expr::Name("shape".into()));
+        assert_eq!(arms.len(), 3);
+        assert!(arms[0].guard.is_some());
+        assert!(matches!(
+            &arms[0].pattern,
+            Pattern::Constructor { path, fields: PatternFields::Named(fields) }
+                if path == &vec!["Shape".to_owned(), "Circle".to_owned()]
+                    && fields[0].name == "radius"
+        ));
+        assert_eq!(arms[2].pattern, Pattern::Wildcard);
+    }
+
+    #[test]
+    fn rejects_mixed_labeled_and_positional_arguments() {
+        let error = parse("let point = Point(x: 1, 2)\n").unwrap_err();
+        assert!(error.message.contains("cannot be mixed"));
     }
 
     #[test]

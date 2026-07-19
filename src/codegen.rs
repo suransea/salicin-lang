@@ -7,7 +7,10 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use crate::ast::{BinaryOp, Binding, Expr, Function, Item, PassMode, Program, Stmt, Type, UnaryOp};
+use crate::ast::{
+    BinaryOp, Binding, CallArg, EnumDef, Expr, Function, Item, MatchArm, PassMode, Pattern,
+    PatternFields, Program, Stmt, StructDef, Type, UnaryOp, VariantFields,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
@@ -55,6 +58,8 @@ enum Ty {
     U64,
     Bool,
     Unit,
+    Struct(String),
+    Enum(String),
     Never,
     Function(FunctionTy),
     Error,
@@ -74,16 +79,6 @@ impl Ty {
     fn is_signed(&self) -> bool {
         matches!(self, Self::I32 | Self::I64)
     }
-
-    fn llvm(&self) -> Option<&'static str> {
-        match self {
-            Self::I32 | Self::U32 => Some("i32"),
-            Self::I64 | Self::U64 => Some("i64"),
-            Self::Bool => Some("i1"),
-            Self::Unit | Self::Never => None,
-            Self::Function(_) | Self::Error => None,
-        }
-    }
 }
 
 impl fmt::Display for Ty {
@@ -95,6 +90,7 @@ impl fmt::Display for Ty {
             Self::U64 => f.write_str("u64"),
             Self::Bool => f.write_str("bool"),
             Self::Unit => f.write_str("()"),
+            Self::Struct(name) | Self::Enum(name) => f.write_str(name),
             Self::Never => f.write_str("never"),
             Self::Error => f.write_str("<error>"),
             Self::Function(function) => {
@@ -117,9 +113,47 @@ impl fmt::Display for Ty {
 type LocalId = usize;
 
 #[derive(Debug, Clone)]
+struct FieldLayout {
+    name: String,
+    ty: Ty,
+}
+
+#[derive(Debug, Clone)]
+struct StructLayout {
+    name: String,
+    fields: Vec<FieldLayout>,
+}
+
+#[derive(Debug, Clone)]
+struct VariantLayout {
+    name: String,
+    fields: Vec<FieldLayout>,
+    payload_offset: usize,
+    named: bool,
+}
+
+#[derive(Debug, Clone)]
+struct EnumLayout {
+    name: String,
+    variants: Vec<VariantLayout>,
+}
+
+#[derive(Debug, Clone)]
 struct HirProgram {
+    structs: Vec<StructLayout>,
+    enums: Vec<EnumLayout>,
     globals: Vec<HirGlobal>,
     functions: Vec<HirFunction>,
+}
+
+impl HirProgram {
+    fn struct_layout(&self, name: &str) -> Option<&StructLayout> {
+        self.structs.iter().find(|layout| layout.name == name)
+    }
+
+    fn enum_layout(&self, name: &str) -> Option<&EnumLayout> {
+        self.enums.iter().find(|layout| layout.name == name)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -165,6 +199,36 @@ struct HirExpr {
 }
 
 #[derive(Debug, Clone)]
+struct HirPlace {
+    local: LocalId,
+    root_ty: Ty,
+    projections: Vec<usize>,
+    ty: Ty,
+}
+
+#[derive(Debug, Clone)]
+struct HirPatternBinding {
+    id: LocalId,
+    name: String,
+    ty: Ty,
+    path: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HirMatcher {
+    Variant(usize),
+    All,
+}
+
+#[derive(Debug, Clone)]
+struct HirMatchArm {
+    matcher: HirMatcher,
+    bindings: Vec<HirPatternBinding>,
+    guard: Option<HirExpr>,
+    body: HirExpr,
+}
+
+#[derive(Debug, Clone)]
 enum HirExprKind {
     Integer(i128),
     Bool(bool),
@@ -174,10 +238,32 @@ enum HirExprKind {
     Function(String),
     Unary(UnaryOp, Box<HirExpr>),
     Binary(Box<HirExpr>, BinaryOp, Box<HirExpr>),
-    Assign(LocalId, Box<HirExpr>),
+    Assign(HirPlace, Box<HirExpr>),
     Call {
         function: String,
         arguments: Vec<HirExpr>,
+    },
+    Partial {
+        function: String,
+        consumed_groups: usize,
+        captures: Vec<HirExpr>,
+    },
+    PartialCapture {
+        binding: LocalId,
+        index: usize,
+    },
+    ConstructStruct {
+        name: String,
+        fields: Vec<(usize, HirExpr)>,
+    },
+    ConstructEnum {
+        name: String,
+        variant: usize,
+        fields: Vec<(usize, HirExpr)>,
+    },
+    Field {
+        base: Box<HirExpr>,
+        index: usize,
     },
     Block(Vec<HirStmt>, Option<Box<HirExpr>>),
     If {
@@ -186,6 +272,10 @@ enum HirExprKind {
         else_branch: Option<Box<HirExpr>>,
     },
     Return(Option<Box<HirExpr>>),
+    Match {
+        scrutinee: Box<HirExpr>,
+        arms: Vec<HirMatchArm>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -225,6 +315,14 @@ struct LocalInfo {
     id: LocalId,
     ty: Ty,
     mutable: bool,
+    partial: Option<PartialInfo>,
+}
+
+#[derive(Debug, Clone)]
+struct PartialInfo {
+    function: String,
+    consumed_groups: usize,
+    capture_count: usize,
 }
 
 struct LowerCtx {
@@ -270,8 +368,14 @@ impl LowerCtx {
 struct Analyzer {
     functions: HashMap<String, Function>,
     globals: HashMap<String, Binding>,
+    struct_defs: HashMap<String, StructDef>,
+    enum_defs: HashMap<String, EnumDef>,
+    struct_layouts: HashMap<String, StructLayout>,
+    enum_layouts: HashMap<String, EnumLayout>,
     function_order: Vec<String>,
     global_order: Vec<String>,
+    struct_order: Vec<String>,
+    enum_order: Vec<String>,
     signatures: HashMap<String, FunctionSig>,
     global_annotations: HashMap<String, Option<Ty>>,
     function_states: HashMap<String, ResolutionState>,
@@ -286,8 +390,14 @@ impl Analyzer {
         let mut analyzer = Self {
             functions: HashMap::new(),
             globals: HashMap::new(),
+            struct_defs: HashMap::new(),
+            enum_defs: HashMap::new(),
+            struct_layouts: HashMap::new(),
+            enum_layouts: HashMap::new(),
             function_order: Vec::new(),
             global_order: Vec::new(),
+            struct_order: Vec::new(),
+            enum_order: Vec::new(),
             signatures: HashMap::new(),
             global_annotations: HashMap::new(),
             function_states: HashMap::new(),
@@ -303,59 +413,223 @@ impl Analyzer {
     fn collect_items(&mut self, program: &Program) {
         let mut names = HashSet::new();
         for item in &program.items {
+            let name = match item {
+                Item::Function(function) => &function.name,
+                Item::Global(binding) => &binding.name,
+                Item::Struct(definition) => &definition.name,
+                Item::Enum(definition) => &definition.name,
+            };
+            if !names.insert(name.clone()) {
+                self.error(format!("duplicate top-level name `{name}`"));
+                continue;
+            }
             match item {
                 Item::Function(function) => {
-                    if !names.insert(function.name.clone()) {
-                        self.error(format!("duplicate top-level name `{}`", function.name));
-                        continue;
-                    }
-
-                    let groups = function
-                        .groups
-                        .iter()
-                        .map(|group| {
-                            group
-                                .iter()
-                                .map(|param| ParamSig {
-                                    name: param.name.clone(),
-                                    ty: self.lower_source_type(&param.ty),
-                                    mode: param.mode,
-                                })
-                                .collect()
-                        })
-                        .collect();
-                    let result = function
-                        .return_type
-                        .as_ref()
-                        .map(|ty| self.lower_source_type(ty));
-                    self.signatures
-                        .insert(function.name.clone(), FunctionSig { groups, result });
                     self.function_order.push(function.name.clone());
                     self.functions
                         .insert(function.name.clone(), function.clone());
                 }
                 Item::Global(binding) => {
-                    if !names.insert(binding.name.clone()) {
-                        self.error(format!("duplicate top-level name `{}`", binding.name));
-                        continue;
-                    }
                     if binding.mutable {
                         self.error(format!(
-                            "mutable global `{}` is not supported in M0",
+                            "mutable global `{}` is not supported yet",
                             binding.name
                         ));
                     }
-                    let annotation = binding
-                        .annotation
-                        .as_ref()
-                        .map(|ty| self.lower_source_type(ty));
-                    self.global_annotations
-                        .insert(binding.name.clone(), annotation);
                     self.global_order.push(binding.name.clone());
                     self.globals.insert(binding.name.clone(), binding.clone());
                 }
+                Item::Struct(definition) => {
+                    self.struct_order.push(definition.name.clone());
+                    self.struct_defs
+                        .insert(definition.name.clone(), definition.clone());
+                }
+                Item::Enum(definition) => {
+                    self.enum_order.push(definition.name.clone());
+                    self.enum_defs
+                        .insert(definition.name.clone(), definition.clone());
+                }
             }
         }
+
+        self.collect_nominal_layouts();
+
+        for name in self.function_order.clone() {
+            let function = self.functions[&name].clone();
+            let groups = function
+                .groups
+                .iter()
+                .map(|group| {
+                    group
+                        .iter()
+                        .map(|param| ParamSig {
+                            name: param.name.clone(),
+                            ty: self.lower_source_type(&param.ty),
+                            mode: param.mode,
+                        })
+                        .collect()
+                })
+                .collect();
+            let result = function
+                .return_type
+                .as_ref()
+                .map(|ty| self.lower_source_type(ty));
+            self.signatures.insert(name, FunctionSig { groups, result });
+        }
+        for name in self.global_order.clone() {
+            let binding = self.globals[&name].clone();
+            let annotation = binding
+                .annotation
+                .as_ref()
+                .map(|ty| self.lower_source_type(ty));
+            self.global_annotations.insert(name, annotation);
+        }
+
+        self.validate_nominal_layouts();
+    }
+
+    fn collect_nominal_layouts(&mut self) {
+        for name in self.struct_order.clone() {
+            let definition = self.struct_defs[&name].clone();
+            let mut seen = HashSet::new();
+            let mut fields = Vec::new();
+            for field in definition.fields {
+                if !seen.insert(field.name.clone()) {
+                    self.error(format!(
+                        "duplicate field `{}` in struct `{name}`",
+                        field.name
+                    ));
+                    continue;
+                }
+                fields.push(FieldLayout {
+                    name: field.name,
+                    ty: self.lower_source_type(&field.ty),
+                });
+            }
+            self.struct_layouts
+                .insert(name.clone(), StructLayout { name, fields });
+        }
+
+        for name in self.enum_order.clone() {
+            let definition = self.enum_defs[&name].clone();
+            if definition.variants.is_empty() {
+                self.error(format!("enum `{name}` must declare at least one variant"));
+            }
+            let mut seen_variants = HashSet::new();
+            let mut variants = Vec::new();
+            let mut payload_offset = 0;
+            for variant in definition.variants {
+                if !seen_variants.insert(variant.name.clone()) {
+                    self.error(format!(
+                        "duplicate variant `{}` in enum `{name}`",
+                        variant.name
+                    ));
+                    continue;
+                }
+                let (source_fields, named) = match variant.fields {
+                    VariantFields::Unit => (Vec::new(), false),
+                    VariantFields::Positional(types) => (
+                        types
+                            .into_iter()
+                            .enumerate()
+                            .map(|(index, ty)| (index.to_string(), ty))
+                            .collect(),
+                        false,
+                    ),
+                    VariantFields::Named(fields) => (
+                        fields
+                            .into_iter()
+                            .map(|field| (field.name, field.ty))
+                            .collect(),
+                        true,
+                    ),
+                };
+                let mut seen_fields = HashSet::new();
+                let mut fields = Vec::new();
+                for (field_name, source_ty) in source_fields {
+                    if !seen_fields.insert(field_name.clone()) {
+                        self.error(format!(
+                            "duplicate field `{field_name}` in variant `{name}.{}`",
+                            variant.name
+                        ));
+                        continue;
+                    }
+                    fields.push(FieldLayout {
+                        name: field_name,
+                        ty: self.lower_source_type(&source_ty),
+                    });
+                }
+                let field_count = fields.len();
+                variants.push(VariantLayout {
+                    name: variant.name,
+                    fields,
+                    payload_offset,
+                    named,
+                });
+                payload_offset += field_count;
+            }
+            self.enum_layouts
+                .insert(name.clone(), EnumLayout { name, variants });
+        }
+    }
+
+    fn validate_nominal_layouts(&mut self) {
+        let mut states = HashMap::new();
+        let mut stack = Vec::new();
+        let names: Vec<_> = self
+            .struct_order
+            .iter()
+            .chain(&self.enum_order)
+            .cloned()
+            .collect();
+        for name in names {
+            self.visit_nominal_layout(&name, &mut states, &mut stack);
+        }
+    }
+
+    fn visit_nominal_layout(
+        &mut self,
+        name: &str,
+        states: &mut HashMap<String, u8>,
+        stack: &mut Vec<String>,
+    ) {
+        match states.get(name).copied() {
+            Some(2) => return,
+            Some(1) => {
+                let start = stack.iter().position(|item| item == name).unwrap_or(0);
+                let mut cycle = stack[start..].to_vec();
+                cycle.push(name.to_owned());
+                self.error(format!(
+                    "recursive value layout has infinite size: {}",
+                    cycle.join(" -> ")
+                ));
+                return;
+            }
+            _ => {}
+        }
+        states.insert(name.to_owned(), 1);
+        stack.push(name.to_owned());
+        let dependencies: Vec<String> = if let Some(layout) = self.struct_layouts.get(name) {
+            layout
+                .fields
+                .iter()
+                .filter_map(|field| nominal_name(&field.ty).map(str::to_owned))
+                .collect()
+        } else if let Some(layout) = self.enum_layouts.get(name) {
+            layout
+                .variants
+                .iter()
+                .flat_map(|variant| &variant.fields)
+                .filter_map(|field| nominal_name(&field.ty).map(str::to_owned))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        for dependency in dependencies {
+            self.visit_nominal_layout(&dependency, states, stack);
+        }
+        stack.pop();
+        states.insert(name.to_owned(), 2);
     }
 
     fn analyze(&mut self) -> Option<HirProgram> {
@@ -372,6 +646,16 @@ impl Analyzer {
         }
 
         Some(HirProgram {
+            structs: self
+                .struct_order
+                .iter()
+                .map(|name| self.struct_layouts[name].clone())
+                .collect(),
+            enums: self
+                .enum_order
+                .iter()
+                .map(|name| self.enum_layouts[name].clone())
+                .collect(),
             globals: self
                 .global_order
                 .iter()
@@ -394,8 +678,18 @@ impl Analyzer {
             Type::Bool => Ty::Bool,
             Type::Void => Ty::Unit,
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => Ty::Unit,
+            Type::Named(name, arguments) if arguments.is_empty() => {
+                if self.struct_defs.contains_key(name) {
+                    Ty::Struct(name.clone())
+                } else if self.enum_defs.contains_key(name) {
+                    Ty::Enum(name.clone())
+                } else {
+                    self.error(format!("unknown type `{name}`"));
+                    Ty::Error
+                }
+            }
             Type::Named(name, _) => {
-                self.error(format!("type `{name}` is not supported in M0"));
+                self.error(format!("generic type `{name}` is not supported yet"));
                 Ty::Error
             }
         }
@@ -439,6 +733,7 @@ impl Analyzer {
                         id,
                         ty: param.ty.clone(),
                         mutable: false,
+                        partial: None,
                     },
                 );
                 params.push(HirParam {
@@ -502,6 +797,12 @@ impl Analyzer {
     }
 
     fn validate_parameter_mode(&mut self, function: &str, param: &ParamSig) {
+        if param.mode == PassMode::Copy && matches!(param.ty, Ty::Struct(_) | Ty::Enum(_)) {
+            self.error(format!(
+                "parameter `{}` in function `{function}` requires `Copy`, but nominal type `{}` does not implement Copy",
+                param.name, param.ty
+            ));
+        }
         if matches!(
             param.mode,
             PassMode::Move | PassMode::Borrow | PassMode::MutBorrow
@@ -510,7 +811,7 @@ impl Analyzer {
                 "parameter `{}` in function `{function}` uses {}, which is not supported in M0",
                 param.name,
                 match param.mode {
-                    PassMode::Move => "`move`",
+                    PassMode::Move => "`move` (moved-value tracking is not implemented yet)",
                     PassMode::Borrow => "`borrow`",
                     PassMode::MutBorrow => "`mut borrow`",
                     _ => unreachable!(),
@@ -613,10 +914,17 @@ impl Analyzer {
                 kind: HirExprKind::Unit,
             },
             Expr::Name(name) => {
-                if let Some(local) = context.lookup(name) {
-                    HirExpr {
-                        ty: local.ty.clone(),
-                        kind: HirExprKind::Local(local.id),
+                if let Some(local) = context.lookup(name).cloned() {
+                    if local.partial.is_some() {
+                        self.error(format!(
+                            "local partial application `{name}` cannot escape; call it directly"
+                        ));
+                        error_expr()
+                    } else {
+                        HirExpr {
+                            ty: local.ty,
+                            kind: HirExprKind::Local(local.id),
+                        }
                     }
                 } else if self.globals.contains_key(name) {
                     HirExpr {
@@ -627,6 +935,25 @@ impl Analyzer {
                     HirExpr {
                         ty: self.function_type(name),
                         kind: HirExprKind::Function(name.clone()),
+                    }
+                } else if let Some((enum_name, variant)) =
+                    self.resolve_short_variant(name, expected)
+                {
+                    if self.enum_layouts[&enum_name].variants[variant]
+                        .fields
+                        .is_empty()
+                    {
+                        HirExpr {
+                            ty: Ty::Enum(enum_name.clone()),
+                            kind: HirExprKind::ConstructEnum {
+                                name: enum_name,
+                                variant,
+                                fields: Vec::new(),
+                            },
+                        }
+                    } else {
+                        self.error(format!("variant `{name}` requires constructor arguments"));
+                        error_expr()
                     }
                 } else {
                     self.error(format!("unknown name `{name}`"));
@@ -698,25 +1025,18 @@ impl Analyzer {
             Expr::Binary(left, operator, right) => {
                 self.lower_binary(left, *operator, right, expected, context)
             }
-            Expr::Assign(name, value) => {
-                let Some(local) = context.lookup(name).cloned() else {
-                    if self.globals.contains_key(name) {
-                        self.error(format!("global constant `{name}` cannot be assigned"));
-                    } else {
-                        self.error(format!("unknown local `{name}` in assignment"));
-                    }
+            Expr::Assign(place, value) => {
+                let Some(place) = self.lower_place(place, context) else {
                     return error_expr();
                 };
-                if !local.mutable {
-                    self.error(format!("cannot assign to immutable binding `{name}`"));
-                }
-                let value = self.lower_expr(value, Some(&local.ty), context);
+                let value = self.lower_expr(value, Some(&place.ty), context);
                 HirExpr {
                     ty: Ty::Unit,
-                    kind: HirExprKind::Assign(local.id, Box::new(value)),
+                    kind: HirExprKind::Assign(place, Box::new(value)),
                 }
             }
-            Expr::Call(_, _) => self.lower_call(expression, context),
+            Expr::Call(_, _) => self.lower_call(expression, expected, context),
+            Expr::Member(base, field) => self.lower_member(base, field, context),
             Expr::Block(statements, tail) => {
                 context.scopes.push(HashMap::new());
                 let mut lowered_statements = Vec::new();
@@ -730,9 +1050,27 @@ impl Analyzer {
                             let value =
                                 self.lower_expr(&binding.value, annotation.as_ref(), context);
                             let ty = annotation.unwrap_or_else(|| value.ty.clone());
-                            if matches!(ty, Ty::Function(_)) {
+                            let partial = match &value.kind {
+                                HirExprKind::Partial {
+                                    function,
+                                    consumed_groups,
+                                    captures,
+                                } => Some(PartialInfo {
+                                    function: function.clone(),
+                                    consumed_groups: *consumed_groups,
+                                    capture_count: captures.len(),
+                                }),
+                                _ => None,
+                            };
+                            if matches!(ty, Ty::Function(_)) && partial.is_none() {
                                 self.error(format!(
-                                    "partial application/function-valued local `{}` is not supported in M0",
+                                    "function-valued local `{}` must be a direct partial application",
+                                    binding.name
+                                ));
+                            }
+                            if partial.is_some() && binding.mutable {
+                                self.error(format!(
+                                    "local partial application `{}` must be immutable",
                                     binding.name
                                 ));
                             }
@@ -755,6 +1093,7 @@ impl Analyzer {
                                         id,
                                         ty: ty.clone(),
                                         mutable: binding.mutable,
+                                        partial,
                                     },
                                 );
                             }
@@ -858,12 +1197,425 @@ impl Analyzer {
                     kind: HirExprKind::Return(value),
                 }
             }
+            Expr::Match { scrutinee, arms } => self.lower_match(scrutinee, arms, expected, context),
         };
 
         if let Some(expected) = expected {
             self.require_same_type(&lowered.ty, expected, "expression");
         }
         lowered
+    }
+
+    fn lower_place(&mut self, expression: &Expr, context: &mut LowerCtx) -> Option<HirPlace> {
+        match expression {
+            Expr::Name(name) => {
+                let Some(local) = context.lookup(name).cloned() else {
+                    if self.globals.contains_key(name) {
+                        self.error(format!("global constant `{name}` cannot be assigned"));
+                    } else {
+                        self.error(format!("unknown local `{name}` in assignment"));
+                    }
+                    return None;
+                };
+                if !local.mutable {
+                    self.error(format!("cannot assign to immutable binding `{name}`"));
+                }
+                Some(HirPlace {
+                    local: local.id,
+                    root_ty: local.ty.clone(),
+                    projections: Vec::new(),
+                    ty: local.ty,
+                })
+            }
+            Expr::Member(base, field_name) => {
+                let mut place = self.lower_place(base, context)?;
+                let Ty::Struct(struct_name) = &place.ty else {
+                    self.error(format!(
+                        "field `{field_name}` cannot be assigned on value of type `{}`",
+                        place.ty
+                    ));
+                    return None;
+                };
+                let layout = self.struct_layouts[struct_name].clone();
+                let Some((index, field)) = layout
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .find(|(_, field)| field.name == *field_name)
+                else {
+                    self.error(format!(
+                        "unknown field `{field_name}` on struct `{struct_name}`"
+                    ));
+                    return None;
+                };
+                place.projections.push(index);
+                place.ty = field.ty.clone();
+                Some(place)
+            }
+            _ => {
+                self.error("left side of assignment is not an assignable place");
+                None
+            }
+        }
+    }
+
+    fn lower_member(&mut self, base: &Expr, member: &str, context: &mut LowerCtx) -> HirExpr {
+        if let Expr::Name(enum_name) = base {
+            if let Some(layout) = self.enum_layouts.get(enum_name).cloned() {
+                let Some((variant, variant_layout)) = layout
+                    .variants
+                    .iter()
+                    .enumerate()
+                    .find(|(_, variant)| variant.name == member)
+                else {
+                    self.error(format!("unknown variant `{member}` on enum `{enum_name}`"));
+                    return error_expr();
+                };
+                if !variant_layout.fields.is_empty() {
+                    self.error(format!(
+                        "variant `{enum_name}.{member}` requires constructor arguments"
+                    ));
+                    return error_expr();
+                }
+                return HirExpr {
+                    ty: Ty::Enum(enum_name.clone()),
+                    kind: HirExprKind::ConstructEnum {
+                        name: enum_name.clone(),
+                        variant,
+                        fields: Vec::new(),
+                    },
+                };
+            }
+        }
+
+        let base = self.lower_expr(base, None, context);
+        let Ty::Struct(struct_name) = &base.ty else {
+            self.error(format!(
+                "member access requires a struct value, found `{}`",
+                base.ty
+            ));
+            return error_expr();
+        };
+        let layout = self.struct_layouts[struct_name].clone();
+        let Some((index, field)) = layout
+            .fields
+            .iter()
+            .enumerate()
+            .find(|(_, field)| field.name == member)
+        else {
+            self.error(format!(
+                "unknown field `{member}` on struct `{struct_name}`"
+            ));
+            return error_expr();
+        };
+        HirExpr {
+            ty: field.ty.clone(),
+            kind: HirExprKind::Field {
+                base: Box::new(base),
+                index,
+            },
+        }
+    }
+
+    fn lower_match(
+        &mut self,
+        scrutinee: &Expr,
+        arms: &[MatchArm],
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let scrutinee = self.lower_expr(scrutinee, None, context);
+        let Ty::Enum(enum_name) = &scrutinee.ty else {
+            self.error(format!(
+                "match currently requires an enum value, found `{}`",
+                scrutinee.ty
+            ));
+            return error_expr();
+        };
+        let layout = self.enum_layouts[enum_name].clone();
+        let mut lowered_arms = Vec::new();
+        let mut covered = vec![false; layout.variants.len()];
+        let mut result_ty: Option<Ty> = None;
+
+        for arm in arms {
+            context.scopes.push(HashMap::new());
+            let (matcher, bindings) = self.lower_enum_pattern(&arm.pattern, &layout, context);
+            let guard = arm
+                .guard
+                .as_ref()
+                .map(|guard| self.lower_expr(guard, Some(&Ty::Bool), context));
+            let branch_expected = expected.or_else(|| {
+                result_ty
+                    .as_ref()
+                    .filter(|ty| !matches!(ty, Ty::Never | Ty::Error))
+            });
+            let body = self.lower_expr(&arm.body, branch_expected, context);
+            context.scopes.pop();
+
+            result_ty = Some(match result_ty {
+                Some(current) => self.unify_types(&current, &body.ty, "match arm results"),
+                None => body.ty.clone(),
+            });
+            if guard.is_none() {
+                match matcher {
+                    HirMatcher::Variant(index) => covered[index] = true,
+                    HirMatcher::All => covered.fill(true),
+                }
+            }
+            lowered_arms.push(HirMatchArm {
+                matcher,
+                bindings,
+                guard,
+                body,
+            });
+        }
+
+        let missing: Vec<_> = layout
+            .variants
+            .iter()
+            .zip(covered)
+            .filter_map(|(variant, covered)| (!covered).then_some(variant.name.as_str()))
+            .collect();
+        if !missing.is_empty() {
+            self.error(format!(
+                "match on `{enum_name}` is not exhaustive; missing {}",
+                missing.join(", ")
+            ));
+        }
+        if arms.is_empty() {
+            self.error("match must contain at least one arm");
+        }
+        HirExpr {
+            ty: result_ty.unwrap_or(Ty::Error),
+            kind: HirExprKind::Match {
+                scrutinee: Box::new(scrutinee),
+                arms: lowered_arms,
+            },
+        }
+    }
+
+    fn lower_enum_pattern(
+        &mut self,
+        pattern: &Pattern,
+        layout: &EnumLayout,
+        context: &mut LowerCtx,
+    ) -> (HirMatcher, Vec<HirPatternBinding>) {
+        let mut bindings = Vec::new();
+        match pattern {
+            Pattern::Wildcard => (HirMatcher::All, bindings),
+            Pattern::Binding(name) => {
+                self.bind_pattern(
+                    name,
+                    Ty::Enum(layout.name.clone()),
+                    Vec::new(),
+                    context,
+                    &mut bindings,
+                );
+                (HirMatcher::All, bindings)
+            }
+            Pattern::Constructor { path, fields } => {
+                let Some(variant_name) = path.last() else {
+                    self.error("empty constructor path in pattern");
+                    return (HirMatcher::All, bindings);
+                };
+                if path.len() > 2 || (path.len() == 2 && path[0] != layout.name) {
+                    self.error(format!(
+                        "pattern constructor `{}` does not belong to enum `{}`",
+                        path.join("."),
+                        layout.name
+                    ));
+                    return (HirMatcher::All, bindings);
+                }
+                let Some(variant_index) = layout
+                    .variants
+                    .iter()
+                    .position(|variant| variant.name == *variant_name)
+                else {
+                    self.error(format!(
+                        "unknown pattern variant `{variant_name}` for enum `{}`",
+                        layout.name
+                    ));
+                    return (HirMatcher::All, bindings);
+                };
+                let variant = &layout.variants[variant_index];
+                let patterns = self.normalize_pattern_fields(
+                    fields,
+                    &variant.fields,
+                    variant.named,
+                    &format!("pattern `{}.{}`", layout.name, variant.name),
+                );
+                for (field_index, field_pattern) in patterns {
+                    let field = &variant.fields[field_index];
+                    self.lower_irrefutable_pattern(
+                        &field_pattern,
+                        &field.ty,
+                        vec![1 + variant.payload_offset + field_index],
+                        context,
+                        &mut bindings,
+                    );
+                }
+                (HirMatcher::Variant(variant_index), bindings)
+            }
+            Pattern::Integer(_) | Pattern::Bool(_) => {
+                self.error(format!(
+                    "pattern type mismatch: enum `{}` cannot be matched by a scalar literal",
+                    layout.name
+                ));
+                (HirMatcher::All, bindings)
+            }
+        }
+    }
+
+    fn normalize_pattern_fields(
+        &mut self,
+        patterns: &PatternFields,
+        fields: &[FieldLayout],
+        named: bool,
+        description: &str,
+    ) -> Vec<(usize, Pattern)> {
+        match patterns {
+            PatternFields::Unit => {
+                if !fields.is_empty() {
+                    self.error(format!(
+                        "{description} requires {} field patterns",
+                        fields.len()
+                    ));
+                }
+                Vec::new()
+            }
+            PatternFields::Positional(patterns) => {
+                if patterns.len() != fields.len() {
+                    self.error(format!(
+                        "field count mismatch in {description}: expected {}, found {}",
+                        fields.len(),
+                        patterns.len()
+                    ));
+                }
+                patterns.iter().cloned().enumerate().collect()
+            }
+            PatternFields::Named(patterns) => {
+                if !named {
+                    self.error(format!("{description} has positional fields"));
+                    return Vec::new();
+                }
+                let mut seen = HashSet::new();
+                let mut result = Vec::new();
+                for pattern in patterns {
+                    let Some(index) = fields.iter().position(|field| field.name == pattern.name)
+                    else {
+                        self.error(format!("unknown field `{}` in {description}", pattern.name));
+                        continue;
+                    };
+                    if !seen.insert(index) {
+                        self.error(format!(
+                            "duplicate field `{}` in {description}",
+                            pattern.name
+                        ));
+                        continue;
+                    }
+                    result.push((index, pattern.pattern.clone()));
+                }
+                for (index, field) in fields.iter().enumerate() {
+                    if !seen.contains(&index) {
+                        self.error(format!("missing field `{}` in {description}", field.name));
+                    }
+                }
+                result
+            }
+        }
+    }
+
+    fn lower_irrefutable_pattern(
+        &mut self,
+        pattern: &Pattern,
+        ty: &Ty,
+        path: Vec<usize>,
+        context: &mut LowerCtx,
+        bindings: &mut Vec<HirPatternBinding>,
+    ) {
+        match pattern {
+            Pattern::Wildcard => {}
+            Pattern::Binding(name) => self.bind_pattern(name, ty.clone(), path, context, bindings),
+            Pattern::Integer(_) if ty.is_integer() => self
+                .error("literal payload patterns are not supported yet; use a binding and a guard"),
+            Pattern::Bool(_) if *ty == Ty::Bool => self
+                .error("literal payload patterns are not supported yet; use a binding and a guard"),
+            Pattern::Constructor {
+                path: constructor,
+                fields,
+            } => {
+                let Ty::Struct(struct_name) = ty else {
+                    self.error(format!(
+                        "pattern type mismatch: constructor `{}` cannot match `{ty}`",
+                        constructor.join(".")
+                    ));
+                    return;
+                };
+                if constructor.last() != Some(struct_name) {
+                    self.error(format!(
+                        "pattern type mismatch: expected struct `{struct_name}`, found `{}`",
+                        constructor.join(".")
+                    ));
+                    return;
+                }
+                let layout = self.struct_layouts[struct_name].clone();
+                let nested = self.normalize_pattern_fields(
+                    fields,
+                    &layout.fields,
+                    true,
+                    &format!("pattern `{struct_name}`"),
+                );
+                for (index, pattern) in nested {
+                    let mut nested_path = path.clone();
+                    nested_path.push(index);
+                    self.lower_irrefutable_pattern(
+                        &pattern,
+                        &layout.fields[index].ty,
+                        nested_path,
+                        context,
+                        bindings,
+                    );
+                }
+            }
+            Pattern::Integer(_) | Pattern::Bool(_) => self.error(format!(
+                "pattern type mismatch: literal pattern cannot match `{ty}`"
+            )),
+        }
+    }
+
+    fn bind_pattern(
+        &mut self,
+        name: &str,
+        ty: Ty,
+        path: Vec<usize>,
+        context: &mut LowerCtx,
+        bindings: &mut Vec<HirPatternBinding>,
+    ) {
+        if context
+            .scopes
+            .last()
+            .expect("match arm scope")
+            .contains_key(name)
+        {
+            self.error(format!("duplicate pattern binding `{name}`"));
+            return;
+        }
+        let id = context.fresh_local();
+        context.scopes.last_mut().expect("match arm scope").insert(
+            name.to_owned(),
+            LocalInfo {
+                id,
+                ty: ty.clone(),
+                mutable: false,
+                partial: None,
+            },
+        );
+        bindings.push(HirPatternBinding {
+            id,
+            name: name.to_owned(),
+            ty,
+            path,
+        });
     }
 
     fn lower_binary(
@@ -986,30 +1738,63 @@ impl Analyzer {
         }
     }
 
-    fn lower_call(&mut self, expression: &Expr, context: &mut LowerCtx) -> HirExpr {
+    fn lower_call(
+        &mut self,
+        expression: &Expr,
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
         let mut groups = Vec::new();
         let root = flatten_call(expression, &mut groups);
-        let Expr::Name(name) = root else {
-            self.error("M0 only supports direct calls to named functions");
-            return error_expr();
-        };
-        if !self.functions.contains_key(name) {
-            self.error(format!("`{name}` is not a function"));
+        if let Expr::Name(name) = root {
+            if self.struct_layouts.contains_key(name) {
+                return self.lower_struct_constructor(name, &groups, context);
+            }
+            if self.functions.contains_key(name) {
+                return self.lower_named_function_call(name, &groups, context);
+            }
+            if let Some(local) = context.lookup(name).cloned() {
+                if local.partial.is_some() {
+                    return self.lower_local_partial_call(name, &local, &groups, context);
+                }
+            }
+            if let Some((enum_name, variant)) = self.resolve_short_variant(name, expected) {
+                return self.lower_enum_constructor(&enum_name, variant, &groups, context);
+            }
+            self.error(format!("`{name}` is not a function or constructor"));
             return error_expr();
         }
+        if let Expr::Member(base, variant_name) = root {
+            if let Expr::Name(enum_name) = base.as_ref() {
+                if let Some(layout) = self.enum_layouts.get(enum_name) {
+                    if let Some(variant) = layout
+                        .variants
+                        .iter()
+                        .position(|variant| variant.name == *variant_name)
+                    {
+                        return self.lower_enum_constructor(enum_name, variant, &groups, context);
+                    }
+                    self.error(format!(
+                        "unknown variant `{variant_name}` on enum `{enum_name}`"
+                    ));
+                    return error_expr();
+                }
+            }
+        }
+        self.error("calls require a named function, constructor, or local partial application");
+        error_expr()
+    }
 
+    fn lower_named_function_call(
+        &mut self,
+        name: &str,
+        groups: &[&[CallArg]],
+        context: &mut LowerCtx,
+    ) -> HirExpr {
         let function_ty = self.function_type(name);
         let Ty::Function(function_ty) = function_ty else {
             return error_expr();
         };
-        if groups.len() < function_ty.groups.len() {
-            self.error(format!(
-                "partial application of `{name}` is not supported in M0: supplied {} of {} parameter groups",
-                groups.len(),
-                function_ty.groups.len()
-            ));
-            return error_expr();
-        }
         if groups.len() > function_ty.groups.len() {
             self.error(format!(
                 "too many parameter groups in call to `{name}`: expected {}, found {}",
@@ -1032,16 +1817,311 @@ impl Analyzer {
                 ));
             }
             for (argument, parameter) in arguments_ast.iter().zip(params) {
-                arguments.push(self.lower_expr(argument, Some(parameter), context));
+                if argument.label.is_some() {
+                    self.error(format!(
+                        "named arguments are not allowed in call to `{name}`"
+                    ));
+                }
+                arguments.push(self.lower_expr(&argument.value, Some(parameter), context));
             }
         }
 
+        if groups.len() == function_ty.groups.len() {
+            HirExpr {
+                ty: (*function_ty.result).clone(),
+                kind: HirExprKind::Call {
+                    function: name.to_owned(),
+                    arguments,
+                },
+            }
+        } else {
+            let remaining = function_ty.groups[groups.len()..].to_vec();
+            HirExpr {
+                ty: Ty::Function(FunctionTy {
+                    groups: remaining,
+                    result: function_ty.result.clone(),
+                }),
+                kind: HirExprKind::Partial {
+                    function: name.to_owned(),
+                    consumed_groups: groups.len(),
+                    captures: arguments,
+                },
+            }
+        }
+    }
+
+    fn lower_local_partial_call(
+        &mut self,
+        local_name: &str,
+        local: &LocalInfo,
+        groups: &[&[CallArg]],
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let partial = local
+            .partial
+            .as_ref()
+            .expect("partial call requires partial metadata");
+        let function_ty = self.function_type(&partial.function);
+        let Ty::Function(function_ty) = function_ty else {
+            return error_expr();
+        };
+        let remaining_groups = function_ty.groups.len() - partial.consumed_groups;
+        if groups.len() > remaining_groups {
+            self.error(format!(
+                "too many parameter groups in call to `{local_name}`: expected at most {remaining_groups}, found {}",
+                groups.len()
+            ));
+            return error_expr();
+        }
+
+        let captured_types: Vec<_> = function_ty
+            .groups
+            .iter()
+            .take(partial.consumed_groups)
+            .flatten()
+            .cloned()
+            .collect();
+        if captured_types.len() != partial.capture_count {
+            self.error(format!(
+                "internal error: invalid capture count for partial `{local_name}`"
+            ));
+            return error_expr();
+        }
+        let mut arguments: Vec<_> = captured_types
+            .into_iter()
+            .enumerate()
+            .map(|(index, ty)| HirExpr {
+                ty,
+                kind: HirExprKind::PartialCapture {
+                    binding: local.id,
+                    index,
+                },
+            })
+            .collect();
+
+        for (relative_group, arguments_ast) in groups.iter().enumerate() {
+            let group_index = partial.consumed_groups + relative_group;
+            let params = &function_ty.groups[group_index];
+            if arguments_ast.len() != params.len() {
+                self.error(format!(
+                    "argument count mismatch in group {} of `{local_name}`: expected {}, found {}",
+                    relative_group + 1,
+                    params.len(),
+                    arguments_ast.len()
+                ));
+            }
+            for (argument, parameter) in arguments_ast.iter().zip(params) {
+                if argument.label.is_some() {
+                    self.error(format!(
+                        "named arguments are not allowed in call to `{local_name}`"
+                    ));
+                }
+                arguments.push(self.lower_expr(&argument.value, Some(parameter), context));
+            }
+        }
+
+        let consumed_groups = partial.consumed_groups + groups.len();
+        if consumed_groups == function_ty.groups.len() {
+            HirExpr {
+                ty: (*function_ty.result).clone(),
+                kind: HirExprKind::Call {
+                    function: partial.function.clone(),
+                    arguments,
+                },
+            }
+        } else {
+            HirExpr {
+                ty: Ty::Function(FunctionTy {
+                    groups: function_ty.groups[consumed_groups..].to_vec(),
+                    result: function_ty.result.clone(),
+                }),
+                kind: HirExprKind::Partial {
+                    function: partial.function.clone(),
+                    consumed_groups,
+                    captures: arguments,
+                },
+            }
+        }
+    }
+
+    fn lower_struct_constructor(
+        &mut self,
+        name: &str,
+        groups: &[&[CallArg]],
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        if groups.len() != 1 {
+            self.error(format!(
+                "struct constructor `{name}` expects exactly one argument group"
+            ));
+            return error_expr();
+        }
+        let layout = self.struct_layouts[name].clone();
+        let fields = self.lower_constructor_fields(
+            groups[0],
+            &layout.fields,
+            true,
+            &format!("struct `{name}`"),
+            context,
+        );
         HirExpr {
-            ty: (*function_ty.result).clone(),
-            kind: HirExprKind::Call {
-                function: name.clone(),
-                arguments,
+            ty: Ty::Struct(name.to_owned()),
+            kind: HirExprKind::ConstructStruct {
+                name: name.to_owned(),
+                fields,
             },
+        }
+    }
+
+    fn lower_enum_constructor(
+        &mut self,
+        enum_name: &str,
+        variant: usize,
+        groups: &[&[CallArg]],
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        if groups.len() != 1 {
+            self.error(format!(
+                "enum variant constructor `{enum_name}` expects exactly one argument group"
+            ));
+            return error_expr();
+        }
+        let layout = self.enum_layouts[enum_name].clone();
+        let variant_layout = &layout.variants[variant];
+        if variant_layout.fields.is_empty() {
+            self.error(format!(
+                "unit variant `{enum_name}.{}` is a value and must not be called",
+                variant_layout.name
+            ));
+            return error_expr();
+        }
+        let fields = self.lower_constructor_fields(
+            groups[0],
+            &variant_layout.fields,
+            variant_layout.named,
+            &format!("variant `{enum_name}.{}`", variant_layout.name),
+            context,
+        );
+        HirExpr {
+            ty: Ty::Enum(enum_name.to_owned()),
+            kind: HirExprKind::ConstructEnum {
+                name: enum_name.to_owned(),
+                variant,
+                fields,
+            },
+        }
+    }
+
+    fn lower_constructor_fields(
+        &mut self,
+        arguments: &[CallArg],
+        fields: &[FieldLayout],
+        labels_allowed: bool,
+        constructor: &str,
+        context: &mut LowerCtx,
+    ) -> Vec<(usize, HirExpr)> {
+        let labeled = arguments
+            .iter()
+            .filter(|argument| argument.label.is_some())
+            .count();
+        if labeled != 0 && labeled != arguments.len() {
+            self.error(format!(
+                "cannot mix labeled and positional arguments in {constructor}"
+            ));
+            return Vec::new();
+        }
+
+        if labeled == 0 {
+            if arguments.len() != fields.len() {
+                self.error(format!(
+                    "argument count mismatch for {constructor}: expected {}, found {}",
+                    fields.len(),
+                    arguments.len()
+                ));
+            }
+            return arguments
+                .iter()
+                .zip(fields)
+                .enumerate()
+                .map(|(index, (argument, field))| {
+                    (
+                        index,
+                        self.lower_expr(&argument.value, Some(&field.ty), context),
+                    )
+                })
+                .collect();
+        }
+
+        if !labels_allowed {
+            self.error(format!("{constructor} does not accept labeled arguments"));
+            return Vec::new();
+        }
+        let mut initialized = HashSet::new();
+        let mut lowered = Vec::new();
+        for argument in arguments {
+            let label = argument
+                .label
+                .as_deref()
+                .expect("all arguments are labeled");
+            let Some((index, field)) = fields
+                .iter()
+                .enumerate()
+                .find(|(_, field)| field.name == label)
+            else {
+                self.error(format!("unknown field `{label}` in {constructor}"));
+                continue;
+            };
+            if !initialized.insert(index) {
+                self.error(format!("duplicate field `{label}` in {constructor}"));
+                continue;
+            }
+            lowered.push((
+                index,
+                self.lower_expr(&argument.value, Some(&field.ty), context),
+            ));
+        }
+        for (index, field) in fields.iter().enumerate() {
+            if !initialized.contains(&index) {
+                self.error(format!("missing field `{}` in {constructor}", field.name));
+            }
+        }
+        lowered
+    }
+
+    fn resolve_short_variant(
+        &mut self,
+        name: &str,
+        expected: Option<&Ty>,
+    ) -> Option<(String, usize)> {
+        if let Some(Ty::Enum(enum_name)) = expected {
+            if let Some(index) = self.enum_layouts[enum_name]
+                .variants
+                .iter()
+                .position(|variant| variant.name == name)
+            {
+                return Some((enum_name.clone(), index));
+            }
+        }
+        let candidates: Vec<_> = self
+            .enum_layouts
+            .iter()
+            .filter_map(|(enum_name, layout)| {
+                layout
+                    .variants
+                    .iter()
+                    .position(|variant| variant.name == name)
+                    .map(|variant| (enum_name.clone(), variant))
+            })
+            .collect();
+        match candidates.as_slice() {
+            [candidate] => Some(candidate.clone()),
+            [] => None,
+            _ => {
+                self.error(format!(
+                    "variant name `{name}` is ambiguous; qualify it with its enum"
+                ));
+                None
+            }
         }
     }
 
@@ -1109,7 +2189,7 @@ fn error_expr() -> HirExpr {
     }
 }
 
-fn flatten_call<'a>(expression: &'a Expr, groups: &mut Vec<&'a [Expr]>) -> &'a Expr {
+fn flatten_call<'a>(expression: &'a Expr, groups: &mut Vec<&'a [CallArg]>) -> &'a Expr {
     match expression {
         Expr::Call(callee, arguments) => {
             let root = flatten_call(callee, groups);
@@ -1127,6 +2207,13 @@ fn integer_fits(value: i128, ty: &Ty) -> bool {
         Ty::U32 => u32::try_from(value).is_ok(),
         Ty::U64 => u64::try_from(value).is_ok(),
         _ => false,
+    }
+}
+
+fn nominal_name(ty: &Ty) -> Option<&str> {
+    match ty {
+        Ty::Struct(name) | Ty::Enum(name) => Some(name),
+        _ => None,
     }
 }
 
@@ -1162,6 +2249,7 @@ enum ConstValue {
     Integer(i128),
     Bool(bool),
     Unit,
+    Aggregate(Vec<ConstValue>),
 }
 
 fn evaluate_globals(program: &HirProgram) -> Result<HashMap<String, ConstValue>, Vec<Diagnostic>> {
@@ -1171,6 +2259,7 @@ fn evaluate_globals(program: &HirProgram) -> Result<HashMap<String, ConstValue>,
         .map(|global| (global.name.clone(), global))
         .collect();
     let mut evaluator = ConstantEvaluator {
+        program,
         globals,
         values: HashMap::new(),
         active: HashSet::new(),
@@ -1187,6 +2276,7 @@ fn evaluate_globals(program: &HirProgram) -> Result<HashMap<String, ConstValue>,
 }
 
 struct ConstantEvaluator<'a> {
+    program: &'a HirProgram,
     globals: HashMap<String, &'a HirGlobal>,
     values: HashMap<String, ConstValue>,
     active: HashSet<String>,
@@ -1226,6 +2316,46 @@ impl ConstantEvaluator<'_> {
                 None
             }),
             HirExprKind::Global(name) => self.evaluate_global(name),
+            HirExprKind::ConstructStruct { name, fields } => {
+                let layout = self.program.struct_layout(name)?;
+                let mut values = layout
+                    .fields
+                    .iter()
+                    .map(|field| zero_const(&field.ty, self.program))
+                    .collect::<Option<Vec<_>>>()?;
+                for (index, field) in fields {
+                    values[*index] = self.evaluate_expr(field, locals)?;
+                }
+                Some(ConstValue::Aggregate(values))
+            }
+            HirExprKind::ConstructEnum {
+                name,
+                variant,
+                fields,
+            } => {
+                let layout = self.program.enum_layout(name)?;
+                let variant_layout = &layout.variants[*variant];
+                let mut values = vec![ConstValue::Integer(*variant as i128)];
+                values.extend(
+                    layout
+                        .variants
+                        .iter()
+                        .flat_map(|variant| &variant.fields)
+                        .map(|field| zero_const(&field.ty, self.program))
+                        .collect::<Option<Vec<_>>>()?,
+                );
+                for (index, field) in fields {
+                    values[1 + variant_layout.payload_offset + index] =
+                        self.evaluate_expr(field, locals)?;
+                }
+                Some(ConstValue::Aggregate(values))
+            }
+            HirExprKind::Field { base, index } => {
+                let ConstValue::Aggregate(fields) = self.evaluate_expr(base, locals)? else {
+                    return None;
+                };
+                fields.get(*index).cloned()
+            }
             HirExprKind::Unary(operator, operand) => {
                 let operand = self.evaluate_expr(operand, locals)?;
                 self.evaluate_unary(*operator, operand, &expression.ty)
@@ -1293,8 +2423,11 @@ impl ConstantEvaluator<'_> {
             }
             HirExprKind::Assign(_, _)
             | HirExprKind::Call { .. }
+            | HirExprKind::Partial { .. }
+            | HirExprKind::PartialCapture { .. }
             | HirExprKind::Function(_)
-            | HirExprKind::Return(_) => {
+            | HirExprKind::Return(_)
+            | HirExprKind::Match { .. } => {
                 self.error("global initializer is not a compile-time constant");
                 None
             }
@@ -1389,6 +2522,33 @@ impl<'a> Emitter<'a> {
         let mut output = String::new();
         output.push_str("; ModuleID = 'salicin'\nsource_filename = \"salicin\"\n\n");
 
+        for layout in &self.program.structs {
+            let fields = layout
+                .fields
+                .iter()
+                .map(|field| llvm_field_type(&field.ty))
+                .collect::<Result<Vec<_>, _>>()?;
+            output.push_str(&format!(
+                "%{} = type {{ {} }}\n",
+                type_symbol(&layout.name),
+                fields.join(", ")
+            ));
+        }
+        for layout in &self.program.enums {
+            let mut fields = vec!["i32".to_owned()];
+            for field in layout.variants.iter().flat_map(|variant| &variant.fields) {
+                fields.push(llvm_field_type(&field.ty)?);
+            }
+            output.push_str(&format!(
+                "%{} = type {{ {} }}\n",
+                type_symbol(&layout.name),
+                fields.join(", ")
+            ));
+        }
+        if !self.program.structs.is_empty() || !self.program.enums.is_empty() {
+            output.push('\n');
+        }
+
         for global in &self.program.globals {
             if global.ty == Ty::Unit {
                 continue;
@@ -1401,7 +2561,7 @@ impl<'a> Emitter<'a> {
                 "@{} = internal unnamed_addr constant {} {}\n",
                 global_symbol(&global.name),
                 llvm_ty,
-                const_ir(value, &global.ty)?
+                const_ir(value, &global.ty, self.program)?
             ));
         }
         if !self.program.globals.is_empty() {
@@ -1409,7 +2569,7 @@ impl<'a> Emitter<'a> {
         }
 
         for function in &self.program.functions {
-            let mut emitter = FunctionEmitter::new(function);
+            let mut emitter = FunctionEmitter::new(function, self.program);
             output.push_str(&emitter.emit()?);
             output.push('\n');
         }
@@ -1470,22 +2630,26 @@ impl Operand {
 
 struct FunctionEmitter<'a> {
     function: &'a HirFunction,
+    program: &'a HirProgram,
     output: String,
     next_register: usize,
     next_label: usize,
     locals: HashMap<LocalId, String>,
+    partial_captures: HashMap<LocalId, Vec<Option<(Ty, String)>>>,
     current_label: String,
     terminated: bool,
 }
 
 impl<'a> FunctionEmitter<'a> {
-    fn new(function: &'a HirFunction) -> Self {
+    fn new(function: &'a HirFunction, program: &'a HirProgram) -> Self {
         Self {
             function,
+            program,
             output: String::new(),
             next_register: 0,
             next_label: 0,
             locals: HashMap::new(),
+            partial_captures: HashMap::new(),
             current_label: "entry".to_owned(),
             terminated: false,
         }
@@ -1584,8 +2748,88 @@ impl<'a> FunctionEmitter<'a> {
                 })
             }
             HirExprKind::Function(name) => Err(Diagnostic::new(format!(
-                "function value `{name}` reached M0 LLVM emission"
+                "function value `{name}` reached LLVM emission"
             ))),
+            HirExprKind::ConstructStruct { name, fields } => {
+                let aggregate_ty = llvm_value_type(&Ty::Struct(name.clone()))?;
+                let mut aggregate = "zeroinitializer".to_owned();
+                for (index, field) in fields {
+                    let field = self.emit_expr(field)?;
+                    if self.terminated {
+                        return Ok(Operand::never());
+                    }
+                    if field.ty == Ty::Unit {
+                        continue;
+                    }
+                    let register = self.fresh_register();
+                    self.instruction(format!(
+                        "{register} = insertvalue {aggregate_ty} {aggregate}, {} {}, {index}",
+                        llvm_value_type(&field.ty)?,
+                        field.value()?
+                    ));
+                    aggregate = register;
+                }
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: Some(aggregate),
+                })
+            }
+            HirExprKind::ConstructEnum {
+                name,
+                variant,
+                fields,
+            } => {
+                let layout = self.program.enum_layout(name).ok_or_else(|| {
+                    Diagnostic::new(format!("internal error: missing enum layout `{name}`"))
+                })?;
+                let variant_layout = &layout.variants[*variant];
+                let aggregate_ty = llvm_value_type(&Ty::Enum(name.clone()))?;
+                let tag_register = self.fresh_register();
+                self.instruction(format!(
+                    "{tag_register} = insertvalue {aggregate_ty} zeroinitializer, i32 {variant}, 0"
+                ));
+                let mut aggregate = tag_register;
+                for (index, field) in fields {
+                    let field = self.emit_expr(field)?;
+                    if self.terminated {
+                        return Ok(Operand::never());
+                    }
+                    if field.ty == Ty::Unit {
+                        continue;
+                    }
+                    let register = self.fresh_register();
+                    let payload_index = 1 + variant_layout.payload_offset + index;
+                    self.instruction(format!(
+                        "{register} = insertvalue {aggregate_ty} {aggregate}, {} {}, {payload_index}",
+                        llvm_value_type(&field.ty)?,
+                        field.value()?
+                    ));
+                    aggregate = register;
+                }
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: Some(aggregate),
+                })
+            }
+            HirExprKind::Field { base, index } => {
+                let base = self.emit_expr(base)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                if expression.ty == Ty::Unit {
+                    return Ok(Operand::unit());
+                }
+                let register = self.fresh_register();
+                self.instruction(format!(
+                    "{register} = extractvalue {} {}, {index}",
+                    llvm_value_type(&base.ty)?,
+                    base.value()?
+                ));
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: Some(register),
+                })
+            }
             HirExprKind::Unary(operator, operand) => {
                 let operand = self.emit_expr(operand)?;
                 if self.terminated {
@@ -1653,7 +2897,7 @@ impl<'a> FunctionEmitter<'a> {
                     value: Some(register),
                 })
             }
-            HirExprKind::Assign(id, value) => {
+            HirExprKind::Assign(place, value) => {
                 let value = self.emit_expr(value)?;
                 if self.terminated {
                     return Ok(Operand::never());
@@ -1661,10 +2905,26 @@ impl<'a> FunctionEmitter<'a> {
                 if value.ty == Ty::Unit {
                     return Ok(Operand::unit());
                 }
-                let pointer = self.locals.get(id).ok_or_else(|| {
-                    Diagnostic::new(format!("internal error: unknown local id {id}"))
+                let root_pointer = self.locals.get(&place.local).cloned().ok_or_else(|| {
+                    Diagnostic::new(format!("internal error: unknown local id {}", place.local))
                 })?;
                 let ty = llvm_value_type(&value.ty)?;
+                let pointer = if place.projections.is_empty() {
+                    root_pointer
+                } else {
+                    let pointer = self.fresh_register();
+                    let indices = place
+                        .projections
+                        .iter()
+                        .map(|index| format!("i32 {index}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    self.instruction(format!(
+                        "{pointer} = getelementptr inbounds {}, ptr {root_pointer}, i32 0, {indices}",
+                        llvm_value_type(&place.root_ty)?
+                    ));
+                    pointer
+                };
                 self.instruction(format!("store {ty} {}, ptr {pointer}", value.value()?));
                 Ok(Operand::unit())
             }
@@ -1705,6 +2965,33 @@ impl<'a> FunctionEmitter<'a> {
                     })
                 }
             }
+            HirExprKind::Partial { .. } => Err(Diagnostic::new(
+                "local partial application escaped its binding",
+            )),
+            HirExprKind::PartialCapture { binding, index } => {
+                let capture = self
+                    .partial_captures
+                    .get(binding)
+                    .and_then(|captures| captures.get(*index))
+                    .cloned()
+                    .ok_or_else(|| {
+                        Diagnostic::new(format!(
+                            "internal error: unknown capture {index} for partial binding {binding}"
+                        ))
+                    })?;
+                let Some((ty, pointer)) = capture else {
+                    return Ok(Operand::unit());
+                };
+                let register = self.fresh_register();
+                self.instruction(format!(
+                    "{register} = load {}, ptr {pointer}",
+                    llvm_value_type(&ty)?
+                ));
+                Ok(Operand {
+                    ty,
+                    value: Some(register),
+                })
+            }
             HirExprKind::Block(statements, tail) => {
                 for statement in statements {
                     if self.terminated {
@@ -1712,6 +2999,33 @@ impl<'a> FunctionEmitter<'a> {
                     }
                     match statement {
                         HirStmt::Let(binding) => {
+                            if let HirExprKind::Partial { captures, .. } = &binding.value.kind {
+                                let mut stored = Vec::new();
+                                for capture in captures {
+                                    let capture = self.emit_expr(capture)?;
+                                    if self.terminated {
+                                        break;
+                                    }
+                                    if capture.ty == Ty::Unit {
+                                        stored.push(None);
+                                        continue;
+                                    }
+                                    let pointer = self.fresh_register();
+                                    let ty = llvm_value_type(&capture.ty)?;
+                                    self.instruction(format!(
+                                        "{pointer} = alloca {ty} ; partial capture"
+                                    ));
+                                    self.instruction(format!(
+                                        "store {ty} {}, ptr {pointer}",
+                                        capture.value()?
+                                    ));
+                                    stored.push(Some((capture.ty, pointer)));
+                                }
+                                if !self.terminated {
+                                    self.partial_captures.insert(binding.id, stored);
+                                }
+                                continue;
+                            }
                             let value = self.emit_expr(&binding.value)?;
                             if self.terminated {
                                 break;
@@ -1766,7 +3080,169 @@ impl<'a> FunctionEmitter<'a> {
                 }
                 Ok(Operand::never())
             }
+            HirExprKind::Match { scrutinee, arms } => self.emit_match(expression, scrutinee, arms),
         }
+    }
+
+    fn emit_match(
+        &mut self,
+        expression: &HirExpr,
+        scrutinee: &HirExpr,
+        arms: &[HirMatchArm],
+    ) -> Result<Operand, Diagnostic> {
+        let scrutinee = self.emit_expr(scrutinee)?;
+        if self.terminated {
+            return Ok(Operand::never());
+        }
+        let Ty::Enum(enum_name) = &scrutinee.ty else {
+            return Err(Diagnostic::new(
+                "internal error: non-enum scrutinee reached match emission",
+            ));
+        };
+        let layout = self.program.enum_layout(enum_name).ok_or_else(|| {
+            Diagnostic::new(format!("internal error: missing enum layout `{enum_name}`"))
+        })?;
+        let tag = self.fresh_register();
+        self.instruction(format!(
+            "{tag} = extractvalue {} {}, 0",
+            llvm_value_type(&scrutinee.ty)?,
+            scrutinee.value()?
+        ));
+
+        let mut candidates = Vec::new();
+        let mut labels = Vec::new();
+        for variant in 0..layout.variants.len() {
+            let mut variant_candidates = Vec::new();
+            for (arm_index, arm) in arms.iter().enumerate() {
+                if matches!(arm.matcher, HirMatcher::All)
+                    || arm.matcher == HirMatcher::Variant(variant)
+                {
+                    variant_candidates.push(arm_index);
+                    if arm.guard.is_none() {
+                        break;
+                    }
+                }
+            }
+            let variant_labels: Vec<_> = (0..variant_candidates.len())
+                .map(|_| self.fresh_label("match.candidate"))
+                .collect();
+            candidates.push(variant_candidates);
+            labels.push(variant_labels);
+        }
+        let default_label = self.fresh_label("match.invalid");
+        let merge_label = self.fresh_label("match.end");
+        let cases = labels
+            .iter()
+            .enumerate()
+            .filter_map(|(variant, labels)| {
+                labels
+                    .first()
+                    .map(|label| format!("i32 {variant}, label %{label}"))
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        self.terminate(format!(
+            "switch i32 {tag}, label %{default_label} [ {cases} ]"
+        ));
+
+        self.start_block(&default_label);
+        self.terminate("unreachable");
+
+        let mut incoming = Vec::new();
+        for variant in 0..layout.variants.len() {
+            for (position, arm_index) in candidates[variant].iter().copied().enumerate() {
+                self.start_block(&labels[variant][position]);
+                let arm = &arms[arm_index];
+                self.emit_pattern_bindings(&scrutinee, &arm.bindings)?;
+
+                if let Some(guard) = &arm.guard {
+                    let guard = self.emit_expr(guard)?;
+                    if !self.terminated {
+                        let body_label = self.fresh_label("match.body");
+                        let false_label = labels[variant]
+                            .get(position + 1)
+                            .cloned()
+                            .unwrap_or_else(|| default_label.clone());
+                        self.terminate(format!(
+                            "br i1 {}, label %{body_label}, label %{false_label}",
+                            guard.value()?
+                        ));
+                        self.start_block(&body_label);
+                    }
+                }
+
+                let body = self.emit_expr(&arm.body)?;
+                if !self.terminated {
+                    let predecessor = self.current_label.clone();
+                    self.terminate(format!("br label %{merge_label}"));
+                    incoming.push((body, predecessor));
+                }
+            }
+        }
+
+        if incoming.is_empty() {
+            self.terminated = true;
+            return Ok(Operand::never());
+        }
+        self.start_block(&merge_label);
+        if expression.ty == Ty::Unit {
+            return Ok(Operand::unit());
+        }
+        if incoming.len() == 1 {
+            return Ok(incoming.pop().expect("one incoming match value").0);
+        }
+        let register = self.fresh_register();
+        let incoming = incoming
+            .iter()
+            .map(|(operand, label)| Ok(format!("[{}, %{label}]", operand.value()?)))
+            .collect::<Result<Vec<_>, Diagnostic>>()?
+            .join(", ");
+        self.instruction(format!(
+            "{register} = phi {} {incoming}",
+            llvm_value_type(&expression.ty)?
+        ));
+        Ok(Operand {
+            ty: expression.ty.clone(),
+            value: Some(register),
+        })
+    }
+
+    fn emit_pattern_bindings(
+        &mut self,
+        scrutinee: &Operand,
+        bindings: &[HirPatternBinding],
+    ) -> Result<(), Diagnostic> {
+        for binding in bindings {
+            if binding.ty == Ty::Unit {
+                continue;
+            }
+            let value = if binding.path.is_empty() {
+                scrutinee.value()?.to_owned()
+            } else {
+                let register = self.fresh_register();
+                let path = binding
+                    .path
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.instruction(format!(
+                    "{register} = extractvalue {} {}, {path}",
+                    llvm_value_type(&scrutinee.ty)?,
+                    scrutinee.value()?
+                ));
+                register
+            };
+            let pointer = self.fresh_register();
+            let ty = llvm_value_type(&binding.ty)?;
+            self.instruction(format!(
+                "{pointer} = alloca {ty} ; {}",
+                llvm_comment(&binding.name)
+            ));
+            self.instruction(format!("store {ty} {value}, ptr {pointer}"));
+            self.locals.insert(binding.id, pointer);
+        }
+        Ok(())
     }
 
     fn emit_short_circuit(
@@ -1919,27 +3395,111 @@ impl<'a> FunctionEmitter<'a> {
     }
 }
 
-fn llvm_return_type(ty: &Ty) -> Result<&'static str, Diagnostic> {
+fn llvm_return_type(ty: &Ty) -> Result<String, Diagnostic> {
     if *ty == Ty::Unit {
-        Ok("void")
+        Ok("void".to_owned())
     } else {
         llvm_value_type(ty)
     }
 }
 
-fn llvm_value_type(ty: &Ty) -> Result<&'static str, Diagnostic> {
-    ty.llvm().ok_or_else(|| {
-        Diagnostic::new(format!(
+fn llvm_value_type(ty: &Ty) -> Result<String, Diagnostic> {
+    match ty {
+        Ty::I32 | Ty::U32 => Ok("i32".to_owned()),
+        Ty::I64 | Ty::U64 => Ok("i64".to_owned()),
+        Ty::Bool => Ok("i1".to_owned()),
+        Ty::Struct(name) | Ty::Enum(name) => Ok(format!("%{}", type_symbol(name))),
+        Ty::Unit | Ty::Never | Ty::Function(_) | Ty::Error => Err(Diagnostic::new(format!(
             "internal error: `{ty}` has no first-class LLVM representation"
-        ))
-    })
+        ))),
+    }
 }
 
-fn const_ir(value: &ConstValue, ty: &Ty) -> Result<String, Diagnostic> {
+fn llvm_field_type(ty: &Ty) -> Result<String, Diagnostic> {
+    if *ty == Ty::Unit {
+        Ok("[0 x i8]".to_owned())
+    } else {
+        llvm_value_type(ty)
+    }
+}
+
+fn zero_const(ty: &Ty, program: &HirProgram) -> Option<ConstValue> {
+    match ty {
+        Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 => Some(ConstValue::Integer(0)),
+        Ty::Bool => Some(ConstValue::Bool(false)),
+        Ty::Unit => Some(ConstValue::Unit),
+        Ty::Struct(name) => Some(ConstValue::Aggregate(
+            program
+                .struct_layout(name)?
+                .fields
+                .iter()
+                .map(|field| zero_const(&field.ty, program))
+                .collect::<Option<Vec<_>>>()?,
+        )),
+        Ty::Enum(name) => {
+            let layout = program.enum_layout(name)?;
+            let mut fields = vec![ConstValue::Integer(0)];
+            fields.extend(
+                layout
+                    .variants
+                    .iter()
+                    .flat_map(|variant| &variant.fields)
+                    .map(|field| zero_const(&field.ty, program))
+                    .collect::<Option<Vec<_>>>()?,
+            );
+            Some(ConstValue::Aggregate(fields))
+        }
+        Ty::Never | Ty::Function(_) | Ty::Error => None,
+    }
+}
+
+fn const_ir(value: &ConstValue, ty: &Ty, program: &HirProgram) -> Result<String, Diagnostic> {
     match (value, ty) {
         (ConstValue::Integer(value), ty) if ty.is_integer() => Ok(value.to_string()),
         (ConstValue::Bool(value), Ty::Bool) => Ok(if *value { "1" } else { "0" }.to_owned()),
-        (ConstValue::Unit, Ty::Unit) => Ok(String::new()),
+        (ConstValue::Unit, Ty::Unit) => Ok("zeroinitializer".to_owned()),
+        (ConstValue::Aggregate(values), Ty::Struct(name)) => {
+            let layout = program.struct_layout(name).ok_or_else(|| {
+                Diagnostic::new(format!("internal error: missing struct layout `{name}`"))
+            })?;
+            let fields = values
+                .iter()
+                .zip(&layout.fields)
+                .map(|(value, field)| {
+                    Ok(format!(
+                        "{} {}",
+                        llvm_field_type(&field.ty)?,
+                        const_ir(value, &field.ty, program)?
+                    ))
+                })
+                .collect::<Result<Vec<_>, Diagnostic>>()?;
+            Ok(format!("{{ {} }}", fields.join(", ")))
+        }
+        (ConstValue::Aggregate(values), Ty::Enum(name)) => {
+            let layout = program.enum_layout(name).ok_or_else(|| {
+                Diagnostic::new(format!("internal error: missing enum layout `{name}`"))
+            })?;
+            let mut types = vec![Ty::U32];
+            types.extend(
+                layout
+                    .variants
+                    .iter()
+                    .flat_map(|variant| &variant.fields)
+                    .map(|field| field.ty.clone()),
+            );
+            let fields = values
+                .iter()
+                .zip(types)
+                .map(|(value, ty)| {
+                    Ok(format!(
+                        "{} {}",
+                        llvm_field_type(&ty)?,
+                        const_ir(value, &ty, program)?
+                    ))
+                })
+                .collect::<Result<Vec<_>, Diagnostic>>()?;
+            Ok(format!("{{ {} }}", fields.join(", ")))
+        }
         _ => Err(Diagnostic::new(format!(
             "internal error: constant value does not have type `{ty}`"
         ))),
@@ -1952,6 +3512,10 @@ fn function_symbol(name: &str) -> String {
 
 fn global_symbol(name: &str) -> String {
     format!("sali.global.{}", hex_name(name))
+}
+
+fn type_symbol(name: &str) -> String {
+    format!("sali.type.{}", hex_name(name))
 }
 
 fn hex_name(name: &str) -> String {
@@ -1972,6 +3536,11 @@ mod tests {
     use super::*;
     use crate::ast::Param;
 
+    fn compile_text(source: &str) -> Result<String, Vec<Diagnostic>> {
+        let program = crate::parser::parse(source).expect("test source must parse");
+        compile(&program)
+    }
+
     fn function(name: &str, groups: Vec<Vec<Param>>, result: Type, body: Expr) -> Item {
         Item::Function(Function {
             name: name.to_owned(),
@@ -1989,6 +3558,10 @@ mod tests {
         }
     }
 
+    fn arg(value: Expr) -> CallArg {
+        CallArg { label: None, value }
+    }
+
     #[test]
     fn emits_flattened_curried_call_and_i32_wrapper() {
         let add = function(
@@ -2004,9 +3577,9 @@ mod tests {
         let call = Expr::Call(
             Box::new(Expr::Call(
                 Box::new(Expr::Name("add".into())),
-                vec![Expr::Integer(20)],
+                vec![arg(Expr::Integer(20))],
             )),
-            vec![Expr::Integer(22)],
+            vec![arg(Expr::Integer(22))],
         );
         let main = function("main", vec![vec![]], Type::I32, call);
         let ir = compile(&Program {
@@ -2046,7 +3619,7 @@ mod tests {
                     )),
                     then_branch: Box::new(Expr::Block(
                         vec![Stmt::Expr(Expr::Assign(
-                            "x".into(),
+                            Box::new(Expr::Name("x".into())),
                             Box::new(Expr::Integer(1)),
                         ))],
                         None,
@@ -2064,6 +3637,49 @@ mod tests {
         assert!(ir.contains("@sali.global.616e73776572 = internal unnamed_addr constant i64 42"));
         assert!(ir.contains("phi i1"));
         assert!(ir.contains("store i32 1"));
+    }
+
+    #[test]
+    fn emits_nominal_aggregates_and_tag_switches() {
+        let ir = compile_text(
+            r#"
+let Pair = struct(left: i32, right: i32)
+let Choice = enum {
+  Pair(Pair),
+  Empty,
+}
+let global: Pair = Pair(left: 40, right: 2)
+let read(choice: Choice): i32 = choice match {
+  Choice.Pair(pair) => pair.left + pair.right,
+  Choice.Empty => 0,
+}
+let main(): i32 = read(Choice.Pair(global))
+"#,
+        )
+        .unwrap();
+        assert!(ir.contains("%sali.type.50616972 = type { i32, i32 }"));
+        assert!(ir.contains("%sali.type.43686f696365 = type { i32, %sali.type.50616972 }"));
+        assert!(ir.contains("switch i32"));
+        assert!(ir.contains("@sali.global.676c6f62616c = internal unnamed_addr constant"));
+    }
+
+    #[test]
+    fn rejects_recursive_value_layouts() {
+        let errors = compile_text(
+            r#"
+let First = struct(next: Second)
+let Second = enum {
+  Again(First),
+  End,
+}
+let main(): i32 = 0
+"#,
+        )
+        .unwrap_err();
+        assert!(errors.iter().any(|error| {
+            error.message.contains("recursive value layout")
+                && error.message.contains("First -> Second -> First")
+        }));
     }
 
     #[test]
@@ -2173,7 +3789,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_partial_application_with_specific_diagnostic() {
+    fn emits_local_non_escaping_partial_application() {
         let add = function(
             "add",
             vec![vec![param("x", Type::I32)], vec![param("y", Type::I32)]],
@@ -2188,14 +3804,26 @@ mod tests {
             "main",
             vec![vec![]],
             Type::I32,
-            Expr::Call(Box::new(Expr::Name("add".into())), vec![Expr::Integer(1)]),
+            Expr::Block(
+                vec![Stmt::Let(Binding {
+                    mutable: false,
+                    name: "add_one".into(),
+                    annotation: None,
+                    value: Expr::Call(
+                        Box::new(Expr::Name("add".into())),
+                        vec![arg(Expr::Integer(1))],
+                    ),
+                })],
+                Some(Box::new(Expr::Call(
+                    Box::new(Expr::Name("add_one".into())),
+                    vec![arg(Expr::Integer(41))],
+                ))),
+            ),
         );
-        let errors = compile(&Program {
+        let ir = compile(&Program {
             items: vec![add, main],
         })
-        .unwrap_err();
-        assert!(errors
-            .iter()
-            .any(|error| error.message.contains("partial application")));
+        .unwrap();
+        assert!(ir.contains("call i32 @sali.fn.616464(i32"));
     }
 }

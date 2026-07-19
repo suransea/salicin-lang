@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -5,6 +6,68 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Copy)]
+enum M1Expectation {
+    RunWithExitCode(i32),
+    CheckFailsContaining(&'static str),
+}
+
+struct M1PendingCase {
+    relative_path: &'static str,
+    expectation: M1Expectation,
+}
+
+const M1_PENDING_CASES: &[M1PendingCase] = &[
+    M1PendingCase {
+        relative_path: "m1_pending/pass/capturing_closure.sali",
+        expectation: M1Expectation::RunWithExitCode(42),
+    },
+    M1PendingCase {
+        relative_path: "m1_pending/pass/while_mutation.sali",
+        expectation: M1Expectation::RunWithExitCode(42),
+    },
+    M1PendingCase {
+        relative_path: "m1_pending/pass/loop_break_value.sali",
+        expectation: M1Expectation::RunWithExitCode(42),
+    },
+    M1PendingCase {
+        relative_path: "m1_pending/pass/fixed_array_index.sali",
+        expectation: M1Expectation::RunWithExitCode(42),
+    },
+    M1PendingCase {
+        relative_path: "m1_pending/pass/shared_borrow_call.sali",
+        expectation: M1Expectation::RunWithExitCode(42),
+    },
+    M1PendingCase {
+        relative_path: "m1_pending/pass/mut_borrow_field_update.sali",
+        expectation: M1Expectation::RunWithExitCode(42),
+    },
+    M1PendingCase {
+        relative_path: "m1_pending/fail/use_after_move.sali",
+        expectation: M1Expectation::CheckFailsContaining("moved"),
+    },
+    M1PendingCase {
+        relative_path: "m1_pending/fail/copy_non_copy.sali",
+        expectation: M1Expectation::CheckFailsContaining("Copy"),
+    },
+    M1PendingCase {
+        relative_path: "m1_pending/fail/double_mut_borrow.sali",
+        expectation: M1Expectation::CheckFailsContaining("mutable borrow"),
+    },
+    M1PendingCase {
+        relative_path: "m1_pending/fail/borrow_move_conflict.sali",
+        expectation: M1Expectation::CheckFailsContaining("borrowed"),
+    },
+    M1PendingCase {
+        relative_path: "m1_pending/fail/array_index_type.sali",
+        expectation: M1Expectation::CheckFailsContaining("index"),
+    },
+    M1PendingCase {
+        relative_path: "m1_pending/fail/array_length_mismatch.sali",
+        expectation: M1Expectation::CheckFailsContaining("length"),
+    },
+];
 
 fn salic() -> Command {
     Command::new(env!("CARGO_BIN_EXE_salic"))
@@ -140,6 +203,97 @@ fn run_supports_grouped_calls_and_unit_main() {
 }
 
 #[test]
+fn m1_struct_programs_run_with_expected_result() {
+    for name in [
+        "struct_fields.sali",
+        "struct_mutation.sali",
+        "positional_constructor.sali",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run M1 struct fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn m1_struct_errors_report_their_cause() {
+    for (name, expected) in [
+        ("unknown_field.sali", "unknown field"),
+        ("constructor_missing_field.sali", "missing field"),
+        ("constructor_duplicate_field.sali", "duplicate field"),
+        ("constructor_mixed_arguments.sali", "mixed"),
+        ("immutable_field_assignment.sali", "immutable"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid M1 struct fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected),
+            "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn m1_match_and_partial_programs_run_with_expected_result() {
+    for name in [
+        "enum_match.sali",
+        "nested_match.sali",
+        "match_guard.sali",
+        "partial_application.sali",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run M1 match or partial-application fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn m1_match_and_partial_errors_report_their_cause() {
+    for (name, expected) in [
+        ("non_exhaustive_match.sali", "exhaustive"),
+        ("pattern_type_mismatch.sali", "pattern"),
+        ("partial_application_escape.sali", "escape"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid M1 match or partial-application fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected),
+            "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn shorthand_builds_a_native_executable() {
     let temporary = TestDirectory::new();
     let executable = temporary.join("mutation");
@@ -212,6 +366,57 @@ fn every_pass_fixture_checks_successfully() {
             output_text(&output)
         );
     }
+}
+
+#[test]
+fn m1_pending_acceptance_matrix_is_complete() {
+    let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let mut paths = HashSet::new();
+
+    for case in M1_PENDING_CASES {
+        assert!(
+            paths.insert(case.relative_path),
+            "duplicate M1 fixture in acceptance matrix: {}",
+            case.relative_path
+        );
+        assert!(
+            fixture_root.join(case.relative_path).is_file(),
+            "missing M1 fixture: {}",
+            case.relative_path
+        );
+
+        match case.expectation {
+            M1Expectation::RunWithExitCode(code) => {
+                assert_eq!(
+                    code, 42,
+                    "M1 pass fixtures use exit code 42 as their oracle"
+                )
+            }
+            M1Expectation::CheckFailsContaining(fragment) => assert!(
+                !fragment.is_empty(),
+                "M1 failure fixture needs a diagnostic oracle: {}",
+                case.relative_path
+            ),
+        }
+    }
+
+    let pending_files = fs::read_dir(fixture_root.join("m1_pending/pass"))
+        .expect("read pending M1 pass fixtures")
+        .chain(
+            fs::read_dir(fixture_root.join("m1_pending/fail"))
+                .expect("read pending M1 failure fixtures"),
+        )
+        .map(|entry| entry.expect("read pending M1 fixture").path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "sali")
+        })
+        .count();
+    assert_eq!(
+        pending_files,
+        M1_PENDING_CASES.len(),
+        "every pending M1 fixture must appear in the acceptance matrix"
+    );
 }
 
 #[test]

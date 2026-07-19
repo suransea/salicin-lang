@@ -7,6 +7,39 @@ pub struct Program {
 pub enum Item {
     Function(Function),
     Global(Binding),
+    Struct(StructDef),
+    Enum(EnumDef),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructDef {
+    pub name: String,
+    pub fields: Vec<Field>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnumDef {
+    pub name: String,
+    pub variants: Vec<VariantDef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VariantDef {
+    pub name: String,
+    pub fields: VariantFields,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VariantFields {
+    Unit,
+    Positional(Vec<Type>),
+    Named(Vec<Field>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Field {
+    pub name: String,
+    pub ty: Type,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -61,6 +94,44 @@ pub enum Stmt {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct CallArg {
+    pub label: Option<String>,
+    pub value: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub guard: Option<Expr>,
+    pub body: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Pattern {
+    Wildcard,
+    Integer(i128),
+    Bool(bool),
+    Binding(String),
+    Constructor {
+        path: Vec<String>,
+        fields: PatternFields,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PatternFields {
+    Unit,
+    Positional(Vec<Pattern>),
+    Named(Vec<PatternField>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PatternField {
+    pub name: String,
+    pub pattern: Pattern,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Unit,
     Integer(i128),
@@ -68,8 +139,9 @@ pub enum Expr {
     Name(String),
     Unary(UnaryOp, Box<Expr>),
     Binary(Box<Expr>, BinaryOp, Box<Expr>),
-    Assign(String, Box<Expr>),
-    Call(Box<Expr>, Vec<Expr>),
+    Assign(Box<Expr>, Box<Expr>),
+    Call(Box<Expr>, Vec<CallArg>),
+    Member(Box<Expr>, String),
     Block(Vec<Stmt>, Option<Box<Expr>>),
     Closure(Vec<Param>, Box<Expr>),
     If {
@@ -78,6 +150,10 @@ pub enum Expr {
         else_branch: Option<Box<Expr>>,
     },
     Return(Option<Box<Expr>>),
+    Match {
+        scrutinee: Box<Expr>,
+        arms: Vec<MatchArm>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
