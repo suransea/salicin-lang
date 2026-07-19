@@ -490,7 +490,26 @@ struct ClosureInfo {
     function: String,
     params: Vec<ParamSig>,
     result: Ty,
-    captures: Vec<HirPlace>,
+    captures: Vec<ClosureCapture>,
+    is_fn_mut: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClosureCaptureMode {
+    Shared,
+    Mutable,
+}
+
+#[derive(Debug, Clone)]
+struct ClosureCapture {
+    place: HirPlace,
+    mode: ClosureCaptureMode,
+}
+
+#[derive(Debug, Clone)]
+struct ClosureCaptureUse {
+    name: String,
+    mode: ClosureCaptureMode,
 }
 
 struct LowerCtx {
@@ -1350,6 +1369,14 @@ impl Analyzer {
                                     binding.name
                                 ));
                             }
+                            if closure.as_ref().is_some_and(|closure| closure.is_fn_mut)
+                                && !binding.mutable
+                            {
+                                self.error(format!(
+                                    "FnMut closure `{}` requires a mutable binding (`let mut`)",
+                                    binding.name
+                                ));
+                            }
                             let duplicate = context
                                 .scopes
                                 .last()
@@ -1537,15 +1564,8 @@ impl Analyzer {
             .iter()
             .map(|param| param.name.clone())
             .collect();
-        let mut capture_names = Vec::new();
-        let mut seen = HashSet::new();
-        if !self.scan_simple_closure_captures(
-            body,
-            &mut bound,
-            outer,
-            &mut capture_names,
-            &mut seen,
-        ) {
+        let mut capture_uses = Vec::new();
+        if !self.scan_simple_closure_captures(body, &mut bound, outer, &mut capture_uses) {
             return error_expr();
         }
 
@@ -1555,7 +1575,11 @@ impl Analyzer {
         let mut hir_params = Vec::new();
         let mut captures = Vec::new();
 
-        for name in capture_names {
+        let is_fn_mut = capture_uses
+            .iter()
+            .any(|capture| capture.mode == ClosureCaptureMode::Mutable);
+        for capture in capture_uses {
+            let name = capture.name;
             let local = outer
                 .lookup(&name)
                 .cloned()
@@ -1586,8 +1610,28 @@ impl Analyzer {
                 root_mutable: local.mutable,
                 loan: None,
             };
-            place.loan = self.acquire_loan(&place, LoanKind::Shared, true, outer);
-            captures.push(place);
+            let (loan_kind, parameter_mode, capability, mutable) = match capture.mode {
+                ClosureCaptureMode::Shared => (
+                    LoanKind::Shared,
+                    PassMode::Borrow,
+                    LocalCapability::SharedParam,
+                    false,
+                ),
+                ClosureCaptureMode::Mutable => {
+                    self.ensure_writable(&place);
+                    (
+                        LoanKind::Mutable,
+                        PassMode::MutBorrow,
+                        LocalCapability::MutParam,
+                        true,
+                    )
+                }
+            };
+            place.loan = self.acquire_loan(&place, loan_kind, true, outer);
+            captures.push(ClosureCapture {
+                place,
+                mode: capture.mode,
+            });
 
             let id = context.fresh_local();
             context.scopes[0].locals.push(id);
@@ -1596,8 +1640,8 @@ impl Analyzer {
                 LocalInfo {
                     id,
                     ty: local.ty.clone(),
-                    mutable: false,
-                    capability: LocalCapability::SharedParam,
+                    mutable,
+                    capability,
                     alias: None,
                     partial: None,
                     closure: None,
@@ -1607,7 +1651,7 @@ impl Analyzer {
                 id,
                 name: format!("capture.{name}"),
                 ty: local.ty,
-                mode: PassMode::Borrow,
+                mode: parameter_mode,
             });
         }
 
@@ -1680,6 +1724,7 @@ impl Analyzer {
             params: params.clone(),
             result: result.clone(),
             captures,
+            is_fn_mut,
         };
         HirExpr {
             ty: Ty::Function(FunctionTy {
@@ -1695,26 +1740,38 @@ impl Analyzer {
         expression: &Expr,
         bound: &mut HashSet<String>,
         outer: &LowerCtx,
-        captures: &mut Vec<String>,
-        seen: &mut HashSet<String>,
+        captures: &mut Vec<ClosureCaptureUse>,
     ) -> bool {
         match expression {
             Expr::Unit | Expr::Integer(_) | Expr::Bool(_) => true,
             Expr::Name(name) => {
-                if !bound.contains(name)
-                    && outer.lookup(name).is_some()
-                    && seen.insert(name.clone())
-                {
-                    captures.push(name.clone());
+                if !bound.contains(name) && outer.lookup(name).is_some() {
+                    record_closure_capture(captures, name, ClosureCaptureMode::Shared);
                 }
                 true
             }
             Expr::Unary(_, operand) => {
-                self.scan_simple_closure_captures(operand, bound, outer, captures, seen)
+                self.scan_simple_closure_captures(operand, bound, outer, captures)
             }
             Expr::Binary(left, _, right) => {
-                self.scan_simple_closure_captures(left, bound, outer, captures, seen)
-                    & self.scan_simple_closure_captures(right, bound, outer, captures, seen)
+                self.scan_simple_closure_captures(left, bound, outer, captures)
+                    & self.scan_simple_closure_captures(right, bound, outer, captures)
+            }
+            Expr::Assign(place, value) => {
+                let mut valid = self.scan_simple_closure_captures(value, bound, outer, captures);
+                if let Some(name) = place_root_name(place) {
+                    if !bound.contains(name) && outer.lookup(name).is_some() {
+                        if !matches!(place.as_ref(), Expr::Name(_)) {
+                            self.error(
+                                "FnMut closure assignment only supports a captured root local for now",
+                            );
+                            valid = false;
+                        } else {
+                            record_closure_capture(captures, name, ClosureCaptureMode::Mutable);
+                        }
+                    }
+                }
+                valid
             }
             Expr::Block(statements, tail) => {
                 let saved = bound.clone();
@@ -1727,19 +1784,17 @@ impl Analyzer {
                                 bound,
                                 outer,
                                 captures,
-                                seen,
                             );
                             bound.insert(binding.name.clone());
                         }
                         Stmt::Expr(expression) => {
-                            valid &= self.scan_simple_closure_captures(
-                                expression, bound, outer, captures, seen,
-                            );
+                            valid &= self
+                                .scan_simple_closure_captures(expression, bound, outer, captures);
                         }
                     }
                 }
                 if let Some(tail) = tail {
-                    valid &= self.scan_simple_closure_captures(tail, bound, outer, captures, seen);
+                    valid &= self.scan_simple_closure_captures(tail, bound, outer, captures);
                 }
                 *bound = saved;
                 valid
@@ -2631,7 +2686,10 @@ impl Analyzer {
             .captures
             .iter()
             .cloned()
-            .map(HirArgument::SharedBorrow)
+            .map(|capture| match capture.mode {
+                ClosureCaptureMode::Shared => HirArgument::SharedBorrow(capture.place),
+                ClosureCaptureMode::Mutable => HirArgument::MutBorrow(capture.place),
+            })
             .collect();
         let mut temporary_loans = Vec::new();
         for (argument, parameter) in groups[0].iter().zip(&closure.params) {
@@ -3184,6 +3242,31 @@ fn flatten_call<'a>(expression: &'a Expr, groups: &mut Vec<&'a [CallArg]>) -> &'
             root
         }
         _ => expression,
+    }
+}
+
+fn place_root_name(expression: &Expr) -> Option<&str> {
+    match expression {
+        Expr::Name(name) => Some(name),
+        Expr::Member(base, _) => place_root_name(base),
+        _ => None,
+    }
+}
+
+fn record_closure_capture(
+    captures: &mut Vec<ClosureCaptureUse>,
+    name: &str,
+    mode: ClosureCaptureMode,
+) {
+    if let Some(capture) = captures.iter_mut().find(|capture| capture.name == name) {
+        if mode == ClosureCaptureMode::Mutable {
+            capture.mode = mode;
+        }
+    } else {
+        captures.push(ClosureCaptureUse {
+            name: name.to_owned(),
+            mode,
+        });
     }
 }
 
@@ -5074,6 +5157,89 @@ let main(): i32 = {
         assert!(errors
             .iter()
             .any(|error| error.message.contains("cannot escape")));
+    }
+
+    #[test]
+    fn lifts_and_repeatedly_calls_an_fn_mut_scalar_closure() {
+        let ir = compile_text(
+            r#"
+let main(): i32 = {
+  let mut value = 40
+  let mut next = { ->
+    value = value + 1
+    value
+  }
+  next()
+  next()
+}
+"#,
+        )
+        .unwrap();
+        let symbol = function_symbol("__closure.0");
+        assert!(ir.contains(&format!("define internal i32 @{symbol}(ptr %arg.0)")));
+        assert_eq!(ir.matches(&format!("call i32 @{symbol}(ptr")).count(), 2);
+        assert!(ir.contains("store i32"));
+    }
+
+    #[test]
+    fn requires_a_mutable_binding_for_an_fn_mut_closure() {
+        let errors = compile_text(
+            r#"
+let main(): i32 = {
+  let mut value = 40
+  let next = { ->
+    value = value + 2
+    value
+  }
+  next()
+}
+"#,
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| { error.message.contains("FnMut") && error.message.contains("mutable") }));
+    }
+
+    #[test]
+    fn keeps_an_fn_mut_capture_mutably_borrowed_for_its_scope() {
+        let errors = compile_text(
+            r#"
+let main(): i32 = {
+  let mut value = 40
+  let mut next = { ->
+    value = value + 2
+    value
+  }
+  value
+}
+"#,
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("borrowed")));
+    }
+
+    #[test]
+    fn rejects_an_fn_mut_capture_that_conflicts_with_an_existing_borrow() {
+        let errors = compile_text(
+            r#"
+let main(): i32 = {
+  let mut value = 40
+  let shared = borrow value
+  let mut next = { ->
+    value = value + 2
+    value
+  }
+  0
+}
+"#,
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("borrowed")));
     }
 
     #[test]
