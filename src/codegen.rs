@@ -282,6 +282,7 @@ enum HirExprKind {
         binding: LocalId,
         index: usize,
     },
+    LocalClosure(ClosureInfo),
     ConstructStruct {
         name: String,
         fields: Vec<(usize, HirExpr)>,
@@ -352,6 +353,7 @@ struct LocalInfo {
     capability: LocalCapability,
     alias: Option<HirPlace>,
     partial: Option<PartialInfo>,
+    closure: Option<ClosureInfo>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -483,6 +485,14 @@ struct PartialInfo {
     capture_count: usize,
 }
 
+#[derive(Debug, Clone)]
+struct ClosureInfo {
+    function: String,
+    params: Vec<ParamSig>,
+    result: Ty,
+    captures: Vec<HirPlace>,
+}
+
 struct LowerCtx {
     scopes: Vec<ScopeFrame>,
     flow: FlowState,
@@ -582,6 +592,8 @@ struct Analyzer {
     function_states: HashMap<String, ResolutionState>,
     global_states: HashMap<String, ResolutionState>,
     hir_functions: HashMap<String, HirFunction>,
+    lifted_functions: Vec<HirFunction>,
+    next_closure: usize,
     hir_globals: HashMap<String, HirGlobal>,
     diagnostics: Vec<Diagnostic>,
 }
@@ -604,6 +616,8 @@ impl Analyzer {
             function_states: HashMap::new(),
             global_states: HashMap::new(),
             hir_functions: HashMap::new(),
+            lifted_functions: Vec::new(),
+            next_closure: 0,
             hir_globals: HashMap::new(),
             diagnostics: Vec::new(),
         };
@@ -846,6 +860,12 @@ impl Analyzer {
             return None;
         }
 
+        let mut functions: Vec<_> = self
+            .function_order
+            .iter()
+            .map(|name| self.hir_functions[name].clone())
+            .collect();
+        functions.extend(self.lifted_functions.clone());
         Some(HirProgram {
             structs: self
                 .struct_order
@@ -862,11 +882,7 @@ impl Analyzer {
                 .iter()
                 .map(|name| self.hir_globals[name].clone())
                 .collect(),
-            functions: self
-                .function_order
-                .iter()
-                .map(|name| self.hir_functions[name].clone())
-                .collect(),
+            functions,
         })
     }
 
@@ -943,6 +959,7 @@ impl Analyzer {
                         capability,
                         alias: None,
                         partial: None,
+                        closure: None,
                     },
                 );
                 params.push(HirParam {
@@ -1115,6 +1132,11 @@ impl Analyzer {
                             "local partial application `{name}` cannot escape; call it directly"
                         ));
                         error_expr()
+                    } else if local.closure.is_some() {
+                        self.error(format!(
+                            "local closure `{name}` cannot escape; call it directly"
+                        ));
+                        error_expr()
                     } else {
                         let place = self
                             .lower_place(expression, context)
@@ -1273,8 +1295,18 @@ impl Analyzer {
                                 .annotation
                                 .as_ref()
                                 .map(|ty| self.lower_source_type(ty));
-                            let value =
-                                self.lower_expr(&binding.value, annotation.as_ref(), context);
+                            let value = match &binding.value {
+                                Expr::Closure(params, body) => {
+                                    if annotation.is_some() {
+                                        self.error(format!(
+                                            "closure binding `{}` cannot have a type annotation yet",
+                                            binding.name
+                                        ));
+                                    }
+                                    self.lower_local_closure(params, body, context)
+                                }
+                                _ => self.lower_expr(&binding.value, annotation.as_ref(), context),
+                            };
                             let ty = annotation.unwrap_or_else(|| value.ty.clone());
                             let partial = match &value.kind {
                                 HirExprKind::Partial {
@@ -1288,6 +1320,10 @@ impl Analyzer {
                                 }),
                                 _ => None,
                             };
+                            let closure = match &value.kind {
+                                HirExprKind::LocalClosure(closure) => Some(closure.clone()),
+                                _ => None,
+                            };
                             let (capability, alias) = match &value.kind {
                                 HirExprKind::Borrow { place, mutable } => (
                                     if *mutable {
@@ -1299,7 +1335,10 @@ impl Analyzer {
                                 ),
                                 _ => (LocalCapability::Owned, None),
                             };
-                            if matches!(ty, Ty::Function(_)) && partial.is_none() {
+                            if matches!(ty, Ty::Function(_))
+                                && partial.is_none()
+                                && closure.is_none()
+                            {
                                 self.error(format!(
                                     "function-valued local `{}` must be a direct partial application",
                                     binding.name
@@ -1334,6 +1373,7 @@ impl Analyzer {
                                         capability,
                                         alias,
                                         partial,
+                                        closure,
                                     },
                                 );
                             }
@@ -1482,6 +1522,237 @@ impl Analyzer {
         (expression, context.flow.clone())
     }
 
+    fn lower_local_closure(
+        &mut self,
+        source_params: &[crate::ast::Param],
+        body: &Expr,
+        outer: &mut LowerCtx,
+    ) -> HirExpr {
+        if matches!(body, Expr::Closure(_, _)) {
+            self.error("curried closures are not supported yet");
+            return error_expr();
+        }
+
+        let mut bound: HashSet<String> = source_params
+            .iter()
+            .map(|param| param.name.clone())
+            .collect();
+        let mut capture_names = Vec::new();
+        let mut seen = HashSet::new();
+        if !self.scan_simple_closure_captures(
+            body,
+            &mut bound,
+            outer,
+            &mut capture_names,
+            &mut seen,
+        ) {
+            return error_expr();
+        }
+
+        let function = format!("__closure.{}", self.next_closure);
+        self.next_closure += 1;
+        let mut context = LowerCtx::for_function(&function, None);
+        let mut hir_params = Vec::new();
+        let mut captures = Vec::new();
+
+        for name in capture_names {
+            let local = outer
+                .lookup(&name)
+                .cloned()
+                .expect("capture scanner only records outer locals");
+            if local.partial.is_some() || local.closure.is_some() {
+                self.error(format!("closure cannot capture local callable `{name}`"));
+                continue;
+            }
+            if local.alias.is_some() || local.capability != LocalCapability::Owned {
+                self.error(format!(
+                    "closure capture of borrowed local `{name}` is not supported yet"
+                ));
+                continue;
+            }
+            if !matches!(local.ty, Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool) {
+                self.error(format!(
+                    "closure capture `{name}` must be a Copy scalar for now"
+                ));
+                continue;
+            }
+
+            let mut place = HirPlace {
+                local: local.id,
+                root_ty: local.ty.clone(),
+                projections: Vec::new(),
+                ty: local.ty.clone(),
+                capability: local.capability,
+                root_mutable: local.mutable,
+                loan: None,
+            };
+            place.loan = self.acquire_loan(&place, LoanKind::Shared, true, outer);
+            captures.push(place);
+
+            let id = context.fresh_local();
+            context.scopes[0].locals.push(id);
+            context.scopes[0].names.insert(
+                name.clone(),
+                LocalInfo {
+                    id,
+                    ty: local.ty.clone(),
+                    mutable: false,
+                    capability: LocalCapability::SharedParam,
+                    alias: None,
+                    partial: None,
+                    closure: None,
+                },
+            );
+            hir_params.push(HirParam {
+                id,
+                name: format!("capture.{name}"),
+                ty: local.ty,
+                mode: PassMode::Borrow,
+            });
+        }
+
+        let mut params = Vec::new();
+        for param in source_params {
+            if param.mode != PassMode::Inferred {
+                self.error(format!(
+                    "closure parameter `{}` must use inferred passing mode for now",
+                    param.name
+                ));
+            }
+            let ty = self.lower_source_type(&param.ty);
+            if context.scopes[0].names.contains_key(&param.name) {
+                self.error(format!("duplicate closure parameter `{}`", param.name));
+                continue;
+            }
+            let id = context.fresh_local();
+            context.scopes[0].locals.push(id);
+            context.scopes[0].names.insert(
+                param.name.clone(),
+                LocalInfo {
+                    id,
+                    ty: ty.clone(),
+                    mutable: false,
+                    capability: LocalCapability::Owned,
+                    alias: None,
+                    partial: None,
+                    closure: None,
+                },
+            );
+            params.push(ParamSig {
+                name: param.name.clone(),
+                ty: ty.clone(),
+                mode: PassMode::Inferred,
+            });
+            hir_params.push(HirParam {
+                id,
+                name: param.name.clone(),
+                ty,
+                mode: PassMode::Inferred,
+            });
+        }
+
+        let lowered_body = self.lower_expr(body, None, &mut context);
+        let mut result = if lowered_body.ty == Ty::Never {
+            None
+        } else {
+            Some(lowered_body.ty.clone())
+        };
+        for returned in &context.returned_types {
+            result = Some(match result {
+                Some(current) => self.unify_types(
+                    &current,
+                    returned,
+                    format!("return values in closure `{function}`"),
+                ),
+                None => returned.clone(),
+            });
+        }
+        let result = result.unwrap_or(Ty::Unit);
+        self.lifted_functions.push(HirFunction {
+            name: function.clone(),
+            params: hir_params,
+            result: result.clone(),
+            body: lowered_body,
+        });
+
+        let info = ClosureInfo {
+            function,
+            params: params.clone(),
+            result: result.clone(),
+            captures,
+        };
+        HirExpr {
+            ty: Ty::Function(FunctionTy {
+                groups: vec![params.into_iter().map(|param| param.ty).collect()],
+                result: Box::new(result),
+            }),
+            kind: HirExprKind::LocalClosure(info),
+        }
+    }
+
+    fn scan_simple_closure_captures(
+        &mut self,
+        expression: &Expr,
+        bound: &mut HashSet<String>,
+        outer: &LowerCtx,
+        captures: &mut Vec<String>,
+        seen: &mut HashSet<String>,
+    ) -> bool {
+        match expression {
+            Expr::Unit | Expr::Integer(_) | Expr::Bool(_) => true,
+            Expr::Name(name) => {
+                if !bound.contains(name)
+                    && outer.lookup(name).is_some()
+                    && seen.insert(name.clone())
+                {
+                    captures.push(name.clone());
+                }
+                true
+            }
+            Expr::Unary(_, operand) => {
+                self.scan_simple_closure_captures(operand, bound, outer, captures, seen)
+            }
+            Expr::Binary(left, _, right) => {
+                self.scan_simple_closure_captures(left, bound, outer, captures, seen)
+                    & self.scan_simple_closure_captures(right, bound, outer, captures, seen)
+            }
+            Expr::Block(statements, tail) => {
+                let saved = bound.clone();
+                let mut valid = true;
+                for statement in statements {
+                    match statement {
+                        Stmt::Let(binding) => {
+                            valid &= self.scan_simple_closure_captures(
+                                &binding.value,
+                                bound,
+                                outer,
+                                captures,
+                                seen,
+                            );
+                            bound.insert(binding.name.clone());
+                        }
+                        Stmt::Expr(expression) => {
+                            valid &= self.scan_simple_closure_captures(
+                                expression, bound, outer, captures, seen,
+                            );
+                        }
+                    }
+                }
+                if let Some(tail) = tail {
+                    valid &= self.scan_simple_closure_captures(tail, bound, outer, captures, seen);
+                }
+                *bound = saved;
+                valid
+            }
+            _ => {
+                self.error(
+                    "closure body form requires mutable or consuming capture analysis, which is not supported yet",
+                );
+                false
+            }
+        }
+    }
+
     fn lower_place(&mut self, expression: &Expr, context: &mut LowerCtx) -> Option<HirPlace> {
         match expression {
             Expr::Name(name) => {
@@ -1495,10 +1766,8 @@ impl Analyzer {
                     }
                     return None;
                 };
-                if local.partial.is_some() {
-                    self.error(format!(
-                        "local partial application `{name}` is not a data place"
-                    ));
+                if local.partial.is_some() || local.closure.is_some() {
+                    self.error(format!("local callable `{name}` is not a data place"));
                     return None;
                 }
                 if let Some(alias) = local.alias {
@@ -2149,6 +2418,7 @@ impl Analyzer {
                 capability: LocalCapability::Owned,
                 alias: None,
                 partial: None,
+                closure: None,
             },
         );
         bindings.push(HirPatternBinding {
@@ -2298,6 +2568,9 @@ impl Analyzer {
                 return self.lower_named_function_call(name, &groups, context);
             }
             if let Some(local) = context.lookup(name).cloned() {
+                if local.closure.is_some() {
+                    return self.lower_local_closure_call(name, &local, &groups, context);
+                }
                 if local.partial.is_some() {
                     return self.lower_local_partial_call(name, &local, &groups, context);
                 }
@@ -2327,6 +2600,61 @@ impl Analyzer {
         }
         self.error("calls require a named function, constructor, or local partial application");
         error_expr()
+    }
+
+    fn lower_local_closure_call(
+        &mut self,
+        local_name: &str,
+        local: &LocalInfo,
+        groups: &[&[CallArg]],
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let closure = local
+            .closure
+            .as_ref()
+            .expect("closure call requires closure metadata");
+        if groups.len() != 1 {
+            self.error(format!(
+                "closure `{local_name}` requires one complete argument group; closure partial application is not supported"
+            ));
+            return error_expr();
+        }
+        if groups[0].len() != closure.params.len() {
+            self.error(format!(
+                "argument count mismatch in closure `{local_name}`: expected {}, found {}",
+                closure.params.len(),
+                groups[0].len()
+            ));
+        }
+
+        let mut arguments: Vec<_> = closure
+            .captures
+            .iter()
+            .cloned()
+            .map(HirArgument::SharedBorrow)
+            .collect();
+        let mut temporary_loans = Vec::new();
+        for (argument, parameter) in groups[0].iter().zip(&closure.params) {
+            if argument.label.is_some() {
+                self.error(format!(
+                    "named arguments are not allowed in call to closure `{local_name}`"
+                ));
+            }
+            arguments.push(self.lower_call_argument(
+                &argument.value,
+                parameter,
+                context,
+                &mut temporary_loans,
+            ));
+        }
+        self.release_loans(&temporary_loans, context);
+        HirExpr {
+            ty: closure.result.clone(),
+            kind: HirExprKind::Call {
+                function: closure.function.clone(),
+                arguments,
+            },
+        }
     }
 
     fn lower_named_function_call(
@@ -3124,6 +3452,7 @@ impl ConstantEvaluator<'_> {
             | HirExprKind::Call { .. }
             | HirExprKind::Partial { .. }
             | HirExprKind::PartialCapture { .. }
+            | HirExprKind::LocalClosure(_)
             | HirExprKind::Function(_)
             | HirExprKind::Return(_)
             | HirExprKind::Match { .. } => {
@@ -3694,6 +4023,10 @@ impl<'a> FunctionEmitter<'a> {
                     value: Some(register),
                 })
             }
+            HirExprKind::LocalClosure(closure) => Err(Diagnostic::new(format!(
+                "local closure `{}` escaped its binding",
+                closure.function
+            ))),
             HirExprKind::Block(statements, tail) => {
                 for statement in statements {
                     if self.terminated {
@@ -3701,6 +4034,9 @@ impl<'a> FunctionEmitter<'a> {
                     }
                     match statement {
                         HirStmt::Let(binding) => {
+                            if matches!(binding.value.kind, HirExprKind::LocalClosure(_)) {
+                                continue;
+                            }
                             if let HirExprKind::Partial { captures, .. } = &binding.value.kind {
                                 let mut stored = Vec::new();
                                 for capture in captures {
@@ -4701,6 +5037,43 @@ let main(): i32 = choose(Choice.Only)
         )
         .unwrap_err();
         assert!(errors.iter().any(|error| error.message.contains("moved")));
+    }
+
+    #[test]
+    fn lifts_a_local_closure_with_a_shared_scalar_capture() {
+        let ir = compile_text(
+            r#"
+let main(): i32 = {
+  let base = 40
+  let add_base = { (increment: i32) -> base + increment }
+  add_base(2)
+}
+"#,
+        )
+        .unwrap();
+        let symbol = function_symbol("__closure.0");
+        assert!(ir.contains(&format!(
+            "define internal i32 @{symbol}(ptr %arg.0, i32 %arg.1)"
+        )));
+        assert!(ir.contains(&format!("call i32 @{symbol}(ptr")));
+    }
+
+    #[test]
+    fn rejects_aliasing_a_local_closure() {
+        let errors = compile_text(
+            r#"
+let main(): i32 = {
+  let base = 40
+  let add_base = { (increment: i32) -> base + increment }
+  let alias = add_base
+  0
+}
+"#,
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("cannot escape")));
     }
 
     #[test]

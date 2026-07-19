@@ -20,10 +20,6 @@ struct M1PendingCase {
 
 const M1_PENDING_CASES: &[M1PendingCase] = &[
     M1PendingCase {
-        relative_path: "m1_pending/pass/capturing_closure.sali",
-        expectation: M1Expectation::RunWithExitCode(42),
-    },
-    M1PendingCase {
         relative_path: "m1_pending/pass/while_mutation.sali",
         expectation: M1Expectation::RunWithExitCode(42),
     },
@@ -337,6 +333,49 @@ fn m1_ownership_errors_report_their_cause() {
         assert!(
             !stderr.contains("not supported"),
             "{name} reached a placeholder diagnostic:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn m1_local_closure_programs_run_with_expected_result() {
+    for name in [
+        "capturing_closure.sali",
+        "closure_shared_repeat.sali",
+        "closure_capture_parameter.sali",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run M1 closure fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn m1_local_closure_errors_report_their_cause() {
+    for (name, expected) in [
+        ("closure_escape_return.sali", "escape"),
+        ("closure_partial_application.sali", "curried closures"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid M1 closure fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected),
+            "{name} did not report `{expected}`:\n{}",
             output_text(&output)
         );
     }
