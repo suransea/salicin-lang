@@ -1,0 +1,6 @@
+let add(x: i32)(y: i32): i32 = x + y
+
+let main(): i32 = {
+  let add_one = add(1)
+  add_one(41)
+}

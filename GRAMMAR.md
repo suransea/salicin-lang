@@ -1,0 +1,435 @@
+# Salicin 语法骨架
+
+状态：Draft 0.2  
+源码后缀：`.sali`  
+源码编码：UTF-8
+
+本文给 lexer 和 parser 提供可实现的语法骨架。语义、类型与所有权规则以
+[LANGUAGE.md](LANGUAGE.md) 为准。这里的 EBNF 尚不是用于标准化的最终 grammar，但每项歧义都必须
+在 parser 测试中得到唯一 AST。
+
+## 1. 记号
+
+```text
+"token"       固定 token
+NAME          lexer 产生的 token 类别
+[ x ]         可选一次
+{ x }         重复零次或多次
+x | y         二选一
+( x )         文法分组
+```
+
+关键字不能作为普通 `IDENT`。`await`、`try` 等当前均保留，不采用随上下文变化的关键字集合。
+
+## 2. 词法 token
+
+```ebnf
+IDENT   = Unicode_XID_Start, { Unicode_XID_Continue } ;
+REGION  = "'", Unicode_XID_Start, { Unicode_XID_Continue } ;
+INTEGER = decimal_integer | hex_integer | octal_integer | binary_integer ;
+FLOAT   = decimal_float ;
+CHAR    = "'", char_content, "'" ;
+STRING  = '"', { string_content }, '"' ;
+```
+
+region token 与字符字面量可由 `'` 后第一个字符区分：`'a` 是 region，`'a'` 是字符。源码在名称
+比较前按 NFC 规范化。数值中的 `_` 仅作视觉分隔，不进入数值。
+
+注释：
+
+```ebnf
+line_comment  = "//", { any_except_newline } ;
+block_comment = "/*", { text | block_comment }, "*/" ;
+```
+
+块注释允许嵌套。注释等价为空白，但行注释末尾的物理换行仍参与逻辑换行判定。
+
+## 3. 逻辑换行与语句
+
+lexer 产生 `NEWLINE`，但在以下情况忽略物理换行：
+
+1. 当前位于未闭合的 `(...)` 或 `[...]` 内；
+2. 上一个有效 token 是二元/前缀运算符、逗号、`.`、`?.`、`=`、`=>`、`->` 或 `:`。
+
+`{...}` 不抑制换行，因为块内需要分隔语句。普通调用不能跨逻辑换行从 `(` 继续：
+
+```sali
+f
+(x) // 两个表达式，不是 f(x)
+```
+
+```ebnf
+separator  = NEWLINE | ";" ;
+separators = { separator } ;
+```
+
+换行分隔表达式但不主动丢弃最后表达式的值。块中最后一个表达式即使后面有换行，只要没有显式
+`;`，仍是块值。`;` 明确把该表达式转换为 `()`。
+
+`return`、`throw`、`break` 和 `continue` 后的逻辑换行结束该控制表达式。
+
+## 4. 源文件与声明
+
+```ebnf
+source_file = separators, { item, separators }, EOF ;
+
+item = { attribute }, [ visibility ], [ "unsafe" ],
+       ( use_decl | let_decl | extend_decl | extern_decl ) ;
+
+attribute  = "@", IDENT, [ "(", [ attribute_args ], ")" ] ;
+visibility = "pub", [ "(", "package", ")" ] ;
+```
+
+### 4.1 `let`
+
+```ebnf
+let_decl = "let", [ "mut" ], IDENT,
+           { parameter_group },
+           [ ":", type_expr ],
+           [ where_clause ],
+           [ "=", initializer ] ;
+
+initializer = expression | struct_decl | enum_decl | trait_decl | module_decl ;
+```
+
+语义限制：
+
+- 普通值、函数、类型和模块声明必须有 initializer；只有 trait 要求可以省略。
+- `let mut` 不能含参数组，且必须绑定运行时值。
+- `let f(x: T) = body` 是具名函数声明。
+- `let f: (x: T): R = { body }` 是带名签名函数声明：所有槽必须有名字，RHS 是函数体。
+- `let f: (T): R = { (x: T) -> body }` 是普通函数值绑定。
+- 具名函数的参数类型必须显式；首版 `let` 名称位置不接受解构 pattern。
+- trait 声明体中的无 initializer `let` 是 requirement。
+
+参数组：
+
+```ebnf
+parameter_group = "(", [ parameter_list ], ")" ;
+parameter_list  = parameter, { ",", parameter }, [ "," ] ;
+
+parameter = [ pass_mode ], IDENT, ":", type_expr
+          | [ pass_mode ], "self" ;
+
+pass_mode = "copy" | "move" | "borrow" | "mut", "borrow" ;
+```
+
+一个编译期参数组只含 `T: type`、`'a: region` 等编译期参数，并位于所有运行时参数组之前；同一组
+不能混合编译期和运行时参数。忽略开头的编译期组后，实例方法的 `self` 独占第一个运行时组，
+并且后面至少还有一个显式运行时组。
+
+### 4.2 数据、trait 与模块
+
+```ebnf
+struct_decl = "struct", "(", [ field_list ], ")" ;
+module_decl = "struct", "{", separators, { item, separators }, "}" ;
+
+field_list = field_decl, { ",", field_decl }, [ "," ] ;
+field_decl = [ visibility ], IDENT, ":", type_expr ;
+
+enum_decl = "enum", "{", separators,
+            [ variant, { ",", separators, variant }, [ "," ] ],
+            separators, "}" ;
+
+variant = IDENT
+        | IDENT, "(", positional_variant_fields, ")"
+        | IDENT, "(", named_variant_fields, ")" ;
+
+positional_variant_fields = type_expr, { ",", type_expr }, [ "," ] ;
+named_variant_fields      = field_decl, { ",", field_decl }, [ "," ] ;
+
+trait_decl = "trait", "{", separators, { trait_item, separators }, "}" ;
+trait_item = { attribute }, [ visibility ], let_decl ;
+```
+
+一个 variant 的字段全部按位置或全部命名；不能混合。`struct(...)` 与 `struct {...}` 只允许作为
+命名 `let` initializer，分别建立运行时名义类型和编译期模块。
+
+### 4.3 `extend`
+
+```ebnf
+extend_decl = "extend", [ compile_parameter_group ], type_expr,
+              [ ":", trait_ref ], [ where_clause ],
+              "{", separators, { let_decl, separators }, "}" ;
+
+compile_parameter_group = parameter_group ;
+```
+
+编译期参数组的语义限制与函数相同。例如：
+
+```sali
+extend(T: type) Box(T): Display
+where T: Display {
+  let display(borrow self)(): String = ...
+}
+```
+
+### 4.4 导入与 FFI
+
+```ebnf
+use_decl = "use", use_path,
+           [ ".", "{", use_name, { ",", use_name }, [ "," ], "}" ] ;
+use_name = IDENT, [ "as", IDENT ] ;
+use_path = path, [ "as", IDENT ] ;
+
+extern_decl = "extern", STRING,
+              ( "{", separators, { extern_function_decl, separators }, "}"
+              | let_decl ) ;
+
+extern_function_decl = { attribute }, "let", IDENT, parameter_group,
+                       ":", type_expr ;
+```
+
+`use` 的实际 parser 可把单名、分组和 `as` 形式拆成不同 AST 节点。首版没有 glob 导入。
+
+## 5. 类型
+
+函数类型的 `:` 右结合。解析器看到 parenthesized type group 后，仅当其后有 `:` 才把它解释为
+callable group；否则它是括号类型或元组类型。
+
+```ebnf
+type_expr = callable_group, ":", type_expr
+          | type_atom ;
+
+callable_group = "(", [ signature_slot, { ",", signature_slot }, [ "," ] ], ")" ;
+
+signature_slot = type_expr
+               | IDENT, ":", type_expr
+               | pass_mode, ( IDENT | "_" ), ":", type_expr ;
+
+type_atom = path, [ type_arguments ]
+          | "(", ")"
+          | "(", type_expr, ")"
+          | "(", type_expr, ",", [ type_expr, { ",", type_expr }, [ "," ] ], ")"
+          | "borrow", [ "(", REGION, ")" ], type_atom
+          | "mut", "borrow", [ "(", REGION, ")" ], type_atom ;
+
+type_arguments = "(", type_argument, { ",", type_argument }, [ "," ], ")" ;
+type_argument  = type_expr | "_" | INTEGER ;
+```
+
+匿名签名槽只有在模式为 `auto` 时可省略 `_:`：
+
+```sali
+(T): U                 // auto 参数，类型 T
+(borrow _: T): U       // 调用时借用 T
+(_: borrow T): U       // 按 auto 传入一个已有借用值
+```
+
+trait 引用和约束：
+
+```ebnf
+where_clause = "where", predicate, { ",", predicate }, [ "," ] ;
+predicate    = type_expr, ":", trait_ref ;
+
+trait_ref = path, [ "(", trait_argument,
+                    { ",", trait_argument }, [ "," ], ")" ] ;
+trait_argument = type_expr | IDENT, "=", type_expr ;
+```
+
+`Output = T` 是关联类型等式，不是运行时命名实参。
+
+## 6. 表达式与优先级
+
+从低到高：
+
+| 层级 | 构造 | 结合性 |
+|---|---|---|
+| 1 | `=`、`+=`、`-=`、`*=`、`/=` 等赋值 | 右结合 |
+| 2 | 后缀 `match` | 不结合 |
+| 3 | `??` | 右结合 |
+| 4 | `||` | 左结合 |
+| 5 | `&&` | 左结合 |
+| 6 | `==`、`!=`、`<`、`<=`、`>`、`>=` | 不结合 |
+| 7 | `..`、`..=` | 不结合 |
+| 8 | `+`、`-`、按位运算 | 左结合 |
+| 9 | `*`、`/`、`%`、shift | 左结合 |
+| 10 | `-`、`!`、`borrow`、`mut borrow`、`move` | 前缀 |
+| 11 | 调用、索引、成员、`?.`、`.try`、`.await`、尾随闭包 | 左到右后缀 |
+
+精确的按位/shift 相对层级在实现相应运算符前补入，不能由 parser generator 默认决定。
+
+```ebnf
+expression       = assignment_expr ;
+assignment_expr  = match_expr, [ assign_op, assignment_expr ] ;
+match_expr       = coalesce_expr, [ "match", match_body ] ;
+coalesce_expr    = logical_or_expr, [ "??", coalesce_expr ] ;
+logical_or_expr  = logical_and_expr, { "||", logical_and_expr } ;
+logical_and_expr = equality_expr, { "&&", equality_expr } ;
+equality_expr    = relation_expr, [ equality_op, relation_expr ] ;
+relation_expr    = range_expr, [ relation_op, range_expr ] ;
+range_expr       = additive_expr, [ range_op, additive_expr ] ;
+additive_expr    = multiply_expr, { additive_op, multiply_expr } ;
+multiply_expr    = unary_expr, { multiply_op, unary_expr } ;
+unary_expr       = { prefix_op }, postfix_expr ;
+```
+
+后缀层：
+
+```ebnf
+postfix_expr = primary_expr, { postfix_part } ;
+
+postfix_part = call_group
+             | "[", expression, "]"
+             | ".", IDENT
+             | "?.", IDENT
+             | ".try"
+             | ".await"
+             | trailing_closure ;
+
+call_group = "(", [ call_argument, { ",", call_argument }, [ "," ] ], ")" ;
+call_argument = expression | IDENT, ":", expression ;
+
+trailing_closure = closure_literal ;
+```
+
+语义限制：尾随闭包必须在同一逻辑行跟随已有 `call_group`，一条调用链最多一个；它新建一个单元素
+参数组。`f(x) {}` 是 `Call(Call(f,[x]),[{}])`，`f(x,{})` 是 `Call(f,[x,{}])`。
+
+primary：
+
+```ebnf
+primary_expr = literal
+             | path
+             | "(", expression, ")"
+             | tuple_literal
+             | array_literal
+             | do_block
+             | unsafe_block
+             | closure_literal
+             | if_expr
+             | loop_expr
+             | while_expr
+             | for_expr
+             | try_block
+             | async_expr
+             | return_expr
+             | throw_expr
+             | break_expr
+             | continue_expr ;
+
+do_block = "do", block ;
+unsafe_block = "unsafe", "do", block ;
+
+closure_literal = [ "move" ], "{",
+                  ( "}" | parameter_group, { parameter_group }, "->",
+                    block_contents, "}" | "->", block_contents, "}" ) ;
+
+async_expr = "async", closure_literal | "async", "do", block ;
+```
+
+非空闭包必须有 `->`。`{}` 是零参空闭包；`{ -> expression }` 是非空零参闭包；
+`{ (x: T)(y: U) -> expression }` 是多组闭包。
+
+## 7. 块和控制流
+
+```ebnf
+block = "{", block_contents, "}" ;
+
+block_contents = separators,
+                 { block_item, separators },
+                 [ expression, separators ] ;
+
+block_item = let_decl | expression ;
+```
+
+实际 parser 应保留每个表达式后的终止符类别；最后一个未以 `;` 终止的表达式成为块值。
+
+```ebnf
+if_expr = "if", ( expression | "let", pattern, "=", expression ), block,
+          [ "else", ( block | if_expr ) ] ;
+
+loop_expr  = "loop", block ;
+while_expr = "while", ( expression | "let", pattern, "=", expression ), block ;
+for_expr   = "for", pattern, "in", expression, block ;
+
+return_expr   = "return", [ expression ] ;
+throw_expr    = "throw", expression ;
+break_expr    = "break", [ expression ] ;
+continue_expr = "continue" ;
+
+try_block = "try", [ type_expr ], "do", block ;
+```
+
+解析 `if`、`while`、`for` 控制头的最外层时禁用尾随闭包；第一个未被括号包围的 `{` 是控制主体。
+条件要使用尾随闭包必须整体加括号。
+
+### 7.1 大括号上下文
+
+| 上下文 | AST |
+|---|---|
+| `let f = {}` | 零参闭包 |
+| `let f(x: T) = { ... }` | 函数体 |
+| `if`/`else`/`loop`/`while`/`for` 后 | 控制流块 |
+| `struct`/`enum`/`trait`/`extend` 后 | 声明体 |
+| `value match { ... }` | match arm 列表 |
+| 其他表达式位置 | 闭包 |
+| `do { ... }` | 立即块表达式 |
+
+## 8. `match` 与 pattern
+
+```ebnf
+match_body = "{", separators,
+             [ match_arm, { ",", separators, match_arm }, [ "," ] ],
+             separators, "}" ;
+
+match_arm = pattern, [ "if", expression ], "=>", expression ;
+
+pattern = or_pattern ;
+or_pattern = bind_pattern, { "|", bind_pattern } ;
+
+bind_pattern = [ pass_mode ], IDENT
+             | "_"
+             | literal_pattern
+             | tuple_pattern
+             | variant_pattern
+             | range_pattern ;
+
+tuple_pattern   = "(", pattern, ",", [ pattern, { ",", pattern }, [ "," ] ], ")" ;
+variant_pattern = path, [ "(", pattern_fields, ")" ] ;
+pattern_fields  = pattern, { ",", pattern }, [ "," ]
+                | named_pattern, { ",", named_pattern }, [ "," ] ;
+named_pattern   = IDENT, ":", pattern ;
+range_pattern   = literal_pattern, ( ".." | "..=" ), literal_pattern ;
+```
+
+同一 variant pattern 内不混合位置和命名字段。裸大写名称若解析为当前枚举可见的无数据 variant，
+表示 variant；其他裸标识符建立绑定。有歧义时使用限定路径，例如 `Option.Some(x)`。或 pattern
+两侧绑定集合、类型和模式必须一致。match arm 之间必须有逗号，最后一个逗号可省略。
+
+## 9. 路径
+
+```ebnf
+path = path_head, { ".", IDENT } ;
+path_head = IDENT | "root" | "self" | "super" | "Self" ;
+```
+
+完全限定 trait 成员 `<T as Trait>.member` 作为独立的 `qualified_path` 产生，加入 `path` 可出现的
+位置。类型应用 `A(T)` 与运行时调用 `f(x)` 具有相同 token 外形，由名称的 kind 和上下文在语义
+分析阶段区分。
+
+## 10. 必须锁定的 parser 测试
+
+```sali
+let f = {}                         // 零参闭包
+let f(x: i32) = {}                 // 空函数体
+let x = do {}                      // 单元值
+let add = { (x: i32)(y: i32) -> x + y }
+
+f(x) {}                            // 新参数组
+f(x, {})                           // 同组第二实参
+if f(x) {}                         // 条件 f(x) + 空 if 主体
+if (f(x) {}) {}                    // 条件中使用尾随闭包
+a.method()                         // A.method(a)()
+
+let by_borrow: (borrow _: T): U = callback
+let takes_ref: (_: borrow T): U = callback_ref
+
+a ?? b match {
+  Some(x) => x,
+  None => fallback,
+}
+```
+
+上述每一行都应有 AST snapshot；相邻案例不得产生相同 AST。错误恢复至少覆盖缺失 `)`、缺失
+`=>`、enum/match 中缺逗号、控制头意外尾随闭包和闭包缺 `->`。
