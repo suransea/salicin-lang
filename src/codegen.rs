@@ -156,6 +156,39 @@ enum TypeProbe {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CoalesceKind {
+    Option,
+    Result,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CoalesceInfo {
+    kind: CoalesceKind,
+    payload: Ty,
+    payload_source: Option<Type>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CoalescePayloadHint {
+    ty: Ty,
+    source: Option<Type>,
+}
+
+struct InferredCoalesceLhs<'a> {
+    kind: CoalesceKind,
+    name: String,
+    type_groups: Vec<&'a [CallArg]>,
+    variant: &'a str,
+    value_groups: Vec<&'a [CallArg]>,
+}
+
+#[derive(Clone, Copy)]
+struct InferredEnumHints<'a> {
+    payload: Option<&'a CoalescePayloadHint>,
+    result: Option<&'a Ty>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NominalInstanceState {
     Building,
     Ready,
@@ -3495,6 +3528,157 @@ impl Analyzer {
         self.probe_numeric_binary_ty(left, right, expected, context)
     }
 
+    fn coalesce_info_for_ty(&self, ty: &Ty) -> Option<CoalesceInfo> {
+        let Ty::Enum(canonical) = ty else {
+            return None;
+        };
+        let instance = self.nominal_instances.get(canonical)?;
+        if instance.key.kind != NominalKind::Enum {
+            return None;
+        }
+        match (
+            instance.key.template.as_str(),
+            instance.key.arguments.as_slice(),
+        ) {
+            ("Option", [payload]) => Some(CoalesceInfo {
+                kind: CoalesceKind::Option,
+                payload: payload.clone(),
+                payload_source: self.source_type_for_ty(payload),
+            }),
+            ("Result", [payload, _error]) => Some(CoalesceInfo {
+                kind: CoalesceKind::Result,
+                payload: payload.clone(),
+                payload_source: self.source_type_for_ty(payload),
+            }),
+            _ => None,
+        }
+    }
+
+    fn coalesce_info_for_probe(&self, probe: &TypeProbe) -> Option<CoalesceInfo> {
+        let ty = match probe {
+            TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) => ty,
+            TypeProbe::Defaultable(_) | TypeProbe::Unsupported => return None,
+        };
+        if let Some(info) = self.coalesce_info_for_ty(ty) {
+            return Some(info);
+        }
+        let TypeProbe::KnownSource(Ty::Enum(_), Type::Named(template, arguments)) = probe else {
+            return None;
+        };
+        match (template.as_str(), arguments.as_slice()) {
+            ("Option", [payload]) => Some(CoalesceInfo {
+                kind: CoalesceKind::Option,
+                payload: self.probe_source_ty(payload)?,
+                payload_source: Some(payload.clone()),
+            }),
+            ("Result", [payload, _error]) => Some(CoalesceInfo {
+                kind: CoalesceKind::Result,
+                payload: self.probe_source_ty(payload)?,
+                payload_source: Some(payload.clone()),
+            }),
+            _ => None,
+        }
+    }
+
+    fn inferred_builtin_coalesce_lhs<'a>(
+        &self,
+        expression: &'a Expr,
+        context: &LowerCtx,
+    ) -> Option<InferredCoalesceLhs<'a>> {
+        let mut value_groups = Vec::new();
+        let Expr::Member(base, variant) = flatten_call(expression, &mut value_groups) else {
+            return None;
+        };
+        let (name, type_groups) = self.inferred_generic_enum_type_head(base, context)?;
+        let kind = match name.as_str() {
+            "Option" => CoalesceKind::Option,
+            "Result" => CoalesceKind::Result,
+            _ => return None,
+        };
+        Some(InferredCoalesceLhs {
+            kind,
+            name,
+            type_groups,
+            variant: variant.as_str(),
+            value_groups,
+        })
+    }
+
+    fn inferred_coalesce_payload_probe(
+        &self,
+        kind: CoalesceKind,
+        type_groups: &[&[CallArg]],
+        hint: Option<&Ty>,
+        right: &Expr,
+        context: &LowerCtx,
+    ) -> TypeProbe {
+        let expected_arguments = match kind {
+            CoalesceKind::Option => 1,
+            CoalesceKind::Result => 2,
+        };
+        let [arguments] = type_groups else {
+            return TypeProbe::Unsupported;
+        };
+        if arguments.len() != expected_arguments || arguments[0].label.is_some() {
+            return TypeProbe::Unsupported;
+        }
+        if !matches!(arguments[0].value, Expr::Infer) {
+            let Some(source) =
+                self.probe_type_argument_source(&arguments[0].value, &context.type_substitutions)
+            else {
+                return TypeProbe::Unsupported;
+            };
+            let Some(ty) = self.probe_source_ty(&source) else {
+                return TypeProbe::Unsupported;
+            };
+            return TypeProbe::KnownSource(ty, source);
+        }
+        if let Some(hint) = hint.filter(|ty| **ty != Ty::Error) {
+            return self.source_type_for_ty(hint).map_or_else(
+                || TypeProbe::Known(hint.clone()),
+                |source| TypeProbe::KnownSource(hint.clone(), source),
+            );
+        }
+        self.probe_expr_ty(right, None, context)
+    }
+
+    fn probe_coalesce_ty(
+        &self,
+        left: &Expr,
+        right: &Expr,
+        hint: Option<&Ty>,
+        context: &LowerCtx,
+    ) -> TypeProbe {
+        let left_probe = self.probe_expr_ty(left, None, context);
+        let payload = if let Some(info) = self.coalesce_info_for_probe(&left_probe) {
+            match info.payload_source {
+                Some(source) => TypeProbe::KnownSource(info.payload, source),
+                None => TypeProbe::Known(info.payload),
+            }
+        } else {
+            let Some(inferred) = self.inferred_builtin_coalesce_lhs(left, context) else {
+                return TypeProbe::Unsupported;
+            };
+            self.inferred_coalesce_payload_probe(
+                inferred.kind,
+                &inferred.type_groups,
+                hint,
+                right,
+                context,
+            )
+        };
+        let payload_ty = match &payload {
+            TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) | TypeProbe::Defaultable(ty) => ty,
+            TypeProbe::Unsupported => return TypeProbe::Unsupported,
+        };
+        let right = self.probe_expr_ty(right, Some(payload_ty), context);
+        if Self::probe_matches_type(&right, payload_ty) {
+            payload
+        } else {
+            TypeProbe::Unsupported
+        }
+    }
+
     fn probe_expr_ty(&self, expression: &Expr, hint: Option<&Ty>, context: &LowerCtx) -> TypeProbe {
         match expression {
             Expr::Integer(_) => hint
@@ -3537,6 +3721,7 @@ impl Analyzer {
                     self.probe_numeric_binary_ty(left, right, hint, context)
                 }
             },
+            Expr::Coalesce(left, right) => self.probe_coalesce_ty(left, right, hint, context),
             Expr::Array(elements) => {
                 if let Some(Ty::Array(element, length)) = hint {
                     if *length != elements.len() as u64 {
@@ -4519,6 +4704,7 @@ impl Analyzer {
             Expr::Binary(left, operator, right) => {
                 self.lower_binary(left, *operator, right, expected, context)
             }
+            Expr::Coalesce(left, right) => self.lower_coalesce(left, right, expected, context),
             Expr::Assign(place, value) => {
                 if matches!(place.as_ref(), Expr::Index { .. }) {
                     self.error("indexed array assignment is not supported yet");
@@ -5256,7 +5442,7 @@ impl Analyzer {
             Expr::Unary(_, operand) => {
                 self.scan_simple_closure_captures(operand, bound, outer, captures)
             }
-            Expr::Binary(left, _, right) => {
+            Expr::Binary(left, _, right) | Expr::Coalesce(left, right) => {
                 self.scan_simple_closure_captures(left, bound, outer, captures)
                     & self.scan_simple_closure_captures(right, bound, outer, captures)
             }
@@ -5668,7 +5854,10 @@ impl Analyzer {
                 &type_groups,
                 member,
                 &[],
-                expected,
+                InferredEnumHints {
+                    payload: None,
+                    result: expected,
+                },
                 context,
             ) else {
                 return error_expr();
@@ -5961,6 +6150,119 @@ impl Analyzer {
         context: &mut LowerCtx,
     ) -> HirExpr {
         let scrutinee = self.lower_expr(scrutinee, None, context);
+        self.lower_match_with_scrutinee(scrutinee, arms, expected, context)
+    }
+
+    fn lower_coalesce(
+        &mut self,
+        left: &Expr,
+        right: &Expr,
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let inferred_left = self.inferred_builtin_coalesce_lhs(left, context);
+        let payload_hint = inferred_left.as_ref().and_then(|inferred| {
+            match self.inferred_coalesce_payload_probe(
+                inferred.kind,
+                &inferred.type_groups,
+                expected.filter(|ty| !matches!(ty, Ty::Never | Ty::Error)),
+                right,
+                context,
+            ) {
+                TypeProbe::Known(ty) | TypeProbe::Defaultable(ty) => Some(CoalescePayloadHint {
+                    source: self.source_type_for_ty(&ty),
+                    ty,
+                }),
+                TypeProbe::KnownSource(ty, source) => Some(CoalescePayloadHint {
+                    ty,
+                    source: Some(source),
+                }),
+                TypeProbe::Unsupported => None,
+            }
+        });
+        let scrutinee = if let (Some(inferred), Some(hint)) = (inferred_left, payload_hint.as_ref())
+        {
+            let Some(canonical) = self.resolve_inferred_generic_enum_instance(
+                &inferred.name,
+                &inferred.type_groups,
+                inferred.variant,
+                &inferred.value_groups,
+                InferredEnumHints {
+                    payload: Some(hint),
+                    result: None,
+                },
+                context,
+            ) else {
+                return error_expr();
+            };
+            if inferred.value_groups.is_empty() {
+                self.lower_nominal_type_member_value(
+                    &canonical,
+                    NominalKind::Enum,
+                    inferred.variant,
+                )
+            } else {
+                self.lower_nominal_type_member_call(
+                    &canonical,
+                    NominalKind::Enum,
+                    inferred.variant,
+                    &inferred.value_groups,
+                    context,
+                )
+            }
+        } else {
+            self.lower_expr(left, None, context)
+        };
+        if scrutinee.ty == Ty::Error {
+            return error_expr();
+        }
+        let Some(info) = self.coalesce_info_for_ty(&scrutinee.ty) else {
+            self.error(format!(
+                "operator `??` requires `Option(T)` or `Result(T, E)` on the left, found `{}`",
+                scrutinee.ty
+            ));
+            return error_expr();
+        };
+
+        const PAYLOAD_BINDING: &str = "$coalesce$payload";
+        let payload_arm = |variant: &str| MatchArm {
+            pattern: Pattern::Constructor {
+                path: vec![variant.to_owned()],
+                fields: PatternFields::Positional(vec![Pattern::Binding(
+                    PAYLOAD_BINDING.to_owned(),
+                )]),
+            },
+            guard: None,
+            body: Expr::Name(PAYLOAD_BINDING.to_owned()),
+        };
+        let fallback_arm = |variant: &str, fields: PatternFields| MatchArm {
+            pattern: Pattern::Constructor {
+                path: vec![variant.to_owned()],
+                fields,
+            },
+            guard: None,
+            body: right.clone(),
+        };
+        let arms = match info.kind {
+            CoalesceKind::Option => vec![
+                payload_arm("Some"),
+                fallback_arm("None", PatternFields::Unit),
+            ],
+            CoalesceKind::Result => vec![
+                payload_arm("Ok"),
+                fallback_arm("Err", PatternFields::Positional(vec![Pattern::Wildcard])),
+            ],
+        };
+        self.lower_match_with_scrutinee(scrutinee, &arms, Some(&info.payload), context)
+    }
+
+    fn lower_match_with_scrutinee(
+        &mut self,
+        scrutinee: HirExpr,
+        arms: &[MatchArm],
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
         let Ty::Enum(enum_name) = &scrutinee.ty else {
             self.error(format!(
                 "match currently requires an enum value, found `{}`",
@@ -6632,7 +6934,10 @@ impl Analyzer {
                     &type_groups,
                     variant_name,
                     &groups,
-                    expected,
+                    InferredEnumHints {
+                        payload: None,
+                        result: expected,
+                    },
                     context,
                 ) else {
                     return error_expr();
@@ -6844,7 +7149,7 @@ impl Analyzer {
         type_groups: &[&[CallArg]],
         variant_name: &str,
         value_groups: &[&[CallArg]],
-        expected: Option<&Ty>,
+        hints: InferredEnumHints<'_>,
         context: &LowerCtx,
     ) -> Option<String> {
         let template = self.enum_templates[name].clone();
@@ -6854,7 +7159,27 @@ impl Analyzer {
             type_groups,
             &context.type_substitutions,
         )?;
-        if let Some(expected) = expected.filter(|ty| **ty != Ty::Error) {
+        if let Some(payload_hint) = hints.payload.filter(|hint| hint.ty != Ty::Error) {
+            let Some(payload_parameter) = template.compile_groups.iter().flatten().next() else {
+                self.error(format!(
+                    "internal error: coalescing enum `{name}` has no payload type parameter"
+                ));
+                return None;
+            };
+            let payload_template = Type::Named(payload_parameter.name.clone(), Vec::new());
+            if let Err(message) = self.unify_template_ty(
+                &payload_template,
+                &payload_hint.ty,
+                payload_hint.source.as_ref(),
+                &compile_parameters,
+                &mut inferred,
+                "payload type of `??`",
+            ) {
+                self.error(message);
+                return None;
+            }
+        }
+        if let Some(expected) = hints.result.filter(|ty| **ty != Ty::Error) {
             let result_template = Type::Named(
                 name.to_owned(),
                 template
@@ -10034,7 +10359,7 @@ fn substitute_expr_types(expression: &mut Expr, substitutions: &HashMap<String, 
         Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Infer => {}
         Expr::Unary(_, operand) => substitute_expr_types(operand, substitutions),
         Expr::Borrow { value, .. } => substitute_expr_types(value, substitutions),
-        Expr::Binary(left, _, right) | Expr::Assign(left, right) => {
+        Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
             substitute_expr_types(left, substitutions);
             substitute_expr_types(right, substitutions);
         }
@@ -10797,6 +11122,167 @@ let main(): i32 = {
         };
         assert!(ir.contains(&hex_name(&nominal_instance_name(&option))));
         assert!(ir.contains(&hex_name(&nominal_instance_name(&result))));
+    }
+
+    #[test]
+    fn coalesce_lowers_option_and_result_through_lazy_match_control_flow() {
+        let ir = compile_text(
+            r#"
+let make(mut borrow count: i32): Option(i32) = {
+  count = count + 1
+  Option(i32).Some(20)
+}
+let fallback(mut borrow count: i32): i32 = {
+  count = count + 10
+  22
+}
+let main(): i32 = {
+  let mut count = 0
+  let option = make(count) ?? fallback(count)
+  let result = Result(i32, bool).Err(false) ?? option
+  if count == 11 { result } else { 0 }
+}
+"#,
+        )
+        .expect("Option and Result coalescing must compile");
+
+        let calls_to_make = ir
+            .lines()
+            .filter(|line| line.contains("call ") && line.contains(&function_symbol("make")))
+            .count();
+        assert_eq!(calls_to_make, 1, "left operand must be evaluated once");
+        assert!(ir.matches("switch i32").count() >= 2);
+        assert!(
+            ir.contains(" phi "),
+            "coalesce result must join through a phi"
+        );
+    }
+
+    #[test]
+    fn coalesce_hir_keeps_the_fallback_call_in_the_residual_arm() {
+        let program = crate::parser::parse(
+            r#"
+let fallback(): i32 = 42
+let main(): i32 = Option(i32).Some(20) ?? fallback()
+"#,
+        )
+        .expect("coalesce source must parse");
+        let mut analyzer = Analyzer::new(&program);
+        let hir = analyzer.analyze().expect("coalesce HIR must lower");
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        let main = hir
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .expect("main HIR");
+        let HirExprKind::Match { arms, .. } = &main.body.kind else {
+            panic!("coalesce must lower to match HIR");
+        };
+        assert_eq!(main.body.ty, Ty::I32);
+        assert_eq!(arms.len(), 2);
+        assert!(matches!(arms[0].body.kind, HirExprKind::Read { .. }));
+        assert!(matches!(
+            &arms[1].body.kind,
+            HirExprKind::Call { function, .. } if function == "fallback"
+        ));
+    }
+
+    #[test]
+    fn coalesce_probe_participates_in_outer_inference_and_nests_right_associatively() {
+        compile_text(
+            r#"
+let identity(T: type)(move value: T): T = value
+let Boxed(T: type) = struct(value: T)
+let main(): i32 = {
+  let first = Option(i32).None
+  let second = Option(i32).Some(42)
+  let scalar = identity(_)(Option(_).None ?? 42)
+  let boxed = identity(_)(Option(_).None ?? Boxed(i32)(value: 42))
+  let wide = identity(_)(Result(i64, _).Err(false) ?? 42)
+  identity(_)(first ?? second ?? 0) + scalar + boxed.value - 84
+}
+"#,
+        )
+        .expect("coalesce payload type must be visible to outer inference");
+    }
+
+    #[test]
+    fn coalesce_infers_empty_builtin_variants_from_expected_or_rhs_payloads() {
+        compile_text(
+            r#"
+let main(): i32 = {
+  let inferred_option = Option(_).None ?? 40
+  let inferred_result = Result(_, bool).Err(false) ?? 2
+  let option = Option(_).None ?? 40
+  let result = Result(_, bool).Err(false) ?? 1
+  let fully_inferred_result = Result(_, _).Err(false) ?? 1
+  let wide = Result(i64, _).Err(false) ?? 42
+  let nested = Option(i32).None ?? Option(_).None ?? 1
+  inferred_option + inferred_result + option + result + fully_inferred_result + nested - 43
+}
+"#,
+        )
+        .expect("coalesce payload evidence must resolve empty variants");
+    }
+
+    #[test]
+    fn coalesce_does_not_guess_an_unconstrained_result_error_type() {
+        let errors = compile_text("let main(): i32 = Result(_, _).Ok(40) ?? 2\n").unwrap_err();
+        assert!(errors.iter().any(|diagnostic| {
+            diagnostic.message.contains("cannot infer type argument")
+                && diagnostic.message.contains("`E`")
+                && diagnostic.message.contains("`Result`")
+        }));
+    }
+
+    #[test]
+    fn coalesce_reports_non_containers_mismatched_fallbacks_and_moves() {
+        let non_container = compile_text("let main(): i32 = 40 ?? 2\n").unwrap_err();
+        assert!(non_container.iter().any(|diagnostic| diagnostic.message
+            == "operator `??` requires `Option(T)` or `Result(T, E)` on the left, found `i32`"));
+
+        let mismatch = compile_text("let main(): i32 = Option(i32).None ?? true\n").unwrap_err();
+        assert!(mismatch
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("type mismatch")));
+
+        let moved = compile_text(
+            r#"
+let main(): i32 = {
+  let value = Result(i32, bool).Ok(42)
+  let answer = value ?? 0
+  value match { Ok(item) => item, Err(_) => answer }
+}
+"#,
+        )
+        .unwrap_err();
+        assert!(moved
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("moved")));
+    }
+
+    #[test]
+    fn coalesce_joins_a_fallback_only_move_as_possibly_moved() {
+        let errors = compile_text(
+            r#"
+let Boxed = struct(value: i32)
+let consume(move value: Boxed): i32 = value.value
+let main(): i32 = {
+  let spare = Boxed(41)
+  let choice = Option(i32).Some(1)
+  let answer = choice ?? consume(spare)
+  consume(spare) + answer
+}
+"#,
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|diagnostic| diagnostic.message == "use of possibly moved value"));
     }
 
     #[test]

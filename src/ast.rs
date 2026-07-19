@@ -194,6 +194,7 @@ pub enum Expr {
         value: Box<Expr>,
     },
     Binary(Box<Expr>, BinaryOp, Box<Expr>),
+    Coalesce(Box<Expr>, Box<Expr>),
     Assign(Box<Expr>, Box<Expr>),
     Call(Box<Expr>, Vec<CallArg>),
     Member(Box<Expr>, String),

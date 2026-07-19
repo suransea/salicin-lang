@@ -52,6 +52,7 @@ pub enum TokenKind {
     GreaterEqual,
     AndAnd,
     OrOr,
+    QuestionQuestion,
     Eof,
 }
 
@@ -166,6 +167,7 @@ impl Lexer {
                     '>' => TokenKind::Greater,
                     '&' if self.take('&') => TokenKind::AndAnd,
                     '|' if self.take('|') => TokenKind::OrOr,
+                    '?' if self.take('?') => TokenKind::QuestionQuestion,
                     '/' => TokenKind::Slash,
                     _ => {
                         return Err(self.error(
@@ -214,6 +216,7 @@ impl Lexer {
                     | TokenKind::GreaterEqual
                     | TokenKind::AndAnd
                     | TokenKind::OrOr
+                    | TokenKind::QuestionQuestion
             )
         });
 
@@ -358,12 +361,15 @@ mod tests {
 
     #[test]
     fn suppresses_newlines_in_parentheses_and_after_operators() {
-        let tokens = lex("f(\n  1,\n  2\n)\nlet x =\n  1 +\n  2\n").unwrap();
+        let tokens = lex("f(\n  1,\n  2\n)\nlet x =\n  1 +\n  2\nlet y = x ??\n  3\n").unwrap();
         let newlines = tokens
             .iter()
             .filter(|token| token.kind == TokenKind::Newline)
             .count();
-        assert_eq!(newlines, 2);
+        assert_eq!(newlines, 3);
+        assert!(tokens
+            .iter()
+            .any(|token| token.kind == TokenKind::QuestionQuestion));
     }
 
     #[test]

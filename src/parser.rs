@@ -735,7 +735,7 @@ impl Parser {
     }
 
     fn match_expression(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
-        let scrutinee = self.logical_or(allow_trailing_closure)?;
+        let scrutinee = self.coalesce(allow_trailing_closure)?;
         if !self.take(&TokenKind::Match) {
             return Ok(scrutinee);
         }
@@ -778,6 +778,16 @@ impl Parser {
             scrutinee: Box::new(scrutinee),
             arms,
         })
+    }
+
+    fn coalesce(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
+        let left = self.logical_or(allow_trailing_closure)?;
+        if self.take(&TokenKind::QuestionQuestion) {
+            let right = self.coalesce(allow_trailing_closure)?;
+            Ok(Expr::Coalesce(Box::new(left), Box::new(right)))
+        } else {
+            Ok(left)
+        }
     }
 
     fn pattern(&mut self) -> Result<Pattern, ParseError> {
@@ -1495,6 +1505,7 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::GreaterEqual => "`>=`",
         TokenKind::AndAnd => "`&&`",
         TokenKind::OrOr => "`||`",
+        TokenKind::QuestionQuestion => "`??`",
         TokenKind::Eof => "end of file",
     }
 }
@@ -2086,6 +2097,48 @@ mod tests {
                     && fields[0].name == "radius"
         ));
         assert_eq!(arms[2].pattern, Pattern::Wildcard);
+    }
+
+    #[test]
+    fn parses_coalesce_right_associatively_between_match_and_logical_or() {
+        let program = parse(
+            "let chain = a || b ??\n  c || d ?? e\n\
+             let matched = a ?? b match { _ => c }\n\
+             let assigned = target = a ?? b\n",
+        )
+        .unwrap();
+
+        let Item::Global(chain) = &program.items[0] else {
+            panic!("expected chain binding");
+        };
+        assert!(matches!(
+            &chain.value,
+            Expr::Coalesce(left, right)
+                if matches!(left.as_ref(), Expr::Binary(_, BinaryOp::Or, _))
+                    && matches!(
+                        right.as_ref(),
+                        Expr::Coalesce(nested_left, nested_right)
+                            if matches!(nested_left.as_ref(), Expr::Binary(_, BinaryOp::Or, _))
+                                && nested_right.as_ref() == &Expr::Name("e".into())
+                    )
+        ));
+
+        let Item::Global(matched) = &program.items[1] else {
+            panic!("expected match binding");
+        };
+        assert!(matches!(
+            &matched.value,
+            Expr::Match { scrutinee, .. }
+                if matches!(scrutinee.as_ref(), Expr::Coalesce(_, _))
+        ));
+
+        let Item::Global(assigned) = &program.items[2] else {
+            panic!("expected assignment binding");
+        };
+        assert!(matches!(
+            &assigned.value,
+            Expr::Assign(_, value) if matches!(value.as_ref(), Expr::Coalesce(_, _))
+        ));
     }
 
     #[test]
