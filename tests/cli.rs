@@ -345,6 +345,7 @@ fn m1_local_closure_programs_run_with_expected_result() {
         "closure_shared_repeat.sali",
         "closure_capture_parameter.sali",
         "closure_mut_capture.sali",
+        "closure_move_once.sali",
     ] {
         let output = salic()
             .arg("run")
@@ -367,6 +368,8 @@ fn m1_local_closure_errors_report_their_cause() {
         ("closure_partial_application.sali", "curried closures"),
         ("closure_fnmut_immutable.sali", "FnMut"),
         ("closure_capture_borrow_conflict.sali", "borrowed"),
+        ("closure_fnonce_twice.sali", "consumed"),
+        ("closure_move_capture_source_use.sali", "moved"),
     ] {
         let output = salic()
             .arg("check")

@@ -492,18 +492,21 @@ struct ClosureInfo {
     result: Ty,
     captures: Vec<ClosureCapture>,
     is_fn_mut: bool,
+    is_fn_once: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClosureCaptureMode {
     Shared,
     Mutable,
+    Move,
 }
 
 #[derive(Debug, Clone)]
 struct ClosureCapture {
     place: HirPlace,
     mode: ClosureCaptureMode,
+    value: Option<Box<HirExpr>>,
 }
 
 #[derive(Debug, Clone)]
@@ -1575,9 +1578,13 @@ impl Analyzer {
         let mut hir_params = Vec::new();
         let mut captures = Vec::new();
 
-        let is_fn_mut = capture_uses
+        let is_fn_once = capture_uses
             .iter()
-            .any(|capture| capture.mode == ClosureCaptureMode::Mutable);
+            .any(|capture| capture.mode == ClosureCaptureMode::Move);
+        let is_fn_mut = !is_fn_once
+            && capture_uses
+                .iter()
+                .any(|capture| capture.mode == ClosureCaptureMode::Mutable);
         for capture in capture_uses {
             let name = capture.name;
             let local = outer
@@ -1594,11 +1601,22 @@ impl Analyzer {
                 ));
                 continue;
             }
-            if !matches!(local.ty, Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool) {
-                self.error(format!(
-                    "closure capture `{name}` must be a Copy scalar for now"
-                ));
-                continue;
+            match capture.mode {
+                ClosureCaptureMode::Shared | ClosureCaptureMode::Mutable
+                    if !matches!(local.ty, Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool) =>
+                {
+                    self.error(format!(
+                        "closure capture `{name}` must be a Copy scalar for this capture mode"
+                    ));
+                    continue;
+                }
+                ClosureCaptureMode::Move if !matches!(local.ty, Ty::Struct(_) | Ty::Enum(_)) => {
+                    self.error(format!(
+                        "FnOnce move capture `{name}` must be a nominal root local for now"
+                    ));
+                    continue;
+                }
+                _ => {}
             }
 
             let mut place = HirPlace {
@@ -1610,27 +1628,30 @@ impl Analyzer {
                 root_mutable: local.mutable,
                 loan: None,
             };
-            let (loan_kind, parameter_mode, capability, mutable) = match capture.mode {
-                ClosureCaptureMode::Shared => (
-                    LoanKind::Shared,
-                    PassMode::Borrow,
-                    LocalCapability::SharedParam,
-                    false,
-                ),
+            let (parameter_mode, capability, mutable, value) = match capture.mode {
+                ClosureCaptureMode::Shared => {
+                    place.loan = self.acquire_loan(&place, LoanKind::Shared, true, outer);
+                    (PassMode::Borrow, LocalCapability::SharedParam, false, None)
+                }
                 ClosureCaptureMode::Mutable => {
                     self.ensure_writable(&place);
+                    place.loan = self.acquire_loan(&place, LoanKind::Mutable, true, outer);
+                    (PassMode::MutBorrow, LocalCapability::MutParam, true, None)
+                }
+                ClosureCaptureMode::Move => {
+                    let value = self.access_place(place.clone(), AccessKind::Move, outer);
                     (
-                        LoanKind::Mutable,
-                        PassMode::MutBorrow,
-                        LocalCapability::MutParam,
-                        true,
+                        PassMode::Move,
+                        LocalCapability::Owned,
+                        false,
+                        Some(Box::new(value)),
                     )
                 }
             };
-            place.loan = self.acquire_loan(&place, loan_kind, true, outer);
             captures.push(ClosureCapture {
                 place,
                 mode: capture.mode,
+                value,
             });
 
             let id = context.fresh_local();
@@ -1725,6 +1746,7 @@ impl Analyzer {
             result: result.clone(),
             captures,
             is_fn_mut,
+            is_fn_once,
         };
         HirExpr {
             ty: Ty::Function(FunctionTy {
@@ -1773,6 +1795,9 @@ impl Analyzer {
                 }
                 valid
             }
+            Expr::Call(_, _) => {
+                self.scan_direct_move_closure_call(expression, bound, outer, captures)
+            }
             Expr::Block(statements, tail) => {
                 let saved = bound.clone();
                 let mut valid = true;
@@ -1806,6 +1831,72 @@ impl Analyzer {
                 false
             }
         }
+    }
+
+    fn scan_direct_move_closure_call(
+        &mut self,
+        expression: &Expr,
+        bound: &HashSet<String>,
+        outer: &LowerCtx,
+        captures: &mut Vec<ClosureCaptureUse>,
+    ) -> bool {
+        let mut groups = Vec::new();
+        let root = flatten_call(expression, &mut groups);
+        let Expr::Name(function) = root else {
+            self.error("FnOnce capture requires a direct named-function call");
+            return false;
+        };
+        let Some(signature) = self.signatures.get(function).cloned() else {
+            self.error(format!(
+                "closure call `{function}` is not a top-level named function"
+            ));
+            return false;
+        };
+        if groups.len() != signature.groups.len() {
+            self.error(format!(
+                "named function `{function}` must be fully applied inside a closure"
+            ));
+            return false;
+        }
+
+        let mut valid = true;
+        for (arguments, parameters) in groups.iter().zip(&signature.groups) {
+            if arguments.len() != parameters.len() {
+                self.error(format!(
+                    "argument count mismatch in closure call to `{function}`"
+                ));
+                valid = false;
+            }
+            for (argument, parameter) in arguments.iter().zip(parameters) {
+                match &argument.value {
+                    Expr::Name(name) if bound.contains(name) => {}
+                    Expr::Name(name) => {
+                        if let Some(local) = outer.lookup(name) {
+                            let mode = effective_pass_mode(parameter.mode, &parameter.ty);
+                            if mode == PassMode::Move
+                                && matches!(local.ty, Ty::Struct(_) | Ty::Enum(_))
+                                && local.ty == parameter.ty
+                            {
+                                record_closure_capture(captures, name, ClosureCaptureMode::Move);
+                            } else {
+                                self.error(format!(
+                                    "closure call capture `{name}` must be a nominal root passed to a move parameter"
+                                ));
+                                valid = false;
+                            }
+                        }
+                    }
+                    Expr::Unit | Expr::Integer(_) | Expr::Bool(_) => {}
+                    _ => {
+                        self.error(
+                            "closure call arguments only support literals, closure parameters, or a nominal root move capture",
+                        );
+                        valid = false;
+                    }
+                }
+            }
+        }
+        valid
     }
 
     fn lower_place(&mut self, expression: &Expr, context: &mut LowerCtx) -> Option<HirPlace> {
@@ -2682,13 +2773,51 @@ impl Analyzer {
             ));
         }
 
+        if closure.is_fn_once {
+            let callable = HirPlace {
+                local: local.id,
+                root_ty: local.ty.clone(),
+                projections: Vec::new(),
+                ty: local.ty.clone(),
+                capability: LocalCapability::Owned,
+                root_mutable: local.mutable,
+                loan: None,
+            };
+            let key = PlaceKey::from(&callable);
+            if let Some(status) = context
+                .flow
+                .moves
+                .iter()
+                .find_map(|(moved, status)| places_overlap(&key, moved).then_some(*status))
+            {
+                self.error(match status {
+                    MoveStatus::Moved => {
+                        format!("FnOnce closure `{local_name}` was already consumed")
+                    }
+                    MoveStatus::MaybeMoved => {
+                        format!("FnOnce closure `{local_name}` may already be consumed")
+                    }
+                });
+            } else {
+                self.mark_moved(&callable, context);
+            }
+        }
+
         let mut arguments: Vec<_> = closure
             .captures
             .iter()
             .cloned()
-            .map(|capture| match capture.mode {
+            .enumerate()
+            .map(|(index, capture)| match capture.mode {
                 ClosureCaptureMode::Shared => HirArgument::SharedBorrow(capture.place),
                 ClosureCaptureMode::Mutable => HirArgument::MutBorrow(capture.place),
+                ClosureCaptureMode::Move => HirArgument::Move(HirExpr {
+                    ty: capture.place.ty,
+                    kind: HirExprKind::PartialCapture {
+                        binding: local.id,
+                        index,
+                    },
+                }),
             })
             .collect();
         let mut temporary_loans = Vec::new();
@@ -3259,8 +3388,12 @@ fn record_closure_capture(
     mode: ClosureCaptureMode,
 ) {
     if let Some(capture) = captures.iter_mut().find(|capture| capture.name == name) {
-        if mode == ClosureCaptureMode::Mutable {
-            capture.mode = mode;
+        match mode {
+            ClosureCaptureMode::Move => capture.mode = mode,
+            ClosureCaptureMode::Mutable if capture.mode == ClosureCaptureMode::Shared => {
+                capture.mode = mode;
+            }
+            ClosureCaptureMode::Shared | ClosureCaptureMode::Mutable => {}
         }
     } else {
         captures.push(ClosureCaptureUse {
@@ -4117,7 +4250,37 @@ impl<'a> FunctionEmitter<'a> {
                     }
                     match statement {
                         HirStmt::Let(binding) => {
-                            if matches!(binding.value.kind, HirExprKind::LocalClosure(_)) {
+                            if let HirExprKind::LocalClosure(closure) = &binding.value.kind {
+                                let mut stored = Vec::new();
+                                for capture in &closure.captures {
+                                    if capture.mode != ClosureCaptureMode::Move {
+                                        stored.push(None);
+                                        continue;
+                                    }
+                                    let value = self.emit_expr(
+                                        capture.value.as_deref().ok_or_else(|| {
+                                            Diagnostic::new(
+                                                "internal error: move closure capture has no value",
+                                            )
+                                        })?,
+                                    )?;
+                                    if self.terminated {
+                                        break;
+                                    }
+                                    let pointer = self.fresh_register();
+                                    let ty = llvm_value_type(&value.ty)?;
+                                    self.instruction(format!(
+                                        "{pointer} = alloca {ty} ; closure capture"
+                                    ));
+                                    self.instruction(format!(
+                                        "store {ty} {}, ptr {pointer}",
+                                        value.value()?
+                                    ));
+                                    stored.push(Some((value.ty, pointer)));
+                                }
+                                if !self.terminated {
+                                    self.partial_captures.insert(binding.id, stored);
+                                }
                                 continue;
                             }
                             if let HirExprKind::Partial { captures, .. } = &binding.value.kind {
@@ -5240,6 +5403,65 @@ let main(): i32 = {
         assert!(errors
             .iter()
             .any(|error| error.message.contains("borrowed")));
+    }
+
+    #[test]
+    fn stores_and_consumes_an_fn_once_nominal_capture() {
+        let ir = compile_text(
+            r#"
+let Payload = struct(value: i32)
+let take(move payload: Payload): i32 = payload.value
+let main(): i32 = {
+  let payload = Payload(value: 42)
+  let invoke = { -> take(payload) }
+  invoke()
+}
+"#,
+        )
+        .unwrap();
+        let symbol = function_symbol("__closure.0");
+        assert!(ir.contains(&format!(
+            "define internal i32 @{symbol}(%sali.type.5061796c6f6164 %arg.0)"
+        )));
+        assert!(ir.contains("; closure capture"));
+        assert!(ir.contains(&format!("call i32 @{symbol}(%sali.type.5061796c6f6164")));
+    }
+
+    #[test]
+    fn rejects_calling_an_fn_once_closure_twice() {
+        let errors = compile_text(
+            r#"
+let Payload = struct(value: i32)
+let take(move payload: Payload): i32 = payload.value
+let main(): i32 = {
+  let payload = Payload(value: 42)
+  let invoke = { -> take(payload) }
+  invoke()
+  invoke()
+}
+"#,
+        )
+        .unwrap_err();
+        assert!(errors.iter().any(|error| {
+            error.message.contains("FnOnce") && error.message.contains("consumed")
+        }));
+    }
+
+    #[test]
+    fn moves_an_fn_once_source_when_the_closure_is_created() {
+        let errors = compile_text(
+            r#"
+let Payload = struct(value: i32)
+let take(move payload: Payload): i32 = payload.value
+let main(): i32 = {
+  let payload = Payload(value: 42)
+  let invoke = { -> take(payload) }
+  payload.value
+}
+"#,
+        )
+        .unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains("moved")));
     }
 
     #[test]

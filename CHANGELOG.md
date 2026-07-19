@@ -14,7 +14,8 @@ M1 development is in progress.
 - Added place-aware `copy` and `move` checking, including use-after-move diagnostics.
 - Added shared and mutable borrows, explicit borrow values, and pointer-based borrow parameters.
 - Added path-sensitive move-state joins for conditionals, short-circuit expressions and matches.
-- Added lambda lifting for local, non-escaping closures with shared and mutable scalar captures.
+- Added lambda lifting for local, non-escaping closures with shared/mutable scalar captures and
+  single-use nominal move captures.
 
 ## 0.1.0 - 2026-07-20
 
