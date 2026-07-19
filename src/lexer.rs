@@ -14,6 +14,7 @@ pub enum TokenKind {
     While,
     Loop,
     Break,
+    Extend,
     Struct,
     Enum,
     Match,
@@ -289,6 +290,7 @@ impl Lexer {
             "while" => TokenKind::While,
             "loop" => TokenKind::Loop,
             "break" => TokenKind::Break,
+            "extend" => TokenKind::Extend,
             "struct" => TokenKind::Struct,
             "enum" => TokenKind::Enum,
             "match" => TokenKind::Match,
@@ -380,6 +382,12 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn recognizes_extend_as_a_keyword() {
+        let tokens = lex("extend A { let answer = 42 }").unwrap();
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Extend));
     }
 
     #[test]

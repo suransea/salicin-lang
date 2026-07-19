@@ -1,0 +1,11 @@
+let Number = struct(raw: i32)
+
+extend Number {
+  let value(borrow self)(): i32 = self.raw
+  let value = 2
+}
+
+let main(): i32 = {
+  let number = Number(40)
+  number.value() + Number.value
+}

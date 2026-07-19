@@ -9,6 +9,20 @@ pub enum Item {
     Global(Binding),
     Struct(StructDef),
     Enum(EnumDef),
+    Extend(ExtendDef),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtendDef {
+    pub target: Type,
+    pub trait_ref: Option<Type>,
+    pub members: Vec<ExtendMember>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExtendMember {
+    Function(Function),
+    Const(Binding),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -23,6 +23,10 @@ M1 development is in progress.
   loop body.
 - Added inline fixed `Array(T, N)` values, array literals, and runtime-checked `i32` indexing;
   the initial subset is limited to `Copy` elements and read-only indexing.
+- Added inherent `extend` blocks with statically dispatched `borrow self`, `mut borrow self`, and
+  `move self` methods, plus type-namespace associated functions and constants.
+- Added separate instance/type member lookup and conservative diagnostics for temporary receivers
+  and non-`Copy` bound-method partial application; trait-backed extensions remain reserved for M2.
 
 ## 0.1.0 - 2026-07-20
 

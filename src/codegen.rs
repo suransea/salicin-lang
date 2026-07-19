@@ -8,8 +8,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::ast::{
-    BinaryOp, Binding, CallArg, EnumDef, Expr, Function, Item, MatchArm, PassMode, Pattern,
-    PatternFields, Program, Stmt, StructDef, Type, UnaryOp, VariantFields,
+    BinaryOp, Binding, CallArg, EnumDef, Expr, ExtendDef, ExtendMember, Function, Item, MatchArm,
+    PassMode, Pattern, PatternFields, Program, Stmt, StructDef, Type, UnaryOp, VariantFields,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -648,6 +648,13 @@ impl LowerCtx {
     }
 }
 
+#[derive(Default)]
+struct InherentMemberSet {
+    methods: HashMap<String, String>,
+    functions: HashMap<String, String>,
+    constants: HashMap<String, String>,
+}
+
 struct Analyzer {
     functions: HashMap<String, Function>,
     globals: HashMap<String, Binding>,
@@ -655,6 +662,7 @@ struct Analyzer {
     enum_defs: HashMap<String, EnumDef>,
     struct_layouts: HashMap<String, StructLayout>,
     enum_layouts: HashMap<String, EnumLayout>,
+    inherent_members: HashMap<String, InherentMemberSet>,
     function_order: Vec<String>,
     global_order: Vec<String>,
     struct_order: Vec<String>,
@@ -679,6 +687,7 @@ impl Analyzer {
             enum_defs: HashMap::new(),
             struct_layouts: HashMap::new(),
             enum_layouts: HashMap::new(),
+            inherent_members: HashMap::new(),
             function_order: Vec::new(),
             global_order: Vec::new(),
             struct_order: Vec::new(),
@@ -699,12 +708,17 @@ impl Analyzer {
 
     fn collect_items(&mut self, program: &Program) {
         let mut names = HashSet::new();
+        let mut extensions = Vec::new();
         for item in &program.items {
             let name = match item {
                 Item::Function(function) => &function.name,
                 Item::Global(binding) => &binding.name,
                 Item::Struct(definition) => &definition.name,
                 Item::Enum(definition) => &definition.name,
+                Item::Extend(extension) => {
+                    extensions.push(extension.clone());
+                    continue;
+                }
             };
             if !names.insert(name.clone()) {
                 self.error(format!("duplicate top-level name `{name}`"));
@@ -736,10 +750,14 @@ impl Analyzer {
                     self.enum_defs
                         .insert(definition.name.clone(), definition.clone());
                 }
+                Item::Extend(_) => unreachable!("extensions were collected separately"),
             }
         }
 
         self.collect_nominal_layouts();
+        for extension in extensions {
+            self.collect_extension(extension);
+        }
 
         for name in self.function_order.clone() {
             let function = self.functions[&name].clone();
@@ -773,6 +791,148 @@ impl Analyzer {
         }
 
         self.validate_nominal_layouts();
+    }
+
+    fn collect_extension(&mut self, extension: ExtendDef) {
+        if extension.trait_ref.is_some() {
+            self.error("trait extensions are reserved for M2; M1 only supports inherent extend");
+            return;
+        }
+        let target = match extension.target {
+            Type::Named(name, arguments) if arguments.is_empty() => name,
+            Type::Named(name, _) => {
+                self.error(format!(
+                    "generic extend target `{name}` is not supported in M1"
+                ));
+                return;
+            }
+            _ => {
+                self.error("extend target must be a non-generic nominal type in M1");
+                return;
+            }
+        };
+        if !self.struct_defs.contains_key(&target) && !self.enum_defs.contains_key(&target) {
+            self.error(format!("unknown extension target `{target}`"));
+            return;
+        }
+
+        for member in extension.members {
+            match member {
+                ExtendMember::Function(mut function) => {
+                    let short_name = function.name.clone();
+                    let is_method = function
+                        .groups
+                        .first()
+                        .is_some_and(|group| group.len() == 1 && group[0].name == "self");
+                    if is_method
+                        && self.struct_layouts.get(&target).is_some_and(|layout| {
+                            layout.fields.iter().any(|field| field.name == short_name)
+                        })
+                    {
+                        self.error(format!(
+                            "inherent method `{target}.{short_name}` conflicts with field `{short_name}`"
+                        ));
+                        continue;
+                    }
+                    if !is_method
+                        && self.enum_layouts.get(&target).is_some_and(|layout| {
+                            layout
+                                .variants
+                                .iter()
+                                .any(|variant| variant.name == short_name)
+                        })
+                    {
+                        self.error(format!(
+                            "associated function `{target}.{short_name}` conflicts with variant `{short_name}`"
+                        ));
+                        continue;
+                    }
+
+                    let duplicate = {
+                        let members = self.inherent_members.entry(target.clone()).or_default();
+                        if is_method {
+                            members.methods.contains_key(&short_name)
+                        } else {
+                            members.functions.contains_key(&short_name)
+                                || members.constants.contains_key(&short_name)
+                        }
+                    };
+                    if duplicate {
+                        self.error(if is_method {
+                            format!("duplicate inherent method `{target}.{short_name}`")
+                        } else {
+                            format!("duplicate associated member `{target}.{short_name}`")
+                        });
+                        continue;
+                    }
+
+                    for group in &mut function.groups {
+                        for parameter in group {
+                            substitute_self_type(&mut parameter.ty, &target);
+                        }
+                    }
+                    if let Some(result) = &mut function.return_type {
+                        substitute_self_type(result, &target);
+                    }
+                    let canonical = if is_method {
+                        inherent_method_name(&target, &short_name)
+                    } else {
+                        associated_function_name(&target, &short_name)
+                    };
+                    function.name = canonical.clone();
+                    self.function_order.push(canonical.clone());
+                    self.functions.insert(canonical.clone(), function);
+                    let members = self.inherent_members.entry(target.clone()).or_default();
+                    if is_method {
+                        members.methods.insert(short_name, canonical);
+                    } else {
+                        members.functions.insert(short_name, canonical);
+                    }
+                }
+                ExtendMember::Const(mut binding) => {
+                    let short_name = binding.name.clone();
+                    if self.enum_layouts.get(&target).is_some_and(|layout| {
+                        layout
+                            .variants
+                            .iter()
+                            .any(|variant| variant.name == short_name)
+                    }) {
+                        self.error(format!(
+                            "associated constant `{target}.{short_name}` conflicts with variant `{short_name}`"
+                        ));
+                        continue;
+                    }
+                    let duplicate = self
+                        .inherent_members
+                        .entry(target.clone())
+                        .or_default()
+                        .constants
+                        .contains_key(&short_name)
+                        || self
+                            .inherent_members
+                            .get(&target)
+                            .is_some_and(|members| members.functions.contains_key(&short_name));
+                    if duplicate {
+                        self.error(format!(
+                            "duplicate associated member `{target}.{short_name}`"
+                        ));
+                        continue;
+                    }
+                    if let Some(annotation) = &mut binding.annotation {
+                        substitute_self_type(annotation, &target);
+                    }
+                    let canonical = associated_constant_name(&target, &short_name);
+                    binding.name = canonical.clone();
+                    self.global_order.push(canonical.clone());
+                    self.globals.insert(canonical.clone(), binding);
+                    self.inherent_members
+                        .entry(target.clone())
+                        .or_default()
+                        .constants
+                        .insert(short_name, canonical);
+                }
+            }
+        }
     }
 
     fn collect_nominal_layouts(&mut self) {
@@ -2488,35 +2648,129 @@ impl Analyzer {
     }
 
     fn lower_member(&mut self, base: &Expr, member: &str, context: &mut LowerCtx) -> HirExpr {
-        if let Expr::Name(enum_name) = base {
-            if let Some(layout) = self.enum_layouts.get(enum_name).cloned() {
-                let Some((variant, variant_layout)) = layout
-                    .variants
-                    .iter()
-                    .enumerate()
-                    .find(|(_, variant)| variant.name == member)
-                else {
-                    self.error(format!("unknown variant `{member}` on enum `{enum_name}`"));
-                    return error_expr();
-                };
-                if !variant_layout.fields.is_empty() {
+        if let Expr::Name(target) = base {
+            if context.lookup(target).is_none()
+                && (self.struct_layouts.contains_key(target)
+                    || self.enum_layouts.contains_key(target))
+            {
+                if let Some(canonical) = self
+                    .inherent_members
+                    .get(target)
+                    .and_then(|members| members.constants.get(member))
+                    .cloned()
+                {
+                    return HirExpr {
+                        ty: self.global_type(&canonical),
+                        kind: HirExprKind::Global(canonical),
+                    };
+                }
+                if self
+                    .inherent_members
+                    .get(target)
+                    .is_some_and(|members| members.functions.contains_key(member))
+                {
                     self.error(format!(
-                        "variant `{enum_name}.{member}` requires constructor arguments"
+                        "associated function `{target}.{member}` must be called"
                     ));
                     return error_expr();
                 }
-                return HirExpr {
-                    ty: Ty::Enum(enum_name.clone()),
-                    kind: HirExprKind::ConstructEnum {
-                        name: enum_name.clone(),
-                        variant,
-                        fields: Vec::new(),
-                    },
-                };
+            }
+            if context.lookup(target).is_none() {
+                if let Some(layout) = self.enum_layouts.get(target).cloned() {
+                    if let Some((variant, variant_layout)) = layout
+                        .variants
+                        .iter()
+                        .enumerate()
+                        .find(|(_, variant)| variant.name == member)
+                    {
+                        if !variant_layout.fields.is_empty() {
+                            self.error(format!(
+                                "variant `{target}.{member}` requires constructor arguments"
+                            ));
+                            return error_expr();
+                        }
+                        return HirExpr {
+                            ty: Ty::Enum(target.clone()),
+                            kind: HirExprKind::ConstructEnum {
+                                name: target.clone(),
+                                variant,
+                                fields: Vec::new(),
+                            },
+                        };
+                    }
+                    if self
+                        .inherent_members
+                        .get(target)
+                        .is_some_and(|members| members.methods.contains_key(member))
+                    {
+                        self.error(format!(
+                            "inherent method `{target}.{member}` requires an instance receiver and must be called"
+                        ));
+                        return error_expr();
+                    }
+                    self.error(format!(
+                        "unknown associated member or variant `{member}` on `{target}`"
+                    ));
+                    return error_expr();
+                }
+                if self.struct_layouts.contains_key(target) {
+                    if self
+                        .inherent_members
+                        .get(target)
+                        .is_some_and(|members| members.methods.contains_key(member))
+                    {
+                        self.error(format!(
+                            "inherent method `{target}.{member}` requires an instance receiver and must be called"
+                        ));
+                        return error_expr();
+                    }
+                    self.error(format!(
+                        "unknown associated member `{member}` on `{target}`"
+                    ));
+                    return error_expr();
+                }
             }
         }
 
         if let Some(place) = self.lower_place_without_diagnostic(base, context) {
+            if let Ty::Struct(target) | Ty::Enum(target) = &place.ty {
+                if self
+                    .inherent_members
+                    .get(target)
+                    .is_some_and(|members| members.methods.contains_key(member))
+                {
+                    self.error(format!(
+                        "inherent method `{target}.{member}` must be called"
+                    ));
+                    return error_expr();
+                }
+                let has_field = self
+                    .struct_layouts
+                    .get(target)
+                    .is_some_and(|layout| layout.fields.iter().any(|field| field.name == member));
+                if !has_field {
+                    if self
+                        .inherent_members
+                        .get(target)
+                        .is_some_and(|members| members.functions.contains_key(member))
+                    {
+                        self.error(format!(
+                            "associated function `{target}.{member}` must be called on the type"
+                        ));
+                        return error_expr();
+                    }
+                    if self
+                        .inherent_members
+                        .get(target)
+                        .is_some_and(|members| members.constants.contains_key(member))
+                    {
+                        self.error(format!(
+                            "associated constant `{target}.{member}` must be accessed on the type"
+                        ));
+                        return error_expr();
+                    }
+                }
+            }
             let Ty::Struct(struct_name) = &place.ty else {
                 self.error(format!(
                     "member access requires a struct value, found `{}`",
@@ -3049,12 +3303,6 @@ impl Analyzer {
         let mut groups = Vec::new();
         let root = flatten_call(expression, &mut groups);
         if let Expr::Name(name) = root {
-            if self.struct_layouts.contains_key(name) {
-                return self.lower_struct_constructor(name, &groups, context);
-            }
-            if self.functions.contains_key(name) {
-                return self.lower_named_function_call(name, &groups, context);
-            }
             if let Some(local) = context.lookup(name).cloned() {
                 if local.closure.is_some() {
                     return self.lower_local_closure_call(name, &local, &groups, context);
@@ -3062,6 +3310,14 @@ impl Analyzer {
                 if local.partial.is_some() {
                     return self.lower_local_partial_call(name, &local, &groups, context);
                 }
+                self.error(format!("local value `{name}` is not callable"));
+                return error_expr();
+            }
+            if self.struct_layouts.contains_key(name) {
+                return self.lower_struct_constructor(name, &groups, context);
+            }
+            if self.functions.contains_key(name) {
+                return self.lower_named_function_call(name, &groups, context);
             }
             if let Some((enum_name, variant)) = self.resolve_short_variant(name, expected) {
                 return self.lower_enum_constructor(&enum_name, variant, &groups, context);
@@ -3071,23 +3327,215 @@ impl Analyzer {
         }
         if let Expr::Member(base, variant_name) = root {
             if let Expr::Name(enum_name) = base.as_ref() {
-                if let Some(layout) = self.enum_layouts.get(enum_name) {
-                    if let Some(variant) = layout
-                        .variants
-                        .iter()
-                        .position(|variant| variant.name == *variant_name)
+                if context.lookup(enum_name).is_none()
+                    && (self.struct_layouts.contains_key(enum_name)
+                        || self.enum_layouts.contains_key(enum_name))
+                {
+                    if let Some(canonical) = self
+                        .inherent_members
+                        .get(enum_name)
+                        .and_then(|members| members.functions.get(variant_name))
+                        .cloned()
                     {
-                        return self.lower_enum_constructor(enum_name, variant, &groups, context);
+                        return self.lower_named_function_call(&canonical, &groups, context);
                     }
-                    self.error(format!(
-                        "unknown variant `{variant_name}` on enum `{enum_name}`"
-                    ));
-                    return error_expr();
+                    if self
+                        .inherent_members
+                        .get(enum_name)
+                        .is_some_and(|members| members.constants.contains_key(variant_name))
+                    {
+                        self.error(format!(
+                            "associated constant `{enum_name}.{variant_name}` is not callable"
+                        ));
+                        return error_expr();
+                    }
+                }
+                if context.lookup(enum_name).is_none() {
+                    if let Some(layout) = self.enum_layouts.get(enum_name) {
+                        if let Some(variant) = layout
+                            .variants
+                            .iter()
+                            .position(|variant| variant.name == *variant_name)
+                        {
+                            return self
+                                .lower_enum_constructor(enum_name, variant, &groups, context);
+                        }
+                        if self
+                            .inherent_members
+                            .get(enum_name)
+                            .is_some_and(|members| members.methods.contains_key(variant_name))
+                        {
+                            self.error(format!(
+                                "inherent method `{enum_name}.{variant_name}` requires an instance receiver"
+                            ));
+                            return error_expr();
+                        }
+                        self.error(format!(
+                            "unknown associated member or variant `{variant_name}` on `{enum_name}`"
+                        ));
+                        return error_expr();
+                    }
+                    if self.struct_layouts.contains_key(enum_name) {
+                        if self
+                            .inherent_members
+                            .get(enum_name)
+                            .is_some_and(|members| members.methods.contains_key(variant_name))
+                        {
+                            self.error(format!(
+                                "inherent method `{enum_name}.{variant_name}` requires an instance receiver"
+                            ));
+                            return error_expr();
+                        }
+                        self.error(format!(
+                            "unknown associated member `{variant_name}` on `{enum_name}`"
+                        ));
+                        return error_expr();
+                    }
                 }
             }
+            return self.lower_bound_method_call(base, variant_name, &groups, context);
         }
-        self.error("calls require a named function, constructor, or local partial application");
+        self.error("calls require a named function, constructor, associated function, or method");
         error_expr()
+    }
+
+    fn lower_bound_method_call(
+        &mut self,
+        receiver: &Expr,
+        member: &str,
+        groups: &[&[CallArg]],
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let Some(receiver_place) = self.lower_place_without_diagnostic(receiver, context) else {
+            self.error(format!(
+                "temporary receiver for method `{member}` is not supported yet; bind it to a local first"
+            ));
+            return error_expr();
+        };
+        let target = match &receiver_place.ty {
+            Ty::Struct(name) | Ty::Enum(name) => name.clone(),
+            ty => {
+                self.error(format!(
+                    "method call requires a nominal receiver, found `{ty}`"
+                ));
+                return error_expr();
+            }
+        };
+        let Some(canonical) = self
+            .inherent_members
+            .get(&target)
+            .and_then(|members| members.methods.get(member))
+            .cloned()
+        else {
+            if self
+                .inherent_members
+                .get(&target)
+                .is_some_and(|members| members.functions.contains_key(member))
+            {
+                self.error(format!(
+                    "associated function `{target}.{member}` must be called on the type"
+                ));
+            } else if self
+                .inherent_members
+                .get(&target)
+                .is_some_and(|members| members.constants.contains_key(member))
+            {
+                self.error(format!(
+                    "associated constant `{target}.{member}` must be accessed on the type"
+                ));
+            } else {
+                self.error(format!("unknown inherent method `{member}` on `{target}`"));
+            }
+            return error_expr();
+        };
+
+        let function_ty = self.function_type(&canonical);
+        let Ty::Function(function_ty) = function_ty else {
+            return error_expr();
+        };
+        let signature = self.signatures[&canonical].clone();
+        let Some(receiver_parameter) = signature.groups.first().and_then(|group| group.first())
+        else {
+            self.error(format!(
+                "internal error: method `{target}.{member}` has no receiver parameter"
+            ));
+            return error_expr();
+        };
+        let consumed_groups = groups.len() + 1;
+        if consumed_groups > signature.groups.len() {
+            self.error(format!(
+                "too many parameter groups in method call `{target}.{member}`: expected {}, found {}",
+                signature.groups.len() - 1,
+                groups.len()
+            ));
+            return error_expr();
+        }
+
+        let mut temporary_loans = Vec::new();
+        let mut arguments = vec![self.lower_call_argument(
+            receiver,
+            receiver_parameter,
+            context,
+            &mut temporary_loans,
+        )];
+        for (relative_group, arguments_ast) in groups.iter().enumerate() {
+            let group_index = relative_group + 1;
+            let params = &signature.groups[group_index];
+            if arguments_ast.len() != params.len() {
+                self.error(format!(
+                    "argument count mismatch in group {} of method `{target}.{member}`: expected {}, found {}",
+                    relative_group + 1,
+                    params.len(),
+                    arguments_ast.len()
+                ));
+            }
+            for (argument, parameter) in arguments_ast.iter().zip(params) {
+                if argument.label.is_some() {
+                    self.error(format!(
+                        "named arguments are not allowed in call to method `{target}.{member}`"
+                    ));
+                }
+                arguments.push(self.lower_call_argument(
+                    &argument.value,
+                    parameter,
+                    context,
+                    &mut temporary_loans,
+                ));
+            }
+        }
+
+        let complete = consumed_groups == signature.groups.len();
+        if !complete
+            && arguments
+                .iter()
+                .any(|argument| !matches!(argument, HirArgument::Copy(_)))
+        {
+            self.error(format!(
+                "partial application of bound method `{target}.{member}` may only capture Copy arguments"
+            ));
+        }
+        self.release_loans(&temporary_loans, context);
+        if complete {
+            HirExpr {
+                ty: (*function_ty.result).clone(),
+                kind: HirExprKind::Call {
+                    function: canonical,
+                    arguments,
+                },
+            }
+        } else {
+            HirExpr {
+                ty: Ty::Function(FunctionTy {
+                    groups: function_ty.groups[consumed_groups..].to_vec(),
+                    result: function_ty.result.clone(),
+                }),
+                kind: HirExprKind::Partial {
+                    function: canonical,
+                    consumed_groups,
+                    captures: arguments,
+                },
+            }
+        }
     }
 
     fn lower_local_closure_call(
@@ -5454,6 +5902,33 @@ fn const_ir(value: &ConstValue, ty: &Ty, program: &HirProgram) -> Result<String,
     }
 }
 
+fn substitute_self_type(ty: &mut Type, target: &str) {
+    match ty {
+        Type::Array(element, _) => substitute_self_type(element, target),
+        Type::Named(name, arguments) if name == "Self" && arguments.is_empty() => {
+            *ty = Type::Named(target.to_owned(), Vec::new());
+        }
+        Type::Named(_, arguments) => {
+            for argument in arguments {
+                substitute_self_type(argument, target);
+            }
+        }
+        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Void => {}
+    }
+}
+
+fn inherent_method_name(target: &str, member: &str) -> String {
+    format!("{target}::method::{member}")
+}
+
+fn associated_function_name(target: &str, member: &str) -> String {
+    format!("{target}::function::{member}")
+}
+
+fn associated_constant_name(target: &str, member: &str) -> String {
+    format!("{target}::constant::{member}")
+}
+
 fn function_symbol(name: &str) -> String {
     format!("sali.fn.{}", hex_name(name))
 }
@@ -6129,6 +6604,78 @@ let main(): i32 = {
         assert!(errors
             .iter()
             .any(|error| error.message.contains("partial application")));
+    }
+
+    #[test]
+    fn emits_kind_discriminated_inherent_receiver_abis() {
+        let ir = compile_text(
+            r#"
+let Counter = struct(value: i32)
+extend Counter {
+  let read(borrow self)(): i32 = self.value
+  let reset(mut borrow self)(): () = { self.value = 0 }
+  let take(move self)(): i32 = self.value
+  let answer = 1
+}
+let main(): i32 = {
+  let mut counter = Counter(42)
+  let value = counter.read()
+  counter.reset()
+  value + counter.take() + Counter.answer
+}
+"#,
+        )
+        .unwrap();
+        let read = function_symbol("Counter::method::read");
+        let reset = function_symbol("Counter::method::reset");
+        let take = function_symbol("Counter::method::take");
+        let answer = global_symbol("Counter::constant::answer");
+        assert!(ir.contains(&format!("define internal i32 @{read}(ptr %arg.0)")));
+        assert!(ir.contains(&format!("define internal void @{reset}(ptr %arg.0)")));
+        assert!(ir.contains(&format!(
+            "define internal i32 @{take}(%sali.type.436f756e746572 %arg.0)"
+        )));
+        assert!(ir.contains(&format!("call i32 @{read}(ptr")));
+        assert!(ir.contains(&format!("call void @{reset}(ptr")));
+        assert!(ir.contains(&format!("call i32 @{take}(%sali.type.436f756e746572")));
+        assert!(ir.contains(&format!("@{answer} = internal unnamed_addr constant i32 1")));
+    }
+
+    #[test]
+    fn substitutes_self_in_associated_function_parameters_and_results() {
+        compile_text(
+            r#"
+let Boxed = struct(value: i32)
+extend Boxed {
+  let identity(value: Self): Self = value
+}
+let main(): i32 = Boxed.identity(Boxed(42)).value
+"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn keeps_same_named_method_and_associated_function_symbols_distinct() {
+        let ir = compile_text(
+            r#"
+let Number = struct(raw: i32)
+extend Number {
+  let value(borrow self)(): i32 = self.raw
+  let value(): i32 = 2
+}
+let main(): i32 = {
+  let number = Number(40)
+  number.value() + Number.value()
+}
+"#,
+        )
+        .unwrap();
+        let method = function_symbol("Number::method::value");
+        let function = function_symbol("Number::function::value");
+        assert_ne!(method, function);
+        assert!(ir.contains(&format!("@{method}")));
+        assert!(ir.contains(&format!("@{function}")));
     }
 
     #[test]

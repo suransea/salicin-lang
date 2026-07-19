@@ -1,9 +1,9 @@
 use std::fmt;
 
 use crate::ast::{
-    BinaryOp, Binding, CallArg, EnumDef, Expr, Field, Function, Item, MatchArm, Param, PassMode,
-    Pattern, PatternField, PatternFields, Program, Stmt, StructDef, Type, UnaryOp, VariantDef,
-    VariantFields,
+    BinaryOp, Binding, CallArg, EnumDef, Expr, ExtendDef, ExtendMember, Field, Function, Item,
+    MatchArm, Param, PassMode, Pattern, PatternField, PatternFields, Program, Stmt, StructDef,
+    Type, UnaryOp, VariantDef, VariantFields,
 };
 use crate::lexer::{lex, LexError, Token, TokenKind};
 
@@ -64,6 +64,19 @@ impl Parser {
     }
 
     fn item(&mut self) -> Result<Item, ParseError> {
+        if self.at(&TokenKind::Let) {
+            self.let_item()
+        } else if self.at(&TokenKind::Extend) {
+            self.extend_definition().map(Item::Extend)
+        } else {
+            Err(self.error_here(format!(
+                "expected `let` or `extend`, found {}",
+                describe(&self.current().kind)
+            )))
+        }
+    }
+
+    fn let_item(&mut self) -> Result<Item, ParseError> {
         self.expect(&TokenKind::Let, "`let`")?;
         let mutable = self.take(&TokenKind::Mut);
         let name = self.expect_ident("a declaration name")?;
@@ -127,6 +140,171 @@ impl Parser {
                 body: Some(body),
             }))
         }
+    }
+
+    fn extend_definition(&mut self) -> Result<ExtendDef, ParseError> {
+        self.expect(&TokenKind::Extend, "`extend`")?;
+        let target = self.type_expr()?;
+        let trait_ref = if self.take(&TokenKind::Colon) {
+            Some(self.type_expr()?)
+        } else {
+            None
+        };
+        self.expect(&TokenKind::LBrace, "`{` after extend target")?;
+        self.skip_separators();
+
+        let mut members = Vec::new();
+        while !self.at(&TokenKind::RBrace) {
+            if self.at(&TokenKind::Eof) {
+                return Err(self.error_here("expected `}` before end of extend declaration"));
+            }
+            members.push(self.extend_member()?);
+            if !self.at(&TokenKind::RBrace) && !self.at_separator() {
+                return Err(self.error_here("expected a newline or `;` after extend member"));
+            }
+            self.skip_separators();
+        }
+        self.expect(&TokenKind::RBrace, "`}` after extend members")?;
+
+        Ok(ExtendDef {
+            target,
+            trait_ref,
+            members,
+        })
+    }
+
+    fn extend_member(&mut self) -> Result<ExtendMember, ParseError> {
+        self.expect(&TokenKind::Let, "`let` in extend body")?;
+        if self.take(&TokenKind::Mut) {
+            let mutable = self.previous().clone();
+            return Err(self.error_at(&mutable, "extend members cannot be declared with `let mut`"));
+        }
+        let name = self.expect_ident("an extend member name")?;
+
+        let mut groups = Vec::new();
+        while self.at(&TokenKind::LParen) {
+            groups.push(self.extend_parameter_group()?);
+            self.take_newlines_if_followed_by(&[
+                TokenKind::LParen,
+                TokenKind::Colon,
+                TokenKind::Equal,
+            ]);
+        }
+        self.validate_receiver_groups(&groups)?;
+
+        let annotation = if self.take(&TokenKind::Colon) {
+            Some(self.type_expr()?)
+        } else {
+            None
+        };
+        if !groups.is_empty() {
+            self.take_newlines_if_followed_by(&[TokenKind::Equal]);
+        }
+        self.expect(&TokenKind::Equal, "`=` in extend member")?;
+
+        if self.at(&TokenKind::Struct) || self.at(&TokenKind::Enum) {
+            return Err(self.error_here("data declarations are not allowed in extend bodies"));
+        }
+
+        if groups.is_empty() {
+            Ok(ExtendMember::Const(Binding {
+                mutable: false,
+                name,
+                annotation,
+                value: self.expression(true)?,
+            }))
+        } else {
+            let body = if self.at(&TokenKind::LBrace) {
+                self.block()?
+            } else {
+                self.expression(true)?
+            };
+            Ok(ExtendMember::Function(Function {
+                name,
+                groups,
+                return_type: annotation,
+                body: Some(body),
+            }))
+        }
+    }
+
+    fn extend_parameter_group(&mut self) -> Result<Vec<Param>, ParseError> {
+        self.expect(&TokenKind::LParen, "`(`")?;
+        let mut params = Vec::new();
+        if self.take(&TokenKind::RParen) {
+            return Ok(params);
+        }
+
+        loop {
+            let mode = if self.take(&TokenKind::Copy) {
+                PassMode::Copy
+            } else if self.take(&TokenKind::Move) {
+                PassMode::Move
+            } else if self.take(&TokenKind::Borrow) {
+                PassMode::Borrow
+            } else if self.take(&TokenKind::Mut) {
+                self.expect(&TokenKind::Borrow, "`borrow` after `mut`")?;
+                PassMode::MutBorrow
+            } else {
+                PassMode::Inferred
+            };
+
+            let name = self.expect_ident("a parameter name or `self`")?;
+            let ty = if name == "self" {
+                if self.at(&TokenKind::Colon) {
+                    return Err(self.error_here(
+                        "extend receiver is contextual `self` and cannot have an explicit type",
+                    ));
+                }
+                Type::Named("Self".into(), Vec::new())
+            } else {
+                self.expect(&TokenKind::Colon, "`:` after parameter name")?;
+                self.type_expr()?
+            };
+            params.push(Param { mode, name, ty });
+
+            if self.take(&TokenKind::Comma) {
+                if self.take(&TokenKind::RParen) {
+                    break;
+                }
+            } else {
+                self.expect(&TokenKind::RParen, "`)`")?;
+                break;
+            }
+        }
+        Ok(params)
+    }
+
+    fn validate_receiver_groups(&self, groups: &[Vec<Param>]) -> Result<(), ParseError> {
+        let receivers = groups
+            .iter()
+            .enumerate()
+            .flat_map(|(group_index, group)| {
+                group
+                    .iter()
+                    .filter(|param| param.name == "self")
+                    .map(move |_| group_index)
+            })
+            .collect::<Vec<_>>();
+
+        if receivers.len() > 1 {
+            return Err(self.error_here("an extend method can have at most one `self` receiver"));
+        }
+        let Some(group_index) = receivers.first().copied() else {
+            return Ok(());
+        };
+        if group_index != 0 {
+            return Err(self.error_here("`self` must appear in the first parameter group"));
+        }
+        if groups[0].len() != 1 {
+            return Err(self.error_here("`self` must be the only parameter in its group"));
+        }
+        if groups.len() < 2 {
+            return Err(self.error_here(
+                "an instance method requires an explicit parameter group after `self`",
+            ));
+        }
+        Ok(())
     }
 
     fn struct_definition(&mut self, name: String) -> Result<StructDef, ParseError> {
@@ -268,6 +446,10 @@ impl Parser {
             };
 
             let name = self.expect_ident("a parameter name")?;
+            if name == "self" {
+                return Err(self
+                    .error_here("contextual `self` receivers are only allowed in extend methods"));
+            }
             self.expect(&TokenKind::Colon, "`:` after parameter name")?;
             let ty = self.type_expr()?;
             params.push(Param { mode, name, ty });
@@ -1084,6 +1266,7 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::While => "`while`",
         TokenKind::Loop => "`loop`",
         TokenKind::Break => "`break`",
+        TokenKind::Extend => "`extend`",
         TokenKind::Struct => "`struct`",
         TokenKind::Enum => "`enum`",
         TokenKind::Match => "`match`",
@@ -1584,6 +1767,135 @@ mod tests {
     fn array_length_must_be_a_non_negative_decimal_integer() {
         let error = parse("let main(values: Array(i32, -1)): i32 = 0\n").unwrap_err();
         assert!(error.message.contains("non-negative decimal integer"));
+    }
+
+    #[test]
+    fn parses_extend_methods_associated_functions_constants_and_trait_refs() {
+        let program = parse(
+            "let A = struct(value: i32)\n\
+             extend A: Foo {\n\
+               let reset(mut borrow self)(): () = {}\n\
+               let answer: i32 = 42\n\
+               let make(value: i32): A = A(value)\n\
+             }\n",
+        )
+        .unwrap();
+
+        let Item::Extend(extension) = &program.items[1] else {
+            panic!("expected extend declaration");
+        };
+        assert_eq!(extension.target, Type::Named("A".into(), Vec::new()));
+        assert_eq!(
+            extension.trait_ref,
+            Some(Type::Named("Foo".into(), Vec::new()))
+        );
+        assert_eq!(extension.members.len(), 3);
+
+        let ExtendMember::Function(reset) = &extension.members[0] else {
+            panic!("expected method");
+        };
+        assert_eq!(reset.name, "reset");
+        assert_eq!(reset.groups.len(), 2);
+        assert_eq!(reset.groups[0].len(), 1);
+        assert_eq!(reset.groups[0][0].name, "self");
+        assert_eq!(reset.groups[0][0].mode, PassMode::MutBorrow);
+        assert_eq!(
+            reset.groups[0][0].ty,
+            Type::Named("Self".into(), Vec::new())
+        );
+        assert!(reset.groups[1].is_empty());
+
+        let ExtendMember::Const(answer) = &extension.members[1] else {
+            panic!("expected associated constant");
+        };
+        assert_eq!(answer.name, "answer");
+        assert_eq!(answer.annotation, Some(Type::I32));
+
+        let ExtendMember::Function(make) = &extension.members[2] else {
+            panic!("expected associated function");
+        };
+        assert_eq!(make.name, "make");
+        assert!(make
+            .groups
+            .iter()
+            .flatten()
+            .all(|param| param.name != "self"));
+    }
+
+    #[test]
+    fn rejects_invalid_extend_receivers() {
+        let cases = [
+            (
+                "extend A { let invalid(self: A)(): () = {} }\n",
+                "cannot have an explicit type",
+            ),
+            (
+                "extend A { let invalid(self, value: i32)(): () = {} }\n",
+                "only parameter",
+            ),
+            (
+                "extend A { let invalid(self): () = {} }\n",
+                "requires an explicit parameter group",
+            ),
+            (
+                "extend A { let invalid(value: i32)(self)(): () = {} }\n",
+                "first parameter group",
+            ),
+            (
+                "extend A { let invalid(self)(self)(): () = {} }\n",
+                "at most one",
+            ),
+        ];
+
+        for (source, expected) in cases {
+            let error = parse(source).unwrap_err();
+            assert!(
+                error.message.contains(expected),
+                "expected `{expected}` in `{}`",
+                error.message
+            );
+        }
+    }
+
+    #[test]
+    fn parses_borrow_and_move_receivers_with_explicit_following_groups() {
+        let program = parse(
+            "extend A {\n\
+               let inspect(borrow self)(): i32 = self.value\n\
+               let replace(move self)(value: i32)(other: i32): A = A(value + other)\n\
+             }\n",
+        )
+        .unwrap();
+
+        let Item::Extend(extension) = &program.items[0] else {
+            panic!("expected extend declaration");
+        };
+        let ExtendMember::Function(inspect) = &extension.members[0] else {
+            panic!("expected method");
+        };
+        assert_eq!(inspect.groups[0][0].mode, PassMode::Borrow);
+        assert!(inspect.groups[1].is_empty());
+
+        let ExtendMember::Function(replace) = &extension.members[1] else {
+            panic!("expected method");
+        };
+        assert_eq!(replace.groups[0][0].mode, PassMode::Move);
+        assert_eq!(replace.groups.len(), 3);
+    }
+
+    #[test]
+    fn rejects_receivers_outside_extend_and_invalid_extend_members() {
+        let receiver = parse("let invalid(self: A)(): () = {}\n").unwrap_err();
+        assert!(receiver.message.contains("only allowed in extend"));
+
+        let mutable = parse("extend A { let mut answer = 42 }\n").unwrap_err();
+        assert!(mutable.message.contains("let mut"));
+
+        let data = parse("extend A { let Nested = struct(value: i32) }\n").unwrap_err();
+        assert!(data.message.contains("data declarations"));
+
+        let missing = parse("extend A { let answer: i32\n}\n").unwrap_err();
+        assert!(missing.message.contains("expected `=`"));
     }
 
     #[test]

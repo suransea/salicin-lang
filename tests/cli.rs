@@ -519,6 +519,84 @@ fn dynamic_array_out_of_bounds_traps() {
 }
 
 #[test]
+fn m1_inherent_members_run_with_expected_result() {
+    for name in [
+        "inherent_reset_and_constant.sali",
+        "inherent_grouped_shared_method.sali",
+        "inherent_move_receiver.sali",
+        "inherent_associated_function.sali",
+        "inherent_associated_field_same_name.sali",
+        "inherent_method_and_associated_same_name.sali",
+        "inherent_local_shadows_type.sali",
+        "inherent_recursive_method.sali",
+        "inherent_enum_method.sali",
+        "inherent_receiver_loan_released.sali",
+        "inherent_disjoint_forward_extend.sali",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run M1 inherent-member fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn m1_inherent_member_errors_report_their_cause() {
+    for (name, expected) in [
+        (
+            "inherent_field_method_conflict.sali",
+            "conflicts with field",
+        ),
+        (
+            "inherent_duplicate_method.sali",
+            "duplicate inherent method",
+        ),
+        (
+            "inherent_duplicate_associated.sali",
+            "duplicate associated member",
+        ),
+        (
+            "inherent_variant_associated_conflict.sali",
+            "conflicts with variant",
+        ),
+        ("inherent_mut_receiver_immutable.sali", "immutable"),
+        ("inherent_unknown_target.sali", "unknown extension target"),
+        ("inherent_trait_extension_pending.sali", "trait extensions"),
+        ("inherent_bound_method_value.sali", "must be called"),
+        ("inherent_associated_function_value.sali", "must be called"),
+        (
+            "inherent_temporary_borrow_receiver.sali",
+            "temporary receiver",
+        ),
+        ("inherent_move_receiver_reuse.sali", "moved"),
+        ("inherent_borrowed_partial.sali", "partial application"),
+        ("inherent_receiver_borrow_conflict.sali", "borrowed"),
+        ("inherent_non_nominal_target.sali", "nominal"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid M1 inherent-member fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected),
+            "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn output_must_not_overwrite_the_source() {
     let temporary = TestDirectory::new();
     let source = temporary.join("keep.sali");
