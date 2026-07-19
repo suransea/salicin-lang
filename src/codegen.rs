@@ -3848,6 +3848,7 @@ impl Analyzer {
             | Expr::Binary(_, _, _)
             | Expr::Coalesce(_, _)
             | Expr::Try(_)
+            | Expr::Throw(_)
             | Expr::Array(_)
             | Expr::Index { .. } => true,
             Expr::Name(_)
@@ -4017,6 +4018,7 @@ impl Analyzer {
                     None => TypeProbe::Known(info.payload),
                 }
             }
+            Expr::Throw(_) => TypeProbe::Unsupported,
             Expr::Array(elements) => {
                 if let Some(Ty::Array(element, length)) = hint {
                     if *length != elements.len() as u64 {
@@ -5090,6 +5092,7 @@ impl Analyzer {
             }
             Expr::Coalesce(left, right) => self.lower_coalesce(left, right, expected, context),
             Expr::Try(value) => self.lower_try(value, expected, context),
+            Expr::Throw(value) => self.lower_throw(value, context),
             Expr::Assign(place, value) => {
                 if matches!(place.as_ref(), Expr::Index { .. }) {
                     self.error("indexed array assignment is not supported yet");
@@ -5838,7 +5841,7 @@ impl Analyzer {
                 }
                 true
             }
-            Expr::Unary(_, operand) | Expr::Try(operand) => {
+            Expr::Unary(_, operand) | Expr::Try(operand) | Expr::Throw(operand) => {
                 self.scan_simple_closure_captures(operand, bound, outer, captures)
             }
             Expr::Binary(left, _, right) | Expr::Coalesce(left, right) => {
@@ -6753,6 +6756,35 @@ impl Analyzer {
             residual_arm,
         ];
         self.lower_match_with_scrutinee(operand, &arms, expected, context)
+    }
+
+    fn lower_throw(&mut self, value: &Expr, context: &mut LowerCtx) -> HirExpr {
+        let boundary = context.return_boundary.clone();
+        let Some(boundary) = boundary else {
+            let _ = self.lower_expr(value, None, context);
+            self.error("`throw` requires a named function with an explicit `Result` return type");
+            return error_expr();
+        };
+        if boundary.kind != BuiltinFallibleKind::Result {
+            let _ = self.lower_expr(value, None, context);
+            self.error("`throw` may only propagate through a `Result` return type");
+            return error_expr();
+        }
+        let error_ty = boundary
+            .error
+            .clone()
+            .expect("Result return boundary has an error type");
+        let error = self.lower_expr(value, Some(&error_ty), context);
+        if error.ty == Ty::Never {
+            return error;
+        }
+        let result = self.construct_boundary_variant(&boundary, false, Some(error));
+        context.returned_types.push(boundary.container);
+        context.flow.reachable = false;
+        HirExpr {
+            ty: Ty::Never,
+            kind: HirExprKind::Return(Some(Box::new(result))),
+        }
     }
 
     fn lower_match_with_scrutinee(
@@ -10856,7 +10888,7 @@ fn substitute_function_types(function: &mut Function, substitutions: &HashMap<St
 fn substitute_expr_types(expression: &mut Expr, substitutions: &HashMap<String, Type>) {
     match expression {
         Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Infer => {}
-        Expr::Unary(_, operand) | Expr::Try(operand) => {
+        Expr::Unary(_, operand) | Expr::Try(operand) | Expr::Throw(operand) => {
             substitute_expr_types(operand, substitutions)
         }
         Expr::Borrow { value, .. } => substitute_expr_types(value, substitutions),
@@ -11657,6 +11689,50 @@ let main(): i32 = {
             ir.contains(" phi "),
             "coalesce result must join through a phi"
         );
+    }
+
+    #[test]
+    fn throw_returns_the_enclosing_result_error_variant() {
+        let ir = compile_text(
+            r#"
+let answer(fail: bool): Result(i32, bool) = {
+  if fail { throw true }
+  42
+}
+let main(): i32 = answer(true) ?? 42
+"#,
+        )
+        .expect("throw in an explicit Result function must compile");
+        assert!(ir.contains("switch i32"));
+        assert!(ir.contains("ret %sali.type."));
+    }
+
+    #[test]
+    fn throw_requires_an_exact_explicit_result_error_boundary() {
+        for (source, expected) in [
+            (
+                "let fail(): Result(i32, bool) = throw 0\nlet main(): i32 = 0\n",
+                "where `bool` is expected",
+            ),
+            (
+                "let fail(): Option(i32) = throw false\nlet main(): i32 = 0\n",
+                "only propagate through a `Result`",
+            ),
+            (
+                "let fail(): i32 = throw false\nlet main(): i32 = 0\n",
+                "explicit `Result` return type",
+            ),
+            (
+                "let fail() = throw false\nlet main(): i32 = 0\n",
+                "explicit `Result` return type",
+            ),
+        ] {
+            let errors = compile_text(source).expect_err("invalid throw must be rejected");
+            assert!(
+                errors.iter().any(|error| error.message.contains(expected)),
+                "missing `{expected}` diagnostic in {errors:?}"
+            );
+        }
     }
 
     #[test]

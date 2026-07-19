@@ -1,0 +1,14 @@
+let make_error(mut borrow count: i32): bool = {
+  count = count + 1
+  true
+}
+
+let fail(mut borrow count: i32): Result(i32, bool) = {
+  throw make_error(count)
+}
+
+let main(): i32 = {
+  let mut count = 0
+  let answer = fail(count) ?? 42
+  if count == 1 { answer } else { 0 }
+}

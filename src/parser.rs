@@ -1156,6 +1156,7 @@ impl Parser {
             }
             TokenKind::If => self.if_expression(),
             TokenKind::Return => self.return_expression(allow_trailing_closure),
+            TokenKind::Throw => self.throw_expression(allow_trailing_closure),
             TokenKind::While => self.while_expression(),
             TokenKind::Loop => self.loop_expression(),
             TokenKind::Break => self.break_expression(allow_trailing_closure),
@@ -1228,6 +1229,15 @@ impl Parser {
             let value = self.expression(allow_trailing_closure)?;
             Ok(Expr::Return(Some(Box::new(value))))
         }
+    }
+
+    fn throw_expression(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
+        self.expect(&TokenKind::Throw, "`throw`")?;
+        if self.at_control_expression_boundary() {
+            return Err(self.error_here("expected an expression after `throw`"));
+        }
+        let value = self.expression(allow_trailing_closure)?;
+        Ok(Expr::Throw(Box::new(value)))
     }
 
     fn while_expression(&mut self) -> Result<Expr, ParseError> {
@@ -1469,6 +1479,7 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::If => "`if`",
         TokenKind::Else => "`else`",
         TokenKind::Return => "`return`",
+        TokenKind::Throw => "`throw`",
         TokenKind::While => "`while`",
         TokenKind::Loop => "`loop`",
         TokenKind::Break => "`break`",
@@ -1994,6 +2005,21 @@ mod tests {
             panic!("expected function");
         };
         assert!(matches!(function.body, Some(Expr::Block(_, _))));
+    }
+
+    #[test]
+    fn parses_throw_with_a_required_operand() {
+        let program = parse("let fail(): Result(i32, bool) = throw false\n").unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        assert_eq!(
+            function.body,
+            Some(Expr::Throw(Box::new(Expr::Bool(false))))
+        );
+
+        let error = parse("let fail(): Result(i32, bool) = { throw\n}\n").unwrap_err();
+        assert!(error.message.contains("expression after `throw`"));
     }
 
     #[test]

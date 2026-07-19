@@ -12,6 +12,7 @@ pub enum TokenKind {
     If,
     Else,
     Return,
+    Throw,
     While,
     Loop,
     Break,
@@ -294,6 +295,7 @@ impl Lexer {
             "if" => TokenKind::If,
             "else" => TokenKind::Else,
             "return" => TokenKind::Return,
+            "throw" => TokenKind::Throw,
             "while" => TokenKind::While,
             "loop" => TokenKind::Loop,
             "break" => TokenKind::Break,
@@ -353,11 +355,12 @@ mod tests {
 
     #[test]
     fn recognizes_arrow_keywords_and_comments() {
-        let tokens = lex("{ (x: i32) -> x + 1 } // hi\nif true {} else {}").unwrap();
+        let tokens = lex("{ (x: i32) -> x + 1 } // hi\nif true { throw false } else {}").unwrap();
         assert!(tokens.iter().any(|t| t.kind == TokenKind::Arrow));
         assert!(tokens.iter().any(|t| t.kind == TokenKind::Plus));
         assert!(tokens.iter().any(|t| t.kind == TokenKind::If));
         assert!(tokens.iter().any(|t| t.kind == TokenKind::Else));
+        assert!(tokens.iter().any(|t| t.kind == TokenKind::Throw));
         assert!(tokens.iter().any(|t| t.kind == TokenKind::Newline));
     }
 

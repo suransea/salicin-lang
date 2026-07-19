@@ -1033,6 +1033,56 @@ fn m2_try_errors_report_their_cause() {
 }
 
 #[test]
+fn m2_throw_programs_run_with_expected_result() {
+    for name in [
+        "throw_result_err_propagate.sali",
+        "throw_error_once.sali",
+        "throw_if_flow.sali",
+        "throw_generic_error.sali",
+        "throw_unit_error.sali",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run throw-propagation fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn m2_throw_errors_report_their_cause() {
+    for (name, expected) in [
+        ("throw_in_option_return.sali", "Result"),
+        ("throw_in_plain_return.sali", "Result"),
+        ("throw_in_global.sali", "global"),
+        ("throw_in_closure.sali", "closure"),
+        ("throw_omitted_return_type.sali", "return type"),
+        ("throw_error_type_mismatch.sali", "expected"),
+        ("throw_without_value.sali", "expression"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid throw-propagation fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected),
+            "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn output_must_not_overwrite_the_source() {
     let temporary = TestDirectory::new();
     let source = temporary.join("keep.sali");

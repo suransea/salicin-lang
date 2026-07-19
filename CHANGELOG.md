@@ -29,6 +29,8 @@ M2 development follows the v0.2 language foundation.
 - Added postfix `.try` propagation for explicitly annotated named functions returning prelude
   `Option` or `Result`, including single-evaluation residual returns, exact `Result` error matching,
   inferred operands, and automatic `Some` / `Ok` wrapping of normal tails and `return` values.
+- Added `throw error` for explicitly annotated `Result` functions, lowering the error exactly once
+  into the enclosing result's `Err` variant with precise error-type checking and terminating flow.
 
 ## 0.2.0 - 2026-07-20
 
