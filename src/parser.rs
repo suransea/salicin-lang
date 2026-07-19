@@ -3,7 +3,8 @@ use std::fmt;
 use crate::ast::{
     BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EnumDef, Expr, ExtendDef,
     ExtendMember, Field, Function, Item, MatchArm, Param, PassMode, Pattern, PatternField,
-    PatternFields, Program, Stmt, StructDef, Type, UnaryOp, VariantDef, VariantFields,
+    PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantDef,
+    VariantFields,
 };
 use crate::lexer::{lex, LexError, Token, TokenKind};
 
@@ -106,7 +107,7 @@ impl Parser {
 
         self.expect(&TokenKind::Equal, "`=`")?;
 
-        if self.at(&TokenKind::Struct) || self.at(&TokenKind::Enum) {
+        if self.at(&TokenKind::Struct) || self.at(&TokenKind::Enum) || self.at(&TokenKind::Trait) {
             if mutable || annotation.is_some() || !groups.is_empty() {
                 return Err(self.error_here(
                     "data declarations cannot be mutable, annotated, or have runtime parameters",
@@ -115,8 +116,10 @@ impl Parser {
             return if self.at(&TokenKind::Struct) {
                 self.struct_definition(name, compile_groups)
                     .map(Item::Struct)
-            } else {
+            } else if self.at(&TokenKind::Enum) {
                 self.enum_definition(name, compile_groups).map(Item::Enum)
+            } else {
+                self.trait_definition(name, compile_groups).map(Item::Trait)
             };
         }
 
@@ -196,7 +199,7 @@ impl Parser {
         }
         self.expect(&TokenKind::Equal, "`=` in extend member")?;
 
-        if self.at(&TokenKind::Struct) || self.at(&TokenKind::Enum) {
+        if self.at(&TokenKind::Struct) || self.at(&TokenKind::Enum) || self.at(&TokenKind::Trait) {
             return Err(self.error_here("data declarations are not allowed in extend bodies"));
         }
 
@@ -360,12 +363,12 @@ impl Parser {
             let ty = if name == "self" {
                 if !allow_receiver {
                     return Err(self.error_here(
-                        "contextual `self` receivers are only allowed in extend methods",
+                        "contextual `self` receivers are only allowed in extend or trait methods",
                     ));
                 }
                 if self.at(&TokenKind::Colon) {
                     return Err(self.error_here(
-                        "extend receiver is contextual `self` and cannot have an explicit type",
+                        "method receiver is contextual `self` and cannot have an explicit type",
                     ));
                 }
                 Type::Named("Self".into(), Vec::new())
@@ -400,7 +403,7 @@ impl Parser {
             .collect::<Vec<_>>();
 
         if receivers.len() > 1 {
-            return Err(self.error_here("an extend method can have at most one `self` receiver"));
+            return Err(self.error_here("a method can have at most one `self` receiver"));
         }
         let Some(group_index) = receivers.first().copied() else {
             return Ok(());
@@ -495,6 +498,95 @@ impl Parser {
             compile_groups,
             variants,
         })
+    }
+
+    fn trait_definition(
+        &mut self,
+        name: String,
+        compile_groups: Vec<Vec<CompileParam>>,
+    ) -> Result<TraitDef, ParseError> {
+        self.expect(&TokenKind::Trait, "`trait`")?;
+        self.expect(&TokenKind::LBrace, "`{` after `trait`")?;
+        self.skip_separators();
+
+        let mut members = Vec::new();
+        while !self.at(&TokenKind::RBrace) {
+            if self.at(&TokenKind::Eof) {
+                return Err(self.error_here("expected `}` before end of trait declaration"));
+            }
+            members.push(self.trait_member()?);
+            if !self.at(&TokenKind::RBrace) && !self.at_separator() {
+                return Err(self.error_here("expected a newline or `;` after trait member"));
+            }
+            self.skip_separators();
+        }
+        self.expect(&TokenKind::RBrace, "`}` after trait members")?;
+
+        Ok(TraitDef {
+            name,
+            compile_groups,
+            members,
+        })
+    }
+
+    fn trait_member(&mut self) -> Result<TraitMember, ParseError> {
+        self.expect(&TokenKind::Let, "`let` in trait body")?;
+        if self.take(&TokenKind::Mut) {
+            let mutable = self.previous().clone();
+            return Err(self.error_at(&mutable, "trait members cannot be declared with `let mut`"));
+        }
+        let name = self.expect_ident("a trait member name")?;
+        let (compile_groups, groups) = self.declaration_groups(true)?;
+        self.validate_receiver_groups(&groups)?;
+
+        let return_type = if self.take(&TokenKind::Colon) {
+            if self.take(&TokenKind::Type) {
+                if !groups.is_empty() {
+                    return Err(
+                        self.error_here("associated types cannot have runtime parameter groups")
+                    );
+                }
+                self.take_newlines_if_followed_by(&[TokenKind::Equal]);
+                let default = if self.take(&TokenKind::Equal) {
+                    Some(self.type_expr()?)
+                } else {
+                    None
+                };
+                return Ok(TraitMember::AssociatedType {
+                    name,
+                    compile_groups,
+                    default,
+                });
+            }
+            Some(self.type_expr()?)
+        } else {
+            None
+        };
+
+        if compile_groups.is_empty() && groups.is_empty() {
+            return Err(
+                self.error_here("trait function members require at least one parameter group")
+            );
+        }
+
+        self.take_newlines_if_followed_by(&[TokenKind::Equal]);
+        let body = if self.take(&TokenKind::Equal) {
+            Some(if self.at(&TokenKind::LBrace) {
+                self.block()?
+            } else {
+                self.expression(true)?
+            })
+        } else {
+            None
+        };
+
+        Ok(TraitMember::Function(Function {
+            name,
+            compile_groups,
+            groups,
+            return_type,
+            body,
+        }))
     }
 
     fn named_type_fields(&mut self) -> Result<Vec<Field>, ParseError> {
@@ -1369,6 +1461,7 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::Extend => "`extend`",
         TokenKind::Struct => "`struct`",
         TokenKind::Enum => "`enum`",
+        TokenKind::Trait => "`trait`",
         TokenKind::Match => "`match`",
         TokenKind::True => "`true`",
         TokenKind::False => "`false`",
@@ -1515,6 +1608,105 @@ mod tests {
             VariantFields::Named(fields)
                 if fields[0].ty == Type::Named("T".into(), Vec::new())
         ));
+    }
+
+    #[test]
+    fn parses_trait_method_signatures_and_associated_types() {
+        let program = parse(
+            "let Foo = trait {\n\
+               let f(borrow self)(x: i32): i32;\n\
+               let Item: type\n\
+             }\n",
+        )
+        .unwrap();
+
+        let Item::Trait(definition) = &program.items[0] else {
+            panic!("expected trait definition");
+        };
+        assert_eq!(definition.name, "Foo");
+        assert!(definition.compile_groups.is_empty());
+        assert_eq!(definition.members.len(), 2);
+
+        let TraitMember::Function(function) = &definition.members[0] else {
+            panic!("expected trait function");
+        };
+        assert_eq!(function.name, "f");
+        assert!(function.compile_groups.is_empty());
+        assert_eq!(function.groups.len(), 2);
+        assert_eq!(function.groups[0][0].name, "self");
+        assert_eq!(function.groups[0][0].mode, PassMode::Borrow);
+        assert_eq!(function.groups[1][0].name, "x");
+        assert_eq!(function.groups[1][0].ty, Type::I32);
+        assert_eq!(function.return_type, Some(Type::I32));
+        assert_eq!(function.body, None);
+
+        let TraitMember::AssociatedType {
+            name,
+            compile_groups,
+            default,
+        } = &definition.members[1]
+        else {
+            panic!("expected associated type");
+        };
+        assert_eq!(name, "Item");
+        assert!(compile_groups.is_empty());
+        assert_eq!(default, &None);
+    }
+
+    #[test]
+    fn preserves_generic_traits_and_trait_member_defaults() {
+        let program = parse(
+            "let Convert(T: type) = trait {\n\
+               let convert(U: type)(borrow self)(value: U): T = value\n\
+               let Output(V: type): type = Pair(T, V)\n\
+             }\n",
+        )
+        .unwrap();
+
+        let Item::Trait(definition) = &program.items[0] else {
+            panic!("expected generic trait definition");
+        };
+        assert_eq!(definition.compile_groups.len(), 1);
+        assert_eq!(definition.compile_groups[0][0].name, "T");
+
+        let TraitMember::Function(function) = &definition.members[0] else {
+            panic!("expected default method");
+        };
+        assert_eq!(function.compile_groups[0][0].name, "U");
+        assert_eq!(
+            function.return_type,
+            Some(Type::Named("T".into(), Vec::new()))
+        );
+        assert_eq!(function.body, Some(Expr::Name("value".into())));
+
+        let TraitMember::AssociatedType {
+            name,
+            compile_groups,
+            default,
+        } = &definition.members[1]
+        else {
+            panic!("expected generic associated type");
+        };
+        assert_eq!(name, "Output");
+        assert_eq!(compile_groups[0][0].name, "V");
+        assert_eq!(
+            default,
+            &Some(Type::Named(
+                "Pair".into(),
+                vec![
+                    Type::Named("T".into(), Vec::new()),
+                    Type::Named("V".into(), Vec::new()),
+                ],
+            ))
+        );
+    }
+
+    #[test]
+    fn rejects_runtime_parameter_groups_on_associated_types() {
+        let error = parse("let Broken = trait { let Item(value: i32): type }\n").unwrap_err();
+        assert!(error
+            .message
+            .contains("cannot have runtime parameter groups"));
     }
 
     #[test]

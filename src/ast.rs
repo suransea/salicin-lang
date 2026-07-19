@@ -9,7 +9,25 @@ pub enum Item {
     Global(Binding),
     Struct(StructDef),
     Enum(EnumDef),
+    Trait(TraitDef),
     Extend(ExtendDef),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitDef {
+    pub name: String,
+    pub compile_groups: Vec<Vec<CompileParam>>,
+    pub members: Vec<TraitMember>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TraitMember {
+    Function(Function),
+    AssociatedType {
+        name: String,
+        compile_groups: Vec<Vec<CompileParam>>,
+        default: Option<Type>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

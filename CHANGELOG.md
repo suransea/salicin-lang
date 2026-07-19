@@ -16,6 +16,9 @@ M2 development follows the v0.2 language foundation.
   variants, pattern matching, stable instance metadata and recursive-layout validation.
 - Added side-effect-free `_` type-argument inference for generic functions, structs and enum
   variants, using expected and runtime argument constraints before lowering each argument once.
+- Added concrete trait implementations with required associated types, exact grouped-signature and
+  pass-mode validation, coherence checks, stable static method dispatch, inherent-method precedence,
+  and support for concrete generic nominal instances such as `Cell(i32)`.
 
 ## 0.2.0 - 2026-07-20
 

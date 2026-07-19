@@ -9,8 +9,8 @@ use std::fmt;
 
 use crate::ast::{
     BinaryOp, Binding, CallArg, CompileParam, EnumDef, Expr, ExtendDef, ExtendMember, Function,
-    Item, MatchArm, PassMode, Pattern, PatternFields, Program, Stmt, StructDef, Type, UnaryOp,
-    VariantFields,
+    Item, MatchArm, PassMode, Pattern, PatternFields, Program, Stmt, StructDef, TraitDef,
+    TraitMember, Type, UnaryOp, VariantFields,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -714,6 +714,40 @@ struct InherentMemberSet {
     constants: HashMap<String, String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct TraitRefKey {
+    name: String,
+    arguments: Vec<Ty>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct TraitImplKey {
+    self_ty: Ty,
+    trait_ref: TraitRefKey,
+}
+
+#[derive(Debug, Clone)]
+struct TraitImplInfo {
+    key: TraitImplKey,
+    associated_types: HashMap<String, Ty>,
+    methods: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone)]
+struct TraitSchema {
+    compile_parameters: Vec<CompileParam>,
+    associated_types: Vec<String>,
+    methods: HashMap<String, Function>,
+    method_order: Vec<String>,
+    valid: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FunctionShape {
+    groups: Vec<Vec<(PassMode, Ty)>>,
+    result: Ty,
+}
+
 #[derive(Clone)]
 struct NominalSnapshot {
     struct_defs: HashMap<String, StructDef>,
@@ -750,6 +784,10 @@ struct Analyzer {
     struct_layouts: HashMap<String, StructLayout>,
     enum_layouts: HashMap<String, EnumLayout>,
     inherent_members: HashMap<String, InherentMemberSet>,
+    traits: HashMap<String, TraitSchema>,
+    trait_impl_headers: HashSet<TraitImplKey>,
+    trait_impls: HashMap<TraitImplKey, TraitImplInfo>,
+    trait_methods_by_receiver: HashMap<(Ty, String), Vec<TraitImplKey>>,
     function_order: Vec<String>,
     global_order: Vec<String>,
     struct_order: Vec<String>,
@@ -789,6 +827,10 @@ impl Analyzer {
             struct_layouts: HashMap::new(),
             enum_layouts: HashMap::new(),
             inherent_members: HashMap::new(),
+            traits: HashMap::new(),
+            trait_impl_headers: HashSet::new(),
+            trait_impls: HashMap::new(),
+            trait_methods_by_receiver: HashMap::new(),
             function_order: Vec::new(),
             global_order: Vec::new(),
             struct_order: Vec::new(),
@@ -816,6 +858,7 @@ impl Analyzer {
                 Item::Global(binding) => &binding.name,
                 Item::Struct(definition) => &definition.name,
                 Item::Enum(definition) => &definition.name,
+                Item::Trait(definition) => &definition.name,
                 Item::Extend(extension) => {
                     extensions.push(extension.clone());
                     continue;
@@ -915,12 +958,14 @@ impl Analyzer {
                             .insert(definition.name.clone(), definition.clone());
                     }
                 }
+                Item::Trait(definition) => self.collect_trait_schema(definition.clone()),
                 Item::Extend(_) => unreachable!("extensions were collected separately"),
             }
         }
 
         self.validate_generic_nominal_cycles();
         self.collect_nominal_layouts();
+        self.validate_trait_schemas();
         for extension in extensions {
             self.collect_extension(extension);
         }
@@ -960,9 +1005,767 @@ impl Analyzer {
         self.validate_function_templates();
     }
 
+    fn collect_trait_schema(&mut self, definition: TraitDef) {
+        let mut valid = true;
+        if definition.compile_groups.len() > 1 {
+            self.error(format!(
+                "trait `{}` supports at most one compile-time parameter group",
+                definition.name
+            ));
+            valid = false;
+        }
+        let compile_parameters = definition
+            .compile_groups
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut compile_parameter_names = HashSet::new();
+        for parameter in &compile_parameters {
+            if parameter.name == "Self" {
+                self.error(format!(
+                    "trait `{}` cannot declare reserved type parameter `Self`",
+                    definition.name
+                ));
+                valid = false;
+            }
+            if !compile_parameter_names.insert(parameter.name.clone()) {
+                self.error(format!(
+                    "duplicate type parameter `{}` in trait `{}`",
+                    parameter.name, definition.name
+                ));
+                valid = false;
+            }
+        }
+        let mut member_names = HashSet::new();
+        let mut associated_types = Vec::new();
+        let mut methods = HashMap::new();
+        let mut method_order = Vec::new();
+        for member in definition.members {
+            match member {
+                TraitMember::AssociatedType {
+                    name,
+                    compile_groups,
+                    default,
+                } => {
+                    if !member_names.insert(name.clone()) {
+                        self.error(format!(
+                            "duplicate trait member `{}.{name}`",
+                            definition.name
+                        ));
+                        valid = false;
+                        continue;
+                    }
+                    if name == "Self" || compile_parameter_names.contains(&name) {
+                        self.error(format!(
+                            "associated type `{}.{name}` conflicts with a trait type parameter",
+                            definition.name
+                        ));
+                        valid = false;
+                    }
+                    if !compile_groups.is_empty() {
+                        self.error(format!(
+                            "generic associated type `{}.{name}` is not supported",
+                            definition.name
+                        ));
+                        valid = false;
+                    }
+                    if default.is_some() {
+                        self.error(format!(
+                            "default associated type `{}.{name}` is not supported",
+                            definition.name
+                        ));
+                        valid = false;
+                    }
+                    associated_types.push(name);
+                }
+                TraitMember::Function(mut function) => {
+                    let name = function.name.clone();
+                    if !member_names.insert(name.clone()) {
+                        self.error(format!(
+                            "duplicate trait member `{}.{name}`",
+                            definition.name
+                        ));
+                        valid = false;
+                        continue;
+                    }
+                    if !function.compile_groups.is_empty() {
+                        self.error(format!(
+                            "generic trait method `{}.{name}` is not supported",
+                            definition.name
+                        ));
+                        valid = false;
+                    }
+                    if function.body.is_some() {
+                        self.error(format!(
+                            "default trait method `{}.{name}` is not supported",
+                            definition.name
+                        ));
+                        valid = false;
+                        function.body = None;
+                    }
+                    if function.return_type.is_none() {
+                        self.error(format!(
+                            "trait method `{}.{name}` requires an explicit return type",
+                            definition.name
+                        ));
+                        valid = false;
+                    }
+                    let is_method = function
+                        .groups
+                        .first()
+                        .is_some_and(|group| group.len() == 1 && group[0].name == "self");
+                    if !is_method {
+                        self.error(format!(
+                            "associated trait function `{}.{name}` is not supported; declare a `self` receiver",
+                            definition.name
+                        ));
+                        valid = false;
+                    }
+                    method_order.push(name.clone());
+                    methods.insert(name, function);
+                }
+            }
+        }
+        self.traits.insert(
+            definition.name,
+            TraitSchema {
+                compile_parameters,
+                associated_types,
+                methods,
+                method_order,
+                valid,
+            },
+        );
+    }
+
+    fn validate_trait_schemas(&mut self) {
+        let mut trait_names = self.traits.keys().cloned().collect::<Vec<_>>();
+        trait_names.sort();
+        for trait_name in trait_names {
+            let schema = self.traits[&trait_name].clone();
+            let mut type_names = schema
+                .compile_parameters
+                .iter()
+                .map(|parameter| parameter.name.clone())
+                .collect::<HashSet<_>>();
+            type_names.insert("Self".to_owned());
+            type_names.extend(schema.associated_types.iter().cloned());
+            let mut valid = schema.valid;
+            for method_name in &schema.method_order {
+                let method = &schema.methods[method_name];
+                let mut method_type_names = type_names.clone();
+                method_type_names.extend(
+                    method
+                        .compile_groups
+                        .iter()
+                        .flatten()
+                        .map(|parameter| parameter.name.clone()),
+                );
+                for parameter in method.groups.iter().flatten() {
+                    valid &= self.validate_trait_source_type(
+                        &trait_name,
+                        method_name,
+                        &parameter.ty,
+                        &method_type_names,
+                    );
+                    if parameter.mode == PassMode::Copy
+                        && !Self::trait_source_type_is_definitely_copy(&parameter.ty)
+                    {
+                        self.error(format!(
+                            "trait method `{}.{method_name}` parameter `{}` requires `Copy`, but its type is not provably Copy without a trait bound",
+                            trait_name,
+                            parameter.name
+                        ));
+                        valid = false;
+                    }
+                }
+                if let Some(result) = &method.return_type {
+                    valid &= self.validate_trait_source_type(
+                        &trait_name,
+                        method_name,
+                        result,
+                        &method_type_names,
+                    );
+                }
+            }
+            self.traits
+                .get_mut(&trait_name)
+                .expect("trait schema exists")
+                .valid = valid;
+        }
+    }
+
+    fn trait_source_type_is_definitely_copy(source: &Type) -> bool {
+        match source {
+            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Void => true,
+            Type::Array(element, _) => Self::trait_source_type_is_definitely_copy(element),
+            Type::Named(name, arguments) if name == "()" && arguments.is_empty() => true,
+            Type::Infer | Type::Named(_, _) => false,
+        }
+    }
+
+    fn validate_trait_source_type(
+        &mut self,
+        trait_name: &str,
+        member_name: &str,
+        source: &Type,
+        type_names: &HashSet<String>,
+    ) -> bool {
+        match source {
+            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Void => true,
+            Type::Infer => {
+                self.error(format!(
+                    "trait member `{trait_name}.{member_name}` cannot use inferred type `_`"
+                ));
+                false
+            }
+            Type::Array(element, length) => {
+                let mut valid = true;
+                if *length > i32::MAX as u64 {
+                    self.error(format!(
+                        "array length {length} in trait member `{trait_name}.{member_name}` exceeds the first-version limit"
+                    ));
+                    valid = false;
+                }
+                valid &=
+                    self.validate_trait_source_type(trait_name, member_name, element, type_names);
+                valid
+            }
+            Type::Named(name, arguments) if type_names.contains(name) => {
+                if arguments.is_empty() {
+                    true
+                } else {
+                    self.error(format!(
+                        "trait type parameter `{name}` in `{trait_name}.{member_name}` does not accept type arguments"
+                    ));
+                    false
+                }
+            }
+            Type::Named(name, arguments) if name == "()" && arguments.is_empty() => true,
+            Type::Named(name, arguments) if arguments.is_empty() => {
+                if self.struct_defs.contains_key(name) || self.enum_defs.contains_key(name) {
+                    true
+                } else if self.struct_templates.contains_key(name)
+                    || self.enum_templates.contains_key(name)
+                {
+                    self.error(format!(
+                        "generic type `{name}` in trait member `{trait_name}.{member_name}` requires type arguments"
+                    ));
+                    false
+                } else {
+                    self.error(format!(
+                        "unknown type `{name}` in trait member `{trait_name}.{member_name}`"
+                    ));
+                    false
+                }
+            }
+            Type::Named(name, arguments) => {
+                let expected = self
+                    .struct_templates
+                    .get(name)
+                    .map(|template| template.compile_groups.iter().flatten().count())
+                    .or_else(|| {
+                        self.enum_templates
+                            .get(name)
+                            .map(|template| template.compile_groups.iter().flatten().count())
+                    });
+                let Some(expected) = expected else {
+                    if self.struct_defs.contains_key(name) || self.enum_defs.contains_key(name) {
+                        self.error(format!(
+                            "non-generic type `{name}` in trait member `{trait_name}.{member_name}` does not accept type arguments"
+                        ));
+                    } else {
+                        self.error(format!(
+                            "unknown generic type `{name}` in trait member `{trait_name}.{member_name}`"
+                        ));
+                    }
+                    return false;
+                };
+                let mut valid = true;
+                if arguments.len() != expected {
+                    self.error(format!(
+                        "type argument count mismatch for `{name}` in trait member `{trait_name}.{member_name}`: expected {expected}, found {}",
+                        arguments.len()
+                    ));
+                    valid = false;
+                }
+                for argument in arguments {
+                    valid &= self.validate_trait_source_type(
+                        trait_name,
+                        member_name,
+                        argument,
+                        type_names,
+                    );
+                }
+                valid
+            }
+        }
+    }
+
+    fn source_type_is_concrete(&self, source: &Type) -> bool {
+        match source {
+            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Void => true,
+            Type::Infer => false,
+            Type::Array(element, _) => self.source_type_is_concrete(element),
+            Type::Named(name, arguments) if name == "()" && arguments.is_empty() => true,
+            Type::Named(name, arguments) if arguments.is_empty() => {
+                self.struct_defs.contains_key(name) || self.enum_defs.contains_key(name)
+            }
+            Type::Named(name, arguments) => {
+                let expected = self
+                    .struct_templates
+                    .get(name)
+                    .map(|template| template.compile_groups.iter().flatten().count())
+                    .or_else(|| {
+                        self.enum_templates
+                            .get(name)
+                            .map(|template| template.compile_groups.iter().flatten().count())
+                    });
+                expected == Some(arguments.len())
+                    && arguments
+                        .iter()
+                        .all(|argument| self.source_type_is_concrete(argument))
+            }
+        }
+    }
+
+    fn resolve_trait_impl_target(&mut self, source: &Type) -> Option<Ty> {
+        let Type::Named(name, arguments) = source else {
+            self.error("trait implementation target must be a nominal type");
+            return None;
+        };
+        if (self.struct_templates.contains_key(name) || self.enum_templates.contains_key(name))
+            && (arguments.is_empty() || !self.source_type_is_concrete(source))
+        {
+            self.error(format!(
+                "generic trait implementation for `{name}` is not supported; use a concrete type such as `{name}(i32)`"
+            ));
+            return None;
+        }
+        if arguments.is_empty()
+            && !self.struct_defs.contains_key(name)
+            && !self.enum_defs.contains_key(name)
+        {
+            self.error(format!("unknown extension target `{name}`"));
+            return None;
+        }
+        let target = self.lower_source_type(source);
+        match target {
+            Ty::Struct(_) | Ty::Enum(_) => Some(target),
+            Ty::Error => None,
+            _ => {
+                self.error("trait implementation target must be a nominal type");
+                None
+            }
+        }
+    }
+
+    fn resolve_trait_impl_ref(
+        &mut self,
+        source: &Type,
+    ) -> Option<(TraitRefKey, TraitSchema, HashMap<String, Type>)> {
+        let Type::Named(name, source_arguments) = source else {
+            self.error("trait reference must name a trait");
+            return None;
+        };
+        let Some(schema) = self.traits.get(name).cloned() else {
+            self.error(format!("unknown trait `{name}`"));
+            return None;
+        };
+        if !schema.valid {
+            return None;
+        }
+        if source_arguments.len() != schema.compile_parameters.len() {
+            self.error(format!(
+                "trait argument count mismatch for `{name}`: expected {}, found {}",
+                schema.compile_parameters.len(),
+                source_arguments.len()
+            ));
+            return None;
+        }
+        if source_arguments
+            .iter()
+            .any(|argument| !self.source_type_is_concrete(argument))
+        {
+            self.error(format!(
+                "generic trait implementation of `{name}` is not supported; trait arguments must be concrete"
+            ));
+            return None;
+        }
+        let mut arguments = Vec::new();
+        let mut substitutions = HashMap::new();
+        for (parameter, source_argument) in schema.compile_parameters.iter().zip(source_arguments) {
+            let argument = self.lower_source_type(source_argument);
+            if argument == Ty::Error {
+                return None;
+            }
+            arguments.push(argument);
+            substitutions.insert(parameter.name.clone(), source_argument.clone());
+        }
+        Some((
+            TraitRefKey {
+                name: name.clone(),
+                arguments,
+            },
+            schema,
+            substitutions,
+        ))
+    }
+
+    fn normalize_trait_impl_associated_type(
+        &mut self,
+        trait_name: &str,
+        type_name: &str,
+        raw: &HashMap<String, Type>,
+        base_substitutions: &HashMap<String, Type>,
+        normalized: &mut HashMap<String, Type>,
+        visiting: &mut Vec<String>,
+    ) -> Option<Type> {
+        if let Some(ty) = normalized.get(type_name) {
+            return Some(ty.clone());
+        }
+        if let Some(cycle_start) = visiting.iter().position(|name| name == type_name) {
+            let mut cycle = visiting[cycle_start..].to_vec();
+            cycle.push(type_name.to_owned());
+            self.error(format!(
+                "associated type cycle in implementation of `{trait_name}`: {}",
+                cycle.join(" -> ")
+            ));
+            return None;
+        }
+        let source = raw.get(type_name)?.clone();
+        visiting.push(type_name.to_owned());
+        let resolved = self.normalize_trait_impl_type(
+            trait_name,
+            &source,
+            raw,
+            base_substitutions,
+            normalized,
+            visiting,
+        );
+        visiting.pop();
+        if let Some(resolved) = &resolved {
+            normalized.insert(type_name.to_owned(), resolved.clone());
+        }
+        resolved
+    }
+
+    fn normalize_trait_impl_type(
+        &mut self,
+        trait_name: &str,
+        source: &Type,
+        raw: &HashMap<String, Type>,
+        base_substitutions: &HashMap<String, Type>,
+        normalized: &mut HashMap<String, Type>,
+        visiting: &mut Vec<String>,
+    ) -> Option<Type> {
+        match source {
+            Type::Named(name, arguments) if arguments.is_empty() => {
+                if raw.contains_key(name) {
+                    self.normalize_trait_impl_associated_type(
+                        trait_name,
+                        name,
+                        raw,
+                        base_substitutions,
+                        normalized,
+                        visiting,
+                    )
+                } else {
+                    Some(
+                        base_substitutions
+                            .get(name)
+                            .cloned()
+                            .unwrap_or_else(|| source.clone()),
+                    )
+                }
+            }
+            Type::Array(element, length) => Some(Type::Array(
+                Box::new(self.normalize_trait_impl_type(
+                    trait_name,
+                    element,
+                    raw,
+                    base_substitutions,
+                    normalized,
+                    visiting,
+                )?),
+                *length,
+            )),
+            Type::Named(name, arguments) => Some(Type::Named(
+                name.clone(),
+                arguments
+                    .iter()
+                    .map(|argument| {
+                        self.normalize_trait_impl_type(
+                            trait_name,
+                            argument,
+                            raw,
+                            base_substitutions,
+                            normalized,
+                            visiting,
+                        )
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+            )),
+            Type::I32
+            | Type::I64
+            | Type::U32
+            | Type::U64
+            | Type::Bool
+            | Type::Void
+            | Type::Infer => Some(source.clone()),
+        }
+    }
+
+    fn function_shape(&mut self, function: &Function) -> Option<FunctionShape> {
+        let groups = function
+            .groups
+            .iter()
+            .map(|group| {
+                group
+                    .iter()
+                    .map(|parameter| {
+                        let ty = self.lower_source_type(&parameter.ty);
+                        (ty != Ty::Error).then_some((parameter.mode, ty))
+                    })
+                    .collect::<Option<Vec<_>>>()
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let result_source = function.return_type.as_ref()?;
+        let result = self.lower_source_type(result_source);
+        (result != Ty::Error).then_some(FunctionShape { groups, result })
+    }
+
+    fn collect_trait_extension(&mut self, extension: ExtendDef) {
+        let target_source = extension.target.clone();
+        let Some(target) = self.resolve_trait_impl_target(&target_source) else {
+            return;
+        };
+        let trait_source = extension
+            .trait_ref
+            .as_ref()
+            .expect("trait extension has a trait reference");
+        let Some((trait_ref, schema, mut substitutions)) =
+            self.resolve_trait_impl_ref(trait_source)
+        else {
+            return;
+        };
+        let key = TraitImplKey {
+            self_ty: target.clone(),
+            trait_ref,
+        };
+        if !self.trait_impl_headers.insert(key.clone()) {
+            self.error(format!(
+                "duplicate trait implementation of `{}` for `{target}`",
+                key.trait_ref.name
+            ));
+            return;
+        }
+        substitutions.insert("Self".to_owned(), target_source);
+
+        let mut raw_associated = HashMap::new();
+        let mut supplied_methods = HashMap::new();
+        let mut valid = true;
+        for member in extension.members {
+            match member {
+                ExtendMember::Const(binding) => {
+                    if !schema.associated_types.contains(&binding.name) {
+                        self.error(format!(
+                            "unknown trait member `{}.{}`",
+                            key.trait_ref.name, binding.name
+                        ));
+                        valid = false;
+                        continue;
+                    }
+                    if binding.annotation.is_some() {
+                        self.error(format!(
+                            "associated type `{}.{}` must not have a value annotation",
+                            key.trait_ref.name, binding.name
+                        ));
+                        valid = false;
+                    }
+                    let Some(source) = self.type_argument_from_expr(&binding.value, &substitutions)
+                    else {
+                        valid = false;
+                        continue;
+                    };
+                    if raw_associated
+                        .insert(binding.name.clone(), source)
+                        .is_some()
+                    {
+                        self.error(format!(
+                            "duplicate associated type `{}.{}`",
+                            key.trait_ref.name, binding.name
+                        ));
+                        valid = false;
+                    }
+                }
+                ExtendMember::Function(function) => {
+                    if !schema.methods.contains_key(&function.name) {
+                        self.error(format!(
+                            "unknown trait member `{}.{}`",
+                            key.trait_ref.name, function.name
+                        ));
+                        valid = false;
+                        continue;
+                    }
+                    if supplied_methods
+                        .insert(function.name.clone(), function.clone())
+                        .is_some()
+                    {
+                        self.error(format!(
+                            "duplicate trait method `{}.{}`",
+                            key.trait_ref.name, function.name
+                        ));
+                        valid = false;
+                    }
+                }
+            }
+        }
+
+        for associated in &schema.associated_types {
+            if !raw_associated.contains_key(associated) {
+                self.error(format!(
+                    "missing associated type `{}.{associated}` in trait implementation",
+                    key.trait_ref.name
+                ));
+                valid = false;
+            }
+        }
+        for method in &schema.method_order {
+            if !supplied_methods.contains_key(method) {
+                self.error(format!(
+                    "missing trait method `{}.{method}` in implementation for `{target}`",
+                    key.trait_ref.name
+                ));
+                valid = false;
+            }
+        }
+        if !valid {
+            return;
+        }
+
+        let mut normalized_sources = HashMap::new();
+        for associated in &schema.associated_types {
+            if self
+                .normalize_trait_impl_associated_type(
+                    &key.trait_ref.name,
+                    associated,
+                    &raw_associated,
+                    &substitutions,
+                    &mut normalized_sources,
+                    &mut Vec::new(),
+                )
+                .is_none()
+            {
+                valid = false;
+            }
+        }
+        if !valid {
+            return;
+        }
+        let mut associated_types = HashMap::new();
+        for (name, source) in &normalized_sources {
+            let ty = self.lower_source_type(source);
+            if ty == Ty::Error {
+                valid = false;
+            } else {
+                associated_types.insert(name.clone(), ty);
+                substitutions.insert(name.clone(), source.clone());
+            }
+        }
+        if !valid {
+            return;
+        }
+
+        let mut registered = Vec::new();
+        for method_name in &schema.method_order {
+            let mut expected = schema.methods[method_name].clone();
+            substitute_function_types(&mut expected, &substitutions);
+            let Some(expected_shape) = self.function_shape(&expected) else {
+                valid = false;
+                continue;
+            };
+
+            let mut function = supplied_methods[method_name].clone();
+            if !function.compile_groups.is_empty() {
+                self.error(format!(
+                    "generic trait implementation method `{}.{method_name}` is not supported",
+                    key.trait_ref.name
+                ));
+                valid = false;
+                continue;
+            }
+            if function.body.is_none() {
+                self.error(format!(
+                    "trait implementation method `{}.{method_name}` requires a body",
+                    key.trait_ref.name
+                ));
+                valid = false;
+                continue;
+            }
+            let is_method = function
+                .groups
+                .first()
+                .is_some_and(|group| group.len() == 1 && group[0].name == "self");
+            if !is_method {
+                self.error(format!(
+                    "trait method `{}.{method_name}` signature mismatch: implementation requires a contextual `self` receiver",
+                    key.trait_ref.name
+                ));
+                valid = false;
+                continue;
+            }
+            substitute_function_types(&mut function, &substitutions);
+            let Some(actual_shape) = self.function_shape(&function) else {
+                self.error(format!(
+                    "trait method `{}.{method_name}` signature mismatch",
+                    key.trait_ref.name
+                ));
+                valid = false;
+                continue;
+            };
+            if actual_shape != expected_shape {
+                self.error(format!(
+                    "trait method `{}.{method_name}` signature mismatch: expected {expected_shape:?}, found {actual_shape:?}",
+                    key.trait_ref.name
+                ));
+                valid = false;
+                continue;
+            }
+            let canonical = trait_method_name(&key, method_name);
+            function.name = canonical.clone();
+            registered.push((method_name.clone(), canonical, function));
+        }
+        if !valid {
+            return;
+        }
+
+        let mut methods = HashMap::new();
+        for (method_name, canonical, function) in registered {
+            self.function_order.push(canonical.clone());
+            self.functions.insert(canonical.clone(), function);
+            self.function_type_substitutions
+                .insert(canonical.clone(), substitutions.clone());
+            methods.insert(method_name.clone(), canonical);
+            self.trait_methods_by_receiver
+                .entry((target.clone(), method_name))
+                .or_default()
+                .push(key.clone());
+        }
+        self.trait_impls.insert(
+            key.clone(),
+            TraitImplInfo {
+                key,
+                associated_types,
+                methods,
+            },
+        );
+    }
+
     fn collect_extension(&mut self, extension: ExtendDef) {
         if extension.trait_ref.is_some() {
-            self.error("trait extensions are reserved for M2; M1 only supports inherent extend");
+            self.collect_trait_extension(extension);
             return;
         }
         let target = match extension.target {
@@ -6279,32 +7082,65 @@ impl Analyzer {
                 return error_expr();
             }
         };
-        let Some(canonical) = self
+        let inherent = self
             .inherent_members
             .get(&target)
             .and_then(|members| members.methods.get(member))
-            .cloned()
-        else {
-            if self
-                .inherent_members
-                .get(&target)
-                .is_some_and(|members| members.functions.contains_key(member))
-            {
+            .cloned();
+        let canonical = if let Some(canonical) = inherent {
+            canonical
+        } else {
+            let candidates = self
+                .trait_methods_by_receiver
+                .get(&(receiver_place.ty.clone(), member.to_owned()))
+                .cloned()
+                .unwrap_or_default();
+            if candidates.len() == 1 {
+                let implementation = &self.trait_impls[&candidates[0]];
+                debug_assert_eq!(implementation.key, candidates[0]);
+                debug_assert!(implementation
+                    .associated_types
+                    .values()
+                    .all(|ty| *ty != Ty::Error));
+                implementation.methods[member].clone()
+            } else if candidates.len() > 1 {
+                let mut traits = candidates
+                    .iter()
+                    .map(|candidate| candidate.trait_ref.name.clone())
+                    .collect::<Vec<_>>();
+                traits.sort();
+                traits.dedup();
                 self.error(format!(
-                    "associated function `{target}.{member}` must be called on the type"
+                    "ambiguous trait method `{member}` on `{target}`; candidates: {}",
+                    traits
+                        .iter()
+                        .map(|name| format!("`{name}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
-            } else if self
-                .inherent_members
-                .get(&target)
-                .is_some_and(|members| members.constants.contains_key(member))
-            {
-                self.error(format!(
-                    "associated constant `{target}.{member}` must be accessed on the type"
-                ));
+                return error_expr();
             } else {
-                self.error(format!("unknown inherent method `{member}` on `{target}`"));
+                if self
+                    .inherent_members
+                    .get(&target)
+                    .is_some_and(|members| members.functions.contains_key(member))
+                {
+                    self.error(format!(
+                        "associated function `{target}.{member}` must be called on the type"
+                    ));
+                } else if self
+                    .inherent_members
+                    .get(&target)
+                    .is_some_and(|members| members.constants.contains_key(member))
+                {
+                    self.error(format!(
+                        "associated constant `{target}.{member}` must be accessed on the type"
+                    ));
+                } else {
+                    self.error(format!("unknown method `{member}` on `{target}`"));
+                }
+                return error_expr();
             }
-            return error_expr();
         };
 
         let function_ty = self.function_type(&canonical);
@@ -9055,6 +9891,19 @@ fn associated_constant_name(target: &str, member: &str) -> String {
     format!("{target}::constant::{member}")
 }
 
+fn trait_method_name(key: &TraitImplKey, member: &str) -> String {
+    let mut canonical = String::from("$trait$impl$");
+    push_canonical_component(&mut canonical, &key.trait_ref.name);
+    push_canonical_component(&mut canonical, &canonical_type_encoding(&key.self_ty));
+    canonical.push_str(&key.trait_ref.arguments.len().to_string());
+    canonical.push(':');
+    for argument in &key.trait_ref.arguments {
+        push_canonical_component(&mut canonical, &canonical_type_encoding(argument));
+    }
+    push_canonical_component(&mut canonical, member);
+    canonical
+}
+
 fn function_symbol(name: &str) -> String {
     format!("sali.fn.{}", hex_name(name))
 }
@@ -10285,6 +11134,217 @@ let main(): i32 = {
         assert!(ir.contains(&format!("call void @{reset}(ptr")));
         assert!(ir.contains(&format!("call i32 @{take}(%sali.type.436f756e746572")));
         assert!(ir.contains(&format!("@{answer} = internal unnamed_addr constant i32 1")));
+    }
+
+    #[test]
+    fn registers_generic_trait_metadata_and_emits_static_method_dispatch() {
+        let program = crate::parser::parse(
+            r#"
+let Convert(Rhs: type) = trait {
+  let Output: type
+  let convert(borrow self)(move rhs: Rhs): Output
+}
+let Number = struct(value: i32)
+extend Number: Convert(i32) {
+  let Output = i32
+  let convert(borrow self)(move rhs: i32): i32 = self.value + rhs
+}
+let main(): i32 = {
+  let number = Number(40)
+  number.convert(2)
+}
+"#,
+        )
+        .expect("generic trait source must parse");
+        let mut analyzer = Analyzer::new(&program);
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected collection diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        assert_eq!(analyzer.trait_impls.len(), 1);
+        let (key, implementation) = analyzer.trait_impls.iter().next().unwrap();
+        assert_eq!(key.self_ty, Ty::Struct("Number".into()));
+        assert_eq!(key.trait_ref.name, "Convert");
+        assert_eq!(key.trait_ref.arguments, vec![Ty::I32]);
+        assert_eq!(implementation.associated_types["Output"], Ty::I32);
+        let canonical = trait_method_name(key, "convert");
+        assert_eq!(implementation.methods["convert"], canonical);
+
+        analyzer.analyze().expect("concrete trait program HIR");
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected lowering diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        let ir = compile(&program).expect("concrete trait program must compile");
+        let symbol = function_symbol(&canonical);
+        assert!(ir.contains(&format!(
+            "define internal i32 @{symbol}(ptr %arg.0, i32 %arg.1)"
+        )));
+        assert!(ir.contains(&format!("call i32 @{symbol}(ptr")));
+    }
+
+    #[test]
+    fn trait_method_bodies_resolve_concrete_trait_type_substitutions() {
+        let ir = compile_text(
+            r#"
+let Cell(T: type) = struct(value: T)
+let Factory(T: type) = trait {
+  let Output: type
+  let make(borrow self)(move value: T): Output
+}
+let Maker = struct(seed: i32)
+extend Maker: Factory(i32) {
+  let Output = Cell(i32)
+  let make(borrow self)(move value: i32): Cell(i32) = Cell(T)(value + self.seed)
+}
+let main(): i32 = {
+  let maker = Maker(0)
+  maker.make(42).value
+}
+"#,
+        )
+        .expect("trait method compile-time substitutions must resolve");
+        let instance = NominalInstanceKey {
+            kind: NominalKind::Struct,
+            template: "Cell".into(),
+            arguments: vec![Ty::I32],
+        };
+        assert!(ir.contains(&hex_name(&nominal_instance_name(&instance))));
+    }
+
+    #[test]
+    fn inherent_methods_take_precedence_over_trait_candidates() {
+        let program = crate::parser::parse(
+            r#"
+let Answer = trait {
+  let answer(borrow self)(): i32
+}
+let Number = struct(value: i32)
+extend Number: Answer {
+  let answer(borrow self)(): i32 = 1
+}
+extend Number {
+  let answer(borrow self)(): i32 = self.value
+}
+let main(): i32 = {
+  let number = Number(42)
+  number.answer()
+}
+"#,
+        )
+        .expect("method precedence source must parse");
+        let analyzer = Analyzer::new(&program);
+        let trait_key = analyzer.trait_impls.keys().next().unwrap();
+        let trait_symbol = function_symbol(&trait_method_name(trait_key, "answer"));
+        let inherent_symbol = function_symbol(&inherent_method_name("Number", "answer"));
+        let ir = compile(&program).expect("method precedence source must compile");
+        assert!(ir.contains(&format!("call i32 @{inherent_symbol}(ptr")));
+        assert!(!ir.contains(&format!("call i32 @{trait_symbol}(ptr")));
+    }
+
+    #[test]
+    fn rejects_unsupported_trait_defaults_gats_and_associated_cycles() {
+        let cases = [
+            (
+                r#"
+let Defaulted = trait {
+  let value(borrow self)(): i32 = 42
+}
+let main(): i32 = 0
+"#,
+                "default trait method",
+            ),
+            (
+                r#"
+let Generic = trait {
+  let Item(T: type): type
+}
+let main(): i32 = 0
+"#,
+                "generic associated type",
+            ),
+            (
+                r#"
+let Cycle = trait {
+  let A: type
+  let B: type
+}
+let Node = struct(value: i32)
+extend Node: Cycle {
+  let A = B
+  let B = A
+}
+let main(): i32 = 0
+"#,
+                "associated type cycle",
+            ),
+            (
+                r#"
+let Broken = trait {
+  let read(borrow self)(): Missing
+}
+let main(): i32 = 0
+"#,
+                "unknown type `Missing`",
+            ),
+            (
+                r#"
+let Conflict(T: type) = trait {
+  let T: type
+}
+let main(): i32 = 0
+"#,
+                "conflicts with a trait type parameter",
+            ),
+            (
+                r#"
+let Read = trait {
+  let read(borrow self)(): i32
+}
+let Number = struct(value: i32)
+extend Number: Read {
+  let read(borrow value: Number)(): i32 = value.value
+}
+let main(): i32 = 0
+"#,
+                "signature mismatch",
+            ),
+            (
+                r#"
+let Boxed = struct(value: i32)
+let InvalidCopy = trait {
+  let consume(borrow self)(copy value: Boxed): i32
+}
+let main(): i32 = 0
+"#,
+                "requires `Copy`",
+            ),
+            (
+                r#"
+let Read = trait {
+  let read(borrow self)(): i32
+}
+let Number = struct(value: i32)
+extend Number: Read {}
+extend Number: Read {
+  let read(borrow self)(): i32 = self.value
+}
+let main(): i32 = 0
+"#,
+                "duplicate trait implementation",
+            ),
+        ];
+        for (source, expected) in cases {
+            let diagnostics = compile_text(source).expect_err("trait source must be rejected");
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.message.contains(expected)),
+                "missing `{expected}` in {diagnostics:?}"
+            );
+        }
     }
 
     #[test]

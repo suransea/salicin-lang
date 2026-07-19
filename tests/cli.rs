@@ -568,7 +568,7 @@ fn m1_inherent_member_errors_report_their_cause() {
         ),
         ("inherent_mut_receiver_immutable.sali", "immutable"),
         ("inherent_unknown_target.sali", "unknown extension target"),
-        ("inherent_trait_extension_pending.sali", "trait extensions"),
+        ("inherent_trait_extension_pending.sali", "unknown trait"),
         ("inherent_bound_method_value.sali", "must be called"),
         ("inherent_associated_function_value.sali", "must be called"),
         (
@@ -736,6 +736,65 @@ fn m2_inferred_type_argument_errors_report_their_cause() {
             .arg(fixture("fail", name))
             .output()
             .expect("check invalid inferred-type-argument fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected),
+            "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn m2_concrete_trait_programs_run_with_expected_result() {
+    for name in [
+        "trait_unique_method.sali",
+        "trait_associated_output.sali",
+        "trait_generic_nominal_impl.sali",
+        "trait_inherent_precedence.sali",
+        "trait_declaration_order.sali",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run concrete-trait fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn m2_concrete_trait_errors_report_their_cause() {
+    for (name, expected) in [
+        ("trait_unknown_trait.sali", "unknown trait"),
+        (
+            "trait_duplicate_impl.sali",
+            "duplicate trait implementation",
+        ),
+        ("trait_missing_method.sali", "missing trait method"),
+        ("trait_missing_type.sali", "missing associated type"),
+        ("trait_extra_member.sali", "unknown trait member"),
+        ("trait_pass_mode_mismatch.sali", "signature mismatch"),
+        ("trait_group_mismatch.sali", "signature mismatch"),
+        ("trait_return_mismatch.sali", "signature mismatch"),
+        ("trait_ambiguous_method.sali", "ambiguous trait method"),
+        (
+            "trait_generic_impl_pending.sali",
+            "generic trait implementation",
+        ),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid concrete-trait fixture");
         assert!(!output.status.success(), "{name} unexpectedly passed");
 
         let stderr = String::from_utf8_lossy(&output.stderr);

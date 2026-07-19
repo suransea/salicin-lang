@@ -18,6 +18,7 @@ pub enum TokenKind {
     Extend,
     Struct,
     Enum,
+    Trait,
     Match,
     True,
     False,
@@ -295,6 +296,7 @@ impl Lexer {
             "extend" => TokenKind::Extend,
             "struct" => TokenKind::Struct,
             "enum" => TokenKind::Enum,
+            "trait" => TokenKind::Trait,
             "match" => TokenKind::Match,
             "true" => TokenKind::True,
             "false" => TokenKind::False,
@@ -390,6 +392,13 @@ mod tests {
     fn recognizes_extend_as_a_keyword() {
         let tokens = lex("extend A { let identity(T: type)(value: T) = value }").unwrap();
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Extend));
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Type));
+    }
+
+    #[test]
+    fn recognizes_trait_as_a_keyword() {
+        let tokens = lex("let Foo = trait { let Item: type }").unwrap();
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Trait));
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Type));
     }
 
