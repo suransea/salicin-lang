@@ -488,7 +488,7 @@ struct PartialInfo {
 #[derive(Debug, Clone)]
 struct ClosureInfo {
     function: String,
-    params: Vec<ParamSig>,
+    groups: Vec<Vec<ParamSig>>,
     result: Ty,
     captures: Vec<ClosureCapture>,
     is_fn_mut: bool,
@@ -1558,14 +1558,16 @@ impl Analyzer {
         body: &Expr,
         outer: &mut LowerCtx,
     ) -> HirExpr {
-        if matches!(body, Expr::Closure(_, _)) {
-            self.error("curried closures are not supported yet");
-            return error_expr();
+        let mut source_groups = vec![source_params];
+        let mut body = body;
+        while let Expr::Closure(params, nested_body) = body {
+            source_groups.push(params);
+            body = nested_body;
         }
 
-        let mut bound: HashSet<String> = source_params
+        let mut bound: HashSet<String> = source_groups
             .iter()
-            .map(|param| param.name.clone())
+            .flat_map(|group| group.iter().map(|param| param.name.clone()))
             .collect();
         let mut capture_uses = Vec::new();
         if !self.scan_simple_closure_captures(body, &mut bound, outer, &mut capture_uses) {
@@ -1676,44 +1678,48 @@ impl Analyzer {
             });
         }
 
-        let mut params = Vec::new();
-        for param in source_params {
-            if param.mode != PassMode::Inferred {
-                self.error(format!(
-                    "closure parameter `{}` must use inferred passing mode for now",
-                    param.name
-                ));
-            }
-            let ty = self.lower_source_type(&param.ty);
-            if context.scopes[0].names.contains_key(&param.name) {
-                self.error(format!("duplicate closure parameter `{}`", param.name));
-                continue;
-            }
-            let id = context.fresh_local();
-            context.scopes[0].locals.push(id);
-            context.scopes[0].names.insert(
-                param.name.clone(),
-                LocalInfo {
-                    id,
+        let mut groups = Vec::new();
+        for source_group in source_groups {
+            let mut group = Vec::new();
+            for param in source_group {
+                if param.mode != PassMode::Inferred {
+                    self.error(format!(
+                        "closure parameter `{}` must use inferred passing mode for now",
+                        param.name
+                    ));
+                }
+                let ty = self.lower_source_type(&param.ty);
+                if context.scopes[0].names.contains_key(&param.name) {
+                    self.error(format!("duplicate closure parameter `{}`", param.name));
+                    continue;
+                }
+                let id = context.fresh_local();
+                context.scopes[0].locals.push(id);
+                context.scopes[0].names.insert(
+                    param.name.clone(),
+                    LocalInfo {
+                        id,
+                        ty: ty.clone(),
+                        mutable: false,
+                        capability: LocalCapability::Owned,
+                        alias: None,
+                        partial: None,
+                        closure: None,
+                    },
+                );
+                group.push(ParamSig {
+                    name: param.name.clone(),
                     ty: ty.clone(),
-                    mutable: false,
-                    capability: LocalCapability::Owned,
-                    alias: None,
-                    partial: None,
-                    closure: None,
-                },
-            );
-            params.push(ParamSig {
-                name: param.name.clone(),
-                ty: ty.clone(),
-                mode: PassMode::Inferred,
-            });
-            hir_params.push(HirParam {
-                id,
-                name: param.name.clone(),
-                ty,
-                mode: PassMode::Inferred,
-            });
+                    mode: PassMode::Inferred,
+                });
+                hir_params.push(HirParam {
+                    id,
+                    name: param.name.clone(),
+                    ty,
+                    mode: PassMode::Inferred,
+                });
+            }
+            groups.push(group);
         }
 
         let lowered_body = self.lower_expr(body, None, &mut context);
@@ -1742,7 +1748,7 @@ impl Analyzer {
 
         let info = ClosureInfo {
             function,
-            params: params.clone(),
+            groups: groups.clone(),
             result: result.clone(),
             captures,
             is_fn_mut,
@@ -1750,7 +1756,10 @@ impl Analyzer {
         };
         HirExpr {
             ty: Ty::Function(FunctionTy {
-                groups: vec![params.into_iter().map(|param| param.ty).collect()],
+                groups: groups
+                    .into_iter()
+                    .map(|group| group.into_iter().map(|param| param.ty).collect())
+                    .collect(),
                 result: Box::new(result),
             }),
             kind: HirExprKind::LocalClosure(info),
@@ -2759,18 +2768,30 @@ impl Analyzer {
             .closure
             .as_ref()
             .expect("closure call requires closure metadata");
-        if groups.len() != 1 {
+        if groups.len() < closure.groups.len() {
             self.error(format!(
-                "closure `{local_name}` requires one complete argument group; closure partial application is not supported"
+                "curried closures require all {} parameter groups in one call; partial application of closure `{local_name}` is not supported",
+                closure.groups.len()
             ));
             return error_expr();
         }
-        if groups[0].len() != closure.params.len() {
+        if groups.len() > closure.groups.len() {
             self.error(format!(
-                "argument count mismatch in closure `{local_name}`: expected {}, found {}",
-                closure.params.len(),
-                groups[0].len()
+                "too many parameter groups in call to closure `{local_name}`: expected {}, found {}",
+                closure.groups.len(),
+                groups.len()
             ));
+            return error_expr();
+        }
+        for (index, (arguments, parameters)) in groups.iter().zip(&closure.groups).enumerate() {
+            if arguments.len() != parameters.len() {
+                self.error(format!(
+                    "argument count mismatch in group {} of closure `{local_name}`: expected {}, found {}",
+                    index + 1,
+                    parameters.len(),
+                    arguments.len()
+                ));
+            }
         }
 
         if closure.is_fn_once {
@@ -2803,7 +2824,7 @@ impl Analyzer {
             }
         }
 
-        let mut arguments: Vec<_> = closure
+        let mut lowered_arguments: Vec<_> = closure
             .captures
             .iter()
             .cloned()
@@ -2821,25 +2842,27 @@ impl Analyzer {
             })
             .collect();
         let mut temporary_loans = Vec::new();
-        for (argument, parameter) in groups[0].iter().zip(&closure.params) {
-            if argument.label.is_some() {
-                self.error(format!(
-                    "named arguments are not allowed in call to closure `{local_name}`"
+        for (argument_group, parameters) in groups.iter().zip(&closure.groups) {
+            for (argument, parameter) in argument_group.iter().zip(parameters) {
+                if argument.label.is_some() {
+                    self.error(format!(
+                        "named arguments are not allowed in call to closure `{local_name}`"
+                    ));
+                }
+                lowered_arguments.push(self.lower_call_argument(
+                    &argument.value,
+                    parameter,
+                    context,
+                    &mut temporary_loans,
                 ));
             }
-            arguments.push(self.lower_call_argument(
-                &argument.value,
-                parameter,
-                context,
-                &mut temporary_loans,
-            ));
         }
         self.release_loans(&temporary_loans, context);
         HirExpr {
             ty: closure.result.clone(),
             kind: HirExprKind::Call {
                 function: closure.function.clone(),
-                arguments,
+                arguments: lowered_arguments,
             },
         }
     }
@@ -5462,6 +5485,43 @@ let main(): i32 = {
         )
         .unwrap_err();
         assert!(errors.iter().any(|error| error.message.contains("moved")));
+    }
+
+    #[test]
+    fn flattens_all_groups_of_a_curried_capturing_closure() {
+        let ir = compile_text(
+            r#"
+let main(): i32 = {
+  let base = 40
+  let add = { (x: i32)(y: i32) -> base + x + y }
+  add(1)(1)
+}
+"#,
+        )
+        .unwrap();
+        let symbol = function_symbol("__closure.0");
+        assert!(ir.contains(&format!(
+            "define internal i32 @{symbol}(ptr %arg.0, i32 %arg.1, i32 %arg.2)"
+        )));
+        assert!(ir.contains(&format!("call i32 @{symbol}(ptr")));
+    }
+
+    #[test]
+    fn rejects_partial_application_of_a_curried_closure() {
+        let errors = compile_text(
+            r#"
+let main(): i32 = {
+  let base = 40
+  let add = { (x: i32)(y: i32) -> base + x + y }
+  let add_one = add(1)
+  add_one(1)
+}
+"#,
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("partial application")));
     }
 
     #[test]

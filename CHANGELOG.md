@@ -16,6 +16,8 @@ M1 development is in progress.
 - Added path-sensitive move-state joins for conditionals, short-circuit expressions and matches.
 - Added lambda lifting for local, non-escaping closures with shared/mutable scalar captures and
   single-use nominal move captures.
+- Added complete grouped calls for curried capturing closures, with explicit diagnostics for
+  unsupported partial application.
 
 ## 0.1.0 - 2026-07-20
 
