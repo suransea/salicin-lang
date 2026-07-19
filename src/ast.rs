@@ -138,6 +138,10 @@ pub enum Expr {
     Bool(bool),
     Name(String),
     Unary(UnaryOp, Box<Expr>),
+    Borrow {
+        mutable: bool,
+        value: Box<Expr>,
+    },
     Binary(Box<Expr>, BinaryOp, Box<Expr>),
     Assign(Box<Expr>, Box<Expr>),
     Call(Box<Expr>, Vec<CallArg>),

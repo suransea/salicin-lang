@@ -11,6 +11,8 @@ M1 development is in progress.
 - Added field access and mutable field assignment.
 - Added exhaustive enum matching, payload bindings, guards and nested matches.
 - Added local non-escaping partial application for multi-group named functions.
+- Added place-aware `copy` and `move` checking, including use-after-move diagnostics.
+- Added shared and mutable borrows, explicit borrow values, and pointer-based borrow parameters.
 
 ## 0.1.0 - 2026-07-20
 

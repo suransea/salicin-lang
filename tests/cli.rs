@@ -36,30 +36,6 @@ const M1_PENDING_CASES: &[M1PendingCase] = &[
         expectation: M1Expectation::RunWithExitCode(42),
     },
     M1PendingCase {
-        relative_path: "m1_pending/pass/shared_borrow_call.sali",
-        expectation: M1Expectation::RunWithExitCode(42),
-    },
-    M1PendingCase {
-        relative_path: "m1_pending/pass/mut_borrow_field_update.sali",
-        expectation: M1Expectation::RunWithExitCode(42),
-    },
-    M1PendingCase {
-        relative_path: "m1_pending/fail/use_after_move.sali",
-        expectation: M1Expectation::CheckFailsContaining("moved"),
-    },
-    M1PendingCase {
-        relative_path: "m1_pending/fail/copy_non_copy.sali",
-        expectation: M1Expectation::CheckFailsContaining("Copy"),
-    },
-    M1PendingCase {
-        relative_path: "m1_pending/fail/double_mut_borrow.sali",
-        expectation: M1Expectation::CheckFailsContaining("mutable borrow"),
-    },
-    M1PendingCase {
-        relative_path: "m1_pending/fail/borrow_move_conflict.sali",
-        expectation: M1Expectation::CheckFailsContaining("borrowed"),
-    },
-    M1PendingCase {
         relative_path: "m1_pending/fail/array_index_type.sali",
         expectation: M1Expectation::CheckFailsContaining("index"),
     },
@@ -288,6 +264,74 @@ fn m1_match_and_partial_errors_report_their_cause() {
         assert!(
             stderr.contains(expected),
             "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn m1_ownership_programs_run_with_expected_result() {
+    for name in [
+        "shared_borrow_call.sali",
+        "mut_borrow_field_update.sali",
+        "explicit_move_i32_once.sali",
+        "borrow_released_after_complete_call.sali",
+        "borrowed_unit_is_abi_erased.sali",
+        "disjoint_mut_field_borrows.sali",
+        "inferred_copy_i32.sali",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run M1 ownership fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn m1_ownership_errors_report_their_cause() {
+    for (name, expected) in [
+        ("use_after_move.sali", &["moved"][..]),
+        ("use_after_explicit_move_i32.sali", &["moved"][..]),
+        (
+            "copy_non_copy.sali",
+            &["requires `Copy`", "does not implement Copy"][..],
+        ),
+        (
+            "double_mut_borrow.sali",
+            &["mutable borrow", "already borrowed"][..],
+        ),
+        ("borrow_move_conflict.sali", &["move", "borrowed"][..]),
+        (
+            "same_field_mut_borrow_conflict.sali",
+            &["mutable borrow", "already borrowed"][..],
+        ),
+        ("use_after_inferred_move.sali", &["moved"][..]),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid M1 ownership fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        for fragment in expected {
+            assert!(
+                stderr.contains(fragment),
+                "{name} did not report `{fragment}`:\n{}",
+                output_text(&output)
+            );
+        }
+        assert!(
+            !stderr.contains("not supported"),
+            "{name} reached a placeholder diagnostic:\n{}",
             output_text(&output)
         );
     }

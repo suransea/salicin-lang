@@ -605,9 +605,32 @@ impl Parser {
         } else if self.take(&TokenKind::Bang) {
             let operand = self.unary(allow_trailing_closure)?;
             Ok(Expr::Unary(UnaryOp::Not, Box::new(operand)))
+        } else if self.take(&TokenKind::Borrow) {
+            let borrow = self.previous().clone();
+            self.borrow_expression(false, &borrow, allow_trailing_closure)
+        } else if self.take(&TokenKind::Mut) {
+            let mutable = self.previous().clone();
+            self.expect(&TokenKind::Borrow, "`borrow` after `mut`")?;
+            self.borrow_expression(true, &mutable, allow_trailing_closure)
         } else {
             self.postfix(allow_trailing_closure)
         }
+    }
+
+    fn borrow_expression(
+        &mut self,
+        mutable: bool,
+        operator: &Token,
+        allow_trailing_closure: bool,
+    ) -> Result<Expr, ParseError> {
+        let value = self.unary(allow_trailing_closure)?;
+        if !Self::is_assignable_place(&value) {
+            return Err(self.error_at(operator, "borrow operand must be a name or member chain"));
+        }
+        Ok(Expr::Borrow {
+            mutable,
+            value: Box::new(value),
+        })
     }
 
     fn postfix(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
@@ -1254,6 +1277,50 @@ mod tests {
     fn rejects_mixed_labeled_and_positional_arguments() {
         let error = parse("let point = Point(x: 1, 2)\n").unwrap_err();
         assert!(error.message.contains("cannot be mixed"));
+    }
+
+    #[test]
+    fn parses_shared_and_mutable_borrow_places() {
+        let program = parse(
+            "let main(): () = {\n\
+               let shared = borrow value.field\n\
+               let exclusive = mut borrow value\n\
+             }\n",
+        )
+        .unwrap();
+
+        let Item::Function(main) = &program.items[0] else {
+            panic!("expected function");
+        };
+        let Some(Expr::Block(statements, None)) = &main.body else {
+            panic!("expected block");
+        };
+        assert!(matches!(
+            &statements[0],
+            Stmt::Let(Binding {
+                value: Expr::Borrow {
+                    mutable: false,
+                    value,
+                },
+                ..
+            }) if matches!(value.as_ref(), Expr::Member(_, field) if field == "field")
+        ));
+        assert!(matches!(
+            &statements[1],
+            Stmt::Let(Binding {
+                value: Expr::Borrow {
+                    mutable: true,
+                    value,
+                },
+                ..
+            }) if value.as_ref() == &Expr::Name("value".into())
+        ));
+    }
+
+    #[test]
+    fn rejects_borrowing_a_non_place_expression() {
+        let error = parse("let invalid = borrow make()\n").unwrap_err();
+        assert!(error.message.contains("name or member chain"));
     }
 
     #[test]

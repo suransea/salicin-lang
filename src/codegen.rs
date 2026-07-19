@@ -176,6 +176,7 @@ struct HirParam {
     id: LocalId,
     name: String,
     ty: Ty,
+    mode: PassMode,
 }
 
 #[derive(Debug, Clone)]
@@ -198,12 +199,38 @@ struct HirExpr {
     kind: HirExprKind,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct HirPlace {
     local: LocalId,
     root_ty: Ty,
     projections: Vec<usize>,
     ty: Ty,
+    capability: LocalCapability,
+    root_mutable: bool,
+    loan: Option<LoanId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HirReadKind {
+    Copy,
+    Move,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AccessKind {
+    Auto,
+    Copy,
+    Move,
+    SharedBorrow,
+    MutBorrow,
+}
+
+#[derive(Debug, Clone)]
+enum HirArgument {
+    Copy(HirExpr),
+    Move(HirExpr),
+    SharedBorrow(HirPlace),
+    MutBorrow(HirPlace),
 }
 
 #[derive(Debug, Clone)]
@@ -233,7 +260,10 @@ enum HirExprKind {
     Integer(i128),
     Bool(bool),
     Unit,
-    Local(LocalId),
+    Read {
+        place: HirPlace,
+        kind: HirReadKind,
+    },
     Global(String),
     Function(String),
     Unary(UnaryOp, Box<HirExpr>),
@@ -241,12 +271,12 @@ enum HirExprKind {
     Assign(HirPlace, Box<HirExpr>),
     Call {
         function: String,
-        arguments: Vec<HirExpr>,
+        arguments: Vec<HirArgument>,
     },
     Partial {
         function: String,
         consumed_groups: usize,
-        captures: Vec<HirExpr>,
+        captures: Vec<HirArgument>,
     },
     PartialCapture {
         binding: LocalId,
@@ -264,6 +294,10 @@ enum HirExprKind {
     Field {
         base: Box<HirExpr>,
         index: usize,
+    },
+    Borrow {
+        place: HirPlace,
+        mutable: bool,
     },
     Block(Vec<HirStmt>, Option<Box<HirExpr>>),
     If {
@@ -315,7 +349,83 @@ struct LocalInfo {
     id: LocalId,
     ty: Ty,
     mutable: bool,
+    capability: LocalCapability,
+    alias: Option<HirPlace>,
     partial: Option<PartialInfo>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum LocalCapability {
+    Owned,
+    SharedParam,
+    MutParam,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct PlaceKey {
+    local: LocalId,
+    projections: Vec<usize>,
+}
+
+impl From<&HirPlace> for PlaceKey {
+    fn from(place: &HirPlace) -> Self {
+        Self {
+            local: place.local,
+            projections: place.projections.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MoveStatus {
+    Moved,
+}
+
+type LoanId = usize;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoanKind {
+    Shared,
+    Mutable,
+}
+
+#[derive(Debug, Clone)]
+struct Loan {
+    place: PlaceKey,
+    kind: LoanKind,
+}
+
+#[derive(Debug, Clone)]
+struct FlowState {
+    reachable: bool,
+    moves: HashMap<PlaceKey, MoveStatus>,
+    loans: HashMap<LoanId, Loan>,
+}
+
+impl Default for FlowState {
+    fn default() -> Self {
+        Self {
+            reachable: true,
+            moves: HashMap::new(),
+            loans: HashMap::new(),
+        }
+    }
+}
+
+struct ScopeFrame {
+    names: HashMap<String, LocalInfo>,
+    locals: Vec<LocalId>,
+    lexical_loans: Vec<LoanId>,
+}
+
+impl ScopeFrame {
+    fn new() -> Self {
+        Self {
+            names: HashMap::new(),
+            locals: Vec::new(),
+            lexical_loans: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -326,8 +436,10 @@ struct PartialInfo {
 }
 
 struct LowerCtx {
-    scopes: Vec<HashMap<String, LocalInfo>>,
+    scopes: Vec<ScopeFrame>,
+    flow: FlowState,
     next_local: LocalId,
+    next_loan: LoanId,
     declared_result: Option<Ty>,
     returned_types: Vec<Ty>,
     function_name: Option<String>,
@@ -336,8 +448,10 @@ struct LowerCtx {
 impl LowerCtx {
     fn for_function(name: &str, result: Option<Ty>) -> Self {
         Self {
-            scopes: vec![HashMap::new()],
+            scopes: vec![ScopeFrame::new()],
+            flow: FlowState::default(),
             next_local: 0,
+            next_loan: 0,
             declared_result: result,
             returned_types: Vec::new(),
             function_name: Some(name.to_owned()),
@@ -346,8 +460,10 @@ impl LowerCtx {
 
     fn for_global() -> Self {
         Self {
-            scopes: vec![HashMap::new()],
+            scopes: vec![ScopeFrame::new()],
+            flow: FlowState::default(),
             next_local: 0,
+            next_loan: 0,
             declared_result: None,
             returned_types: Vec::new(),
             function_name: None,
@@ -355,13 +471,40 @@ impl LowerCtx {
     }
 
     fn lookup(&self, name: &str) -> Option<&LocalInfo> {
-        self.scopes.iter().rev().find_map(|scope| scope.get(name))
+        self.scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.names.get(name))
     }
 
     fn fresh_local(&mut self) -> LocalId {
         let id = self.next_local;
         self.next_local += 1;
         id
+    }
+
+    fn push_scope(&mut self) {
+        self.scopes.push(ScopeFrame::new());
+    }
+
+    fn pop_scope(&mut self) {
+        let scope = self.scopes.pop().expect("cannot pop all scopes");
+        for loan in scope.lexical_loans {
+            self.flow.loans.remove(&loan);
+        }
+        self.flow
+            .moves
+            .retain(|place, _| !scope.locals.contains(&place.local));
+    }
+
+    fn insert_local(&mut self, name: String, local: LocalInfo) -> bool {
+        let scope = self.scopes.last_mut().expect("at least one scope");
+        if scope.names.contains_key(&name) {
+            return false;
+        }
+        scope.locals.push(local.id);
+        scope.names.insert(name, local);
+        true
     }
 }
 
@@ -719,7 +862,7 @@ impl Analyzer {
         for group in &signature.groups {
             for param in group {
                 self.validate_parameter_mode(name, param);
-                if context.scopes[0].contains_key(&param.name) {
+                if context.scopes[0].names.contains_key(&param.name) {
                     self.error(format!(
                         "duplicate parameter `{}` in function `{name}`",
                         param.name
@@ -727,12 +870,20 @@ impl Analyzer {
                     continue;
                 }
                 let id = context.fresh_local();
-                context.scopes[0].insert(
+                let capability = match param.mode {
+                    PassMode::Borrow => LocalCapability::SharedParam,
+                    PassMode::MutBorrow => LocalCapability::MutParam,
+                    PassMode::Inferred | PassMode::Copy | PassMode::Move => LocalCapability::Owned,
+                };
+                context.scopes[0].locals.push(id);
+                context.scopes[0].names.insert(
                     param.name.clone(),
                     LocalInfo {
                         id,
                         ty: param.ty.clone(),
-                        mutable: false,
+                        mutable: param.mode == PassMode::MutBorrow,
+                        capability,
+                        alias: None,
                         partial: None,
                     },
                 );
@@ -740,6 +891,7 @@ impl Analyzer {
                     id,
                     name: param.name.clone(),
                     ty: param.ty.clone(),
+                    mode: param.mode,
                 });
             }
         }
@@ -797,25 +949,10 @@ impl Analyzer {
     }
 
     fn validate_parameter_mode(&mut self, function: &str, param: &ParamSig) {
-        if param.mode == PassMode::Copy && matches!(param.ty, Ty::Struct(_) | Ty::Enum(_)) {
+        if param.mode == PassMode::Copy && !is_copy_type(&param.ty) {
             self.error(format!(
                 "parameter `{}` in function `{function}` requires `Copy`, but nominal type `{}` does not implement Copy",
                 param.name, param.ty
-            ));
-        }
-        if matches!(
-            param.mode,
-            PassMode::Move | PassMode::Borrow | PassMode::MutBorrow
-        ) {
-            self.error(format!(
-                "parameter `{}` in function `{function}` uses {}, which is not supported in M0",
-                param.name,
-                match param.mode {
-                    PassMode::Move => "`move` (moved-value tracking is not implemented yet)",
-                    PassMode::Borrow => "`borrow`",
-                    PassMode::MutBorrow => "`mut borrow`",
-                    _ => unreachable!(),
-                }
             ));
         }
     }
@@ -921,10 +1058,10 @@ impl Analyzer {
                         ));
                         error_expr()
                     } else {
-                        HirExpr {
-                            ty: local.ty,
-                            kind: HirExprKind::Local(local.id),
-                        }
+                        let place = self
+                            .lower_place(expression, context)
+                            .expect("a resolved local name is a place");
+                        self.access_place(place, AccessKind::Auto, context)
                     }
                 } else if self.globals.contains_key(name) {
                     HirExpr {
@@ -958,6 +1095,33 @@ impl Analyzer {
                 } else {
                     self.error(format!("unknown name `{name}`"));
                     error_expr()
+                }
+            }
+            Expr::Borrow { mutable, value } => {
+                let Some(mut place) = self.lower_place(value, context) else {
+                    return error_expr();
+                };
+                if *mutable {
+                    self.ensure_writable(&place);
+                }
+                let kind = if *mutable {
+                    LoanKind::Mutable
+                } else {
+                    LoanKind::Shared
+                };
+                let loan = self.acquire_loan(&place, kind, true, context);
+                place.capability = if *mutable {
+                    LocalCapability::MutParam
+                } else {
+                    LocalCapability::SharedParam
+                };
+                place.loan = loan;
+                HirExpr {
+                    ty: place.ty.clone(),
+                    kind: HirExprKind::Borrow {
+                        place,
+                        mutable: *mutable,
+                    },
                 }
             }
             Expr::Unary(operator, operand) => {
@@ -1029,7 +1193,11 @@ impl Analyzer {
                 let Some(place) = self.lower_place(place, context) else {
                     return error_expr();
                 };
+                self.ensure_writable(&place);
+                self.ensure_available(&place, context);
+                self.ensure_no_conflicting_loan(&place, AccessKind::MutBorrow, context);
                 let value = self.lower_expr(value, Some(&place.ty), context);
+                self.mark_initialized(&place, context);
                 HirExpr {
                     ty: Ty::Unit,
                     kind: HirExprKind::Assign(place, Box::new(value)),
@@ -1038,7 +1206,7 @@ impl Analyzer {
             Expr::Call(_, _) => self.lower_call(expression, expected, context),
             Expr::Member(base, field) => self.lower_member(base, field, context),
             Expr::Block(statements, tail) => {
-                context.scopes.push(HashMap::new());
+                context.push_scope();
                 let mut lowered_statements = Vec::new();
                 for statement in statements {
                     match statement {
@@ -1062,6 +1230,17 @@ impl Analyzer {
                                 }),
                                 _ => None,
                             };
+                            let (capability, alias) = match &value.kind {
+                                HirExprKind::Borrow { place, mutable } => (
+                                    if *mutable {
+                                        LocalCapability::MutParam
+                                    } else {
+                                        LocalCapability::SharedParam
+                                    },
+                                    Some(place.clone()),
+                                ),
+                                _ => (LocalCapability::Owned, None),
+                            };
                             if matches!(ty, Ty::Function(_)) && partial.is_none() {
                                 self.error(format!(
                                     "function-valued local `{}` must be a direct partial application",
@@ -1078,6 +1257,7 @@ impl Analyzer {
                                 .scopes
                                 .last()
                                 .expect("block scope")
+                                .names
                                 .contains_key(&binding.name);
                             if duplicate {
                                 self.error(format!(
@@ -1087,12 +1267,14 @@ impl Analyzer {
                             }
                             let id = context.fresh_local();
                             if !duplicate {
-                                context.scopes.last_mut().expect("block scope").insert(
+                                context.insert_local(
                                     binding.name.clone(),
                                     LocalInfo {
                                         id,
                                         ty: ty.clone(),
                                         mutable: binding.mutable,
+                                        capability,
+                                        alias,
                                         partial,
                                     },
                                 );
@@ -1116,7 +1298,7 @@ impl Analyzer {
                 let ty = lowered_tail
                     .as_ref()
                     .map_or(Ty::Unit, |tail| tail.ty.clone());
-                context.scopes.pop();
+                context.pop_scope();
                 HirExpr {
                     ty,
                     kind: HirExprKind::Block(lowered_statements, lowered_tail),
@@ -1211,27 +1393,38 @@ impl Analyzer {
             Expr::Name(name) => {
                 let Some(local) = context.lookup(name).cloned() else {
                     if self.globals.contains_key(name) {
-                        self.error(format!("global constant `{name}` cannot be assigned"));
+                        self.error(format!(
+                            "global constant `{name}` is not a borrowable place"
+                        ));
                     } else {
-                        self.error(format!("unknown local `{name}` in assignment"));
+                        self.error(format!("unknown local `{name}` in place expression"));
                     }
                     return None;
                 };
-                if !local.mutable {
-                    self.error(format!("cannot assign to immutable binding `{name}`"));
+                if local.partial.is_some() {
+                    self.error(format!(
+                        "local partial application `{name}` is not a data place"
+                    ));
+                    return None;
+                }
+                if let Some(alias) = local.alias {
+                    return Some(alias);
                 }
                 Some(HirPlace {
                     local: local.id,
                     root_ty: local.ty.clone(),
                     projections: Vec::new(),
                     ty: local.ty,
+                    capability: local.capability,
+                    root_mutable: local.mutable,
+                    loan: None,
                 })
             }
             Expr::Member(base, field_name) => {
                 let mut place = self.lower_place(base, context)?;
                 let Ty::Struct(struct_name) = &place.ty else {
                     self.error(format!(
-                        "field `{field_name}` cannot be assigned on value of type `{}`",
+                        "field `{field_name}` cannot be selected on value of type `{}`",
                         place.ty
                     ));
                     return None;
@@ -1253,9 +1446,186 @@ impl Analyzer {
                 Some(place)
             }
             _ => {
-                self.error("left side of assignment is not an assignable place");
+                self.error("expression is not a local place");
                 None
             }
+        }
+    }
+
+    fn access_place(
+        &mut self,
+        place: HirPlace,
+        requested: AccessKind,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let access = if requested == AccessKind::Auto {
+            if is_copy_type(&place.ty) {
+                AccessKind::Copy
+            } else {
+                AccessKind::Move
+            }
+        } else {
+            requested
+        };
+        self.ensure_available(&place, context);
+        self.ensure_no_conflicting_loan(&place, access, context);
+        match access {
+            AccessKind::Copy => {
+                if !is_copy_type(&place.ty) {
+                    self.error(format!(
+                        "type `{}` does not implement Copy and cannot be copied",
+                        place.ty
+                    ));
+                }
+                HirExpr {
+                    ty: place.ty.clone(),
+                    kind: HirExprKind::Read {
+                        place,
+                        kind: HirReadKind::Copy,
+                    },
+                }
+            }
+            AccessKind::Move => {
+                if place.capability != LocalCapability::Owned {
+                    self.error("cannot move out of a borrowed value");
+                } else {
+                    self.mark_moved(&place, context);
+                }
+                HirExpr {
+                    ty: place.ty.clone(),
+                    kind: HirExprKind::Read {
+                        place,
+                        kind: HirReadKind::Move,
+                    },
+                }
+            }
+            AccessKind::Auto | AccessKind::SharedBorrow | AccessKind::MutBorrow => {
+                unreachable!("borrow accesses do not produce values")
+            }
+        }
+    }
+
+    fn ensure_available(&mut self, place: &HirPlace, context: &LowerCtx) {
+        if !context.flow.reachable {
+            return;
+        }
+        let requested = PlaceKey::from(place);
+        for (moved, status) in &context.flow.moves {
+            if places_overlap(&requested, moved) {
+                self.error(match status {
+                    MoveStatus::Moved => "use of moved value",
+                });
+                return;
+            }
+        }
+    }
+
+    fn ensure_no_conflicting_loan(
+        &mut self,
+        place: &HirPlace,
+        access: AccessKind,
+        context: &LowerCtx,
+    ) {
+        if !context.flow.reachable {
+            return;
+        }
+        let requested = PlaceKey::from(place);
+        let conflict = context.flow.loans.iter().any(|(id, loan)| {
+            Some(*id) != place.loan
+                && places_overlap(&requested, &loan.place)
+                && match access {
+                    AccessKind::Copy | AccessKind::SharedBorrow => loan.kind == LoanKind::Mutable,
+                    AccessKind::Move | AccessKind::MutBorrow => true,
+                    AccessKind::Auto => unreachable!("auto access must be resolved"),
+                }
+        });
+        if !conflict {
+            return;
+        }
+        self.error(match access {
+            AccessKind::Copy => "cannot read value while it is mutably borrowed",
+            AccessKind::Move => "cannot move value because it is borrowed",
+            AccessKind::SharedBorrow => "cannot borrow value while it is mutably borrowed",
+            AccessKind::MutBorrow => {
+                "cannot create mutable borrow because the value is already borrowed"
+            }
+            AccessKind::Auto => unreachable!("auto access must be resolved"),
+        });
+    }
+
+    fn ensure_writable(&mut self, place: &HirPlace) {
+        match place.capability {
+            LocalCapability::MutParam => {}
+            LocalCapability::SharedParam => {
+                self.error("cannot assign through a shared borrow");
+            }
+            LocalCapability::Owned if place.root_mutable => {}
+            LocalCapability::Owned => {
+                self.error("cannot assign to immutable binding");
+            }
+        }
+    }
+
+    fn mark_moved(&mut self, place: &HirPlace, context: &mut LowerCtx) {
+        if !context.flow.reachable {
+            return;
+        }
+        let moved = PlaceKey::from(place);
+        context
+            .flow
+            .moves
+            .retain(|existing, _| !is_place_prefix(&moved, existing));
+        context.flow.moves.insert(moved, MoveStatus::Moved);
+    }
+
+    fn mark_initialized(&mut self, place: &HirPlace, context: &mut LowerCtx) {
+        let initialized = PlaceKey::from(place);
+        context
+            .flow
+            .moves
+            .retain(|moved, _| !is_place_prefix(&initialized, moved));
+    }
+
+    fn acquire_loan(
+        &mut self,
+        place: &HirPlace,
+        kind: LoanKind,
+        lexical: bool,
+        context: &mut LowerCtx,
+    ) -> Option<LoanId> {
+        let diagnostics_before = self.diagnostics.len();
+        self.ensure_available(place, context);
+        let access = match kind {
+            LoanKind::Shared => AccessKind::SharedBorrow,
+            LoanKind::Mutable => AccessKind::MutBorrow,
+        };
+        self.ensure_no_conflicting_loan(place, access, context);
+        if self.diagnostics.len() != diagnostics_before || !context.flow.reachable {
+            return None;
+        }
+        let id = context.next_loan;
+        context.next_loan += 1;
+        context.flow.loans.insert(
+            id,
+            Loan {
+                place: PlaceKey::from(place),
+                kind,
+            },
+        );
+        if lexical {
+            context
+                .scopes
+                .last_mut()
+                .expect("borrow expression has a scope")
+                .lexical_loans
+                .push(id);
+        }
+        Some(id)
+    }
+
+    fn release_loans(&mut self, loans: &[LoanId], context: &mut LowerCtx) {
+        for loan in loans {
+            context.flow.loans.remove(loan);
         }
     }
 
@@ -1288,6 +1658,32 @@ impl Analyzer {
             }
         }
 
+        if let Some(place) = self.lower_place_without_diagnostic(base, context) {
+            let Ty::Struct(struct_name) = &place.ty else {
+                self.error(format!(
+                    "member access requires a struct value, found `{}`",
+                    place.ty
+                ));
+                return error_expr();
+            };
+            let layout = self.struct_layouts[struct_name].clone();
+            let Some((index, field)) = layout
+                .fields
+                .iter()
+                .enumerate()
+                .find(|(_, field)| field.name == member)
+            else {
+                self.error(format!(
+                    "unknown field `{member}` on struct `{struct_name}`"
+                ));
+                return error_expr();
+            };
+            let mut field_place = place;
+            field_place.projections.push(index);
+            field_place.ty = field.ty.clone();
+            return self.access_place(field_place, AccessKind::Auto, context);
+        }
+
         let base = self.lower_expr(base, None, context);
         let Ty::Struct(struct_name) = &base.ty else {
             self.error(format!(
@@ -1317,6 +1713,23 @@ impl Analyzer {
         }
     }
 
+    fn lower_place_without_diagnostic(
+        &mut self,
+        expression: &Expr,
+        context: &mut LowerCtx,
+    ) -> Option<HirPlace> {
+        match expression {
+            Expr::Name(name) if context.lookup(name).is_some() => {
+                self.lower_place(expression, context)
+            }
+            Expr::Member(base, _) => {
+                self.lower_place_without_diagnostic(base, context)?;
+                self.lower_place(expression, context)
+            }
+            _ => None,
+        }
+    }
+
     fn lower_match(
         &mut self,
         scrutinee: &Expr,
@@ -1338,7 +1751,7 @@ impl Analyzer {
         let mut result_ty: Option<Ty> = None;
 
         for arm in arms {
-            context.scopes.push(HashMap::new());
+            context.push_scope();
             let (matcher, bindings) = self.lower_enum_pattern(&arm.pattern, &layout, context);
             let guard = arm
                 .guard
@@ -1350,7 +1763,7 @@ impl Analyzer {
                     .filter(|ty| !matches!(ty, Ty::Never | Ty::Error))
             });
             let body = self.lower_expr(&arm.body, branch_expected, context);
-            context.scopes.pop();
+            context.pop_scope();
 
             result_ty = Some(match result_ty {
                 Some(current) => self.unify_types(&current, &body.ty, "match arm results"),
@@ -1595,18 +2008,21 @@ impl Analyzer {
             .scopes
             .last()
             .expect("match arm scope")
+            .names
             .contains_key(name)
         {
             self.error(format!("duplicate pattern binding `{name}`"));
             return;
         }
         let id = context.fresh_local();
-        context.scopes.last_mut().expect("match arm scope").insert(
+        context.insert_local(
             name.to_owned(),
             LocalInfo {
                 id,
                 ty: ty.clone(),
                 mutable: false,
+                capability: LocalCapability::Owned,
+                alias: None,
                 partial: None,
             },
         );
@@ -1795,6 +2211,7 @@ impl Analyzer {
         let Ty::Function(function_ty) = function_ty else {
             return error_expr();
         };
+        let signature = self.signatures[name].clone();
         if groups.len() > function_ty.groups.len() {
             self.error(format!(
                 "too many parameter groups in call to `{name}`: expected {}, found {}",
@@ -1805,8 +2222,9 @@ impl Analyzer {
         }
 
         let mut arguments = Vec::new();
+        let mut temporary_loans = Vec::new();
         for (group_index, (arguments_ast, params)) in
-            groups.iter().zip(&function_ty.groups).enumerate()
+            groups.iter().zip(&signature.groups).enumerate()
         {
             if arguments_ast.len() != params.len() {
                 self.error(format!(
@@ -1822,11 +2240,26 @@ impl Analyzer {
                         "named arguments are not allowed in call to `{name}`"
                     ));
                 }
-                arguments.push(self.lower_expr(&argument.value, Some(parameter), context));
+                arguments.push(self.lower_call_argument(
+                    &argument.value,
+                    parameter,
+                    context,
+                    &mut temporary_loans,
+                ));
             }
         }
 
-        if groups.len() == function_ty.groups.len() {
+        let complete = groups.len() == function_ty.groups.len();
+        if !complete
+            && arguments
+                .iter()
+                .any(|argument| !matches!(argument, HirArgument::Copy(_)))
+        {
+            self.error("partial application may only capture Copy arguments for now");
+        }
+        self.release_loans(&temporary_loans, context);
+
+        if complete {
             HirExpr {
                 ty: (*function_ty.result).clone(),
                 kind: HirExprKind::Call {
@@ -1865,6 +2298,7 @@ impl Analyzer {
         let Ty::Function(function_ty) = function_ty else {
             return error_expr();
         };
+        let signature = self.signatures[&partial.function].clone();
         let remaining_groups = function_ty.groups.len() - partial.consumed_groups;
         if groups.len() > remaining_groups {
             self.error(format!(
@@ -1874,34 +2308,45 @@ impl Analyzer {
             return error_expr();
         }
 
-        let captured_types: Vec<_> = function_ty
+        let captured_params: Vec<_> = signature
             .groups
             .iter()
             .take(partial.consumed_groups)
             .flatten()
             .cloned()
             .collect();
-        if captured_types.len() != partial.capture_count {
+        if captured_params.len() != partial.capture_count {
             self.error(format!(
                 "internal error: invalid capture count for partial `{local_name}`"
             ));
             return error_expr();
         }
-        let mut arguments: Vec<_> = captured_types
+        let mut arguments: Vec<_> = captured_params
             .into_iter()
             .enumerate()
-            .map(|(index, ty)| HirExpr {
-                ty,
-                kind: HirExprKind::PartialCapture {
-                    binding: local.id,
-                    index,
-                },
+            .map(|(index, parameter)| {
+                let capture = HirExpr {
+                    ty: parameter.ty.clone(),
+                    kind: HirExprKind::PartialCapture {
+                        binding: local.id,
+                        index,
+                    },
+                };
+                match effective_pass_mode(parameter.mode, &parameter.ty) {
+                    PassMode::Copy => HirArgument::Copy(capture),
+                    PassMode::Move => HirArgument::Move(capture),
+                    PassMode::Borrow | PassMode::MutBorrow => {
+                        unreachable!("borrowed partial applications are rejected at creation")
+                    }
+                    PassMode::Inferred => unreachable!("effective mode is explicit"),
+                }
             })
             .collect();
 
+        let mut temporary_loans = Vec::new();
         for (relative_group, arguments_ast) in groups.iter().enumerate() {
             let group_index = partial.consumed_groups + relative_group;
-            let params = &function_ty.groups[group_index];
+            let params = &signature.groups[group_index];
             if arguments_ast.len() != params.len() {
                 self.error(format!(
                     "argument count mismatch in group {} of `{local_name}`: expected {}, found {}",
@@ -1916,11 +2361,24 @@ impl Analyzer {
                         "named arguments are not allowed in call to `{local_name}`"
                     ));
                 }
-                arguments.push(self.lower_expr(&argument.value, Some(parameter), context));
+                arguments.push(self.lower_call_argument(
+                    &argument.value,
+                    parameter,
+                    context,
+                    &mut temporary_loans,
+                ));
             }
         }
 
         let consumed_groups = partial.consumed_groups + groups.len();
+        if consumed_groups != function_ty.groups.len()
+            && arguments
+                .iter()
+                .any(|argument| !matches!(argument, HirArgument::Copy(_)))
+        {
+            self.error("partial application may only capture Copy arguments for now");
+        }
+        self.release_loans(&temporary_loans, context);
         if consumed_groups == function_ty.groups.len() {
             HirExpr {
                 ty: (*function_ty.result).clone(),
@@ -1941,6 +2399,79 @@ impl Analyzer {
                     captures: arguments,
                 },
             }
+        }
+    }
+
+    fn lower_call_argument(
+        &mut self,
+        argument: &Expr,
+        parameter: &ParamSig,
+        context: &mut LowerCtx,
+        temporary_loans: &mut Vec<LoanId>,
+    ) -> HirArgument {
+        let mode = effective_pass_mode(parameter.mode, &parameter.ty);
+        match mode {
+            PassMode::Copy | PassMode::Move => {
+                let value =
+                    if let Some(place) = self.lower_place_without_diagnostic(argument, context) {
+                        let access = if mode == PassMode::Copy {
+                            AccessKind::Copy
+                        } else {
+                            AccessKind::Move
+                        };
+                        self.access_place(place, access, context)
+                    } else {
+                        self.lower_expr(argument, Some(&parameter.ty), context)
+                    };
+                self.require_same_type(
+                    &value.ty,
+                    &parameter.ty,
+                    format!("argument for parameter `{}`", parameter.name),
+                );
+                if mode == PassMode::Copy {
+                    if !is_copy_type(&parameter.ty) {
+                        self.error(format!(
+                            "parameter `{}` requires Copy, but `{}` does not implement Copy",
+                            parameter.name, parameter.ty
+                        ));
+                    }
+                    HirArgument::Copy(value)
+                } else {
+                    HirArgument::Move(value)
+                }
+            }
+            PassMode::Borrow | PassMode::MutBorrow => {
+                let Some(place) = self.lower_place_without_diagnostic(argument, context) else {
+                    self.error(format!(
+                        "borrowed argument for parameter `{}` must be a local place",
+                        parameter.name
+                    ));
+                    return HirArgument::Copy(error_expr());
+                };
+                self.require_same_type(
+                    &place.ty,
+                    &parameter.ty,
+                    format!("argument for parameter `{}`", parameter.name),
+                );
+                let mutable = mode == PassMode::MutBorrow;
+                if mutable {
+                    self.ensure_writable(&place);
+                }
+                let kind = if mutable {
+                    LoanKind::Mutable
+                } else {
+                    LoanKind::Shared
+                };
+                if let Some(loan) = self.acquire_loan(&place, kind, false, context) {
+                    temporary_loans.push(loan);
+                }
+                if mutable {
+                    HirArgument::MutBorrow(place)
+                } else {
+                    HirArgument::SharedBorrow(place)
+                }
+            }
+            PassMode::Inferred => unreachable!("effective mode is explicit"),
         }
     }
 
@@ -2200,6 +2731,31 @@ fn flatten_call<'a>(expression: &'a Expr, groups: &mut Vec<&'a [CallArg]>) -> &'
     }
 }
 
+fn is_copy_type(ty: &Ty) -> bool {
+    matches!(
+        ty,
+        Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool | Ty::Unit | Ty::Never | Ty::Error
+    )
+}
+
+fn effective_pass_mode(mode: PassMode, ty: &Ty) -> PassMode {
+    match mode {
+        PassMode::Inferred if is_copy_type(ty) => PassMode::Copy,
+        PassMode::Inferred => PassMode::Move,
+        mode => mode,
+    }
+}
+
+fn is_place_prefix(prefix: &PlaceKey, place: &PlaceKey) -> bool {
+    prefix.local == place.local
+        && prefix.projections.len() <= place.projections.len()
+        && place.projections.starts_with(&prefix.projections)
+}
+
+fn places_overlap(left: &PlaceKey, right: &PlaceKey) -> bool {
+    is_place_prefix(left, right) || is_place_prefix(right, left)
+}
+
 fn integer_fits(value: i128, ty: &Ty) -> bool {
     match ty {
         Ty::I32 => i32::try_from(value).is_ok(),
@@ -2311,10 +2867,24 @@ impl ConstantEvaluator<'_> {
             HirExprKind::Integer(value) => Some(ConstValue::Integer(*value)),
             HirExprKind::Bool(value) => Some(ConstValue::Bool(*value)),
             HirExprKind::Unit => Some(ConstValue::Unit),
-            HirExprKind::Local(id) => locals.get(id).cloned().or_else(|| {
-                self.error("invalid local in constant expression");
-                None
-            }),
+            HirExprKind::Read { place, .. } => {
+                let mut value = locals.get(&place.local).cloned().or_else(|| {
+                    self.error("invalid local in constant expression");
+                    None
+                })?;
+                for index in &place.projections {
+                    let ConstValue::Aggregate(fields) = value else {
+                        self.error("invalid field read in constant expression");
+                        return None;
+                    };
+                    let Some(field) = fields.get(*index).cloned() else {
+                        self.error("invalid field index in constant expression");
+                        return None;
+                    };
+                    value = field;
+                }
+                Some(value)
+            }
             HirExprKind::Global(name) => self.evaluate_global(name),
             HirExprKind::ConstructStruct { name, fields } => {
                 let layout = self.program.struct_layout(name)?;
@@ -2422,6 +2992,7 @@ impl ConstantEvaluator<'_> {
                 }
             }
             HirExprKind::Assign(_, _)
+            | HirExprKind::Borrow { .. }
             | HirExprKind::Call { .. }
             | HirExprKind::Partial { .. }
             | HirExprKind::PartialCapture { .. }
@@ -2669,14 +3240,22 @@ impl<'a> FunctionEmitter<'a> {
             if emitted_parameter_count != 0 {
                 self.output.push_str(", ");
             }
-            self.output
-                .push_str(&format!("{} %arg.{index}", llvm_value_type(&parameter.ty)?));
+            let abi_ty = if matches!(parameter.mode, PassMode::Borrow | PassMode::MutBorrow) {
+                "ptr".to_owned()
+            } else {
+                llvm_value_type(&parameter.ty)?
+            };
+            self.output.push_str(&format!("{abi_ty} %arg.{index}"));
             emitted_parameter_count += 1;
         }
         self.output.push_str(") {\nentry:\n");
 
         for (index, parameter) in self.function.params.iter().enumerate() {
             if parameter.ty == Ty::Unit {
+                continue;
+            }
+            if matches!(parameter.mode, PassMode::Borrow | PassMode::MutBorrow) {
+                self.locals.insert(parameter.id, format!("%arg.{index}"));
                 continue;
             }
             let pointer = self.fresh_register();
@@ -2717,13 +3296,12 @@ impl<'a> FunctionEmitter<'a> {
                 value: Some(if *value { "1" } else { "0" }.to_owned()),
             }),
             HirExprKind::Unit => Ok(Operand::unit()),
-            HirExprKind::Local(id) => {
+            HirExprKind::Read { place, kind } => {
+                let _ = kind;
                 if expression.ty == Ty::Unit {
                     return Ok(Operand::unit());
                 }
-                let pointer = self.locals.get(id).cloned().ok_or_else(|| {
-                    Diagnostic::new(format!("internal error: unknown local id {id}"))
-                })?;
+                let pointer = self.emit_place_address(place)?;
                 let register = self.fresh_register();
                 let ty = llvm_value_type(&expression.ty)?;
                 self.instruction(format!("{register} = load {ty}, ptr {pointer}"));
@@ -2905,26 +3483,8 @@ impl<'a> FunctionEmitter<'a> {
                 if value.ty == Ty::Unit {
                     return Ok(Operand::unit());
                 }
-                let root_pointer = self.locals.get(&place.local).cloned().ok_or_else(|| {
-                    Diagnostic::new(format!("internal error: unknown local id {}", place.local))
-                })?;
                 let ty = llvm_value_type(&value.ty)?;
-                let pointer = if place.projections.is_empty() {
-                    root_pointer
-                } else {
-                    let pointer = self.fresh_register();
-                    let indices = place
-                        .projections
-                        .iter()
-                        .map(|index| format!("i32 {index}"))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    self.instruction(format!(
-                        "{pointer} = getelementptr inbounds {}, ptr {root_pointer}, i32 0, {indices}",
-                        llvm_value_type(&place.root_ty)?
-                    ));
-                    pointer
-                };
+                let pointer = self.emit_place_address(place)?;
                 self.instruction(format!("store {ty} {}, ptr {pointer}", value.value()?));
                 Ok(Operand::unit())
             }
@@ -2934,18 +3494,29 @@ impl<'a> FunctionEmitter<'a> {
             } => {
                 let mut emitted_arguments = Vec::new();
                 for argument in arguments {
-                    let argument = self.emit_expr(argument)?;
-                    if self.terminated {
-                        return Ok(Operand::never());
+                    match argument {
+                        HirArgument::Copy(argument) | HirArgument::Move(argument) => {
+                            let argument = self.emit_expr(argument)?;
+                            if self.terminated {
+                                return Ok(Operand::never());
+                            }
+                            if argument.ty == Ty::Unit {
+                                continue;
+                            }
+                            emitted_arguments.push(format!(
+                                "{} {}",
+                                llvm_value_type(&argument.ty)?,
+                                argument.value()?
+                            ));
+                        }
+                        HirArgument::SharedBorrow(place) | HirArgument::MutBorrow(place) => {
+                            if place.ty == Ty::Unit {
+                                continue;
+                            }
+                            let pointer = self.emit_place_address(place)?;
+                            emitted_arguments.push(format!("ptr {pointer}"));
+                        }
                     }
-                    if argument.ty == Ty::Unit {
-                        continue;
-                    }
-                    emitted_arguments.push(format!(
-                        "{} {}",
-                        llvm_value_type(&argument.ty)?,
-                        argument.value()?
-                    ));
                 }
                 let call = format!(
                     "call {} @{}({})",
@@ -2967,6 +3538,9 @@ impl<'a> FunctionEmitter<'a> {
             }
             HirExprKind::Partial { .. } => Err(Diagnostic::new(
                 "local partial application escaped its binding",
+            )),
+            HirExprKind::Borrow { .. } => Err(Diagnostic::new(
+                "borrow value escaped the local binding that owns its loan",
             )),
             HirExprKind::PartialCapture { binding, index } => {
                 let capture = self
@@ -3002,7 +3576,17 @@ impl<'a> FunctionEmitter<'a> {
                             if let HirExprKind::Partial { captures, .. } = &binding.value.kind {
                                 let mut stored = Vec::new();
                                 for capture in captures {
-                                    let capture = self.emit_expr(capture)?;
+                                    let capture = match capture {
+                                        HirArgument::Copy(capture) | HirArgument::Move(capture) => {
+                                            self.emit_expr(capture)?
+                                        }
+                                        HirArgument::SharedBorrow(_)
+                                        | HirArgument::MutBorrow(_) => {
+                                            return Err(Diagnostic::new(
+                                                "borrowed argument reached partial application emission",
+                                            ));
+                                        }
+                                    };
                                     if self.terminated {
                                         break;
                                     }
@@ -3024,6 +3608,9 @@ impl<'a> FunctionEmitter<'a> {
                                 if !self.terminated {
                                     self.partial_captures.insert(binding.id, stored);
                                 }
+                                continue;
+                            }
+                            if matches!(binding.value.kind, HirExprKind::Borrow { .. }) {
                                 continue;
                             }
                             let value = self.emit_expr(&binding.value)?;
@@ -3361,6 +3948,27 @@ impl<'a> FunctionEmitter<'a> {
             ty: expression.ty.clone(),
             value: Some(register),
         })
+    }
+
+    fn emit_place_address(&mut self, place: &HirPlace) -> Result<String, Diagnostic> {
+        let root_pointer = self.locals.get(&place.local).cloned().ok_or_else(|| {
+            Diagnostic::new(format!("internal error: unknown local id {}", place.local))
+        })?;
+        if place.projections.is_empty() {
+            return Ok(root_pointer);
+        }
+        let pointer = self.fresh_register();
+        let indices = place
+            .projections
+            .iter()
+            .map(|index| format!("i32 {index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.instruction(format!(
+            "{pointer} = getelementptr inbounds {}, ptr {root_pointer}, i32 0, {indices}",
+            llvm_value_type(&place.root_ty)?
+        ));
+        Ok(pointer)
     }
 
     fn fresh_register(&mut self) -> String {
@@ -3767,7 +4375,7 @@ let main(): i32 = 0
     }
 
     #[test]
-    fn rejects_explicit_move_until_move_tracking_exists() {
+    fn tracks_explicit_move_even_for_a_copy_type() {
         let consume = function(
             "consume",
             vec![vec![Param {
@@ -3778,14 +4386,36 @@ let main(): i32 = 0
             Type::I32,
             Expr::Name("value".into()),
         );
-        let main = function("main", vec![vec![]], Type::I32, Expr::Integer(0));
+        let main = function(
+            "main",
+            vec![vec![]],
+            Type::I32,
+            Expr::Block(
+                vec![
+                    Stmt::Let(Binding {
+                        mutable: false,
+                        name: "value".into(),
+                        annotation: None,
+                        value: Expr::Integer(7),
+                    }),
+                    Stmt::Let(Binding {
+                        mutable: false,
+                        name: "consumed".into(),
+                        annotation: None,
+                        value: Expr::Call(
+                            Box::new(Expr::Name("consume".into())),
+                            vec![arg(Expr::Name("value".into()))],
+                        ),
+                    }),
+                ],
+                Some(Box::new(Expr::Name("value".into()))),
+            ),
+        );
         let errors = compile(&Program {
             items: vec![consume, main],
         })
         .unwrap_err();
-        assert!(errors
-            .iter()
-            .any(|error| error.message.contains("uses `move`")));
+        assert!(errors.iter().any(|error| error.message.contains("moved")));
     }
 
     #[test]
