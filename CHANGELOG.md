@@ -22,6 +22,8 @@ M2 development follows the v0.2 language foundation.
 - Added name-based `Add(Rhs)` language-trait validation and statically dispatched `+` for concrete
   nominal left operands, including `Output`-guided inference, deterministic ambiguity diagnostics,
   literal range filtering and single-evaluation ownership semantics; integer addition remains built in.
+- Added reserved prelude `Option(T)` and `Result(T, E)` generic enums as ordinary nominal templates,
+  reusing existing constructors, type-argument inference, matching, monomorphization and LLVM layouts.
 
 ## 0.2.0 - 2026-07-20
 

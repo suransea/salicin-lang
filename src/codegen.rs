@@ -10,7 +10,7 @@ use std::fmt;
 use crate::ast::{
     BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EnumDef, Expr, ExtendDef,
     ExtendMember, Function, Item, MatchArm, PassMode, Pattern, PatternFields, Program, Stmt,
-    StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantFields,
+    StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantDef, VariantFields,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,6 +49,45 @@ pub fn compile(program: &Program) -> Result<String, Vec<Diagnostic>> {
         Ok(ir) => Ok(ir),
         Err(error) => Err(vec![error]),
     }
+}
+
+fn builtin_prelude_items() -> [Item; 2] {
+    let type_parameter = |name: &str| CompileParam {
+        name: name.to_owned(),
+        kind: CompileParamKind::Type,
+    };
+    let named_type = |name: &str| Type::Named(name.to_owned(), Vec::new());
+
+    [
+        Item::Enum(EnumDef {
+            name: "Option".to_owned(),
+            compile_groups: vec![vec![type_parameter("T")]],
+            variants: vec![
+                VariantDef {
+                    name: "Some".to_owned(),
+                    fields: VariantFields::Positional(vec![named_type("T")]),
+                },
+                VariantDef {
+                    name: "None".to_owned(),
+                    fields: VariantFields::Unit,
+                },
+            ],
+        }),
+        Item::Enum(EnumDef {
+            name: "Result".to_owned(),
+            compile_groups: vec![vec![type_parameter("T"), type_parameter("E")]],
+            variants: vec![
+                VariantDef {
+                    name: "Ok".to_owned(),
+                    fields: VariantFields::Positional(vec![named_type("T")]),
+                },
+                VariantDef {
+                    name: "Err".to_owned(),
+                    fields: VariantFields::Positional(vec![named_type("E")]),
+                },
+            ],
+        }),
+    ]
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -859,7 +898,8 @@ impl Analyzer {
     fn collect_items(&mut self, program: &Program) {
         let mut names = HashSet::new();
         let mut extensions = Vec::new();
-        for item in &program.items {
+        let prelude = builtin_prelude_items();
+        for item in prelude.iter().chain(&program.items) {
             let name = match item {
                 Item::Function(function) => &function.name,
                 Item::Global(binding) => &binding.name,
@@ -10674,6 +10714,183 @@ mod tests {
         };
         let canonical = nominal_instance_name(&key);
         assert!(ir.contains(&hex_name(&canonical)));
+    }
+
+    #[test]
+    fn registers_option_and_result_as_validated_prelude_templates() {
+        let analyzer = Analyzer::new(&Program { items: Vec::new() });
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected prelude diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        assert_eq!(
+            &analyzer.enum_template_order[..2],
+            &["Option".to_owned(), "Result".to_owned()]
+        );
+
+        let option = &analyzer.enum_templates["Option"];
+        assert_eq!(option.compile_groups.len(), 1);
+        assert_eq!(option.compile_groups[0].len(), 1);
+        assert_eq!(option.compile_groups[0][0].name, "T");
+        assert_eq!(option.variants.len(), 2);
+        assert_eq!(option.variants[0].name, "Some");
+        assert_eq!(
+            option.variants[0].fields,
+            VariantFields::Positional(vec![Type::Named("T".into(), Vec::new())])
+        );
+        assert_eq!(option.variants[1].name, "None");
+        assert_eq!(option.variants[1].fields, VariantFields::Unit);
+
+        let result = &analyzer.enum_templates["Result"];
+        assert_eq!(result.compile_groups.len(), 1);
+        assert_eq!(
+            result.compile_groups[0]
+                .iter()
+                .map(|parameter| parameter.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["T", "E"]
+        );
+        assert_eq!(result.variants.len(), 2);
+        assert_eq!(result.variants[0].name, "Ok");
+        assert_eq!(result.variants[1].name, "Err");
+
+        assert!(analyzer.nominal_instances.is_empty());
+        assert!(analyzer.nominal_instance_names.is_empty());
+        assert!(analyzer.enum_layouts.is_empty());
+        assert!(analyzer.functions.is_empty());
+        assert!(analyzer.function_templates.is_empty());
+        assert!(analyzer.function_order.is_empty());
+    }
+
+    #[test]
+    fn constructs_infers_and_matches_prelude_option_and_result() {
+        let ir = compile_text(
+            r#"
+let unwrap_option(move value: Option(i32)): i32 = value match {
+  Some(item) => item,
+  None => 0,
+}
+let unwrap_result(move value: Result(i32, bool)): i32 = value match {
+  Ok(item) => item,
+  Err(_) => 0,
+}
+let main(): i32 = {
+  let some = Option(_).Some(19)
+  let none: Option(i32) = Option(_).None
+  let ok: Result(i32, bool) = Result(_, _).Ok(23)
+  let err: Result(i32, bool) = Result(_, _).Err(false)
+  unwrap_option(some) + unwrap_option(none) + unwrap_result(ok) + unwrap_result(err)
+}
+"#,
+        )
+        .expect("prelude Option and Result program must compile");
+        let option = NominalInstanceKey {
+            kind: NominalKind::Enum,
+            template: "Option".into(),
+            arguments: vec![Ty::I32],
+        };
+        let result = NominalInstanceKey {
+            kind: NominalKind::Enum,
+            template: "Result".into(),
+            arguments: vec![Ty::I32, Ty::Bool],
+        };
+        assert!(ir.contains(&hex_name(&nominal_instance_name(&option))));
+        assert!(ir.contains(&hex_name(&nominal_instance_name(&result))));
+    }
+
+    #[test]
+    fn keeps_prelude_nominal_instances_structurally_isolated() {
+        let program = crate::parser::parse(
+            r#"
+let main(): i32 = {
+  let number = Option(_).Some(42)
+  let flag = Option(_).Some(true)
+  let first: Result(i32, bool) = Result(_, _).Ok(42)
+  let second: Result(bool, i32) = Result(_, _).Err(0)
+  let value = number match { Some(item) => item, None => 0 }
+  let enabled = flag match { Some(item) => item, None => false }
+  let left = first match { Ok(item) => item, Err(_) => 0 }
+  let right = second match { Ok(_) => 0, Err(item) => item }
+  if enabled { value + left - right - 42 } else { 0 }
+}
+"#,
+        )
+        .expect("multiple prelude instances source must parse");
+        let mut analyzer = Analyzer::new(&program);
+        analyzer.analyze().expect("multiple prelude instances HIR");
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+
+        let option_i32 = NominalInstanceKey {
+            kind: NominalKind::Enum,
+            template: "Option".into(),
+            arguments: vec![Ty::I32],
+        };
+        let option_bool = NominalInstanceKey {
+            kind: NominalKind::Enum,
+            template: "Option".into(),
+            arguments: vec![Ty::Bool],
+        };
+        let option_i32_name = analyzer.nominal_instance_names[&option_i32].clone();
+        let option_bool_name = analyzer.nominal_instance_names[&option_bool].clone();
+        assert_ne!(option_i32_name, option_bool_name);
+        assert_eq!(
+            analyzer.enum_layouts[&option_i32_name].variants[0].fields[0].ty,
+            Ty::I32
+        );
+        assert_eq!(
+            analyzer.enum_layouts[&option_bool_name].variants[0].fields[0].ty,
+            Ty::Bool
+        );
+
+        let result_keys = analyzer
+            .nominal_instances
+            .values()
+            .filter(|instance| instance.key.template == "Result")
+            .map(|instance| instance.key.arguments.clone())
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            result_keys,
+            HashSet::from([vec![Ty::I32, Ty::Bool], vec![Ty::Bool, Ty::I32]])
+        );
+    }
+
+    #[test]
+    fn rejects_user_redefinitions_of_prelude_nominal_names() {
+        for (source, name) in [
+            (
+                "let Option = struct(value: i32)\nlet main(): i32 = 42\n",
+                "Option",
+            ),
+            (
+                "let Result(T: type) = enum { Value(T) }\nlet main(): i32 = 42\n",
+                "Result",
+            ),
+        ] {
+            let program = crate::parser::parse(source).expect("reserved-name source must parse");
+            let analyzer = Analyzer::new(&program);
+            assert!(analyzer.diagnostics.iter().any(|diagnostic| {
+                diagnostic.message == format!("duplicate top-level name `{name}`")
+            }));
+            let retained = &analyzer.enum_templates[name];
+            let retained_variants = retained
+                .variants
+                .iter()
+                .map(|variant| variant.name.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                retained_variants,
+                if name == "Option" {
+                    vec!["Some", "None"]
+                } else {
+                    vec!["Ok", "Err"]
+                }
+            );
+        }
     }
 
     #[test]
