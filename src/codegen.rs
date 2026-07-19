@@ -8,8 +8,9 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::ast::{
-    BinaryOp, Binding, CallArg, EnumDef, Expr, ExtendDef, ExtendMember, Function, Item, MatchArm,
-    PassMode, Pattern, PatternFields, Program, Stmt, StructDef, Type, UnaryOp, VariantFields,
+    BinaryOp, Binding, CallArg, CompileParam, EnumDef, Expr, ExtendDef, ExtendMember, Function,
+    Item, MatchArm, PassMode, Pattern, PatternFields, Program, Stmt, StructDef, Type, UnaryOp,
+    VariantFields,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,6 +99,21 @@ struct NominalInstanceKey {
 struct NominalInstanceInfo {
     key: NominalInstanceKey,
     canonical: String,
+}
+
+#[derive(Debug, Clone)]
+struct InferredTypeArgument {
+    ty: Ty,
+    source: Option<Type>,
+    origin: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TypeProbe {
+    Known(Ty),
+    KnownSource(Ty, Type),
+    Defaultable(Ty),
+    Unsupported,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1928,7 +1944,7 @@ impl Analyzer {
         match expression {
             Expr::Infer => {
                 self.error(
-                    "`_` generic type argument inference is not supported in the first generic slice",
+                    "nested `_` type argument inference is not supported; use `_` as a complete compile-time argument",
                 );
                 None
             }
@@ -1989,6 +2005,1022 @@ impl Analyzer {
                 None
             }
         }
+    }
+
+    fn source_type_for_ty(&self, ty: &Ty) -> Option<Type> {
+        match ty {
+            Ty::I32 => Some(Type::I32),
+            Ty::I64 => Some(Type::I64),
+            Ty::U32 => Some(Type::U32),
+            Ty::U64 => Some(Type::U64),
+            Ty::Bool => Some(Type::Bool),
+            Ty::Unit => Some(Type::Void),
+            Ty::Array(element, length) => Some(Type::Array(
+                Box::new(self.source_type_for_ty(element)?),
+                *length,
+            )),
+            Ty::Struct(name) | Ty::Enum(name) => {
+                if let Some(instance) = self.nominal_instances.get(name) {
+                    let arguments = instance
+                        .key
+                        .arguments
+                        .iter()
+                        .map(|argument| self.source_type_for_ty(argument))
+                        .collect::<Option<Vec<_>>>()?;
+                    Some(Type::Named(instance.key.template.clone(), arguments))
+                } else if self.abstract_type_parameters.contains_key(name)
+                    || self.struct_defs.contains_key(name)
+                    || self.enum_defs.contains_key(name)
+                {
+                    Some(Type::Named(name.clone(), Vec::new()))
+                } else {
+                    None
+                }
+            }
+            Ty::Never | Ty::Function(_) | Ty::Error => None,
+        }
+    }
+
+    fn probe_type_argument_source(
+        &self,
+        expression: &Expr,
+        substitutions: &HashMap<String, Type>,
+    ) -> Option<Type> {
+        match expression {
+            Expr::Infer => None,
+            Expr::Unit => Some(Type::Void),
+            Expr::Name(name) => substitutions.get(name).cloned().or_else(|| {
+                Some(match name.as_str() {
+                    "i32" => Type::I32,
+                    "i64" => Type::I64,
+                    "u32" => Type::U32,
+                    "u64" => Type::U64,
+                    "bool" => Type::Bool,
+                    "void" => Type::Void,
+                    _ => Type::Named(name.clone(), Vec::new()),
+                })
+            }),
+            Expr::Call(callee, arguments) => {
+                let Expr::Name(name) = callee.as_ref() else {
+                    return None;
+                };
+                if arguments.iter().any(|argument| argument.label.is_some()) {
+                    return None;
+                }
+                if name == "Array" {
+                    if arguments.len() != 2 {
+                        return None;
+                    }
+                    let element =
+                        self.probe_type_argument_source(&arguments[0].value, substitutions)?;
+                    let Expr::Integer(length) = arguments[1].value else {
+                        return None;
+                    };
+                    Some(Type::Array(Box::new(element), u64::try_from(length).ok()?))
+                } else {
+                    let arguments = arguments
+                        .iter()
+                        .map(|argument| {
+                            self.probe_type_argument_source(&argument.value, substitutions)
+                        })
+                        .collect::<Option<Vec<_>>>()?;
+                    Some(Type::Named(name.clone(), arguments))
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn probe_source_ty(&self, source: &Type) -> Option<Ty> {
+        match source {
+            Type::I32 => Some(Ty::I32),
+            Type::I64 => Some(Ty::I64),
+            Type::U32 => Some(Ty::U32),
+            Type::U64 => Some(Ty::U64),
+            Type::Bool => Some(Ty::Bool),
+            Type::Void => Some(Ty::Unit),
+            Type::Infer => None,
+            Type::Array(element, length) => {
+                Some(Ty::Array(Box::new(self.probe_source_ty(element)?), *length))
+            }
+            Type::Named(name, arguments) if name == "()" && arguments.is_empty() => Some(Ty::Unit),
+            Type::Named(name, arguments)
+                if arguments.is_empty() && self.abstract_type_parameters.contains_key(name) =>
+            {
+                Some(Ty::Struct(name.clone()))
+            }
+            Type::Named(name, arguments) if arguments.is_empty() => {
+                if self.struct_defs.contains_key(name) {
+                    Some(Ty::Struct(name.clone()))
+                } else if self.enum_defs.contains_key(name) {
+                    Some(Ty::Enum(name.clone()))
+                } else {
+                    None
+                }
+            }
+            Type::Named(name, source_arguments) => {
+                let (kind, expected) = if let Some(template) = self.struct_templates.get(name) {
+                    (
+                        NominalKind::Struct,
+                        template.compile_groups.iter().flatten().count(),
+                    )
+                } else if let Some(template) = self.enum_templates.get(name) {
+                    (
+                        NominalKind::Enum,
+                        template.compile_groups.iter().flatten().count(),
+                    )
+                } else {
+                    return None;
+                };
+                if source_arguments.len() != expected {
+                    return None;
+                }
+                let arguments = source_arguments
+                    .iter()
+                    .map(|argument| self.probe_source_ty(argument))
+                    .collect::<Option<Vec<_>>>()?;
+                let key = NominalInstanceKey {
+                    kind,
+                    template: name.clone(),
+                    arguments,
+                };
+                let canonical = self
+                    .nominal_instance_names
+                    .get(&key)
+                    .cloned()
+                    .unwrap_or_else(|| nominal_instance_name(&key));
+                Some(match kind {
+                    NominalKind::Struct => Ty::Struct(canonical),
+                    NominalKind::Enum => Ty::Enum(canonical),
+                })
+            }
+        }
+    }
+
+    fn probe_generic_nominal_type_head(
+        &self,
+        name: &str,
+        groups: &[&[CallArg]],
+        context: &LowerCtx,
+    ) -> Option<(NominalKind, Ty, Type)> {
+        let (kind, compile_groups) = if let Some(template) = self.struct_templates.get(name) {
+            (NominalKind::Struct, &template.compile_groups)
+        } else if let Some(template) = self.enum_templates.get(name) {
+            (NominalKind::Enum, &template.compile_groups)
+        } else {
+            return None;
+        };
+        if groups.len() != compile_groups.len() {
+            return None;
+        }
+        let mut source_arguments = Vec::new();
+        let mut arguments = Vec::new();
+        for (parameters, supplied) in compile_groups.iter().zip(groups) {
+            if parameters.len() != supplied.len()
+                || supplied.iter().any(|argument| argument.label.is_some())
+            {
+                return None;
+            }
+            for argument in *supplied {
+                let source =
+                    self.probe_type_argument_source(&argument.value, &context.type_substitutions)?;
+                let ty = self.probe_source_ty(&source)?;
+                source_arguments.push(source);
+                arguments.push(ty);
+            }
+        }
+        let key = NominalInstanceKey {
+            kind,
+            template: name.to_owned(),
+            arguments,
+        };
+        let canonical = self
+            .nominal_instance_names
+            .get(&key)
+            .cloned()
+            .unwrap_or_else(|| nominal_instance_name(&key));
+        let ty = match kind {
+            NominalKind::Struct => Ty::Struct(canonical),
+            NominalKind::Enum => Ty::Enum(canonical),
+        };
+        Some((kind, ty, Type::Named(name.to_owned(), source_arguments)))
+    }
+
+    fn probe_nominal_type_head(
+        &self,
+        expression: &Expr,
+        context: &LowerCtx,
+    ) -> Option<(NominalKind, Ty, Type)> {
+        let mut groups = Vec::new();
+        let root = flatten_call(expression, &mut groups);
+        let Expr::Name(name) = root else {
+            return None;
+        };
+        if context.lookup(name).is_some() {
+            return None;
+        }
+        if groups.is_empty() {
+            if self.struct_defs.contains_key(name) {
+                return Some((
+                    NominalKind::Struct,
+                    Ty::Struct(name.clone()),
+                    Type::Named(name.clone(), Vec::new()),
+                ));
+            }
+            if self.enum_defs.contains_key(name) {
+                return Some((
+                    NominalKind::Enum,
+                    Ty::Enum(name.clone()),
+                    Type::Named(name.clone(), Vec::new()),
+                ));
+            }
+        }
+        self.probe_generic_nominal_type_head(name, &groups, context)
+    }
+
+    fn probe_enum_variant_fields(&self, source: &Type, variant: &str) -> Option<VariantFields> {
+        let Type::Named(template, _) = source else {
+            return None;
+        };
+        self.enum_templates
+            .get(template)
+            .or_else(|| self.enum_defs.get(template))?
+            .variants
+            .iter()
+            .find(|candidate| candidate.name == variant)
+            .map(|candidate| candidate.fields.clone())
+    }
+
+    fn unify_template_ty(
+        &self,
+        template: &Type,
+        actual: &Ty,
+        actual_source: Option<&Type>,
+        compile_parameters: &HashSet<String>,
+        inferred: &mut HashMap<String, InferredTypeArgument>,
+        origin: &str,
+    ) -> Result<bool, String> {
+        if let Type::Named(name, arguments) = template {
+            if arguments.is_empty() && compile_parameters.contains(name) {
+                if let Some(previous) = inferred.get_mut(name) {
+                    if previous.ty == *actual {
+                        if previous.source.is_none() {
+                            previous.source = actual_source
+                                .cloned()
+                                .or_else(|| self.source_type_for_ty(actual));
+                        }
+                        return Ok(false);
+                    }
+                    return Err(format!(
+                        "conflicting inference for type parameter `{name}`: `{}` from {} conflicts with `{actual}` from {origin}",
+                        previous.ty, previous.origin
+                    ));
+                }
+                if matches!(actual, Ty::Never | Ty::Error) {
+                    return Err(format!(
+                        "cannot infer type parameter `{name}` from `{actual}` in {origin}"
+                    ));
+                }
+                inferred.insert(
+                    name.clone(),
+                    InferredTypeArgument {
+                        ty: actual.clone(),
+                        source: actual_source
+                            .cloned()
+                            .or_else(|| self.source_type_for_ty(actual)),
+                        origin: origin.to_owned(),
+                    },
+                );
+                return Ok(true);
+            }
+        }
+
+        let mismatch = || {
+            format!("type inference constraint from {origin} does not match actual type `{actual}`")
+        };
+        match template {
+            Type::I32 => (*actual == Ty::I32).then_some(false).ok_or_else(mismatch),
+            Type::I64 => (*actual == Ty::I64).then_some(false).ok_or_else(mismatch),
+            Type::U32 => (*actual == Ty::U32).then_some(false).ok_or_else(mismatch),
+            Type::U64 => (*actual == Ty::U64).then_some(false).ok_or_else(mismatch),
+            Type::Bool => (*actual == Ty::Bool).then_some(false).ok_or_else(mismatch),
+            Type::Void => (*actual == Ty::Unit).then_some(false).ok_or_else(mismatch),
+            Type::Array(element, length) => {
+                let Ty::Array(actual_element, actual_length) = actual else {
+                    return Err(mismatch());
+                };
+                if length != actual_length {
+                    return Err(mismatch());
+                }
+                self.unify_template_ty(
+                    element,
+                    actual_element,
+                    match actual_source {
+                        Some(Type::Array(element, _)) => Some(element),
+                        _ => None,
+                    },
+                    compile_parameters,
+                    inferred,
+                    origin,
+                )
+            }
+            Type::Named(name, arguments) if name == "()" && arguments.is_empty() => {
+                if *actual == Ty::Unit {
+                    Ok(false)
+                } else {
+                    Err(mismatch())
+                }
+            }
+            Type::Named(name, arguments) => {
+                let (actual_kind, actual_name) = match actual {
+                    Ty::Struct(name) => (NominalKind::Struct, name),
+                    Ty::Enum(name) => (NominalKind::Enum, name),
+                    _ => return Err(mismatch()),
+                };
+                if let Some(instance) = self.nominal_instances.get(actual_name) {
+                    if instance.key.kind != actual_kind
+                        || instance.key.template != *name
+                        || instance.key.arguments.len() != arguments.len()
+                    {
+                        return Err(mismatch());
+                    }
+                    let actual_arguments = instance.key.arguments.clone();
+                    let mut changed = false;
+                    for (template, actual) in arguments.iter().zip(&actual_arguments) {
+                        changed |= self.unify_template_ty(
+                            template,
+                            actual,
+                            None,
+                            compile_parameters,
+                            inferred,
+                            origin,
+                        )?;
+                    }
+                    Ok(changed)
+                } else if let Some(Type::Named(actual_template, source_arguments)) = actual_source {
+                    if actual_template != name || source_arguments.len() != arguments.len() {
+                        return Err(mismatch());
+                    }
+                    let mut changed = false;
+                    for (template, source) in arguments.iter().zip(source_arguments) {
+                        let Some(actual) = self.probe_source_ty(source) else {
+                            return Err(mismatch());
+                        };
+                        changed |= self.unify_template_ty(
+                            template,
+                            &actual,
+                            Some(source),
+                            compile_parameters,
+                            inferred,
+                            origin,
+                        )?;
+                    }
+                    Ok(changed)
+                } else if arguments.is_empty() && name == actual_name {
+                    Ok(false)
+                } else {
+                    Err(mismatch())
+                }
+            }
+            Type::Infer => Err(format!(
+                "nested `_` type inference is not supported in {origin}; use `_` as a complete compile-time argument"
+            )),
+        }
+    }
+
+    fn resolved_template_ty(
+        &self,
+        template: &Type,
+        compile_parameters: &HashSet<String>,
+        inferred: &HashMap<String, InferredTypeArgument>,
+    ) -> Option<Ty> {
+        match template {
+            Type::I32 => Some(Ty::I32),
+            Type::I64 => Some(Ty::I64),
+            Type::U32 => Some(Ty::U32),
+            Type::U64 => Some(Ty::U64),
+            Type::Bool => Some(Ty::Bool),
+            Type::Void => Some(Ty::Unit),
+            Type::Infer => None,
+            Type::Array(element, length) => Some(Ty::Array(
+                Box::new(self.resolved_template_ty(element, compile_parameters, inferred)?),
+                *length,
+            )),
+            Type::Named(name, arguments)
+                if arguments.is_empty() && compile_parameters.contains(name) =>
+            {
+                inferred.get(name).map(|argument| argument.ty.clone())
+            }
+            Type::Named(name, arguments) if name == "()" && arguments.is_empty() => Some(Ty::Unit),
+            Type::Named(name, arguments) => {
+                let arguments = arguments
+                    .iter()
+                    .map(|argument| {
+                        self.resolved_template_ty(argument, compile_parameters, inferred)
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                if self.struct_templates.contains_key(name) {
+                    let key = NominalInstanceKey {
+                        kind: NominalKind::Struct,
+                        template: name.clone(),
+                        arguments,
+                    };
+                    Some(Ty::Struct(
+                        self.nominal_instance_names
+                            .get(&key)
+                            .cloned()
+                            .unwrap_or_else(|| nominal_instance_name(&key)),
+                    ))
+                } else if self.enum_templates.contains_key(name) {
+                    let key = NominalInstanceKey {
+                        kind: NominalKind::Enum,
+                        template: name.clone(),
+                        arguments,
+                    };
+                    Some(Ty::Enum(
+                        self.nominal_instance_names
+                            .get(&key)
+                            .cloned()
+                            .unwrap_or_else(|| nominal_instance_name(&key)),
+                    ))
+                } else if arguments.is_empty() && self.struct_defs.contains_key(name) {
+                    Some(Ty::Struct(name.clone()))
+                } else if arguments.is_empty() && self.enum_defs.contains_key(name) {
+                    Some(Ty::Enum(name.clone()))
+                } else if arguments.is_empty() && self.abstract_type_parameters.contains_key(name) {
+                    Some(Ty::Struct(name.clone()))
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    fn probe_expr_ty(&self, expression: &Expr, hint: Option<&Ty>, context: &LowerCtx) -> TypeProbe {
+        match expression {
+            Expr::Integer(_) => hint
+                .filter(|ty| ty.is_integer())
+                .cloned()
+                .map_or(TypeProbe::Defaultable(Ty::I32), TypeProbe::Known),
+            Expr::Bool(_) => TypeProbe::Known(Ty::Bool),
+            Expr::Unit => TypeProbe::Known(Ty::Unit),
+            Expr::Name(name) => {
+                if let Some(local) = context.lookup(name) {
+                    TypeProbe::Known(local.ty.clone())
+                } else if let Some(Some(annotation)) = self.global_annotations.get(name) {
+                    TypeProbe::Known(annotation.clone())
+                } else if let Some(global) = self.hir_globals.get(name) {
+                    TypeProbe::Known(global.ty.clone())
+                } else if let Some(signature) = self.signatures.get(name) {
+                    signature
+                        .function_ty()
+                        .map_or(TypeProbe::Unsupported, TypeProbe::Known)
+                } else {
+                    TypeProbe::Unsupported
+                }
+            }
+            Expr::Borrow { value, .. } => self.probe_expr_ty(value, hint, context),
+            Expr::Unary(UnaryOp::Neg, operand) => {
+                self.probe_expr_ty(operand, hint.filter(|ty| ty.is_signed()), context)
+            }
+            Expr::Unary(UnaryOp::Not, _) => TypeProbe::Known(Ty::Bool),
+            Expr::Binary(left, operator, right) => match operator {
+                BinaryOp::And
+                | BinaryOp::Or
+                | BinaryOp::Eq
+                | BinaryOp::Ne
+                | BinaryOp::Lt
+                | BinaryOp::Le
+                | BinaryOp::Gt
+                | BinaryOp::Ge => TypeProbe::Known(Ty::Bool),
+                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
+                    let numeric_hint = hint.filter(|ty| ty.is_integer());
+                    match self.probe_expr_ty(left, numeric_hint, context) {
+                        TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) if ty.is_integer() => {
+                            TypeProbe::Known(ty)
+                        }
+                        _ => match self.probe_expr_ty(right, numeric_hint, context) {
+                            TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _)
+                                if ty.is_integer() =>
+                            {
+                                TypeProbe::Known(ty)
+                            }
+                            TypeProbe::Defaultable(ty) if ty.is_integer() => {
+                                TypeProbe::Defaultable(ty)
+                            }
+                            _ => TypeProbe::Unsupported,
+                        },
+                    }
+                }
+            },
+            Expr::Array(elements) => {
+                if let Some(Ty::Array(element, length)) = hint {
+                    if *length != elements.len() as u64 {
+                        return TypeProbe::Unsupported;
+                    }
+                    return TypeProbe::Known(Ty::Array(element.clone(), *length));
+                }
+                let Some(first) = elements.first() else {
+                    return TypeProbe::Unsupported;
+                };
+                let first = self.probe_expr_ty(first, None, context);
+                let mut exact = match &first {
+                    TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) => Some(ty.clone()),
+                    TypeProbe::Defaultable(_) => None,
+                    TypeProbe::Unsupported => return TypeProbe::Unsupported,
+                };
+                let mut probes = vec![first];
+                for item in elements.iter().skip(1) {
+                    let probe = self.probe_expr_ty(item, exact.as_ref(), context);
+                    match &probe {
+                        TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) => {
+                            if exact.as_ref().is_some_and(|exact| exact != ty) {
+                                return TypeProbe::Unsupported;
+                            }
+                            exact.get_or_insert_with(|| ty.clone());
+                        }
+                        TypeProbe::Defaultable(_) => {}
+                        TypeProbe::Unsupported => return TypeProbe::Unsupported,
+                    }
+                    probes.push(probe);
+                }
+                if let Some(element) = exact {
+                    if probes.iter().all(|probe| match probe {
+                        TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) => ty == &element,
+                        TypeProbe::Defaultable(ty) => ty.is_integer() && element.is_integer(),
+                        TypeProbe::Unsupported => false,
+                    }) {
+                        TypeProbe::Known(Ty::Array(Box::new(element), elements.len() as u64))
+                    } else {
+                        TypeProbe::Unsupported
+                    }
+                } else if probes
+                    .iter()
+                    .all(|probe| matches!(probe, TypeProbe::Defaultable(ty) if ty == &Ty::I32))
+                {
+                    TypeProbe::Defaultable(Ty::Array(Box::new(Ty::I32), elements.len() as u64))
+                } else {
+                    TypeProbe::Unsupported
+                }
+            }
+            Expr::Index { base, .. } => match self.probe_expr_ty(base, None, context) {
+                TypeProbe::Known(Ty::Array(element, _))
+                | TypeProbe::KnownSource(Ty::Array(element, _), _) => TypeProbe::Known(*element),
+                _ => TypeProbe::Unsupported,
+            },
+            Expr::Member(base, member) => {
+                if let Some((NominalKind::Enum, ty, source)) =
+                    self.probe_nominal_type_head(base, context)
+                {
+                    if matches!(
+                        self.probe_enum_variant_fields(&source, member),
+                        Some(VariantFields::Unit)
+                    ) {
+                        return TypeProbe::KnownSource(ty, source);
+                    }
+                }
+                match self.probe_expr_ty(base, None, context) {
+                    TypeProbe::Known(Ty::Struct(name))
+                    | TypeProbe::KnownSource(Ty::Struct(name), _) => self
+                        .struct_layouts
+                        .get(&name)
+                        .and_then(|layout| layout.fields.iter().find(|field| field.name == *member))
+                        .map(|field| TypeProbe::Known(field.ty.clone()))
+                        .unwrap_or(TypeProbe::Unsupported),
+                    _ => TypeProbe::Unsupported,
+                }
+            }
+            Expr::Call(_, _) => self.probe_call_ty(expression, context),
+            Expr::Block(statements, tail) if statements.is_empty() => {
+                tail.as_ref().map_or(TypeProbe::Known(Ty::Unit), |tail| {
+                    self.probe_expr_ty(tail, hint, context)
+                })
+            }
+            Expr::If {
+                then_branch,
+                else_branch: Some(else_branch),
+                ..
+            } => {
+                let then_ty = self.probe_expr_ty(then_branch, hint, context);
+                let else_ty = self.probe_expr_ty(else_branch, hint, context);
+                if then_ty == else_ty {
+                    then_ty
+                } else {
+                    match (then_ty, else_ty) {
+                        (TypeProbe::Defaultable(default), exact)
+                        | (exact, TypeProbe::Defaultable(default)) => match exact {
+                            TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _)
+                                if default.is_integer() && ty.is_integer() =>
+                            {
+                                TypeProbe::Known(ty)
+                            }
+                            _ => TypeProbe::Unsupported,
+                        },
+                        (TypeProbe::Known(left), TypeProbe::KnownSource(right, source))
+                        | (TypeProbe::KnownSource(right, source), TypeProbe::Known(left))
+                            if left == right =>
+                        {
+                            TypeProbe::KnownSource(left, source)
+                        }
+                        _ => TypeProbe::Unsupported,
+                    }
+                }
+            }
+            Expr::Infer
+            | Expr::Assign(_, _)
+            | Expr::Block(_, _)
+            | Expr::Closure(_, _)
+            | Expr::If { .. }
+            | Expr::Return(_)
+            | Expr::While { .. }
+            | Expr::Loop { .. }
+            | Expr::Break(_)
+            | Expr::Match { .. } => TypeProbe::Unsupported,
+        }
+    }
+
+    fn probe_call_ty(&self, expression: &Expr, context: &LowerCtx) -> TypeProbe {
+        let mut groups = Vec::new();
+        let root = flatten_call(expression, &mut groups);
+        if let Expr::Member(base, variant) = root {
+            let Some((NominalKind::Enum, ty, source)) = self.probe_nominal_type_head(base, context)
+            else {
+                return TypeProbe::Unsupported;
+            };
+            let Some(fields) = self.probe_enum_variant_fields(&source, variant) else {
+                return TypeProbe::Unsupported;
+            };
+            let valid = match fields {
+                VariantFields::Unit => false,
+                VariantFields::Positional(fields) => {
+                    groups.len() == 1
+                        && groups[0].len() == fields.len()
+                        && groups[0].iter().all(|argument| argument.label.is_none())
+                }
+                VariantFields::Named(fields) => {
+                    groups.len() == 1
+                        && groups[0].len() == fields.len()
+                        && groups[0].iter().all(|argument| {
+                            argument.label.as_ref().is_some_and(|label| {
+                                fields.iter().any(|field| field.name == *label)
+                            })
+                        })
+                }
+            };
+            return if valid {
+                TypeProbe::KnownSource(ty, source)
+            } else {
+                TypeProbe::Unsupported
+            };
+        }
+        let Expr::Name(name) = root else {
+            return TypeProbe::Unsupported;
+        };
+        if context.lookup(name).is_some() {
+            return TypeProbe::Unsupported;
+        }
+        if let Some(template) = self.struct_templates.get(name) {
+            let compile_group_count = template.compile_groups.len();
+            if groups.len() == compile_group_count + 1 {
+                let value_arguments = groups[compile_group_count];
+                let labeled = value_arguments
+                    .iter()
+                    .filter(|argument| argument.label.is_some())
+                    .count();
+                let valid_fields = if labeled == 0 {
+                    value_arguments.len() == template.fields.len()
+                } else if labeled == value_arguments.len() {
+                    value_arguments.len() == template.fields.len()
+                        && value_arguments.iter().all(|argument| {
+                            argument.label.as_ref().is_some_and(|label| {
+                                template.fields.iter().any(|field| field.name == *label)
+                            })
+                        })
+                } else {
+                    false
+                };
+                if valid_fields {
+                    if let Some((NominalKind::Struct, ty, source)) = self
+                        .probe_generic_nominal_type_head(
+                            name,
+                            &groups[..compile_group_count],
+                            context,
+                        )
+                    {
+                        return TypeProbe::KnownSource(ty, source);
+                    }
+                }
+            }
+        }
+        if let Some(template) = self.function_templates.get(name) {
+            let compile_group_count = template.compile_groups.len();
+            if groups.len() >= compile_group_count
+                && groups.len() <= compile_group_count + template.groups.len()
+            {
+                let mut substitutions = HashMap::new();
+                let mut valid = true;
+                for (parameters, supplied) in template
+                    .compile_groups
+                    .iter()
+                    .zip(groups.iter().take(compile_group_count))
+                {
+                    if parameters.len() != supplied.len()
+                        || supplied.iter().any(|argument| argument.label.is_some())
+                    {
+                        valid = false;
+                        break;
+                    }
+                    for (parameter, argument) in parameters.iter().zip(*supplied) {
+                        let Some(source) = self.probe_type_argument_source(
+                            &argument.value,
+                            &context.type_substitutions,
+                        ) else {
+                            valid = false;
+                            break;
+                        };
+                        if self.probe_source_ty(&source).is_none() {
+                            valid = false;
+                            break;
+                        }
+                        substitutions.insert(parameter.name.clone(), source);
+                    }
+                }
+                let runtime_groups = &groups[compile_group_count..];
+                valid &= runtime_groups
+                    .iter()
+                    .zip(&template.groups)
+                    .all(|(arguments, parameters)| arguments.len() == parameters.len());
+                if valid {
+                    let Some(mut result_source) = template.return_type.clone() else {
+                        return TypeProbe::Unsupported;
+                    };
+                    substitute_type_parameters(&mut result_source, &substitutions);
+                    let Some(result) = self.probe_source_ty(&result_source) else {
+                        return TypeProbe::Unsupported;
+                    };
+                    if runtime_groups.len() == template.groups.len() {
+                        return TypeProbe::KnownSource(result, result_source);
+                    }
+                    let remaining = template.groups[runtime_groups.len()..]
+                        .iter()
+                        .map(|group| {
+                            group
+                                .iter()
+                                .map(|parameter| {
+                                    let mut source = parameter.ty.clone();
+                                    substitute_type_parameters(&mut source, &substitutions);
+                                    self.probe_source_ty(&source)
+                                })
+                                .collect::<Option<Vec<_>>>()
+                        })
+                        .collect::<Option<Vec<_>>>();
+                    if let Some(groups) = remaining {
+                        return TypeProbe::Known(Ty::Function(FunctionTy {
+                            groups,
+                            result: Box::new(result),
+                        }));
+                    }
+                }
+            }
+        }
+        if let Some(signature) = self.signatures.get(name) {
+            if groups.len() > signature.groups.len()
+                || groups
+                    .iter()
+                    .zip(&signature.groups)
+                    .any(|(arguments, parameters)| arguments.len() != parameters.len())
+            {
+                return TypeProbe::Unsupported;
+            }
+            if groups.len() == signature.groups.len() {
+                return signature
+                    .result
+                    .clone()
+                    .map_or(TypeProbe::Unsupported, TypeProbe::Known);
+            }
+            let Some(result) = signature.result.clone() else {
+                return TypeProbe::Unsupported;
+            };
+            return TypeProbe::Known(Ty::Function(FunctionTy {
+                groups: signature.groups[groups.len()..]
+                    .iter()
+                    .map(|group| group.iter().map(|parameter| parameter.ty.clone()).collect())
+                    .collect(),
+                result: Box::new(result),
+            }));
+        }
+        if self.struct_layouts.contains_key(name) && groups.len() == 1 {
+            return TypeProbe::Known(Ty::Struct(name.clone()));
+        }
+        TypeProbe::Unsupported
+    }
+
+    fn seed_type_argument_inference(
+        &mut self,
+        owner: &str,
+        compile_groups: &[Vec<CompileParam>],
+        groups: &[&[CallArg]],
+        type_substitutions: &HashMap<String, Type>,
+    ) -> Option<(HashSet<String>, HashMap<String, InferredTypeArgument>)> {
+        if groups.len() < compile_groups.len() {
+            self.error(format!(
+                "generic declaration `{owner}` requires all {} type argument groups",
+                compile_groups.len()
+            ));
+            return None;
+        }
+        let compile_parameters: HashSet<_> = compile_groups
+            .iter()
+            .flatten()
+            .map(|parameter| parameter.name.clone())
+            .collect();
+        let mut inferred = HashMap::new();
+        for (group_index, (parameters, arguments)) in compile_groups
+            .iter()
+            .zip(groups.iter().take(compile_groups.len()))
+            .enumerate()
+        {
+            if parameters.len() != arguments.len() {
+                self.error(format!(
+                    "type argument count mismatch in group {} of `{owner}`: expected {}, found {}",
+                    group_index + 1,
+                    parameters.len(),
+                    arguments.len()
+                ));
+                return None;
+            }
+            for (parameter, argument) in parameters.iter().zip(*arguments) {
+                if argument.label.is_some() {
+                    self.error(format!(
+                        "labeled arguments are not allowed in type argument groups of `{owner}`"
+                    ));
+                    return None;
+                }
+                if matches!(argument.value, Expr::Infer) {
+                    continue;
+                }
+                let source = self.type_argument_from_expr(&argument.value, type_substitutions)?;
+                let Some(ty) = self.probe_source_ty(&source) else {
+                    self.error(format!(
+                        "invalid explicit type argument for `{}` in `{owner}`",
+                        parameter.name
+                    ));
+                    return None;
+                };
+                inferred.insert(
+                    parameter.name.clone(),
+                    InferredTypeArgument {
+                        ty,
+                        source: Some(source),
+                        origin: "explicit type argument".to_owned(),
+                    },
+                );
+            }
+        }
+        Some((compile_parameters, inferred))
+    }
+
+    fn finish_type_argument_inference(
+        &mut self,
+        owner: &str,
+        ordered_parameters: &[CompileParam],
+        inferred: &HashMap<String, InferredTypeArgument>,
+        unsupported_argument: bool,
+    ) -> Option<(Vec<Type>, Vec<Ty>)> {
+        let unresolved: Vec<_> = ordered_parameters
+            .iter()
+            .filter(|parameter| !inferred.contains_key(&parameter.name))
+            .map(|parameter| parameter.name.clone())
+            .collect();
+        if !unresolved.is_empty() {
+            if unsupported_argument {
+                self.error(format!(
+                    "cannot infer type argument{} {} for `{owner}` from this argument expression; write explicit type arguments",
+                    if unresolved.len() == 1 { "" } else { "s" },
+                    unresolved
+                        .iter()
+                        .map(|name| format!("`{name}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            } else {
+                self.error(format!(
+                    "cannot infer type argument{} {} for `{owner}`; write explicit type arguments",
+                    if unresolved.len() == 1 { "" } else { "s" },
+                    unresolved
+                        .iter()
+                        .map(|name| format!("`{name}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            return None;
+        }
+        let mut source_arguments = Vec::new();
+        let mut arguments = Vec::new();
+        for parameter in ordered_parameters {
+            let inferred = &inferred[&parameter.name];
+            let Some(source) = inferred
+                .source
+                .clone()
+                .or_else(|| self.source_type_for_ty(&inferred.ty))
+            else {
+                self.error(format!(
+                    "cannot use inferred type `{}` for type parameter `{}` in `{owner}`",
+                    inferred.ty, parameter.name
+                ));
+                return None;
+            };
+            source_arguments.push(source);
+            arguments.push(inferred.ty.clone());
+        }
+        Some((source_arguments, arguments))
+    }
+
+    fn infer_from_expression_constraints(
+        &mut self,
+        constraints: &[(Type, Expr, String)],
+        compile_parameters: &HashSet<String>,
+        inferred: &mut HashMap<String, InferredTypeArgument>,
+        context: &LowerCtx,
+    ) -> Option<bool> {
+        let mut pending: Vec<_> = (0..constraints.len()).collect();
+        let unsupported = loop {
+            let mut progress = false;
+            let mut next = Vec::new();
+            let mut defaultable = Vec::new();
+            for index in pending {
+                let (template, expression, origin) = &constraints[index];
+                let hint = self.resolved_template_ty(template, compile_parameters, inferred);
+                match self.probe_expr_ty(expression, hint.as_ref(), context) {
+                    TypeProbe::Known(actual) => {
+                        match self.unify_template_ty(
+                            template,
+                            &actual,
+                            None,
+                            compile_parameters,
+                            inferred,
+                            origin,
+                        ) {
+                            Ok(changed) => progress |= changed,
+                            Err(message) => {
+                                self.error(message);
+                                return None;
+                            }
+                        }
+                    }
+                    TypeProbe::KnownSource(actual, source) => {
+                        match self.unify_template_ty(
+                            template,
+                            &actual,
+                            Some(&source),
+                            compile_parameters,
+                            inferred,
+                            origin,
+                        ) {
+                            Ok(changed) => progress |= changed,
+                            Err(message) => {
+                                self.error(message);
+                                return None;
+                            }
+                        }
+                    }
+                    TypeProbe::Defaultable(actual) => defaultable.push((index, actual)),
+                    TypeProbe::Unsupported => next.push(index),
+                }
+            }
+            if progress {
+                next.extend(defaultable.into_iter().map(|(index, _)| index));
+                pending = next;
+                continue;
+            }
+            let mut default_progress = false;
+            for (index, actual) in defaultable {
+                let (template, _, origin) = &constraints[index];
+                match self.unify_template_ty(
+                    template,
+                    &actual,
+                    None,
+                    compile_parameters,
+                    inferred,
+                    origin,
+                ) {
+                    Ok(changed) => default_progress |= changed,
+                    Err(message) => {
+                        self.error(message);
+                        return None;
+                    }
+                }
+            }
+            if next.is_empty() {
+                break false;
+            }
+            if !default_progress {
+                break true;
+            }
+            pending = next;
+        };
+        Some(unsupported)
     }
 
     fn ensure_function_instance(
@@ -2483,7 +3515,7 @@ impl Analyzer {
                 }
             }
             Expr::Call(_, _) => self.lower_call(expression, expected, context),
-            Expr::Member(base, field) => self.lower_member(base, field, context),
+            Expr::Member(base, field) => self.lower_member(base, field, expected, context),
             Expr::Index { base, index } => self.lower_index(base, index, context),
             Expr::Block(statements, tail) => {
                 context.push_scope();
@@ -3599,7 +4631,26 @@ impl Analyzer {
         }
     }
 
-    fn lower_member(&mut self, base: &Expr, member: &str, context: &mut LowerCtx) -> HirExpr {
+    fn lower_member(
+        &mut self,
+        base: &Expr,
+        member: &str,
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        if let Some((name, type_groups)) = self.inferred_generic_enum_type_head(base, context) {
+            let Some(canonical) = self.resolve_inferred_generic_enum_instance(
+                &name,
+                &type_groups,
+                member,
+                &[],
+                expected,
+                context,
+            ) else {
+                return error_expr();
+            };
+            return self.lower_nominal_type_member_value(&canonical, NominalKind::Enum, member);
+        }
         match self.resolve_nominal_type_head(base, context) {
             Ok(Some((target, kind))) => {
                 return self.lower_nominal_type_member_value(&target, kind, member);
@@ -4372,9 +5423,23 @@ impl Analyzer {
                 return self.lower_struct_constructor(name, &groups, context);
             }
             if self.struct_templates.contains_key(name) {
-                let Some((canonical, compile_group_count, NominalKind::Struct)) = self
-                    .resolve_generic_nominal_instance(name, &groups, &context.type_substitutions)
-                else {
+                let compile_group_count = self.struct_templates[name].compile_groups.len();
+                let has_inference = groups
+                    .iter()
+                    .take(compile_group_count)
+                    .flat_map(|group| group.iter())
+                    .any(|argument| matches!(argument.value, Expr::Infer));
+                let resolved = if has_inference {
+                    self.resolve_inferred_generic_struct_instance(name, &groups, expected, context)
+                        .map(|canonical| (canonical, compile_group_count, NominalKind::Struct))
+                } else {
+                    self.resolve_generic_nominal_instance(
+                        name,
+                        &groups,
+                        &context.type_substitutions,
+                    )
+                };
+                let Some((canonical, compile_group_count, NominalKind::Struct)) = resolved else {
                     return error_expr();
                 };
                 return self.lower_struct_constructor(
@@ -4390,7 +5455,7 @@ impl Analyzer {
                 return error_expr();
             }
             if self.function_templates.contains_key(name) {
-                return self.lower_generic_function_call(name, &groups, context);
+                return self.lower_generic_function_call(name, &groups, expected, context);
             }
             if self.functions.contains_key(name) {
                 return self.lower_named_function_call(name, &groups, context);
@@ -4402,6 +5467,25 @@ impl Analyzer {
             return error_expr();
         }
         if let Expr::Member(base, variant_name) = root {
+            if let Some((name, type_groups)) = self.inferred_generic_enum_type_head(base, context) {
+                let Some(canonical) = self.resolve_inferred_generic_enum_instance(
+                    &name,
+                    &type_groups,
+                    variant_name,
+                    &groups,
+                    expected,
+                    context,
+                ) else {
+                    return error_expr();
+                };
+                return self.lower_nominal_type_member_call(
+                    &canonical,
+                    NominalKind::Enum,
+                    variant_name,
+                    &groups,
+                    context,
+                );
+            }
             match self.resolve_nominal_type_head(base, context) {
                 Ok(Some((target, kind))) => {
                     return self.lower_nominal_type_member_call(
@@ -4550,14 +5634,355 @@ impl Analyzer {
         &mut self,
         name: &str,
         groups: &[&[CallArg]],
+        expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
-        let Some((canonical, compile_group_count)) =
+        let compile_group_count = self.function_templates[name].compile_groups.len();
+        let has_inference = groups
+            .iter()
+            .take(compile_group_count)
+            .flat_map(|group| group.iter())
+            .any(|argument| matches!(argument.value, Expr::Infer));
+        let resolved = if has_inference {
+            self.resolve_inferred_generic_function_instance(name, groups, expected, context)
+        } else {
             self.resolve_generic_function_instance(name, groups, &context.type_substitutions)
-        else {
+        };
+        let Some((canonical, compile_group_count)) = resolved else {
             return error_expr();
         };
         self.lower_named_function_call(&canonical, &groups[compile_group_count..], context)
+    }
+
+    fn inferred_generic_enum_type_head<'a>(
+        &self,
+        expression: &'a Expr,
+        context: &LowerCtx,
+    ) -> Option<(String, Vec<&'a [CallArg]>)> {
+        let mut groups = Vec::new();
+        let root = flatten_call(expression, &mut groups);
+        let Expr::Name(name) = root else {
+            return None;
+        };
+        if context.lookup(name).is_some() || !self.enum_templates.contains_key(name) {
+            return None;
+        }
+        let compile_group_count = self.enum_templates[name].compile_groups.len();
+        if groups.len() > compile_group_count
+            || !groups
+                .iter()
+                .flat_map(|group| group.iter())
+                .any(|argument| matches!(argument.value, Expr::Infer))
+        {
+            return None;
+        }
+        Some((name.clone(), groups))
+    }
+
+    fn resolve_inferred_generic_enum_instance(
+        &mut self,
+        name: &str,
+        type_groups: &[&[CallArg]],
+        variant_name: &str,
+        value_groups: &[&[CallArg]],
+        expected: Option<&Ty>,
+        context: &LowerCtx,
+    ) -> Option<String> {
+        let template = self.enum_templates[name].clone();
+        let (compile_parameters, mut inferred) = self.seed_type_argument_inference(
+            name,
+            &template.compile_groups,
+            type_groups,
+            &context.type_substitutions,
+        )?;
+        if let Some(expected) = expected.filter(|ty| **ty != Ty::Error) {
+            let result_template = Type::Named(
+                name.to_owned(),
+                template
+                    .compile_groups
+                    .iter()
+                    .flatten()
+                    .map(|parameter| Type::Named(parameter.name.clone(), Vec::new()))
+                    .collect(),
+            );
+            if let Err(message) = self.unify_template_ty(
+                &result_template,
+                expected,
+                None,
+                &compile_parameters,
+                &mut inferred,
+                "expected result type",
+            ) {
+                self.error(message);
+                return None;
+            }
+        }
+
+        let Some(variant) = template
+            .variants
+            .iter()
+            .find(|variant| variant.name == variant_name)
+            .cloned()
+        else {
+            self.error(format!(
+                "unknown associated member or variant `{variant_name}` on `{name}`"
+            ));
+            return None;
+        };
+        let (fields, named) = match variant.fields {
+            VariantFields::Unit => (Vec::new(), false),
+            VariantFields::Positional(types) => (
+                types
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, ty)| (index.to_string(), ty))
+                    .collect::<Vec<_>>(),
+                false,
+            ),
+            VariantFields::Named(fields) => (
+                fields
+                    .into_iter()
+                    .map(|field| (field.name, field.ty))
+                    .collect::<Vec<_>>(),
+                true,
+            ),
+        };
+        if fields.is_empty() {
+            if !value_groups.is_empty() {
+                self.error(format!(
+                    "unit variant `{name}.{variant_name}` is a value and must not be called"
+                ));
+                return None;
+            }
+        } else if value_groups.len() != 1 {
+            self.error(format!(
+                "enum variant constructor `{name}` expects exactly one argument group"
+            ));
+            return None;
+        }
+
+        let mut constraints = Vec::new();
+        if let Some(arguments) = value_groups.first().copied() {
+            let labeled = arguments
+                .iter()
+                .filter(|argument| argument.label.is_some())
+                .count();
+            if labeled != 0 && labeled != arguments.len() {
+                self.error(format!(
+                    "cannot mix labeled and positional arguments in variant `{name}.{variant_name}`"
+                ));
+                return None;
+            }
+            if labeled == 0 {
+                if arguments.len() != fields.len() {
+                    self.error(format!(
+                        "argument count mismatch for variant `{name}.{variant_name}`: expected {}, found {}",
+                        fields.len(),
+                        arguments.len()
+                    ));
+                    return None;
+                }
+                for (argument, (field_name, field_ty)) in arguments.iter().zip(&fields) {
+                    constraints.push((
+                        field_ty.clone(),
+                        argument.value.clone(),
+                        format!("argument for variant field `{field_name}`"),
+                    ));
+                }
+            } else {
+                if !named {
+                    self.error(format!(
+                        "variant `{name}.{variant_name}` does not accept labeled arguments"
+                    ));
+                    return None;
+                }
+                let mut initialized = HashSet::new();
+                for argument in arguments {
+                    let label = argument
+                        .label
+                        .as_deref()
+                        .expect("all arguments are labeled");
+                    let Some((index, (_, field_ty))) = fields
+                        .iter()
+                        .enumerate()
+                        .find(|(_, (field_name, _))| field_name == label)
+                    else {
+                        self.error(format!(
+                            "unknown field `{label}` in variant `{name}.{variant_name}`"
+                        ));
+                        return None;
+                    };
+                    if !initialized.insert(index) {
+                        self.error(format!(
+                            "duplicate field `{label}` in variant `{name}.{variant_name}`"
+                        ));
+                        return None;
+                    }
+                    constraints.push((
+                        field_ty.clone(),
+                        argument.value.clone(),
+                        format!("argument for variant field `{label}`"),
+                    ));
+                }
+                if initialized.len() != fields.len() {
+                    let missing = fields
+                        .iter()
+                        .enumerate()
+                        .find(|(index, _)| !initialized.contains(index))
+                        .map(|(_, (name, _))| name.as_str())
+                        .unwrap_or("<unknown>");
+                    self.error(format!(
+                        "missing field `{missing}` in variant `{name}.{variant_name}`"
+                    ));
+                    return None;
+                }
+            }
+        }
+
+        let unsupported = self.infer_from_expression_constraints(
+            &constraints,
+            &compile_parameters,
+            &mut inferred,
+            context,
+        )?;
+        let ordered_parameters = template
+            .compile_groups
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+        let (source_arguments, arguments) =
+            self.finish_type_argument_inference(name, &ordered_parameters, &inferred, unsupported)?;
+        self.ensure_nominal_instance(NominalKind::Enum, name, source_arguments, arguments)
+    }
+
+    fn resolve_inferred_generic_struct_instance(
+        &mut self,
+        name: &str,
+        groups: &[&[CallArg]],
+        expected: Option<&Ty>,
+        context: &LowerCtx,
+    ) -> Option<String> {
+        let template = self.struct_templates[name].clone();
+        let compile_group_count = template.compile_groups.len();
+        let (compile_parameters, mut inferred) = self.seed_type_argument_inference(
+            name,
+            &template.compile_groups,
+            groups,
+            &context.type_substitutions,
+        )?;
+        let value_groups = &groups[compile_group_count..];
+        if value_groups.len() != 1 {
+            self.error(format!(
+                "struct constructor `{name}` expects exactly one argument group"
+            ));
+            return None;
+        }
+
+        if let Some(expected) = expected.filter(|ty| **ty != Ty::Error) {
+            let result_template = Type::Named(
+                name.to_owned(),
+                template
+                    .compile_groups
+                    .iter()
+                    .flatten()
+                    .map(|parameter| Type::Named(parameter.name.clone(), Vec::new()))
+                    .collect(),
+            );
+            if let Err(message) = self.unify_template_ty(
+                &result_template,
+                expected,
+                None,
+                &compile_parameters,
+                &mut inferred,
+                "expected result type",
+            ) {
+                self.error(message);
+                return None;
+            }
+        }
+
+        let arguments = value_groups[0];
+        let labeled = arguments
+            .iter()
+            .filter(|argument| argument.label.is_some())
+            .count();
+        if labeled != 0 && labeled != arguments.len() {
+            self.error(format!(
+                "cannot mix labeled and positional arguments in struct `{name}`"
+            ));
+            return None;
+        }
+        let mut constraints = Vec::new();
+        if labeled == 0 {
+            if arguments.len() != template.fields.len() {
+                self.error(format!(
+                    "argument count mismatch for struct `{name}`: expected {}, found {}",
+                    template.fields.len(),
+                    arguments.len()
+                ));
+                return None;
+            }
+            for (argument, field) in arguments.iter().zip(&template.fields) {
+                constraints.push((
+                    field.ty.clone(),
+                    argument.value.clone(),
+                    format!("argument for field `{}`", field.name),
+                ));
+            }
+        } else {
+            let mut initialized = HashSet::new();
+            for argument in arguments {
+                let label = argument
+                    .label
+                    .as_deref()
+                    .expect("all arguments are labeled");
+                let Some((index, field)) = template
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .find(|(_, field)| field.name == label)
+                else {
+                    self.error(format!("unknown field `{label}` in struct `{name}`"));
+                    return None;
+                };
+                if !initialized.insert(index) {
+                    self.error(format!("duplicate field `{label}` in struct `{name}`"));
+                    return None;
+                }
+                constraints.push((
+                    field.ty.clone(),
+                    argument.value.clone(),
+                    format!("argument for field `{label}`"),
+                ));
+            }
+            if initialized.len() != template.fields.len() {
+                let missing = template
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .find(|(index, _)| !initialized.contains(index))
+                    .map(|(_, field)| field.name.as_str())
+                    .unwrap_or("<unknown>");
+                self.error(format!("missing field `{missing}` in struct `{name}`"));
+                return None;
+            }
+        }
+        let unsupported = self.infer_from_expression_constraints(
+            &constraints,
+            &compile_parameters,
+            &mut inferred,
+            context,
+        )?;
+        let ordered_parameters = template
+            .compile_groups
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+        let (source_arguments, arguments) =
+            self.finish_type_argument_inference(name, &ordered_parameters, &inferred, unsupported)?;
+        self.ensure_nominal_instance(NominalKind::Struct, name, source_arguments, arguments)
     }
 
     fn resolve_generic_nominal_instance(
@@ -4677,6 +6102,106 @@ impl Analyzer {
             }
             _ => Ok(None),
         }
+    }
+
+    fn resolve_inferred_generic_function_instance(
+        &mut self,
+        name: &str,
+        groups: &[&[CallArg]],
+        expected: Option<&Ty>,
+        context: &LowerCtx,
+    ) -> Option<(String, usize)> {
+        let template = self.function_templates[name].clone();
+        let compile_group_count = template.compile_groups.len();
+        let (compile_parameters, mut inferred) = self.seed_type_argument_inference(
+            name,
+            &template.compile_groups,
+            groups,
+            &context.type_substitutions,
+        )?;
+        let runtime_groups = &groups[compile_group_count..];
+        if runtime_groups.len() > template.groups.len() {
+            self.error(format!(
+                "too many parameter groups in call to `{name}`: expected at most {}, found {}",
+                template.groups.len(),
+                runtime_groups.len()
+            ));
+            return None;
+        }
+        for (group_index, (arguments, parameters)) in
+            runtime_groups.iter().zip(&template.groups).enumerate()
+        {
+            if arguments.len() != parameters.len() {
+                self.error(format!(
+                    "argument count mismatch in group {} of `{name}`: expected {}, found {}",
+                    group_index + 1,
+                    parameters.len(),
+                    arguments.len()
+                ));
+                return None;
+            }
+        }
+
+        if runtime_groups.len() == template.groups.len() {
+            if let (Some(expected), Some(result)) = (expected, template.return_type.as_ref()) {
+                if *expected != Ty::Error {
+                    if let Err(message) = self.unify_template_ty(
+                        result,
+                        expected,
+                        None,
+                        &compile_parameters,
+                        &mut inferred,
+                        "expected result type",
+                    ) {
+                        self.error(message);
+                        return None;
+                    }
+                }
+            }
+        }
+
+        let constraints: Vec<_> = runtime_groups
+            .iter()
+            .zip(&template.groups)
+            .enumerate()
+            .flat_map(|(group_index, (arguments, parameters))| {
+                arguments
+                    .iter()
+                    .zip(parameters)
+                    .map(move |(argument, parameter)| {
+                        (
+                            parameter.ty.clone(),
+                            argument.value.clone(),
+                            format!(
+                                "argument for parameter `{}` in group {}",
+                                parameter.name,
+                                group_index + 1
+                            ),
+                        )
+                    })
+            })
+            .collect();
+        let unsupported_argument = self.infer_from_expression_constraints(
+            &constraints,
+            &compile_parameters,
+            &mut inferred,
+            context,
+        )?;
+
+        let ordered_parameters = template
+            .compile_groups
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+        let (source_arguments, arguments) = self.finish_type_argument_inference(
+            name,
+            &ordered_parameters,
+            &inferred,
+            unsupported_argument,
+        )?;
+        let canonical = self.ensure_function_instance(name, source_arguments, arguments)?;
+        Some((canonical, compile_group_count))
     }
 
     fn resolve_generic_function_instance(
@@ -7613,6 +9138,151 @@ mod tests {
     }
 
     #[test]
+    fn inferred_and_explicit_type_arguments_share_instance_cache_keys() {
+        let program = crate::parser::parse(
+            "let identity(T: type)(move value: T): T = value\n\
+             let Cell(T: type) = struct(value: T)\n\
+             let main(): i32 = {\n\
+               let explicit = Cell(i32)(identity(i32)(20))\n\
+               let inferred_value = identity(_)(22)\n\
+               let inferred = Cell(_)(inferred_value)\n\
+               explicit.value + inferred.value\n\
+             }\n",
+        )
+        .expect("mixed explicit and inferred source must parse");
+        let mut analyzer = Analyzer::new(&program);
+        let hir = analyzer.analyze();
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        assert!(hir.is_some(), "mixed generic program HIR");
+
+        let function_instances: Vec<_> = analyzer
+            .function_instances
+            .values()
+            .filter(|instance| instance.key.template == "identity")
+            .collect();
+        assert_eq!(function_instances.len(), 1);
+        assert_eq!(function_instances[0].key.arguments, vec![Ty::I32]);
+
+        let nominal_instances: Vec<_> = analyzer
+            .nominal_instances
+            .values()
+            .filter(|instance| instance.key.template == "Cell")
+            .collect();
+        assert_eq!(nominal_instances.len(), 1);
+        assert_eq!(nominal_instances[0].key.arguments, vec![Ty::I32]);
+    }
+
+    #[test]
+    fn inference_reifies_and_decomposes_generic_nominal_types() {
+        let program = crate::parser::parse(
+            "let Cell(T: type) = struct(value: T)\n\
+             let unwrap(T: type)(move value: Cell(T)): T = value.value\n\
+             let main(): i32 = {\n\
+               let inner = Cell(i32)(42)\n\
+               let outer = Cell(_)(inner)\n\
+               let nested = unwrap(_)(outer.value)\n\
+               let direct = unwrap(_)(Cell(i32)(0))\n\
+               nested + direct\n\
+             }\n",
+        )
+        .expect("nested inferred nominal source must parse");
+        let mut analyzer = Analyzer::new(&program);
+        analyzer.analyze().expect("nested inferred nominal HIR");
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+
+        let inner_key = NominalInstanceKey {
+            kind: NominalKind::Struct,
+            template: "Cell".into(),
+            arguments: vec![Ty::I32],
+        };
+        let inner = analyzer.nominal_instance_names[&inner_key].clone();
+        let outer_key = NominalInstanceKey {
+            kind: NominalKind::Struct,
+            template: "Cell".into(),
+            arguments: vec![Ty::Struct(inner)],
+        };
+        assert!(analyzer.nominal_instance_names.contains_key(&outer_key));
+
+        let unwrap_instances: Vec<_> = analyzer
+            .function_instances
+            .values()
+            .filter(|instance| instance.key.template == "unwrap")
+            .collect();
+        assert_eq!(unwrap_instances.len(), 1);
+        assert_eq!(unwrap_instances[0].key.arguments, vec![Ty::I32]);
+    }
+
+    #[test]
+    fn integer_constraints_precede_defaulting_independent_of_source_order() {
+        let program = crate::parser::parse(
+            "let same(T: type)(left: T, right: T): i32 = 14\n\
+             let accept(T: type)(value: T): i32 = 14\n\
+             let main(): i32 = {\n\
+               let wide: i64 = 7\n\
+               same(_)(0, wide) + same(_)(wide, 0) + accept(_)(0 + wide)\n\
+             }\n",
+        )
+        .expect("ordered inference source must parse");
+        let mut analyzer = Analyzer::new(&program);
+        analyzer.analyze().expect("ordered inference HIR");
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        for template in ["same", "accept"] {
+            let instances: Vec<_> = analyzer
+                .function_instances
+                .values()
+                .filter(|instance| instance.key.template == template)
+                .collect();
+            assert_eq!(instances.len(), 1);
+            assert_eq!(instances[0].key.arguments, vec![Ty::I64]);
+        }
+    }
+
+    #[test]
+    fn explicit_generic_enum_values_are_available_to_outer_inference() {
+        let source = "let Maybe(T: type) = enum { Some(T), None }\n\
+                      let identity(T: type)(move value: T): T = value\n\
+                      let main(): i32 = {\n\
+                        let some = identity(_)(Maybe(i32).Some(42))\n\
+                        let none: Maybe(i32) = identity(_)(Maybe(i32).None)\n\
+                        some match { Some(value) => value, None => 0 }\n\
+                      }\n";
+        compile_text(source).expect("outer inference over enum constructors must compile");
+    }
+
+    #[test]
+    fn inference_conflicts_do_not_materialize_instances() {
+        let program = crate::parser::parse(
+            "let identity(T: type)(move value: T): T = value\n\
+             let Cell(T: type) = struct(value: T)\n\
+             let main(): bool = identity(_)(Cell(i32)(42))\n",
+        )
+        .expect("conflicting inference source must parse");
+        let mut analyzer = Analyzer::new(&program);
+        assert!(analyzer.analyze().is_none());
+        assert!(analyzer.diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("conflicting inference for type parameter `T`")
+        }));
+        assert!(analyzer.function_instances.is_empty());
+        assert!(analyzer.function_instance_names.is_empty());
+        assert!(analyzer.nominal_instances.is_empty());
+        assert!(analyzer.nominal_instance_names.is_empty());
+    }
+
+    #[test]
     fn template_validation_rolls_back_temporary_instances_and_emits_closed_ir() {
         let program = crate::parser::parse(
             "let identity(T: type)(move value: T): T = value\n\
@@ -7658,6 +9328,54 @@ mod tests {
         }));
 
         let ir = compile(&program).expect("closed generic composition must compile");
+        for marker in markers {
+            assert!(!ir.contains(&marker));
+            assert!(!ir.contains(&hex_name(&marker)));
+        }
+    }
+
+    #[test]
+    fn inferred_template_calls_roll_back_abstract_instances() {
+        let program = crate::parser::parse(
+            "let identity(U: type)(move value: U): U = value\n\
+             let wrap(T: type)(move value: T): T = identity(_)(value)\n\
+             let main(): i32 = wrap(i32)(42)\n",
+        )
+        .expect("inferred generic composition must parse");
+        let mut analyzer = Analyzer::new(&program);
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected validation diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        assert!(analyzer.function_instances.is_empty());
+        assert!(analyzer.function_instance_names.is_empty());
+        assert!(analyzer.function_type_substitutions.is_empty());
+
+        let markers: HashSet<_> = analyzer.abstract_type_parameters.keys().cloned().collect();
+        let hir = analyzer.analyze().expect("closed inferred generic HIR");
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected lowering diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        assert_eq!(analyzer.function_instances.len(), 2);
+        assert!(hir
+            .functions
+            .iter()
+            .all(|function| !function.name.contains("$generic$")));
+        assert!(analyzer.function_instances.values().all(|instance| {
+            instance
+                .key
+                .arguments
+                .iter()
+                .all(|argument| match argument {
+                    Ty::Struct(name) | Ty::Enum(name) => !markers.contains(name),
+                    _ => true,
+                })
+        }));
+
+        let ir = compile(&program).expect("closed inferred composition must compile");
         for marker in markers {
             assert!(!ir.contains(&marker));
             assert!(!ir.contains(&hex_name(&marker)));
@@ -7857,8 +9575,8 @@ mod tests {
             ),
             (
                 "let Cell(T: type) = struct(value: T)\n\
-                 let main(): i32 = Cell(_)(42).value\n",
-                "`_` generic type argument inference is not supported",
+                 let main(): i32 = Cell(Cell(_))(Cell(i32)(42)).value.value\n",
+                "nested `_` type argument inference is not supported",
             ),
             (
                 "let Cell(T: type) = struct(value: T)\n\

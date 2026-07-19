@@ -1,0 +1,6 @@
+let choose(T: type)(first: T)(second: T): T = second
+
+let main(): i32 = {
+  let choose_after_zero = choose(_)(0)
+  choose_after_zero(42)
+}

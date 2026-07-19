@@ -1,0 +1,6 @@
+let identity(T: type)(move value: T): T = value
+
+let main(): i32 = {
+  let value: i64 = identity(_)(42)
+  if value == 42 { 42 } else { 0 }
+}

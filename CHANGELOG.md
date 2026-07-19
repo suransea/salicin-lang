@@ -14,6 +14,8 @@ M2 development follows the v0.2 language foundation.
   ownership, so invalid unused templates are diagnosed before instantiation.
 - Added explicit generic struct and enum application, including nested data instances, constructors,
   variants, pattern matching, stable instance metadata and recursive-layout validation.
+- Added side-effect-free `_` type-argument inference for generic functions, structs and enum
+  variants, using expected and runtime argument constraints before lowering each argument once.
 
 ## 0.2.0 - 2026-07-20
 

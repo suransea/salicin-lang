@@ -692,6 +692,62 @@ fn m2_generic_nominal_errors_report_their_cause() {
 }
 
 #[test]
+fn m2_inferred_type_arguments_run_with_expected_result() {
+    for name in [
+        "infer_generic_function.sali",
+        "infer_function_from_expected.sali",
+        "infer_generic_struct.sali",
+        "infer_nested_generic_struct.sali",
+        "infer_nominal_from_expected.sali",
+        "infer_generic_enum_variant.sali",
+        "infer_runtime_partial.sali",
+        "infer_argument_once.sali",
+        "infer_constraint_order.sali",
+        "infer_fresh_constructor.sali",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run inferred-type-argument fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn m2_inferred_type_argument_errors_report_their_cause() {
+    for (name, expected) in [
+        ("infer_conflicting_arguments.sali", "conflicting"),
+        ("infer_expected_conflict.sali", "conflicting"),
+        ("infer_unconstrained.sali", "cannot infer"),
+        ("infer_incomplete_application.sali", "cannot infer"),
+        ("infer_unsupported_probe.sali", "explicit type argument"),
+        ("infer_nested_hole.sali", "nested"),
+        ("infer_moved_argument.sali", "moved"),
+        ("infer_borrow_temporary.sali", "place"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid inferred-type-argument fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected),
+            "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn output_must_not_overwrite_the_source() {
     let temporary = TestDirectory::new();
     let source = temporary.join("keep.sali");

@@ -1,0 +1,18 @@
+let Maybe(T: type) = enum {
+  Some(T),
+  None,
+}
+
+let main(): i32 = {
+  let some = Maybe(_).Some(42)
+  let none: Maybe(i32) = Maybe(_).None
+  let from_some = some match {
+    Some(value) => value,
+    None => 0,
+  }
+  let from_none = none match {
+    Some(value) => value,
+    None => 0,
+  }
+  from_some + from_none
+}

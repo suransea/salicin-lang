@@ -1,0 +1,7 @@
+let Cell(T: type) = struct(value: T)
+
+let main(): i32 = {
+  let inner = Cell(i32)(42)
+  let outer = Cell(_)(inner)
+  outer.value.value
+}
