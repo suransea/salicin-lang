@@ -24,6 +24,8 @@ M2 development follows the v0.2 language foundation.
   literal range filtering and single-evaluation ownership semantics; integer addition remains built in.
 - Added reserved prelude `Option(T)` and `Result(T, E)` generic enums as ordinary nominal templates,
   reusing existing constructors, type-argument inference, matching, monomorphization and LLVM layouts.
+- Added `?.` optional chaining over owned prelude `Option` and `Result` values for struct fields and
+  fully applied methods, preserving lazy arguments, single evaluation, residuals and nested outputs.
 - Added right-associative `??` for prelude `Option` and `Result`, with single evaluation of the
   consumed container, lazy fallback control flow, payload-aware inference and ownership-flow joins.
 - Added postfix `.try` propagation for explicitly annotated named functions returning prelude

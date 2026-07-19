@@ -3603,6 +3603,123 @@ impl Analyzer {
         }
     }
 
+    fn probe_chain_access_ty(
+        &self,
+        payload: &Ty,
+        member: &str,
+        groups: Option<&[&[CallArg]]>,
+    ) -> Option<Ty> {
+        let target = match payload {
+            Ty::Struct(name) | Ty::Enum(name) => name,
+            _ => return None,
+        };
+        if groups.is_none() {
+            return self
+                .struct_layouts
+                .get(target)?
+                .fields
+                .iter()
+                .find(|field| field.name == member)
+                .map(|field| field.ty.clone());
+        }
+
+        let canonical = self
+            .inherent_members
+            .get(target)
+            .and_then(|members| members.methods.get(member))
+            .cloned()
+            .or_else(|| {
+                let candidates = self
+                    .trait_methods_by_receiver
+                    .get(&(payload.clone(), member.to_owned()))?;
+                (candidates.len() == 1)
+                    .then(|| self.trait_impls[&candidates[0]].methods[member].clone())
+            })?;
+        let signature = self.signatures.get(&canonical)?;
+        let groups = groups.expect("method chain has call groups");
+        if signature.groups.len() != groups.len() + 1
+            || signature.groups.first()?.len() != 1
+            || signature.groups[0][0].mode == PassMode::MutBorrow
+            || groups
+                .iter()
+                .zip(signature.groups.iter().skip(1))
+                .any(|(arguments, parameters)| arguments.len() != parameters.len())
+        {
+            return None;
+        }
+        signature.result.clone()
+    }
+
+    fn probe_chain_ty(
+        &self,
+        base: &Expr,
+        member: &str,
+        groups: Option<&[&[CallArg]]>,
+        expected: Option<&Ty>,
+        context: &LowerCtx,
+    ) -> TypeProbe {
+        if matches!(base, Expr::Borrow { .. }) {
+            return TypeProbe::Unsupported;
+        }
+        if place_root_name(base)
+            .and_then(|name| context.lookup(name))
+            .is_some_and(|local| local.capability != LocalCapability::Owned)
+        {
+            return TypeProbe::Unsupported;
+        }
+        let base_probe = self.probe_expr_ty(base, None, context);
+        let info = self
+            .builtin_fallible_info_for_probe(&base_probe)
+            .or_else(|| {
+                let expected = self.builtin_fallible_info_for_ty(expected?)?;
+                let inferred = self.inferred_builtin_coalesce_lhs(base, context)?;
+                if inferred.kind != expected.kind {
+                    return None;
+                }
+                Some(BuiltinFallibleInfo {
+                    kind: inferred.kind,
+                    payload: self.inferred_try_payload(&inferred, context)?,
+                    payload_source: None,
+                    error: expected.error,
+                })
+            });
+        let Some(info) = info else {
+            return TypeProbe::Unsupported;
+        };
+        let Some(output) = self.probe_chain_access_ty(&info.payload, member, groups) else {
+            return TypeProbe::Unsupported;
+        };
+        let mut arguments = vec![output];
+        if info.kind == BuiltinFallibleKind::Result {
+            arguments.push(info.error.expect("Result probe has an error type"));
+        }
+        let Some(source_arguments) = arguments
+            .iter()
+            .map(|argument| self.source_type_for_ty(argument))
+            .collect::<Option<Vec<_>>>()
+        else {
+            return TypeProbe::Unsupported;
+        };
+        let template = match info.kind {
+            BuiltinFallibleKind::Option => "Option",
+            BuiltinFallibleKind::Result => "Result",
+        };
+        let key = NominalInstanceKey {
+            kind: NominalKind::Enum,
+            template: template.to_owned(),
+            arguments,
+        };
+        let canonical = self
+            .nominal_instance_names
+            .get(&key)
+            .cloned()
+            .unwrap_or_else(|| nominal_instance_name(&key));
+        TypeProbe::KnownSource(
+            Ty::Enum(canonical),
+            Type::Named(template.to_owned(), source_arguments),
+        )
+    }
+
     fn return_boundary_for_ty(&self, ty: &Ty) -> Option<ReturnBoundary> {
         let info = self.builtin_fallible_info_for_ty(ty)?;
         Some(ReturnBoundary {
@@ -3856,6 +3973,7 @@ impl Analyzer {
             | Expr::Assign(_, _)
             | Expr::Call(_, _)
             | Expr::Member(_, _)
+            | Expr::ChainMember(_, _)
             | Expr::Block(_, _)
             | Expr::Closure(_, _)
             | Expr::If { .. }
@@ -4096,7 +4214,10 @@ impl Analyzer {
                     _ => TypeProbe::Unsupported,
                 }
             }
-            Expr::Call(_, _) => self.probe_call_ty(expression, context),
+            Expr::ChainMember(base, member) => {
+                self.probe_chain_ty(base, member, None, hint, context)
+            }
+            Expr::Call(_, _) => self.probe_call_ty(expression, hint, context),
             Expr::Block(statements, tail) if statements.is_empty() => {
                 tail.as_ref().map_or(TypeProbe::Known(Ty::Unit), |tail| {
                     self.probe_expr_ty(tail, hint, context)
@@ -4145,9 +4266,17 @@ impl Analyzer {
         }
     }
 
-    fn probe_call_ty(&self, expression: &Expr, context: &LowerCtx) -> TypeProbe {
+    fn probe_call_ty(
+        &self,
+        expression: &Expr,
+        expected: Option<&Ty>,
+        context: &LowerCtx,
+    ) -> TypeProbe {
         let mut groups = Vec::new();
         let root = flatten_call(expression, &mut groups);
+        if let Expr::ChainMember(base, member) = root {
+            return self.probe_chain_ty(base, member, Some(&groups), expected, context);
+        }
         if let Expr::Member(base, variant) = root {
             let Some((NominalKind::Enum, ty, source)) = self.probe_nominal_type_head(base, context)
             else {
@@ -5114,6 +5243,9 @@ impl Analyzer {
             }
             Expr::Call(_, _) => self.lower_call(expression, expected, context),
             Expr::Member(base, field) => self.lower_member(base, field, expected, context),
+            Expr::ChainMember(base, field) => {
+                self.lower_chain(base, field, None, expected, context)
+            }
             Expr::Index { base, index } => self.lower_index(base, index, context),
             Expr::Block(statements, tail) => {
                 context.push_scope();
@@ -5871,8 +6003,25 @@ impl Analyzer {
                 }
                 valid
             }
+            Expr::ChainMember(base, _) => {
+                self.scan_simple_closure_captures(base, bound, outer, captures)
+            }
             Expr::Call(_, _) => {
-                self.scan_direct_move_closure_call(expression, bound, outer, captures)
+                let mut groups = Vec::new();
+                if let Expr::ChainMember(base, _) = flatten_call(expression, &mut groups) {
+                    let mut valid = self.scan_simple_closure_captures(base, bound, outer, captures);
+                    for argument in groups.iter().flat_map(|group| group.iter()) {
+                        valid &= self.scan_simple_closure_captures(
+                            &argument.value,
+                            bound,
+                            outer,
+                            captures,
+                        );
+                    }
+                    valid
+                } else {
+                    self.scan_direct_move_closure_call(expression, bound, outer, captures)
+                }
             }
             Expr::Block(statements, tail) => {
                 let saved = bound.clone();
@@ -6658,6 +6807,252 @@ impl Analyzer {
         self.lower_match_with_scrutinee(scrutinee, &arms, Some(&info.payload), context)
     }
 
+    fn chain_access_ty(
+        &mut self,
+        payload: &Ty,
+        member: &str,
+        groups: Option<&[&[CallArg]]>,
+    ) -> Option<Ty> {
+        let target = match payload {
+            Ty::Struct(name) | Ty::Enum(name) => name.clone(),
+            ty => {
+                self.error(format!(
+                    "optional chaining requires a nominal payload, found `{ty}`"
+                ));
+                return None;
+            }
+        };
+        let Some(groups) = groups else {
+            let Some(layout) = self.struct_layouts.get(&target) else {
+                self.error(format!(
+                    "optional field access requires a struct payload, found `{payload}`"
+                ));
+                return None;
+            };
+            let Some(field) = layout.fields.iter().find(|field| field.name == member) else {
+                if self
+                    .inherent_members
+                    .get(&target)
+                    .is_some_and(|members| members.methods.contains_key(member))
+                {
+                    self.error(format!(
+                        "optional method `{target}.{member}` must be fully called"
+                    ));
+                } else {
+                    self.error(format!(
+                        "unknown field `{member}` on optional payload `{target}`"
+                    ));
+                }
+                return None;
+            };
+            return Some(field.ty.clone());
+        };
+
+        let inherent = self
+            .inherent_members
+            .get(&target)
+            .and_then(|members| members.methods.get(member))
+            .cloned();
+        let canonical = if let Some(canonical) = inherent {
+            canonical
+        } else {
+            let candidates = self
+                .trait_methods_by_receiver
+                .get(&(payload.clone(), member.to_owned()))
+                .cloned()
+                .unwrap_or_default();
+            match candidates.as_slice() {
+                [candidate] => self.trait_impls[candidate].methods[member].clone(),
+                [] => {
+                    if self.struct_layouts.get(&target).is_some_and(|layout| {
+                        layout.fields.iter().any(|field| field.name == member)
+                    }) {
+                        self.error(format!(
+                            "optional chaining cannot call field `{target}.{member}`"
+                        ));
+                    } else {
+                        self.error(format!(
+                            "unknown method `{member}` on optional payload `{target}`"
+                        ));
+                    }
+                    return None;
+                }
+                [_, _, ..] => {
+                    self.error(format!(
+                        "ambiguous trait method `{member}` on optional payload `{target}`"
+                    ));
+                    return None;
+                }
+            }
+        };
+        let function_ty = self.function_type(&canonical);
+        let signature = self.signatures[&canonical].clone();
+        let Some(receiver) = signature.groups.first().and_then(|group| group.first()) else {
+            self.error(format!(
+                "internal error: optional method `{target}.{member}` has no receiver"
+            ));
+            return None;
+        };
+        if receiver.mode == PassMode::MutBorrow {
+            self.error(format!(
+                "optional chaining does not support mutable-borrow receiver `{target}.{member}`"
+            ));
+            return None;
+        }
+        let supplied = groups.len() + 1;
+        if supplied != signature.groups.len() {
+            if supplied < signature.groups.len() {
+                self.error(format!(
+                    "optional method `{target}.{member}` must be fully applied"
+                ));
+            } else {
+                self.error(format!(
+                    "too many parameter groups in optional method call `{target}.{member}`"
+                ));
+            }
+            return None;
+        }
+        let Ty::Function(function_ty) = function_ty else {
+            return None;
+        };
+        Some((*function_ty.result).clone())
+    }
+
+    fn lower_chain(
+        &mut self,
+        base: &Expr,
+        member: &str,
+        groups: Option<&[&[CallArg]]>,
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let borrowed = matches!(base, Expr::Borrow { .. })
+            || place_root_name(base)
+                .and_then(|name| context.lookup(name))
+                .is_some_and(|local| local.capability != LocalCapability::Owned);
+        let base_expected = expected.and_then(|expected| {
+            let expected = self.builtin_fallible_info_for_ty(expected)?;
+            let inferred = self.inferred_builtin_coalesce_lhs(base, context)?;
+            if inferred.kind != expected.kind {
+                return None;
+            }
+            let payload = self.inferred_try_payload(&inferred, context)?;
+            let mut arguments = vec![payload];
+            if inferred.kind == BuiltinFallibleKind::Result {
+                arguments.push(expected.error?);
+            }
+            let source_arguments = arguments
+                .iter()
+                .map(|argument| self.source_type_for_ty(argument))
+                .collect::<Option<Vec<_>>>()?;
+            let canonical = self.ensure_nominal_instance(
+                NominalKind::Enum,
+                &inferred.name,
+                source_arguments,
+                arguments,
+            )?;
+            Some(Ty::Enum(canonical))
+        });
+        let scrutinee = self.lower_expr(base, base_expected.as_ref(), context);
+        if borrowed {
+            self.error("optional chaining requires an owned `Option` or `Result` value");
+            return error_expr();
+        }
+        if scrutinee.ty == Ty::Error {
+            return error_expr();
+        }
+        let Some(info) = self.builtin_fallible_info_for_ty(&scrutinee.ty) else {
+            self.error(format!(
+                "operator `?.` requires an owned `Option(T)` or `Result(T, E)`, found `{}`",
+                scrutinee.ty
+            ));
+            return error_expr();
+        };
+        let Some(output) = self.chain_access_ty(&info.payload, member, groups) else {
+            return error_expr();
+        };
+        if matches!(output, Ty::Function(_)) {
+            self.error(
+                "optional chaining does not support partial applications or callable fields",
+            );
+            return error_expr();
+        }
+        let template = match info.kind {
+            BuiltinFallibleKind::Option => "Option",
+            BuiltinFallibleKind::Result => "Result",
+        };
+        let mut arguments = vec![output];
+        if info.kind == BuiltinFallibleKind::Result {
+            arguments.push(info.error.clone().expect("Result has an error type"));
+        }
+        let Some(source_arguments) = arguments
+            .iter()
+            .map(|argument| self.source_type_for_ty(argument))
+            .collect::<Option<Vec<_>>>()
+        else {
+            self.error("optional chaining result cannot be represented as a builtin container");
+            return error_expr();
+        };
+        let Some(canonical) =
+            self.ensure_nominal_instance(NominalKind::Enum, template, source_arguments, arguments)
+        else {
+            return error_expr();
+        };
+
+        const PAYLOAD_BINDING: &str = "$chain$payload";
+        const ERROR_BINDING: &str = "$chain$error";
+        let mut access = Expr::Member(
+            Box::new(Expr::Name(PAYLOAD_BINDING.to_owned())),
+            member.to_owned(),
+        );
+        if let Some(groups) = groups {
+            for arguments in groups {
+                access = Expr::Call(Box::new(access), arguments.to_vec());
+            }
+        }
+        let wrap = |variant: &str, value: Option<Expr>| {
+            let member = Expr::Member(Box::new(Expr::Name(canonical.clone())), variant.to_owned());
+            value.map_or(member.clone(), |value| {
+                Expr::Call(Box::new(member), vec![CallArg { label: None, value }])
+            })
+        };
+        let success_variant = match info.kind {
+            BuiltinFallibleKind::Option => "Some",
+            BuiltinFallibleKind::Result => "Ok",
+        };
+        let mut arms = vec![MatchArm {
+            pattern: Pattern::Constructor {
+                path: vec![success_variant.to_owned()],
+                fields: PatternFields::Positional(vec![Pattern::Binding(
+                    PAYLOAD_BINDING.to_owned(),
+                )]),
+            },
+            guard: None,
+            body: wrap(success_variant, Some(access)),
+        }];
+        arms.push(match info.kind {
+            BuiltinFallibleKind::Option => MatchArm {
+                pattern: Pattern::Constructor {
+                    path: vec!["None".to_owned()],
+                    fields: PatternFields::Unit,
+                },
+                guard: None,
+                body: wrap("None", None),
+            },
+            BuiltinFallibleKind::Result => MatchArm {
+                pattern: Pattern::Constructor {
+                    path: vec!["Err".to_owned()],
+                    fields: PatternFields::Positional(vec![Pattern::Binding(
+                        ERROR_BINDING.to_owned(),
+                    )]),
+                },
+                guard: None,
+                body: wrap("Err", Some(Expr::Name(ERROR_BINDING.to_owned()))),
+            },
+        });
+        self.lower_match_with_scrutinee(scrutinee, &arms, Some(&Ty::Enum(canonical)), context)
+    }
+
     fn lower_try(
         &mut self,
         value: &Expr,
@@ -7400,6 +7795,9 @@ impl Analyzer {
     ) -> HirExpr {
         let mut groups = Vec::new();
         let root = flatten_call(expression, &mut groups);
+        if let Expr::ChainMember(base, member) = root {
+            return self.lower_chain(base, member, Some(&groups), expected, context);
+        }
         if let Expr::Name(name) = root {
             if let Some(local) = context.lookup(name).cloned() {
                 if local.closure.is_some() {
@@ -9099,7 +9497,7 @@ fn flatten_call<'a>(expression: &'a Expr, groups: &mut Vec<&'a [CallArg]>) -> &'
 fn place_root_name(expression: &Expr) -> Option<&str> {
     match expression {
         Expr::Name(name) => Some(name),
-        Expr::Member(base, _) => place_root_name(base),
+        Expr::Member(base, _) | Expr::ChainMember(base, _) => place_root_name(base),
         _ => None,
     }
 }
@@ -10902,7 +11300,9 @@ fn substitute_expr_types(expression: &mut Expr, substitutions: &HashMap<String, 
                 substitute_expr_types(&mut argument.value, substitutions);
             }
         }
-        Expr::Member(base, _) => substitute_expr_types(base, substitutions),
+        Expr::Member(base, _) | Expr::ChainMember(base, _) => {
+            substitute_expr_types(base, substitutions)
+        }
         Expr::Array(elements) => {
             for element in elements {
                 substitute_expr_types(element, substitutions);
@@ -13287,5 +13687,88 @@ let main(): i32 = {
         })
         .unwrap();
         assert!(ir.contains("call i32 @sali.fn.616464(i32"));
+    }
+
+    #[test]
+    fn lowers_builtin_optional_fields_and_methods_without_flattening() {
+        let ir = compile_text(
+            r#"
+let Box = struct(value: i32, nested: Option(i32))
+extend Box {
+  let add(borrow self)(amount: i32): i32 = self.value + amount
+}
+let read(value: Option(Box)): Option(i32) = value?.value
+let nested(value: Option(Box)): Option(Option(i32)) = value?.nested
+let call(value: Result(Box, bool)): Result(i32, bool) = value?.add(2)
+let main(): i32 = {
+  let boxed = Box(value: 40, nested: Option(i32).Some(42))
+  let left = read(Option(Box).Some(boxed)) ?? 0
+  let right = call(Result(Box, bool).Ok(Box(value: 0, nested: Option(i32).None))) ?? 0
+  left + right
+}
+"#,
+        )
+        .unwrap();
+        assert!(ir.contains("switch i32"));
+        assert!(ir.contains(&function_symbol("Box::method::add")));
+    }
+
+    #[test]
+    fn optional_chain_expected_result_only_constrains_the_base_error_type() {
+        compile_text(
+            r#"
+let Boxed = struct(value: i32)
+let read(): Result(i32, bool) = Result(_, _).Ok(Boxed(42))?.value
+let main(): i32 = read() ?? 0
+"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn rejects_unsupported_optional_chain_receivers_and_calls() {
+        let cases = [
+            (
+                r#"
+let Box = struct(value: i32)
+let read(borrow value: Option(Box)): Option(i32) = value?.value
+let main(): i32 = 0
+"#,
+                "owned",
+            ),
+            (
+                r#"
+let Box = struct(value: i32)
+extend Box { let reset(mut borrow self)(): i32 = self.value }
+let read(value: Option(Box)): Option(i32) = value?.reset()
+let main(): i32 = 0
+"#,
+                "mutable-borrow receiver",
+            ),
+            (
+                r#"
+let Box = struct(value: i32)
+extend Box { let add(borrow self)(x: i32)(y: i32): i32 = self.value + x + y }
+let read(value: Option(Box)): Option(i32) = value?.add(1)
+let main(): i32 = 0
+"#,
+                "fully applied",
+            ),
+            (
+                r#"
+let Box = struct(value: i32)
+let read(value: Box): Option(i32) = value?.value
+let main(): i32 = 0
+"#,
+                "requires an owned `Option(T)` or `Result(T, E)`",
+            ),
+        ];
+        for (source, expected) in cases {
+            let errors = compile_text(source).unwrap_err();
+            assert!(
+                errors.iter().any(|error| error.message.contains(expected)),
+                "expected `{expected}` in {errors:?}"
+            );
+        }
     }
 }

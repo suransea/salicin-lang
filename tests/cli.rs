@@ -1033,6 +1033,66 @@ fn m2_try_errors_report_their_cause() {
 }
 
 #[test]
+fn m2_optional_chain_programs_run_with_expected_result() {
+    for name in [
+        "chain_option_some_field.sali",
+        "chain_option_none_field.sali",
+        "chain_result_ok_field.sali",
+        "chain_result_err_field.sali",
+        "chain_success_type_changes.sali",
+        "chain_consecutive_fields.sali",
+        "chain_option_method.sali",
+        "chain_result_method.sali",
+        "chain_borrowed_method.sali",
+        "chain_option_method_arguments_are_lazy.sali",
+        "chain_result_method_arguments_are_lazy.sali",
+        "chain_inferred_inputs.sali",
+        "chain_lhs_once.sali",
+        "chain_method_result_is_nested.sali",
+        "chain_then_coalesce.sali",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run optional-chain fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn m2_optional_chain_errors_report_their_cause() {
+    for (name, expected) in [
+        ("chain_non_container.sali", "Option"),
+        ("chain_unknown_field.sali", "missing"),
+        ("chain_unknown_method.sali", "missing"),
+        ("chain_mut_borrow_method.sali", "mutable-borrow"),
+        ("chain_method_partial_application.sali", "fully applied"),
+        ("chain_use_after_move.sali", "moved"),
+        ("chain_nested_result_not_flattened.sali", "type mismatch"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid optional-chain fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected),
+            "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn m2_throw_programs_run_with_expected_result() {
     for name in [
         "throw_result_err_propagate.sali",

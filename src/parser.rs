@@ -1095,6 +1095,9 @@ impl Parser {
                     let member = self.expect_ident("a member name after `.`")?;
                     expression = Expr::Member(Box::new(expression), member);
                 }
+            } else if self.take(&TokenKind::QuestionDot) {
+                let member = self.expect_ident("a member name after `?.`")?;
+                expression = Expr::ChainMember(Box::new(expression), member);
             } else if allow_trailing_closure
                 && has_call_group
                 && !used_trailing_closure
@@ -1522,6 +1525,7 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::AndAnd => "`&&`",
         TokenKind::OrOr => "`||`",
         TokenKind::QuestionQuestion => "`??`",
+        TokenKind::QuestionDot => "`?.`",
         TokenKind::Eof => "end of file",
     }
 }
@@ -2547,5 +2551,40 @@ mod tests {
         let error = parse("let main(): i32 = {\n  let x =\n}\n").unwrap_err();
         assert_eq!((error.line, error.column), (3, 1));
         assert!(error.message.contains("expression"));
+    }
+
+    #[test]
+    fn parses_optional_fields_and_complete_method_groups() {
+        let program = parse(
+            "let field = value?.answer\n\
+             let called = value?.convert(1)(2)\n",
+        )
+        .unwrap();
+        let Item::Global(field) = &program.items[0] else {
+            panic!("expected field binding");
+        };
+        assert!(matches!(
+            &field.value,
+            Expr::ChainMember(base, member)
+                if matches!(base.as_ref(), Expr::Name(name) if name == "value")
+                    && member == "answer"
+        ));
+        let Item::Global(called) = &program.items[1] else {
+            panic!("expected call binding");
+        };
+        let Expr::Call(first, second_group) = &called.value else {
+            panic!("expected second call group");
+        };
+        let Expr::Call(root, first_group) = first.as_ref() else {
+            panic!("expected first call group");
+        };
+        assert!(matches!(
+            root.as_ref(),
+            Expr::ChainMember(base, member)
+                if matches!(base.as_ref(), Expr::Name(name) if name == "value")
+                    && member == "convert"
+        ));
+        assert_eq!(first_group.len(), 1);
+        assert_eq!(second_group.len(), 1);
     }
 }

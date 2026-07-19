@@ -200,6 +200,7 @@ pub enum Expr {
     Assign(Box<Expr>, Box<Expr>),
     Call(Box<Expr>, Vec<CallArg>),
     Member(Box<Expr>, String),
+    ChainMember(Box<Expr>, String),
     Array(Vec<Expr>),
     Index {
         base: Box<Expr>,
