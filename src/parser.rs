@@ -1551,6 +1551,81 @@ mod tests {
     }
 
     #[test]
+    fn keeps_generic_construction_and_variant_heads_as_regular_postfix_expressions() {
+        fn argument(label: Option<&str>, value: Expr) -> CallArg {
+            CallArg {
+                label: label.map(str::to_owned),
+                value,
+            }
+        }
+
+        fn type_head(name: &str, type_argument: Expr) -> Expr {
+            Expr::Call(
+                Box::new(Expr::Name(name.to_owned())),
+                vec![argument(None, type_argument)],
+            )
+        }
+
+        let program = parse(
+            "let cell = Cell(i32)(value: 42)\n\
+             let nested = Cell(Cell(i32))(value: 42)\n\
+             let some = Maybe(i32).Some(42)\n\
+             let none = Maybe(i32).None\n",
+        )
+        .unwrap();
+
+        let Item::Global(cell) = &program.items[0] else {
+            panic!("expected cell binding");
+        };
+        assert_eq!(
+            cell.value,
+            Expr::Call(
+                Box::new(type_head("Cell", Expr::Name("i32".into()))),
+                vec![argument(Some("value"), Expr::Integer(42))],
+            )
+        );
+
+        let Item::Global(nested) = &program.items[1] else {
+            panic!("expected nested cell binding");
+        };
+        assert_eq!(
+            nested.value,
+            Expr::Call(
+                Box::new(type_head(
+                    "Cell",
+                    type_head("Cell", Expr::Name("i32".into())),
+                )),
+                vec![argument(Some("value"), Expr::Integer(42))],
+            )
+        );
+
+        let Item::Global(some) = &program.items[2] else {
+            panic!("expected Some binding");
+        };
+        assert_eq!(
+            some.value,
+            Expr::Call(
+                Box::new(Expr::Member(
+                    Box::new(type_head("Maybe", Expr::Name("i32".into()))),
+                    "Some".into(),
+                )),
+                vec![argument(None, Expr::Integer(42))],
+            )
+        );
+
+        let Item::Global(none) = &program.items[3] else {
+            panic!("expected None binding");
+        };
+        assert_eq!(
+            none.value,
+            Expr::Member(
+                Box::new(type_head("Maybe", Expr::Name("i32".into()))),
+                "None".into(),
+            )
+        );
+    }
+
+    #[test]
     fn rejects_mixed_or_misordered_compile_parameter_groups() {
         let cases = [
             (

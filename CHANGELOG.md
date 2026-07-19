@@ -12,6 +12,8 @@ M2 development follows the v0.2 language foundation.
   and local partial application.
 - Added definition-time abstract checking for generic function bodies, including return types and
   ownership, so invalid unused templates are diagnosed before instantiation.
+- Added explicit generic struct and enum application, including nested data instances, constructors,
+  variants, pattern matching, stable instance metadata and recursive-layout validation.
 
 ## 0.2.0 - 2026-07-20
 

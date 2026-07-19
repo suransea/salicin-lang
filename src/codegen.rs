@@ -79,6 +79,32 @@ struct FunctionInstanceInfo {
 }
 
 const MAX_FUNCTION_INSTANCES: usize = 256;
+const MAX_NOMINAL_INSTANCES: usize = 256;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum NominalKind {
+    Struct,
+    Enum,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct NominalInstanceKey {
+    kind: NominalKind,
+    template: String,
+    arguments: Vec<Ty>,
+}
+
+#[derive(Debug, Clone)]
+struct NominalInstanceInfo {
+    key: NominalInstanceKey,
+    canonical: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NominalInstanceState {
+    Building,
+    Ready,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct FunctionTy {
@@ -672,6 +698,20 @@ struct InherentMemberSet {
     constants: HashMap<String, String>,
 }
 
+#[derive(Clone)]
+struct NominalSnapshot {
+    struct_defs: HashMap<String, StructDef>,
+    enum_defs: HashMap<String, EnumDef>,
+    struct_layouts: HashMap<String, StructLayout>,
+    enum_layouts: HashMap<String, EnumLayout>,
+    struct_order: Vec<String>,
+    enum_order: Vec<String>,
+    instance_names: HashMap<NominalInstanceKey, String>,
+    instances: HashMap<String, NominalInstanceInfo>,
+    states: HashMap<NominalInstanceKey, NominalInstanceState>,
+    invalid_recursive_nominals: HashSet<String>,
+}
+
 struct Analyzer {
     functions: HashMap<String, Function>,
     function_templates: HashMap<String, Function>,
@@ -683,6 +723,14 @@ struct Analyzer {
     globals: HashMap<String, Binding>,
     struct_defs: HashMap<String, StructDef>,
     enum_defs: HashMap<String, EnumDef>,
+    struct_templates: HashMap<String, StructDef>,
+    enum_templates: HashMap<String, EnumDef>,
+    struct_template_order: Vec<String>,
+    enum_template_order: Vec<String>,
+    nominal_instance_names: HashMap<NominalInstanceKey, String>,
+    nominal_instances: HashMap<String, NominalInstanceInfo>,
+    nominal_instance_states: HashMap<NominalInstanceKey, NominalInstanceState>,
+    invalid_recursive_nominals: HashSet<String>,
     struct_layouts: HashMap<String, StructLayout>,
     enum_layouts: HashMap<String, EnumLayout>,
     inherent_members: HashMap<String, InherentMemberSet>,
@@ -714,6 +762,14 @@ impl Analyzer {
             globals: HashMap::new(),
             struct_defs: HashMap::new(),
             enum_defs: HashMap::new(),
+            struct_templates: HashMap::new(),
+            enum_templates: HashMap::new(),
+            struct_template_order: Vec::new(),
+            enum_template_order: Vec::new(),
+            nominal_instance_names: HashMap::new(),
+            nominal_instances: HashMap::new(),
+            nominal_instance_states: HashMap::new(),
+            invalid_recursive_nominals: HashSet::new(),
             struct_layouts: HashMap::new(),
             enum_layouts: HashMap::new(),
             inherent_members: HashMap::new(),
@@ -776,33 +832,78 @@ impl Analyzer {
                     self.globals.insert(binding.name.clone(), binding.clone());
                 }
                 Item::Struct(definition) => {
-                    if !definition.compile_groups.is_empty() {
-                        self.error(format!(
-                            "generic struct `{}` is not supported in the first generic slice",
-                            definition.name
-                        ));
-                        continue;
+                    if definition.compile_groups.is_empty() {
+                        let key = NominalInstanceKey {
+                            kind: NominalKind::Struct,
+                            template: definition.name.clone(),
+                            arguments: Vec::new(),
+                        };
+                        self.nominal_instance_names
+                            .insert(key.clone(), definition.name.clone());
+                        self.nominal_instances.insert(
+                            definition.name.clone(),
+                            NominalInstanceInfo {
+                                key: key.clone(),
+                                canonical: definition.name.clone(),
+                            },
+                        );
+                        self.nominal_instance_states
+                            .insert(key, NominalInstanceState::Building);
+                        self.struct_order.push(definition.name.clone());
+                        self.struct_defs
+                            .insert(definition.name.clone(), definition.clone());
+                    } else {
+                        if definition.compile_groups.len() != 1 {
+                            self.error(format!(
+                                "generic struct `{}` must use exactly one compile-time parameter group",
+                                definition.name
+                            ));
+                            continue;
+                        }
+                        self.struct_template_order.push(definition.name.clone());
+                        self.struct_templates
+                            .insert(definition.name.clone(), definition.clone());
                     }
-                    self.struct_order.push(definition.name.clone());
-                    self.struct_defs
-                        .insert(definition.name.clone(), definition.clone());
                 }
                 Item::Enum(definition) => {
-                    if !definition.compile_groups.is_empty() {
-                        self.error(format!(
-                            "generic enum `{}` is not supported in the first generic slice",
-                            definition.name
-                        ));
-                        continue;
+                    if definition.compile_groups.is_empty() {
+                        let key = NominalInstanceKey {
+                            kind: NominalKind::Enum,
+                            template: definition.name.clone(),
+                            arguments: Vec::new(),
+                        };
+                        self.nominal_instance_names
+                            .insert(key.clone(), definition.name.clone());
+                        self.nominal_instances.insert(
+                            definition.name.clone(),
+                            NominalInstanceInfo {
+                                key: key.clone(),
+                                canonical: definition.name.clone(),
+                            },
+                        );
+                        self.nominal_instance_states
+                            .insert(key, NominalInstanceState::Building);
+                        self.enum_order.push(definition.name.clone());
+                        self.enum_defs
+                            .insert(definition.name.clone(), definition.clone());
+                    } else {
+                        if definition.compile_groups.len() != 1 {
+                            self.error(format!(
+                                "generic enum `{}` must use exactly one compile-time parameter group",
+                                definition.name
+                            ));
+                            continue;
+                        }
+                        self.enum_template_order.push(definition.name.clone());
+                        self.enum_templates
+                            .insert(definition.name.clone(), definition.clone());
                     }
-                    self.enum_order.push(definition.name.clone());
-                    self.enum_defs
-                        .insert(definition.name.clone(), definition.clone());
                 }
                 Item::Extend(_) => unreachable!("extensions were collected separately"),
             }
         }
 
+        self.validate_generic_nominal_cycles();
         self.collect_nominal_layouts();
         for extension in extensions {
             self.collect_extension(extension);
@@ -839,9 +940,8 @@ impl Analyzer {
             self.global_annotations.insert(name, annotation);
         }
 
+        self.validate_nominal_templates();
         self.validate_function_templates();
-
-        self.validate_nominal_layouts();
     }
 
     fn collect_extension(&mut self, extension: ExtendDef) {
@@ -862,6 +962,13 @@ impl Analyzer {
                 return;
             }
         };
+        if self.struct_templates.contains_key(&target) || self.enum_templates.contains_key(&target)
+        {
+            self.error(format!(
+                "generic extend target `{target}` is not supported in the first generic slice"
+            ));
+            return;
+        }
         if !self.struct_defs.contains_key(&target) && !self.enum_defs.contains_key(&target) {
             self.error(format!("unknown extension target `{target}`"));
             return;
@@ -994,87 +1101,495 @@ impl Analyzer {
 
     fn collect_nominal_layouts(&mut self) {
         for name in self.struct_order.clone() {
-            let definition = self.struct_defs[&name].clone();
-            let mut seen = HashSet::new();
-            let mut fields = Vec::new();
-            for field in definition.fields {
-                if !seen.insert(field.name.clone()) {
-                    self.error(format!(
-                        "duplicate field `{}` in struct `{name}`",
-                        field.name
-                    ));
-                    continue;
-                }
-                fields.push(FieldLayout {
-                    name: field.name,
-                    ty: self.lower_source_type(&field.ty),
-                });
+            let is_ready = self
+                .nominal_instances
+                .get(&name)
+                .and_then(|instance| self.nominal_instance_states.get(&instance.key))
+                == Some(&NominalInstanceState::Ready);
+            if is_ready {
+                continue;
             }
-            self.struct_layouts
-                .insert(name.clone(), StructLayout { name, fields });
+            let definition = self.struct_defs[&name].clone();
+            self.build_struct_layout(&name, definition);
         }
 
         for name in self.enum_order.clone() {
-            let definition = self.enum_defs[&name].clone();
-            if definition.variants.is_empty() {
-                self.error(format!("enum `{name}` must declare at least one variant"));
+            let is_ready = self
+                .nominal_instances
+                .get(&name)
+                .and_then(|instance| self.nominal_instance_states.get(&instance.key))
+                == Some(&NominalInstanceState::Ready);
+            if is_ready {
+                continue;
             }
-            let mut seen_variants = HashSet::new();
-            let mut variants = Vec::new();
-            let mut payload_offset = 0;
-            for variant in definition.variants {
-                if !seen_variants.insert(variant.name.clone()) {
+            let definition = self.enum_defs[&name].clone();
+            self.build_enum_layout(&name, definition);
+        }
+    }
+
+    fn build_struct_layout(&mut self, name: &str, definition: StructDef) {
+        let mut seen = HashSet::new();
+        let mut fields = Vec::new();
+        for field in definition.fields {
+            if !seen.insert(field.name.clone()) {
+                self.error(format!(
+                    "duplicate field `{}` in struct `{name}`",
+                    field.name
+                ));
+                continue;
+            }
+            fields.push(FieldLayout {
+                name: field.name,
+                ty: self.lower_source_type(&field.ty),
+            });
+        }
+        self.struct_layouts.insert(
+            name.to_owned(),
+            StructLayout {
+                name: name.to_owned(),
+                fields,
+            },
+        );
+        if let Some(info) = self.nominal_instances.get(name) {
+            self.nominal_instance_states
+                .insert(info.key.clone(), NominalInstanceState::Ready);
+        }
+    }
+
+    fn build_enum_layout(&mut self, name: &str, definition: EnumDef) {
+        if definition.variants.is_empty() {
+            self.error(format!("enum `{name}` must declare at least one variant"));
+        }
+        let mut seen_variants = HashSet::new();
+        let mut variants = Vec::new();
+        let mut payload_offset = 0;
+        for variant in definition.variants {
+            if !seen_variants.insert(variant.name.clone()) {
+                self.error(format!(
+                    "duplicate variant `{}` in enum `{name}`",
+                    variant.name
+                ));
+                continue;
+            }
+            let (source_fields, named) = match variant.fields {
+                VariantFields::Unit => (Vec::new(), false),
+                VariantFields::Positional(types) => (
+                    types
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, ty)| (index.to_string(), ty))
+                        .collect(),
+                    false,
+                ),
+                VariantFields::Named(fields) => (
+                    fields
+                        .into_iter()
+                        .map(|field| (field.name, field.ty))
+                        .collect(),
+                    true,
+                ),
+            };
+            let mut seen_fields = HashSet::new();
+            let mut fields = Vec::new();
+            for (field_name, source_ty) in source_fields {
+                if !seen_fields.insert(field_name.clone()) {
                     self.error(format!(
-                        "duplicate variant `{}` in enum `{name}`",
+                        "duplicate field `{field_name}` in variant `{name}.{}`",
                         variant.name
                     ));
                     continue;
                 }
-                let (source_fields, named) = match variant.fields {
-                    VariantFields::Unit => (Vec::new(), false),
-                    VariantFields::Positional(types) => (
-                        types
-                            .into_iter()
-                            .enumerate()
-                            .map(|(index, ty)| (index.to_string(), ty))
-                            .collect(),
-                        false,
-                    ),
-                    VariantFields::Named(fields) => (
-                        fields
-                            .into_iter()
-                            .map(|field| (field.name, field.ty))
-                            .collect(),
-                        true,
-                    ),
-                };
-                let mut seen_fields = HashSet::new();
-                let mut fields = Vec::new();
-                for (field_name, source_ty) in source_fields {
-                    if !seen_fields.insert(field_name.clone()) {
-                        self.error(format!(
-                            "duplicate field `{field_name}` in variant `{name}.{}`",
-                            variant.name
-                        ));
-                        continue;
-                    }
-                    fields.push(FieldLayout {
-                        name: field_name,
-                        ty: self.lower_source_type(&source_ty),
-                    });
-                }
-                let field_count = fields.len();
-                variants.push(VariantLayout {
-                    name: variant.name,
-                    fields,
-                    payload_offset,
-                    named,
+                fields.push(FieldLayout {
+                    name: field_name,
+                    ty: self.lower_source_type(&source_ty),
                 });
-                payload_offset += field_count;
             }
-            self.enum_layouts
-                .insert(name.clone(), EnumLayout { name, variants });
+            let field_count = fields.len();
+            variants.push(VariantLayout {
+                name: variant.name,
+                fields,
+                payload_offset,
+                named,
+            });
+            payload_offset += field_count;
         }
+        self.enum_layouts.insert(
+            name.to_owned(),
+            EnumLayout {
+                name: name.to_owned(),
+                variants,
+            },
+        );
+        if let Some(info) = self.nominal_instances.get(name) {
+            self.nominal_instance_states
+                .insert(info.key.clone(), NominalInstanceState::Ready);
+        }
+    }
+
+    fn snapshot_nominals(&self) -> NominalSnapshot {
+        NominalSnapshot {
+            struct_defs: self.struct_defs.clone(),
+            enum_defs: self.enum_defs.clone(),
+            struct_layouts: self.struct_layouts.clone(),
+            enum_layouts: self.enum_layouts.clone(),
+            struct_order: self.struct_order.clone(),
+            enum_order: self.enum_order.clone(),
+            instance_names: self.nominal_instance_names.clone(),
+            instances: self.nominal_instances.clone(),
+            states: self.nominal_instance_states.clone(),
+            invalid_recursive_nominals: self.invalid_recursive_nominals.clone(),
+        }
+    }
+
+    fn restore_nominals(&mut self, snapshot: NominalSnapshot) {
+        self.struct_defs = snapshot.struct_defs;
+        self.enum_defs = snapshot.enum_defs;
+        self.struct_layouts = snapshot.struct_layouts;
+        self.enum_layouts = snapshot.enum_layouts;
+        self.struct_order = snapshot.struct_order;
+        self.enum_order = snapshot.enum_order;
+        self.nominal_instance_names = snapshot.instance_names;
+        self.nominal_instances = snapshot.instances;
+        self.nominal_instance_states = snapshot.states;
+        self.invalid_recursive_nominals = snapshot.invalid_recursive_nominals;
+    }
+
+    fn validate_generic_nominal_cycles(&mut self) {
+        let nominal_names: HashSet<_> = self
+            .struct_defs
+            .keys()
+            .chain(self.enum_defs.keys())
+            .chain(self.struct_templates.keys())
+            .chain(self.enum_templates.keys())
+            .cloned()
+            .collect();
+        let generic_names: HashSet<_> = self
+            .struct_templates
+            .keys()
+            .chain(self.enum_templates.keys())
+            .cloned()
+            .collect();
+        let mut dependencies = HashMap::new();
+        for (name, definition) in self.struct_defs.iter().chain(&self.struct_templates) {
+            let bound: HashSet<_> = definition
+                .compile_groups
+                .iter()
+                .flatten()
+                .map(|parameter| parameter.name.as_str())
+                .collect();
+            let mut direct = Vec::new();
+            for field in &definition.fields {
+                collect_nominal_type_dependencies(&field.ty, &nominal_names, &bound, &mut direct);
+            }
+            dependencies.insert(name.clone(), direct);
+        }
+        for (name, definition) in self.enum_defs.iter().chain(&self.enum_templates) {
+            let bound: HashSet<_> = definition
+                .compile_groups
+                .iter()
+                .flatten()
+                .map(|parameter| parameter.name.as_str())
+                .collect();
+            let mut direct = Vec::new();
+            for variant in &definition.variants {
+                match &variant.fields {
+                    VariantFields::Unit => {}
+                    VariantFields::Positional(types) => {
+                        for ty in types {
+                            collect_nominal_type_dependencies(
+                                ty,
+                                &nominal_names,
+                                &bound,
+                                &mut direct,
+                            );
+                        }
+                    }
+                    VariantFields::Named(fields) => {
+                        for field in fields {
+                            collect_nominal_type_dependencies(
+                                &field.ty,
+                                &nominal_names,
+                                &bound,
+                                &mut direct,
+                            );
+                        }
+                    }
+                }
+            }
+            dependencies.insert(name.clone(), direct);
+        }
+
+        let mut states = HashMap::new();
+        let mut stack = Vec::new();
+        let names: Vec<_> = nominal_names.into_iter().collect();
+        for name in names {
+            self.visit_generic_nominal_cycle(
+                &name,
+                &dependencies,
+                &generic_names,
+                &mut states,
+                &mut stack,
+            );
+        }
+    }
+
+    fn visit_generic_nominal_cycle(
+        &mut self,
+        name: &str,
+        dependencies: &HashMap<String, Vec<String>>,
+        generic_names: &HashSet<String>,
+        states: &mut HashMap<String, u8>,
+        stack: &mut Vec<String>,
+    ) {
+        match states.get(name).copied() {
+            Some(2) => return,
+            Some(1) => {
+                let start = stack.iter().position(|item| item == name).unwrap_or(0);
+                let mut cycle = stack[start..].to_vec();
+                cycle.push(name.to_owned());
+                if cycle.iter().any(|item| generic_names.contains(item)) {
+                    for item in &cycle {
+                        if generic_names.contains(item) {
+                            self.invalid_recursive_nominals.insert(item.clone());
+                        }
+                    }
+                    self.error(format!(
+                        "recursive generic value layout has infinite size: {}",
+                        cycle.join(" -> ")
+                    ));
+                }
+                return;
+            }
+            _ => {}
+        }
+        states.insert(name.to_owned(), 1);
+        stack.push(name.to_owned());
+        if let Some(items) = dependencies.get(name) {
+            for dependency in items {
+                self.visit_generic_nominal_cycle(
+                    dependency,
+                    dependencies,
+                    generic_names,
+                    states,
+                    stack,
+                );
+            }
+        }
+        stack.pop();
+        states.insert(name.to_owned(), 2);
+    }
+
+    fn validate_nominal_templates(&mut self) {
+        let templates: Vec<_> = self
+            .struct_template_order
+            .iter()
+            .map(|name| (NominalKind::Struct, name.clone()))
+            .chain(
+                self.enum_template_order
+                    .iter()
+                    .map(|name| (NominalKind::Enum, name.clone())),
+            )
+            .collect();
+        for (kind, template_name) in templates {
+            if self.invalid_recursive_nominals.contains(&template_name) {
+                continue;
+            }
+            let parameters = match kind {
+                NominalKind::Struct => self.struct_templates[&template_name]
+                    .compile_groups
+                    .iter()
+                    .flatten()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                NominalKind::Enum => self.enum_templates[&template_name]
+                    .compile_groups
+                    .iter()
+                    .flatten()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            };
+            let mut source_arguments = Vec::new();
+            let mut arguments = Vec::new();
+            for (index, parameter) in parameters.iter().enumerate() {
+                let owner = format!("nominal::{template_name}");
+                let marker = generic_parameter_marker(&owner, index, &parameter.name);
+                self.abstract_type_parameters
+                    .insert(marker.clone(), parameter.name.clone());
+                source_arguments.push(Type::Named(marker.clone(), Vec::new()));
+                arguments.push(Ty::Struct(marker));
+            }
+            let snapshot = self.snapshot_nominals();
+            if let Some(canonical) =
+                self.ensure_nominal_instance(kind, &template_name, source_arguments, arguments)
+            {
+                let mut states = HashMap::new();
+                let mut stack = Vec::new();
+                self.visit_nominal_layout(&canonical, &mut states, &mut stack);
+            }
+            let dynamically_invalid = self.invalid_recursive_nominals.contains(&template_name);
+            self.restore_nominals(snapshot);
+            if dynamically_invalid {
+                self.invalid_recursive_nominals.insert(template_name);
+            }
+        }
+    }
+
+    fn ensure_nominal_instance(
+        &mut self,
+        kind: NominalKind,
+        template_name: &str,
+        source_arguments: Vec<Type>,
+        arguments: Vec<Ty>,
+    ) -> Option<String> {
+        if self.invalid_recursive_nominals.contains(template_name) {
+            return None;
+        }
+        let key = NominalInstanceKey {
+            kind,
+            template: template_name.to_owned(),
+            arguments,
+        };
+        if let Some(canonical) = self.nominal_instance_names.get(&key) {
+            let info = &self.nominal_instances[canonical];
+            debug_assert_eq!(info.key, key);
+            debug_assert_eq!(info.canonical, *canonical);
+            match self.nominal_instance_states.get(&key) {
+                Some(NominalInstanceState::Ready) => return Some(canonical.clone()),
+                Some(NominalInstanceState::Building) => {
+                    self.error(format!(
+                        "recursive generic value layout has infinite size while instantiating `{template_name}`"
+                    ));
+                    self.invalid_recursive_nominals
+                        .insert(template_name.to_owned());
+                    return None;
+                }
+                None => {
+                    self.error(format!(
+                        "internal error: missing construction state for nominal instance `{canonical}`"
+                    ));
+                    return None;
+                }
+            }
+        }
+        if self.nominal_instance_states.iter().any(|(active, state)| {
+            *state == NominalInstanceState::Building
+                && active.kind == kind
+                && active.template == template_name
+                && !active.arguments.is_empty()
+        }) {
+            self.error(format!(
+                "recursive generic value layout has infinite size while instantiating `{template_name}` with growing type arguments"
+            ));
+            self.invalid_recursive_nominals
+                .insert(template_name.to_owned());
+            return None;
+        }
+        let instance_count = self
+            .nominal_instances
+            .values()
+            .filter(|instance| !instance.key.arguments.is_empty())
+            .count();
+        if instance_count >= MAX_NOMINAL_INSTANCES {
+            self.error(format!(
+                "generic nominal instance limit of {MAX_NOMINAL_INSTANCES} exceeded while instantiating `{template_name}`"
+            ));
+            return None;
+        }
+
+        let parameters = match kind {
+            NominalKind::Struct => self.struct_templates[template_name]
+                .compile_groups
+                .iter()
+                .flatten()
+                .cloned()
+                .collect::<Vec<_>>(),
+            NominalKind::Enum => self.enum_templates[template_name]
+                .compile_groups
+                .iter()
+                .flatten()
+                .cloned()
+                .collect::<Vec<_>>(),
+        };
+        if parameters.len() != source_arguments.len() {
+            self.error(format!(
+                "type argument count mismatch for `{template_name}`: expected {}, found {}",
+                parameters.len(),
+                source_arguments.len()
+            ));
+            return None;
+        }
+        let mut substitutions = HashMap::new();
+        for (parameter, argument) in parameters.iter().zip(source_arguments) {
+            if substitutions
+                .insert(parameter.name.clone(), argument)
+                .is_some()
+            {
+                self.error(format!(
+                    "duplicate compile-time parameter `{}` in generic nominal `{template_name}`",
+                    parameter.name
+                ));
+                return None;
+            }
+        }
+
+        let canonical = nominal_instance_name(&key);
+        if let Some(existing) = self.nominal_instances.get(&canonical) {
+            self.error(format!(
+                "internal error: nominal instance name collision between `{}` and `{template_name}`",
+                existing.key.template
+            ));
+            return None;
+        }
+        self.nominal_instance_names
+            .insert(key.clone(), canonical.clone());
+        self.nominal_instances.insert(
+            canonical.clone(),
+            NominalInstanceInfo {
+                key: key.clone(),
+                canonical: canonical.clone(),
+            },
+        );
+        self.nominal_instance_states
+            .insert(key.clone(), NominalInstanceState::Building);
+
+        match kind {
+            NominalKind::Struct => {
+                self.struct_order.push(canonical.clone());
+                self.struct_layouts.insert(
+                    canonical.clone(),
+                    StructLayout {
+                        name: canonical.clone(),
+                        fields: Vec::new(),
+                    },
+                );
+                let mut definition = self.struct_templates[template_name].clone();
+                substitute_struct_types(&mut definition, &substitutions);
+                definition.name = canonical.clone();
+                definition.compile_groups.clear();
+                self.struct_defs
+                    .insert(canonical.clone(), definition.clone());
+                self.build_struct_layout(&canonical, definition);
+            }
+            NominalKind::Enum => {
+                self.enum_order.push(canonical.clone());
+                self.enum_layouts.insert(
+                    canonical.clone(),
+                    EnumLayout {
+                        name: canonical.clone(),
+                        variants: Vec::new(),
+                    },
+                );
+                let mut definition = self.enum_templates[template_name].clone();
+                substitute_enum_types(&mut definition, &substitutions);
+                definition.name = canonical.clone();
+                definition.compile_groups.clear();
+                self.enum_defs.insert(canonical.clone(), definition.clone());
+                self.build_enum_layout(&canonical, definition);
+            }
+        }
+        self.nominal_instance_states
+            .insert(key, NominalInstanceState::Ready);
+        Some(canonical)
     }
 
     fn validate_nominal_layouts(&mut self) {
@@ -1146,6 +1661,7 @@ impl Analyzer {
             self.lower_function(&name);
             function_index += 1;
         }
+        self.validate_nominal_layouts();
         self.validate_entry_point();
 
         if !self.diagnostics.is_empty() {
@@ -1211,6 +1727,7 @@ impl Analyzer {
             let hir_functions_before = self.hir_functions.clone();
             let global_states_before = self.global_states.clone();
             let hir_globals_before = self.hir_globals.clone();
+            let nominals_before = self.snapshot_nominals();
             let instance_names_before = self.function_instance_names.clone();
             let instances_before = self.function_instances.clone();
             let type_substitutions_before = self.function_type_substitutions.clone();
@@ -1253,6 +1770,7 @@ impl Analyzer {
             self.hir_functions = hir_functions_before;
             self.global_states = global_states_before;
             self.hir_globals = hir_globals_before;
+            self.restore_nominals(nominals_before);
             self.function_instance_names = instance_names_before;
             self.function_instances = instances_before;
             self.function_type_substitutions = type_substitutions_before;
@@ -1304,14 +1822,68 @@ impl Analyzer {
                     Ty::Struct(name.clone())
                 } else if self.enum_defs.contains_key(name) {
                     Ty::Enum(name.clone())
+                } else if self.struct_templates.contains_key(name)
+                    || self.enum_templates.contains_key(name)
+                {
+                    self.error(format!(
+                        "generic type `{name}` requires explicit type arguments"
+                    ));
+                    Ty::Error
                 } else {
                     self.error(format!("unknown type `{name}`"));
                     Ty::Error
                 }
             }
-            Type::Named(name, _) => {
-                self.error(format!("generic type `{name}` is not supported yet"));
-                Ty::Error
+            Type::Named(name, source_arguments) => {
+                let kind = if self.struct_templates.contains_key(name) {
+                    NominalKind::Struct
+                } else if self.enum_templates.contains_key(name) {
+                    NominalKind::Enum
+                } else if self.struct_defs.contains_key(name) || self.enum_defs.contains_key(name) {
+                    self.error(format!(
+                        "non-generic type `{name}` does not accept type arguments"
+                    ));
+                    return Ty::Error;
+                } else {
+                    self.error(format!("unknown generic type `{name}`"));
+                    return Ty::Error;
+                };
+                let expected = match kind {
+                    NominalKind::Struct => self.struct_templates[name]
+                        .compile_groups
+                        .iter()
+                        .flatten()
+                        .count(),
+                    NominalKind::Enum => self.enum_templates[name]
+                        .compile_groups
+                        .iter()
+                        .flatten()
+                        .count(),
+                };
+                if source_arguments.len() != expected {
+                    self.error(format!(
+                        "type argument count mismatch for `{name}`: expected {expected}, found {}",
+                        source_arguments.len()
+                    ));
+                    return Ty::Error;
+                }
+                let mut arguments = Vec::new();
+                for argument in source_arguments {
+                    let argument = self.lower_source_type(argument);
+                    if argument == Ty::Error {
+                        return Ty::Error;
+                    }
+                    arguments.push(argument);
+                }
+                let Some(canonical) =
+                    self.ensure_nominal_instance(kind, name, source_arguments.clone(), arguments)
+                else {
+                    return Ty::Error;
+                };
+                match kind {
+                    NominalKind::Struct => Ty::Struct(canonical),
+                    NominalKind::Enum => Ty::Enum(canonical),
+                }
             }
         }
     }
@@ -3028,6 +3600,13 @@ impl Analyzer {
     }
 
     fn lower_member(&mut self, base: &Expr, member: &str, context: &mut LowerCtx) -> HirExpr {
+        match self.resolve_nominal_type_head(base, context) {
+            Ok(Some((target, kind))) => {
+                return self.lower_nominal_type_member_value(&target, kind, member);
+            }
+            Err(()) => return error_expr(),
+            Ok(None) => {}
+        }
         if let Expr::Name(target) = base {
             if context.lookup(target).is_none()
                 && (self.struct_layouts.contains_key(target)
@@ -3209,6 +3788,79 @@ impl Analyzer {
         }
     }
 
+    fn lower_nominal_type_member_value(
+        &mut self,
+        target: &str,
+        kind: NominalKind,
+        member: &str,
+    ) -> HirExpr {
+        if let Some(canonical) = self
+            .inherent_members
+            .get(target)
+            .and_then(|members| members.constants.get(member))
+            .cloned()
+        {
+            return HirExpr {
+                ty: self.global_type(&canonical),
+                kind: HirExprKind::Global(canonical),
+            };
+        }
+        if self
+            .inherent_members
+            .get(target)
+            .is_some_and(|members| members.functions.contains_key(member))
+        {
+            self.error(format!(
+                "associated function `{target}.{member}` must be called"
+            ));
+            return error_expr();
+        }
+        if kind == NominalKind::Enum {
+            let Some(layout) = self.enum_layout_or_diagnostic(target) else {
+                return error_expr();
+            };
+            if let Some((variant, variant_layout)) = layout
+                .variants
+                .iter()
+                .enumerate()
+                .find(|(_, variant)| variant.name == member)
+            {
+                if !variant_layout.fields.is_empty() {
+                    self.error(format!(
+                        "variant `{target}.{member}` requires constructor arguments"
+                    ));
+                    return error_expr();
+                }
+                return HirExpr {
+                    ty: Ty::Enum(target.to_owned()),
+                    kind: HirExprKind::ConstructEnum {
+                        name: target.to_owned(),
+                        variant,
+                        fields: Vec::new(),
+                    },
+                };
+            }
+        }
+        if self
+            .inherent_members
+            .get(target)
+            .is_some_and(|members| members.methods.contains_key(member))
+        {
+            self.error(format!(
+                "inherent method `{target}.{member}` requires an instance receiver and must be called"
+            ));
+        } else if kind == NominalKind::Enum {
+            self.error(format!(
+                "unknown associated member or variant `{member}` on `{target}`"
+            ));
+        } else {
+            self.error(format!(
+                "unknown associated member `{member}` on `{target}`"
+            ));
+        }
+        error_expr()
+    }
+
     fn lower_place_without_diagnostic(
         &mut self,
         expression: &Expr,
@@ -3353,7 +4005,14 @@ impl Analyzer {
                     self.error("empty constructor path in pattern");
                     return (HirMatcher::All, bindings);
                 };
-                if path.len() > 2 || (path.len() == 2 && path[0] != layout.name) {
+                let source_name = self
+                    .nominal_instances
+                    .get(&layout.name)
+                    .map(|instance| instance.key.template.as_str())
+                    .unwrap_or(&layout.name);
+                if path.len() > 2
+                    || (path.len() == 2 && path[0] != layout.name && path[0] != source_name)
+                {
                     self.error(format!(
                         "pattern constructor `{}` does not belong to enum `{}`",
                         path.join("."),
@@ -3486,7 +4145,15 @@ impl Analyzer {
                     ));
                     return;
                 };
-                if constructor.last() != Some(struct_name) {
+                let source_name = self
+                    .nominal_instances
+                    .get(struct_name)
+                    .map(|instance| instance.key.template.as_str())
+                    .unwrap_or(struct_name);
+                if constructor
+                    .last()
+                    .is_none_or(|name| name != struct_name && name != source_name)
+                {
                     self.error(format!(
                         "pattern type mismatch: expected struct `{struct_name}`, found `{}`",
                         constructor.join(".")
@@ -3704,6 +4371,24 @@ impl Analyzer {
             if self.struct_layouts.contains_key(name) {
                 return self.lower_struct_constructor(name, &groups, context);
             }
+            if self.struct_templates.contains_key(name) {
+                let Some((canonical, compile_group_count, NominalKind::Struct)) = self
+                    .resolve_generic_nominal_instance(name, &groups, &context.type_substitutions)
+                else {
+                    return error_expr();
+                };
+                return self.lower_struct_constructor(
+                    &canonical,
+                    &groups[compile_group_count..],
+                    context,
+                );
+            }
+            if self.enum_templates.contains_key(name) {
+                self.error(format!(
+                    "generic enum type `{name}` is not directly callable; select a variant"
+                ));
+                return error_expr();
+            }
             if self.function_templates.contains_key(name) {
                 return self.lower_generic_function_call(name, &groups, context);
             }
@@ -3717,6 +4402,19 @@ impl Analyzer {
             return error_expr();
         }
         if let Expr::Member(base, variant_name) = root {
+            match self.resolve_nominal_type_head(base, context) {
+                Ok(Some((target, kind))) => {
+                    return self.lower_nominal_type_member_call(
+                        &target,
+                        kind,
+                        variant_name,
+                        &groups,
+                        context,
+                    );
+                }
+                Err(()) => return error_expr(),
+                Ok(None) => {}
+            }
             if let Expr::Name(enum_name) = base.as_ref() {
                 if context.lookup(enum_name).is_none()
                     && (self.struct_layouts.contains_key(enum_name)
@@ -3790,6 +4488,64 @@ impl Analyzer {
         error_expr()
     }
 
+    fn lower_nominal_type_member_call(
+        &mut self,
+        target: &str,
+        kind: NominalKind,
+        member: &str,
+        groups: &[&[CallArg]],
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        if let Some(canonical) = self
+            .inherent_members
+            .get(target)
+            .and_then(|members| members.functions.get(member))
+            .cloned()
+        {
+            return self.lower_named_function_call(&canonical, groups, context);
+        }
+        if self
+            .inherent_members
+            .get(target)
+            .is_some_and(|members| members.constants.contains_key(member))
+        {
+            self.error(format!(
+                "associated constant `{target}.{member}` is not callable"
+            ));
+            return error_expr();
+        }
+        if kind == NominalKind::Enum {
+            let Some(layout) = self.enum_layout_or_diagnostic(target) else {
+                return error_expr();
+            };
+            if let Some(variant) = layout
+                .variants
+                .iter()
+                .position(|variant| variant.name == member)
+            {
+                return self.lower_enum_constructor(target, variant, groups, context);
+            }
+        }
+        if self
+            .inherent_members
+            .get(target)
+            .is_some_and(|members| members.methods.contains_key(member))
+        {
+            self.error(format!(
+                "inherent method `{target}.{member}` requires an instance receiver"
+            ));
+        } else if kind == NominalKind::Enum {
+            self.error(format!(
+                "unknown associated member or variant `{member}` on `{target}`"
+            ));
+        } else {
+            self.error(format!(
+                "unknown associated member `{member}` on `{target}`"
+            ));
+        }
+        error_expr()
+    }
+
     fn lower_generic_function_call(
         &mut self,
         name: &str,
@@ -3802,6 +4558,125 @@ impl Analyzer {
             return error_expr();
         };
         self.lower_named_function_call(&canonical, &groups[compile_group_count..], context)
+    }
+
+    fn resolve_generic_nominal_instance(
+        &mut self,
+        name: &str,
+        groups: &[&[CallArg]],
+        substitutions: &HashMap<String, Type>,
+    ) -> Option<(String, usize, NominalKind)> {
+        let (kind, compile_groups) = if let Some(template) = self.struct_templates.get(name) {
+            (NominalKind::Struct, template.compile_groups.clone())
+        } else if let Some(template) = self.enum_templates.get(name) {
+            (NominalKind::Enum, template.compile_groups.clone())
+        } else {
+            self.error(format!("unknown generic nominal type `{name}`"));
+            return None;
+        };
+        let compile_group_count = compile_groups.len();
+        if groups.len() < compile_group_count {
+            self.error(format!(
+                "generic type `{name}` requires all {compile_group_count} type argument groups"
+            ));
+            return None;
+        }
+
+        let mut source_arguments = Vec::new();
+        let mut arguments = Vec::new();
+        for (group_index, (source_group, argument_group)) in compile_groups
+            .iter()
+            .zip(groups.iter().take(compile_group_count))
+            .enumerate()
+        {
+            if source_group.len() != argument_group.len() {
+                self.error(format!(
+                    "type argument count mismatch in group {} of `{name}`: expected {}, found {}",
+                    group_index + 1,
+                    source_group.len(),
+                    argument_group.len()
+                ));
+                return None;
+            }
+            for argument in *argument_group {
+                if argument.label.is_some() {
+                    self.error(format!(
+                        "labeled arguments are not allowed in type argument groups of `{name}`"
+                    ));
+                    return None;
+                }
+                let source_ty = self.type_argument_from_expr(&argument.value, substitutions)?;
+                let ty = self.lower_source_type(&source_ty);
+                if ty == Ty::Error {
+                    return None;
+                }
+                source_arguments.push(source_ty);
+                arguments.push(ty);
+            }
+        }
+        let canonical = self.ensure_nominal_instance(kind, name, source_arguments, arguments)?;
+        Some((canonical, compile_group_count, kind))
+    }
+
+    fn resolve_nominal_type_head(
+        &mut self,
+        expression: &Expr,
+        context: &LowerCtx,
+    ) -> Result<Option<(String, NominalKind)>, ()> {
+        match expression {
+            Expr::Name(name) if context.lookup(name).is_none() => {
+                if self.struct_layouts.contains_key(name) {
+                    Ok(Some((name.clone(), NominalKind::Struct)))
+                } else if self.enum_layouts.contains_key(name) {
+                    Ok(Some((name.clone(), NominalKind::Enum)))
+                } else if self.struct_templates.contains_key(name)
+                    || self.enum_templates.contains_key(name)
+                {
+                    self.error(format!(
+                        "generic type `{name}` requires explicit type arguments"
+                    ));
+                    Err(())
+                } else {
+                    Ok(None)
+                }
+            }
+            Expr::Call(_, _) => {
+                let mut groups = Vec::new();
+                let root = flatten_call(expression, &mut groups);
+                let Expr::Name(name) = root else {
+                    return Ok(None);
+                };
+                if context.lookup(name).is_some()
+                    || (!self.struct_templates.contains_key(name)
+                        && !self.enum_templates.contains_key(name))
+                {
+                    return Ok(None);
+                }
+                let expected_groups = if let Some(template) = self.struct_templates.get(name) {
+                    template.compile_groups.len()
+                } else {
+                    self.enum_templates[name].compile_groups.len()
+                };
+                if groups.len() > expected_groups {
+                    return Ok(None);
+                }
+                let Some((canonical, consumed, kind)) = self.resolve_generic_nominal_instance(
+                    name,
+                    &groups,
+                    &context.type_substitutions,
+                ) else {
+                    return Err(());
+                };
+                if consumed != groups.len() {
+                    self.error(format!(
+                        "generic type head `{name}` is missing type argument groups"
+                    ));
+                    return Err(());
+                }
+                Ok(Some((canonical, kind)))
+            }
+            _ => Ok(None),
+        }
     }
 
     fn resolve_generic_function_instance(
@@ -4547,6 +5422,13 @@ impl Analyzer {
             .enum_layouts
             .iter()
             .filter_map(|(enum_name, layout)| {
+                let is_non_generic = self
+                    .nominal_instances
+                    .get(enum_name)
+                    .is_some_and(|instance| instance.key.arguments.is_empty());
+                if !is_non_generic {
+                    return None;
+                }
                 layout
                     .variants
                     .iter()
@@ -6365,6 +7247,56 @@ fn const_ir(value: &ConstValue, ty: &Ty, program: &HirProgram) -> Result<String,
     }
 }
 
+fn collect_nominal_type_dependencies(
+    ty: &Type,
+    nominal_names: &HashSet<String>,
+    bound: &HashSet<&str>,
+    output: &mut Vec<String>,
+) {
+    match ty {
+        Type::Array(element, _) => {
+            collect_nominal_type_dependencies(element, nominal_names, bound, output)
+        }
+        Type::Named(name, _) if !bound.contains(name.as_str()) && nominal_names.contains(name) => {
+            if !output.contains(name) {
+                output.push(name.clone());
+            }
+        }
+        Type::I32
+        | Type::I64
+        | Type::U32
+        | Type::U64
+        | Type::Bool
+        | Type::Void
+        | Type::Infer
+        | Type::Named(_, _) => {}
+    }
+}
+
+fn substitute_struct_types(definition: &mut StructDef, substitutions: &HashMap<String, Type>) {
+    for field in &mut definition.fields {
+        substitute_type_parameters(&mut field.ty, substitutions);
+    }
+}
+
+fn substitute_enum_types(definition: &mut EnumDef, substitutions: &HashMap<String, Type>) {
+    for variant in &mut definition.variants {
+        match &mut variant.fields {
+            VariantFields::Unit => {}
+            VariantFields::Positional(types) => {
+                for ty in types {
+                    substitute_type_parameters(ty, substitutions);
+                }
+            }
+            VariantFields::Named(fields) => {
+                for field in fields {
+                    substitute_type_parameters(&mut field.ty, substitutions);
+                }
+            }
+        }
+    }
+}
+
 fn substitute_function_types(function: &mut Function, substitutions: &HashMap<String, Type>) {
     for group in &mut function.groups {
         for parameter in group {
@@ -6478,6 +7410,25 @@ fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<String, Typ
 
 fn function_instance_name(key: &FunctionInstanceKey) -> String {
     let mut canonical = String::from("$mono$fn$");
+    push_canonical_component(&mut canonical, &key.template);
+    canonical.push_str(&key.arguments.len().to_string());
+    canonical.push(':');
+    for argument in &key.arguments {
+        let encoded = canonical_type_encoding(argument);
+        push_canonical_component(&mut canonical, &encoded);
+    }
+    canonical
+}
+
+fn nominal_instance_name(key: &NominalInstanceKey) -> String {
+    let mut canonical = String::from("$mono$type$");
+    push_canonical_component(
+        &mut canonical,
+        match key.kind {
+            NominalKind::Struct => "struct",
+            NominalKind::Enum => "enum",
+        },
+    );
     push_canonical_component(&mut canonical, &key.template);
     canonical.push_str(&key.arguments.len().to_string());
     canonical.push(':');
@@ -6710,6 +7661,220 @@ mod tests {
         for marker in markers {
             assert!(!ir.contains(&marker));
             assert!(!ir.contains(&hex_name(&marker)));
+        }
+    }
+
+    #[test]
+    fn registers_plain_nominals_and_deduplicates_generic_nominal_instances() {
+        let program = crate::parser::parse(
+            "let Plain = struct(value: i32)\n\
+             let Cell(T: type) = struct(value: T)\n\
+             let main(): i32 = Cell(i32)(Plain(40).value).value + Cell(i32)(2).value\n",
+        )
+        .expect("generic nominal source must parse");
+        let mut analyzer = Analyzer::new(&program);
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected validation diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+
+        let plain = analyzer
+            .nominal_instances
+            .get("Plain")
+            .expect("plain nominal metadata");
+        assert_eq!(plain.canonical, "Plain");
+        assert_eq!(plain.key.kind, NominalKind::Struct);
+        assert_eq!(plain.key.template, "Plain");
+        assert!(plain.key.arguments.is_empty());
+        assert!(analyzer
+            .nominal_instances
+            .values()
+            .all(|instance| instance.key.arguments.is_empty()));
+
+        let hir = analyzer.analyze().expect("generic nominal HIR");
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected lowering diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        let key = NominalInstanceKey {
+            kind: NominalKind::Struct,
+            template: "Cell".into(),
+            arguments: vec![Ty::I32],
+        };
+        let canonical = analyzer
+            .nominal_instance_names
+            .get(&key)
+            .expect("Cell(i32) canonical name");
+        let instances: Vec<_> = analyzer
+            .nominal_instances
+            .values()
+            .filter(|instance| instance.key.template == "Cell")
+            .collect();
+        assert_eq!(instances.len(), 1);
+        assert_eq!(instances[0].key, key);
+        assert_eq!(instances[0].canonical, *canonical);
+        assert!(canonical.starts_with("$mono$type$"));
+        assert!(hir.structs.iter().any(|layout| layout.name == *canonical));
+    }
+
+    #[test]
+    fn materializes_nested_generic_struct_layouts_in_dependency_order() {
+        let program = crate::parser::parse(
+            "let Cell(T: type) = struct(value: T)\n\
+             let main(): i32 = Cell(Cell(i32))(Cell(i32)(42)).value.value\n",
+        )
+        .expect("nested generic nominal source must parse");
+        let mut analyzer = Analyzer::new(&program);
+        let hir = analyzer.analyze().expect("nested generic nominal HIR");
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+
+        let inner_key = NominalInstanceKey {
+            kind: NominalKind::Struct,
+            template: "Cell".into(),
+            arguments: vec![Ty::I32],
+        };
+        let inner = analyzer.nominal_instance_names[&inner_key].clone();
+        let outer_key = NominalInstanceKey {
+            kind: NominalKind::Struct,
+            template: "Cell".into(),
+            arguments: vec![Ty::Struct(inner.clone())],
+        };
+        let outer = analyzer.nominal_instance_names[&outer_key].clone();
+        assert_ne!(inner, outer);
+        assert_eq!(
+            analyzer.struct_layouts[&outer].fields[0].ty,
+            Ty::Struct(inner.clone())
+        );
+        let inner_index = hir
+            .structs
+            .iter()
+            .position(|layout| layout.name == inner)
+            .expect("inner layout order");
+        let outer_index = hir
+            .structs
+            .iter()
+            .position(|layout| layout.name == outer)
+            .expect("outer layout order");
+        assert!(inner_index < outer_index);
+    }
+
+    #[test]
+    fn lowers_generic_enum_type_heads_unit_variants_and_short_patterns() {
+        let ir = compile_text(
+            "let Maybe(T: type) = enum {\n\
+               Some(T),\n\
+               None,\n\
+             }\n\
+             let choose(flag: bool): Maybe(i32) = if flag {\n\
+               Maybe(i32).Some(42)\n\
+             } else {\n\
+               Maybe(i32).None\n\
+             }\n\
+             let unwrap(move value: Maybe(i32)): i32 = value match {\n\
+               Some(item) => item,\n\
+               None => 0,\n\
+             }\n\
+             let main(): i32 = unwrap(choose(false))\n",
+        )
+        .expect("generic enum program must compile");
+        let key = NominalInstanceKey {
+            kind: NominalKind::Enum,
+            template: "Maybe".into(),
+            arguments: vec![Ty::I32],
+        };
+        let canonical = nominal_instance_name(&key);
+        assert!(ir.contains(&hex_name(&canonical)));
+    }
+
+    #[test]
+    fn generic_function_validation_rolls_back_temporary_nominal_instances() {
+        let program = crate::parser::parse(
+            "let Cell(T: type) = struct(value: T)\n\
+             let wrap(T: type)(move value: T): Cell(T) = Cell(T)(value)\n\
+             let main(): i32 = wrap(i32)(42).value\n",
+        )
+        .expect("generic function and nominal source must parse");
+        let mut analyzer = Analyzer::new(&program);
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected validation diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        assert!(analyzer.nominal_instances.is_empty());
+        assert!(analyzer.nominal_instance_names.is_empty());
+        assert!(analyzer.struct_layouts.is_empty());
+        assert!(analyzer.struct_order.is_empty());
+
+        let markers: HashSet<_> = analyzer.abstract_type_parameters.keys().cloned().collect();
+        analyzer.analyze().expect("closed generic nominal HIR");
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected lowering diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        let instances: Vec<_> = analyzer
+            .nominal_instances
+            .values()
+            .filter(|instance| instance.key.template == "Cell")
+            .collect();
+        assert_eq!(instances.len(), 1);
+        assert_eq!(instances[0].key.arguments, vec![Ty::I32]);
+        assert!(analyzer.nominal_instances.keys().all(|name| {
+            !name.contains("$generic$") && markers.iter().all(|marker| !name.contains(marker))
+        }));
+
+        let ir = compile(&program).expect("closed generic nominal program must compile");
+        for marker in markers {
+            assert!(!ir.contains(&marker));
+            assert!(!ir.contains(&hex_name(&marker)));
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_generic_nominal_forms_without_instantiating_them() {
+        let cases = [
+            (
+                "let Invalid(T: type) = struct(next: Invalid(T))\n\
+                 let main(): i32 = 42\n",
+                "recursive generic value layout has infinite size",
+            ),
+            (
+                "let Wrap(T: type) = struct(value: T)\n\
+                 let Grow(T: type) = struct(next: Wrap(Grow(Wrap(T))))\n\
+                 let main(): i32 = 42\n",
+                "recursive generic value layout has infinite size",
+            ),
+            (
+                "let Invalid(T: type) = struct(value: Missing)\n\
+                 let main(): i32 = 42\n",
+                "unknown type `Missing`",
+            ),
+            (
+                "let Cell(T: type) = struct(value: T)\n\
+                 let main(): i32 = Cell(_)(42).value\n",
+                "`_` generic type argument inference is not supported",
+            ),
+            (
+                "let Cell(T: type) = struct(value: T)\n\
+                 extend Cell { let answer = 42 }\n\
+                 let main(): i32 = 42\n",
+                "generic extend target `Cell` is not supported",
+            ),
+        ];
+        for (source, expected) in cases {
+            let diagnostics = compile_text(source).expect_err("source must be rejected");
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.message.contains(expected)),
+                "missing `{expected}` in {diagnostics:?}"
+            );
         }
     }
 

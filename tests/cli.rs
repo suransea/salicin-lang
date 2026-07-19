@@ -646,6 +646,52 @@ fn m2_generic_function_errors_report_their_cause() {
 }
 
 #[test]
+fn m2_generic_nominal_programs_run_with_expected_result() {
+    for name in [
+        "generic_struct.sali",
+        "generic_nested_struct.sali",
+        "generic_enum_match.sali",
+        "generic_function_constructs_nominal.sali",
+        "generic_nominal_multiple_instances.sali",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run M2 generic-nominal fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn m2_generic_nominal_errors_report_their_cause() {
+    for (name, expected) in [
+        ("generic_nominal_unknown_field_type.sali", "unknown type"),
+        ("generic_nominal_recursive_layout.sali", "infinite size"),
+        ("generic_nominal_argument_count.sali", "argument count"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid M2 generic-nominal fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected),
+            "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn output_must_not_overwrite_the_source() {
     let temporary = TestDirectory::new();
     let source = temporary.join("keep.sali");
