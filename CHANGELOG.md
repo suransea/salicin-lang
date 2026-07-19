@@ -26,6 +26,9 @@ M2 development follows the v0.2 language foundation.
   reusing existing constructors, type-argument inference, matching, monomorphization and LLVM layouts.
 - Added right-associative `??` for prelude `Option` and `Result`, with single evaluation of the
   consumed container, lazy fallback control flow, payload-aware inference and ownership-flow joins.
+- Added postfix `.try` propagation for explicitly annotated named functions returning prelude
+  `Option` or `Result`, including single-evaluation residual returns, exact `Result` error matching,
+  inferred operands, and automatic `Some` / `Ok` wrapping of normal tails and `return` values.
 
 ## 0.2.0 - 2026-07-20
 

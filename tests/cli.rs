@@ -971,6 +971,68 @@ fn m2_coalesce_errors_report_their_cause() {
 }
 
 #[test]
+fn m2_try_programs_run_with_expected_result() {
+    for name in [
+        "try_option_some_continue.sali",
+        "try_option_none_propagate.sali",
+        "try_result_ok_continue.sali",
+        "try_result_err_propagate.sali",
+        "try_result_success_type_changes.sali",
+        "try_auto_wrap_tail.sali",
+        "try_auto_wrap_return.sali",
+        "try_auto_wrap_shadowing.sali",
+        "try_full_container_unchanged.sali",
+        "try_inferred_operand.sali",
+        "try_nested_auto_wrap.sali",
+        "try_unit_success.sali",
+        "try_then_member.sali",
+        "try_operand_once.sali",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run try-propagation fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn m2_try_errors_report_their_cause() {
+    for (name, expected) in [
+        ("try_non_container_return.sali", "return"),
+        ("try_in_global.sali", "global"),
+        ("try_omitted_return_type.sali", "return type"),
+        ("try_in_closure.sali", "closure"),
+        ("try_option_into_result.sali", "Option"),
+        ("try_result_into_option.sali", "Result"),
+        ("try_result_error_mismatch.sali", "error type"),
+        ("try_non_container_operand.sali", "Option"),
+        ("try_use_after_move.sali", "moved"),
+        ("try_auto_wrap_type_mismatch.sali", "type mismatch"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid try-propagation fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected),
+            "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn output_must_not_overwrite_the_source() {
     let temporary = TestDirectory::new();
     let source = temporary.join("keep.sali");

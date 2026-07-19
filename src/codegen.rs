@@ -156,16 +156,32 @@ enum TypeProbe {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CoalesceKind {
+enum BuiltinFallibleKind {
     Option,
     Result,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct CoalesceInfo {
-    kind: CoalesceKind,
+struct BuiltinFallibleInfo {
+    kind: BuiltinFallibleKind,
     payload: Ty,
     payload_source: Option<Type>,
+    error: Option<Ty>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReturnBoundary {
+    kind: BuiltinFallibleKind,
+    container: Ty,
+    success: Ty,
+    error: Option<Ty>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReturnValueCandidate {
+    Container,
+    Success,
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -175,7 +191,7 @@ struct CoalescePayloadHint {
 }
 
 struct InferredCoalesceLhs<'a> {
-    kind: CoalesceKind,
+    kind: BuiltinFallibleKind,
     name: String,
     type_groups: Vec<&'a [CallArg]>,
     variant: &'a str,
@@ -678,6 +694,7 @@ struct LowerCtx {
     next_local: LocalId,
     next_loan: LoanId,
     declared_result: Option<Ty>,
+    return_boundary: Option<ReturnBoundary>,
     returned_types: Vec<Ty>,
     function_name: Option<String>,
     type_substitutions: HashMap<String, Type>,
@@ -692,6 +709,7 @@ impl LowerCtx {
             next_local: 0,
             next_loan: 0,
             declared_result: result,
+            return_boundary: None,
             returned_types: Vec::new(),
             function_name: Some(name.to_owned()),
             type_substitutions: HashMap::new(),
@@ -706,6 +724,7 @@ impl LowerCtx {
             next_local: 0,
             next_loan: 0,
             declared_result: None,
+            return_boundary: None,
             returned_types: Vec::new(),
             function_name: None,
             type_substitutions: HashMap::new(),
@@ -3528,7 +3547,7 @@ impl Analyzer {
         self.probe_numeric_binary_ty(left, right, expected, context)
     }
 
-    fn coalesce_info_for_ty(&self, ty: &Ty) -> Option<CoalesceInfo> {
+    fn builtin_fallible_info_for_ty(&self, ty: &Ty) -> Option<BuiltinFallibleInfo> {
         let Ty::Enum(canonical) = ty else {
             return None;
         };
@@ -3540,43 +3559,309 @@ impl Analyzer {
             instance.key.template.as_str(),
             instance.key.arguments.as_slice(),
         ) {
-            ("Option", [payload]) => Some(CoalesceInfo {
-                kind: CoalesceKind::Option,
+            ("Option", [payload]) => Some(BuiltinFallibleInfo {
+                kind: BuiltinFallibleKind::Option,
                 payload: payload.clone(),
                 payload_source: self.source_type_for_ty(payload),
+                error: None,
             }),
-            ("Result", [payload, _error]) => Some(CoalesceInfo {
-                kind: CoalesceKind::Result,
+            ("Result", [payload, error]) => Some(BuiltinFallibleInfo {
+                kind: BuiltinFallibleKind::Result,
                 payload: payload.clone(),
                 payload_source: self.source_type_for_ty(payload),
+                error: Some(error.clone()),
             }),
             _ => None,
         }
     }
 
-    fn coalesce_info_for_probe(&self, probe: &TypeProbe) -> Option<CoalesceInfo> {
+    fn builtin_fallible_info_for_probe(&self, probe: &TypeProbe) -> Option<BuiltinFallibleInfo> {
         let ty = match probe {
             TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) => ty,
             TypeProbe::Defaultable(_) | TypeProbe::Unsupported => return None,
         };
-        if let Some(info) = self.coalesce_info_for_ty(ty) {
+        if let Some(info) = self.builtin_fallible_info_for_ty(ty) {
             return Some(info);
         }
         let TypeProbe::KnownSource(Ty::Enum(_), Type::Named(template, arguments)) = probe else {
             return None;
         };
         match (template.as_str(), arguments.as_slice()) {
-            ("Option", [payload]) => Some(CoalesceInfo {
-                kind: CoalesceKind::Option,
+            ("Option", [payload]) => Some(BuiltinFallibleInfo {
+                kind: BuiltinFallibleKind::Option,
                 payload: self.probe_source_ty(payload)?,
                 payload_source: Some(payload.clone()),
+                error: None,
             }),
-            ("Result", [payload, _error]) => Some(CoalesceInfo {
-                kind: CoalesceKind::Result,
+            ("Result", [payload, error]) => Some(BuiltinFallibleInfo {
+                kind: BuiltinFallibleKind::Result,
                 payload: self.probe_source_ty(payload)?,
                 payload_source: Some(payload.clone()),
+                error: Some(self.probe_source_ty(error)?),
             }),
             _ => None,
+        }
+    }
+
+    fn return_boundary_for_ty(&self, ty: &Ty) -> Option<ReturnBoundary> {
+        let info = self.builtin_fallible_info_for_ty(ty)?;
+        Some(ReturnBoundary {
+            kind: info.kind,
+            container: ty.clone(),
+            success: info.payload,
+            error: info.error,
+        })
+    }
+
+    fn inferred_try_operand_expected(
+        &mut self,
+        expression: &Expr,
+        expected: Option<&Ty>,
+        boundary: &ReturnBoundary,
+        context: &LowerCtx,
+    ) -> Option<Ty> {
+        let inferred = self.inferred_builtin_coalesce_lhs(expression, context)?;
+        if inferred.kind != boundary.kind {
+            return None;
+        }
+
+        let payload = expected
+            .filter(|ty| !matches!(ty, Ty::Never | Ty::Error))
+            .cloned()
+            .or_else(|| self.inferred_try_payload(&inferred, context))?;
+        let mut arguments = vec![payload];
+        if inferred.kind == BuiltinFallibleKind::Result {
+            arguments.push(boundary.error.clone()?);
+        }
+        let source_arguments = arguments
+            .iter()
+            .map(|argument| self.source_type_for_ty(argument))
+            .collect::<Option<Vec<_>>>()?;
+        let canonical = self.ensure_nominal_instance(
+            NominalKind::Enum,
+            &inferred.name,
+            source_arguments,
+            arguments,
+        )?;
+        Some(Ty::Enum(canonical))
+    }
+
+    fn inferred_try_payload(
+        &self,
+        inferred: &InferredCoalesceLhs<'_>,
+        context: &LowerCtx,
+    ) -> Option<Ty> {
+        let [arguments] = inferred.type_groups.as_slice() else {
+            return None;
+        };
+        let first = arguments.first()?;
+        if first.label.is_some() {
+            return None;
+        }
+        if !matches!(first.value, Expr::Infer) {
+            let source =
+                self.probe_type_argument_source(&first.value, &context.type_substitutions)?;
+            return self.probe_source_ty(&source);
+        }
+
+        let success_variant = match inferred.kind {
+            BuiltinFallibleKind::Option => "Some",
+            BuiltinFallibleKind::Result => "Ok",
+        };
+        if inferred.variant != success_variant {
+            return None;
+        }
+        let [values] = inferred.value_groups.as_slice() else {
+            return None;
+        };
+        let [value] = *values else {
+            return None;
+        };
+        if value.label.is_some() {
+            return None;
+        }
+        match self.probe_expr_ty(&value.value, None, context) {
+            TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) | TypeProbe::Defaultable(ty) => {
+                Some(ty)
+            }
+            TypeProbe::Unsupported => None,
+        }
+    }
+
+    fn return_value_candidate(
+        &self,
+        expression: &Expr,
+        boundary: &ReturnBoundary,
+        context: &LowerCtx,
+    ) -> ReturnValueCandidate {
+        self.return_value_candidate_with_shadowing(expression, boundary, context, &HashSet::new())
+    }
+
+    fn return_value_candidate_with_shadowing(
+        &self,
+        expression: &Expr,
+        boundary: &ReturnBoundary,
+        context: &LowerCtx,
+        shadowed_short_variants: &HashSet<String>,
+    ) -> ReturnValueCandidate {
+        match expression {
+            Expr::Block(statements, Some(tail)) => {
+                let mut nested_shadowing = shadowed_short_variants.clone();
+                for statement in statements {
+                    if let Stmt::Let(binding) = statement {
+                        nested_shadowing.insert(binding.name.clone());
+                    }
+                }
+                return self.return_value_candidate_with_shadowing(
+                    tail,
+                    boundary,
+                    context,
+                    &nested_shadowing,
+                );
+            }
+            Expr::If {
+                then_branch,
+                else_branch: Some(else_branch),
+                ..
+            } => {
+                let then_candidate = self.return_value_candidate_with_shadowing(
+                    then_branch,
+                    boundary,
+                    context,
+                    shadowed_short_variants,
+                );
+                let else_candidate = self.return_value_candidate_with_shadowing(
+                    else_branch,
+                    boundary,
+                    context,
+                    shadowed_short_variants,
+                );
+                if then_candidate == else_candidate {
+                    return then_candidate;
+                }
+            }
+            Expr::Match { arms, .. } if !arms.is_empty() => {
+                let first = self.return_value_candidate_with_shadowing(
+                    &arms[0].body,
+                    boundary,
+                    context,
+                    shadowed_short_variants,
+                );
+                if arms.iter().skip(1).all(|arm| {
+                    self.return_value_candidate_with_shadowing(
+                        &arm.body,
+                        boundary,
+                        context,
+                        shadowed_short_variants,
+                    ) == first
+                }) {
+                    return first;
+                }
+            }
+            _ => {}
+        }
+
+        let container_probe = self.probe_expr_ty(expression, Some(&boundary.container), context);
+        if Self::probe_matches_type(&container_probe, &boundary.container)
+            && matches!(
+                container_probe,
+                TypeProbe::Known(_) | TypeProbe::KnownSource(_, _)
+            )
+        {
+            return ReturnValueCandidate::Container;
+        }
+        if let Some(inferred) = self.inferred_builtin_coalesce_lhs(expression, context) {
+            if inferred.kind == boundary.kind {
+                return ReturnValueCandidate::Container;
+            }
+            if self
+                .builtin_fallible_info_for_ty(&boundary.success)
+                .is_some_and(|success| success.kind == inferred.kind)
+            {
+                return ReturnValueCandidate::Success;
+            }
+        }
+        if self.is_short_boundary_variant(expression, boundary, context, shadowed_short_variants) {
+            return ReturnValueCandidate::Container;
+        }
+
+        let success_probe = self.probe_expr_ty(expression, Some(&boundary.success), context);
+        if Self::probe_matches_type(&success_probe, &boundary.success)
+            && !matches!(success_probe, TypeProbe::Unsupported)
+        {
+            ReturnValueCandidate::Success
+        } else {
+            ReturnValueCandidate::Unknown
+        }
+    }
+
+    fn is_short_boundary_variant(
+        &self,
+        expression: &Expr,
+        boundary: &ReturnBoundary,
+        context: &LowerCtx,
+        shadowed_short_variants: &HashSet<String>,
+    ) -> bool {
+        let mut groups = Vec::new();
+        let Expr::Name(name) = flatten_call(expression, &mut groups) else {
+            return false;
+        };
+        if context.lookup(name).is_some() || shadowed_short_variants.contains(name) {
+            return false;
+        }
+        if self.functions.contains_key(name)
+            || self.function_templates.contains_key(name)
+            || self.globals.contains_key(name)
+            || self.struct_defs.contains_key(name)
+            || self.struct_templates.contains_key(name)
+        {
+            return false;
+        }
+        match boundary.kind {
+            BuiltinFallibleKind::Option => matches!(name.as_str(), "Some" | "None"),
+            BuiltinFallibleKind::Result => matches!(name.as_str(), "Ok" | "Err"),
+        }
+    }
+
+    fn unknown_return_value_prefers_success(expression: &Expr) -> bool {
+        match expression {
+            Expr::Block(_, Some(tail)) => Self::unknown_return_value_prefers_success(tail),
+            Expr::If {
+                then_branch,
+                else_branch: Some(else_branch),
+                ..
+            } => {
+                Self::unknown_return_value_prefers_success(then_branch)
+                    && Self::unknown_return_value_prefers_success(else_branch)
+            }
+            Expr::Match { arms, .. } => {
+                !arms.is_empty()
+                    && arms
+                        .iter()
+                        .all(|arm| Self::unknown_return_value_prefers_success(&arm.body))
+            }
+            Expr::Unit
+            | Expr::Integer(_)
+            | Expr::Bool(_)
+            | Expr::Unary(_, _)
+            | Expr::Borrow { .. }
+            | Expr::Binary(_, _, _)
+            | Expr::Coalesce(_, _)
+            | Expr::Try(_)
+            | Expr::Array(_)
+            | Expr::Index { .. } => true,
+            Expr::Name(_)
+            | Expr::Infer
+            | Expr::Assign(_, _)
+            | Expr::Call(_, _)
+            | Expr::Member(_, _)
+            | Expr::Block(_, _)
+            | Expr::Closure(_, _)
+            | Expr::If { .. }
+            | Expr::Return(_)
+            | Expr::While { .. }
+            | Expr::Loop { .. }
+            | Expr::Break(_) => false,
         }
     }
 
@@ -3591,8 +3876,8 @@ impl Analyzer {
         };
         let (name, type_groups) = self.inferred_generic_enum_type_head(base, context)?;
         let kind = match name.as_str() {
-            "Option" => CoalesceKind::Option,
-            "Result" => CoalesceKind::Result,
+            "Option" => BuiltinFallibleKind::Option,
+            "Result" => BuiltinFallibleKind::Result,
             _ => return None,
         };
         Some(InferredCoalesceLhs {
@@ -3606,15 +3891,15 @@ impl Analyzer {
 
     fn inferred_coalesce_payload_probe(
         &self,
-        kind: CoalesceKind,
+        kind: BuiltinFallibleKind,
         type_groups: &[&[CallArg]],
         hint: Option<&Ty>,
         right: &Expr,
         context: &LowerCtx,
     ) -> TypeProbe {
         let expected_arguments = match kind {
-            CoalesceKind::Option => 1,
-            CoalesceKind::Result => 2,
+            BuiltinFallibleKind::Option => 1,
+            BuiltinFallibleKind::Result => 2,
         };
         let [arguments] = type_groups else {
             return TypeProbe::Unsupported;
@@ -3650,7 +3935,7 @@ impl Analyzer {
         context: &LowerCtx,
     ) -> TypeProbe {
         let left_probe = self.probe_expr_ty(left, None, context);
-        let payload = if let Some(info) = self.coalesce_info_for_probe(&left_probe) {
+        let payload = if let Some(info) = self.builtin_fallible_info_for_probe(&left_probe) {
             match info.payload_source {
                 Some(source) => TypeProbe::KnownSource(info.payload, source),
                 None => TypeProbe::Known(info.payload),
@@ -3722,6 +4007,16 @@ impl Analyzer {
                 }
             },
             Expr::Coalesce(left, right) => self.probe_coalesce_ty(left, right, hint, context),
+            Expr::Try(value) => {
+                let probe = self.probe_expr_ty(value, None, context);
+                let Some(info) = self.builtin_fallible_info_for_probe(&probe) else {
+                    return TypeProbe::Unsupported;
+                };
+                match info.payload_source {
+                    Some(source) => TypeProbe::KnownSource(info.payload, source),
+                    None => TypeProbe::Known(info.payload),
+                }
+            }
             Expr::Array(elements) => {
                 if let Some(Ty::Array(element, length)) = hint {
                     if *length != elements.len() as u64 {
@@ -4326,6 +4621,84 @@ impl Analyzer {
         Some(canonical)
     }
 
+    fn lower_return_value(
+        &mut self,
+        expression: &Expr,
+        boundary: &ReturnBoundary,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let candidate = self.return_value_candidate(expression, boundary, context);
+        let expected = match candidate {
+            ReturnValueCandidate::Container => Some(&boundary.container),
+            ReturnValueCandidate::Success => Some(&boundary.success),
+            ReturnValueCandidate::Unknown
+                if Self::unknown_return_value_prefers_success(expression) =>
+            {
+                Some(&boundary.success)
+            }
+            ReturnValueCandidate::Unknown => None,
+        };
+        let value = self.lower_expr(expression, expected, context);
+        self.finish_return_value(value, boundary)
+    }
+
+    fn finish_return_value(&mut self, value: HirExpr, boundary: &ReturnBoundary) -> HirExpr {
+        if matches!(value.ty, Ty::Never | Ty::Error) || value.ty == boundary.container {
+            return value;
+        }
+        if value.ty == boundary.success {
+            return self.construct_boundary_variant(boundary, true, Some(value));
+        }
+        self.error(format!(
+            "return value must be `{}` or its success value `{}`, found `{}`",
+            boundary.container, boundary.success, value.ty
+        ));
+        error_expr()
+    }
+
+    fn construct_boundary_variant(
+        &mut self,
+        boundary: &ReturnBoundary,
+        success: bool,
+        value: Option<HirExpr>,
+    ) -> HirExpr {
+        let Ty::Enum(enum_name) = &boundary.container else {
+            self.error("internal error: non-enum return boundary");
+            return error_expr();
+        };
+        let variant_name = match (boundary.kind, success) {
+            (BuiltinFallibleKind::Option, true) => "Some",
+            (BuiltinFallibleKind::Option, false) => "None",
+            (BuiltinFallibleKind::Result, true) => "Ok",
+            (BuiltinFallibleKind::Result, false) => "Err",
+        };
+        let Some(layout) = self.enum_layout_or_diagnostic(enum_name) else {
+            return error_expr();
+        };
+        let Some(variant) = layout
+            .variants
+            .iter()
+            .position(|variant| variant.name == variant_name)
+        else {
+            self.error(format!(
+                "internal error: `{enum_name}` has no `{variant_name}` variant"
+            ));
+            return error_expr();
+        };
+        let fields = match value {
+            Some(value) => vec![(0, value)],
+            None => Vec::new(),
+        };
+        HirExpr {
+            ty: boundary.container.clone(),
+            kind: HirExprKind::ConstructEnum {
+                name: enum_name.clone(),
+                variant,
+                fields,
+            },
+        }
+    }
+
     fn lower_function(&mut self, name: &str) -> Ty {
         if self.function_states.get(name) == Some(&ResolutionState::Resolved) {
             return self.signatures[name].result.clone().unwrap_or(Ty::Error);
@@ -4345,6 +4718,12 @@ impl Analyzer {
         let function = self.functions[name].clone();
         let signature = self.signatures[name].clone();
         let mut context = LowerCtx::for_function(name, signature.result.clone());
+        if function.return_type.is_some() {
+            context.return_boundary = signature
+                .result
+                .as_ref()
+                .and_then(|result| self.return_boundary_for_ty(result));
+        }
         context.type_substitutions = self
             .function_type_substitutions
             .get(name)
@@ -4398,7 +4777,12 @@ impl Analyzer {
             return Ty::Error;
         };
 
-        let lowered_body = self.lower_expr(body, signature.result.as_ref(), &mut context);
+        let boundary = context.return_boundary.clone();
+        let lowered_body = if let Some(boundary) = &boundary {
+            self.lower_return_value(body, boundary, &mut context)
+        } else {
+            self.lower_expr(body, signature.result.as_ref(), &mut context)
+        };
         let result = if let Some(declared) = signature.result {
             for returned in &context.returned_types {
                 self.require_same_type(
@@ -4705,6 +5089,7 @@ impl Analyzer {
                 self.lower_binary(left, *operator, right, expected, context)
             }
             Expr::Coalesce(left, right) => self.lower_coalesce(left, right, expected, context),
+            Expr::Try(value) => self.lower_try(value, expected, context),
             Expr::Assign(place, value) => {
                 if matches!(place.as_ref(), Expr::Index { .. }) {
                     self.error("indexed array assignment is not supported yet");
@@ -4939,10 +5324,24 @@ impl Analyzer {
                 if context.function_name.is_none() {
                     self.error("`return` may only appear in a function body");
                 }
+                let boundary = context.return_boundary.clone();
                 let declared_result = context.declared_result.clone();
-                let value = value.as_ref().map(|value| {
-                    Box::new(self.lower_expr(value, declared_result.as_ref(), context))
-                });
+                let value = if let Some(boundary) = &boundary {
+                    Some(Box::new(match value {
+                        Some(value) => self.lower_return_value(value, boundary, context),
+                        None => self.finish_return_value(
+                            HirExpr {
+                                ty: Ty::Unit,
+                                kind: HirExprKind::Unit,
+                            },
+                            boundary,
+                        ),
+                    }))
+                } else {
+                    value.as_ref().map(|value| {
+                        Box::new(self.lower_expr(value, declared_result.as_ref(), context))
+                    })
+                };
                 let returned_ty = value.as_ref().map_or(Ty::Unit, |value| value.ty.clone());
                 context.returned_types.push(returned_ty);
                 context.flow.reachable = false;
@@ -5439,7 +5838,7 @@ impl Analyzer {
                 }
                 true
             }
-            Expr::Unary(_, operand) => {
+            Expr::Unary(_, operand) | Expr::Try(operand) => {
                 self.scan_simple_closure_captures(operand, bound, outer, captures)
             }
             Expr::Binary(left, _, right) | Expr::Coalesce(left, right) => {
@@ -6216,7 +6615,7 @@ impl Analyzer {
         if scrutinee.ty == Ty::Error {
             return error_expr();
         }
-        let Some(info) = self.coalesce_info_for_ty(&scrutinee.ty) else {
+        let Some(info) = self.builtin_fallible_info_for_ty(&scrutinee.ty) else {
             self.error(format!(
                 "operator `??` requires `Option(T)` or `Result(T, E)` on the left, found `{}`",
                 scrutinee.ty
@@ -6244,16 +6643,116 @@ impl Analyzer {
             body: right.clone(),
         };
         let arms = match info.kind {
-            CoalesceKind::Option => vec![
+            BuiltinFallibleKind::Option => vec![
                 payload_arm("Some"),
                 fallback_arm("None", PatternFields::Unit),
             ],
-            CoalesceKind::Result => vec![
+            BuiltinFallibleKind::Result => vec![
                 payload_arm("Ok"),
                 fallback_arm("Err", PatternFields::Positional(vec![Pattern::Wildcard])),
             ],
         };
         self.lower_match_with_scrutinee(scrutinee, &arms, Some(&info.payload), context)
+    }
+
+    fn lower_try(
+        &mut self,
+        value: &Expr,
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let boundary = context.return_boundary.clone();
+        let operand_expected = boundary.as_ref().and_then(|boundary| {
+            self.inferred_try_operand_expected(value, expected, boundary, context)
+        });
+        let operand = self.lower_expr(value, operand_expected.as_ref(), context);
+        let Some(boundary) = boundary else {
+            self.error(
+                "postfix `.try` requires a named function with an explicit `Option` or `Result` return type",
+            );
+            return error_expr();
+        };
+        if operand.ty == Ty::Error {
+            return error_expr();
+        }
+        let Some(info) = self.builtin_fallible_info_for_ty(&operand.ty) else {
+            self.error(format!(
+                "postfix `.try` requires an `Option(T)` or `Result(T, E)` operand, found `{}`",
+                operand.ty
+            ));
+            return error_expr();
+        };
+        if info.kind != boundary.kind {
+            self.error(format!(
+                "postfix `.try` cannot propagate `{}` through `{}`",
+                operand.ty, boundary.container
+            ));
+            return error_expr();
+        }
+        if info.kind == BuiltinFallibleKind::Result && info.error != boundary.error {
+            self.error(format!(
+                "postfix `.try` requires the same `Result` error type as `{}`",
+                boundary.container
+            ));
+            return error_expr();
+        }
+
+        let Ty::Enum(boundary_name) = &boundary.container else {
+            self.error("internal error: non-enum `.try` return boundary");
+            return error_expr();
+        };
+        const PAYLOAD_BINDING: &str = "$try$payload";
+        const ERROR_BINDING: &str = "$try$error";
+        let success_variant = match info.kind {
+            BuiltinFallibleKind::Option => "Some",
+            BuiltinFallibleKind::Result => "Ok",
+        };
+        let residual_arm = match info.kind {
+            BuiltinFallibleKind::Option => MatchArm {
+                pattern: Pattern::Constructor {
+                    path: vec!["None".to_owned()],
+                    fields: PatternFields::Unit,
+                },
+                guard: None,
+                body: Expr::Return(Some(Box::new(Expr::Member(
+                    Box::new(Expr::Name(boundary_name.clone())),
+                    "None".to_owned(),
+                )))),
+            },
+            BuiltinFallibleKind::Result => MatchArm {
+                pattern: Pattern::Constructor {
+                    path: vec!["Err".to_owned()],
+                    fields: PatternFields::Positional(vec![Pattern::Binding(
+                        ERROR_BINDING.to_owned(),
+                    )]),
+                },
+                guard: None,
+                body: Expr::Return(Some(Box::new(Expr::Call(
+                    Box::new(Expr::Member(
+                        Box::new(Expr::Name(boundary_name.clone())),
+                        "Err".to_owned(),
+                    )),
+                    vec![CallArg {
+                        label: None,
+                        value: Expr::Name(ERROR_BINDING.to_owned()),
+                    }],
+                )))),
+            },
+        };
+        let arms = vec![
+            MatchArm {
+                pattern: Pattern::Constructor {
+                    path: vec![success_variant.to_owned()],
+                    fields: PatternFields::Positional(vec![Pattern::Binding(
+                        PAYLOAD_BINDING.to_owned(),
+                    )]),
+                },
+                guard: None,
+                body: Expr::Name(PAYLOAD_BINDING.to_owned()),
+            },
+            residual_arm,
+        ];
+        self.lower_match_with_scrutinee(operand, &arms, expected, context)
     }
 
     fn lower_match_with_scrutinee(
@@ -10357,7 +10856,9 @@ fn substitute_function_types(function: &mut Function, substitutions: &HashMap<St
 fn substitute_expr_types(expression: &mut Expr, substitutions: &HashMap<String, Type>) {
     match expression {
         Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Infer => {}
-        Expr::Unary(_, operand) => substitute_expr_types(operand, substitutions),
+        Expr::Unary(_, operand) | Expr::Try(operand) => {
+            substitute_expr_types(operand, substitutions)
+        }
         Expr::Borrow { value, .. } => substitute_expr_types(value, substitutions),
         Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
             substitute_expr_types(left, substitutions);

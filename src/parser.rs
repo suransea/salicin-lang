@@ -1089,8 +1089,12 @@ impl Parser {
                     index: Box::new(index),
                 };
             } else if self.take(&TokenKind::Dot) {
-                let member = self.expect_ident("a member name after `.`")?;
-                expression = Expr::Member(Box::new(expression), member);
+                if self.take(&TokenKind::Try) {
+                    expression = Expr::Try(Box::new(expression));
+                } else {
+                    let member = self.expect_ident("a member name after `.`")?;
+                    expression = Expr::Member(Box::new(expression), member);
+                }
             } else if allow_trailing_closure
                 && has_call_group
                 && !used_trailing_closure
@@ -1473,6 +1477,7 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::Enum => "`enum`",
         TokenKind::Trait => "`trait`",
         TokenKind::Match => "`match`",
+        TokenKind::Try => "`try`",
         TokenKind::True => "`true`",
         TokenKind::False => "`false`",
         TokenKind::Ident(_) => "an identifier",

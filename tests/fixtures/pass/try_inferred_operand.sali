@@ -1,0 +1,18 @@
+let option_none(): Option(i32) = Option(_).None.try
+
+let result_err(): Result(i32, bool) = Result(_, _).Err(false).try
+
+let result_ok(): Result(i32, bool) = Result(_, _).Ok(21).try
+
+let local_result(): Result(bool, bool) = {
+  let value = Result(_, _).Ok(21).try
+  value == 21
+}
+
+let main(): i32 = {
+  let first = option_none() ?? 10
+  let second = result_err() ?? 11
+  let third = result_ok() ?? 0
+  let valid = local_result() ?? false
+  if valid { first + second + third } else { 0 }
+}
