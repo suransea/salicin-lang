@@ -7,6 +7,12 @@ the accepted language, while patch releases preserve source semantics within the
 
 M2 development follows the v0.2 language foundation.
 
+- Added compile-time `type` parameter groups and explicit generic named-function application.
+- Added deterministic, cached, on-demand monomorphization while preserving runtime parameter groups
+  and local partial application.
+- Added definition-time abstract checking for generic function bodies, including return types and
+  ownership, so invalid unused templates are diagnosed before instantiation.
+
 ## 0.2.0 - 2026-07-20
 
 - Added nominal structs and enums with positional or labeled construction.

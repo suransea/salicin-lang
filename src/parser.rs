@@ -1,9 +1,9 @@
 use std::fmt;
 
 use crate::ast::{
-    BinaryOp, Binding, CallArg, EnumDef, Expr, ExtendDef, ExtendMember, Field, Function, Item,
-    MatchArm, Param, PassMode, Pattern, PatternField, PatternFields, Program, Stmt, StructDef,
-    Type, UnaryOp, VariantDef, VariantFields,
+    BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EnumDef, Expr, ExtendDef,
+    ExtendMember, Field, Function, Item, MatchArm, Param, PassMode, Pattern, PatternField,
+    PatternFields, Program, Stmt, StructDef, Type, UnaryOp, VariantDef, VariantFields,
 };
 use crate::lexer::{lex, LexError, Token, TokenKind};
 
@@ -47,6 +47,13 @@ struct Parser {
     index: usize,
 }
 
+enum HeaderGroup {
+    Compile(Vec<CompileParam>),
+    Runtime(Vec<Param>),
+}
+
+type DeclarationGroups = (Vec<Vec<CompileParam>>, Vec<Vec<Param>>);
+
 impl Parser {
     fn program(mut self) -> Result<Program, ParseError> {
         let mut items = Vec::new();
@@ -81,17 +88,9 @@ impl Parser {
         let mutable = self.take(&TokenKind::Mut);
         let name = self.expect_ident("a declaration name")?;
 
-        let mut groups = Vec::new();
-        while self.at(&TokenKind::LParen) {
-            groups.push(self.parameter_group()?);
-            self.take_newlines_if_followed_by(&[
-                TokenKind::LParen,
-                TokenKind::Colon,
-                TokenKind::Equal,
-            ]);
-        }
+        let (compile_groups, groups) = self.declaration_groups(false)?;
 
-        if mutable && !groups.is_empty() {
+        if mutable && (!compile_groups.is_empty() || !groups.is_empty()) {
             return Err(self.error_here("`let mut` cannot declare a function"));
         }
 
@@ -101,7 +100,7 @@ impl Parser {
             None
         };
 
-        if !groups.is_empty() {
+        if !compile_groups.is_empty() || !groups.is_empty() {
             self.take_newlines_if_followed_by(&[TokenKind::Equal]);
         }
 
@@ -109,17 +108,19 @@ impl Parser {
 
         if self.at(&TokenKind::Struct) || self.at(&TokenKind::Enum) {
             if mutable || annotation.is_some() || !groups.is_empty() {
-                return Err(self
-                    .error_here("M1 data declarations cannot be mutable, annotated, or generic"));
+                return Err(self.error_here(
+                    "data declarations cannot be mutable, annotated, or have runtime parameters",
+                ));
             }
             return if self.at(&TokenKind::Struct) {
-                self.struct_definition(name).map(Item::Struct)
+                self.struct_definition(name, compile_groups)
+                    .map(Item::Struct)
             } else {
-                self.enum_definition(name).map(Item::Enum)
+                self.enum_definition(name, compile_groups).map(Item::Enum)
             };
         }
 
-        if groups.is_empty() {
+        if compile_groups.is_empty() && groups.is_empty() {
             let value = self.expression(true)?;
             Ok(Item::Global(Binding {
                 mutable,
@@ -135,6 +136,7 @@ impl Parser {
             };
             Ok(Item::Function(Function {
                 name,
+                compile_groups,
                 groups,
                 return_type: annotation,
                 body: Some(body),
@@ -181,15 +183,7 @@ impl Parser {
         }
         let name = self.expect_ident("an extend member name")?;
 
-        let mut groups = Vec::new();
-        while self.at(&TokenKind::LParen) {
-            groups.push(self.extend_parameter_group()?);
-            self.take_newlines_if_followed_by(&[
-                TokenKind::LParen,
-                TokenKind::Colon,
-                TokenKind::Equal,
-            ]);
-        }
+        let (compile_groups, groups) = self.declaration_groups(true)?;
         self.validate_receiver_groups(&groups)?;
 
         let annotation = if self.take(&TokenKind::Colon) {
@@ -197,7 +191,7 @@ impl Parser {
         } else {
             None
         };
-        if !groups.is_empty() {
+        if !compile_groups.is_empty() || !groups.is_empty() {
             self.take_newlines_if_followed_by(&[TokenKind::Equal]);
         }
         self.expect(&TokenKind::Equal, "`=` in extend member")?;
@@ -206,7 +200,7 @@ impl Parser {
             return Err(self.error_here("data declarations are not allowed in extend bodies"));
         }
 
-        if groups.is_empty() {
+        if compile_groups.is_empty() && groups.is_empty() {
             Ok(ExtendMember::Const(Binding {
                 mutable: false,
                 name,
@@ -221,6 +215,7 @@ impl Parser {
             };
             Ok(ExtendMember::Function(Function {
                 name,
+                compile_groups,
                 groups,
                 return_type: annotation,
                 body: Some(body),
@@ -228,7 +223,109 @@ impl Parser {
         }
     }
 
-    fn extend_parameter_group(&mut self) -> Result<Vec<Param>, ParseError> {
+    fn declaration_groups(
+        &mut self,
+        allow_receiver: bool,
+    ) -> Result<DeclarationGroups, ParseError> {
+        let mut compile_groups = Vec::new();
+        let mut runtime_groups = Vec::new();
+        let mut saw_runtime_group = false;
+
+        while self.at(&TokenKind::LParen) {
+            if saw_runtime_group && self.group_starts_with_compile_parameter() {
+                return Err(self.error_here(
+                    "compile-time parameter groups must precede runtime parameter groups",
+                ));
+            }
+            let group = self.header_parameter_group(allow_receiver)?;
+            match group {
+                HeaderGroup::Compile(params) => {
+                    compile_groups.push(params);
+                }
+                HeaderGroup::Runtime(params) => {
+                    saw_runtime_group = true;
+                    runtime_groups.push(params);
+                }
+            }
+            self.take_newlines_if_followed_by(&[
+                TokenKind::LParen,
+                TokenKind::Colon,
+                TokenKind::Equal,
+            ]);
+        }
+
+        Ok((compile_groups, runtime_groups))
+    }
+
+    fn header_parameter_group(&mut self, allow_receiver: bool) -> Result<HeaderGroup, ParseError> {
+        if self.group_starts_with_compile_parameter() {
+            self.compile_parameter_group().map(HeaderGroup::Compile)
+        } else {
+            self.runtime_parameter_group(allow_receiver)
+                .map(HeaderGroup::Runtime)
+        }
+    }
+
+    fn group_starts_with_compile_parameter(&self) -> bool {
+        self.at(&TokenKind::LParen)
+            && matches!(
+                self.tokens.get(self.index + 1).map(|token| &token.kind),
+                Some(TokenKind::Ident(_))
+            )
+            && self.at_offset(2, &TokenKind::Colon)
+            && self.at_offset(3, &TokenKind::Type)
+    }
+
+    fn current_starts_compile_parameter(&self) -> bool {
+        matches!(self.current().kind, TokenKind::Ident(_))
+            && self.at_offset(1, &TokenKind::Colon)
+            && self.at_offset(2, &TokenKind::Type)
+    }
+
+    fn compile_parameter_group(&mut self) -> Result<Vec<CompileParam>, ParseError> {
+        self.expect(&TokenKind::LParen, "`(`")?;
+        let mut params = Vec::new();
+
+        loop {
+            if !self.current_starts_compile_parameter() {
+                return Err(self.error_here(
+                    "compile-time and runtime parameters cannot be mixed in one group",
+                ));
+            }
+            let name_token = self.current().clone();
+            let name = self.expect_ident("a compile-time parameter name")?;
+            if matches!(
+                name.as_str(),
+                "_" | "i32" | "i64" | "u32" | "u64" | "bool" | "void"
+            ) {
+                return Err(self.error_at(
+                    &name_token,
+                    format!(
+                        "reserved type name `{name}` cannot be used as a compile-time parameter"
+                    ),
+                ));
+            }
+            self.expect(&TokenKind::Colon, "`:` after compile-time parameter name")?;
+            self.expect(&TokenKind::Type, "`type`")?;
+            params.push(CompileParam {
+                name,
+                kind: CompileParamKind::Type,
+            });
+
+            if self.take(&TokenKind::Comma) {
+                if self.take(&TokenKind::RParen) {
+                    break;
+                }
+            } else {
+                self.expect(&TokenKind::RParen, "`)`")?;
+                break;
+            }
+        }
+
+        Ok(params)
+    }
+
+    fn runtime_parameter_group(&mut self, allow_receiver: bool) -> Result<Vec<Param>, ParseError> {
         self.expect(&TokenKind::LParen, "`(`")?;
         let mut params = Vec::new();
         if self.take(&TokenKind::RParen) {
@@ -249,8 +346,23 @@ impl Parser {
                 PassMode::Inferred
             };
 
-            let name = self.expect_ident("a parameter name or `self`")?;
+            if self.current_starts_compile_parameter() {
+                return Err(self.error_here(
+                    "compile-time and runtime parameters cannot be mixed in one group",
+                ));
+            }
+
+            let name = self.expect_ident(if allow_receiver {
+                "a parameter name or `self`"
+            } else {
+                "a parameter name"
+            })?;
             let ty = if name == "self" {
+                if !allow_receiver {
+                    return Err(self.error_here(
+                        "contextual `self` receivers are only allowed in extend methods",
+                    ));
+                }
                 if self.at(&TokenKind::Colon) {
                     return Err(self.error_here(
                         "extend receiver is contextual `self` and cannot have an explicit type",
@@ -307,14 +419,26 @@ impl Parser {
         Ok(())
     }
 
-    fn struct_definition(&mut self, name: String) -> Result<StructDef, ParseError> {
+    fn struct_definition(
+        &mut self,
+        name: String,
+        compile_groups: Vec<Vec<CompileParam>>,
+    ) -> Result<StructDef, ParseError> {
         self.expect(&TokenKind::Struct, "`struct`")?;
         self.expect(&TokenKind::LParen, "`(` after `struct`")?;
         let fields = self.named_type_fields()?;
-        Ok(StructDef { name, fields })
+        Ok(StructDef {
+            name,
+            compile_groups,
+            fields,
+        })
     }
 
-    fn enum_definition(&mut self, name: String) -> Result<EnumDef, ParseError> {
+    fn enum_definition(
+        &mut self,
+        name: String,
+        compile_groups: Vec<Vec<CompileParam>>,
+    ) -> Result<EnumDef, ParseError> {
         self.expect(&TokenKind::Enum, "`enum`")?;
         self.expect(&TokenKind::LBrace, "`{` after `enum`")?;
         self.skip_separators();
@@ -366,7 +490,11 @@ impl Parser {
         }
 
         self.expect(&TokenKind::RBrace, "`}` after enum variants")?;
-        Ok(EnumDef { name, variants })
+        Ok(EnumDef {
+            name,
+            compile_groups,
+            variants,
+        })
     }
 
     fn named_type_fields(&mut self) -> Result<Vec<Field>, ParseError> {
@@ -425,51 +553,18 @@ impl Parser {
     }
 
     fn parameter_group(&mut self) -> Result<Vec<Param>, ParseError> {
-        self.expect(&TokenKind::LParen, "`(`")?;
-        let mut params = Vec::new();
-        if self.take(&TokenKind::RParen) {
-            return Ok(params);
-        }
-
-        loop {
-            let mode = if self.take(&TokenKind::Copy) {
-                PassMode::Copy
-            } else if self.take(&TokenKind::Move) {
-                PassMode::Move
-            } else if self.take(&TokenKind::Borrow) {
-                PassMode::Borrow
-            } else if self.take(&TokenKind::Mut) {
-                self.expect(&TokenKind::Borrow, "`borrow` after `mut`")?;
-                PassMode::MutBorrow
-            } else {
-                PassMode::Inferred
-            };
-
-            let name = self.expect_ident("a parameter name")?;
-            if name == "self" {
-                return Err(self
-                    .error_here("contextual `self` receivers are only allowed in extend methods"));
-            }
-            self.expect(&TokenKind::Colon, "`:` after parameter name")?;
-            let ty = self.type_expr()?;
-            params.push(Param { mode, name, ty });
-
-            if self.take(&TokenKind::Comma) {
-                if self.take(&TokenKind::RParen) {
-                    break;
-                }
-            } else {
-                self.expect(&TokenKind::RParen, "`)`")?;
-                break;
-            }
-        }
-        Ok(params)
+        self.runtime_parameter_group(false)
     }
 
     fn type_expr(&mut self) -> Result<Type, ParseError> {
         if self.take(&TokenKind::LParen) {
             self.expect(&TokenKind::RParen, "`)` in unit type")?;
             return Ok(Type::Void);
+        }
+
+        if matches!(&self.current().kind, TokenKind::Ident(name) if name == "_") {
+            self.advance();
+            return Ok(Type::Infer);
         }
 
         let name = self.expect_ident("a type")?;
@@ -933,7 +1028,11 @@ impl Parser {
             }
             TokenKind::Ident(name) => {
                 self.advance();
-                Ok(Expr::Name(name))
+                if name == "_" {
+                    Ok(Expr::Infer)
+                } else {
+                    Ok(Expr::Name(name))
+                }
             }
             TokenKind::LParen => {
                 self.advance();
@@ -1259,6 +1358,7 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::Copy => "`copy`",
         TokenKind::Move => "`move`",
         TokenKind::Borrow => "`borrow`",
+        TokenKind::Type => "`type`",
         TokenKind::Do => "`do`",
         TokenKind::If => "`if`",
         TokenKind::Else => "`else`",
@@ -1326,6 +1426,171 @@ mod tests {
         assert_eq!(function.groups.len(), 2);
         assert_eq!(function.groups[0][0].mode, PassMode::Copy);
         assert_eq!(function.return_type, Some(Type::I32));
+    }
+
+    #[test]
+    fn separates_compile_time_and_runtime_parameter_groups() {
+        let program = parse(
+            "let identity(T: type)(value: T): T = value\n\
+             let staged(T: type)(U: type)(value: T): U = value\n",
+        )
+        .unwrap();
+
+        let Item::Function(identity) = &program.items[0] else {
+            panic!("expected generic function");
+        };
+        assert_eq!(identity.compile_groups.len(), 1);
+        assert_eq!(identity.compile_groups[0].len(), 1);
+        assert_eq!(identity.compile_groups[0][0].name, "T");
+        assert_eq!(identity.compile_groups[0][0].kind, CompileParamKind::Type);
+        assert_eq!(identity.groups.len(), 1);
+        assert_eq!(
+            identity.groups[0][0].ty,
+            Type::Named("T".into(), Vec::new())
+        );
+        assert_eq!(
+            identity.return_type,
+            Some(Type::Named("T".into(), Vec::new()))
+        );
+
+        let Item::Function(staged) = &program.items[1] else {
+            panic!("expected generic function");
+        };
+        assert_eq!(
+            staged
+                .compile_groups
+                .iter()
+                .map(Vec::len)
+                .collect::<Vec<_>>(),
+            vec![1, 1]
+        );
+        assert_eq!(staged.groups.len(), 1);
+    }
+
+    #[test]
+    fn preserves_multiple_compile_parameters_in_one_group() {
+        let program = parse("let choose(T: type, U: type)(value: T): U = value\n").unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected generic function");
+        };
+        assert_eq!(function.compile_groups.len(), 1);
+        assert_eq!(
+            function.compile_groups[0]
+                .iter()
+                .map(|param| param.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["T", "U"]
+        );
+    }
+
+    #[test]
+    fn parses_generic_structs_and_enums() {
+        let program = parse(
+            "let Cell(T: type) = struct(value: T)\n\
+             let Maybe(T: type) = enum {\n\
+               Some(T),\n\
+               Named(value: T),\n\
+               None,\n\
+             }\n",
+        )
+        .unwrap();
+
+        let Item::Struct(cell) = &program.items[0] else {
+            panic!("expected generic struct");
+        };
+        assert_eq!(cell.compile_groups[0][0].name, "T");
+        assert_eq!(cell.fields[0].ty, Type::Named("T".into(), Vec::new()));
+
+        let Item::Enum(maybe) = &program.items[1] else {
+            panic!("expected generic enum");
+        };
+        assert_eq!(maybe.compile_groups[0][0].kind, CompileParamKind::Type);
+        assert!(matches!(
+            &maybe.variants[0].fields,
+            VariantFields::Positional(types)
+                if types == &vec![Type::Named("T".into(), Vec::new())]
+        ));
+        assert!(matches!(
+            &maybe.variants[1].fields,
+            VariantFields::Named(fields)
+                if fields[0].ty == Type::Named("T".into(), Vec::new())
+        ));
+    }
+
+    #[test]
+    fn parses_inferred_type_and_expression_arguments() {
+        let program = parse("let value: Cell(_) = Cell(_)(20)\n").unwrap();
+        let Item::Global(binding) = &program.items[0] else {
+            panic!("expected global binding");
+        };
+        assert_eq!(
+            binding.annotation,
+            Some(Type::Named("Cell".into(), vec![Type::Infer]))
+        );
+        let Expr::Call(type_application, values) = &binding.value else {
+            panic!("expected value argument group");
+        };
+        assert!(matches!(
+            values.as_slice(),
+            [CallArg {
+                label: None,
+                value: Expr::Integer(20)
+            }]
+        ));
+        assert!(matches!(
+            type_application.as_ref(),
+            Expr::Call(_, arguments)
+                if matches!(
+                    arguments.as_slice(),
+                    [CallArg {
+                        label: None,
+                        value: Expr::Infer
+                    }]
+                )
+        ));
+    }
+
+    #[test]
+    fn rejects_mixed_or_misordered_compile_parameter_groups() {
+        let cases = [
+            (
+                "let bad(value: i32)(T: type): i32 = value\n",
+                "must precede runtime",
+            ),
+            ("let bad(T: type, value: T): T = value\n", "cannot be mixed"),
+            ("let bad(value: T, U: type): T = value\n", "cannot be mixed"),
+        ];
+
+        for (source, expected) in cases {
+            let error = parse(source).unwrap_err();
+            assert!(
+                error.message.contains(expected),
+                "expected `{expected}` in `{}`",
+                error.message
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_reserved_compile_parameter_names() {
+        for name in ["_", "i32", "i64", "u32", "u64", "bool", "void"] {
+            let source = format!("let invalid({name}: type)(value: i32): i32 = value\n");
+            let error = parse(&source).unwrap_err();
+            assert_eq!(
+                error.message,
+                format!("reserved type name `{name}` cannot be used as a compile-time parameter")
+            );
+            assert_eq!((error.line, error.column), (1, 13));
+        }
+    }
+
+    #[test]
+    fn rejects_runtime_parameters_on_generic_data_and_generic_extend_headers() {
+        let data = parse("let Bad(T: type)(value: T) = struct(value: T)\n").unwrap_err();
+        assert!(data.message.contains("runtime parameters"));
+
+        let extension = parse("extend(T: type) Cell(T) {}\n").unwrap_err();
+        assert!(extension.message.contains("expected `)`"));
     }
 
     #[test]
@@ -1820,6 +2085,34 @@ mod tests {
             .iter()
             .flatten()
             .all(|param| param.name != "self"));
+    }
+
+    #[test]
+    fn parses_compile_parameters_on_extend_functions() {
+        let program = parse(
+            "extend A {\n\
+               let convert(T: type)(borrow self)(value: T): T = value\n\
+               let make(T: type)(value: T): T = value\n\
+             }\n",
+        )
+        .unwrap();
+
+        let Item::Extend(extension) = &program.items[0] else {
+            panic!("expected extend declaration");
+        };
+        let ExtendMember::Function(convert) = &extension.members[0] else {
+            panic!("expected generic method");
+        };
+        assert_eq!(convert.compile_groups[0][0].name, "T");
+        assert_eq!(convert.groups.len(), 2);
+        assert_eq!(convert.groups[0][0].name, "self");
+        assert_eq!(convert.groups[1][0].ty, Type::Named("T".into(), Vec::new()));
+
+        let ExtendMember::Function(make) = &extension.members[1] else {
+            panic!("expected generic associated function");
+        };
+        assert_eq!(make.compile_groups.len(), 1);
+        assert_eq!(make.groups.len(), 1);
     }
 
     #[test]

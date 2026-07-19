@@ -67,6 +67,20 @@ enum Ty {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct FunctionInstanceKey {
+    template: String,
+    arguments: Vec<Ty>,
+}
+
+#[derive(Debug, Clone)]
+struct FunctionInstanceInfo {
+    key: FunctionInstanceKey,
+    canonical: String,
+}
+
+const MAX_FUNCTION_INSTANCES: usize = 256;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct FunctionTy {
     groups: Vec<Vec<Ty>>,
     result: Box<Ty>,
@@ -552,6 +566,7 @@ struct LowerCtx {
     declared_result: Option<Ty>,
     returned_types: Vec<Ty>,
     function_name: Option<String>,
+    type_substitutions: HashMap<String, Type>,
     loops: Vec<LoopFrame>,
 }
 
@@ -565,6 +580,7 @@ impl LowerCtx {
             declared_result: result,
             returned_types: Vec::new(),
             function_name: Some(name.to_owned()),
+            type_substitutions: HashMap::new(),
             loops: Vec::new(),
         }
     }
@@ -578,6 +594,7 @@ impl LowerCtx {
             declared_result: None,
             returned_types: Vec::new(),
             function_name: None,
+            type_substitutions: HashMap::new(),
             loops: Vec::new(),
         }
     }
@@ -657,6 +674,12 @@ struct InherentMemberSet {
 
 struct Analyzer {
     functions: HashMap<String, Function>,
+    function_templates: HashMap<String, Function>,
+    function_template_order: Vec<String>,
+    function_instance_names: HashMap<FunctionInstanceKey, String>,
+    function_instances: HashMap<String, FunctionInstanceInfo>,
+    function_type_substitutions: HashMap<String, HashMap<String, Type>>,
+    abstract_type_parameters: HashMap<String, String>,
     globals: HashMap<String, Binding>,
     struct_defs: HashMap<String, StructDef>,
     enum_defs: HashMap<String, EnumDef>,
@@ -682,6 +705,12 @@ impl Analyzer {
     fn new(program: &Program) -> Self {
         let mut analyzer = Self {
             functions: HashMap::new(),
+            function_templates: HashMap::new(),
+            function_template_order: Vec::new(),
+            function_instance_names: HashMap::new(),
+            function_instances: HashMap::new(),
+            function_type_substitutions: HashMap::new(),
+            abstract_type_parameters: HashMap::new(),
             globals: HashMap::new(),
             struct_defs: HashMap::new(),
             enum_defs: HashMap::new(),
@@ -726,9 +755,15 @@ impl Analyzer {
             }
             match item {
                 Item::Function(function) => {
-                    self.function_order.push(function.name.clone());
-                    self.functions
-                        .insert(function.name.clone(), function.clone());
+                    if function.compile_groups.is_empty() {
+                        self.function_order.push(function.name.clone());
+                        self.functions
+                            .insert(function.name.clone(), function.clone());
+                    } else {
+                        self.function_template_order.push(function.name.clone());
+                        self.function_templates
+                            .insert(function.name.clone(), function.clone());
+                    }
                 }
                 Item::Global(binding) => {
                     if binding.mutable {
@@ -741,11 +776,25 @@ impl Analyzer {
                     self.globals.insert(binding.name.clone(), binding.clone());
                 }
                 Item::Struct(definition) => {
+                    if !definition.compile_groups.is_empty() {
+                        self.error(format!(
+                            "generic struct `{}` is not supported in the first generic slice",
+                            definition.name
+                        ));
+                        continue;
+                    }
                     self.struct_order.push(definition.name.clone());
                     self.struct_defs
                         .insert(definition.name.clone(), definition.clone());
                 }
                 Item::Enum(definition) => {
+                    if !definition.compile_groups.is_empty() {
+                        self.error(format!(
+                            "generic enum `{}` is not supported in the first generic slice",
+                            definition.name
+                        ));
+                        continue;
+                    }
                     self.enum_order.push(definition.name.clone());
                     self.enum_defs
                         .insert(definition.name.clone(), definition.clone());
@@ -790,6 +839,8 @@ impl Analyzer {
             self.global_annotations.insert(name, annotation);
         }
 
+        self.validate_function_templates();
+
         self.validate_nominal_layouts();
     }
 
@@ -819,6 +870,12 @@ impl Analyzer {
         for member in extension.members {
             match member {
                 ExtendMember::Function(mut function) => {
+                    if !function.compile_groups.is_empty() {
+                        self.error(
+                            "generic extend functions are not supported in the first generic slice",
+                        );
+                        continue;
+                    }
                     let short_name = function.name.clone();
                     let is_method = function
                         .groups
@@ -1083,8 +1140,11 @@ impl Analyzer {
         for name in self.global_order.clone() {
             self.lower_global(&name);
         }
-        for name in self.function_order.clone() {
+        let mut function_index = 0;
+        while function_index < self.function_order.len() {
+            let name = self.function_order[function_index].clone();
             self.lower_function(&name);
+            function_index += 1;
         }
         self.validate_entry_point();
 
@@ -1118,6 +1178,89 @@ impl Analyzer {
         })
     }
 
+    fn validate_function_templates(&mut self) {
+        for template_name in self.function_template_order.clone() {
+            let template = self.function_templates[&template_name].clone();
+            if template.return_type.is_none() {
+                self.error(format!(
+                    "generic function `{template_name}` requires an explicit return type"
+                ));
+                continue;
+            }
+
+            let mut substitutions = HashMap::new();
+            for (index, parameter) in template.compile_groups.iter().flatten().enumerate() {
+                let marker = generic_parameter_marker(&template_name, index, &parameter.name);
+                self.abstract_type_parameters
+                    .insert(marker.clone(), parameter.name.clone());
+                if substitutions
+                    .insert(parameter.name.clone(), Type::Named(marker, Vec::new()))
+                    .is_some()
+                {
+                    self.error(format!(
+                        "duplicate compile-time parameter `{}` in generic function `{template_name}`",
+                        parameter.name
+                    ));
+                }
+            }
+
+            let functions_before = self.functions.clone();
+            let function_order_before = self.function_order.clone();
+            let signatures_before = self.signatures.clone();
+            let function_states_before = self.function_states.clone();
+            let hir_functions_before = self.hir_functions.clone();
+            let global_states_before = self.global_states.clone();
+            let hir_globals_before = self.hir_globals.clone();
+            let instance_names_before = self.function_instance_names.clone();
+            let instances_before = self.function_instances.clone();
+            let type_substitutions_before = self.function_type_substitutions.clone();
+            let lifted_functions_before = self.lifted_functions.clone();
+            let next_closure = self.next_closure;
+
+            let mut function = template;
+            substitute_function_types(&mut function, &substitutions);
+            let validation_name = generic_validation_name(&template_name);
+            function.name = validation_name.clone();
+            function.compile_groups.clear();
+            let groups = function
+                .groups
+                .iter()
+                .map(|group| {
+                    group
+                        .iter()
+                        .map(|param| ParamSig {
+                            name: param.name.clone(),
+                            ty: self.lower_source_type(&param.ty),
+                            mode: param.mode,
+                        })
+                        .collect()
+                })
+                .collect();
+            let result = function
+                .return_type
+                .as_ref()
+                .map(|ty| self.lower_source_type(ty));
+            self.functions.insert(validation_name.clone(), function);
+            self.signatures
+                .insert(validation_name.clone(), FunctionSig { groups, result });
+            self.function_type_substitutions
+                .insert(validation_name.clone(), substitutions);
+            self.lower_function(&validation_name);
+            self.functions = functions_before;
+            self.function_order = function_order_before;
+            self.signatures = signatures_before;
+            self.function_states = function_states_before;
+            self.hir_functions = hir_functions_before;
+            self.global_states = global_states_before;
+            self.hir_globals = hir_globals_before;
+            self.function_instance_names = instance_names_before;
+            self.function_instances = instances_before;
+            self.function_type_substitutions = type_substitutions_before;
+            self.lifted_functions = lifted_functions_before;
+            self.next_closure = next_closure;
+        }
+    }
+
     fn lower_source_type(&mut self, source: &Type) -> Ty {
         match source {
             Type::I32 => Ty::I32,
@@ -1126,6 +1269,10 @@ impl Analyzer {
             Type::U64 => Ty::U64,
             Type::Bool => Ty::Bool,
             Type::Void => Ty::Unit,
+            Type::Infer => {
+                self.error("`_` type inference is not supported in the first generic slice");
+                Ty::Error
+            }
             Type::Array(element, length) => {
                 let element = self.lower_source_type(element);
                 if *length > i32::MAX as u64 {
@@ -1147,6 +1294,11 @@ impl Analyzer {
                 }
             }
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => Ty::Unit,
+            Type::Named(name, arguments)
+                if arguments.is_empty() && self.abstract_type_parameters.contains_key(name) =>
+            {
+                Ty::Struct(name.clone())
+            }
             Type::Named(name, arguments) if arguments.is_empty() => {
                 if self.struct_defs.contains_key(name) {
                     Ty::Struct(name.clone())
@@ -1162,6 +1314,203 @@ impl Analyzer {
                 Ty::Error
             }
         }
+    }
+
+    fn struct_layout_or_diagnostic(&mut self, name: &str) -> Option<StructLayout> {
+        if let Some(layout) = self.struct_layouts.get(name) {
+            return Some(layout.clone());
+        }
+        if let Some(parameter) = self.abstract_type_parameters.get(name).cloned() {
+            self.error(format!(
+                "generic parameter `{parameter}` has no known fields or struct layout"
+            ));
+        } else {
+            self.error(format!(
+                "internal error: struct type `{name}` has no registered layout"
+            ));
+        }
+        None
+    }
+
+    fn enum_layout_or_diagnostic(&mut self, name: &str) -> Option<EnumLayout> {
+        if let Some(layout) = self.enum_layouts.get(name) {
+            return Some(layout.clone());
+        }
+        if let Some(parameter) = self.abstract_type_parameters.get(name).cloned() {
+            self.error(format!(
+                "generic parameter `{parameter}` has no known variants or enum layout"
+            ));
+        } else {
+            self.error(format!(
+                "internal error: enum type `{name}` has no registered layout"
+            ));
+        }
+        None
+    }
+
+    fn type_argument_from_expr(
+        &mut self,
+        expression: &Expr,
+        substitutions: &HashMap<String, Type>,
+    ) -> Option<Type> {
+        match expression {
+            Expr::Infer => {
+                self.error(
+                    "`_` generic type argument inference is not supported in the first generic slice",
+                );
+                None
+            }
+            Expr::Unit => Some(Type::Void),
+            Expr::Name(name) => {
+                if let Some(replacement) = substitutions.get(name) {
+                    return Some(replacement.clone());
+                }
+                Some(match name.as_str() {
+                    "i32" => Type::I32,
+                    "i64" => Type::I64,
+                    "u32" => Type::U32,
+                    "u64" => Type::U64,
+                    "bool" => Type::Bool,
+                    "void" => Type::Void,
+                    _ => Type::Named(name.clone(), Vec::new()),
+                })
+            }
+            Expr::Call(callee, call_arguments) => {
+                let Expr::Name(name) = callee.as_ref() else {
+                    self.error("generic type arguments require a named type constructor");
+                    return None;
+                };
+                if call_arguments
+                    .iter()
+                    .any(|argument| argument.label.is_some())
+                {
+                    self.error("generic type arguments cannot contain labeled arguments");
+                    return None;
+                }
+                if name == "Array" {
+                    if call_arguments.len() != 2 {
+                        self.error("`Array` type arguments require an element type and length");
+                        return None;
+                    }
+                    let element =
+                        self.type_argument_from_expr(&call_arguments[0].value, substitutions)?;
+                    let Expr::Integer(length) = call_arguments[1].value else {
+                        self.error("array type argument length must be a non-negative integer");
+                        return None;
+                    };
+                    let Ok(length) = u64::try_from(length) else {
+                        self.error("array type argument length must fit in `u64`");
+                        return None;
+                    };
+                    Some(Type::Array(Box::new(element), length))
+                } else {
+                    let mut arguments = Vec::new();
+                    for argument in call_arguments {
+                        arguments
+                            .push(self.type_argument_from_expr(&argument.value, substitutions)?);
+                    }
+                    Some(Type::Named(name.clone(), arguments))
+                }
+            }
+            _ => {
+                self.error("generic type arguments must be type names, type applications, or `_`");
+                None
+            }
+        }
+    }
+
+    fn ensure_function_instance(
+        &mut self,
+        template_name: &str,
+        source_arguments: Vec<Type>,
+        arguments: Vec<Ty>,
+    ) -> Option<String> {
+        let key = FunctionInstanceKey {
+            template: template_name.to_owned(),
+            arguments,
+        };
+        if let Some(canonical) = self.function_instance_names.get(&key) {
+            let info = &self.function_instances[canonical];
+            debug_assert_eq!(info.key, key);
+            debug_assert_eq!(info.canonical, *canonical);
+            return Some(canonical.clone());
+        }
+        if self.function_instances.len() >= MAX_FUNCTION_INSTANCES {
+            self.error(format!(
+                "generic function instance limit of {MAX_FUNCTION_INSTANCES} exceeded while instantiating `{template_name}`"
+            ));
+            return None;
+        }
+
+        let template = self.function_templates[template_name].clone();
+        let compile_parameters: Vec<_> = template.compile_groups.iter().flatten().collect();
+        if compile_parameters.len() != source_arguments.len() {
+            self.error(format!(
+                "internal error: invalid type argument count while instantiating `{template_name}`"
+            ));
+            return None;
+        }
+        let mut substitutions = HashMap::new();
+        for (parameter, argument) in compile_parameters.iter().zip(source_arguments) {
+            if substitutions
+                .insert(parameter.name.clone(), argument)
+                .is_some()
+            {
+                self.error(format!(
+                    "duplicate compile-time parameter `{}` in generic function `{template_name}`",
+                    parameter.name
+                ));
+                return None;
+            }
+        }
+
+        let canonical = function_instance_name(&key);
+        if let Some(existing) = self.function_instances.get(&canonical) {
+            self.error(format!(
+                "internal error: generic function instance name collision between `{}` and `{template_name}`",
+                existing.key.template
+            ));
+            return None;
+        }
+        self.function_instance_names
+            .insert(key.clone(), canonical.clone());
+        self.function_instances.insert(
+            canonical.clone(),
+            FunctionInstanceInfo {
+                key,
+                canonical: canonical.clone(),
+            },
+        );
+        self.function_type_substitutions
+            .insert(canonical.clone(), substitutions.clone());
+
+        let mut function = template;
+        substitute_function_types(&mut function, &substitutions);
+        function.name = canonical.clone();
+        function.compile_groups.clear();
+        let groups = function
+            .groups
+            .iter()
+            .map(|group| {
+                group
+                    .iter()
+                    .map(|param| ParamSig {
+                        name: param.name.clone(),
+                        ty: self.lower_source_type(&param.ty),
+                        mode: param.mode,
+                    })
+                    .collect()
+            })
+            .collect();
+        let result = function
+            .return_type
+            .as_ref()
+            .map(|ty| self.lower_source_type(ty));
+        self.signatures
+            .insert(canonical.clone(), FunctionSig { groups, result });
+        self.functions.insert(canonical.clone(), function);
+        self.function_order.push(canonical.clone());
+        Some(canonical)
     }
 
     fn lower_function(&mut self, name: &str) -> Ty {
@@ -1183,6 +1532,11 @@ impl Analyzer {
         let function = self.functions[name].clone();
         let signature = self.signatures[name].clone();
         let mut context = LowerCtx::for_function(name, signature.result.clone());
+        context.type_substitutions = self
+            .function_type_substitutions
+            .get(name)
+            .cloned()
+            .unwrap_or_default();
         let mut params = Vec::new();
 
         for group in &signature.groups {
@@ -1377,6 +1731,10 @@ impl Analyzer {
                 ty: Ty::Unit,
                 kind: HirExprKind::Unit,
             },
+            Expr::Infer => {
+                self.error("`_` may only be used as a generic type argument");
+                error_expr()
+            }
             Expr::Array(elements) => self.lower_array_literal(elements, expected, context),
             Expr::Name(name) => {
                 if let Some(local) = context.lookup(name).cloned() {
@@ -1406,12 +1764,19 @@ impl Analyzer {
                         ty: self.function_type(name),
                         kind: HirExprKind::Function(name.clone()),
                     }
+                } else if self.function_templates.contains_key(name) {
+                    self.error(format!(
+                        "generic function `{name}` requires explicit type argument groups"
+                    ));
+                    error_expr()
                 } else if let Some((enum_name, variant)) =
                     self.resolve_short_variant(name, expected)
                 {
-                    if self.enum_layouts[&enum_name].variants[variant]
-                        .fields
-                        .is_empty()
+                    if self
+                        .enum_layouts
+                        .get(&enum_name)
+                        .and_then(|layout| layout.variants.get(variant))
+                        .is_some_and(|variant| variant.fields.is_empty())
                     {
                         HirExpr {
                             ty: Ty::Enum(enum_name.clone()),
@@ -2055,6 +2420,7 @@ impl Analyzer {
         let function = format!("__closure.{}", self.next_closure);
         self.next_closure += 1;
         let mut context = LowerCtx::for_function(&function, None);
+        context.type_substitutions = outer.type_substitutions.clone();
         let mut hir_params = Vec::new();
         let mut captures = Vec::new();
 
@@ -2348,13 +2714,27 @@ impl Analyzer {
             self.error("FnOnce capture requires a direct named-function call");
             return false;
         };
-        let Some(signature) = self.signatures.get(function).cloned() else {
+        let (signature, runtime_groups) = if let Some(signature) = self.signatures.get(function) {
+            (signature.clone(), groups.as_slice())
+        } else if self.function_templates.contains_key(function) {
+            let Some((canonical, compile_group_count)) = self.resolve_generic_function_instance(
+                function,
+                &groups,
+                &outer.type_substitutions,
+            ) else {
+                return false;
+            };
+            (
+                self.signatures[&canonical].clone(),
+                &groups[compile_group_count..],
+            )
+        } else {
             self.error(format!(
                 "closure call `{function}` is not a top-level named function"
             ));
             return false;
         };
-        if groups.len() != signature.groups.len() {
+        if runtime_groups.len() != signature.groups.len() {
             self.error(format!(
                 "named function `{function}` must be fully applied inside a closure"
             ));
@@ -2362,7 +2742,7 @@ impl Analyzer {
         }
 
         let mut valid = true;
-        for (arguments, parameters) in groups.iter().zip(&signature.groups) {
+        for (arguments, parameters) in runtime_groups.iter().zip(&signature.groups) {
             if arguments.len() != parameters.len() {
                 self.error(format!(
                     "argument count mismatch in closure call to `{function}`"
@@ -2440,7 +2820,7 @@ impl Analyzer {
                     ));
                     return None;
                 };
-                let layout = self.struct_layouts[struct_name].clone();
+                let layout = self.struct_layout_or_diagnostic(struct_name)?;
                 let Some((index, field)) = layout
                     .fields
                     .iter()
@@ -2778,7 +3158,9 @@ impl Analyzer {
                 ));
                 return error_expr();
             };
-            let layout = self.struct_layouts[struct_name].clone();
+            let Some(layout) = self.struct_layout_or_diagnostic(struct_name) else {
+                return error_expr();
+            };
             let Some((index, field)) = layout
                 .fields
                 .iter()
@@ -2804,7 +3186,9 @@ impl Analyzer {
             ));
             return error_expr();
         };
-        let layout = self.struct_layouts[struct_name].clone();
+        let Some(layout) = self.struct_layout_or_diagnostic(struct_name) else {
+            return error_expr();
+        };
         let Some((index, field)) = layout
             .fields
             .iter()
@@ -2857,7 +3241,9 @@ impl Analyzer {
             ));
             return error_expr();
         };
-        let layout = self.enum_layouts[enum_name].clone();
+        let Some(layout) = self.enum_layout_or_diagnostic(enum_name) else {
+            return error_expr();
+        };
         let mut lowered_arms = Vec::new();
         let mut covered = vec![false; layout.variants.len()];
         let mut result_ty: Option<Ty> = None;
@@ -3107,7 +3493,9 @@ impl Analyzer {
                     ));
                     return;
                 }
-                let layout = self.struct_layouts[struct_name].clone();
+                let Some(layout) = self.struct_layout_or_diagnostic(struct_name) else {
+                    return;
+                };
                 let nested = self.normalize_pattern_fields(
                     fields,
                     &layout.fields,
@@ -3316,6 +3704,9 @@ impl Analyzer {
             if self.struct_layouts.contains_key(name) {
                 return self.lower_struct_constructor(name, &groups, context);
             }
+            if self.function_templates.contains_key(name) {
+                return self.lower_generic_function_call(name, &groups, context);
+            }
             if self.functions.contains_key(name) {
                 return self.lower_named_function_call(name, &groups, context);
             }
@@ -3397,6 +3788,73 @@ impl Analyzer {
         }
         self.error("calls require a named function, constructor, associated function, or method");
         error_expr()
+    }
+
+    fn lower_generic_function_call(
+        &mut self,
+        name: &str,
+        groups: &[&[CallArg]],
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let Some((canonical, compile_group_count)) =
+            self.resolve_generic_function_instance(name, groups, &context.type_substitutions)
+        else {
+            return error_expr();
+        };
+        self.lower_named_function_call(&canonical, &groups[compile_group_count..], context)
+    }
+
+    fn resolve_generic_function_instance(
+        &mut self,
+        name: &str,
+        groups: &[&[CallArg]],
+        substitutions: &HashMap<String, Type>,
+    ) -> Option<(String, usize)> {
+        let template = self.function_templates[name].clone();
+        let compile_group_count = template.compile_groups.len();
+        if groups.len() < compile_group_count {
+            self.error(format!(
+                "generic function `{name}` requires all {compile_group_count} type argument groups"
+            ));
+            return None;
+        }
+
+        let mut source_arguments = Vec::new();
+        let mut arguments = Vec::new();
+        for (group_index, (source_group, argument_group)) in template
+            .compile_groups
+            .iter()
+            .zip(groups.iter().take(compile_group_count))
+            .enumerate()
+        {
+            if source_group.len() != argument_group.len() {
+                self.error(format!(
+                    "type argument count mismatch in group {} of `{name}`: expected {}, found {}",
+                    group_index + 1,
+                    source_group.len(),
+                    argument_group.len()
+                ));
+                return None;
+            }
+            for argument in *argument_group {
+                if argument.label.is_some() {
+                    self.error(format!(
+                        "labeled arguments are not allowed in type argument groups of `{name}`"
+                    ));
+                    return None;
+                }
+                let source_ty = self.type_argument_from_expr(&argument.value, substitutions)?;
+                let ty = self.lower_source_type(&source_ty);
+                if ty == Ty::Error {
+                    return None;
+                }
+                source_arguments.push(source_ty);
+                arguments.push(ty);
+            }
+        }
+
+        let canonical = self.ensure_function_instance(name, source_arguments, arguments)?;
+        Some((canonical, compile_group_count))
     }
 
     fn lower_bound_method_call(
@@ -3934,7 +4392,9 @@ impl Analyzer {
             ));
             return error_expr();
         }
-        let layout = self.struct_layouts[name].clone();
+        let Some(layout) = self.struct_layout_or_diagnostic(name) else {
+            return error_expr();
+        };
         let fields = self.lower_constructor_fields(
             groups[0],
             &layout.fields,
@@ -3964,7 +4424,9 @@ impl Analyzer {
             ));
             return error_expr();
         }
-        let layout = self.enum_layouts[enum_name].clone();
+        let Some(layout) = self.enum_layout_or_diagnostic(enum_name) else {
+            return error_expr();
+        };
         let variant_layout = &layout.variants[variant];
         if variant_layout.fields.is_empty() {
             self.error(format!(
@@ -4072,7 +4534,8 @@ impl Analyzer {
         expected: Option<&Ty>,
     ) -> Option<(String, usize)> {
         if let Some(Ty::Enum(enum_name)) = expected {
-            if let Some(index) = self.enum_layouts[enum_name]
+            let layout = self.enum_layout_or_diagnostic(enum_name)?;
+            if let Some(index) = layout
                 .variants
                 .iter()
                 .position(|variant| variant.name == name)
@@ -5902,6 +6365,193 @@ fn const_ir(value: &ConstValue, ty: &Ty, program: &HirProgram) -> Result<String,
     }
 }
 
+fn substitute_function_types(function: &mut Function, substitutions: &HashMap<String, Type>) {
+    for group in &mut function.groups {
+        for parameter in group {
+            substitute_type_parameters(&mut parameter.ty, substitutions);
+        }
+    }
+    if let Some(result) = &mut function.return_type {
+        substitute_type_parameters(result, substitutions);
+    }
+    if let Some(body) = &mut function.body {
+        substitute_expr_types(body, substitutions);
+    }
+}
+
+fn substitute_expr_types(expression: &mut Expr, substitutions: &HashMap<String, Type>) {
+    match expression {
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Infer => {}
+        Expr::Unary(_, operand) => substitute_expr_types(operand, substitutions),
+        Expr::Borrow { value, .. } => substitute_expr_types(value, substitutions),
+        Expr::Binary(left, _, right) | Expr::Assign(left, right) => {
+            substitute_expr_types(left, substitutions);
+            substitute_expr_types(right, substitutions);
+        }
+        Expr::Call(callee, arguments) => {
+            substitute_expr_types(callee, substitutions);
+            for argument in arguments {
+                substitute_expr_types(&mut argument.value, substitutions);
+            }
+        }
+        Expr::Member(base, _) => substitute_expr_types(base, substitutions),
+        Expr::Array(elements) => {
+            for element in elements {
+                substitute_expr_types(element, substitutions);
+            }
+        }
+        Expr::Index { base, index } => {
+            substitute_expr_types(base, substitutions);
+            substitute_expr_types(index, substitutions);
+        }
+        Expr::Block(statements, tail) => {
+            for statement in statements {
+                match statement {
+                    Stmt::Let(binding) => {
+                        if let Some(annotation) = &mut binding.annotation {
+                            substitute_type_parameters(annotation, substitutions);
+                        }
+                        substitute_expr_types(&mut binding.value, substitutions);
+                    }
+                    Stmt::Expr(expression) => substitute_expr_types(expression, substitutions),
+                }
+            }
+            if let Some(tail) = tail {
+                substitute_expr_types(tail, substitutions);
+            }
+        }
+        Expr::Closure(parameters, body) => {
+            for parameter in parameters {
+                substitute_type_parameters(&mut parameter.ty, substitutions);
+            }
+            substitute_expr_types(body, substitutions);
+        }
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            substitute_expr_types(condition, substitutions);
+            substitute_expr_types(then_branch, substitutions);
+            if let Some(else_branch) = else_branch {
+                substitute_expr_types(else_branch, substitutions);
+            }
+        }
+        Expr::Return(value) | Expr::Break(value) => {
+            if let Some(value) = value {
+                substitute_expr_types(value, substitutions);
+            }
+        }
+        Expr::While { condition, body } => {
+            substitute_expr_types(condition, substitutions);
+            substitute_expr_types(body, substitutions);
+        }
+        Expr::Loop { body } => substitute_expr_types(body, substitutions),
+        Expr::Match { scrutinee, arms } => {
+            substitute_expr_types(scrutinee, substitutions);
+            for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    substitute_expr_types(guard, substitutions);
+                }
+                substitute_expr_types(&mut arm.body, substitutions);
+            }
+        }
+    }
+}
+
+fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<String, Type>) {
+    match ty {
+        Type::Named(name, arguments) if arguments.is_empty() => {
+            if let Some(replacement) = substitutions.get(name) {
+                *ty = replacement.clone();
+            }
+        }
+        Type::Array(element, _) => substitute_type_parameters(element, substitutions),
+        Type::Named(_, arguments) => {
+            for argument in arguments {
+                substitute_type_parameters(argument, substitutions);
+            }
+        }
+        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Void | Type::Infer => {}
+    }
+}
+
+fn function_instance_name(key: &FunctionInstanceKey) -> String {
+    let mut canonical = String::from("$mono$fn$");
+    push_canonical_component(&mut canonical, &key.template);
+    canonical.push_str(&key.arguments.len().to_string());
+    canonical.push(':');
+    for argument in &key.arguments {
+        let encoded = canonical_type_encoding(argument);
+        push_canonical_component(&mut canonical, &encoded);
+    }
+    canonical
+}
+
+fn generic_validation_name(template: &str) -> String {
+    let mut name = String::from("$generic$check$");
+    push_canonical_component(&mut name, template);
+    name
+}
+
+fn generic_parameter_marker(template: &str, index: usize, parameter: &str) -> String {
+    let mut name = String::from("$generic$param$");
+    push_canonical_component(&mut name, template);
+    name.push_str(&index.to_string());
+    name.push(':');
+    push_canonical_component(&mut name, parameter);
+    name
+}
+
+fn push_canonical_component(output: &mut String, component: &str) {
+    output.push_str(&component.len().to_string());
+    output.push(':');
+    output.push_str(component);
+}
+
+fn canonical_type_encoding(ty: &Ty) -> String {
+    match ty {
+        Ty::I32 => "i32".to_owned(),
+        Ty::I64 => "i64".to_owned(),
+        Ty::U32 => "u32".to_owned(),
+        Ty::U64 => "u64".to_owned(),
+        Ty::Bool => "bool".to_owned(),
+        Ty::Unit => "unit".to_owned(),
+        Ty::Array(element, length) => {
+            let element = canonical_type_encoding(element);
+            let mut encoded = format!("array{length}:");
+            push_canonical_component(&mut encoded, &element);
+            encoded
+        }
+        Ty::Struct(name) => {
+            let mut encoded = String::from("struct");
+            push_canonical_component(&mut encoded, name);
+            encoded
+        }
+        Ty::Enum(name) => {
+            let mut encoded = String::from("enum");
+            push_canonical_component(&mut encoded, name);
+            encoded
+        }
+        Ty::Never => "never".to_owned(),
+        Ty::Function(function) => {
+            let mut encoded = String::from("function");
+            encoded.push_str(&function.groups.len().to_string());
+            encoded.push(':');
+            for group in &function.groups {
+                encoded.push_str(&group.len().to_string());
+                encoded.push(':');
+                for parameter in group {
+                    push_canonical_component(&mut encoded, &canonical_type_encoding(parameter));
+                }
+            }
+            push_canonical_component(&mut encoded, &canonical_type_encoding(&function.result));
+            encoded
+        }
+        Ty::Error => "error".to_owned(),
+    }
+}
+
 fn substitute_self_type(ty: &mut Type, target: &str) {
     match ty {
         Type::Array(element, _) => substitute_self_type(element, target),
@@ -5913,7 +6563,7 @@ fn substitute_self_type(ty: &mut Type, target: &str) {
                 substitute_self_type(argument, target);
             }
         }
-        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Void => {}
+        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Void | Type::Infer => {}
     }
 }
 
@@ -5967,6 +6617,7 @@ mod tests {
     fn function(name: &str, groups: Vec<Vec<Param>>, result: Type, body: Expr) -> Item {
         Item::Function(Function {
             name: name.to_owned(),
+            compile_groups: Vec::new(),
             groups,
             return_type: Some(result),
             body: Some(body),
@@ -5983,6 +6634,118 @@ mod tests {
 
     fn arg(value: Expr) -> CallArg {
         CallArg { label: None, value }
+    }
+
+    #[test]
+    fn monomorphizes_and_deduplicates_explicit_generic_function_calls() {
+        let program = crate::parser::parse(
+            "let identity(T: type)(move value: T): T = value\n\
+             let main(): i32 = identity(i32)(40) + identity(i32)(2)\n",
+        )
+        .expect("generic source must parse");
+        let mut analyzer = Analyzer::new(&program);
+        let hir = analyzer.analyze();
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        assert!(hir.is_some());
+        assert_eq!(analyzer.function_instances.len(), 1);
+        let instance = analyzer
+            .function_instances
+            .values()
+            .next()
+            .expect("identity instance");
+        assert_eq!(instance.key.arguments, vec![Ty::I32]);
+        assert!(instance.canonical.starts_with("$mono$fn$"));
+    }
+
+    #[test]
+    fn template_validation_rolls_back_temporary_instances_and_emits_closed_ir() {
+        let program = crate::parser::parse(
+            "let identity(T: type)(move value: T): T = value\n\
+             let wrap(T: type)(move value: T): T = identity(T)(value)\n\
+             let main(): i32 = wrap(i32)(42)\n",
+        )
+        .expect("generic composition must parse");
+        let mut analyzer = Analyzer::new(&program);
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected validation diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        assert!(analyzer.function_instances.is_empty());
+        assert!(analyzer.function_instance_names.is_empty());
+        assert!(analyzer.function_type_substitutions.is_empty());
+        assert!(analyzer
+            .function_order
+            .iter()
+            .all(|name| !name.contains("$generic$")));
+
+        let markers: HashSet<_> = analyzer.abstract_type_parameters.keys().cloned().collect();
+        let hir = analyzer.analyze().expect("closed program HIR");
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected lowering diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        assert_eq!(analyzer.function_instances.len(), 2);
+        assert!(hir
+            .functions
+            .iter()
+            .all(|function| !function.name.contains("$generic$")));
+        assert!(analyzer.function_instances.values().all(|instance| {
+            instance
+                .key
+                .arguments
+                .iter()
+                .all(|argument| match argument {
+                    Ty::Struct(name) | Ty::Enum(name) => !markers.contains(name),
+                    _ => true,
+                })
+        }));
+
+        let ir = compile(&program).expect("closed generic composition must compile");
+        for marker in markers {
+            assert!(!ir.contains(&marker));
+            assert!(!ir.contains(&hex_name(&marker)));
+        }
+    }
+
+    #[test]
+    fn validation_rollback_does_not_keep_inferred_helpers_or_drop_real_instances() {
+        let source = "let identity(T: type)(move value: T): T = value\n\
+                      let helper(value: i32) = identity(i32)(value)\n\
+                      let preserve(T: type)(move value: T): T = { helper(0); value }\n\
+                      let main(): i32 = preserve(i32)(42)\n";
+        let ir = compile_text(source).expect("validation rollback program must compile");
+        let identity = function_instance_name(&FunctionInstanceKey {
+            template: "identity".into(),
+            arguments: vec![Ty::I32],
+        });
+        let symbol = function_symbol(&identity);
+        assert!(ir.contains(&format!("define internal i32 @{symbol}(i32 %arg.0)")));
+    }
+
+    #[test]
+    fn creates_distinct_stable_names_for_generic_function_instances() {
+        let i32_key = FunctionInstanceKey {
+            template: "identity".into(),
+            arguments: vec![Ty::I32],
+        };
+        let bool_key = FunctionInstanceKey {
+            template: "identity".into(),
+            arguments: vec![Ty::Bool],
+        };
+        assert_eq!(
+            function_instance_name(&i32_key),
+            function_instance_name(&i32_key)
+        );
+        assert_ne!(
+            function_instance_name(&i32_key),
+            function_instance_name(&bool_key)
+        );
     }
 
     #[test]

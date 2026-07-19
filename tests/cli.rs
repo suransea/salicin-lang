@@ -597,6 +597,55 @@ fn m1_inherent_member_errors_report_their_cause() {
 }
 
 #[test]
+fn m2_generic_function_programs_run_with_expected_result() {
+    for name in [
+        "generic_identity.sali",
+        "generic_multiple_instances.sali",
+        "generic_type_application_partial.sali",
+        "generic_composition.sali",
+        "generic_same_instance_recursion.sali",
+        "generic_call_inside_closure.sali",
+        "generic_validation_rollback.sali",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run M2 generic-function fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn m2_generic_function_errors_report_their_cause() {
+    for (name, expected) in [
+        ("generic_unused_invalid_body.sali", "type mismatch"),
+        ("generic_parameter_moved_twice.sali", "moved"),
+        ("generic_missing_return_type.sali", "return type"),
+        ("generic_unconstrained_member.sali", "generic parameter"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid M2 generic-function fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected),
+            "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn output_must_not_overwrite_the_source() {
     let temporary = TestDirectory::new();
     let source = temporary.join("keep.sali");

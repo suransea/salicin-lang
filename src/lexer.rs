@@ -7,6 +7,7 @@ pub enum TokenKind {
     Copy,
     Move,
     Borrow,
+    Type,
     Do,
     If,
     Else,
@@ -283,6 +284,7 @@ impl Lexer {
             "copy" => TokenKind::Copy,
             "move" => TokenKind::Move,
             "borrow" => TokenKind::Borrow,
+            "type" => TokenKind::Type,
             "do" => TokenKind::Do,
             "if" => TokenKind::If,
             "else" => TokenKind::Else,
@@ -386,8 +388,9 @@ mod tests {
 
     #[test]
     fn recognizes_extend_as_a_keyword() {
-        let tokens = lex("extend A { let answer = 42 }").unwrap();
+        let tokens = lex("extend A { let identity(T: type)(value: T) = value }").unwrap();
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Extend));
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Type));
     }
 
     #[test]

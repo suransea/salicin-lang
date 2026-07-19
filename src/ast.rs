@@ -28,12 +28,14 @@ pub enum ExtendMember {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructDef {
     pub name: String,
+    pub compile_groups: Vec<Vec<CompileParam>>,
     pub fields: Vec<Field>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnumDef {
     pub name: String,
+    pub compile_groups: Vec<Vec<CompileParam>>,
     pub variants: Vec<VariantDef>,
 }
 
@@ -59,11 +61,25 @@ pub struct Field {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     pub name: String,
+    /// Compile-time groups retain their source grouping but are erased before
+    /// runtime calling convention lowering.
+    pub compile_groups: Vec<Vec<CompileParam>>,
     /// Parameter groups are retained in the AST so later lowering can implement
     /// partial application without changing the parser.
     pub groups: Vec<Vec<Param>>,
     pub return_type: Option<Type>,
     pub body: Option<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompileParam {
+    pub name: String,
+    pub kind: CompileParamKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompileParamKind {
+    Type,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -90,6 +106,7 @@ pub enum Type {
     U64,
     Bool,
     Void,
+    Infer,
     Array(Box<Type>, u64),
     Named(String, Vec<Type>),
 }
@@ -152,6 +169,7 @@ pub enum Expr {
     Integer(i128),
     Bool(bool),
     Name(String),
+    Infer,
     Unary(UnaryOp, Box<Expr>),
     Borrow {
         mutable: bool,
