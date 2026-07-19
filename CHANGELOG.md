@@ -18,6 +18,11 @@ M1 development is in progress.
   single-use nominal move captures.
 - Added complete grouped calls for curried capturing closures, with explicit diagnostics for
   unsupported partial application.
+- Added `while`, value-yielding `loop`, and value-carrying `break` expressions.
+- Added conservative loop back-edge checking that rejects moving bindings declared outside the
+  loop body.
+- Added inline fixed `Array(T, N)` values, array literals, and runtime-checked `i32` indexing;
+  the initial subset is limited to `Copy` elements and read-only indexing.
 
 ## 0.1.0 - 2026-07-20
 

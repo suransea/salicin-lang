@@ -11,6 +11,9 @@ pub enum TokenKind {
     If,
     Else,
     Return,
+    While,
+    Loop,
+    Break,
     Struct,
     Enum,
     Match,
@@ -20,6 +23,8 @@ pub enum TokenKind {
     Integer(i128),
     LParen,
     RParen,
+    LBracket,
+    RBracket,
     LBrace,
     RBrace,
     Colon,
@@ -75,7 +80,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
         index: 0,
         line: 1,
         column: 1,
-        paren_depth: 0,
+        delimiter_depth: 0,
     };
     lexer.run()
 }
@@ -85,7 +90,7 @@ struct Lexer {
     index: usize,
     line: usize,
     column: usize,
-    paren_depth: usize,
+    delimiter_depth: usize,
 }
 
 impl Lexer {
@@ -121,12 +126,20 @@ impl Lexer {
                 self.bump();
                 match ch {
                     '(' => {
-                        self.paren_depth += 1;
+                        self.delimiter_depth += 1;
                         TokenKind::LParen
                     }
                     ')' => {
-                        self.paren_depth = self.paren_depth.saturating_sub(1);
+                        self.delimiter_depth = self.delimiter_depth.saturating_sub(1);
                         TokenKind::RParen
+                    }
+                    '[' => {
+                        self.delimiter_depth += 1;
+                        TokenKind::LBracket
+                    }
+                    ']' => {
+                        self.delimiter_depth = self.delimiter_depth.saturating_sub(1);
+                        TokenKind::RBracket
                     }
                     '{' => TokenKind::LBrace,
                     '}' => TokenKind::RBrace,
@@ -201,7 +214,7 @@ impl Lexer {
             )
         });
 
-        if self.paren_depth == 0 && !continued {
+        if self.delimiter_depth == 0 && !continued {
             tokens.push(Token {
                 kind: TokenKind::Newline,
                 line,
@@ -273,6 +286,9 @@ impl Lexer {
             "if" => TokenKind::If,
             "else" => TokenKind::Else,
             "return" => TokenKind::Return,
+            "while" => TokenKind::While,
+            "loop" => TokenKind::Loop,
+            "break" => TokenKind::Break,
             "struct" => TokenKind::Struct,
             "enum" => TokenKind::Enum,
             "match" => TokenKind::Match,
@@ -342,6 +358,28 @@ mod tests {
             .filter(|token| token.kind == TokenKind::Newline)
             .count();
         assert_eq!(newlines, 2);
+    }
+
+    #[test]
+    fn recognizes_loops_and_suppresses_newlines_in_brackets() {
+        let tokens = lex("while true { loop { break [\n  40,\n  2\n][\n0\n] } }\n").unwrap();
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::While));
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Loop));
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Break));
+        assert_eq!(
+            tokens
+                .iter()
+                .filter(|token| token.kind == TokenKind::LBracket)
+                .count(),
+            2
+        );
+        assert_eq!(
+            tokens
+                .iter()
+                .filter(|token| token.kind == TokenKind::Newline)
+                .count(),
+            1
+        );
     }
 
     #[test]

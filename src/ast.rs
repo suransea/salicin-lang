@@ -76,6 +76,7 @@ pub enum Type {
     U64,
     Bool,
     Void,
+    Array(Box<Type>, u64),
     Named(String, Vec<Type>),
 }
 
@@ -146,6 +147,11 @@ pub enum Expr {
     Assign(Box<Expr>, Box<Expr>),
     Call(Box<Expr>, Vec<CallArg>),
     Member(Box<Expr>, String),
+    Array(Vec<Expr>),
+    Index {
+        base: Box<Expr>,
+        index: Box<Expr>,
+    },
     Block(Vec<Stmt>, Option<Box<Expr>>),
     Closure(Vec<Param>, Box<Expr>),
     If {
@@ -154,6 +160,14 @@ pub enum Expr {
         else_branch: Option<Box<Expr>>,
     },
     Return(Option<Box<Expr>>),
+    While {
+        condition: Box<Expr>,
+        body: Box<Expr>,
+    },
+    Loop {
+        body: Box<Expr>,
+    },
+    Break(Option<Box<Expr>>),
     Match {
         scrutinee: Box<Expr>,
         arms: Vec<MatchArm>,

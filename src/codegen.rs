@@ -58,6 +58,7 @@ enum Ty {
     U64,
     Bool,
     Unit,
+    Array(Box<Ty>, u64),
     Struct(String),
     Enum(String),
     Never,
@@ -90,6 +91,7 @@ impl fmt::Display for Ty {
             Self::U64 => f.write_str("u64"),
             Self::Bool => f.write_str("bool"),
             Self::Unit => f.write_str("()"),
+            Self::Array(element, length) => write!(f, "Array({element}, {length})"),
             Self::Struct(name) | Self::Enum(name) => f.write_str(name),
             Self::Never => f.write_str("never"),
             Self::Error => f.write_str("<error>"),
@@ -260,6 +262,12 @@ enum HirExprKind {
     Integer(i128),
     Bool(bool),
     Unit,
+    Array(Vec<HirExpr>),
+    Index {
+        base: Box<HirExpr>,
+        index: HirIndex,
+        length: u64,
+    },
     Read {
         place: HirPlace,
         kind: HirReadKind,
@@ -307,10 +315,24 @@ enum HirExprKind {
         else_branch: Option<Box<HirExpr>>,
     },
     Return(Option<Box<HirExpr>>),
+    While {
+        condition: Box<HirExpr>,
+        body: Box<HirExpr>,
+    },
+    Loop {
+        body: Box<HirExpr>,
+    },
+    Break(Option<Box<HirExpr>>),
     Match {
         scrutinee: Box<HirExpr>,
         arms: Vec<HirMatchArm>,
     },
+}
+
+#[derive(Debug, Clone)]
+enum HirIndex {
+    Static(u64),
+    Dynamic(Box<HirExpr>),
 }
 
 #[derive(Debug, Clone)]
@@ -515,6 +537,13 @@ struct ClosureCaptureUse {
     mode: ClosureCaptureMode,
 }
 
+struct LoopFrame {
+    result_ty: Option<Ty>,
+    unit_only: bool,
+    scope_depth: usize,
+    break_flows: Vec<FlowState>,
+}
+
 struct LowerCtx {
     scopes: Vec<ScopeFrame>,
     flow: FlowState,
@@ -523,6 +552,7 @@ struct LowerCtx {
     declared_result: Option<Ty>,
     returned_types: Vec<Ty>,
     function_name: Option<String>,
+    loops: Vec<LoopFrame>,
 }
 
 impl LowerCtx {
@@ -535,6 +565,7 @@ impl LowerCtx {
             declared_result: result,
             returned_types: Vec::new(),
             function_name: Some(name.to_owned()),
+            loops: Vec::new(),
         }
     }
 
@@ -547,6 +578,7 @@ impl LowerCtx {
             declared_result: None,
             returned_types: Vec::new(),
             function_name: None,
+            loops: Vec::new(),
         }
     }
 
@@ -585,6 +617,24 @@ impl LowerCtx {
         flow.moves
             .retain(|place, _| !scope.locals.contains(&place.local));
         flow
+    }
+
+    fn flow_without_scopes_from(&self, scope_depth: usize, mut flow: FlowState) -> FlowState {
+        for scope in &self.scopes[scope_depth..] {
+            for loan in &scope.lexical_loans {
+                flow.loans.remove(loan);
+            }
+            flow.moves
+                .retain(|place, _| !scope.locals.contains(&place.local));
+        }
+        flow
+    }
+
+    fn outer_local_ids(&self) -> HashSet<LocalId> {
+        self.scopes
+            .iter()
+            .flat_map(|scope| scope.locals.iter().copied())
+            .collect()
     }
 
     fn insert_local(&mut self, name: String, local: LocalInfo) -> bool {
@@ -916,6 +966,26 @@ impl Analyzer {
             Type::U64 => Ty::U64,
             Type::Bool => Ty::Bool,
             Type::Void => Ty::Unit,
+            Type::Array(element, length) => {
+                let element = self.lower_source_type(element);
+                if *length > i32::MAX as u64 {
+                    self.error(format!(
+                        "array length {length} exceeds the first-version limit of {}",
+                        i32::MAX
+                    ));
+                    Ty::Error
+                } else if element == Ty::Unit {
+                    self.error("array element type `()` is not supported in the first version");
+                    Ty::Error
+                } else if !is_copy_type(&element) {
+                    self.error(format!(
+                        "array element type `{element}` must implement Copy in the first version"
+                    ));
+                    Ty::Error
+                } else {
+                    Ty::Array(Box::new(element), *length)
+                }
+            }
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => Ty::Unit,
             Type::Named(name, arguments) if arguments.is_empty() => {
                 if self.struct_defs.contains_key(name) {
@@ -1147,6 +1217,7 @@ impl Analyzer {
                 ty: Ty::Unit,
                 kind: HirExprKind::Unit,
             },
+            Expr::Array(elements) => self.lower_array_literal(elements, expected, context),
             Expr::Name(name) => {
                 if let Some(local) = context.lookup(name).cloned() {
                     if local.partial.is_some() {
@@ -1200,6 +1271,10 @@ impl Analyzer {
                 }
             }
             Expr::Borrow { mutable, value } => {
+                if matches!(value.as_ref(), Expr::Index { .. }) {
+                    self.error("borrowing an indexed array element is not supported yet");
+                    return error_expr();
+                }
                 let Some(mut place) = self.lower_place(value, context) else {
                     return error_expr();
                 };
@@ -1292,6 +1367,11 @@ impl Analyzer {
                 self.lower_binary(left, *operator, right, expected, context)
             }
             Expr::Assign(place, value) => {
+                if matches!(place.as_ref(), Expr::Index { .. }) {
+                    self.error("indexed array assignment is not supported yet");
+                    let _ = self.lower_expr(value, None, context);
+                    return error_expr();
+                }
                 let Some(place) = self.lower_place(place, context) else {
                     return error_expr();
                 };
@@ -1307,6 +1387,7 @@ impl Analyzer {
             }
             Expr::Call(_, _) => self.lower_call(expression, expected, context),
             Expr::Member(base, field) => self.lower_member(base, field, context),
+            Expr::Index { base, index } => self.lower_index(base, index, context),
             Expr::Block(statements, tail) => {
                 context.push_scope();
                 let mut lowered_statements = Vec::new();
@@ -1531,6 +1612,9 @@ impl Analyzer {
                     kind: HirExprKind::Return(value),
                 }
             }
+            Expr::While { condition, body } => self.lower_while(condition, body, context),
+            Expr::Loop { body } => self.lower_loop(body, expected, context),
+            Expr::Break(value) => self.lower_break(value.as_deref(), context),
             Expr::Match { scrutinee, arms } => self.lower_match(scrutinee, arms, expected, context),
         };
 
@@ -1550,6 +1634,240 @@ impl Analyzer {
         context.flow = entry.clone();
         let expression = self.lower_expr(expression, expected, context);
         (expression, context.flow.clone())
+    }
+
+    fn lower_array_literal(
+        &mut self,
+        elements: &[Expr],
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let expected_array = match expected {
+            Some(Ty::Array(element, length)) => Some((element.as_ref().clone(), *length)),
+            Some(Ty::Error) => None,
+            Some(other) => {
+                self.error(format!(
+                    "array literal cannot be used where `{other}` is expected"
+                ));
+                None
+            }
+            None => None,
+        };
+
+        if let Some((element_ty, length)) = expected_array {
+            if elements.len() as u64 != length {
+                self.error(format!(
+                    "array literal length mismatch: expected {length}, found {}",
+                    elements.len()
+                ));
+            }
+            let elements = elements
+                .iter()
+                .map(|element| self.lower_expr(element, Some(&element_ty), context))
+                .collect();
+            return HirExpr {
+                ty: Ty::Array(Box::new(element_ty), length),
+                kind: HirExprKind::Array(elements),
+            };
+        }
+
+        let Some((first, rest)) = elements.split_first() else {
+            self.error("empty array literal requires an expected array type");
+            return error_expr();
+        };
+        let first = self.lower_expr(first, None, context);
+        let element_ty = first.ty.clone();
+        if element_ty == Ty::Unit {
+            self.error("array element type `()` is not supported in the first version");
+        } else if !is_copy_type(&element_ty) {
+            self.error(format!(
+                "array element type `{element_ty}` must implement Copy in the first version"
+            ));
+        }
+        let mut lowered = vec![first];
+        lowered.extend(
+            rest.iter()
+                .map(|element| self.lower_expr(element, Some(&element_ty), context)),
+        );
+        HirExpr {
+            ty: Ty::Array(Box::new(element_ty), elements.len() as u64),
+            kind: HirExprKind::Array(lowered),
+        }
+    }
+
+    fn lower_index(&mut self, base: &Expr, index: &Expr, context: &mut LowerCtx) -> HirExpr {
+        let base = self.lower_expr(base, None, context);
+        let Ty::Array(element, length) = &base.ty else {
+            self.error(format!(
+                "array index requires an array value, found `{}`",
+                base.ty
+            ));
+            let _ = self.lower_expr(index, None, context);
+            return error_expr();
+        };
+        let element_ty = element.as_ref().clone();
+        let length = *length;
+        let lowered_index = self.lower_expr(index, None, context);
+        self.require_same_type(&lowered_index.ty, &Ty::I32, "array index");
+
+        let index = match integer_literal_value(index) {
+            Some(value) => {
+                if value < 0 || u64::try_from(value).map_or(true, |value| value >= length) {
+                    self.error(format!(
+                        "array index {value} is out of bounds for length {length}"
+                    ));
+                    HirIndex::Static(0)
+                } else {
+                    HirIndex::Static(value as u64)
+                }
+            }
+            None => HirIndex::Dynamic(Box::new(lowered_index)),
+        };
+        HirExpr {
+            ty: element_ty,
+            kind: HirExprKind::Index {
+                base: Box::new(base),
+                index,
+                length,
+            },
+        }
+    }
+
+    fn lower_while(&mut self, condition: &Expr, body: &Expr, context: &mut LowerCtx) -> HirExpr {
+        let entry_flow = context.flow.clone();
+        let outer_locals = context.outer_local_ids();
+        context.loops.push(LoopFrame {
+            result_ty: Some(Ty::Unit),
+            unit_only: true,
+            scope_depth: context.scopes.len(),
+            break_flows: Vec::new(),
+        });
+
+        let condition = self.lower_expr(condition, Some(&Ty::Bool), context);
+        let condition_flow = context.flow.clone();
+        let body = self.lower_expr(body, Some(&Ty::Unit), context);
+        let backedge_flow = context.flow.clone();
+        let frame = context.loops.pop().expect("while frame");
+
+        if backedge_flow.reachable {
+            self.reject_loop_carried_moves(&entry_flow, &backedge_flow, &outer_locals);
+        }
+        let mut exit_flows = frame.break_flows;
+        exit_flows.push(condition_flow);
+        if backedge_flow.reachable {
+            exit_flows.push(backedge_flow);
+        }
+        context.flow = FlowState::join(&exit_flows);
+        HirExpr {
+            ty: Ty::Unit,
+            kind: HirExprKind::While {
+                condition: Box::new(condition),
+                body: Box::new(body),
+            },
+        }
+    }
+
+    fn lower_loop(
+        &mut self,
+        body: &Expr,
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let entry_flow = context.flow.clone();
+        let outer_locals = context.outer_local_ids();
+        context.loops.push(LoopFrame {
+            result_ty: expected.cloned(),
+            unit_only: false,
+            scope_depth: context.scopes.len(),
+            break_flows: Vec::new(),
+        });
+        let body = self.lower_expr(body, Some(&Ty::Unit), context);
+        let backedge_flow = context.flow.clone();
+        let frame = context.loops.pop().expect("loop frame");
+
+        if backedge_flow.reachable {
+            self.reject_loop_carried_moves(&entry_flow, &backedge_flow, &outer_locals);
+        }
+        let has_reachable_break = !frame.break_flows.is_empty();
+        context.flow = FlowState::join(&frame.break_flows);
+        let ty = if has_reachable_break {
+            frame.result_ty.unwrap_or(Ty::Unit)
+        } else {
+            Ty::Never
+        };
+        HirExpr {
+            ty,
+            kind: HirExprKind::Loop {
+                body: Box::new(body),
+            },
+        }
+    }
+
+    fn lower_break(&mut self, value: Option<&Expr>, context: &mut LowerCtx) -> HirExpr {
+        let Some(frame) = context.loops.last() else {
+            self.error("`break` cannot be used outside a `while` or `loop`");
+            if let Some(value) = value {
+                let _ = self.lower_expr(value, None, context);
+            }
+            return error_expr();
+        };
+        let unit_only = frame.unit_only;
+        let expected = frame.result_ty.clone();
+        let scope_depth = frame.scope_depth;
+
+        if unit_only && value.is_some() {
+            self.error("`break` in a `while` loop cannot carry a value");
+        }
+        let value = value.map(|value| {
+            Box::new(self.lower_expr(
+                value,
+                (!unit_only).then_some(expected.as_ref()).flatten(),
+                context,
+            ))
+        });
+        let break_ty = value.as_ref().map_or(Ty::Unit, |value| value.ty.clone());
+        if !unit_only {
+            let result_ty = match expected {
+                Some(expected) => self.unify_types(&expected, &break_ty, "break values"),
+                None => break_ty,
+            };
+            context.loops.last_mut().expect("break frame").result_ty = Some(result_ty);
+        }
+
+        if context.flow.reachable {
+            let break_flow = context.flow_without_scopes_from(scope_depth, context.flow.clone());
+            context
+                .loops
+                .last_mut()
+                .expect("break frame")
+                .break_flows
+                .push(break_flow);
+        }
+        context.flow.reachable = false;
+        HirExpr {
+            ty: Ty::Never,
+            kind: HirExprKind::Break(value),
+        }
+    }
+
+    fn reject_loop_carried_moves(
+        &mut self,
+        entry: &FlowState,
+        backedge: &FlowState,
+        outer_locals: &HashSet<LocalId>,
+    ) {
+        let mut reported = HashSet::new();
+        for (place, status) in &backedge.moves {
+            if !outer_locals.contains(&place.local)
+                || entry.moves.get(place) == Some(status)
+                || !reported.insert(place.local)
+            {
+                continue;
+            }
+            self.error(
+                "move of an outer value may cross a loop backedge; reinitialize it before the next iteration or move it only on a break/return path",
+            );
+        }
     }
 
     fn lower_local_closure(
@@ -1788,6 +2106,13 @@ impl Analyzer {
                 self.scan_simple_closure_captures(left, bound, outer, captures)
                     & self.scan_simple_closure_captures(right, bound, outer, captures)
             }
+            Expr::Array(elements) => elements.iter().fold(true, |valid, element| {
+                self.scan_simple_closure_captures(element, bound, outer, captures) & valid
+            }),
+            Expr::Index { base, index } => {
+                self.scan_simple_closure_captures(base, bound, outer, captures)
+                    & self.scan_simple_closure_captures(index, bound, outer, captures)
+            }
             Expr::Assign(place, value) => {
                 let mut valid = self.scan_simple_closure_captures(value, bound, outer, captures);
                 if let Some(name) = place_root_name(place) {
@@ -1833,6 +2158,14 @@ impl Analyzer {
                 *bound = saved;
                 valid
             }
+            Expr::While { condition, body } => {
+                self.scan_simple_closure_captures(condition, bound, outer, captures)
+                    & self.scan_simple_closure_captures(body, bound, outer, captures)
+            }
+            Expr::Loop { body } => self.scan_simple_closure_captures(body, bound, outer, captures),
+            Expr::Break(value) => value.as_ref().is_none_or(|value| {
+                self.scan_simple_closure_captures(value, bound, outer, captures)
+            }),
             _ => {
                 self.error(
                     "closure body form requires mutable or consuming capture analysis, which is not supported yet",
@@ -3427,10 +3760,11 @@ fn record_closure_capture(
 }
 
 fn is_copy_type(ty: &Ty) -> bool {
-    matches!(
-        ty,
-        Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool | Ty::Unit | Ty::Never | Ty::Error
-    )
+    match ty {
+        Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool | Ty::Unit | Ty::Never | Ty::Error => true,
+        Ty::Array(element, _) => is_copy_type(element),
+        Ty::Struct(_) | Ty::Enum(_) | Ty::Function(_) => false,
+    }
 }
 
 fn effective_pass_mode(mode: PassMode, ty: &Ty) -> PassMode {
@@ -3464,6 +3798,7 @@ fn integer_fits(value: i128, ty: &Ty) -> bool {
 fn nominal_name(ty: &Ty) -> Option<&str> {
     match ty {
         Ty::Struct(name) | Ty::Enum(name) => Some(name),
+        Ty::Array(element, _) => nominal_name(element),
         _ => None,
     }
 }
@@ -3474,6 +3809,19 @@ fn is_unconstrained_integer(expression: &Expr) -> bool {
         Expr::Unary(UnaryOp::Neg, operand) => matches!(operand.as_ref(), Expr::Integer(_)),
         Expr::Block(_, Some(tail)) => is_unconstrained_integer(tail),
         _ => false,
+    }
+}
+
+fn integer_literal_value(expression: &Expr) -> Option<i128> {
+    match expression {
+        Expr::Integer(value) => Some(*value),
+        Expr::Unary(UnaryOp::Neg, operand) => {
+            let Expr::Integer(value) = operand.as_ref() else {
+                return None;
+            };
+            value.checked_neg()
+        }
+        _ => None,
     }
 }
 
@@ -3562,6 +3910,36 @@ impl ConstantEvaluator<'_> {
             HirExprKind::Integer(value) => Some(ConstValue::Integer(*value)),
             HirExprKind::Bool(value) => Some(ConstValue::Bool(*value)),
             HirExprKind::Unit => Some(ConstValue::Unit),
+            HirExprKind::Array(elements) => Some(ConstValue::Aggregate(
+                elements
+                    .iter()
+                    .map(|element| self.evaluate_expr(element, locals))
+                    .collect::<Option<Vec<_>>>()?,
+            )),
+            HirExprKind::Index { base, index, .. } => {
+                let ConstValue::Aggregate(elements) = self.evaluate_expr(base, locals)? else {
+                    self.error("invalid array value in constant expression");
+                    return None;
+                };
+                let index = match index {
+                    HirIndex::Static(index) => i128::from(*index),
+                    HirIndex::Dynamic(index) => {
+                        let ConstValue::Integer(index) = self.evaluate_expr(index, locals)? else {
+                            self.error("invalid array index in constant expression");
+                            return None;
+                        };
+                        index
+                    }
+                };
+                let Ok(index) = usize::try_from(index) else {
+                    self.error("array index is out of bounds in constant expression");
+                    return None;
+                };
+                elements.get(index).cloned().or_else(|| {
+                    self.error("array index is out of bounds in constant expression");
+                    None
+                })
+            }
             HirExprKind::Read { place, .. } => {
                 let mut value = locals.get(&place.local).cloned().or_else(|| {
                     self.error("invalid local in constant expression");
@@ -3694,6 +4072,9 @@ impl ConstantEvaluator<'_> {
             | HirExprKind::LocalClosure(_)
             | HirExprKind::Function(_)
             | HirExprKind::Return(_)
+            | HirExprKind::While { .. }
+            | HirExprKind::Loop { .. }
+            | HirExprKind::Break(_)
             | HirExprKind::Match { .. } => {
                 self.error("global initializer is not a compile-time constant");
                 None
@@ -3787,7 +4168,9 @@ impl<'a> Emitter<'a> {
 
     fn emit_module(&self) -> Result<String, Diagnostic> {
         let mut output = String::new();
-        output.push_str("; ModuleID = 'salicin'\nsource_filename = \"salicin\"\n\n");
+        output.push_str(
+            "; ModuleID = 'salicin'\nsource_filename = \"salicin\"\n\ndeclare void @llvm.trap()\n\n",
+        );
 
         for layout in &self.program.structs {
             let fields = layout
@@ -3895,6 +4278,12 @@ impl Operand {
     }
 }
 
+#[derive(Clone)]
+struct EmitLoopTarget {
+    break_label: String,
+    result: Option<(Ty, String)>,
+}
+
 struct FunctionEmitter<'a> {
     function: &'a HirFunction,
     program: &'a HirProgram,
@@ -3903,6 +4292,8 @@ struct FunctionEmitter<'a> {
     next_label: usize,
     locals: HashMap<LocalId, String>,
     partial_captures: HashMap<LocalId, Vec<Option<(Ty, String)>>>,
+    entry_allocas: String,
+    loops: Vec<EmitLoopTarget>,
     current_label: String,
     terminated: bool,
 }
@@ -3917,6 +4308,8 @@ impl<'a> FunctionEmitter<'a> {
             next_label: 0,
             locals: HashMap::new(),
             partial_captures: HashMap::new(),
+            entry_allocas: String::new(),
+            loops: Vec::new(),
             current_label: "entry".to_owned(),
             terminated: false,
         }
@@ -3945,6 +4338,7 @@ impl<'a> FunctionEmitter<'a> {
             emitted_parameter_count += 1;
         }
         self.output.push_str(") {\nentry:\n");
+        let entry_alloca_offset = self.output.len();
 
         for (index, parameter) in self.function.params.iter().enumerate() {
             if parameter.ty == Ty::Unit {
@@ -3954,12 +4348,8 @@ impl<'a> FunctionEmitter<'a> {
                 self.locals.insert(parameter.id, format!("%arg.{index}"));
                 continue;
             }
-            let pointer = self.fresh_register();
             let ty = llvm_value_type(&parameter.ty)?;
-            self.instruction(format!(
-                "{pointer} = alloca {ty} ; {}",
-                llvm_comment(&parameter.name)
-            ));
+            let pointer = self.entry_alloca(&ty, &llvm_comment(&parameter.name));
             self.instruction(format!("store {ty} %arg.{index}, ptr {pointer}"));
             self.locals.insert(parameter.id, pointer);
         }
@@ -3974,6 +4364,8 @@ impl<'a> FunctionEmitter<'a> {
                 }
             }
         }
+        self.output
+            .insert_str(entry_alloca_offset, &self.entry_allocas);
         self.output.push_str("}\n");
         Ok(std::mem::take(&mut self.output))
     }
@@ -3992,6 +4384,32 @@ impl<'a> FunctionEmitter<'a> {
                 value: Some(if *value { "1" } else { "0" }.to_owned()),
             }),
             HirExprKind::Unit => Ok(Operand::unit()),
+            HirExprKind::Array(elements) => {
+                let aggregate_ty = llvm_value_type(&expression.ty)?;
+                let mut aggregate = "zeroinitializer".to_owned();
+                for (index, element) in elements.iter().enumerate() {
+                    let element = self.emit_expr(element)?;
+                    if self.terminated {
+                        return Ok(Operand::never());
+                    }
+                    let register = self.fresh_register();
+                    self.instruction(format!(
+                        "{register} = insertvalue {aggregate_ty} {aggregate}, {} {}, {index}",
+                        llvm_value_type(&element.ty)?,
+                        element.value()?
+                    ));
+                    aggregate = register;
+                }
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: Some(aggregate),
+                })
+            }
+            HirExprKind::Index {
+                base,
+                index,
+                length,
+            } => self.emit_index(expression, base, index, *length),
             HirExprKind::Read { place, kind } => {
                 let _ = kind;
                 if expression.ty == Ty::Unit {
@@ -4290,11 +4708,8 @@ impl<'a> FunctionEmitter<'a> {
                                     if self.terminated {
                                         break;
                                     }
-                                    let pointer = self.fresh_register();
                                     let ty = llvm_value_type(&value.ty)?;
-                                    self.instruction(format!(
-                                        "{pointer} = alloca {ty} ; closure capture"
-                                    ));
+                                    let pointer = self.entry_alloca(&ty, "closure capture");
                                     self.instruction(format!(
                                         "store {ty} {}, ptr {pointer}",
                                         value.value()?
@@ -4327,11 +4742,8 @@ impl<'a> FunctionEmitter<'a> {
                                         stored.push(None);
                                         continue;
                                     }
-                                    let pointer = self.fresh_register();
                                     let ty = llvm_value_type(&capture.ty)?;
-                                    self.instruction(format!(
-                                        "{pointer} = alloca {ty} ; partial capture"
-                                    ));
+                                    let pointer = self.entry_alloca(&ty, "partial capture");
                                     self.instruction(format!(
                                         "store {ty} {}, ptr {pointer}",
                                         capture.value()?
@@ -4353,12 +4765,8 @@ impl<'a> FunctionEmitter<'a> {
                             if binding.ty == Ty::Unit {
                                 continue;
                             }
-                            let pointer = self.fresh_register();
                             let ty = llvm_value_type(&binding.ty)?;
-                            self.instruction(format!(
-                                "{pointer} = alloca {ty} ; {}",
-                                llvm_comment(&binding.name)
-                            ));
+                            let pointer = self.entry_alloca(&ty, &llvm_comment(&binding.name));
                             self.instruction(format!(
                                 "store {ty} {}, ptr {pointer}",
                                 value.value()?
@@ -4400,8 +4808,170 @@ impl<'a> FunctionEmitter<'a> {
                 }
                 Ok(Operand::never())
             }
+            HirExprKind::While { condition, body } => self.emit_while(condition, body),
+            HirExprKind::Loop { body } => self.emit_loop(expression, body),
+            HirExprKind::Break(value) => self.emit_break(value.as_deref()),
             HirExprKind::Match { scrutinee, arms } => self.emit_match(expression, scrutinee, arms),
         }
+    }
+
+    fn emit_index(
+        &mut self,
+        expression: &HirExpr,
+        base: &HirExpr,
+        index: &HirIndex,
+        length: u64,
+    ) -> Result<Operand, Diagnostic> {
+        let base = self.emit_expr(base)?;
+        if self.terminated {
+            return Ok(Operand::never());
+        }
+        let array_ty = llvm_value_type(&base.ty)?;
+        match index {
+            HirIndex::Static(index) => {
+                let register = self.fresh_register();
+                self.instruction(format!(
+                    "{register} = extractvalue {array_ty} {}, {index}",
+                    base.value()?
+                ));
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: Some(register),
+                })
+            }
+            HirIndex::Dynamic(index) => {
+                let index = self.emit_expr(index)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                let wide_index = self.fresh_register();
+                self.instruction(format!("{wide_index} = sext i32 {} to i64", index.value()?));
+                let in_bounds = self.fresh_register();
+                self.instruction(format!("{in_bounds} = icmp ult i64 {wide_index}, {length}"));
+                let ok_label = self.fresh_label("index.ok");
+                let trap_label = self.fresh_label("index.trap");
+                self.terminate(format!(
+                    "br i1 {in_bounds}, label %{ok_label}, label %{trap_label}"
+                ));
+
+                self.start_block(&trap_label);
+                self.instruction("call void @llvm.trap()");
+                self.terminate("unreachable");
+
+                self.start_block(&ok_label);
+                let spill = self.entry_alloca(&array_ty, "array index spill");
+                self.instruction(format!("store {array_ty} {}, ptr {spill}", base.value()?));
+                let pointer = self.fresh_register();
+                self.instruction(format!(
+                    "{pointer} = getelementptr inbounds {array_ty}, ptr {spill}, i32 0, i64 {wide_index}"
+                ));
+                let register = self.fresh_register();
+                let element_ty = llvm_value_type(&expression.ty)?;
+                self.instruction(format!("{register} = load {element_ty}, ptr {pointer}"));
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: Some(register),
+                })
+            }
+        }
+    }
+
+    fn emit_while(&mut self, condition: &HirExpr, body: &HirExpr) -> Result<Operand, Diagnostic> {
+        let condition_label = self.fresh_label("while.condition");
+        let body_label = self.fresh_label("while.body");
+        let end_label = self.fresh_label("while.end");
+        self.terminate(format!("br label %{condition_label}"));
+        self.loops.push(EmitLoopTarget {
+            break_label: end_label.clone(),
+            result: None,
+        });
+
+        self.start_block(&condition_label);
+        let condition = self.emit_expr(condition)?;
+        if !self.terminated {
+            self.terminate(format!(
+                "br i1 {}, label %{body_label}, label %{end_label}",
+                condition.value()?
+            ));
+            self.start_block(&body_label);
+            self.emit_expr(body)?;
+            if !self.terminated {
+                self.terminate(format!("br label %{condition_label}"));
+            }
+        }
+
+        self.loops.pop().expect("while emission frame");
+        self.start_block(&end_label);
+        Ok(Operand::unit())
+    }
+
+    fn emit_loop(&mut self, expression: &HirExpr, body: &HirExpr) -> Result<Operand, Diagnostic> {
+        let body_label = self.fresh_label("loop.body");
+        let end_label = self.fresh_label("loop.end");
+        let result = if matches!(expression.ty, Ty::Unit | Ty::Never) {
+            None
+        } else {
+            let ty = llvm_value_type(&expression.ty)?;
+            Some((expression.ty.clone(), self.entry_alloca(&ty, "loop result")))
+        };
+        self.terminate(format!("br label %{body_label}"));
+        self.loops.push(EmitLoopTarget {
+            break_label: end_label.clone(),
+            result: result.clone(),
+        });
+        self.start_block(&body_label);
+        self.emit_expr(body)?;
+        if !self.terminated {
+            self.terminate(format!("br label %{body_label}"));
+        }
+        self.loops.pop().expect("loop emission frame");
+
+        if expression.ty == Ty::Never {
+            return Ok(Operand::never());
+        }
+        self.start_block(&end_label);
+        let Some((ty, pointer)) = result else {
+            return Ok(Operand::unit());
+        };
+        let register = self.fresh_register();
+        let llvm_ty = llvm_value_type(&ty)?;
+        self.instruction(format!("{register} = load {llvm_ty}, ptr {pointer}"));
+        Ok(Operand {
+            ty,
+            value: Some(register),
+        })
+    }
+
+    fn emit_break(&mut self, value: Option<&HirExpr>) -> Result<Operand, Diagnostic> {
+        let target = self.loops.last().cloned().ok_or_else(|| {
+            Diagnostic::new("internal error: break reached emission outside a loop")
+        })?;
+        let value = match value {
+            Some(value) => Some(self.emit_expr(value)?),
+            None => None,
+        };
+        if self.terminated {
+            return Ok(Operand::never());
+        }
+        match (&target.result, value) {
+            (Some((ty, pointer)), Some(value)) => {
+                let llvm_ty = llvm_value_type(ty)?;
+                self.instruction(format!("store {llvm_ty} {}, ptr {pointer}", value.value()?));
+            }
+            (Some(_), None) => {
+                return Err(Diagnostic::new(
+                    "internal error: value-producing loop break has no value",
+                ));
+            }
+            (None, Some(value)) if value.ty != Ty::Unit => {
+                return Err(Diagnostic::new(
+                    "internal error: unit loop break carries a value",
+                ));
+            }
+            (None, None) | (None, Some(_)) => {}
+        }
+        self.terminate(format!("br label %{}", target.break_label));
+        Ok(Operand::never())
     }
 
     fn emit_match(
@@ -4553,12 +5123,8 @@ impl<'a> FunctionEmitter<'a> {
                 ));
                 register
             };
-            let pointer = self.fresh_register();
             let ty = llvm_value_type(&binding.ty)?;
-            self.instruction(format!(
-                "{pointer} = alloca {ty} ; {}",
-                llvm_comment(&binding.name)
-            ));
+            let pointer = self.entry_alloca(&ty, &llvm_comment(&binding.name));
             self.instruction(format!("store {ty} {value}, ptr {pointer}"));
             self.locals.insert(binding.id, pointer);
         }
@@ -4704,6 +5270,20 @@ impl<'a> FunctionEmitter<'a> {
         Ok(pointer)
     }
 
+    fn entry_alloca(&mut self, ty: &str, comment: &str) -> String {
+        let pointer = self.fresh_register();
+        self.entry_allocas.push_str("  ");
+        self.entry_allocas.push_str(&pointer);
+        self.entry_allocas.push_str(" = alloca ");
+        self.entry_allocas.push_str(ty);
+        if !comment.is_empty() {
+            self.entry_allocas.push_str(" ; ");
+            self.entry_allocas.push_str(comment);
+        }
+        self.entry_allocas.push('\n');
+        pointer
+    }
+
     fn fresh_register(&mut self) -> String {
         let register = format!("%v{}", self.next_register);
         self.next_register += 1;
@@ -4749,6 +5329,7 @@ fn llvm_value_type(ty: &Ty) -> Result<String, Diagnostic> {
         Ty::I32 | Ty::U32 => Ok("i32".to_owned()),
         Ty::I64 | Ty::U64 => Ok("i64".to_owned()),
         Ty::Bool => Ok("i1".to_owned()),
+        Ty::Array(element, length) => Ok(format!("[{length} x {}]", llvm_value_type(element)?)),
         Ty::Struct(name) | Ty::Enum(name) => Ok(format!("%{}", type_symbol(name))),
         Ty::Unit | Ty::Never | Ty::Function(_) | Ty::Error => Err(Diagnostic::new(format!(
             "internal error: `{ty}` has no first-class LLVM representation"
@@ -4769,6 +5350,14 @@ fn zero_const(ty: &Ty, program: &HirProgram) -> Option<ConstValue> {
         Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 => Some(ConstValue::Integer(0)),
         Ty::Bool => Some(ConstValue::Bool(false)),
         Ty::Unit => Some(ConstValue::Unit),
+        Ty::Array(element, length) => {
+            let length = usize::try_from(*length).ok()?;
+            Some(ConstValue::Aggregate(
+                (0..length)
+                    .map(|_| zero_const(element, program))
+                    .collect::<Option<Vec<_>>>()?,
+            ))
+        }
         Ty::Struct(name) => Some(ConstValue::Aggregate(
             program
                 .struct_layout(name)?
@@ -4799,6 +5388,24 @@ fn const_ir(value: &ConstValue, ty: &Ty, program: &HirProgram) -> Result<String,
         (ConstValue::Integer(value), ty) if ty.is_integer() => Ok(value.to_string()),
         (ConstValue::Bool(value), Ty::Bool) => Ok(if *value { "1" } else { "0" }.to_owned()),
         (ConstValue::Unit, Ty::Unit) => Ok("zeroinitializer".to_owned()),
+        (ConstValue::Aggregate(values), Ty::Array(element, length)) => {
+            if values.len() as u64 != *length {
+                return Err(Diagnostic::new(
+                    "internal error: constant array length does not match its type",
+                ));
+            }
+            let element_ty = llvm_value_type(element)?;
+            let elements = values
+                .iter()
+                .map(|value| {
+                    Ok(format!(
+                        "{element_ty} {}",
+                        const_ir(value, element, program)?
+                    ))
+                })
+                .collect::<Result<Vec<_>, Diagnostic>>()?;
+            Ok(format!("[{}]", elements.join(", ")))
+        }
         (ConstValue::Aggregate(values), Ty::Struct(name)) => {
             let layout = program.struct_layout(name).ok_or_else(|| {
                 Diagnostic::new(format!("internal error: missing struct layout `{name}`"))
@@ -5522,6 +6129,100 @@ let main(): i32 = {
         assert!(errors
             .iter()
             .any(|error| error.message.contains("partial application")));
+    }
+
+    #[test]
+    fn emits_dynamic_array_bounds_check_before_inbounds_gep_and_hoists_allocas() {
+        let ir = compile_text(
+            r#"
+let read(values: Array(i32, 2), index: i32): i32 = values[index]
+let main(): i32 = read([40, 2], 1)
+"#,
+        )
+        .unwrap();
+        let function_start = ir.find("define internal i32 @sali.fn.72656164").unwrap();
+        let function_tail = &ir[function_start..];
+        let function_end = function_tail.find("\n}\n").unwrap() + 3;
+        let function = &function_tail[..function_end];
+        let bounds = function.find("icmp ult i64").unwrap();
+        let trap = function.find("call void @llvm.trap()").unwrap();
+        let gep = function.find("getelementptr inbounds").unwrap();
+        assert!(bounds < trap && trap < gep);
+        assert!(function.rfind("alloca").unwrap() < function.find("br i1").unwrap());
+    }
+
+    #[test]
+    fn rejects_array_lengths_beyond_the_first_version_limit() {
+        let errors = compile_text(
+            r#"
+let main(): i32 = {
+  let values: Array(i32, 2147483648) = [42]
+  0
+}
+"#,
+        )
+        .unwrap_err();
+        assert!(errors.iter().any(|error| {
+            error.message.contains("array length") && error.message.contains("limit")
+        }));
+    }
+
+    #[test]
+    fn rejects_an_outer_move_on_a_loop_backedge_even_for_a_copy_type() {
+        let errors = compile_text(
+            r#"
+let consume(move value: i32): () = ()
+let main(): i32 = {
+  let value = 42
+  while true {
+    consume(value)
+  }
+  0
+}
+"#,
+        )
+        .unwrap_err();
+        assert!(errors.iter().any(|error| {
+            error.message.contains("move") && error.message.contains("loop backedge")
+        }));
+    }
+
+    #[test]
+    fn permits_a_move_that_only_reaches_a_break_exit() {
+        compile_text(
+            r#"
+let Boxed = struct(value: i32)
+let consume(move value: Boxed): i32 = value.value
+let main(): i32 = {
+  let boxed = Boxed(42)
+  loop {
+    break consume(boxed)
+  }
+}
+"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn nested_breaks_target_the_innermost_loop() {
+        let ir = compile_text(
+            r#"
+let main(): i32 = {
+  let mut answer = 40
+  loop {
+    loop {
+      break
+    }
+    answer = answer + 2
+    break answer
+  }
+}
+"#,
+        )
+        .unwrap();
+        assert_eq!(ir.matches("loop.body").count(), 4);
+        assert_eq!(ir.matches("loop.end").count(), 4);
     }
 
     #[test]

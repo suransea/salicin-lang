@@ -1,0 +1,6 @@
+let Boxed = struct(value: i32)
+
+let main(): i32 = {
+  let values = [Boxed(42)]
+  0
+}

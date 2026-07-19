@@ -291,6 +291,28 @@ impl Parser {
         }
 
         let name = self.expect_ident("a type")?;
+        if name == "Array" && self.take(&TokenKind::LParen) {
+            let element = self.type_expr()?;
+            self.expect(&TokenKind::Comma, "`,` before array length")?;
+            let length_token = self.current().clone();
+            let TokenKind::Integer(length) = length_token.kind else {
+                return Err(self.error_at(
+                    &length_token,
+                    "array length must be a non-negative decimal integer",
+                ));
+            };
+            let length = u64::try_from(length).map_err(|_| {
+                self.error_at(
+                    &length_token,
+                    "array length must fit in an unsigned 64-bit integer",
+                )
+            })?;
+            self.advance();
+            self.take(&TokenKind::Comma);
+            self.expect(&TokenKind::RParen, "`)` after array length")?;
+            return Ok(Type::Array(Box::new(element), length));
+        }
+
         let mut arguments = Vec::new();
         if self.take(&TokenKind::LParen) && !self.take(&TokenKind::RParen) {
             loop {
@@ -489,6 +511,7 @@ impl Parser {
         match expression {
             Expr::Name(_) => true,
             Expr::Member(base, _) => Self::is_assignable_place(base),
+            Expr::Index { base, .. } => Self::is_assignable_place(base),
             _ => false,
         }
     }
@@ -679,6 +702,13 @@ impl Parser {
                 }
                 expression = Expr::Call(Box::new(expression), arguments);
                 has_call_group = true;
+            } else if self.take(&TokenKind::LBracket) {
+                let index = self.expression(true)?;
+                self.expect(&TokenKind::RBracket, "`]` after index")?;
+                expression = Expr::Index {
+                    base: Box::new(expression),
+                    index: Box::new(index),
+                };
             } else if self.take(&TokenKind::Dot) {
                 let member = self.expect_ident("a member name after `.`")?;
                 expression = Expr::Member(Box::new(expression), member);
@@ -732,18 +762,43 @@ impl Parser {
                 self.expect(&TokenKind::RParen, "`)`")?;
                 Ok(expression)
             }
+            TokenKind::LBracket => self.array_literal(),
             TokenKind::Do => {
                 self.advance();
                 self.block()
             }
             TokenKind::If => self.if_expression(),
             TokenKind::Return => self.return_expression(allow_trailing_closure),
+            TokenKind::While => self.while_expression(),
+            TokenKind::Loop => self.loop_expression(),
+            TokenKind::Break => self.break_expression(allow_trailing_closure),
             TokenKind::LBrace => self.closure(),
             _ => Err(self.error_at(
                 &token,
                 format!("expected an expression, found {}", describe(&token.kind)),
             )),
         }
+    }
+
+    fn array_literal(&mut self) -> Result<Expr, ParseError> {
+        self.expect(&TokenKind::LBracket, "`[`")?;
+        let mut elements = Vec::new();
+        if self.take(&TokenKind::RBracket) {
+            return Ok(Expr::Array(elements));
+        }
+
+        loop {
+            elements.push(self.expression(true)?);
+            if self.take(&TokenKind::Comma) {
+                if self.take(&TokenKind::RBracket) {
+                    break;
+                }
+            } else {
+                self.expect(&TokenKind::RBracket, "`]` after array elements")?;
+                break;
+            }
+        }
+        Ok(Expr::Array(elements))
     }
 
     fn if_expression(&mut self) -> Result<Expr, ParseError> {
@@ -780,11 +835,44 @@ impl Parser {
 
     fn return_expression(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
         self.expect(&TokenKind::Return, "`return`")?;
-        if self.at_separator() || self.at(&TokenKind::RBrace) || self.at(&TokenKind::Eof) {
+        if self.at_control_expression_boundary() {
             Ok(Expr::Return(None))
         } else {
             let value = self.expression(allow_trailing_closure)?;
             Ok(Expr::Return(Some(Box::new(value))))
+        }
+    }
+
+    fn while_expression(&mut self) -> Result<Expr, ParseError> {
+        self.expect(&TokenKind::While, "`while`")?;
+        let condition = self.expression(false)?;
+        if !self.at(&TokenKind::LBrace) {
+            return Err(self.error_here("expected `{` after `while` condition"));
+        }
+        let body = self.block()?;
+        Ok(Expr::While {
+            condition: Box::new(condition),
+            body: Box::new(body),
+        })
+    }
+
+    fn loop_expression(&mut self) -> Result<Expr, ParseError> {
+        self.expect(&TokenKind::Loop, "`loop`")?;
+        if !self.at(&TokenKind::LBrace) {
+            return Err(self.error_here("expected `{` after `loop`"));
+        }
+        Ok(Expr::Loop {
+            body: Box::new(self.block()?),
+        })
+    }
+
+    fn break_expression(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
+        self.expect(&TokenKind::Break, "`break`")?;
+        if self.at_control_expression_boundary() {
+            Ok(Expr::Break(None))
+        } else {
+            let value = self.expression(allow_trailing_closure)?;
+            Ok(Expr::Break(Some(Box::new(value))))
         }
     }
 
@@ -901,6 +989,13 @@ impl Parser {
         self.at(&TokenKind::Newline) || self.at(&TokenKind::Semicolon)
     }
 
+    fn at_control_expression_boundary(&self) -> bool {
+        self.at_separator()
+            || self.at(&TokenKind::RBrace)
+            || self.at(&TokenKind::Eof)
+            || self.at(&TokenKind::Comma)
+    }
+
     fn ident_followed_by_colon(&self) -> bool {
         matches!(self.current().kind, TokenKind::Ident(_)) && self.at_offset(1, &TokenKind::Colon)
     }
@@ -986,6 +1081,9 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::If => "`if`",
         TokenKind::Else => "`else`",
         TokenKind::Return => "`return`",
+        TokenKind::While => "`while`",
+        TokenKind::Loop => "`loop`",
+        TokenKind::Break => "`break`",
         TokenKind::Struct => "`struct`",
         TokenKind::Enum => "`enum`",
         TokenKind::Match => "`match`",
@@ -995,6 +1093,8 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::Integer(_) => "an integer",
         TokenKind::LParen => "`(`",
         TokenKind::RParen => "`)`",
+        TokenKind::LBracket => "`[`",
+        TokenKind::RBracket => "`]`",
         TokenKind::LBrace => "`{`",
         TokenKind::RBrace => "`}`",
         TokenKind::Colon => "`:`",
@@ -1321,6 +1421,169 @@ mod tests {
     fn rejects_borrowing_a_non_place_expression() {
         let error = parse("let invalid = borrow make()\n").unwrap_err();
         assert!(error.message.contains("name or member chain"));
+    }
+
+    #[test]
+    fn parses_fixed_array_types_multiline_literals_and_indexes() {
+        let program = parse(
+            "let read(values: Array(i32, 2)): i32 = {\n\
+               let local: Array(i32, 3) = [\n\
+                 40,\n\
+                 1,\n\
+                 1,\n\
+               ]\n\
+               local[0] + local[1]\n\
+             }\n",
+        )
+        .unwrap();
+
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        assert_eq!(
+            function.groups[0][0].ty,
+            Type::Array(Box::new(Type::I32), 2)
+        );
+        let Some(Expr::Block(statements, Some(tail))) = &function.body else {
+            panic!("expected block");
+        };
+        let Stmt::Let(binding) = &statements[0] else {
+            panic!("expected local array binding");
+        };
+        assert_eq!(
+            binding.annotation,
+            Some(Type::Array(Box::new(Type::I32), 3))
+        );
+        assert!(matches!(&binding.value, Expr::Array(elements) if elements.len() == 3));
+        assert!(matches!(
+            tail.as_ref(),
+            Expr::Binary(left, BinaryOp::Add, right)
+                if matches!(left.as_ref(), Expr::Index { .. })
+                    && matches!(right.as_ref(), Expr::Index { .. })
+        ));
+    }
+
+    #[test]
+    fn indexed_places_can_be_assigned_and_borrowed() {
+        let program = parse(
+            "let main(): i32 = {\n\
+               let mut values = [0]\n\
+               values[0] = 42\n\
+               let item = borrow values[0]\n\
+               values[0]\n\
+             }\n",
+        )
+        .unwrap();
+
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        let Some(Expr::Block(statements, Some(tail))) = &function.body else {
+            panic!("expected block");
+        };
+        assert!(matches!(
+            &statements[1],
+            Stmt::Expr(Expr::Assign(left, _)) if matches!(left.as_ref(), Expr::Index { .. })
+        ));
+        assert!(matches!(
+            &statements[2],
+            Stmt::Let(Binding {
+                value: Expr::Borrow { value, .. },
+                ..
+            }) if matches!(value.as_ref(), Expr::Index { .. })
+        ));
+        assert!(matches!(tail.as_ref(), Expr::Index { .. }));
+    }
+
+    #[test]
+    fn parses_while_without_treating_its_body_as_a_trailing_closure() {
+        let program = parse(
+            "let main(): i32 = {\n\
+               let mut value = 0\n\
+               while ready() {\n\
+                 value = value + 1\n\
+               }\n\
+               value\n\
+             }\n",
+        )
+        .unwrap();
+
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        let Some(Expr::Block(statements, Some(_))) = &function.body else {
+            panic!("expected block");
+        };
+        assert!(matches!(
+            &statements[1],
+            Stmt::Expr(Expr::While { condition, body })
+                if matches!(condition.as_ref(), Expr::Call(_, arguments) if arguments.is_empty())
+                    && matches!(body.as_ref(), Expr::Block(_, _))
+        ));
+    }
+
+    #[test]
+    fn parses_loop_with_break_value() {
+        let program = parse("let main(): i32 = loop {\n  break 40 + 2\n}\n").unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        let Some(Expr::Loop { body }) = &function.body else {
+            panic!("expected loop");
+        };
+        assert!(matches!(
+            body.as_ref(),
+            Expr::Block(_, Some(tail))
+                if matches!(
+                    tail.as_ref(),
+                    Expr::Break(Some(value))
+                        if matches!(value.as_ref(), Expr::Binary(_, BinaryOp::Add, _))
+                )
+        ));
+    }
+
+    #[test]
+    fn newline_and_comma_end_a_bare_break() {
+        let program = parse(
+            "let choose(value: bool): i32 = {\n\
+               loop {\n\
+                 break\n\
+                 42\n\
+               }\n\
+               value match {\n\
+                 true => break,\n\
+                 false => 0,\n\
+               }\n\
+             }\n",
+        )
+        .unwrap();
+
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        let Some(Expr::Block(statements, Some(tail))) = &function.body else {
+            panic!("expected block");
+        };
+        assert!(matches!(
+            &statements[0],
+            Stmt::Expr(Expr::Loop { body })
+                if matches!(
+                    body.as_ref(),
+                    Expr::Block(loop_statements, Some(value))
+                        if matches!(loop_statements.as_slice(), [Stmt::Expr(Expr::Break(None))])
+                            && value.as_ref() == &Expr::Integer(42)
+                )
+        ));
+        assert!(matches!(
+            tail.as_ref(),
+            Expr::Match { arms, .. } if matches!(arms[0].body, Expr::Break(None))
+        ));
+    }
+
+    #[test]
+    fn array_length_must_be_a_non_negative_decimal_integer() {
+        let error = parse("let main(values: Array(i32, -1)): i32 = 0\n").unwrap_err();
+        assert!(error.message.contains("non-negative decimal integer"));
     }
 
     #[test]
