@@ -5,7 +5,9 @@ the accepted language, while patch releases preserve source semantics within the
 
 ## Unreleased
 
-M1 development is in progress.
+M2 development follows the v0.2 language foundation.
+
+## 0.2.0 - 2026-07-20
 
 - Added nominal structs and enums with positional or labeled construction.
 - Added field access and mutable field assignment.
