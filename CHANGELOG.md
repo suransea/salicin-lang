@@ -5,6 +5,8 @@ the accepted language, while patch releases preserve source semantics within the
 
 ## Unreleased
 
+## 0.3.0 - 2026-07-20
+
 M2 development follows the v0.2 language foundation.
 
 - Added compile-time `type` parameter groups and explicit generic named-function application.
