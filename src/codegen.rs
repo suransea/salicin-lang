@@ -379,6 +379,7 @@ impl From<&HirPlace> for PlaceKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MoveStatus {
     Moved,
+    MaybeMoved,
 }
 
 type LoanId = usize;
@@ -408,6 +409,53 @@ impl Default for FlowState {
             reachable: true,
             moves: HashMap::new(),
             loans: HashMap::new(),
+        }
+    }
+}
+
+impl FlowState {
+    fn join(flows: &[Self]) -> Self {
+        let reachable: Vec<_> = flows.iter().filter(|flow| flow.reachable).collect();
+        match reachable.as_slice() {
+            [] => Self {
+                reachable: false,
+                moves: HashMap::new(),
+                loans: HashMap::new(),
+            },
+            [only] => (*only).clone(),
+            _ => {
+                let places: HashSet<_> = reachable
+                    .iter()
+                    .flat_map(|flow| flow.moves.keys().cloned())
+                    .collect();
+                let moves = places
+                    .into_iter()
+                    .map(|place| {
+                        let statuses: Vec<_> = reachable
+                            .iter()
+                            .map(|flow| flow.moves.get(&place).copied())
+                            .collect();
+                        let status = if statuses
+                            .iter()
+                            .all(|status| *status == Some(MoveStatus::Moved))
+                        {
+                            MoveStatus::Moved
+                        } else {
+                            MoveStatus::MaybeMoved
+                        };
+                        (place, status)
+                    })
+                    .collect();
+                let loans = reachable
+                    .iter()
+                    .flat_map(|flow| flow.loans.iter().map(|(id, loan)| (*id, loan.clone())))
+                    .collect();
+                Self {
+                    reachable: true,
+                    moves,
+                    loans,
+                }
+            }
         }
     }
 }
@@ -495,6 +543,16 @@ impl LowerCtx {
         self.flow
             .moves
             .retain(|place, _| !scope.locals.contains(&place.local));
+    }
+
+    fn flow_without_current_scope(&self, mut flow: FlowState) -> FlowState {
+        let scope = self.scopes.last().expect("at least one scope");
+        for loan in &scope.lexical_loans {
+            flow.loans.remove(loan);
+        }
+        flow.moves
+            .retain(|place, _| !scope.locals.contains(&place.local));
+        flow
     }
 
     fn insert_local(&mut self, name: String, local: LocalInfo) -> bool {
@@ -1314,37 +1372,60 @@ impl Analyzer {
                 else_branch,
             } => {
                 let condition = self.lower_expr(condition, Some(&Ty::Bool), context);
-                let (then_branch, else_branch) = if let Some(else_ast) = else_branch.as_ref() {
-                    let (then_branch, else_branch) = if expected.is_some() {
-                        (
-                            self.lower_expr(then_branch, expected, context),
-                            self.lower_expr(else_ast, expected, context),
-                        )
+                let entry_flow = context.flow.clone();
+                let (then_branch, else_branch, exit_flows) = if let Some(else_ast) =
+                    else_branch.as_ref()
+                {
+                    let (then_branch, then_flow, else_branch, else_flow) = if expected.is_some() {
+                        let (then_branch, then_flow) =
+                            self.lower_expr_from_flow(then_branch, expected, &entry_flow, context);
+                        let (else_branch, else_flow) =
+                            self.lower_expr_from_flow(else_ast, expected, &entry_flow, context);
+                        (then_branch, then_flow, else_branch, else_flow)
                     } else if is_unconstrained_integer(then_branch)
                         && !is_unconstrained_integer(else_ast)
                     {
-                        let else_branch = self.lower_expr(else_ast, None, context);
+                        let (else_branch, else_flow) =
+                            self.lower_expr_from_flow(else_ast, None, &entry_flow, context);
                         let branch_hint = if matches!(else_branch.ty, Ty::Never | Ty::Error) {
                             None
                         } else {
                             Some(&else_branch.ty)
                         };
-                        let then_branch = self.lower_expr(then_branch, branch_hint, context);
-                        (then_branch, else_branch)
+                        let (then_branch, then_flow) = self.lower_expr_from_flow(
+                            then_branch,
+                            branch_hint,
+                            &entry_flow,
+                            context,
+                        );
+                        (then_branch, then_flow, else_branch, else_flow)
                     } else {
-                        let then_branch = self.lower_expr(then_branch, None, context);
+                        let (then_branch, then_flow) =
+                            self.lower_expr_from_flow(then_branch, None, &entry_flow, context);
                         let branch_hint = if matches!(then_branch.ty, Ty::Never | Ty::Error) {
                             None
                         } else {
                             Some(&then_branch.ty)
                         };
-                        let else_branch = self.lower_expr(else_ast, branch_hint, context);
-                        (then_branch, else_branch)
+                        let (else_branch, else_flow) =
+                            self.lower_expr_from_flow(else_ast, branch_hint, &entry_flow, context);
+                        (then_branch, then_flow, else_branch, else_flow)
                     };
-                    (then_branch, Some(Box::new(else_branch)))
+                    (
+                        then_branch,
+                        Some(Box::new(else_branch)),
+                        vec![then_flow, else_flow],
+                    )
                 } else {
-                    (self.lower_expr(then_branch, Some(&Ty::Unit), context), None)
+                    let (then_branch, then_flow) = self.lower_expr_from_flow(
+                        then_branch,
+                        Some(&Ty::Unit),
+                        &entry_flow,
+                        context,
+                    );
+                    (then_branch, None, vec![then_flow, entry_flow])
                 };
+                context.flow = FlowState::join(&exit_flows);
                 let ty = if let Some(else_branch) = &else_branch {
                     self.unify_types(&then_branch.ty, &else_branch.ty, "branches of `if`")
                 } else {
@@ -1374,6 +1455,7 @@ impl Analyzer {
                 });
                 let returned_ty = value.as_ref().map_or(Ty::Unit, |value| value.ty.clone());
                 context.returned_types.push(returned_ty);
+                context.flow.reachable = false;
                 HirExpr {
                     ty: Ty::Never,
                     kind: HirExprKind::Return(value),
@@ -1386,6 +1468,18 @@ impl Analyzer {
             self.require_same_type(&lowered.ty, expected, "expression");
         }
         lowered
+    }
+
+    fn lower_expr_from_flow(
+        &mut self,
+        expression: &Expr,
+        expected: Option<&Ty>,
+        entry: &FlowState,
+        context: &mut LowerCtx,
+    ) -> (HirExpr, FlowState) {
+        context.flow = entry.clone();
+        let expression = self.lower_expr(expression, expected, context);
+        (expression, context.flow.clone())
     }
 
     fn lower_place(&mut self, expression: &Expr, context: &mut LowerCtx) -> Option<HirPlace> {
@@ -1510,13 +1604,20 @@ impl Analyzer {
             return;
         }
         let requested = PlaceKey::from(place);
+        let mut possibly_moved = false;
         for (moved, status) in &context.flow.moves {
             if places_overlap(&requested, moved) {
-                self.error(match status {
-                    MoveStatus::Moved => "use of moved value",
-                });
-                return;
+                match status {
+                    MoveStatus::Moved => {
+                        self.error("use of moved value");
+                        return;
+                    }
+                    MoveStatus::MaybeMoved => possibly_moved = true,
+                }
             }
+        }
+        if possibly_moved {
+            self.error("use of possibly moved value");
         }
     }
 
@@ -1749,21 +1850,42 @@ impl Analyzer {
         let mut lowered_arms = Vec::new();
         let mut covered = vec![false; layout.variants.len()];
         let mut result_ty: Option<Ty> = None;
+        let entry_flow = context.flow.clone();
+        let mut fallthrough_flows = vec![Some(entry_flow.clone()); layout.variants.len()];
+        let mut exit_flows = Vec::new();
 
         for arm in arms {
             context.push_scope();
             let (matcher, bindings) = self.lower_enum_pattern(&arm.pattern, &layout, context);
+            let matched_variants: Vec<_> = match matcher {
+                HirMatcher::Variant(index) => vec![index],
+                HirMatcher::All => (0..layout.variants.len()).collect(),
+            };
+            let incoming_flows: Vec<_> = matched_variants
+                .iter()
+                .filter_map(|index| fallthrough_flows[*index].clone())
+                .collect();
+            context.flow = FlowState::join(&incoming_flows);
             let guard = arm
                 .guard
                 .as_ref()
                 .map(|guard| self.lower_expr(guard, Some(&Ty::Bool), context));
+            let guard_flow = guard.as_ref().map(|_| context.flow.clone());
             let branch_expected = expected.or_else(|| {
                 result_ty
                     .as_ref()
                     .filter(|ty| !matches!(ty, Ty::Never | Ty::Error))
             });
             let body = self.lower_expr(&arm.body, branch_expected, context);
+            let guard_fallthrough = guard_flow.map(|flow| context.flow_without_current_scope(flow));
             context.pop_scope();
+            exit_flows.push(context.flow.clone());
+
+            for variant in &matched_variants {
+                if fallthrough_flows[*variant].is_some() {
+                    fallthrough_flows[*variant] = guard_fallthrough.clone();
+                }
+            }
 
             result_ty = Some(match result_ty {
                 Some(current) => self.unify_types(&current, &body.ty, "match arm results"),
@@ -1782,6 +1904,9 @@ impl Analyzer {
                 body,
             });
         }
+
+        exit_flows.extend(fallthrough_flows.into_iter().flatten());
+        context.flow = FlowState::join(&exit_flows);
 
         let missing: Vec<_> = layout
             .variants
@@ -2046,7 +2171,10 @@ impl Analyzer {
         let (left, right, ty) = match operator {
             And | Or => {
                 let left = self.lower_expr(left, Some(&Ty::Bool), context);
-                let right = self.lower_expr(right, Some(&Ty::Bool), context);
+                let skip_flow = context.flow.clone();
+                let (right, right_flow) =
+                    self.lower_expr_from_flow(right, Some(&Ty::Bool), &skip_flow, context);
+                context.flow = FlowState::join(&[skip_flow, right_flow]);
                 (left, right, Ty::Bool)
             }
             Add | Sub | Mul | Div | Rem | Lt | Le | Gt | Ge => {
@@ -4414,6 +4542,163 @@ let main(): i32 = 0
         let errors = compile(&Program {
             items: vec![consume, main],
         })
+        .unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains("moved")));
+    }
+
+    #[test]
+    fn reports_a_value_moved_on_only_one_if_path_as_possibly_moved() {
+        let errors = compile_text(
+            r#"
+let Boxed = struct(value: i32)
+let consume(move boxed: Boxed): i32 = boxed.value
+let choose(flag: bool): i32 = {
+  let boxed = Boxed(value: 42)
+  if flag {
+    consume(boxed)
+  }
+  boxed.value
+}
+let main(): i32 = choose(false)
+"#,
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("possibly moved")));
+    }
+
+    #[test]
+    fn discards_moves_on_an_if_path_that_returns() {
+        let ir = compile_text(
+            r#"
+let Boxed = struct(value: i32)
+let consume(move boxed: Boxed): i32 = boxed.value
+let choose(flag: bool): i32 = {
+  let boxed = Boxed(value: 42)
+  if flag {
+    consume(boxed)
+    return 0
+  }
+  boxed.value
+}
+let main(): i32 = choose(false)
+"#,
+        )
+        .unwrap();
+        assert!(ir.contains("call i32 @sali.fn.63686f6f7365(i1 0)"));
+    }
+
+    #[test]
+    fn reports_a_value_moved_on_both_if_paths_as_moved() {
+        let errors = compile_text(
+            r#"
+let Boxed = struct(value: i32)
+let consume(move boxed: Boxed): i32 = boxed.value
+let choose(flag: bool): i32 = {
+  let boxed = Boxed(value: 42)
+  if flag {
+    consume(boxed)
+  } else {
+    consume(boxed)
+  }
+  boxed.value
+}
+let main(): i32 = choose(false)
+"#,
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message == "use of moved value"));
+        assert!(!errors
+            .iter()
+            .any(|error| error.message.contains("possibly moved")));
+    }
+
+    #[test]
+    fn reports_a_move_on_a_short_circuit_rhs_as_possible() {
+        let errors = compile_text(
+            r#"
+let Boxed = struct(value: i32)
+let consume(move boxed: Boxed): bool = boxed.value == 42
+let choose(flag: bool): i32 = {
+  let boxed = Boxed(value: 42)
+  flag && consume(boxed)
+  boxed.value
+}
+let main(): i32 = choose(false)
+"#,
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("possibly moved")));
+    }
+
+    #[test]
+    fn analyzes_mutually_exclusive_if_arms_from_the_same_entry_flow() {
+        let ir = compile_text(
+            r#"
+let Boxed = struct(value: i32)
+let consume(move boxed: Boxed): i32 = boxed.value
+let choose(flag: bool): i32 = {
+  let boxed = Boxed(value: 42)
+  if flag {
+    consume(boxed)
+  } else {
+    boxed.value
+  }
+}
+let main(): i32 = choose(true)
+"#,
+        )
+        .unwrap();
+        assert!(ir.contains("call i32 @sali.fn.63686f6f7365(i1 1)"));
+    }
+
+    #[test]
+    fn analyzes_mutually_exclusive_match_arms_from_variant_entry_flows() {
+        compile_text(
+            r#"
+let Choice = enum {
+  First,
+  Second,
+}
+let Boxed = struct(value: i32)
+let consume(move boxed: Boxed): i32 = boxed.value
+let choose(choice: Choice): i32 = {
+  let boxed = Boxed(value: 42)
+  choice match {
+    Choice.First => consume(boxed),
+    Choice.Second => boxed.value,
+  }
+}
+let main(): i32 = choose(Choice.First)
+"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn carries_guard_moves_into_later_match_candidates() {
+        let errors = compile_text(
+            r#"
+let Choice = enum {
+  Only,
+}
+let Boxed = struct(value: i32)
+let consume(move boxed: Boxed): bool = boxed.value == 0
+let choose(choice: Choice): i32 = {
+  let boxed = Boxed(value: 42)
+  choice match {
+    Choice.Only if consume(boxed) => 0,
+    Choice.Only => boxed.value,
+  }
+}
+let main(): i32 = choose(Choice.Only)
+"#,
+        )
         .unwrap_err();
         assert!(errors.iter().any(|error| error.message.contains("moved")));
     }

@@ -277,8 +277,10 @@ fn m1_ownership_programs_run_with_expected_result() {
         "explicit_move_i32_once.sali",
         "borrow_released_after_complete_call.sali",
         "borrowed_unit_is_abi_erased.sali",
+        "branch_move_does_not_pollute_sibling.sali",
         "disjoint_mut_field_borrows.sali",
         "inferred_copy_i32.sali",
+        "move_then_return_preserves_other_branch.sali",
     ] {
         let output = salic()
             .arg("run")
@@ -313,6 +315,9 @@ fn m1_ownership_errors_report_their_cause() {
             &["mutable borrow", "already borrowed"][..],
         ),
         ("use_after_inferred_move.sali", &["moved"][..]),
+        ("possibly_moved_after_branch.sali", &["possibly moved"][..]),
+        ("both_branches_move.sali", &["moved"][..]),
+        ("short_circuit_possibly_moves.sali", &["possibly moved"][..]),
     ] {
         let output = salic()
             .arg("check")

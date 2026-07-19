@@ -13,6 +13,7 @@ M1 development is in progress.
 - Added local non-escaping partial application for multi-group named functions.
 - Added place-aware `copy` and `move` checking, including use-after-move diagnostics.
 - Added shared and mutable borrows, explicit borrow values, and pointer-based borrow parameters.
+- Added path-sensitive move-state joins for conditionals, short-circuit expressions and matches.
 
 ## 0.1.0 - 2026-07-20
 
