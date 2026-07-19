@@ -8,9 +8,9 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::ast::{
-    BinaryOp, Binding, CallArg, CompileParam, EnumDef, Expr, ExtendDef, ExtendMember, Function,
-    Item, MatchArm, PassMode, Pattern, PatternFields, Program, Stmt, StructDef, TraitDef,
-    TraitMember, Type, UnaryOp, VariantFields,
+    BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EnumDef, Expr, ExtendDef,
+    ExtendMember, Function, Item, MatchArm, PassMode, Pattern, PatternFields, Program, Stmt,
+    StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantFields,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -734,6 +734,13 @@ struct TraitImplInfo {
 }
 
 #[derive(Debug, Clone)]
+struct AddCandidate {
+    method: String,
+    rhs: Ty,
+    output: Ty,
+}
+
+#[derive(Debug, Clone)]
 struct TraitSchema {
     compile_parameters: Vec<CompileParam>,
     associated_types: Vec<String>,
@@ -1005,8 +1012,81 @@ impl Analyzer {
         self.validate_function_templates();
     }
 
+    fn add_lang_item_has_required_shape(definition: &TraitDef) -> bool {
+        let [compile_group] = definition.compile_groups.as_slice() else {
+            return false;
+        };
+        let [rhs_parameter] = compile_group.as_slice() else {
+            return false;
+        };
+        if rhs_parameter.kind != CompileParamKind::Type || definition.members.len() != 2 {
+            return false;
+        }
+
+        let rhs_type = Type::Named(rhs_parameter.name.clone(), Vec::new());
+        let self_type = Type::Named("Self".to_owned(), Vec::new());
+        let output_type = Type::Named("Output".to_owned(), Vec::new());
+        let mut found_output = false;
+        let mut found_add = false;
+
+        for member in &definition.members {
+            match member {
+                TraitMember::AssociatedType {
+                    name,
+                    compile_groups,
+                    default,
+                } => {
+                    if found_output
+                        || name != "Output"
+                        || !compile_groups.is_empty()
+                        || default.is_some()
+                    {
+                        return false;
+                    }
+                    found_output = true;
+                }
+                TraitMember::Function(function) => {
+                    if found_add
+                        || function.name != "add"
+                        || !function.compile_groups.is_empty()
+                        || function.body.is_some()
+                        || function.return_type.as_ref() != Some(&output_type)
+                    {
+                        return false;
+                    }
+                    let [receiver_group, rhs_group] = function.groups.as_slice() else {
+                        return false;
+                    };
+                    let [receiver] = receiver_group.as_slice() else {
+                        return false;
+                    };
+                    let [rhs] = rhs_group.as_slice() else {
+                        return false;
+                    };
+                    if receiver.name != "self"
+                        || receiver.mode != PassMode::Move
+                        || receiver.ty != self_type
+                        || rhs.mode != PassMode::Move
+                        || rhs.ty != rhs_type
+                    {
+                        return false;
+                    }
+                    found_add = true;
+                }
+            }
+        }
+
+        found_output && found_add
+    }
+
     fn collect_trait_schema(&mut self, definition: TraitDef) {
         let mut valid = true;
+        if definition.name == "Add" && !Self::add_lang_item_has_required_shape(&definition) {
+            self.error(
+                "`Add` language trait must have shape `let Add(Rhs: type) = trait { let Output: type; let add(move self)(move rhs: Rhs): Output }`",
+            );
+            valid = false;
+        }
         if definition.compile_groups.len() > 1 {
             self.error(format!(
                 "trait `{}` supports at most one compile-time parameter group",
@@ -3259,6 +3339,122 @@ impl Analyzer {
         }
     }
 
+    fn nominal_ty_from_probe(probe: &TypeProbe) -> Option<Ty> {
+        match probe {
+            TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _)
+                if matches!(ty, Ty::Struct(_) | Ty::Enum(_)) =>
+            {
+                Some(ty.clone())
+            }
+            TypeProbe::Known(_)
+            | TypeProbe::KnownSource(_, _)
+            | TypeProbe::Defaultable(_)
+            | TypeProbe::Unsupported => None,
+        }
+    }
+
+    fn probe_matches_type(probe: &TypeProbe, expected: &Ty) -> bool {
+        match probe {
+            TypeProbe::Known(actual) | TypeProbe::KnownSource(actual, _) => actual == expected,
+            TypeProbe::Defaultable(default) => default.is_integer() && expected.is_integer(),
+            TypeProbe::Unsupported => true,
+        }
+    }
+
+    fn add_candidates(
+        &self,
+        receiver: &Ty,
+        right: &Expr,
+        expected: Option<&Ty>,
+        context: &LowerCtx,
+    ) -> Vec<AddCandidate> {
+        if !self.traits.get("Add").is_some_and(|schema| schema.valid) {
+            return Vec::new();
+        }
+
+        let mut candidates = self
+            .trait_impls
+            .values()
+            .filter_map(|implementation| {
+                if implementation.key.self_ty != *receiver
+                    || implementation.key.trait_ref.name != "Add"
+                {
+                    return None;
+                }
+                let [rhs] = implementation.key.trait_ref.arguments.as_slice() else {
+                    return None;
+                };
+                let method = implementation.methods.get("add")?;
+                let output = implementation.associated_types.get("Output")?;
+                if integer_literal_value(right).is_some_and(|value| !integer_fits(value, rhs)) {
+                    return None;
+                }
+                let right_probe = self.probe_expr_ty(right, Some(rhs), context);
+                Self::probe_matches_type(&right_probe, rhs).then(|| AddCandidate {
+                    method: method.clone(),
+                    rhs: rhs.clone(),
+                    output: output.clone(),
+                })
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_by(|left, right| {
+            canonical_type_encoding(&left.rhs)
+                .cmp(&canonical_type_encoding(&right.rhs))
+                .then_with(|| {
+                    canonical_type_encoding(&left.output)
+                        .cmp(&canonical_type_encoding(&right.output))
+                })
+                .then_with(|| left.method.cmp(&right.method))
+        });
+
+        if candidates.len() > 1 {
+            if let Some(expected) = expected.filter(|ty| **ty != Ty::Error) {
+                candidates.retain(|candidate| candidate.output == *expected);
+            }
+        }
+        candidates
+    }
+
+    fn probe_numeric_binary_ty(
+        &self,
+        left: &Expr,
+        right: &Expr,
+        hint: Option<&Ty>,
+        context: &LowerCtx,
+    ) -> TypeProbe {
+        let numeric_hint = hint.filter(|ty| ty.is_integer());
+        match self.probe_expr_ty(left, numeric_hint, context) {
+            TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) if ty.is_integer() => {
+                TypeProbe::Known(ty)
+            }
+            _ => match self.probe_expr_ty(right, numeric_hint, context) {
+                TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) if ty.is_integer() => {
+                    TypeProbe::Known(ty)
+                }
+                TypeProbe::Defaultable(ty) if ty.is_integer() => TypeProbe::Defaultable(ty),
+                _ => TypeProbe::Unsupported,
+            },
+        }
+    }
+
+    fn probe_add_ty(
+        &self,
+        left: &Expr,
+        right: &Expr,
+        expected: Option<&Ty>,
+        context: &LowerCtx,
+    ) -> TypeProbe {
+        let left_probe = self.probe_expr_ty(left, None, context);
+        if let Some(receiver) = Self::nominal_ty_from_probe(&left_probe) {
+            let candidates = self.add_candidates(&receiver, right, expected, context);
+            return match candidates.as_slice() {
+                [candidate] => TypeProbe::Known(candidate.output.clone()),
+                [] | [_, _, ..] => TypeProbe::Unsupported,
+            };
+        }
+        self.probe_numeric_binary_ty(left, right, expected, context)
+    }
+
     fn probe_expr_ty(&self, expression: &Expr, hint: Option<&Ty>, context: &LowerCtx) -> TypeProbe {
         match expression {
             Expr::Integer(_) => hint
@@ -3296,24 +3492,9 @@ impl Analyzer {
                 | BinaryOp::Le
                 | BinaryOp::Gt
                 | BinaryOp::Ge => TypeProbe::Known(Ty::Bool),
-                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
-                    let numeric_hint = hint.filter(|ty| ty.is_integer());
-                    match self.probe_expr_ty(left, numeric_hint, context) {
-                        TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) if ty.is_integer() => {
-                            TypeProbe::Known(ty)
-                        }
-                        _ => match self.probe_expr_ty(right, numeric_hint, context) {
-                            TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _)
-                                if ty.is_integer() =>
-                            {
-                                TypeProbe::Known(ty)
-                            }
-                            TypeProbe::Defaultable(ty) if ty.is_integer() => {
-                                TypeProbe::Defaultable(ty)
-                            }
-                            _ => TypeProbe::Unsupported,
-                        },
-                    }
+                BinaryOp::Add => self.probe_add_ty(left, right, hint, context),
+                BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
+                    self.probe_numeric_binary_ty(left, right, hint, context)
                 }
             },
             Expr::Array(elements) => {
@@ -6080,6 +6261,106 @@ impl Analyzer {
         });
     }
 
+    fn lower_trait_add(
+        &mut self,
+        left: &Expr,
+        lowered_left: Option<HirExpr>,
+        right: &Expr,
+        receiver: &Ty,
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let Some(schema) = self.traits.get("Add") else {
+            self.error(format!(
+                "operator `+` for `{receiver}` requires the top-level `Add` trait"
+            ));
+            return error_expr();
+        };
+        if !schema.valid {
+            return error_expr();
+        }
+
+        let candidates = self.add_candidates(receiver, right, expected, context);
+        let candidate = match candidates.as_slice() {
+            [candidate] => candidate.clone(),
+            [] => {
+                let right_probe = self.probe_expr_ty(right, None, context);
+                let right_ty = match right_probe {
+                    TypeProbe::Known(ty)
+                    | TypeProbe::KnownSource(ty, _)
+                    | TypeProbe::Defaultable(ty) => Some(ty),
+                    TypeProbe::Unsupported => None,
+                };
+                let expected_output = expected
+                    .filter(|ty| **ty != Ty::Error)
+                    .map(|ty| format!(" producing `{ty}`"))
+                    .unwrap_or_default();
+                if let Some(right_ty) = right_ty {
+                    self.error(format!(
+                        "no matching `Add` implementation for `{receiver}` with right operand `{right_ty}`{expected_output}"
+                    ));
+                } else {
+                    self.error(format!(
+                        "no matching `Add` implementation for `{receiver}` with an unresolved right operand{expected_output}"
+                    ));
+                }
+                return error_expr();
+            }
+            [_, _, ..] => {
+                let descriptions = candidates
+                    .iter()
+                    .map(|candidate| {
+                        format!("`Add({}, Output = {})`", candidate.rhs, candidate.output)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.error(format!(
+                    "ambiguous `+` for `{receiver}`; matching implementations: {descriptions}"
+                ));
+                return error_expr();
+            }
+        };
+
+        let Some(signature) = self.signatures.get(&candidate.method).cloned() else {
+            self.error("internal error: `Add.add` implementation has no function signature");
+            return error_expr();
+        };
+        let valid_signature = signature.groups.len() == 2
+            && signature.groups[0].len() == 1
+            && signature.groups[1].len() == 1
+            && signature.groups[0][0].ty == *receiver
+            && signature.groups[0][0].mode == PassMode::Move
+            && signature.groups[1][0].ty == candidate.rhs
+            && signature.groups[1][0].mode == PassMode::Move
+            && signature.result.as_ref() == Some(&candidate.output);
+        if !valid_signature {
+            self.error("internal error: invalid registered `Add.add` signature");
+            return error_expr();
+        }
+        let receiver_parameter = signature.groups[0][0].clone();
+        let rhs_parameter = signature.groups[1][0].clone();
+        let mut temporary_loans = Vec::new();
+        let left = if let Some(left) = lowered_left {
+            self.require_same_type(
+                &left.ty,
+                &receiver_parameter.ty,
+                "left operand of overloaded `+`",
+            );
+            HirArgument::Move(left)
+        } else {
+            self.lower_call_argument(left, &receiver_parameter, context, &mut temporary_loans)
+        };
+        let right = self.lower_call_argument(right, &rhs_parameter, context, &mut temporary_loans);
+        self.release_loans(&temporary_loans, context);
+        HirExpr {
+            ty: candidate.output,
+            kind: HirExprKind::Call {
+                function: candidate.method,
+                arguments: vec![left, right],
+            },
+        }
+    }
+
     fn lower_binary(
         &mut self,
         left: &Expr,
@@ -6089,6 +6370,41 @@ impl Analyzer {
         context: &mut LowerCtx,
     ) -> HirExpr {
         use BinaryOp::*;
+        if operator == Add {
+            let left_probe = self.probe_expr_ty(left, None, context);
+            if let Some(receiver) = Self::nominal_ty_from_probe(&left_probe) {
+                return self.lower_trait_add(left, None, right, &receiver, expected, context);
+            }
+            if left_probe == TypeProbe::Unsupported {
+                let lowered_left = self.lower_expr(left, None, context);
+                if matches!(lowered_left.ty, Ty::Struct(_) | Ty::Enum(_)) {
+                    let receiver = lowered_left.ty.clone();
+                    return self.lower_trait_add(
+                        left,
+                        Some(lowered_left),
+                        right,
+                        &receiver,
+                        expected,
+                        context,
+                    );
+                }
+
+                let right_hint = lowered_left.ty.is_integer().then_some(&lowered_left.ty);
+                let lowered_right = self.lower_expr(right, right_hint, context);
+                if !lowered_left.ty.is_integer() {
+                    self.error(format!(
+                        "operator `+` requires integer operands, found `{}`",
+                        lowered_left.ty
+                    ));
+                }
+                self.require_same_type(&lowered_left.ty, &lowered_right.ty, "operands of `+`");
+                let ty = lowered_left.ty.clone();
+                return HirExpr {
+                    ty,
+                    kind: HirExprKind::Binary(Box::new(lowered_left), Add, Box::new(lowered_right)),
+                };
+            }
+        }
         let (left, right, ty) = match operator {
             And | Or => {
                 let left = self.lower_expr(left, Some(&Ty::Bool), context);
@@ -7975,6 +8291,7 @@ fn integer_literal_value(expression: &Expr) -> Option<i128> {
             };
             value.checked_neg()
         }
+        Expr::Block(statements, Some(tail)) if statements.is_empty() => integer_literal_value(tail),
         _ => None,
     }
 }
@@ -11183,6 +11500,181 @@ let main(): i32 = {
             "define internal i32 @{symbol}(ptr %arg.0, i32 %arg.1)"
         )));
         assert!(ir.contains(&format!("call i32 @{symbol}(ptr")));
+    }
+
+    #[test]
+    fn lowers_alpha_equivalent_add_trait_to_a_static_call() {
+        let program = crate::parser::parse(
+            r#"
+let Add(Other: type) = trait {
+  let add(move self)(move other: Other): Output
+  let Output: type
+}
+let Number = struct(value: i32)
+extend Number: Add(Number) {
+  let Output = i32
+  let add(move self)(move other: Number): i32 = self.value + other.value
+}
+let main(): i32 = Number(40) + Number(2)
+"#,
+        )
+        .expect("alpha-equivalent Add source must parse");
+        let key = TraitImplKey {
+            self_ty: Ty::Struct("Number".into()),
+            trait_ref: TraitRefKey {
+                name: "Add".into(),
+                arguments: vec![Ty::Struct("Number".into())],
+            },
+        };
+        let symbol = function_symbol(&trait_method_name(&key, "add"));
+        let ir = compile(&program).expect("alpha-equivalent Add source must compile");
+        assert!(ir.contains(&format!("call i32 @{symbol}(")));
+        assert!(
+            ir.contains("add i32"),
+            "integer addition must stay built in"
+        );
+    }
+
+    #[test]
+    fn add_output_participates_in_outer_generic_inference() {
+        let ir = compile_text(
+            r#"
+let Add(Rhs: type) = trait {
+  let Output: type
+  let add(move self)(move rhs: Rhs): Output
+}
+let Number = struct(value: i32)
+extend Number: Add(i32) {
+  let Output = i32
+  let add(move self)(move rhs: i32): i32 = self.value + rhs
+}
+let identity(T: type)(move value: T): T = value
+let main(): i32 = identity(_)(Number(40) + 2)
+"#,
+        )
+        .expect("Add Output must be visible to generic inference");
+        let identity = function_instance_name(&FunctionInstanceKey {
+            template: "identity".into(),
+            arguments: vec![Ty::I32],
+        });
+        assert!(ir.contains(&format!("call i32 @{}(", function_symbol(&identity))));
+    }
+
+    #[test]
+    fn add_literal_range_eliminates_incompatible_rhs_candidates() {
+        let program = crate::parser::parse(
+            r#"
+let Add(Rhs: type) = trait {
+  let Output: type
+  let add(move self)(move rhs: Rhs): Output
+}
+let Number = struct(value: i32)
+extend Number: Add(i32) {
+  let Output = i64
+  let add(move self)(move rhs: i32): i64 = 0
+}
+extend Number: Add(i64) {
+  let Output = i64
+  let add(move self)(move rhs: i64): i64 = rhs
+}
+let main(): i32 = {
+  let answer: i64 = Number(0) + do { 2147483648 }
+  if answer == 2147483648 { 42 } else { 0 }
+}
+"#,
+        )
+        .expect("large literal Add source must parse");
+        let i32_key = TraitImplKey {
+            self_ty: Ty::Struct("Number".into()),
+            trait_ref: TraitRefKey {
+                name: "Add".into(),
+                arguments: vec![Ty::I32],
+            },
+        };
+        let i64_key = TraitImplKey {
+            self_ty: Ty::Struct("Number".into()),
+            trait_ref: TraitRefKey {
+                name: "Add".into(),
+                arguments: vec![Ty::I64],
+            },
+        };
+        let i32_symbol = function_symbol(&trait_method_name(&i32_key, "add"));
+        let i64_symbol = function_symbol(&trait_method_name(&i64_key, "add"));
+        let ir = compile(&program).expect("large literal must select Add(i64)");
+        assert!(ir.contains(&format!("call i64 @{i64_symbol}(")));
+        assert!(!ir.contains(&format!("call i64 @{i32_symbol}(")));
+    }
+
+    #[test]
+    fn add_lowering_is_independent_of_inferred_producer_declaration_order() {
+        let program = crate::parser::parse(
+            r#"
+let Add(Rhs: type) = trait {
+  let Output: type
+  let add(move self)(move rhs: Rhs): Output
+}
+let Number = struct(value: i32)
+extend Number: Add(Number) {
+  let Output = Number
+  let add(move self)(move rhs: Number): Number = Number(self.value + rhs.value)
+}
+let main(): i32 = {
+  let answer = make() + Number(2)
+  answer.value
+}
+let make() = Number(40)
+"#,
+        )
+        .expect("inferred producer source must parse");
+        let key = TraitImplKey {
+            self_ty: Ty::Struct("Number".into()),
+            trait_ref: TraitRefKey {
+                name: "Add".into(),
+                arguments: vec![Ty::Struct("Number".into())],
+            },
+        };
+        let symbol = function_symbol(&trait_method_name(&key, "add"));
+        let ir = compile(&program).expect("later inferred producer must support overloaded Add");
+        assert!(ir.contains(&format!("call %sali.type.4e756d626572 @{symbol}(")));
+    }
+
+    #[test]
+    fn builtin_add_is_independent_of_inferred_producer_declaration_order() {
+        let ir = compile_text(
+            r#"
+let main(): i32 = make() + 2
+let make() = 40
+"#,
+        )
+        .expect("later inferred integer producer must support built-in Add");
+        assert!(ir.contains("add i32"));
+    }
+
+    #[test]
+    fn add_reports_when_no_ambiguous_candidate_has_the_expected_output() {
+        let errors = compile_text(
+            r#"
+let Add(Rhs: type) = trait {
+  let Output: type
+  let add(move self)(move rhs: Rhs): Output
+}
+let Number = struct(value: i32)
+extend Number: Add(i32) {
+  let Output = bool
+  let add(move self)(move rhs: i32): bool = false
+}
+extend Number: Add(i64) {
+  let Output = bool
+  let add(move self)(move rhs: i64): bool = true
+}
+let main(): i32 = Number(40) + 2
+"#,
+        )
+        .expect_err("expected output must reject every Add candidate");
+        assert!(errors.iter().any(|error| {
+            error.message.contains("no matching `Add` implementation")
+                && error.message.contains("producing `i32`")
+        }));
     }
 
     #[test]

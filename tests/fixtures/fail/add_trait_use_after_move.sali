@@ -1,0 +1,17 @@
+let Add(Rhs: type) = trait {
+  let Output: type
+  let add(move self)(move rhs: Rhs): Output
+}
+
+let Number = struct(value: i32)
+
+extend Number: Add(Number) {
+  let Output = Number
+  let add(move self)(move rhs: Number): Number = Number(self.value + rhs.value)
+}
+
+let main(): i32 = {
+  let left = Number(40)
+  let answer = left + Number(2)
+  left.value
+}

@@ -1,0 +1,23 @@
+let Add(Rhs: type) = trait {
+  let Output: type
+  let add(move self)(move rhs: Rhs): Output
+}
+
+let Number = struct(value: i32)
+
+extend Number: Add(Number) {
+  let Output = Number
+  let add(move self)(move rhs: Number): Number = Number(self.value + rhs.value)
+}
+
+let tick(mut borrow count: i32)(value: i32): Number = {
+  count = count + 1
+  Number(value)
+}
+
+let main(): i32 = {
+  let mut left_count = 0
+  let mut right_count = 0
+  let answer = tick(left_count)(19) + tick(right_count)(23)
+  if left_count == 1 && right_count == 1 { answer.value } else { 0 }
+}

@@ -807,6 +807,56 @@ fn m2_concrete_trait_errors_report_their_cause() {
 }
 
 #[test]
+fn m2_add_trait_programs_run_with_expected_result() {
+    for name in [
+        "add_trait_nominal_pair.sali",
+        "add_trait_nominal_i32_nominal_output.sali",
+        "add_trait_nominal_i32_scalar_output.sali",
+        "add_trait_builtin_integer_precedence.sali",
+        "add_trait_operands_once.sali",
+        "add_trait_expected_output.sali",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run Add-trait fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn m2_add_trait_errors_report_their_cause() {
+    for (name, expected) in [
+        ("add_trait_missing_impl.sali", "Add"),
+        ("add_trait_rhs_mismatch.sali", "Add"),
+        ("add_trait_ambiguous_literal.sali", "ambiguous"),
+        ("add_trait_use_after_move.sali", "moved"),
+        ("add_trait_rhs_use_after_move.sali", "moved"),
+        ("add_trait_malformed_schema.sali", "Add"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid Add-trait fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected),
+            "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn output_must_not_overwrite_the_source() {
     let temporary = TestDirectory::new();
     let source = temporary.join("keep.sali");

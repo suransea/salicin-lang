@@ -19,6 +19,9 @@ M2 development follows the v0.2 language foundation.
 - Added concrete trait implementations with required associated types, exact grouped-signature and
   pass-mode validation, coherence checks, stable static method dispatch, inherent-method precedence,
   and support for concrete generic nominal instances such as `Cell(i32)`.
+- Added name-based `Add(Rhs)` language-trait validation and statically dispatched `+` for concrete
+  nominal left operands, including `Output`-guided inference, deterministic ambiguity diagnostics,
+  literal range filtering and single-evaluation ownership semantics; integer addition remains built in.
 
 ## 0.2.0 - 2026-07-20
 
