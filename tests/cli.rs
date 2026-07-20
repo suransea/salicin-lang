@@ -45,6 +45,21 @@ impl TestDirectory {
     fn join(&self, name: &str) -> PathBuf {
         self.0.join(name)
     }
+
+    fn create_dir(&self, name: &str) -> PathBuf {
+        let path = self.join(name);
+        fs::create_dir_all(&path).expect("create nested test directory");
+        path
+    }
+
+    fn write(&self, name: &str, contents: &str) -> PathBuf {
+        let path = self.join(name);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create test fixture parent directory");
+        }
+        fs::write(&path, contents).expect("write test fixture");
+        path
+    }
 }
 
 impl Drop for TestDirectory {
@@ -1160,4 +1175,280 @@ fn output_must_not_overwrite_the_source() {
         assert_eq!(output.status.code(), Some(2), "{}", output_text(&output));
         assert_eq!(fs::read(&source).expect("read preserved source"), original);
     }
+}
+
+#[test]
+fn package_default_target_accepts_directory_manifest_and_cwd_discovery() {
+    let project = TestDirectory::new();
+    let manifest = project.write(
+        "salicin.toml",
+        r#"[package]
+name = "hello-salicin"
+version = "0.1.0"
+edition = "2026"
+"#,
+    );
+    project.write("src/main.sali", "let main(): i32 = 42\n");
+
+    let checked = salic()
+        .arg("check")
+        .arg(&project.0)
+        .output()
+        .expect("check package directory");
+    assert!(checked.status.success(), "{}", output_text(&checked));
+
+    let run = salic()
+        .arg("run")
+        .arg(&manifest)
+        .output()
+        .expect("run package manifest");
+    assert_eq!(run.status.code(), Some(42), "{}", output_text(&run));
+
+    let built = salic()
+        .arg("build")
+        .arg(&project.0)
+        .output()
+        .expect("build package directory");
+    assert!(built.status.success(), "{}", output_text(&built));
+    let mut executable = project.join("build/hello-salicin");
+    if !std::env::consts::EXE_EXTENSION.is_empty() {
+        executable.set_extension(std::env::consts::EXE_EXTENSION);
+    }
+    assert!(
+        executable.is_file(),
+        "default package output was not written to {}",
+        executable.display()
+    );
+
+    let nested = project.create_dir("src/nested/deeper");
+    let discovered = salic()
+        .arg("run")
+        .current_dir(nested)
+        .output()
+        .expect("run package discovered from cwd");
+    assert_eq!(
+        discovered.status.code(),
+        Some(42),
+        "{}",
+        output_text(&discovered)
+    );
+}
+
+#[test]
+fn explicit_package_targets_support_bin_selection_and_lib_checking() {
+    let project = TestDirectory::new();
+    project.write(
+        "salicin.toml",
+        r#"[package]
+name = "toolbox"
+version = "0.1.0"
+edition = "2026"
+
+[lib]
+path = "src/toolbox.sali"
+
+[[bin]]
+name = "toolbox"
+path = "src/main.sali"
+
+[[bin]]
+name = "answer"
+path = "src/answer.sali"
+"#,
+    );
+    project.write("src/toolbox.sali", "let answer(): i32 = 42\n");
+    project.write("src/main.sali", "let main(): i32 = 1\n");
+    project.write("src/answer.sali", "let main(): i32 = 42\n");
+
+    let checked = salic()
+        .arg("check")
+        .arg("--lib")
+        .arg(&project.0)
+        .output()
+        .expect("check explicitly selected library target");
+    assert!(checked.status.success(), "{}", output_text(&checked));
+
+    let run = salic()
+        .arg("run")
+        .arg(&project.0)
+        .args(["--bin", "answer"])
+        .output()
+        .expect("run explicitly selected binary target");
+    assert_eq!(run.status.code(), Some(42), "{}", output_text(&run));
+
+    let built = salic()
+        .arg("build")
+        .arg(&project.0)
+        .args(["--bin", "answer"])
+        .output()
+        .expect("build explicitly selected binary target");
+    assert!(built.status.success(), "{}", output_text(&built));
+    let mut executable = project.join("build/answer");
+    if !std::env::consts::EXE_EXTENSION.is_empty() {
+        executable.set_extension(std::env::consts::EXE_EXTENSION);
+    }
+    assert!(executable.is_file(), "missing {}", executable.display());
+}
+
+#[test]
+fn package_target_selection_errors_explain_how_to_resolve_them() {
+    let multiple_bins = TestDirectory::new();
+    multiple_bins.write(
+        "salicin.toml",
+        r#"[package]
+name = "ambiguous"
+version = "0.1.0"
+edition = "2026"
+
+[[bin]]
+name = "left"
+path = "src/left.sali"
+
+[[bin]]
+name = "right"
+path = "src/right.sali"
+"#,
+    );
+    multiple_bins.write("src/left.sali", "let main(): i32 = 1\n");
+    multiple_bins.write("src/right.sali", "let main(): i32 = 2\n");
+
+    let ambiguous = salic()
+        .arg("run")
+        .arg(&multiple_bins.0)
+        .output()
+        .expect("run package with ambiguous binary target");
+    assert!(
+        !ambiguous.status.success(),
+        "ambiguous target unexpectedly ran"
+    );
+    let stderr = String::from_utf8_lossy(&ambiguous.stderr).to_lowercase();
+    assert!(
+        stderr.contains("--bin") && (stderr.contains("multiple") || stderr.contains("choose")),
+        "{}",
+        output_text(&ambiguous)
+    );
+
+    let library_only = TestDirectory::new();
+    library_only.write(
+        "salicin.toml",
+        r#"[package]
+name = "library-only"
+version = "0.1.0"
+edition = "2026"
+
+[lib]
+path = "src/lib.sali"
+"#,
+    );
+    library_only.write("src/lib.sali", "let answer(): i32 = 42\n");
+
+    let no_binary = salic()
+        .arg("run")
+        .arg(&library_only.0)
+        .output()
+        .expect("run library-only package");
+    assert!(
+        !no_binary.status.success(),
+        "library-only package unexpectedly ran"
+    );
+    let stderr = String::from_utf8_lossy(&no_binary.stderr).to_lowercase();
+    assert!(
+        stderr.contains("bin") || stderr.contains("binary"),
+        "{}",
+        output_text(&no_binary)
+    );
+}
+
+#[test]
+fn invalid_manifests_and_dependencies_fail_with_context() {
+    let invalid_manifest = TestDirectory::new();
+    invalid_manifest.write(
+        "salicin.toml",
+        "[package\nname = \"broken\"\nversion = \"0.1.0\"\n",
+    );
+
+    let malformed = salic()
+        .arg("check")
+        .arg(&invalid_manifest.0)
+        .output()
+        .expect("check package with malformed manifest");
+    assert!(
+        !malformed.status.success(),
+        "malformed manifest unexpectedly passed"
+    );
+    let stderr = String::from_utf8_lossy(&malformed.stderr).to_lowercase();
+    assert!(
+        stderr.contains("manifest") || stderr.contains("salicin.toml"),
+        "{}",
+        output_text(&malformed)
+    );
+
+    let invalid_dependency = TestDirectory::new();
+    invalid_dependency.write(
+        "salicin.toml",
+        r#"[package]
+name = "bad-dependency"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+broken = 42
+"#,
+    );
+    invalid_dependency.write("src/main.sali", "let main(): i32 = 0\n");
+
+    let dependency = salic()
+        .arg("check")
+        .arg(&invalid_dependency.0)
+        .output()
+        .expect("check package with invalid dependency declaration");
+    assert!(
+        !dependency.status.success(),
+        "invalid dependency unexpectedly passed"
+    );
+    let stderr = String::from_utf8_lossy(&dependency.stderr).to_lowercase();
+    assert!(stderr.contains("depend"), "{}", output_text(&dependency));
+}
+
+#[test]
+fn package_outputs_cannot_overwrite_the_manifest_or_another_target() {
+    let project = TestDirectory::new();
+    let manifest_text = r#"[package]
+name = "protected"
+version = "0.1.0"
+edition = "2026"
+
+[[bin]]
+name = "protected"
+path = "src/main.sali"
+
+[[bin]]
+name = "other"
+path = "src/other.sali"
+"#;
+    let main_text = "let main(): i32 = 0\n";
+    let other_text = "let main(): i32 = 1\n";
+    let manifest = project.write("salicin.toml", manifest_text);
+    project.write("src/main.sali", main_text);
+    let other = project.write("src/other.sali", other_text);
+
+    let emit = salic()
+        .args(["emit-ir", "--bin", "protected"])
+        .arg(&project.0)
+        .arg("-o")
+        .arg(&manifest)
+        .output()
+        .expect("reject manifest overwrite");
+    assert_eq!(emit.status.code(), Some(2), "{}", output_text(&emit));
+    assert_eq!(fs::read_to_string(&manifest).unwrap(), manifest_text);
+
+    let build = salic()
+        .args(["build", "--bin", "protected"])
+        .arg(&project.0)
+        .arg("-o")
+        .arg(&other)
+        .output()
+        .expect("reject another target overwrite");
+    assert_eq!(build.status.code(), Some(2), "{}", output_text(&build));
+    assert_eq!(fs::read_to_string(&other).unwrap(), other_text);
 }

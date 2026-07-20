@@ -36,8 +36,23 @@ impl fmt::Display for Diagnostic {
 /// pointers.  The returned module deliberately omits a target triple so that
 /// the caller can compile it for the selected LLVM target.
 pub fn compile(program: &Program) -> Result<String, Vec<Diagnostic>> {
+    compile_target(program, true)
+}
+
+/// Type-check `program` and emit LLVM IR for a library target. Unlike
+/// [`compile`], this does not require `main` or generate the platform entry
+/// wrapper.
+pub fn compile_library(program: &Program) -> Result<String, Vec<Diagnostic>> {
+    compile_target(program, false)
+}
+
+fn compile_target(program: &Program, require_entry_point: bool) -> Result<String, Vec<Diagnostic>> {
     let mut analyzer = Analyzer::new(program);
-    let hir = analyzer.analyze();
+    let hir = if require_entry_point {
+        analyzer.analyze()
+    } else {
+        analyzer.analyze_target(false)
+    };
     if !analyzer.diagnostics.is_empty() {
         return Err(analyzer.diagnostics);
     }
@@ -45,10 +60,24 @@ pub fn compile(program: &Program) -> Result<String, Vec<Diagnostic>> {
     let hir = hir.expect("analysis without diagnostics must produce HIR");
     let constants = evaluate_globals(&hir)?;
 
-    match Emitter::new(&hir, constants).emit_module() {
+    match Emitter::new(&hir, constants).emit_module(require_entry_point) {
         Ok(ir) => Ok(ir),
         Err(error) => Err(vec![error]),
     }
+}
+
+/// Type-check a library target without requiring or emitting a binary entry
+/// point. Global constants are still evaluated so library checks report the
+/// same constant-expression diagnostics as binary compilation.
+pub fn check_library(program: &Program) -> Result<(), Vec<Diagnostic>> {
+    let mut analyzer = Analyzer::new(program);
+    let hir = analyzer.analyze_target(false);
+    if !analyzer.diagnostics.is_empty() {
+        return Err(analyzer.diagnostics);
+    }
+
+    let hir = hir.expect("analysis without diagnostics must produce HIR");
+    evaluate_globals(&hir).map(|_| ())
 }
 
 fn builtin_prelude_items() -> [Item; 2] {
@@ -2643,6 +2672,10 @@ impl Analyzer {
     }
 
     fn analyze(&mut self) -> Option<HirProgram> {
+        self.analyze_target(true)
+    }
+
+    fn analyze_target(&mut self, require_entry_point: bool) -> Option<HirProgram> {
         for name in self.global_order.clone() {
             self.lower_global(&name);
         }
@@ -2653,7 +2686,9 @@ impl Analyzer {
             function_index += 1;
         }
         self.validate_nominal_layouts();
-        self.validate_entry_point();
+        if require_entry_point {
+            self.validate_entry_point();
+        }
 
         if !self.diagnostics.is_empty() {
             return None;
@@ -9931,7 +9966,7 @@ impl<'a> Emitter<'a> {
         Self { program, constants }
     }
 
-    fn emit_module(&self) -> Result<String, Diagnostic> {
+    fn emit_module(&self, include_entry_point: bool) -> Result<String, Diagnostic> {
         let mut output = String::new();
         output.push_str(
             "; ModuleID = 'salicin'\nsource_filename = \"salicin\"\n\ndeclare void @llvm.trap()\n\n",
@@ -9987,6 +10022,10 @@ impl<'a> Emitter<'a> {
             let mut emitter = FunctionEmitter::new(function, self.program);
             output.push_str(&emitter.emit()?);
             output.push('\n');
+        }
+
+        if !include_entry_point {
+            return Ok(output);
         }
 
         let main = self

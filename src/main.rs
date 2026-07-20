@@ -6,30 +6,34 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Command, ExitStatus};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use salicin_lang::compile_source;
+use salicin_lang::manifest::{load_manifest, Manifest, Target, TargetKind, MANIFEST_FILE_NAME};
+use salicin_lang::{check_library_source, compile_library_source, compile_source};
 
 const HELP: &str = "Salicin compiler
 
 Usage:
-  salic build <file.sali> [-o <path>]
-  salic check <file.sali>
-  salic emit-ir <file.sali> [-o <path>]
-  salic run <file.sali> [-- <args>...]
-  salic <file.sali> [-o <path>]
+  salic build [path] [--bin <name>] [-o <path>]
+  salic check [path] [--bin <name> | --lib]
+  salic emit-ir [path] [--bin <name> | --lib] [-o <path>]
+  salic run [path] [--bin <name>] [-- <args>...]
+  salic [path] [--bin <name>] [-o <path>]
 
 Commands:
-  build      Compile a Salicin source file to a native executable
-  check      Parse and type-check a source file without writing output
+    build      Compile a Salicin binary target to a native executable
+    check      Parse and type-check a source or package target
   emit-ir    Print LLVM IR, or write it to a file with -o
   run        Compile and run a program; arguments after -- go to the program
 
 Options:
   -o, --output <path>  Select the output path
+      --bin <name>     Select a binary target from salicin.toml
+      --lib            Select the library target (check and emit-ir only)
   -h, --help           Print this help
   -V, --version        Print the compiler version
 
-Without an explicit command, a .sali input is treated as a build command.
-The default build output is the source path without its .sali extension.";
+Path may be a .sali file, a project directory, or a salicin.toml manifest.
+When path is omitted, salic searches the current directory and its parents.
+Without an explicit command, the input is treated as a build command.";
 
 enum ParsedArgs {
     Help,
@@ -39,20 +43,37 @@ enum ParsedArgs {
 
 enum Action {
     Build {
-        source: PathBuf,
+        input: Option<PathBuf>,
+        bin: Option<String>,
         output: Option<PathBuf>,
     },
     Check {
-        source: PathBuf,
+        input: Option<PathBuf>,
+        target: TargetSelection,
     },
     EmitIr {
-        source: PathBuf,
+        input: Option<PathBuf>,
+        target: TargetSelection,
         output: Option<PathBuf>,
     },
     Run {
-        source: PathBuf,
+        input: Option<PathBuf>,
+        bin: Option<String>,
         args: Vec<OsString>,
     },
+}
+
+#[derive(Clone)]
+enum TargetSelection {
+    Default,
+    Bin(String),
+    Lib,
+}
+
+struct CompileArgs {
+    input: Option<PathBuf>,
+    output: Option<PathBuf>,
+    target: TargetSelection,
 }
 
 fn main() {
@@ -84,7 +105,11 @@ fn run_cli(args: Vec<OsString>) -> i32 {
 
 fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     let Some(first) = args.first() else {
-        return Err("missing a command or .sali source file".into());
+        return Ok(ParsedArgs::Action(Action::Build {
+            input: None,
+            bin: None,
+            output: None,
+        }));
     };
 
     if args.len() == 1 && (is(first, "-h") || is(first, "--help")) {
@@ -103,40 +128,66 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
 
     let action = match first.to_str() {
         Some("build") => {
-            let (source, output) = parse_source_and_output("build", &args[1..])?;
-            Action::Build { source, output }
+            let parsed = parse_compile_args("build", &args[1..], true, false)?;
+            let bin = selection_bin(parsed.target, "build")?;
+            Action::Build {
+                input: parsed.input,
+                bin,
+                output: parsed.output,
+            }
         }
-        Some("check") => Action::Check {
-            source: parse_single_source("check", &args[1..])?,
-        },
+        Some("check") => {
+            let parsed = parse_compile_args("check", &args[1..], false, true)?;
+            Action::Check {
+                input: parsed.input,
+                target: parsed.target,
+            }
+        }
         Some("emit-ir") => {
-            let (source, output) = parse_source_and_output("emit-ir", &args[1..])?;
-            Action::EmitIr { source, output }
+            let parsed = parse_compile_args("emit-ir", &args[1..], true, true)?;
+            Action::EmitIr {
+                input: parsed.input,
+                target: parsed.target,
+                output: parsed.output,
+            }
         }
         Some("run") => parse_run(&args[1..])?,
-        _ if starts_with_dash(first) => {
+        _ if starts_with_dash(first)
+            && !matches!(first.to_str(), Some("-o" | "--output" | "--bin")) =>
+        {
             return Err(format!("unknown option '{}'", first.to_string_lossy()));
         }
         _ => {
-            let (source, output) = parse_source_and_output("build", &args)?;
-            Action::Build { source, output }
+            let parsed = parse_compile_args("build", &args, true, false)?;
+            let bin = selection_bin(parsed.target, "build")?;
+            Action::Build {
+                input: parsed.input,
+                bin,
+                output: parsed.output,
+            }
         }
     };
 
     Ok(ParsedArgs::Action(action))
 }
 
-fn parse_source_and_output(
+fn parse_compile_args(
     command: &str,
     args: &[OsString],
-) -> Result<(PathBuf, Option<PathBuf>), String> {
-    let mut source = None;
+    allow_output: bool,
+    allow_lib: bool,
+) -> Result<CompileArgs, String> {
+    let mut input = None;
     let mut output = None;
+    let mut target = TargetSelection::Default;
     let mut index = 0;
 
     while index < args.len() {
         let argument = &args[index];
         if is(argument, "-o") || is(argument, "--output") {
+            if !allow_output {
+                return Err(format!("'{command}' does not accept an output path"));
+            }
             if output.is_some() {
                 return Err(format!("'{command}' accepts only one output path"));
             }
@@ -148,43 +199,55 @@ fn parse_source_and_output(
                 ));
             };
             output = Some(PathBuf::from(path));
+        } else if is(argument, "--bin") {
+            if !matches!(target, TargetSelection::Default) {
+                return Err(format!("'{command}' accepts only one target selector"));
+            }
+            index += 1;
+            let Some(name) = args.get(index).and_then(|value| value.to_str()) else {
+                return Err("'--bin' requires a UTF-8 target name".into());
+            };
+            if name.is_empty() {
+                return Err("'--bin' requires a non-empty target name".into());
+            }
+            target = TargetSelection::Bin(name.to_owned());
+        } else if is(argument, "--lib") {
+            if !allow_lib {
+                return Err(format!("'{command}' does not support '--lib'"));
+            }
+            if !matches!(target, TargetSelection::Default) {
+                return Err(format!("'{command}' accepts only one target selector"));
+            }
+            target = TargetSelection::Lib;
         } else if starts_with_dash(argument) {
             return Err(format!(
                 "unknown option '{}' for '{command}'",
                 argument.to_string_lossy()
             ));
-        } else if source.is_some() {
+        } else if input.is_some() {
             return Err(format!(
-                "'{command}' accepts exactly one source file; unexpected argument '{}'",
+                "'{command}' accepts at most one input path; unexpected argument '{}'",
                 argument.to_string_lossy()
             ));
         } else {
-            source = Some(PathBuf::from(argument));
+            input = Some(PathBuf::from(argument));
         }
         index += 1;
     }
 
-    let source = source.ok_or_else(|| format!("'{command}' requires a .sali source file"))?;
-    validate_source_path(&source)?;
-    Ok((source, output))
+    Ok(CompileArgs {
+        input,
+        output,
+        target,
+    })
 }
 
-fn parse_single_source(command: &str, args: &[OsString]) -> Result<PathBuf, String> {
-    if args.len() != 1 {
-        return Err(format!(
-            "'{command}' requires exactly one .sali source file"
-        ));
+fn selection_bin(selection: TargetSelection, command: &str) -> Result<Option<String>, String> {
+    match selection {
+        TargetSelection::Default => Ok(None),
+        TargetSelection::Bin(name) => Ok(Some(name)),
+        TargetSelection::Lib => Err(format!("'{command}' does not support '--lib'")),
     }
-    if starts_with_dash(&args[0]) {
-        return Err(format!(
-            "unknown option '{}' for '{command}'",
-            args[0].to_string_lossy()
-        ));
-    }
-
-    let source = PathBuf::from(&args[0]);
-    validate_source_path(&source)?;
-    Ok(source)
 }
 
 fn parse_run(args: &[OsString]) -> Result<Action, String> {
@@ -194,47 +257,35 @@ fn parse_run(args: &[OsString]) -> Result<Action, String> {
         None => (args, Vec::new()),
     };
 
-    if compiler_args.len() != 1 {
-        let hint = if separator.is_none() && compiler_args.len() > 1 {
-            "; place program arguments after '--'"
+    let parsed = parse_compile_args("run", compiler_args, false, false).map_err(|message| {
+        if separator.is_none() && compiler_args.len() > 1 {
+            format!("{message}; place program arguments after '--'")
         } else {
-            ""
-        };
-        return Err(format!(
-            "'run' requires exactly one .sali source file{hint}"
-        ));
-    }
-    if starts_with_dash(&compiler_args[0]) {
-        return Err(format!(
-            "unknown option '{}' for 'run'",
-            compiler_args[0].to_string_lossy()
-        ));
-    }
-
-    let source = PathBuf::from(&compiler_args[0]);
-    validate_source_path(&source)?;
+            message
+        }
+    })?;
+    let bin = selection_bin(parsed.target, "run")?;
     Ok(Action::Run {
-        source,
+        input: parsed.input,
+        bin,
         args: program_args,
     })
 }
 
-fn validate_source_path(source: &Path) -> Result<(), String> {
-    if source.extension() != Some(OsStr::new("sali")) {
-        return Err(format!(
-            "source file '{}' must use the .sali extension",
-            source.display()
-        ));
-    }
-    Ok(())
-}
-
 fn execute(action: Action) -> i32 {
     match action {
-        Action::Build { source, output } => {
+        Action::Build { input, bin, output } => {
+            let target = match resolve_input(
+                input.as_deref(),
+                bin.map_or(TargetSelection::Default, TargetSelection::Bin),
+                true,
+            ) {
+                Ok(target) => target,
+                Err(message) => return report_driver_error(message),
+            };
             let output = match output {
                 Some(output) => output,
-                None => match default_output_path(&source) {
+                None => match target.default_output_path() {
                     Ok(output) => output,
                     Err(message) => {
                         eprintln!("salic: {message}");
@@ -242,12 +293,12 @@ fn execute(action: Action) -> i32 {
                     }
                 },
             };
-            if let Err(message) = ensure_distinct_output(&source, &output) {
+            if let Err(message) = target.ensure_distinct_output(&output) {
                 eprintln!("salic: {message}");
                 return 2;
             }
 
-            let ir = match compile_file(&source) {
+            let ir = match compile_file(&target.source, target.is_library) {
                 Ok(ir) => ir,
                 Err(()) => return 1,
             };
@@ -259,20 +310,34 @@ fn execute(action: Action) -> i32 {
                 }
             }
         }
-        Action::Check { source } => match compile_file(&source) {
-            Ok(_) => 0,
-            Err(()) => 1,
-        },
-        Action::EmitIr { source, output } => {
+        Action::Check { input, target } => {
+            let target = match resolve_input(input.as_deref(), target, false) {
+                Ok(target) => target,
+                Err(message) => return report_driver_error(message),
+            };
+            match check_file(&target.source, target.is_library) {
+                Ok(()) => 0,
+                Err(()) => 1,
+            }
+        }
+        Action::EmitIr {
+            input,
+            target,
+            output,
+        } => {
+            let target = match resolve_input(input.as_deref(), target, false) {
+                Ok(target) => target,
+                Err(message) => return report_driver_error(message),
+            };
             if let Some(path) = output.as_deref() {
                 if path != Path::new("-") {
-                    if let Err(message) = ensure_distinct_output(&source, path) {
+                    if let Err(message) = target.ensure_distinct_output(path) {
                         eprintln!("salic: {message}");
                         return 2;
                     }
                 }
             }
-            let ir = match compile_file(&source) {
+            let ir = match compile_file(&target.source, target.is_library) {
                 Ok(ir) => ir,
                 Err(()) => return 1,
             };
@@ -284,8 +349,16 @@ fn execute(action: Action) -> i32 {
                 }
             }
         }
-        Action::Run { source, args } => {
-            let ir = match compile_file(&source) {
+        Action::Run { input, bin, args } => {
+            let target = match resolve_input(
+                input.as_deref(),
+                bin.map_or(TargetSelection::Default, TargetSelection::Bin),
+                true,
+            ) {
+                Ok(target) => target,
+                Err(message) => return report_driver_error(message),
+            };
+            let ir = match compile_file(&target.source, false) {
                 Ok(ir) => ir,
                 Err(()) => return 1,
             };
@@ -300,14 +373,164 @@ fn execute(action: Action) -> i32 {
     }
 }
 
-fn ensure_distinct_output(source: &Path, output: &Path) -> Result<(), String> {
-    if paths_refer_to_same_file(source, output) {
-        return Err(format!(
-            "refusing to overwrite source file '{}'",
-            source.display()
-        ));
+struct ResolvedTarget {
+    source: PathBuf,
+    project: Option<ProjectTarget>,
+    is_library: bool,
+    protected_inputs: Vec<PathBuf>,
+}
+
+struct ProjectTarget {
+    package_root: PathBuf,
+    target_name: String,
+}
+
+impl ResolvedTarget {
+    fn default_output_path(&self) -> Result<PathBuf, String> {
+        if let Some(project) = &self.project {
+            let directory = project.package_root.join("build");
+            fs::create_dir_all(&directory).map_err(|error| {
+                format!(
+                    "could not create package build directory '{}': {error}",
+                    directory.display()
+                )
+            })?;
+            Ok(directory.join(executable_name(&project.target_name)))
+        } else {
+            default_output_path(&self.source)
+        }
     }
-    Ok(())
+
+    fn ensure_distinct_output(&self, output: &Path) -> Result<(), String> {
+        for input in &self.protected_inputs {
+            if paths_refer_to_same_file(input, output) {
+                return Err(format!(
+                    "refusing to overwrite input file '{}'",
+                    input.display()
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn report_driver_error(message: String) -> i32 {
+    eprintln!("salic: {message}");
+    2
+}
+
+fn resolve_input(
+    input: Option<&Path>,
+    selection: TargetSelection,
+    binary_only: bool,
+) -> Result<ResolvedTarget, String> {
+    if let Some(path) = input {
+        if path.extension() == Some(OsStr::new("sali")) {
+            if !matches!(selection, TargetSelection::Default) {
+                return Err("target selectors require a salicin.toml package input".into());
+            }
+            return Ok(ResolvedTarget {
+                source: path.to_path_buf(),
+                project: None,
+                is_library: false,
+                protected_inputs: vec![path.to_path_buf()],
+            });
+        }
+    }
+
+    let manifest_path = match input {
+        Some(path) if path.is_dir() => path.join(MANIFEST_FILE_NAME),
+        Some(path) if path.file_name() == Some(OsStr::new(MANIFEST_FILE_NAME)) => {
+            path.to_path_buf()
+        }
+        Some(path) if !path.exists() && path.extension().is_none() => path.join(MANIFEST_FILE_NAME),
+        Some(path) => {
+            return Err(format!(
+                "input '{}' must be a .sali file, a package directory, or {MANIFEST_FILE_NAME}",
+                path.display()
+            ));
+        }
+        None => find_manifest_from_current_dir()?,
+    };
+
+    let manifest = load_manifest(&manifest_path).map_err(|error| error.to_string())?;
+    let protected_inputs = std::iter::once(manifest.manifest_path.clone())
+        .chain(manifest.targets().map(|target| target.path.clone()))
+        .collect();
+    let selected = select_manifest_target(&manifest, selection, binary_only)?;
+    Ok(ResolvedTarget {
+        source: selected.path,
+        project: Some(ProjectTarget {
+            package_root: manifest.package_root,
+            target_name: selected.name,
+        }),
+        is_library: selected.kind == TargetKind::Lib,
+        protected_inputs,
+    })
+}
+
+fn find_manifest_from_current_dir() -> Result<PathBuf, String> {
+    let mut directory = env::current_dir()
+        .map_err(|error| format!("could not determine the current directory: {error}"))?;
+    loop {
+        let candidate = directory.join(MANIFEST_FILE_NAME);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+        if !directory.pop() {
+            return Err(format!(
+                "could not find {MANIFEST_FILE_NAME} in the current directory or any parent"
+            ));
+        }
+    }
+}
+
+fn select_manifest_target(
+    manifest: &Manifest,
+    selection: TargetSelection,
+    binary_only: bool,
+) -> Result<Target, String> {
+    match selection {
+        TargetSelection::Bin(name) => manifest
+            .bins
+            .iter()
+            .find(|target| target.name == name)
+            .cloned()
+            .ok_or_else(|| format!("package has no binary target named `{name}`")),
+        TargetSelection::Lib if binary_only => {
+            Err("this command requires a binary target and does not support --lib".into())
+        }
+        TargetSelection::Lib => manifest
+            .lib
+            .clone()
+            .ok_or_else(|| "package has no library target".into()),
+        TargetSelection::Default if binary_only => select_default_binary(manifest),
+        TargetSelection::Default => {
+            if manifest.bins.is_empty() {
+                manifest
+                    .lib
+                    .clone()
+                    .ok_or_else(|| "package has no target".into())
+            } else {
+                select_default_binary(manifest)
+            }
+        }
+    }
+}
+
+fn select_default_binary(manifest: &Manifest) -> Result<Target, String> {
+    if let Some(target) = manifest
+        .bins
+        .iter()
+        .find(|target| target.name == manifest.package.name)
+    {
+        return Ok(target.clone());
+    }
+    match manifest.bins.as_slice() {
+        [] => Err("package has no binary target".into()),
+        [target] => Ok(target.clone()),
+        _ => Err("package has multiple binary targets; choose one with --bin <name>".into()),
+    }
 }
 
 fn paths_refer_to_same_file(left: &Path, right: &Path) -> bool {
@@ -333,20 +556,42 @@ fn paths_refer_to_same_file(left: &Path, right: &Path) -> bool {
     false
 }
 
-fn compile_file(source: &Path) -> Result<String, ()> {
-    let text = match fs::read_to_string(source) {
-        Ok(text) => text,
+fn read_source(source: &Path) -> Result<String, ()> {
+    match fs::read_to_string(source) {
+        Ok(text) => Ok(text),
         Err(error) => {
             eprintln!(
                 "salic: could not read source file '{}': {error}",
                 source.display()
             );
-            return Err(());
+            Err(())
         }
+    }
+}
+
+fn compile_file(source: &Path, library: bool) -> Result<String, ()> {
+    let text = read_source(source)?;
+    let result = if library {
+        compile_library_source(&text)
+    } else {
+        compile_source(&text)
     };
 
-    match compile_source(&text) {
-        Ok(ir) => Ok(ir),
+    report_compilation(source, result)
+}
+
+fn check_file(source: &Path, library: bool) -> Result<(), ()> {
+    if !library {
+        return compile_file(source, false).map(|_| ());
+    }
+
+    let text = read_source(source)?;
+    report_compilation(source, check_library_source(&text))
+}
+
+fn report_compilation<T>(source: &Path, result: Result<T, Vec<String>>) -> Result<T, ()> {
+    match result {
+        Ok(value) => Ok(value),
         Err(diagnostics) => {
             if diagnostics.is_empty() {
                 eprintln!("{}: error: compilation failed", source.display());

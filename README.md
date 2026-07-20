@@ -21,10 +21,18 @@ salic emit-ir main.sali             # 将 LLVM IR 输出到 stdout
 salic emit-ir main.sali -o main.ll  # 将 LLVM IR 写入文件
 salic run main.sali                 # 临时编译并运行
 salic main.sali -o main             # build 的单文件简写
+
+salic build                         # 从当前目录向上发现 salicin.toml
+salic run ./my-project              # 运行项目的默认二进制 target
+salic run salicin.toml --bin tool   # 选择一个 [[bin]] target
+salic check --lib                   # 检查项目的 [lib] target
 ```
 
 `build` 未指定 `-o` 时，默认输出为去掉 `.sali` 后缀的源码路径。`run` 可用 `--` 分隔并传递程序
-参数，例如 `salic run main.sali -- arg1`。
+参数，例如 `salic run main.sali -- arg1`。项目构建默认写入 `build/<target-name>`；项目输入可以是
+目录或 `salicin.toml`，省略时会从当前目录逐级向上查找。当前项目清单支持 `[package]`、`[lib]`
+和 `[[bin]]`；本地依赖将在文件模块与包级名称解析接通后开放，现阶段非空 `[dependencies]` 会
+明确报错。
 
 ## 当前能力
 
@@ -74,6 +82,10 @@ v0.3.0（M2）在此基础上还支持：
   值会自动包装为 `Some` / `Ok`。
 - `throw error` 在显式 `Result(U, E)` 返回边界中把错误值包装成外层 `Err` 并立即返回；错误表达式
   只求值一次，并按边界的精确 `E` 类型检查。
+
+当前 main 分支正在实现 M3，并已支持严格校验的 `salicin.toml`、默认 `src/lib.sali` /
+`src/main.sali` target 发现、自定义 `[lib]` / `[[bin]]`、项目级 target 选择和 `build/` 输出目录；
+单文件命令保持兼容。
 
 最小示例：
 
