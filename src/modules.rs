@@ -32,6 +32,9 @@ impl PackageId {
     /// Compiler-owned package identity used by the edition-pinned `core`
     /// bundle. Source package graphs must never claim this identity.
     pub const CORE: Self = Self(usize::MAX);
+    /// Compiler-owned package identity used by the edition-pinned `alloc`
+    /// bundle. Source package graphs must never claim this identity.
+    pub const ALLOC: Self = Self(usize::MAX - 1);
 }
 
 /// All source files and direct dependency aliases belonging to one package.
@@ -230,10 +233,15 @@ fn validate_package_layout(
 
     let mut package_roots = HashMap::new();
     for package in packages {
-        if package.id == PackageId::CORE {
+        if package.id == PackageId::CORE || package.id == PackageId::ALLOC {
             diagnostics.push(format!(
-                "<packages>: error: package ID {} is reserved for compiler core",
-                PackageId::CORE.0
+                "<packages>: error: package ID {} is reserved for compiler {}",
+                package.id.0,
+                if package.id == PackageId::CORE {
+                    "core"
+                } else {
+                    "alloc"
+                }
             ));
         }
         let root = if package.is_primary {
@@ -3015,6 +3023,20 @@ let main(): i32 = Option()
             .any(|diagnostic| diagnostic.contains(&format!(
                 "package ID {} is reserved for compiler core",
                 PackageId::CORE.0
+            ))));
+
+        let reserved_alloc = resolve_packages(&[package(
+            PackageId::ALLOC.0,
+            true,
+            &[],
+            vec![unit("root.sali", &[], "let main(): i32 = 0\n", true)],
+        )])
+        .unwrap_err();
+        assert!(reserved_alloc
+            .iter()
+            .any(|diagnostic| diagnostic.contains(&format!(
+                "package ID {} is reserved for compiler alloc",
+                PackageId::ALLOC.0
             ))));
     }
 

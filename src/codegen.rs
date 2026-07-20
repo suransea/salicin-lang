@@ -7,6 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+use crate::alloc::AllocBundle;
 use crate::ast::{
     BinaryOp, Binding, CallArg, CompileParam, EnumDef, Expr, ExtendDef, ExtendMember, Field,
     Function, Item, ItemOrigin, MatchArm, PassMode, Pattern, PatternFields, Program, Stmt,
@@ -334,6 +335,7 @@ struct HirProgram {
     globals: Vec<HirGlobal>,
     functions: Vec<HirFunction>,
     drop_methods: HashMap<Ty, String>,
+    box_pointees: HashMap<String, Ty>,
 }
 
 impl HirProgram {
@@ -343,6 +345,10 @@ impl HirProgram {
 
     fn enum_layout(&self, name: &str) -> Option<&EnumLayout> {
         self.enums.iter().find(|layout| layout.name == name)
+    }
+
+    fn box_pointee(&self, name: &str) -> Option<&Ty> {
+        self.box_pointees.get(name)
     }
 
     fn is_uninhabited(&self, ty: &Ty) -> bool {
@@ -355,7 +361,8 @@ impl HirProgram {
             Ty::Array(element, _) => self.needs_drop(element),
             Ty::Pointer { .. } => false,
             Ty::Struct(name) => {
-                self.drop_methods.contains_key(ty)
+                self.box_pointee(name).is_some()
+                    || self.drop_methods.contains_key(ty)
                     || self.struct_layout(name).is_some_and(|layout| {
                         layout.fields.iter().any(|field| self.needs_drop(&field.ty))
                     })
@@ -569,6 +576,10 @@ enum HirExprKind {
     },
     RawLoad(Box<HirExpr>),
     RawStore {
+        pointer: Box<HirExpr>,
+        value: Box<HirExpr>,
+    },
+    RawInit {
         pointer: Box<HirExpr>,
         value: Box<HirExpr>,
     },
@@ -1149,8 +1160,11 @@ struct Analyzer {
 }
 
 impl Analyzer {
-    fn try_new(program: &Program) -> Result<Self, crate::core::CoreBundleError> {
-        let core = CoreBundle::for_edition(Edition::Edition2026)?;
+    fn try_new(program: &Program) -> Result<Self, String> {
+        let core =
+            CoreBundle::for_edition(Edition::Edition2026).map_err(|error| error.to_string())?;
+        let alloc =
+            AllocBundle::for_edition(Edition::Edition2026).map_err(|error| error.to_string())?;
         let mut analyzer = Self {
             lang_items: core.lang_items().clone(),
             functions: HashMap::new(),
@@ -1205,7 +1219,7 @@ impl Analyzer {
                 "unresolved `use` declarations reached semantic analysis; resolve source modules before code generation",
             );
         }
-        analyzer.collect_items(core.program(), program);
+        analyzer.collect_items(core.program(), alloc.program(), program);
         Ok(analyzer)
     }
 
@@ -1226,7 +1240,7 @@ impl Analyzer {
         }
     }
 
-    fn collect_items(&mut self, core: &Program, program: &Program) {
+    fn collect_items(&mut self, core: &Program, alloc: &Program, program: &Program) {
         // `void` is implemented as the prelude's alias of `()` rather than as
         // a distinct nominal item, but still occupies the unified namespace.
         let mut names = HashSet::from([
@@ -1235,6 +1249,7 @@ impl Analyzer {
             "MutPtr".to_owned(),
             "raw_alloc".to_owned(),
             "raw_dealloc".to_owned(),
+            "raw_init".to_owned(),
             "size_of".to_owned(),
             "align_of".to_owned(),
         ]);
@@ -1257,7 +1272,13 @@ impl Analyzer {
             .zip(&program.item_visibilities)
             .zip(&program.item_origins)
             .map(|((item, visibility), origin)| (item, *visibility, origin.clone()));
-        for (item, visibility, origin) in prelude_items.chain(source_items) {
+        let alloc_items = alloc
+            .items
+            .iter()
+            .zip(&alloc.item_visibilities)
+            .zip(&alloc.item_origins)
+            .map(|((item, visibility), origin)| (item, *visibility, origin.clone()));
+        for (item, visibility, origin) in prelude_items.chain(alloc_items).chain(source_items) {
             let name = match item {
                 Item::Function(function) => &function.name,
                 Item::Global(binding) => &binding.name,
@@ -3258,6 +3279,16 @@ impl Analyzer {
                         .map(|method| (key.self_ty.clone(), method.clone()))
                 })
                 .collect(),
+            box_pointees: self
+                .nominal_instances
+                .iter()
+                .filter(|(_, instance)| {
+                    instance.key.kind == NominalKind::Struct
+                        && instance.key.template == "Box"
+                        && instance.key.arguments.len() == 1
+                })
+                .map(|(name, instance)| (name.clone(), instance.key.arguments[0].clone()))
+                .collect(),
         })
     }
 
@@ -3955,6 +3986,31 @@ impl Analyzer {
                 } else {
                     Err(mismatch())
                 }
+            }
+            Type::Named(name, arguments)
+                if matches!(name.as_str(), "Ptr" | "MutPtr") && arguments.len() == 1 =>
+            {
+                let Ty::Pointer { pointee, mutable } = actual else {
+                    return Err(mismatch());
+                };
+                if *mutable != (name == "MutPtr") {
+                    return Err(mismatch());
+                }
+                self.unify_template_ty(
+                    &arguments[0],
+                    pointee,
+                    match actual_source {
+                        Some(Type::Named(actual_name, actual_arguments))
+                            if actual_name == name && actual_arguments.len() == 1 =>
+                        {
+                            Some(&actual_arguments[0])
+                        }
+                        _ => None,
+                    },
+                    compile_parameters,
+                    inferred,
+                    origin,
+                )
             }
             Type::Named(name, arguments) => {
                 let (actual_kind, actual_name) = match actual {
@@ -6328,6 +6384,15 @@ impl Analyzer {
         self.type_is_copy_with_nominals(ty, &self.copy_nominals)
     }
 
+    fn box_pointee_type(&self, name: &str) -> Option<&Ty> {
+        self.nominal_instances.get(name).and_then(|instance| {
+            (instance.key.kind == NominalKind::Struct
+                && instance.key.template == "Box"
+                && instance.key.arguments.len() == 1)
+                .then(|| &instance.key.arguments[0])
+        })
+    }
+
     fn type_needs_drop(&self, ty: &Ty) -> bool {
         self.type_needs_drop_inner(ty, &mut HashSet::new())
     }
@@ -6345,12 +6410,15 @@ impl Analyzer {
             || match ty {
                 Ty::Array(element, _) => self.type_needs_drop_inner(element, visiting),
                 Ty::Pointer { .. } => false,
-                Ty::Struct(name) => self.struct_layouts.get(name).is_some_and(|layout| {
-                    layout
-                        .fields
-                        .iter()
-                        .any(|field| self.type_needs_drop_inner(&field.ty, visiting))
-                }),
+                Ty::Struct(name) => {
+                    self.box_pointee_type(name).is_some()
+                        || self.struct_layouts.get(name).is_some_and(|layout| {
+                            layout
+                                .fields
+                                .iter()
+                                .any(|field| self.type_needs_drop_inner(&field.ty, visiting))
+                        })
+                }
                 Ty::Enum(name) => self.enum_layouts.get(name).is_some_and(|layout| {
                     layout.variants.iter().any(|variant| {
                         variant
@@ -9614,6 +9682,9 @@ impl Analyzer {
             if name == "raw_dealloc" {
                 return self.lower_raw_dealloc(&groups, context);
             }
+            if name == "raw_init" {
+                return self.lower_raw_init(&groups, context);
+            }
             if matches!(name.as_str(), "Ptr" | "MutPtr") {
                 return self.lower_raw_pointer_constructor(name, &groups, context);
             }
@@ -9941,6 +10012,56 @@ impl Analyzer {
                 pointer: Box::new(pointer),
                 size: Box::new(size),
                 align: Box::new(align),
+            },
+        }
+    }
+
+    fn lower_raw_init(&mut self, groups: &[&[CallArg]], context: &mut LowerCtx) -> HirExpr {
+        if context.unsafe_depth == 0 {
+            self.error("`raw_init` requires an `unsafe do` block");
+            return error_expr();
+        }
+        let [runtime] = groups else {
+            self.error("`raw_init` expects exactly one runtime argument group");
+            return error_expr();
+        };
+        let names = ["pointer".to_owned(), "value".to_owned()];
+        let Some(arguments) = self.ordered_call_arguments("raw_init", 1, runtime, &names) else {
+            return error_expr();
+        };
+        let pointer = self.lower_expr(&arguments[0].value, None, context);
+        let Ty::Pointer {
+            pointee,
+            mutable: true,
+        } = &pointer.ty
+        else {
+            self.error(format!(
+                "`raw_init` requires a `MutPtr(T)`, found `{}`",
+                pointer.ty
+            ));
+            return error_expr();
+        };
+        let pointee = (**pointee).clone();
+        let mut temporary_loans = Vec::new();
+        let value = self.lower_call_argument(
+            &arguments[1].value,
+            &ParamSig {
+                name: "value".to_owned(),
+                ty: pointee,
+                mode: PassMode::Move,
+            },
+            context,
+            &mut temporary_loans,
+        );
+        self.release_loans(&temporary_loans, context);
+        let HirArgument::Move(value) = value else {
+            unreachable!("an explicit move parameter lowers to a move argument")
+        };
+        HirExpr {
+            ty: Ty::Unit,
+            kind: HirExprKind::RawInit {
+                pointer: Box::new(pointer),
+                value: Box::new(value),
             },
         }
     }
@@ -12830,6 +12951,20 @@ impl<'a> HirCleanupPlanner<'a> {
                 self.initialize_result(cursor, &result_use)?;
                 Some(cursor)
             }
+            HirExprKind::RawInit { pointer, value } => {
+                let Some(cursor) = self.walk_expr(pointer, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                let (_, stage) = self.prepare_temporary_destination(cursor, &value.ty)?;
+                let Some(cursor) =
+                    self.walk_expr(value, cursor, ResultUse::Store(stage.clone()))?
+                else {
+                    return Ok(None);
+                };
+                self.move_out(cursor, stage.path)?;
+                self.initialize_result(cursor, &result_use)?;
+                Some(cursor)
+            }
             HirExprKind::RawAlloc { size, align } => {
                 let Some(cursor) = self.walk_expr(size, cursor, ResultUse::Discard)? else {
                     return Ok(None);
@@ -14035,6 +14170,7 @@ impl ConstantEvaluator<'_> {
             | HirExprKind::RawAddress { .. }
             | HirExprKind::RawLoad(_)
             | HirExprKind::RawStore { .. }
+            | HirExprKind::RawInit { .. }
             | HirExprKind::RawAlloc { .. }
             | HirExprKind::RawDealloc { .. }
             | HirExprKind::Call { .. }
@@ -14382,6 +14518,9 @@ impl<'a> Emitter<'a> {
         match ty {
             Ty::Array(element, _) => self.collect_drop_glue_type(element, types),
             Ty::Struct(name) => {
+                if let Some(pointee) = self.program.box_pointee(name) {
+                    self.collect_drop_glue_type(pointee, types);
+                }
                 if let Some(layout) = self.program.struct_layout(name) {
                     for field in &layout.fields {
                         self.collect_drop_glue_type(&field.ty, types);
@@ -14423,6 +14562,26 @@ impl<'a> Emitter<'a> {
                 "  call void @{}(ptr %value)\n",
                 function_symbol(method)
             ));
+        }
+        if let Ty::Struct(name) = ty {
+            if let Some(pointee) = self.program.box_pointee(name) {
+                let aggregate_ty = llvm_value_type(ty)?;
+                output.push_str(&format!(
+                    "  %pointer.addr = getelementptr inbounds {aggregate_ty}, ptr %value, i32 0, i32 0\n  %pointer = load ptr, ptr %pointer.addr\n"
+                ));
+                if self.program.needs_drop(pointee) {
+                    output.push_str(&format!(
+                        "  call void @{}(ptr %pointer)\n",
+                        drop_glue_symbol(pointee)
+                    ));
+                }
+                output.push_str(&format!(
+                    "  call void @salicin_dealloc(ptr %pointer, i64 {}, i64 {})\n  ret void\n}}\n",
+                    llvm_layout_const(pointee, LayoutQueryKind::Size)?,
+                    llvm_layout_const(pointee, LayoutQueryKind::Align)?
+                ));
+                return Ok(output);
+            }
         }
         match ty {
             Ty::Struct(name) => {
@@ -15037,6 +15196,25 @@ impl<'a> FunctionEmitter<'a> {
                     value.value()?,
                     pointer.value()?
                 ));
+                Ok(Operand::unit())
+            }
+            HirExprKind::RawInit { pointer, value } => {
+                let pointer = self.emit_expr(pointer)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                let value = self.emit_expr(value)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                if value.ty != Ty::Unit {
+                    self.instruction(format!(
+                        "store {} {}, ptr {}",
+                        llvm_value_type(&value.ty)?,
+                        value.value()?,
+                        pointer.value()?
+                    ));
+                }
                 Ok(Operand::unit())
             }
             HirExprKind::RawAlloc { size, align } => {
@@ -17565,7 +17743,9 @@ mod tests {
         assert_eq!(analyzer.nominal_instances.len(), 1);
         assert_eq!(analyzer.nominal_instance_names.len(), 1);
         assert!(analyzer.functions.is_empty());
-        assert!(analyzer.function_templates.is_empty());
+        assert_eq!(analyzer.function_templates.len(), 2);
+        assert!(analyzer.function_templates.contains_key("box_new"));
+        assert!(analyzer.function_templates.contains_key("box_ptr"));
         assert!(analyzer.function_order.is_empty());
     }
 
@@ -20564,24 +20744,24 @@ let main(): i32 = {
     fn lowers_builtin_optional_fields_and_methods_without_flattening() {
         let ir = compile_text(
             r#"
-let Box = struct(value: i32, nested: Option(i32))
-extend Box {
+let Payload = struct(value: i32, nested: Option(i32))
+extend Payload {
   let add(borrow self)(amount: i32): i32 = self.value + amount
 }
-let read(value: Option(Box)): Option(i32) = value?.value
-let nested(value: Option(Box)): Option(Option(i32)) = value?.nested
-let call(value: Result(Box, bool)): Result(i32, bool) = value?.add(2)
+let read(value: Option(Payload)): Option(i32) = value?.value
+let nested(value: Option(Payload)): Option(Option(i32)) = value?.nested
+let call(value: Result(Payload, bool)): Result(i32, bool) = value?.add(2)
 let main(): i32 = {
-  let boxed = Box(value: 40, nested: Option(i32).Some(42))
-  let left = read(Option(Box).Some(boxed)) ?? 0
-  let right = call(Result(Box, bool).Ok(Box(value: 0, nested: Option(i32).None))) ?? 0
+  let boxed = Payload(value: 40, nested: Option(i32).Some(42))
+  let left = read(Option(Payload).Some(boxed)) ?? 0
+  let right = call(Result(Payload, bool).Ok(Payload(value: 0, nested: Option(i32).None))) ?? 0
   left + right
 }
 "#,
         )
         .unwrap();
         assert!(ir.contains("switch i32"));
-        assert!(ir.contains(&function_symbol("Box::method::add")));
+        assert!(ir.contains(&function_symbol("Payload::method::add")));
     }
 
     #[test]
@@ -20601,34 +20781,34 @@ let main(): i32 = read() ?? 0
         let cases = [
             (
                 r#"
-let Box = struct(value: i32)
-let read(borrow value: Option(Box)): Option(i32) = value?.value
+let Payload = struct(value: i32)
+let read(borrow value: Option(Payload)): Option(i32) = value?.value
 let main(): i32 = 0
 "#,
                 "owned",
             ),
             (
                 r#"
-let Box = struct(value: i32)
-extend Box { let reset(mut borrow self)(): i32 = self.value }
-let read(value: Option(Box)): Option(i32) = value?.reset()
+let Payload = struct(value: i32)
+extend Payload { let reset(mut borrow self)(): i32 = self.value }
+let read(value: Option(Payload)): Option(i32) = value?.reset()
 let main(): i32 = 0
 "#,
                 "mutable-borrow receiver",
             ),
             (
                 r#"
-let Box = struct(value: i32)
-extend Box { let add(borrow self)(x: i32)(y: i32): i32 = self.value + x + y }
-let read(value: Option(Box)): Option(i32) = value?.add(1)
+let Payload = struct(value: i32)
+extend Payload { let add(borrow self)(x: i32)(y: i32): i32 = self.value + x + y }
+let read(value: Option(Payload)): Option(i32) = value?.add(1)
 let main(): i32 = 0
 "#,
                 "fully applied",
             ),
             (
                 r#"
-let Box = struct(value: i32)
-let read(value: Box): Option(i32) = value?.value
+let Payload = struct(value: i32)
+let read(value: Payload): Option(i32) = value?.value
 let main(): i32 = 0
 "#,
                 "requires an owned `Option(T)` or `Result(T, E)`",

@@ -148,5 +148,8 @@ loads/stores inside `unsafe do`. v0.28 adds the reserved `raw_alloc`/`raw_deallo
 two-symbol replaceable allocator ABI with a weak default runtime. v0.29 target-layout intrinsics
 (`size_of(T)` and `align_of(T)`) derive pointer width, aggregate
 padding, and alignment from LLVM rather than a host assumption. These boundaries are now ready for
-the first owning `alloc` type (`Box(T)`), followed later by platform `std` over the C ABI and minimal
-runtime. Generic callable parameters still await the source-level constraint surface.
+the first owning `alloc` type. v0.30 embeds an independently validated ordinary Salicin alloc bundle:
+`box_new` move-initializes target-laid-out heap storage, while compiler glue recursively drops the
+validated private `Box(T)` representation and returns it through the same allocator ABI. Safe generic
+deref APIs and generic callable parameters still await the source-level constraint surface; platform
+`std` remains later work over the C ABI and minimal runtime.

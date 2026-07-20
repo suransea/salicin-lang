@@ -210,6 +210,40 @@ fn target_layout_intrinsics_cover_globals_aggregates_and_generic_instances() {
 }
 
 #[test]
+fn alloc_box_owns_copy_and_resource_payloads() {
+    for name in [
+        "box_i32.sali",
+        "box_resource.sali",
+        "box_drop_once.sali",
+        "box_nested_and_unit.sali",
+        "box_recursive_layout.sali",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run Box fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+
+    let trapped = salic()
+        .arg("run")
+        .arg(fixture("pass", "box_resource_drop_trap.sali"))
+        .output()
+        .expect("run Box recursive drop fixture");
+    assert!(
+        !trapped.status.success(),
+        "boxed resource destructor did not run: {}",
+        output_text(&trapped)
+    );
+}
+
+#[test]
 fn raw_allocator_runtime_rejects_an_invalid_layout() {
     let output = salic()
         .arg("run")

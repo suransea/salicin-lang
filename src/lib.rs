@@ -1,3 +1,4 @@
+pub mod alloc;
 pub mod ast;
 mod cleanup;
 pub mod codegen;

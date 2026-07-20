@@ -378,6 +378,17 @@ v0.29.0 提供 target-aware 类型布局查询：
 - 查询可参与函数中的普通整数表达式，也可单独初始化顶层常量；target-dependent 顶层符号运算暂时
   明确拒绝。allocator 原生测试已经直接使用查询结果分配、访问并释放聚合。
 
+v0.30.0 进入普通 Salicin `alloc` 源并提供首个 owning `Box(T)`：
+
+- `library/alloc/src/prelude.sali` 随 compiler 按 edition 嵌入，仍经过普通 parser、模块 provenance、
+  API visibility、泛型单态化和所有权分析；bootstrap 会严格验证 `Box`、`box_new`、`box_ptr` 的公开形状。
+- `box_new(value)` 推断 `T`，使用 target layout 分配，并通过新的 `raw_init(pointer, move value)` 把资源
+  初始化进未初始化 heap storage；该操作区别于 Copy-only 的 raw overwrite。
+- `Box(T)` 字段对用户私有，owner 可普通移动但不可复制。最终 drop glue 递归析构 heap pointee，再用
+  原 layout 释放；custom Drop、exactly-once alias move、嵌套 Box 与 ZST 均有原生覆盖。
+- `box_ptr(boxed)` 通过共享借用返回 `MutPtr(T)`；pointee 访问仍是显式 unsafe。安全 Deref/into-inner API
+  等待泛型 inherent/trait 约束表面。
+
 标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
 所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
 `Copy`，v0.9 建立 cleanup CFG，v0.10 补齐资源 storage/transfer，v0.11 完成完整 move-path forest 与
@@ -388,7 +399,8 @@ downcast remainder，v0.20 完成 guard rollback，v0.21 完成本地 `FnOnce` r
 开放 owning partial captures，v0.23 完成 borrowed overwrite cleanup，v0.24 完成 match planner 与
 正式 cleanup IR 的对齐，v0.25 开放 concrete callable 的局部移动，v0.26 接通拥有环境的跨函数返回，
 v0.27 建立 raw pointer 与最小 `unsafe` 边界，v0.28 固定可替换 allocator ABI，v0.29 提供 target-aware
-layout intrinsic。下一步进入 `alloc` 并实现首个 owning `Box(T)`；泛型 callable
+layout intrinsic，v0.30 以普通 alloc 源实现首个 owning `Box(T)`。下一步补齐泛型约束和安全 Box
+访问表面，再以相同 allocator/drop 基础推进 `Vec(T)`；泛型 callable
 参数将在正式的 `where` / `Fn` 约束语法落地后开放。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
 运行时之后。
 

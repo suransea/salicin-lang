@@ -1487,6 +1487,27 @@ target，而不是由标准库或编译器按宿主平台猜测。`()` 的 size/
 尚不表示 target-dependent 符号算术，因此 `let N = size_of(T) + 1` 这类顶层运算本版明确拒绝；放入
 函数即可由 LLVM 折叠。函数类型及错误恢复类型没有可查询的数据布局。
 
+v0.30 开始嵌入 edition 匹配的普通 `alloc` 源，并提供首个 owning heap 类型：
+
+```sali
+let boxed = box_new(value)
+let pointer = box_ptr(boxed)
+```
+
+`Box(T)` 的公开表示只有私有 `MutPtr(T)` 字段；用户包不能直接构造或读取该字段。`box_new` 推断 `T`，
+按 `size_of(T)` / `align_of(T)` 分配，将 `value` move-initialize 到未初始化 heap storage，再返回 owner。
+`box_ptr` 共享借用 Box 并返回 raw pointer；读取或修改 pointee 仍必须显式进入 `unsafe do`，因此它不把
+raw pointer 风险伪装成安全引用。
+
+move `Box(T)` 会转移唯一 owner。最终 owner 的 compiler-verified glue 先对 heap 中的 `T` 递归执行
+drop glue，再以同一 layout 调用 `raw_dealloc`；`Box(())`、嵌套 Box、custom Drop payload 和条件移动
+使用既有 cleanup/drop-flag 机制。`raw_init(pointer, value)` 是为这一构造链加入的 unsafe intrinsic：
+它消费 owning value 并初始化此前未初始化的 storage，不执行 overwrite drop；普通 `*p = value` 仍是
+Copy-only 覆盖写。
+
+当前引导期尚无泛型 inherent `extend` / `Deref` 约束，因此构造和 raw pointer 访问暂用自由函数
+`box_new` / `box_ptr`；安全借用解引用、`into_inner` 与统一 `Box.new` API 会随泛型约束表面补齐。
+
 首版 C ABI 只允许标量、原始指针、C ABI 函数指针和 `@repr(C)` 聚合。C 函数只有一个参数组，
 不允许柯里化、泛型、闭包环境、trait、Future 或 Salicin 私有容器；`borrow` 不跨 ABI，必须转换为
 显式指针。普通 `bool`、`String`、slice、`Option`、`Result` 默认都不是 C ABI 类型。

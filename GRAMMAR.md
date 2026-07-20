@@ -335,6 +335,9 @@ async_expr = "async", closure_literal | "async", "do", block ;
 保留的 allocator intrinsic，只能出现在 `unsafe do` 的动态作用域内；`raw_alloc` 的类型组可由期望
 `MutPtr(T)` 省略。
 
+`raw_init(pointer, value)` 是第三个 `unsafe` allocator intrinsic：它以 move 语义把 `value` 初始化到
+尚未初始化的 `MutPtr(T)` storage，区别于表示覆盖写且限于 `Copy` pointee 的 `*pointer = value`。
+
 `size_of(T)` 与 `align_of(T)` 同样使用普通单组调用外形，但该组只接受一个类型实参；结果为 `u64`，
 布局由最终 LLVM target 决定。
 

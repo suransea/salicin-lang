@@ -1,0 +1,13 @@
+pub let Box(T: type) = struct(pointer: MutPtr(T))
+
+pub let box_new(T: type)(move value: T): Box(T) = {
+  let pointer = unsafe do {
+    raw_alloc(T)(size_of(T), align_of(T))
+  }
+  unsafe do {
+    raw_init(pointer, value)
+  }
+  Box(T)(pointer: pointer)
+}
+
+pub let box_ptr(T: type)(borrow boxed: Box(T)): MutPtr(T) = boxed.pointer
