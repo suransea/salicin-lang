@@ -471,6 +471,27 @@ fn projection_drop_flags_preserve_unmoved_fields_and_rebuild_roots() {
 }
 
 #[test]
+fn match_payload_moves_transfer_drop_ownership() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "drop_match_payload.sali"))
+        .output()
+        .expect("run match payload drop program");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+
+    let trapped = salic()
+        .arg("run")
+        .arg(fixture("pass", "drop_match_payload_trap.sali"))
+        .output()
+        .expect("run unmatched payload sibling cleanup trap");
+    assert!(
+        !trapped.status.success(),
+        "the unmatched payload sibling was not dropped:\n{}",
+        output_text(&trapped)
+    );
+}
+
+#[test]
 fn source_backed_copy_errors_report_their_cause() {
     for (name, expected) in [
         (

@@ -441,6 +441,7 @@ struct HirPatternBinding {
     name: String,
     ty: Ty,
     path: Vec<usize>,
+    moves: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -8648,6 +8649,27 @@ impl Analyzer {
         for arm in arms {
             context.push_scope();
             let (matcher, bindings) = self.lower_enum_pattern(&arm.pattern, &layout, context);
+            let moves_payload = bindings.iter().any(|binding| binding.moves);
+            if moves_payload && self.type_has_custom_drop(&scrutinee.ty) {
+                self.error(format!(
+                    "cannot move a pattern binding out of `{}` because it implements `Drop`",
+                    scrutinee.ty
+                ));
+            }
+            if self.type_needs_drop(&scrutinee.ty)
+                && bindings
+                    .iter()
+                    .any(|binding| binding.moves && binding.path.len() > 1)
+            {
+                self.error(
+                    "moving a nested pattern binding out of a value that needs drop is not supported yet",
+                );
+            }
+            if arm.guard.is_some() && self.type_needs_drop(&scrutinee.ty) && moves_payload {
+                self.error(
+                    "guarded match arms cannot move pattern bindings out of a value that needs drop yet",
+                );
+            }
             let matched_variants: Vec<_> = match matcher {
                 HirMatcher::Variant(index) => vec![index],
                 HirMatcher::All => (0..layout.variants.len()).collect(),
@@ -8960,11 +8982,6 @@ impl Analyzer {
         context: &mut LowerCtx,
         bindings: &mut Vec<HirPatternBinding>,
     ) {
-        if self.type_needs_drop(&ty) {
-            self.error(
-                "moving a value that needs drop into a pattern binding is not supported until partial-drop LLVM lowering is complete",
-            );
-        }
         if context
             .scopes
             .last()
@@ -8991,6 +9008,7 @@ impl Analyzer {
         bindings.push(HirPatternBinding {
             id,
             name: name.to_owned(),
+            moves: !self.is_copy_type(&ty),
             ty,
             path,
         });
@@ -14629,11 +14647,13 @@ impl<'a> FunctionEmitter<'a> {
             return Ok(Operand::never());
         }
         let match_cleanup_depth = self.drop_slots.len();
+        let mut match_drop_slot = None;
         if self.program.needs_drop(&scrutinee.ty) {
             let ty = llvm_value_type(&scrutinee.ty)?;
             let pointer = self.entry_alloca(&ty, "match scrutinee");
             self.instruction(format!("store {ty} {}, ptr {pointer}", scrutinee.value()?));
             self.register_drop_slot(None, scrutinee.ty.clone(), pointer)?;
+            match_drop_slot = self.drop_slots.last().cloned();
         }
         let Ty::Enum(enum_name) = &scrutinee.ty else {
             return Err(Diagnostic::new(
@@ -14694,6 +14714,10 @@ impl<'a> FunctionEmitter<'a> {
             for (position, arm_index) in candidates[variant].iter().copied().enumerate() {
                 self.start_block(&labels[variant][position]);
                 let arm = &arms[arm_index];
+                let candidate_cleanup_depth = self.drop_slots.len();
+                if let Some(root) = &match_drop_slot {
+                    self.prepare_match_pattern_ownership(root, layout, variant, &arm.bindings)?;
+                }
                 self.emit_pattern_bindings(&scrutinee, &arm.bindings)?;
 
                 if let Some(guard) = &arm.guard {
@@ -14719,6 +14743,7 @@ impl<'a> FunctionEmitter<'a> {
                     self.terminate(format!("br label %{merge_label}"));
                     incoming.push((body, predecessor));
                 }
+                self.drop_slots.truncate(candidate_cleanup_depth);
             }
         }
 
@@ -14751,6 +14776,46 @@ impl<'a> FunctionEmitter<'a> {
         })
     }
 
+    fn prepare_match_pattern_ownership(
+        &mut self,
+        root: &RuntimeDropSlot,
+        layout: &EnumLayout,
+        variant: usize,
+        bindings: &[HirPatternBinding],
+    ) -> Result<(), Diagnostic> {
+        if !bindings.iter().any(|binding| binding.moves) {
+            return Ok(());
+        }
+        self.instruction(format!("store i1 false, ptr {}", root.flag));
+        if bindings
+            .iter()
+            .any(|binding| binding.moves && binding.path.is_empty())
+        {
+            return Ok(());
+        }
+
+        let moved_fields = bindings
+            .iter()
+            .filter(|binding| binding.moves && binding.path.len() == 1)
+            .map(|binding| binding.path[0])
+            .collect::<HashSet<_>>();
+        let variant = &layout.variants[variant];
+        let aggregate_ty = llvm_value_type(&root.ty)?;
+        for (field_index, field) in variant.fields.iter().enumerate() {
+            let llvm_index = 1 + variant.payload_offset + field_index;
+            if moved_fields.contains(&llvm_index) || !self.program.needs_drop(&field.ty) {
+                continue;
+            }
+            let pointer = self.fresh_register();
+            self.instruction(format!(
+                "{pointer} = getelementptr inbounds {aggregate_ty}, ptr {}, i32 0, i32 {llvm_index}",
+                root.pointer
+            ));
+            self.register_drop_slot(None, field.ty.clone(), pointer)?;
+        }
+        Ok(())
+    }
+
     fn emit_pattern_bindings(
         &mut self,
         scrutinee: &Operand,
@@ -14780,7 +14845,10 @@ impl<'a> FunctionEmitter<'a> {
             let ty = llvm_value_type(&binding.ty)?;
             let pointer = self.entry_alloca(&ty, &llvm_comment(&binding.name));
             self.instruction(format!("store {ty} {value}, ptr {pointer}"));
-            self.locals.insert(binding.id, pointer);
+            self.locals.insert(binding.id, pointer.clone());
+            if binding.moves && self.program.needs_drop(&binding.ty) {
+                self.register_drop_slot(Some(binding.id), binding.ty.clone(), pointer)?;
+            }
         }
         Ok(())
     }
@@ -17126,7 +17194,7 @@ let main(): i32 = {
     }
 
     #[test]
-    fn permits_struct_projection_drop_but_keeps_custom_drop_and_patterns_complete() {
+    fn permits_struct_and_enum_projection_drop_but_keeps_custom_drop_complete() {
         compile_text(
             r#"
 let Resource = struct(value: i32)
@@ -17162,7 +17230,7 @@ let main(): i32 = {
             .iter()
             .any(|error| error.message.contains("type with custom Drop")));
 
-        let pattern_move = compile_text(
+        compile_text(
             r#"
 let Resource = struct(value: i32)
 let Choice = enum { Some(Resource), None }
@@ -17175,10 +17243,47 @@ let main(): i32 = Choice.Some(Resource(1)) match {
 }
 "#,
         )
-        .expect_err("drop payload pattern moves must be rejected for now");
-        assert!(pattern_move
+        .expect("a direct enum payload with Drop may move into an unguarded binding");
+
+        let custom_enum_move = compile_text(
+            r#"
+let Resource = struct(value: i32)
+let Choice = enum { Some(Resource), None }
+extend Resource: Drop {
+  let drop(mut borrow self)(): () = ()
+}
+extend Choice: Drop {
+  let drop(mut borrow self)(): () = ()
+}
+let main(): i32 = Choice.Some(Resource(1)) match {
+  Some(resource) => 1,
+  None => 0
+}
+"#,
+        )
+        .expect_err("custom Drop enum storage must remain complete");
+        assert!(custom_enum_move
             .iter()
-            .any(|error| error.message.contains("pattern binding")));
+            .any(|error| error.message.contains("implements `Drop`")));
+
+        let guarded_move = compile_text(
+            r#"
+let Resource = struct(value: i32)
+let Choice = enum { Some(Resource), None }
+extend Resource: Drop {
+  let drop(mut borrow self)(): () = ()
+}
+let main(): i32 = Choice.Some(Resource(1)) match {
+  Some(resource) if true => 1,
+  Some(_) => 2,
+  None => 0
+}
+"#,
+        )
+        .expect_err("a failed guard cannot roll back a moved payload yet");
+        assert!(guarded_move
+            .iter()
+            .any(|error| error.message.contains("guarded match arms")));
     }
 
     #[test]

@@ -82,11 +82,17 @@ value glue once semantic flow proves the root complete. Conditional field overwr
 projection flag before dropping the old value. Native tests cover nested movement, sibling cleanup,
 and conditional reconstruction. Fields cannot be moved through a type that itself has custom
 `Drop`, and enum payload, pattern, and closure-environment projections remain pending.
+
+The v0.18 emitter transfers direct enum payload ownership into unguarded match bindings. It clears
+whole-enum ownership, registers moved resource bindings independently, and preserves active-variant
+resource siblings as fallback cleanup slots across normal and early-return exits. Custom-`Drop`
+enums remain indivisible; nested payload moves and guarded resource moves await downcast trees and
+guard rollback. Closure-environment projections remain pending.
 Compile-time globals are independently materialized at each use and are
 outside the cleanup plan; resource-bearing global semantics must be settled before `Drop` is
 allowed on globals.
 
-The adjacent standard-library route is therefore: finish enum, pattern, and closure cleanup
-details; then define raw
+The adjacent standard-library route is therefore: finish nested enum, guarded-pattern, and closure
+cleanup details; then define raw
 pointers and the allocator ABI. Only after those boundaries are real will `alloc` be added, followed
 by platform `std` over the C ABI and minimal runtime.

@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.18.0 - 2026-07-21
+
+- Lowered ownership transfer from enum match payloads into pattern bindings. Moving a payload clears
+  whole-enum cleanup, gives each moved drop-bearing binding its own runtime flag, and materializes
+  cleanup slots for active-variant siblings left behind by wildcards.
+- Preserved cleanup across normal arm completion and early return, while isolating compiler cleanup
+  state between candidates. Native trap coverage proves that unmatched resource siblings are
+  destroyed and moved bindings are not destroyed twice.
+- Kept values with custom `Drop` indivisible and rejected nested drop-bearing extraction and guarded
+  payload moves until downcast projection trees and guard rollback are implemented.
+
 ## 0.17.0 - 2026-07-21
 
 - Materialized recursive runtime flag trees for fields of structs without custom `Drop`. A field

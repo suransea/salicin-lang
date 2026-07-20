@@ -152,7 +152,7 @@ v0.8.0 把 `Copy` 接入 source-backed core 与所有权检查：
   到 `Cell(bool)` 或模板；当前也不支持 blanket/generic `Copy` impl 或 `where` 证明。
 - 未标注参数对 `Copy` 类型默认为复制，否则默认为移动；显式 `move` 始终优先并消费实参。相同判定
   已用于普通读取、闭包捕获以及函数和 bound method 的部分应用。
-- 当前函数类型和闭包类型自身仍不是 `Copy`，`Drop` 也尚未公开。
+- 当前函数类型和闭包类型自身仍不是 `Copy`；`Drop` 已由 edition core 公开，但资源型全局仍未开放。
 
 v0.9.0 建立可继续演化的初始化与清理中间层：
 
@@ -266,12 +266,22 @@ v0.17.0 物化 struct projection drop flags：
 - 类型自身实现 custom `Drop` 时仍必须保持完整，不能移动穿过它的字段；drop-bearing pattern
   binding、enum payload transfer、临时 drop 值字段提取和资源闭包环境仍待后续 lowering。
 
+v0.18.0 接通 enum match payload 的所有权转移：
+
+- 无 guard 的直接 payload binding 可以接管带 `Drop` 的字段；转移时关闭完整 enum 的 root flag，
+  给移动后的 binding 建立独立清理槽，并为 active variant 中通配符留下的资源 sibling 建立清理槽。
+- 分支正常结束与显式 `return` 都按逆序清理这些槽；不同 match candidate 的编译期清理状态彼此隔离。
+  原生 trap 测试验证未绑定 sibling 一定析构，同时移动 binding 不会被 enum glue 再次析构。
+- 自身有 custom `Drop` 的 enum 仍不可拆分；带资源的嵌套 pattern move 与 guarded payload move 暂时
+  拒绝，分别等待 downcast 子树和 guard-failure rollback。
+
 标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
 所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
 `Copy`，v0.9 建立 cleanup CFG，v0.10 补齐资源 storage/transfer，v0.11 完成完整 move-path forest 与
 初始化 fixed point，v0.12 再完成 temporary storage liveness，v0.14 已加入 `needs_drop` 与控制流敏感
 drop-flag 计划，v0.15 提供 `Drop` 与递归 glue，v0.16 完成第一阶段结构化 scope-exit lowering，
-v0.17 已物化 struct projection flags。下一步补齐 enum/pattern/capture cleanup pending，其后才固定
+v0.17 已物化 struct projection flags，v0.18 接通直接 enum payload binding。下一步补齐嵌套
+downcast/guard rollback 与 capture cleanup pending，其后才固定
 raw pointer 与 allocator ABI 并进入 `alloc`。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
 运行时之后。
 
