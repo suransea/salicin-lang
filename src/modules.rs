@@ -7,9 +7,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::ast::{
-    Binding, EnumDef, Expr, ExtendDef, ExtendMember, Field, Function, Item, MatchArm, Param,
-    Pattern, PatternField, PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember, Type,
-    UseDecl, VariantFields, Visibility,
+    Binding, EnumDef, Expr, ExtendDef, ExtendMember, Field, Function, Item, ItemOrigin, MatchArm,
+    Param, Pattern, PatternField, PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember,
+    Type, UseDecl, VariantFields, Visibility,
 };
 use crate::{lexer, parser};
 
@@ -22,6 +22,23 @@ pub struct SourceUnit {
     pub module_path: Vec<String>,
     pub source: String,
     pub is_root: bool,
+}
+
+/// Stable identity of one package within a compiler invocation.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct PackageId(pub usize);
+
+/// All source files and direct dependency aliases belonging to one package.
+///
+/// Package IDs provide definition identity; aliases are local to the package
+/// declaring them. This keeps shared dependencies nominally identical and
+/// prevents transitive dependencies from becoming accidentally spellable.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourcePackage {
+    pub id: PackageId,
+    pub is_primary: bool,
+    pub dependencies: BTreeMap<String, PackageId>,
+    pub sources: Vec<SourceUnit>,
 }
 
 /// File-module path segments use a deliberately smaller identifier subset
@@ -43,13 +60,33 @@ pub fn is_valid_module_segment(segment: &str) -> bool {
 /// Unknown names remain unchanged so the normal semantic analyzer can report
 /// built-in, associated-member, and genuinely unresolved-name diagnostics.
 pub fn resolve_sources(sources: &[SourceUnit]) -> Result<Program, Vec<String>> {
-    let mut diagnostics = validate_source_layout(sources);
-    let mut parsed = Vec::with_capacity(sources.len());
+    resolve_packages(&[SourcePackage {
+        id: PackageId(0),
+        is_primary: true,
+        dependencies: BTreeMap::new(),
+        sources: sources.to_vec(),
+    }])
+}
 
-    for source in sources {
-        match parser::parse(&source.source) {
-            Ok(program) => parsed.push(ParsedUnit { source, program }),
-            Err(error) => diagnostics.push(format!("{}: error: {error}", source.path)),
+/// Parse, resolve, and flatten a complete package dependency graph.
+///
+/// Exactly one package must be primary. Dependency definitions receive an
+/// internal, non-source-spellable namespace while each package keeps its own
+/// `root`, `super`, dependency aliases, and `pub(package)` boundary.
+pub fn resolve_packages(packages: &[SourcePackage]) -> Result<Program, Vec<String>> {
+    let (prepared, dependencies, mut diagnostics) = validate_package_layout(packages);
+    let mut parsed = Vec::with_capacity(prepared.len());
+
+    for unit in prepared {
+        match parser::parse(&unit.source.source) {
+            Ok(program) => parsed.push(ParsedUnit {
+                source: unit.source,
+                module_path: unit.module_path,
+                package_root: unit.package_root,
+                package_id: unit.package_id,
+                program,
+            }),
+            Err(error) => diagnostics.push(format!("{}: error: {error}", unit.source.path)),
         }
     }
 
@@ -57,12 +94,13 @@ pub fn resolve_sources(sources: &[SourceUnit]) -> Result<Program, Vec<String>> {
         return Err(diagnostics);
     }
 
-    let (symbols, module_paths, collection_diagnostics) = collect_symbols(&parsed);
+    let (symbols, module_paths, collection_diagnostics) = collect_symbols(&parsed, &dependencies);
     if !collection_diagnostics.is_empty() {
         return Err(collection_diagnostics);
     }
 
-    let (aliases, import_diagnostics) = collect_imports(&parsed, &symbols, &module_paths);
+    let (aliases, import_diagnostics) =
+        collect_imports(&parsed, &symbols, &module_paths, &dependencies);
     if !import_diagnostics.is_empty() {
         return Err(import_diagnostics);
     }
@@ -71,32 +109,52 @@ pub fn resolve_sources(sources: &[SourceUnit]) -> Result<Program, Vec<String>> {
         symbols,
         module_paths,
         aliases,
+        dependencies,
         diagnostics: Vec::new(),
     };
     let mut items = Vec::new();
     let mut item_visibilities = Vec::new();
+    let mut item_origins = Vec::new();
 
-    for ParsedUnit { source, program } in parsed {
+    for ParsedUnit {
+        source,
+        module_path,
+        package_root,
+        package_id,
+        program,
+    } in parsed
+    {
         let Program {
             items: unit_items,
             item_visibilities: unit_visibilities,
+            item_origins: _,
             uses: _,
         } = program;
         debug_assert_eq!(unit_items.len(), unit_visibilities.len());
 
         let context = ResolveContext {
             source_path: &source.path,
-            module_path: &source.module_path,
+            module_path: &module_path,
+            package_root: &package_root,
         };
         for (mut item, visibility) in unit_items.into_iter().zip(unit_visibilities) {
             resolver.rewrite_item(&mut item, context);
             items.push(item);
             item_visibilities.push(visibility);
+            item_origins.push(ItemOrigin {
+                package: package_id.0,
+                module_path: source.module_path.clone(),
+            });
         }
     }
 
     if resolver.diagnostics.is_empty() {
-        Ok(Program::with_visibilities(items, item_visibilities))
+        Ok(Program::with_metadata(
+            items,
+            item_visibilities,
+            item_origins,
+            Vec::new(),
+        ))
     } else {
         Err(resolver.diagnostics)
     }
@@ -104,13 +162,26 @@ pub fn resolve_sources(sources: &[SourceUnit]) -> Result<Program, Vec<String>> {
 
 struct ParsedUnit<'a> {
     source: &'a SourceUnit,
+    /// Absolute module path in the flattened dependency graph.
+    module_path: Vec<String>,
+    /// Absolute namespace at which this unit's package is mounted.
+    package_root: Vec<String>,
+    package_id: PackageId,
     program: Program,
+}
+
+struct PreparedUnit<'a> {
+    source: &'a SourceUnit,
+    module_path: Vec<String>,
+    package_root: Vec<String>,
+    package_id: PackageId,
 }
 
 #[derive(Clone, Debug)]
 struct Symbol {
     canonical: String,
     module_path: Vec<String>,
+    package_root: Vec<String>,
     visibility: Visibility,
     source_path: String,
 }
@@ -126,71 +197,279 @@ struct ResolvedAlias {
     target: AliasTarget,
     visibility: Visibility,
     module_path: Vec<String>,
+    package_root: Vec<String>,
 }
 
 type AliasTable = HashMap<Vec<String>, ResolvedAlias>;
 
 type SymbolTable = HashMap<Vec<String>, Symbol>;
 
-fn validate_source_layout(sources: &[SourceUnit]) -> Vec<String> {
+/// Direct dependency aliases keyed by the internal root of the declaring
+/// package. Target roots are internal and cannot be written in source code.
+type DependencyTable = HashMap<Vec<String>, BTreeMap<String, Vec<String>>>;
+
+fn validate_package_layout(
+    packages: &[SourcePackage],
+) -> (Vec<PreparedUnit<'_>>, DependencyTable, Vec<String>) {
     let mut diagnostics = Vec::new();
-    let roots: Vec<_> = sources.iter().filter(|source| source.is_root).collect();
-    if roots.len() != 1 {
+    let primary_count = packages.iter().filter(|package| package.is_primary).count();
+    if primary_count != 1 {
         diagnostics.push(format!(
-            "<package>: error: package target must have exactly one root source, found {}",
-            roots.len()
+            "<packages>: error: dependency graph must have exactly one primary package, found {primary_count}"
         ));
     }
 
-    let mut modules: HashMap<Vec<String>, &str> = HashMap::new();
-    for source in sources {
-        if source.is_root && !source.module_path.is_empty() {
+    let mut package_roots = HashMap::new();
+    for package in packages {
+        let root = if package.is_primary {
+            Vec::new()
+        } else {
+            vec![format!("@{}", package.id.0)]
+        };
+        if package_roots.insert(package.id, root).is_some() {
             diagnostics.push(format!(
-                "{}: error: root source must use the empty module path",
-                source.path
-            ));
-        }
-        if !source.is_root && source.module_path.is_empty() {
-            diagnostics.push(format!(
-                "{}: error: non-root source must have a non-empty module path",
-                source.path
-            ));
-        }
-        for segment in &source.module_path {
-            if !is_valid_module_segment(segment) {
-                diagnostics.push(format!(
-                    "{}: error: module path segment `{segment}` must be a non-reserved ASCII snake_case identifier",
-                    source.path
-                ));
-            }
-        }
-
-        if let Some(previous) = modules.insert(source.module_path.clone(), &source.path) {
-            diagnostics.push(format!(
-                "{}: error: duplicate module `{}`; it is already provided by {previous}",
-                source.path,
-                display_module(&source.module_path)
+                "<packages>: error: duplicate package ID {}",
+                package.id.0
             ));
         }
     }
+    diagnostics.extend(validate_dependency_graph(packages));
+
+    let mut dependencies = DependencyTable::new();
+    for package in packages {
+        let Some(package_root) = package_roots.get(&package.id) else {
+            continue;
+        };
+        let mut aliases = BTreeMap::new();
+        for (alias, target_id) in &package.dependencies {
+            if !is_valid_module_segment(alias) {
+                diagnostics.push(format!(
+                    "<package {}>: error: dependency alias `{alias}` must be a non-reserved ASCII snake_case identifier",
+                    package.id.0
+                ));
+                continue;
+            }
+            if *target_id == package.id {
+                diagnostics.push(format!(
+                    "<package {}>: error: dependency alias `{alias}` refers to the package itself",
+                    package.id.0
+                ));
+                continue;
+            }
+            let Some(target_root) = package_roots.get(target_id) else {
+                diagnostics.push(format!(
+                    "<package {}>: error: dependency alias `{alias}` refers to unknown package ID {}",
+                    package.id.0, target_id.0
+                ));
+                continue;
+            };
+            aliases.insert(alias.clone(), target_root.clone());
+        }
+        dependencies.insert(package_root.clone(), aliases);
+    }
+
+    let mut module_owners: HashMap<Vec<String>, (PackageId, &str)> = HashMap::new();
+    let mut prepared = Vec::new();
+
+    for package in packages {
+        let package_name = format!("#{}", package.id.0);
+        let package_root = package_roots
+            .get(&package.id)
+            .cloned()
+            .unwrap_or_else(|| vec![format!("@{}", package.id.0)]);
+
+        let roots = package
+            .sources
+            .iter()
+            .filter(|source| source.is_root)
+            .count();
+        if roots != 1 {
+            diagnostics.push(format!(
+                "<package {package_name}>: error: package target must have exactly one root source, found {roots}"
+            ));
+        }
+
+        let mut relative_modules: HashMap<Vec<String>, &str> = HashMap::new();
+        for source in &package.sources {
+            if source.is_root && !source.module_path.is_empty() {
+                diagnostics.push(format!(
+                    "{}: error: root source must use the empty module path",
+                    source.path
+                ));
+            }
+            if !source.is_root && source.module_path.is_empty() {
+                diagnostics.push(format!(
+                    "{}: error: non-root source must have a non-empty module path",
+                    source.path
+                ));
+            }
+            for segment in &source.module_path {
+                if !is_valid_module_segment(segment) {
+                    diagnostics.push(format!(
+                        "{}: error: module path segment `{segment}` must be a non-reserved ASCII snake_case identifier",
+                        source.path
+                    ));
+                }
+            }
+            if let Some(first) = source.module_path.first() {
+                if package.dependencies.contains_key(first) {
+                    diagnostics.push(format!(
+                        "{}: error: top-level module `{first}` conflicts with dependency alias `{first}`",
+                        source.path
+                    ));
+                }
+            }
+
+            if let Some(previous) =
+                relative_modules.insert(source.module_path.clone(), &source.path)
+            {
+                diagnostics.push(format!(
+                    "{}: error: duplicate module `{}`; it is already provided by {previous}",
+                    source.path,
+                    display_module(&source.module_path)
+                ));
+            }
+
+            let mut module_path = package_root.clone();
+            module_path.extend(source.module_path.iter().cloned());
+            for length in package_root.len()..=module_path.len() {
+                let claimed = module_path[..length].to_vec();
+                if let Some((owner, previous)) = module_owners.get(&claimed) {
+                    if *owner != package.id {
+                        diagnostics.push(format!(
+                            "{}: error: module `{}` conflicts with package `{}` provided by {previous}",
+                            source.path,
+                            display_module(&claimed),
+                            owner.0
+                        ));
+                    }
+                } else {
+                    module_owners.insert(claimed, (package.id, source.path.as_str()));
+                }
+            }
+
+            prepared.push(PreparedUnit {
+                source,
+                module_path,
+                package_root: package_root.clone(),
+                package_id: package.id,
+            });
+        }
+    }
+
+    (prepared, dependencies, diagnostics)
+}
+
+fn validate_dependency_graph(packages: &[SourcePackage]) -> Vec<String> {
+    fn visit(
+        id: PackageId,
+        packages: &HashMap<PackageId, &SourcePackage>,
+        states: &mut HashMap<PackageId, u8>,
+        stack: &mut Vec<PackageId>,
+        diagnostics: &mut Vec<String>,
+    ) {
+        match states.get(&id) {
+            Some(1) => {
+                let start = stack.iter().position(|entry| *entry == id).unwrap_or(0);
+                let mut cycle = stack[start..]
+                    .iter()
+                    .map(|entry| format!("#{}", entry.0))
+                    .collect::<Vec<_>>();
+                cycle.push(format!("#{}", id.0));
+                diagnostics.push(format!(
+                    "<packages>: error: cyclic package dependencies: {}",
+                    cycle.join(" -> ")
+                ));
+                return;
+            }
+            Some(2) => return,
+            _ => {}
+        }
+
+        states.insert(id, 1);
+        stack.push(id);
+        if let Some(package) = packages.get(&id) {
+            for target in package.dependencies.values() {
+                if packages.contains_key(target) {
+                    visit(*target, packages, states, stack, diagnostics);
+                }
+            }
+        }
+        stack.pop();
+        states.insert(id, 2);
+    }
+
+    let mut diagnostics = Vec::new();
+    let mut by_id = HashMap::new();
+    for package in packages {
+        by_id.entry(package.id).or_insert(package);
+    }
+
+    let mut states = HashMap::new();
+    let mut stack = Vec::new();
+    let mut ids = by_id.keys().copied().collect::<Vec<_>>();
+    ids.sort();
+    for id in ids {
+        visit(id, &by_id, &mut states, &mut stack, &mut diagnostics);
+    }
+
+    if let [primary] = packages
+        .iter()
+        .filter(|package| package.is_primary)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        let mut reachable = HashSet::new();
+        let mut pending = vec![primary.id];
+        while let Some(id) = pending.pop() {
+            if !reachable.insert(id) {
+                continue;
+            }
+            if let Some(package) = by_id.get(&id) {
+                pending.extend(
+                    package
+                        .dependencies
+                        .values()
+                        .filter(|target| by_id.contains_key(target))
+                        .copied(),
+                );
+            }
+        }
+        let mut unreachable = by_id
+            .keys()
+            .filter(|id| !reachable.contains(id))
+            .copied()
+            .collect::<Vec<_>>();
+        unreachable.sort();
+        for id in unreachable {
+            diagnostics.push(format!(
+                "<package #{}>: error: package is not reachable from primary package #{}",
+                id.0, primary.id.0
+            ));
+        }
+    }
+
     diagnostics
 }
 
-fn collect_symbols(parsed: &[ParsedUnit<'_>]) -> (SymbolTable, HashSet<Vec<String>>, Vec<String>) {
+fn collect_symbols(
+    parsed: &[ParsedUnit<'_>],
+    dependencies: &DependencyTable,
+) -> (SymbolTable, HashSet<Vec<String>>, Vec<String>) {
     let mut symbols: SymbolTable = HashMap::new();
     let mut module_paths = HashSet::new();
     let mut diagnostics = Vec::new();
     let mut module_children: BTreeMap<Vec<String>, BTreeSet<String>> = BTreeMap::new();
 
     for unit in parsed {
-        for length in 0..=unit.source.module_path.len() {
-            module_paths.insert(unit.source.module_path[..length].to_vec());
+        for length in 0..=unit.module_path.len() {
+            module_paths.insert(unit.module_path[..length].to_vec());
         }
-        for index in 0..unit.source.module_path.len() {
+        for index in 0..unit.module_path.len() {
             module_children
-                .entry(unit.source.module_path[..index].to_vec())
+                .entry(unit.module_path[..index].to_vec())
                 .or_default()
-                .insert(unit.source.module_path[index].clone());
+                .insert(unit.module_path[index].clone());
         }
     }
 
@@ -212,11 +491,22 @@ fn collect_symbols(parsed: &[ParsedUnit<'_>]) -> (SymbolTable, HashSet<Vec<Strin
             let Some(name) = declaration_name(item) else {
                 continue;
             };
-            let mut logical_path = unit.source.module_path.clone();
+            if unit.module_path == unit.package_root
+                && dependencies
+                    .get(&unit.package_root)
+                    .is_some_and(|aliases| aliases.contains_key(name))
+            {
+                diagnostics.push(format!(
+                    "{}: error: root declaration `{name}` conflicts with dependency alias `{name}`",
+                    unit.source.path
+                ));
+            }
+            let mut logical_path = unit.module_path.clone();
             logical_path.push(name.to_owned());
             let symbol = Symbol {
-                canonical: canonical_name(&unit.source.module_path, name),
-                module_path: unit.source.module_path.clone(),
+                canonical: canonical_name(&unit.module_path, name),
+                module_path: unit.module_path.clone(),
+                package_root: unit.package_root.clone(),
                 visibility: *visibility,
                 source_path: unit.source.path.clone(),
             };
@@ -225,7 +515,7 @@ fn collect_symbols(parsed: &[ParsedUnit<'_>]) -> (SymbolTable, HashSet<Vec<Strin
                 diagnostics.push(format!(
                     "{}: error: duplicate declaration `{name}` in module `{}`; first declared in {}",
                     unit.source.path,
-                    display_module(&unit.source.module_path),
+                    display_module(&unit.module_path),
                     previous.source_path
                 ));
             } else {
@@ -233,13 +523,13 @@ fn collect_symbols(parsed: &[ParsedUnit<'_>]) -> (SymbolTable, HashSet<Vec<Strin
             }
 
             if module_children
-                .get(&unit.source.module_path)
+                .get(&unit.module_path)
                 .is_some_and(|children| children.contains(name))
             {
                 diagnostics.push(format!(
                     "{}: error: declaration `{name}` conflicts with child module `{}`",
                     unit.source.path,
-                    canonical_name(&unit.source.module_path, name)
+                    canonical_name(&unit.module_path, name)
                 ));
             }
         }
@@ -254,6 +544,7 @@ struct ImportDef {
     alias: String,
     visibility: Visibility,
     module_path: Vec<String>,
+    package_root: Vec<String>,
     source_path: String,
 }
 
@@ -261,6 +552,7 @@ fn collect_imports(
     parsed: &[ParsedUnit<'_>],
     symbols: &SymbolTable,
     module_paths: &HashSet<Vec<String>>,
+    dependencies: &DependencyTable,
 ) -> (AliasTable, Vec<String>) {
     let mut definitions: HashMap<Vec<String>, ImportDef> = HashMap::new();
     let mut diagnostics = Vec::new();
@@ -286,13 +578,14 @@ fn collect_imports(
                 continue;
             }
 
-            let mut key = unit.source.module_path.clone();
+            let mut key = unit.module_path.clone();
             key.push(alias.clone());
             let definition = ImportDef {
                 path: declaration.path.clone(),
                 alias,
                 visibility: declaration.visibility,
-                module_path: unit.source.module_path.clone(),
+                module_path: unit.module_path.clone(),
+                package_root: unit.package_root.clone(),
                 source_path: unit.source.path.clone(),
             };
 
@@ -307,6 +600,15 @@ fn collect_imports(
                     unit.source.path,
                     definition.alias,
                     key.join(".")
+                ));
+            } else if unit.module_path == unit.package_root
+                && dependencies
+                    .get(&unit.package_root)
+                    .is_some_and(|aliases| aliases.contains_key(&definition.alias))
+            {
+                diagnostics.push(format!(
+                    "{}: error: import alias `{}` conflicts with dependency alias `{}`",
+                    unit.source.path, definition.alias, definition.alias
                 ));
             } else if let Some(previous) = definitions.get(&key) {
                 diagnostics.push(format!(
@@ -330,6 +632,7 @@ fn collect_imports(
         definitions,
         symbols,
         module_paths,
+        dependencies,
         resolved: HashMap::new(),
         failed: HashSet::new(),
         stack: Vec::new(),
@@ -402,6 +705,7 @@ struct ImportGraph<'a> {
     definitions: HashMap<Vec<String>, ImportDef>,
     symbols: &'a SymbolTable,
     module_paths: &'a HashSet<Vec<String>>,
+    dependencies: &'a DependencyTable,
     resolved: AliasTable,
     failed: HashSet<Vec<String>>,
     stack: Vec<Vec<String>>,
@@ -418,6 +722,7 @@ struct ImportReference {
 struct ImportAccess {
     visibility: Visibility,
     module_path: Vec<String>,
+    package_root: Vec<String>,
     display: String,
 }
 
@@ -463,15 +768,18 @@ impl ImportGraph<'_> {
         };
 
         for access in &reference.accesses {
-            if access.visibility == Visibility::Private
-                && !definition
-                    .module_path
-                    .starts_with(access.module_path.as_slice())
-            {
+            if !visibility_allows_access(
+                access.visibility,
+                &access.module_path,
+                &access.package_root,
+                &definition.module_path,
+                &definition.package_root,
+            ) {
                 self.diagnostics.push(format!(
-                    "{}: error: import `{}` cannot access private target `{}`",
+                    "{}: error: import `{}` cannot access {} target `{}`",
                     definition.source_path,
                     display_path(&definition.path),
+                    visibility_description(access.visibility),
                     access.display
                 ));
                 self.failed.insert(key.to_vec());
@@ -501,13 +809,18 @@ impl ImportGraph<'_> {
             target: reference.target,
             visibility: definition.visibility,
             module_path: definition.module_path,
+            package_root: definition.package_root,
         };
         self.resolved.insert(key.to_vec(), alias.clone());
         Ok(alias)
     }
 
     fn resolve_import_path(&mut self, definition: &ImportDef) -> Result<ImportReference, ()> {
-        let candidates = match anchored_candidates(&definition.path, &definition.module_path) {
+        let candidates = match anchored_candidates(
+            &definition.path,
+            &definition.module_path,
+            &definition.package_root,
+        ) {
             Ok(candidates) => candidates,
             Err(message) => {
                 self.diagnostics
@@ -515,21 +828,23 @@ impl ImportGraph<'_> {
                 return Err(());
             }
         };
-        let unanchored = !definition
-            .path
-            .first()
-            .is_some_and(|segment| matches!(segment.as_str(), "root" | "self" | "super"));
         for candidate in candidates {
-            if unanchored
-                && self
-                    .stack
-                    .last()
-                    .is_some_and(|current| current == &candidate)
+            if self
+                .stack
+                .last()
+                .is_some_and(|current| current == &candidate)
             {
                 continue;
             }
             if let Some(reference) = self.lookup_import_candidate(&candidate, 0)? {
                 return Ok(reference);
+            }
+            if let Some(expanded) =
+                expand_dependency_candidate(&candidate, &definition.package_root, self.dependencies)
+            {
+                if let Some(reference) = self.lookup_import_candidate(&expanded, 0)? {
+                    return Ok(reference);
+                }
             }
         }
         self.diagnostics.push(format!(
@@ -554,6 +869,7 @@ impl ImportGraph<'_> {
                 accesses: vec![ImportAccess {
                     visibility: symbol.visibility,
                     module_path: symbol.module_path.clone(),
+                    package_root: symbol.package_root.clone(),
                     display: symbol.canonical.replace("::", "."),
                 }],
             }));
@@ -565,6 +881,7 @@ impl ImportGraph<'_> {
                 accesses: vec![ImportAccess {
                     visibility: alias.visibility,
                     module_path: alias.module_path,
+                    package_root: alias.package_root,
                     display: candidate.join("."),
                 }],
             }));
@@ -575,6 +892,7 @@ impl ImportGraph<'_> {
                 accesses: vec![ImportAccess {
                     visibility: Visibility::Public,
                     module_path: candidate[..candidate.len().saturating_sub(1)].to_vec(),
+                    package_root: Vec::new(),
                     display: candidate.join("."),
                 }],
             }));
@@ -593,6 +911,7 @@ impl ImportGraph<'_> {
                     reference.accesses.push(ImportAccess {
                         visibility: alias.visibility,
                         module_path: alias.module_path,
+                        package_root: alias.package_root,
                         display: prefix.join("."),
                     });
                     return Ok(Some(reference));
@@ -606,12 +925,17 @@ impl ImportGraph<'_> {
 fn anchored_candidates(
     path: &[String],
     module_path: &[String],
+    package_root: &[String],
 ) -> Result<Vec<Vec<String>>, String> {
     let Some(first) = path.first().map(String::as_str) else {
         return Ok(Vec::new());
     };
     match first {
-        "root" => Ok(vec![path[1..].to_vec()]),
+        "root" => {
+            let mut candidate = package_root.to_vec();
+            candidate.extend_from_slice(&path[1..]);
+            Ok(vec![candidate])
+        }
         "self" => {
             let mut candidate = module_path.to_vec();
             candidate.extend_from_slice(&path[1..]);
@@ -622,7 +946,7 @@ fn anchored_candidates(
                 .iter()
                 .take_while(|segment| *segment == "super")
                 .count();
-            if count > module_path.len() {
+            if count > module_path.len().saturating_sub(package_root.len()) {
                 return Err(format!(
                     "import path `{}` escapes above the package root",
                     display_path(path)
@@ -632,7 +956,7 @@ fn anchored_candidates(
             candidate.extend_from_slice(&path[count..]);
             Ok(vec![candidate])
         }
-        _ => Ok((0..=module_path.len())
+        _ => Ok((package_root.len()..=module_path.len())
             .rev()
             .map(|depth| {
                 let mut candidate = module_path[..depth].to_vec();
@@ -643,11 +967,42 @@ fn anchored_candidates(
     }
 }
 
+fn expand_dependency_candidate(
+    candidate: &[String],
+    package_root: &[String],
+    dependencies: &DependencyTable,
+) -> Option<Vec<String>> {
+    if !candidate.starts_with(package_root) || candidate.len() <= package_root.len() {
+        return None;
+    }
+    let alias = &candidate[package_root.len()];
+    let target_root = dependencies.get(package_root)?.get(alias)?;
+    let mut expanded = target_root.clone();
+    expanded.extend_from_slice(&candidate[package_root.len() + 1..]);
+    Some(expanded)
+}
+
 fn visibility_rank(visibility: Visibility) -> u8 {
     match visibility {
         Visibility::Private => 0,
         Visibility::Package => 1,
         Visibility::Public => 2,
+    }
+}
+
+fn visibility_allows_access(
+    visibility: Visibility,
+    declaring_module: &[String],
+    declaring_package: &[String],
+    accessing_module: &[String],
+    accessing_package: &[String],
+) -> bool {
+    match visibility {
+        Visibility::Public => true,
+        Visibility::Package => declaring_package == accessing_package,
+        Visibility::Private => {
+            declaring_package == accessing_package && accessing_module.starts_with(declaring_module)
+        }
     }
 }
 
@@ -698,19 +1053,21 @@ fn display_module(module_path: &[String]) -> String {
 struct ResolveContext<'a> {
     source_path: &'a str,
     module_path: &'a [String],
+    package_root: &'a [String],
 }
 
 struct Resolver {
     symbols: SymbolTable,
     module_paths: HashSet<Vec<String>>,
     aliases: AliasTable,
+    dependencies: DependencyTable,
     diagnostics: Vec<String>,
 }
 
 #[derive(Clone)]
 struct NameReference {
     canonical: String,
-    accesses: Vec<(Visibility, Vec<String>)>,
+    accesses: Vec<(Visibility, Vec<String>, Vec<String>)>,
 }
 
 impl Resolver {
@@ -1089,7 +1446,7 @@ impl Resolver {
             // under a known module. A plain Member tree would otherwise be
             // interpreted as a method receiver by the current analyzer and
             // lose its module prefix in the eventual diagnostic.
-            if self.longest_module_prefix(&segments, context.module_path) > 0 {
+            if self.longest_module_prefix(&segments, context) > 0 {
                 *expression = Expr::Name(segments.join("."));
                 return;
             }
@@ -1119,27 +1476,51 @@ impl Resolver {
         logical_path: &[String],
         context: ResolveContext<'_>,
     ) -> Option<String> {
-        let reference = self.find_name(logical_path, context.module_path)?;
-        for (visibility, module_path) in &reference.accesses {
-            if *visibility == Visibility::Private
-                && !context.module_path.starts_with(module_path.as_slice())
-            {
-                self.diagnostics.push(format!(
-                    "{}: error: `{}` is private to module `{}`",
-                    context.source_path,
-                    logical_path.join("."),
-                    display_module(module_path)
-                ));
+        let reference = self.find_name(logical_path, context)?;
+        for (visibility, module_path, package_root) in &reference.accesses {
+            if !visibility_allows_access(
+                *visibility,
+                module_path,
+                package_root,
+                context.module_path,
+                context.package_root,
+            ) {
+                let message = match visibility {
+                    Visibility::Private => format!(
+                        "`{}` is private to module `{}`",
+                        logical_path.join("."),
+                        display_module(module_path)
+                    ),
+                    Visibility::Package => format!(
+                        "`{}` is pub(package) and cannot be used from another package",
+                        logical_path.join(".")
+                    ),
+                    Visibility::Public => unreachable!("public names are always accessible"),
+                };
+                self.diagnostics
+                    .push(format!("{}: error: {message}", context.source_path));
             }
         }
         Some(reference.canonical)
     }
 
-    fn find_name(&self, logical_path: &[String], module_path: &[String]) -> Option<NameReference> {
-        let candidates = anchored_candidates(logical_path, module_path).ok()?;
+    fn find_name(
+        &self,
+        logical_path: &[String],
+        context: ResolveContext<'_>,
+    ) -> Option<NameReference> {
+        let candidates =
+            anchored_candidates(logical_path, context.module_path, context.package_root).ok()?;
         for candidate in candidates {
             if let Some(reference) = self.find_absolute_name(&candidate, 0) {
                 return Some(reference);
+            }
+            if let Some(expanded) =
+                expand_dependency_candidate(&candidate, context.package_root, &self.dependencies)
+            {
+                if let Some(reference) = self.find_absolute_name(&expanded, 0) {
+                    return Some(reference);
+                }
             }
         }
         None
@@ -1152,14 +1533,22 @@ impl Resolver {
         if let Some(symbol) = self.symbols.get(candidate) {
             return Some(NameReference {
                 canonical: symbol.canonical.clone(),
-                accesses: vec![(symbol.visibility, symbol.module_path.clone())],
+                accesses: vec![(
+                    symbol.visibility,
+                    symbol.module_path.clone(),
+                    symbol.package_root.clone(),
+                )],
             });
         }
         if let Some(alias) = self.aliases.get(candidate) {
             if let AliasTarget::Declaration(canonical) = &alias.target {
                 return Some(NameReference {
                     canonical: canonical.clone(),
-                    accesses: vec![(alias.visibility, alias.module_path.clone())],
+                    accesses: vec![(
+                        alias.visibility,
+                        alias.module_path.clone(),
+                        alias.package_root.clone(),
+                    )],
                 });
             }
         }
@@ -1174,18 +1563,24 @@ impl Resolver {
             let mut expanded = module.clone();
             expanded.extend_from_slice(&candidate[length..]);
             if let Some(mut reference) = self.find_absolute_name(&expanded, depth + 1) {
-                reference
-                    .accesses
-                    .push((alias.visibility, alias.module_path.clone()));
+                reference.accesses.push((
+                    alias.visibility,
+                    alias.module_path.clone(),
+                    alias.package_root.clone(),
+                ));
                 return Some(reference);
             }
         }
         None
     }
 
-    fn longest_module_prefix(&self, segments: &[String], module_path: &[String]) -> usize {
+    fn longest_module_prefix(&self, segments: &[String], context: ResolveContext<'_>) -> usize {
         for length in (1..=segments.len()).rev() {
-            let Ok(candidates) = anchored_candidates(&segments[..length], module_path) else {
+            let Ok(candidates) = anchored_candidates(
+                &segments[..length],
+                context.module_path,
+                context.package_root,
+            ) else {
                 continue;
             };
             for candidate in candidates {
@@ -1198,6 +1593,20 @@ impl Resolver {
                     .is_some_and(|alias| matches!(alias.target, AliasTarget::Module(_)))
                 {
                     return length;
+                }
+                if let Some(expanded) = expand_dependency_candidate(
+                    &candidate,
+                    context.package_root,
+                    &self.dependencies,
+                ) {
+                    if self.module_paths.contains(&expanded)
+                        || self
+                            .aliases
+                            .get(&expanded)
+                            .is_some_and(|alias| matches!(alias.target, AliasTarget::Module(_)))
+                    {
+                        return length;
+                    }
                 }
             }
         }
@@ -1246,6 +1655,23 @@ mod tests {
                 .collect(),
             source: source.to_owned(),
             is_root,
+        }
+    }
+
+    fn package(
+        id: usize,
+        is_primary: bool,
+        dependencies: &[(&str, usize)],
+        sources: Vec<SourceUnit>,
+    ) -> SourcePackage {
+        SourcePackage {
+            id: PackageId(id),
+            is_primary,
+            dependencies: dependencies
+                .iter()
+                .map(|(alias, target)| ((*alias).to_owned(), PackageId(*target)))
+                .collect(),
+            sources,
         }
     }
 
@@ -1764,6 +2190,415 @@ mod tests {
             1,
             "{unknown:?}"
         );
+    }
+
+    #[test]
+    fn resolves_dependency_packages_with_independent_roots() {
+        let program = resolve_packages(&[
+            package(
+                0,
+                true,
+                &[("math", 1)],
+                vec![unit(
+                    "app/src/main.sali",
+                    &[],
+                    "use math.answer as selected\nlet main(): i32 = selected()\n",
+                    true,
+                )],
+            ),
+            package(
+                1,
+                false,
+                &[],
+                vec![
+                    unit(
+                        "math/src/lib.sali",
+                        &[],
+                        "pub use root.inner.answer\n",
+                        true,
+                    ),
+                    unit(
+                        "math/src/inner.sali",
+                        &["inner"],
+                        "pub let answer(): i32 = 42\n",
+                        false,
+                    ),
+                ],
+            ),
+        ])
+        .unwrap();
+
+        assert!(function(&program, "@1::inner::answer").body.is_some());
+        assert!(matches!(
+            function(&program, "main").body,
+            Some(Expr::Call(ref callee, _))
+                if callee.as_ref() == &Expr::Name("@1::inner::answer".into())
+        ));
+    }
+
+    #[test]
+    fn enforces_package_visibility_across_dependency_boundaries() {
+        for (visibility, expected) in [("pub(package)", "pub(package)"), ("", "private")] {
+            let error = resolve_packages(&[
+                package(
+                    0,
+                    true,
+                    &[("dep", 1)],
+                    vec![unit(
+                        "app/src/main.sali",
+                        &[],
+                        "let main(): i32 = dep.hidden()\n",
+                        true,
+                    )],
+                ),
+                package(
+                    1,
+                    false,
+                    &[],
+                    vec![unit(
+                        "dep/src/lib.sali",
+                        &[],
+                        &format!("{visibility} let hidden(): i32 = 1\n"),
+                        true,
+                    )],
+                ),
+            ])
+            .unwrap_err();
+            assert!(
+                error.iter().any(|diagnostic| diagnostic.contains(expected)),
+                "{error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn prevents_dependency_anchors_from_escaping_their_package() {
+        let root_lookup = resolve_packages(&[
+            package(
+                0,
+                true,
+                &[("dep", 1)],
+                vec![unit(
+                    "app/src/main.sali",
+                    &[],
+                    "pub let root_value(): i32 = 1\nlet main(): i32 = 0\n",
+                    true,
+                )],
+            ),
+            package(
+                1,
+                false,
+                &[],
+                vec![unit(
+                    "dep/src/lib.sali",
+                    &[],
+                    "use root.root_value\npub let answer(): i32 = root_value()\n",
+                    true,
+                )],
+            ),
+        ])
+        .unwrap_err();
+        assert!(
+            root_lookup.iter().any(|diagnostic| {
+                diagnostic.contains("unknown import") && diagnostic.contains("root.root_value")
+            }),
+            "{root_lookup:?}"
+        );
+
+        let super_escape = resolve_packages(&[
+            package(
+                0,
+                true,
+                &[("dep", 1)],
+                vec![unit(
+                    "app/src/main.sali",
+                    &[],
+                    "let main(): i32 = 0\n",
+                    true,
+                )],
+            ),
+            package(
+                1,
+                false,
+                &[],
+                vec![unit(
+                    "dep/src/lib.sali",
+                    &[],
+                    "use super.outside as value\npub let answer(): i32 = 0\n",
+                    true,
+                )],
+            ),
+        ])
+        .unwrap_err();
+        assert!(super_escape
+            .iter()
+            .any(|diagnostic| diagnostic.contains("escapes above the package root")));
+    }
+
+    #[test]
+    fn rejects_dependency_aliases_that_conflict_with_file_modules() {
+        let error = resolve_packages(&[
+            package(
+                0,
+                true,
+                &[("dep", 1)],
+                vec![
+                    unit("app/src/main.sali", &[], "let main(): i32 = 0\n", true),
+                    unit(
+                        "app/src/dep/internal.sali",
+                        &["dep", "internal"],
+                        "pub(package) let local = 1\n",
+                        false,
+                    ),
+                ],
+            ),
+            package(
+                1,
+                false,
+                &[],
+                vec![unit(
+                    "dep/src/lib.sali",
+                    &[],
+                    "pub let answer(): i32 = 1\n",
+                    true,
+                )],
+            ),
+        ])
+        .unwrap_err();
+        assert!(error
+            .iter()
+            .any(|diagnostic| diagnostic.contains("module `dep`")
+                && diagnostic.contains("dependency alias")));
+    }
+
+    #[test]
+    fn hides_transitive_dependencies_until_the_owner_reexports_them() {
+        let hidden = resolve_packages(&[
+            package(
+                0,
+                true,
+                &[("middle", 1)],
+                vec![unit(
+                    "app/src/main.sali",
+                    &[],
+                    "use middle.leaf.answer\nlet main(): i32 = answer()\n",
+                    true,
+                )],
+            ),
+            package(
+                1,
+                false,
+                &[("leaf", 2)],
+                vec![unit(
+                    "middle/src/lib.sali",
+                    &[],
+                    "pub let middle_value(): i32 = leaf.answer()\n",
+                    true,
+                )],
+            ),
+            package(
+                2,
+                false,
+                &[],
+                vec![unit(
+                    "leaf/src/lib.sali",
+                    &[],
+                    "pub let answer(): i32 = 42\n",
+                    true,
+                )],
+            ),
+        ])
+        .unwrap_err();
+        assert!(hidden.iter().any(|diagnostic| {
+            diagnostic.contains("unknown import") && diagnostic.contains("middle.leaf.answer")
+        }));
+
+        let exposed = resolve_packages(&[
+            package(
+                0,
+                true,
+                &[("middle", 1)],
+                vec![unit(
+                    "app/src/main.sali",
+                    &[],
+                    "use middle.answer as selected\nlet main(): i32 = selected()\n",
+                    true,
+                )],
+            ),
+            package(
+                1,
+                false,
+                &[("leaf", 2)],
+                vec![unit(
+                    "middle/src/lib.sali",
+                    &[],
+                    "pub use leaf.answer\n",
+                    true,
+                )],
+            ),
+            package(
+                2,
+                false,
+                &[],
+                vec![unit(
+                    "leaf/src/lib.sali",
+                    &[],
+                    "pub let answer(): i32 = 42\n",
+                    true,
+                )],
+            ),
+        ])
+        .unwrap();
+        assert!(matches!(
+            function(&exposed, "main").body,
+            Some(Expr::Call(ref callee, _))
+                if callee.as_ref() == &Expr::Name("@2::answer".into())
+        ));
+    }
+
+    #[test]
+    fn shared_dependencies_keep_one_definition_identity() {
+        let program = resolve_packages(&[
+            package(
+                0,
+                true,
+                &[("left", 1), ("right", 2)],
+                vec![unit(
+                    "app/src/main.sali",
+                    &[],
+                    "let same(value: left.Token): right.Token = value\nlet main(): i32 = 0\n",
+                    true,
+                )],
+            ),
+            package(
+                1,
+                false,
+                &[("shared", 3)],
+                vec![unit(
+                    "left/src/lib.sali",
+                    &[],
+                    "pub use shared.Token\n",
+                    true,
+                )],
+            ),
+            package(
+                2,
+                false,
+                &[("shared", 3)],
+                vec![unit(
+                    "right/src/lib.sali",
+                    &[],
+                    "pub use shared.Token\n",
+                    true,
+                )],
+            ),
+            package(
+                3,
+                false,
+                &[],
+                vec![unit(
+                    "shared/src/lib.sali",
+                    &[],
+                    "pub let Token = struct(value: i32)\n",
+                    true,
+                )],
+            ),
+        ])
+        .unwrap();
+
+        let same = function(&program, "same");
+        assert_eq!(
+            same.groups[0][0].ty,
+            Type::Named("@3::Token".into(), vec![])
+        );
+        assert_eq!(
+            same.return_type,
+            Some(Type::Named("@3::Token".into(), vec![]))
+        );
+        assert_eq!(
+            program
+                .items
+                .iter()
+                .filter(|item| matches!(item, Item::Struct(definition) if definition.name == "@3::Token"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn dependency_aliases_conflict_with_root_declarations_and_imports() {
+        for source in [
+            "let dep = 1\nlet main(): i32 = 0\n",
+            "use root.answer as dep\nlet answer(): i32 = 1\nlet main(): i32 = 0\n",
+        ] {
+            let error = resolve_packages(&[
+                package(
+                    0,
+                    true,
+                    &[("dep", 1)],
+                    vec![unit("app/src/main.sali", &[], source, true)],
+                ),
+                package(
+                    1,
+                    false,
+                    &[],
+                    vec![unit(
+                        "dep/src/lib.sali",
+                        &[],
+                        "pub let answer(): i32 = 1\n",
+                        true,
+                    )],
+                ),
+            ])
+            .unwrap_err();
+            assert!(error
+                .iter()
+                .any(|diagnostic| diagnostic.contains("dependency alias `dep`")));
+        }
+    }
+
+    #[test]
+    fn validates_public_package_graph_inputs() {
+        let cycle = resolve_packages(&[
+            package(
+                0,
+                true,
+                &[("next", 1)],
+                vec![unit("root.sali", &[], "let main(): i32 = 0\n", true)],
+            ),
+            package(
+                1,
+                false,
+                &[("back", 0)],
+                vec![unit("next.sali", &[], "pub let value = 1\n", true)],
+            ),
+        ])
+        .unwrap_err();
+        assert!(cycle
+            .iter()
+            .any(|diagnostic| diagnostic.contains("cyclic package dependencies")));
+
+        let invalid = resolve_packages(&[
+            package(
+                0,
+                true,
+                &[("missing", 99)],
+                vec![unit("root.sali", &[], "let main(): i32 = 0\n", true)],
+            ),
+            package(
+                1,
+                false,
+                &[],
+                vec![unit("orphan.sali", &[], "pub let value = 1\n", true)],
+            ),
+        ])
+        .unwrap_err();
+        assert!(invalid
+            .iter()
+            .any(|diagnostic| diagnostic.contains("unknown package ID 99")));
+        assert!(invalid
+            .iter()
+            .any(|diagnostic| diagnostic.contains("not reachable")));
     }
 
     fn expression_names(expression: Option<&Expr>) -> HashSet<String> {

@@ -1,6 +1,6 @@
 //! Loading and validation for `salicin.toml` package manifests.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -21,10 +21,25 @@ pub struct Manifest {
     pub lib: Option<Target>,
     /// Binary targets in declaration order.
     pub bins: Vec<Target>,
+    /// Validated local path dependencies, sorted by alias.
+    pub dependencies: Vec<Dependency>,
     /// Canonical absolute path to `salicin.toml`.
     pub manifest_path: PathBuf,
     /// Canonical absolute path to the directory containing the manifest.
     pub package_root: PathBuf,
+}
+
+/// One validated local path dependency from `[dependencies]`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Dependency {
+    /// Source-level name used as the dependency's package module.
+    pub alias: String,
+    /// Canonical absolute path to the dependency package root.
+    pub path: PathBuf,
+    /// Canonical absolute path to the dependency's `salicin.toml`.
+    pub manifest_path: PathBuf,
+    /// Identity read and validated from the dependency manifest.
+    pub package: Package,
 }
 
 impl Manifest {
@@ -153,30 +168,37 @@ impl Error for ManifestError {
 /// Load and validate a `salicin.toml` manifest.
 ///
 /// `path` may point directly to a manifest or to a package directory. All
-/// returned paths are canonical absolute paths. The first package format does
-/// not resolve dependencies; a non-empty `[dependencies]` table is rejected.
+/// returned paths are canonical absolute paths. Local path dependency
+/// manifests are read to validate their package identity; use
+/// [`load_dependency_graph`] to recursively load the complete graph.
 pub fn load_manifest(path: impl AsRef<Path>) -> Result<Manifest, ManifestError> {
-    let supplied_path = path.as_ref();
-    let manifest_path = if supplied_path.is_dir() {
-        supplied_path.join(MANIFEST_FILE_NAME)
-    } else {
-        supplied_path.to_path_buf()
-    };
-
-    let manifest_path = fs::canonicalize(&manifest_path).map_err(|source| ManifestError::Io {
-        path: manifest_path.clone(),
-        source,
-    })?;
-    let source = fs::read_to_string(&manifest_path).map_err(|source| ManifestError::Io {
-        path: manifest_path.clone(),
-        source,
-    })?;
-    let raw: RawManifest = toml::from_str(&source).map_err(|source| ManifestError::Parse {
-        path: manifest_path.clone(),
-        source,
-    })?;
+    let manifest_path = resolve_manifest_path(path.as_ref())?;
+    let raw = read_raw_manifest(&manifest_path)?;
 
     validate_manifest(raw, manifest_path)
+}
+
+fn resolve_manifest_path(path: &Path) -> Result<PathBuf, ManifestError> {
+    let manifest_path = if path.is_dir() {
+        path.join(MANIFEST_FILE_NAME)
+    } else {
+        path.to_path_buf()
+    };
+    fs::canonicalize(&manifest_path).map_err(|source| ManifestError::Io {
+        path: manifest_path,
+        source,
+    })
+}
+
+fn read_raw_manifest(manifest_path: &Path) -> Result<RawManifest, ManifestError> {
+    let source = fs::read_to_string(manifest_path).map_err(|source| ManifestError::Io {
+        path: manifest_path.to_path_buf(),
+        source,
+    })?;
+    toml::from_str(&source).map_err(|source| ManifestError::Parse {
+        path: manifest_path.to_path_buf(),
+        source,
+    })
 }
 
 fn validate_manifest(raw: RawManifest, manifest_path: PathBuf) -> Result<Manifest, ManifestError> {
@@ -185,48 +207,9 @@ fn validate_manifest(raw: RawManifest, manifest_path: PathBuf) -> Result<Manifes
         .expect("a canonical file path always has a parent")
         .to_path_buf();
 
-    if !is_ascii_kebab_case(&raw.package.name) {
-        return Err(ManifestError::invalid(
-            &manifest_path,
-            format!(
-                "package name `{}` must be ASCII kebab-case (for example `hello-salicin`)",
-                raw.package.name
-            ),
-        ));
-    }
+    let package = validate_package(&raw.package, &manifest_path)?;
 
-    let version = Version::parse(&raw.package.version).map_err(|error| {
-        ManifestError::invalid(
-            &manifest_path,
-            format!(
-                "package version `{}` is not valid semantic versioning: {error}",
-                raw.package.version
-            ),
-        )
-    })?;
-
-    let edition = match raw.package.edition.as_str() {
-        "2026" => Edition::Edition2026,
-        edition => {
-            return Err(ManifestError::invalid(
-                &manifest_path,
-                format!("edition `{edition}` is not supported; expected `2026`"),
-            ));
-        }
-    };
-
-    if !raw.dependencies.is_empty() {
-        return Err(ManifestError::invalid(
-            &manifest_path,
-            "dependencies are not supported by this compiler version yet; remove entries from `[dependencies]`",
-        ));
-    }
-
-    let package = Package {
-        name: raw.package.name,
-        version,
-        edition,
-    };
+    let dependencies = validate_dependencies(raw.dependencies, &package_root, &manifest_path)?;
 
     let lib = match raw.lib {
         Some(raw_lib) => Some(Target {
@@ -305,9 +288,261 @@ fn validate_manifest(raw: RawManifest, manifest_path: PathBuf) -> Result<Manifes
         package,
         lib,
         bins,
+        dependencies,
         manifest_path,
         package_root,
     })
+}
+
+fn validate_package(raw: &RawPackage, manifest_path: &Path) -> Result<Package, ManifestError> {
+    if !is_ascii_kebab_case(&raw.name) {
+        return Err(ManifestError::invalid(
+            manifest_path,
+            format!(
+                "package name `{}` must be ASCII kebab-case (for example `hello-salicin`)",
+                raw.name
+            ),
+        ));
+    }
+
+    let version = Version::parse(&raw.version).map_err(|error| {
+        ManifestError::invalid(
+            manifest_path,
+            format!(
+                "package version `{}` is not valid semantic versioning: {error}",
+                raw.version
+            ),
+        )
+    })?;
+
+    let edition = match raw.edition.as_str() {
+        "2026" => Edition::Edition2026,
+        edition => {
+            return Err(ManifestError::invalid(
+                manifest_path,
+                format!("edition `{edition}` is not supported; expected `2026`"),
+            ));
+        }
+    };
+
+    Ok(Package {
+        name: raw.name.clone(),
+        version,
+        edition,
+    })
+}
+
+fn validate_dependencies(
+    raw_dependencies: BTreeMap<String, RawDependency>,
+    package_root: &Path,
+    manifest_path: &Path,
+) -> Result<Vec<Dependency>, ManifestError> {
+    let mut dependencies = Vec::with_capacity(raw_dependencies.len());
+    for (alias, raw) in raw_dependencies {
+        if !is_ascii_snake_case_module_name(&alias) {
+            return Err(ManifestError::invalid(
+                manifest_path,
+                format!(
+                    "dependency alias `{alias}` must be a non-reserved ASCII snake_case module name"
+                ),
+            ));
+        }
+        if !is_portable_relative_dependency_path(&raw.path) {
+            return Err(ManifestError::invalid(
+                manifest_path,
+                format!(
+                    "dependency `{alias}` path `{}` must be a non-empty portable relative path using `/` separators",
+                    raw.path.display()
+                ),
+            ));
+        }
+
+        let dependency_manifest =
+            resolve_dependency_manifest_path(package_root, manifest_path, &alias, &raw.path)?;
+        let dependency_raw = read_raw_manifest(&dependency_manifest)?;
+        let package = validate_package(&dependency_raw.package, &dependency_manifest)?;
+        let dependency_root = dependency_manifest
+            .parent()
+            .expect("a canonical manifest path always has a parent")
+            .to_path_buf();
+        dependencies.push(Dependency {
+            alias,
+            path: dependency_root,
+            manifest_path: dependency_manifest,
+            package,
+        });
+    }
+    Ok(dependencies)
+}
+
+fn is_portable_relative_dependency_path(path: &Path) -> bool {
+    let Some(text) = path.to_str() else {
+        return false;
+    };
+    if text.is_empty() || text.contains(['\\', ':']) {
+        return false;
+    }
+
+    path.components().all(|component| {
+        matches!(
+            component,
+            Component::Normal(_) | Component::ParentDir | Component::CurDir
+        )
+    })
+}
+
+fn resolve_dependency_manifest_path(
+    package_root: &Path,
+    manifest_path: &Path,
+    alias: &str,
+    dependency_path: &Path,
+) -> Result<PathBuf, ManifestError> {
+    let joined = package_root.join(dependency_path);
+    let candidate = if joined.is_dir() {
+        joined.join(MANIFEST_FILE_NAME)
+    } else {
+        joined
+    };
+    let canonical = fs::canonicalize(&candidate).map_err(|source| {
+        ManifestError::invalid(
+            manifest_path,
+            format!(
+                "dependency `{alias}` path `{}` does not contain an accessible `{MANIFEST_FILE_NAME}`: {source}",
+                dependency_path.display()
+            ),
+        )
+    })?;
+    if canonical.file_name().and_then(|name| name.to_str()) != Some(MANIFEST_FILE_NAME)
+        || !canonical.is_file()
+    {
+        return Err(ManifestError::invalid(
+            manifest_path,
+            format!(
+                "dependency `{alias}` path `{}` must name a package directory or `{MANIFEST_FILE_NAME}`",
+                dependency_path.display()
+            ),
+        ));
+    }
+    Ok(canonical)
+}
+
+fn is_ascii_snake_case_module_name(name: &str) -> bool {
+    if name == "_" || name == "self" || crate::lexer::is_keyword(name) {
+        return false;
+    }
+    let mut bytes = name.bytes();
+    let Some(first) = bytes.next() else {
+        return false;
+    };
+    (first.is_ascii_lowercase() || first == b'_')
+        && bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
+/// A recursively loaded, canonicalized local dependency graph.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DependencyGraph {
+    /// Canonical path of the root package manifest.
+    pub root_manifest_path: PathBuf,
+    /// Every unique package in canonical manifest-path order.
+    pub packages: Vec<Manifest>,
+}
+
+impl DependencyGraph {
+    /// Return the root package manifest.
+    pub fn root(&self) -> &Manifest {
+        self.packages
+            .iter()
+            .find(|manifest| manifest.manifest_path == self.root_manifest_path)
+            .expect("a dependency graph always contains its root")
+    }
+
+    /// Find a package by its canonical manifest path.
+    pub fn package(&self, manifest_path: &Path) -> Option<&Manifest> {
+        self.packages
+            .iter()
+            .find(|manifest| manifest.manifest_path == manifest_path)
+    }
+}
+
+/// Recursively load all local path dependencies and reject canonical-path cycles.
+pub fn load_dependency_graph(path: impl AsRef<Path>) -> Result<DependencyGraph, ManifestError> {
+    let root = load_manifest(path)?;
+    let root_manifest_path = root.manifest_path.clone();
+    let mut builder = GraphBuilder {
+        states: HashMap::new(),
+        manifests: BTreeMap::new(),
+        stack: Vec::new(),
+    };
+    builder.visit(root)?;
+    Ok(DependencyGraph {
+        root_manifest_path,
+        packages: builder.manifests.into_values().collect(),
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum VisitState {
+    Visiting,
+    Complete,
+}
+
+struct GraphBuilder {
+    states: HashMap<PathBuf, VisitState>,
+    manifests: BTreeMap<PathBuf, Manifest>,
+    stack: Vec<PathBuf>,
+}
+
+impl GraphBuilder {
+    fn visit(&mut self, manifest: Manifest) -> Result<(), ManifestError> {
+        let path = manifest.manifest_path.clone();
+        match self.states.get(&path) {
+            Some(VisitState::Complete) => return Ok(()),
+            Some(VisitState::Visiting) => {
+                let start = self
+                    .stack
+                    .iter()
+                    .position(|entry| entry == &path)
+                    .unwrap_or(0);
+                let mut cycle = self.stack[start..].to_vec();
+                cycle.push(path.clone());
+                let cycle = cycle
+                    .iter()
+                    .map(|entry| entry.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(" -> ");
+                return Err(ManifestError::invalid(
+                    &path,
+                    format!("local dependency cycle detected: {cycle}"),
+                ));
+            }
+            None => {}
+        }
+
+        self.states.insert(path.clone(), VisitState::Visiting);
+        self.stack.push(path.clone());
+        let dependencies: Vec<(String, PathBuf)> = manifest
+            .dependencies
+            .iter()
+            .map(|dependency| (dependency.alias.clone(), dependency.manifest_path.clone()))
+            .collect();
+        self.manifests.insert(path.clone(), manifest);
+        for (alias, dependency_path) in dependencies {
+            let dependency = load_manifest(&dependency_path)?;
+            if dependency.lib.is_none() {
+                return Err(ManifestError::invalid(
+                    &dependency_path,
+                    format!(
+                        "dependency `{alias}` package `{}` does not provide a library target",
+                        dependency.package.name
+                    ),
+                ));
+            }
+            self.visit(dependency)?;
+        }
+        self.stack.pop();
+        self.states.insert(path, VisitState::Complete);
+        Ok(())
+    }
 }
 
 fn discover_default_target(
@@ -450,7 +685,7 @@ struct RawManifest {
     #[serde(default)]
     bin: Vec<RawBin>,
     #[serde(default)]
-    dependencies: BTreeMap<String, toml::Value>,
+    dependencies: BTreeMap<String, RawDependency>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -471,6 +706,12 @@ struct RawLib {
 #[serde(deny_unknown_fields)]
 struct RawBin {
     name: String,
+    path: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawDependency {
     path: PathBuf,
 }
 
@@ -617,21 +858,204 @@ license = "MIT"
     }
 
     #[test]
-    fn rejects_dependencies_until_resolution_is_implemented() {
+    fn rejects_non_path_dependency_sources_and_unknown_fields() {
         let temp = TempDir::new();
         temp.write("src/main.sali", "let main() = 0\n");
+        for (field, value) in [
+            ("version", "\"1.2\""),
+            ("git", "\"https://example.invalid/repo\""),
+            ("branch", "\"main\""),
+        ] {
+            temp.write(
+                MANIFEST_FILE_NAME,
+                &basic_manifest(&format!(
+                    "\n[dependencies]\nhttp = {{ {field} = {value} }}\n"
+                )),
+            );
+
+            let error = load_manifest(temp.path()).unwrap_err().to_string();
+            assert!(
+                error.contains(&format!("unknown field `{field}`")),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn loads_and_sorts_validated_local_path_dependencies() {
+        let temp = TempDir::new();
+        write_test_package(&temp, "alpha", "alpha-package", "");
+        write_test_package(&temp, "zeta", "zeta-package", "");
+        temp.write("root/src/main.sali", "let main() = 0\n");
         temp.write(
-            MANIFEST_FILE_NAME,
-            &basic_manifest(
-                r#"
+            "root/salicin.toml",
+            r#"[package]
+name = "root-package"
+version = "1.0.0"
+edition = "2026"
+
 [dependencies]
-http = { version = "1.2" }
+zeta = { path = "../zeta/salicin.toml" }
+alpha_util = { path = "../alpha" }
 "#,
-            ),
         );
 
-        let error = load_manifest(temp.path()).unwrap_err().to_string();
-        assert!(error.contains("dependencies are not supported"), "{error}");
+        let manifest = load_manifest(temp.path().join("root")).unwrap();
+
+        assert_eq!(
+            manifest
+                .dependencies
+                .iter()
+                .map(|dependency| dependency.alias.as_str())
+                .collect::<Vec<_>>(),
+            ["alpha_util", "zeta"]
+        );
+        assert_eq!(manifest.dependencies[0].package.name, "alpha-package");
+        assert!(manifest
+            .dependencies
+            .iter()
+            .all(|dependency| dependency.path.is_absolute()
+                && dependency.manifest_path.is_absolute()));
+    }
+
+    #[test]
+    fn rejects_invalid_dependency_aliases_paths_and_manifests() {
+        for alias in ["Upper", "has-dash", "self", "_", "let"] {
+            let temp = TempDir::new();
+            temp.write("root/src/main.sali", "let main() = 0\n");
+            temp.write(
+                "root/salicin.toml",
+                &format!(
+                    "[package]\nname = \"root\"\nversion = \"1.0.0\"\nedition = \"2026\"\n\n[dependencies]\n{alias} = {{ path = \"../dep\" }}\n"
+                ),
+            );
+            let error = load_manifest(temp.path().join("root"))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("ASCII snake_case"), "{error}");
+        }
+
+        let temp = TempDir::new();
+        temp.write("root/src/main.sali", "let main() = 0\n");
+        for path in [
+            "/dep",
+            "C:/dep",
+            r"C:dep",
+            r"\dep",
+            r"\\server\share",
+            r"..\dep",
+            "named:stream",
+        ] {
+            temp.write(
+                "root/salicin.toml",
+                &format!(
+                    "[package]\nname = \"root\"\nversion = \"1.0.0\"\nedition = \"2026\"\n\n[dependencies]\ndep = {{ path = '{path}' }}\n"
+                ),
+            );
+            let non_portable = load_manifest(temp.path().join("root"))
+                .unwrap_err()
+                .to_string();
+            assert!(
+                non_portable.contains("portable relative path"),
+                "{non_portable}"
+            );
+        }
+
+        temp.write(
+            "root/salicin.toml",
+            "[package]\nname = \"root\"\nversion = \"1.0.0\"\nedition = \"2026\"\n\n[dependencies]\ndep = { path = \"../missing\" }\n",
+        );
+        let missing = load_manifest(temp.path().join("root"))
+            .unwrap_err()
+            .to_string();
+        assert!(missing.contains("does not contain"), "{missing}");
+    }
+
+    #[test]
+    fn recursively_loads_diamond_graph_once_and_rejects_canonical_cycles() {
+        let temp = TempDir::new();
+        write_test_package(&temp, "shared", "shared", "");
+        write_test_package(
+            &temp,
+            "left",
+            "left",
+            "\n[dependencies]\nshared = { path = \"../shared\" }\n",
+        );
+        write_test_package(
+            &temp,
+            "right",
+            "right",
+            "\n[dependencies]\nshared = { path = \"../shared/salicin.toml\" }\n",
+        );
+        write_test_package(
+            &temp,
+            "root",
+            "root",
+            "\n[dependencies]\nleft = { path = \"../left\" }\nright = { path = \"../right\" }\n",
+        );
+
+        let graph = load_dependency_graph(temp.path().join("root")).unwrap();
+        assert_eq!(graph.packages.len(), 4);
+        assert_eq!(graph.root().package.name, "root");
+        assert_eq!(
+            graph
+                .packages
+                .iter()
+                .filter(|manifest| manifest.package.name == "shared")
+                .count(),
+            1
+        );
+
+        write_test_package(
+            &temp,
+            "cycle-a",
+            "cycle-a",
+            "\n[dependencies]\nb = { path = \"../cycle-b\" }\n",
+        );
+        write_test_package(
+            &temp,
+            "cycle-b",
+            "cycle-b",
+            "\n[dependencies]\na = { path = \"../cycle-a/salicin.toml\" }\n",
+        );
+        let cycle = load_dependency_graph(temp.path().join("cycle-a"))
+            .unwrap_err()
+            .to_string();
+        assert!(cycle.contains("dependency cycle"), "{cycle}");
+        assert!(
+            cycle.contains("cycle-a") && cycle.contains("cycle-b"),
+            "{cycle}"
+        );
+    }
+
+    #[test]
+    fn dependency_graph_requires_library_targets() {
+        let temp = TempDir::new();
+        temp.write("app/src/main.sali", "let main() = 0\n");
+        temp.write(
+            "app/salicin.toml",
+            "[package]\nname = \"app\"\nversion = \"1.0.0\"\nedition = \"2026\"\n\n[dependencies]\ntool = { path = \"../tool\" }\n",
+        );
+        temp.write("tool/src/main.sali", "let main() = 0\n");
+        temp.write(
+            "tool/salicin.toml",
+            "[package]\nname = \"tool\"\nversion = \"1.0.0\"\nedition = \"2026\"\n",
+        );
+
+        let error = load_dependency_graph(temp.path().join("app"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("library target"), "{error}");
+    }
+
+    fn write_test_package(temp: &TempDir, directory: &str, name: &str, extra: &str) {
+        temp.write(format!("{directory}/src/lib.sali"), "let answer = 42\n");
+        temp.write(
+            format!("{directory}/salicin.toml"),
+            &format!(
+                "[package]\nname = \"{name}\"\nversion = \"1.0.0\"\nedition = \"2026\"\n{extra}"
+            ),
+        );
     }
 
     #[test]

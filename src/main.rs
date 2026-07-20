@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -7,11 +7,15 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Command, ExitStatus};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use salicin_lang::manifest::{load_manifest, Manifest, Target, TargetKind, MANIFEST_FILE_NAME};
-use salicin_lang::modules::{is_valid_module_segment, SourceUnit};
+use salicin_lang::lockfile::{write_package_lockfile, LOCKFILE_NAME};
+use salicin_lang::manifest::{
+    load_dependency_graph, DependencyGraph, Manifest, Target, TargetKind, MANIFEST_FILE_NAME,
+};
+use salicin_lang::modules::{is_valid_module_segment, PackageId, SourcePackage, SourceUnit};
 use salicin_lang::{
-    check_library_source, check_library_source_units, check_source_units, compile_library_source,
-    compile_library_source_units, compile_source, compile_source_units,
+    check_library_source, check_library_source_packages, check_source_packages,
+    compile_library_source, compile_library_source_packages, compile_source,
+    compile_source_packages,
 };
 
 const HELP: &str = "Salicin compiler
@@ -383,13 +387,20 @@ struct ResolvedTarget {
     project: Option<ProjectTarget>,
     is_library: bool,
     protected_inputs: Vec<PathBuf>,
-    module_sources: Vec<(PathBuf, Vec<String>)>,
 }
 
 struct ProjectTarget {
     package_root: PathBuf,
     target_name: String,
-    target_sources: Vec<PathBuf>,
+    packages: Vec<ResolvedPackage>,
+}
+
+struct ResolvedPackage {
+    id: PackageId,
+    is_primary: bool,
+    dependencies: BTreeMap<String, PackageId>,
+    source: PathBuf,
+    module_sources: Vec<(PathBuf, Vec<String>)>,
 }
 
 impl ResolvedTarget {
@@ -441,7 +452,6 @@ fn resolve_input(
                 project: None,
                 is_library: false,
                 protected_inputs: vec![path.to_path_buf()],
-                module_sources: Vec::new(),
             });
         }
     }
@@ -461,38 +471,97 @@ fn resolve_input(
         None => find_manifest_from_current_dir()?,
     };
 
-    let manifest = load_manifest(&manifest_path).map_err(|error| error.to_string())?;
-    let target_sources = manifest
-        .targets()
-        .map(|target| target.path.clone())
-        .collect::<Vec<_>>();
-    let protected_inputs = std::iter::once(manifest.manifest_path.clone())
-        .chain(target_sources.iter().cloned())
-        .collect();
-    let selected = select_manifest_target(&manifest, selection, binary_only)?;
-    let mut resolved = ResolvedTarget {
+    let graph = load_dependency_graph(&manifest_path).map_err(|error| error.to_string())?;
+    let selected = select_manifest_target(graph.root(), selection, binary_only)?;
+    let packages = resolve_project_packages(&graph, &selected)?;
+    write_package_lockfile(&graph).map_err(|error| {
+        format!(
+            "could not write lockfile '{}': {error}",
+            graph.root().package_root.join(LOCKFILE_NAME).display()
+        )
+    })?;
+
+    let mut protected_inputs = Vec::new();
+    for manifest in &graph.packages {
+        protected_inputs.push(manifest.manifest_path.clone());
+        protected_inputs.extend(manifest.targets().map(|target| target.path.clone()));
+    }
+    for package in &packages {
+        protected_inputs.push(package.source.clone());
+        protected_inputs.extend(package.module_sources.iter().map(|(path, _)| path.clone()));
+    }
+    protected_inputs.push(graph.root().package_root.join(LOCKFILE_NAME));
+
+    Ok(ResolvedTarget {
         source: selected.path,
         project: Some(ProjectTarget {
-            package_root: manifest.package_root,
+            package_root: graph.root().package_root.clone(),
             target_name: selected.name,
-            target_sources,
+            packages,
         }),
         is_library: selected.kind == TargetKind::Lib,
         protected_inputs,
-        module_sources: Vec::new(),
-    };
-    resolved.module_sources = discover_module_sources(&resolved)?;
-    resolved
-        .protected_inputs
-        .extend(resolved.module_sources.iter().map(|(path, _)| path.clone()));
-    Ok(resolved)
+    })
 }
 
-fn discover_module_sources(target: &ResolvedTarget) -> Result<Vec<(PathBuf, Vec<String>)>, String> {
-    let Some(project) = &target.project else {
-        return Ok(Vec::new());
-    };
-    let source_root = project.package_root.join("src");
+fn resolve_project_packages(
+    graph: &DependencyGraph,
+    selected: &Target,
+) -> Result<Vec<ResolvedPackage>, String> {
+    let ids: HashMap<PathBuf, PackageId> = graph
+        .packages
+        .iter()
+        .enumerate()
+        .map(|(index, manifest)| (manifest.manifest_path.clone(), PackageId(index)))
+        .collect();
+    let mut packages = Vec::with_capacity(graph.packages.len());
+
+    for manifest in &graph.packages {
+        let is_primary = manifest.manifest_path == graph.root_manifest_path;
+        let root_source = if is_primary {
+            selected.path.clone()
+        } else {
+            manifest
+                .lib
+                .as_ref()
+                .expect("dependency graph validation requires dependency libraries")
+                .path
+                .clone()
+        };
+        let target_sources = manifest
+            .targets()
+            .map(|target| target.path.clone())
+            .collect::<Vec<_>>();
+        let module_sources =
+            discover_package_module_sources(&manifest.package_root, &target_sources, &root_source)?;
+        let dependencies = manifest
+            .dependencies
+            .iter()
+            .map(|dependency| {
+                let target = ids
+                    .get(&dependency.manifest_path)
+                    .copied()
+                    .expect("every validated dependency is present in the graph");
+                (dependency.alias.clone(), target)
+            })
+            .collect();
+        packages.push(ResolvedPackage {
+            id: ids[&manifest.manifest_path],
+            is_primary,
+            dependencies,
+            source: root_source,
+            module_sources,
+        });
+    }
+    Ok(packages)
+}
+
+fn discover_package_module_sources(
+    package_root: &Path,
+    target_sources: &[PathBuf],
+    root_source: &Path,
+) -> Result<Vec<(PathBuf, Vec<String>)>, String> {
+    let source_root = package_root.join("src");
     if !source_root.is_dir() {
         return Ok(Vec::new());
     }
@@ -504,9 +573,8 @@ fn discover_module_sources(target: &ResolvedTarget) -> Result<Vec<(PathBuf, Vec<
     let mut modules = Vec::new();
     let mut seen = HashSet::new();
     for path in candidates {
-        if paths_refer_to_same_file(&path, &target.source)
-            || project
-                .target_sources
+        if paths_refer_to_same_file(&path, root_source)
+            || target_sources
                 .iter()
                 .any(|other| paths_refer_to_same_file(&path, other))
         {
@@ -670,13 +738,8 @@ fn paths_refer_to_same_file(left: &Path, right: &Path) -> bool {
         }
     }
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-
-        if let (Ok(left), Ok(right)) = (fs::metadata(left), fs::metadata(right)) {
-            return left.dev() == right.dev() && left.ino() == right.ino();
-        }
+    if same_file::is_same_file(left, right).unwrap_or(false) {
+        return true;
     }
 
     false
@@ -711,11 +774,11 @@ fn compile_target(target: &ResolvedTarget) -> Result<String, ()> {
         return compile_file(&target.source, target.is_library);
     }
 
-    let units = read_source_units(target)?;
+    let packages = read_source_packages(target)?;
     let result = if target.is_library {
-        compile_library_source_units(&units)
+        compile_library_source_packages(&packages)
     } else {
-        compile_source_units(&units)
+        compile_source_packages(&packages)
     };
     report_project_compilation(&target.source, result)
 }
@@ -734,32 +797,47 @@ fn check_target(target: &ResolvedTarget) -> Result<(), ()> {
         return check_file(&target.source, target.is_library);
     }
 
-    let units = read_source_units(target)?;
+    let packages = read_source_packages(target)?;
     let result = if target.is_library {
-        check_library_source_units(&units)
+        check_library_source_packages(&packages)
     } else {
-        check_source_units(&units)
+        check_source_packages(&packages)
     };
     report_project_compilation(&target.source, result)
 }
 
-fn read_source_units(target: &ResolvedTarget) -> Result<Vec<SourceUnit>, ()> {
-    let mut units = Vec::with_capacity(target.module_sources.len() + 1);
-    units.push(SourceUnit {
-        path: target.source.display().to_string(),
-        module_path: Vec::new(),
-        source: read_source(&target.source)?,
-        is_root: true,
-    });
-    for (path, module_path) in &target.module_sources {
-        units.push(SourceUnit {
-            path: path.display().to_string(),
-            module_path: module_path.clone(),
-            source: read_source(path)?,
-            is_root: false,
-        });
-    }
-    Ok(units)
+fn read_source_packages(target: &ResolvedTarget) -> Result<Vec<SourcePackage>, ()> {
+    let project = target
+        .project
+        .as_ref()
+        .expect("package source reading requires a resolved project");
+    project
+        .packages
+        .iter()
+        .map(|package| {
+            let mut sources = Vec::with_capacity(package.module_sources.len() + 1);
+            sources.push(SourceUnit {
+                path: package.source.display().to_string(),
+                module_path: Vec::new(),
+                source: read_source(&package.source)?,
+                is_root: true,
+            });
+            for (path, module_path) in &package.module_sources {
+                sources.push(SourceUnit {
+                    path: path.display().to_string(),
+                    module_path: module_path.clone(),
+                    source: read_source(path)?,
+                    is_root: false,
+                });
+            }
+            Ok(SourcePackage {
+                id: package.id,
+                is_primary: package.is_primary,
+                dependencies: package.dependencies.clone(),
+                sources,
+            })
+        })
+        .collect()
 }
 
 fn report_compilation<T>(source: &Path, result: Result<T, Vec<String>>) -> Result<T, ()> {

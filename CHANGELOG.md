@@ -5,6 +5,8 @@ the accepted language, while patch releases preserve source semantics within the
 
 ## Unreleased
 
+## 0.4.0 - 2026-07-20
+
 - Added strict `salicin.toml` package loading, default and explicit library/binary targets, target
   selection, project discovery, protected inputs, and project-local build outputs.
 - Defined prelude `void` as the ordinary alias of `()` and `never` as an empty enum, including
@@ -18,6 +20,15 @@ the accepted language, while patch releases preserve source semantics within the
 - Added declaration and module imports with aliases and grouped syntax, explicit `root` / `self` /
   `super` anchors, visibility-preserving `pub use` facades, cycle diagnostics, and access-chain
   checks that prevent private aliases from becoming visibility backdoors.
+- Added strict local path dependencies, canonical dependency-cycle detection, library-only dependency
+  source discovery, and deterministic atomically updated `salicin.lock` files.
+- Added stable package identities and package-local dependency aliases, preserving nominal identity
+  through shared diamond dependencies, preventing accidental transitive-dependency access, and
+  enforcing private and `pub(package)` boundaries across packages.
+- Preserved package and module provenance through semantic analysis so private trait methods cannot
+  leak into method lookup across visibility boundaries, including optional chains and generic bodies.
+- Required portable relative dependency paths and extended protected-output checks to hardlinks on
+  both Unix and Windows.
 
 ## 0.3.0 - 2026-07-20
 

@@ -4,15 +4,21 @@ pub struct Program {
     /// Visibility is stored alongside top-level items until module lowering
     /// gives declarations stable module identities.
     pub item_visibilities: Vec<Visibility>,
+    /// Source module provenance retained for semantic visibility checks that
+    /// cannot be completed by syntactic path resolution (notably trait-method
+    /// candidate lookup).
+    pub item_origins: Vec<ItemOrigin>,
     pub uses: Vec<UseDecl>,
 }
 
 impl Program {
     pub fn new(items: Vec<Item>) -> Self {
         let item_visibilities = vec![Visibility::Private; items.len()];
+        let item_origins = vec![ItemOrigin::default(); items.len()];
         Self {
             items,
             item_visibilities,
+            item_origins,
             uses: Vec::new(),
         }
     }
@@ -26,17 +32,39 @@ impl Program {
         item_visibilities: Vec<Visibility>,
         uses: Vec<UseDecl>,
     ) -> Self {
+        let item_origins = vec![ItemOrigin::default(); items.len()];
+        Self::with_metadata(items, item_visibilities, item_origins, uses)
+    }
+
+    pub fn with_metadata(
+        items: Vec<Item>,
+        item_visibilities: Vec<Visibility>,
+        item_origins: Vec<ItemOrigin>,
+        uses: Vec<UseDecl>,
+    ) -> Self {
         assert_eq!(
             items.len(),
             item_visibilities.len(),
             "every program item must have a visibility"
         );
+        assert_eq!(
+            items.len(),
+            item_origins.len(),
+            "every program item must have source provenance"
+        );
         Self {
             items,
             item_visibilities,
+            item_origins,
             uses,
         }
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct ItemOrigin {
+    pub package: usize,
+    pub module_path: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -823,7 +823,6 @@ name = "hello-salicin"
 path = "src/main.sali"
 
 [dependencies]
-http = { version = "1.2" }
 local_util = { path = "../local-util" }
 ```
 
@@ -832,8 +831,11 @@ local_util = { path = "../local-util" }
 snake_case。edition 固定解析和语义规则，不由所安装编译器静默改变。
 
 `salicin.lock` 对应用必须提交版本控制；库可以提交以保证开发环境复现，但发布库的使用者按自己
-的依赖图解析。lockfile 记录完整版本、来源和校验值。首版不支持在构建期间执行任意代码的 build
-script；本地生成步骤由外部构建工具显式完成。构建产物默认写入 `build/`，不与源码混放。
+的依赖图解析。当前实现只接受本地 `{ path = "..." }` 依赖；路径必须使用 `/` 分隔并相对于声明
+它的包。lockfile 记录包名、版本、edition、规范化路径和完整依赖边；能相对于根包表示时写相对
+路径，跨文件系统根时保留规范化绝对路径。本地来源没有校验和。registry 版本范围、Git 来源、
+校验和及多版本求解留给后续包管理切片。首版不支持在构建期间执行任意代码的 build script；
+本地生成步骤由外部构建工具显式完成。构建产物默认写入 `build/`，不与源码混放。
 
 ### 11.4 程序入口与退出
 

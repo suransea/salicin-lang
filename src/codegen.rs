@@ -9,8 +9,8 @@ use std::fmt;
 
 use crate::ast::{
     BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EnumDef, Expr, ExtendDef,
-    ExtendMember, Function, Item, MatchArm, PassMode, Pattern, PatternFields, Program, Stmt,
-    StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantDef, VariantFields,
+    ExtendMember, Function, Item, ItemOrigin, MatchArm, PassMode, Pattern, PatternFields, Program,
+    Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantDef, VariantFields, Visibility,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -736,12 +736,13 @@ struct LowerCtx {
     return_boundary: Option<ReturnBoundary>,
     returned_types: Vec<Ty>,
     function_name: Option<String>,
+    origin: ItemOrigin,
     type_substitutions: HashMap<String, Type>,
     loops: Vec<LoopFrame>,
 }
 
 impl LowerCtx {
-    fn for_function(name: &str, result: Option<Ty>) -> Self {
+    fn for_function(name: &str, result: Option<Ty>, origin: ItemOrigin) -> Self {
         Self {
             scopes: vec![ScopeFrame::new()],
             flow: FlowState::default(),
@@ -751,12 +752,13 @@ impl LowerCtx {
             return_boundary: None,
             returned_types: Vec::new(),
             function_name: Some(name.to_owned()),
+            origin,
             type_substitutions: HashMap::new(),
             loops: Vec::new(),
         }
     }
 
-    fn for_global() -> Self {
+    fn for_global(origin: ItemOrigin) -> Self {
         Self {
             scopes: vec![ScopeFrame::new()],
             flow: FlowState::default(),
@@ -766,6 +768,7 @@ impl LowerCtx {
             return_boundary: None,
             returned_types: Vec::new(),
             function_name: None,
+            origin,
             type_substitutions: HashMap::new(),
             loops: Vec::new(),
         }
@@ -861,6 +864,13 @@ struct TraitImplInfo {
     key: TraitImplKey,
     associated_types: HashMap<String, Ty>,
     methods: HashMap<String, String>,
+    access: AccessBoundary,
+}
+
+#[derive(Debug, Clone)]
+struct AccessBoundary {
+    visibility: Visibility,
+    origin: ItemOrigin,
 }
 
 #[derive(Debug, Clone)]
@@ -876,6 +886,7 @@ struct TraitSchema {
     associated_types: Vec<String>,
     methods: HashMap<String, Function>,
     method_order: Vec<String>,
+    access: AccessBoundary,
     valid: bool,
 }
 
@@ -901,13 +912,16 @@ struct NominalSnapshot {
 
 struct Analyzer {
     functions: HashMap<String, Function>,
+    function_origins: HashMap<String, ItemOrigin>,
     function_templates: HashMap<String, Function>,
+    function_template_origins: HashMap<String, ItemOrigin>,
     function_template_order: Vec<String>,
     function_instance_names: HashMap<FunctionInstanceKey, String>,
     function_instances: HashMap<String, FunctionInstanceInfo>,
     function_type_substitutions: HashMap<String, HashMap<String, Type>>,
     abstract_type_parameters: HashMap<String, String>,
     globals: HashMap<String, Binding>,
+    global_origins: HashMap<String, ItemOrigin>,
     struct_defs: HashMap<String, StructDef>,
     enum_defs: HashMap<String, EnumDef>,
     struct_templates: HashMap<String, StructDef>,
@@ -944,13 +958,16 @@ impl Analyzer {
     fn new(program: &Program) -> Self {
         let mut analyzer = Self {
             functions: HashMap::new(),
+            function_origins: HashMap::new(),
             function_templates: HashMap::new(),
+            function_template_origins: HashMap::new(),
             function_template_order: Vec::new(),
             function_instance_names: HashMap::new(),
             function_instances: HashMap::new(),
             function_type_substitutions: HashMap::new(),
             abstract_type_parameters: HashMap::new(),
             globals: HashMap::new(),
+            global_origins: HashMap::new(),
             struct_defs: HashMap::new(),
             enum_defs: HashMap::new(),
             struct_templates: HashMap::new(),
@@ -997,7 +1014,22 @@ impl Analyzer {
         let mut names = HashSet::from(["void".to_owned()]);
         let mut extensions = Vec::new();
         let prelude = builtin_prelude_items();
-        for item in prelude.iter().chain(&program.items) {
+        if program.items.len() != program.item_visibilities.len()
+            || program.items.len() != program.item_origins.len()
+        {
+            self.error("program item metadata count does not match item count");
+            return;
+        }
+        let prelude_items = prelude
+            .iter()
+            .map(|item| (item, Visibility::Public, ItemOrigin::default()));
+        let source_items = program
+            .items
+            .iter()
+            .zip(&program.item_visibilities)
+            .zip(&program.item_origins)
+            .map(|((item, visibility), origin)| (item, *visibility, origin.clone()));
+        for (item, visibility, origin) in prelude_items.chain(source_items) {
             let name = match item {
                 Item::Function(function) => &function.name,
                 Item::Global(binding) => &binding.name,
@@ -1005,7 +1037,7 @@ impl Analyzer {
                 Item::Enum(definition) => &definition.name,
                 Item::Trait(definition) => &definition.name,
                 Item::Extend(extension) => {
-                    extensions.push(extension.clone());
+                    extensions.push((extension.clone(), origin));
                     continue;
                 }
             };
@@ -1019,10 +1051,14 @@ impl Analyzer {
                         self.function_order.push(function.name.clone());
                         self.functions
                             .insert(function.name.clone(), function.clone());
+                        self.function_origins
+                            .insert(function.name.clone(), origin.clone());
                     } else {
                         self.function_template_order.push(function.name.clone());
                         self.function_templates
                             .insert(function.name.clone(), function.clone());
+                        self.function_template_origins
+                            .insert(function.name.clone(), origin.clone());
                     }
                 }
                 Item::Global(binding) => {
@@ -1034,6 +1070,8 @@ impl Analyzer {
                     }
                     self.global_order.push(binding.name.clone());
                     self.globals.insert(binding.name.clone(), binding.clone());
+                    self.global_origins
+                        .insert(binding.name.clone(), origin.clone());
                 }
                 Item::Struct(definition) => {
                     if definition.compile_groups.is_empty() {
@@ -1103,7 +1141,9 @@ impl Analyzer {
                             .insert(definition.name.clone(), definition.clone());
                     }
                 }
-                Item::Trait(definition) => self.collect_trait_schema(definition.clone()),
+                Item::Trait(definition) => {
+                    self.collect_trait_schema(definition.clone(), visibility, origin)
+                }
                 Item::Extend(_) => unreachable!("extensions were collected separately"),
             }
         }
@@ -1111,8 +1151,8 @@ impl Analyzer {
         self.validate_generic_nominal_cycles();
         self.collect_nominal_layouts();
         self.validate_trait_schemas();
-        for extension in extensions {
-            self.collect_extension(extension);
+        for (extension, origin) in extensions {
+            self.collect_extension(extension, origin);
         }
 
         for name in self.function_order.clone() {
@@ -1217,7 +1257,12 @@ impl Analyzer {
         found_output && found_add
     }
 
-    fn collect_trait_schema(&mut self, definition: TraitDef) {
+    fn collect_trait_schema(
+        &mut self,
+        definition: TraitDef,
+        visibility: Visibility,
+        origin: ItemOrigin,
+    ) {
         let mut valid = true;
         if definition.name == "Add" && !Self::add_lang_item_has_required_shape(&definition) {
             self.error(
@@ -1352,6 +1397,7 @@ impl Analyzer {
                 associated_types,
                 methods,
                 method_order,
+                access: AccessBoundary { visibility, origin },
                 valid,
             },
         );
@@ -1754,7 +1800,7 @@ impl Analyzer {
         (result != Ty::Error).then_some(FunctionShape { groups, result })
     }
 
-    fn collect_trait_extension(&mut self, extension: ExtendDef) {
+    fn collect_trait_extension(&mut self, extension: ExtendDef, origin: ItemOrigin) {
         let target_source = extension.target.clone();
         let Some(target) = self.resolve_trait_impl_target(&target_source) else {
             return;
@@ -1963,6 +2009,8 @@ impl Analyzer {
         for (method_name, canonical, function) in registered {
             self.function_order.push(canonical.clone());
             self.functions.insert(canonical.clone(), function);
+            self.function_origins
+                .insert(canonical.clone(), origin.clone());
             self.function_type_substitutions
                 .insert(canonical.clone(), substitutions.clone());
             methods.insert(method_name.clone(), canonical);
@@ -1977,13 +2025,14 @@ impl Analyzer {
                 key,
                 associated_types,
                 methods,
+                access: schema.access,
             },
         );
     }
 
-    fn collect_extension(&mut self, extension: ExtendDef) {
+    fn collect_extension(&mut self, extension: ExtendDef, origin: ItemOrigin) {
         if extension.trait_ref.is_some() {
-            self.collect_trait_extension(extension);
+            self.collect_trait_extension(extension, origin);
             return;
         }
         let target = match extension.target {
@@ -2083,6 +2132,8 @@ impl Analyzer {
                     function.name = canonical.clone();
                     self.function_order.push(canonical.clone());
                     self.functions.insert(canonical.clone(), function);
+                    self.function_origins
+                        .insert(canonical.clone(), origin.clone());
                     let members = self.inherent_members.entry(target.clone()).or_default();
                     if is_method {
                         members.methods.insert(short_name, canonical);
@@ -2126,6 +2177,8 @@ impl Analyzer {
                     binding.name = canonical.clone();
                     self.global_order.push(canonical.clone());
                     self.globals.insert(canonical.clone(), binding);
+                    self.global_origins
+                        .insert(canonical.clone(), origin.clone());
                     self.inherent_members
                         .entry(target.clone())
                         .or_default()
@@ -2761,6 +2814,7 @@ impl Analyzer {
             }
 
             let functions_before = self.functions.clone();
+            let function_origins_before = self.function_origins.clone();
             let function_order_before = self.function_order.clone();
             let signatures_before = self.signatures.clone();
             let function_states_before = self.function_states.clone();
@@ -2798,12 +2852,17 @@ impl Analyzer {
                 .as_ref()
                 .map(|ty| self.lower_source_type(ty));
             self.functions.insert(validation_name.clone(), function);
+            self.function_origins.insert(
+                validation_name.clone(),
+                self.function_template_origins[&template_name].clone(),
+            );
             self.signatures
                 .insert(validation_name.clone(), FunctionSig { groups, result });
             self.function_type_substitutions
                 .insert(validation_name.clone(), substitutions);
             self.lower_function(&validation_name);
             self.functions = functions_before;
+            self.function_origins = function_origins_before;
             self.function_order = function_order_before;
             self.signatures = signatures_before;
             self.function_states = function_states_before;
@@ -3502,6 +3561,59 @@ impl Analyzer {
         }
     }
 
+    fn access_boundary_allows(origin: &ItemOrigin, access: &AccessBoundary) -> bool {
+        match access.visibility {
+            Visibility::Public => true,
+            Visibility::Package => origin.package == access.origin.package,
+            Visibility::Private => {
+                origin.package == access.origin.package
+                    && origin
+                        .module_path
+                        .starts_with(access.origin.module_path.as_slice())
+            }
+        }
+    }
+
+    fn trait_method_candidates(
+        &self,
+        receiver: &Ty,
+        member: &str,
+        origin: &ItemOrigin,
+    ) -> Vec<TraitImplKey> {
+        self.trait_methods_by_receiver
+            .get(&(receiver.clone(), member.to_owned()))
+            .into_iter()
+            .flatten()
+            .filter(|candidate| {
+                self.trait_impls
+                    .get(*candidate)
+                    .is_some_and(|implementation| {
+                        Self::access_boundary_allows(origin, &implementation.access)
+                    })
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn has_inaccessible_trait_method(
+        &self,
+        receiver: &Ty,
+        member: &str,
+        origin: &ItemOrigin,
+    ) -> bool {
+        self.trait_methods_by_receiver
+            .get(&(receiver.clone(), member.to_owned()))
+            .is_some_and(|candidates| {
+                candidates.iter().any(|candidate| {
+                    self.trait_impls
+                        .get(candidate)
+                        .is_some_and(|implementation| {
+                            !Self::access_boundary_allows(origin, &implementation.access)
+                        })
+                })
+            })
+    }
+
     fn add_candidates(
         &self,
         receiver: &Ty,
@@ -3519,6 +3631,7 @@ impl Analyzer {
             .filter_map(|implementation| {
                 if implementation.key.self_ty != *receiver
                     || implementation.key.trait_ref.name != "Add"
+                    || !Self::access_boundary_allows(&context.origin, &implementation.access)
                 {
                     return None;
                 }
@@ -3657,6 +3770,7 @@ impl Analyzer {
         payload: &Ty,
         member: &str,
         groups: Option<&[&[CallArg]]>,
+        origin: &ItemOrigin,
     ) -> Option<Ty> {
         let target = match payload {
             Ty::Struct(name) | Ty::Enum(name) => name,
@@ -3678,9 +3792,7 @@ impl Analyzer {
             .and_then(|members| members.methods.get(member))
             .cloned()
             .or_else(|| {
-                let candidates = self
-                    .trait_methods_by_receiver
-                    .get(&(payload.clone(), member.to_owned()))?;
+                let candidates = self.trait_method_candidates(payload, member, origin);
                 (candidates.len() == 1)
                     .then(|| self.trait_impls[&candidates[0]].methods[member].clone())
             })?;
@@ -3735,7 +3847,9 @@ impl Analyzer {
         let Some(info) = info else {
             return TypeProbe::Unsupported;
         };
-        let Some(output) = self.probe_chain_access_ty(&info.payload, member, groups) else {
+        let Some(output) =
+            self.probe_chain_access_ty(&info.payload, member, groups, &context.origin)
+        else {
             return TypeProbe::Unsupported;
         };
         let mut arguments = vec![output];
@@ -4797,6 +4911,10 @@ impl Analyzer {
         self.signatures
             .insert(canonical.clone(), FunctionSig { groups, result });
         self.functions.insert(canonical.clone(), function);
+        self.function_origins.insert(
+            canonical.clone(),
+            self.function_template_origins[template_name].clone(),
+        );
         self.function_order.push(canonical.clone());
         Some(canonical)
     }
@@ -4900,7 +5018,14 @@ impl Analyzer {
             .insert(name.to_owned(), ResolutionState::Resolving);
         let function = self.functions[name].clone();
         let signature = self.signatures[name].clone();
-        let mut context = LowerCtx::for_function(name, signature.result.clone());
+        let mut context = LowerCtx::for_function(
+            name,
+            signature.result.clone(),
+            self.function_origins
+                .get(name)
+                .cloned()
+                .expect("every registered function has source provenance"),
+        );
         if function.return_type.is_some() {
             context.return_boundary = signature
                 .result
@@ -5048,7 +5173,12 @@ impl Analyzer {
 
         let binding = self.globals[name].clone();
         let expected = self.global_annotations[name].clone();
-        let mut context = LowerCtx::for_global();
+        let mut context = LowerCtx::for_global(
+            self.global_origins
+                .get(name)
+                .cloned()
+                .expect("every registered global has source provenance"),
+        );
         let value = self.lower_expr(&binding.value, expected.as_ref(), &mut context);
         if !context.returned_types.is_empty() {
             self.error(format!("`return` is not allowed in global `{name}`"));
@@ -5826,7 +5956,7 @@ impl Analyzer {
 
         let function = format!("__closure.{}", self.next_closure);
         self.next_closure += 1;
-        let mut context = LowerCtx::for_function(&function, None);
+        let mut context = LowerCtx::for_function(&function, None, outer.origin.clone());
         context.type_substitutions = outer.type_substitutions.clone();
         let mut hir_params = Vec::new();
         let mut captures = Vec::new();
@@ -6871,6 +7001,7 @@ impl Analyzer {
         payload: &Ty,
         member: &str,
         groups: Option<&[&[CallArg]]>,
+        origin: &ItemOrigin,
     ) -> Option<Ty> {
         let target = match payload {
             Ty::Struct(name) | Ty::Enum(name) => name.clone(),
@@ -6915,11 +7046,7 @@ impl Analyzer {
         let canonical = if let Some(canonical) = inherent {
             canonical
         } else {
-            let candidates = self
-                .trait_methods_by_receiver
-                .get(&(payload.clone(), member.to_owned()))
-                .cloned()
-                .unwrap_or_default();
+            let candidates = self.trait_method_candidates(payload, member, origin);
             match candidates.as_slice() {
                 [candidate] => self.trait_impls[candidate].methods[member].clone(),
                 [] => {
@@ -6928,6 +7055,10 @@ impl Analyzer {
                     }) {
                         self.error(format!(
                             "optional chaining cannot call field `{target}.{member}`"
+                        ));
+                    } else if self.has_inaccessible_trait_method(payload, member, origin) {
+                        self.error(format!(
+                            "trait method `{member}` on optional payload `{target}` is private or package-visible from another package"
                         ));
                     } else {
                         self.error(format!(
@@ -7027,7 +7158,8 @@ impl Analyzer {
             ));
             return error_expr();
         };
-        let Some(output) = self.chain_access_ty(&info.payload, member, groups) else {
+        let Some(output) = self.chain_access_ty(&info.payload, member, groups, &context.origin)
+        else {
             return error_expr();
         };
         if matches!(output, Ty::Function(_)) {
@@ -8765,11 +8897,8 @@ impl Analyzer {
         let canonical = if let Some(canonical) = inherent {
             canonical
         } else {
-            let candidates = self
-                .trait_methods_by_receiver
-                .get(&(receiver_place.ty.clone(), member.to_owned()))
-                .cloned()
-                .unwrap_or_default();
+            let candidates =
+                self.trait_method_candidates(&receiver_place.ty, member, &context.origin);
             if candidates.len() == 1 {
                 let implementation = &self.trait_impls[&candidates[0]];
                 debug_assert_eq!(implementation.key, candidates[0]);
@@ -8810,6 +8939,14 @@ impl Analyzer {
                 {
                     self.error(format!(
                         "associated constant `{target}.{member}` must be accessed on the type"
+                    ));
+                } else if self.has_inaccessible_trait_method(
+                    &receiver_place.ty,
+                    member,
+                    &context.origin,
+                ) {
+                    self.error(format!(
+                        "trait method `{member}` on `{target}` is private or package-visible from another package"
                     ));
                 } else {
                     self.error(format!("unknown method `{member}` on `{target}`"));

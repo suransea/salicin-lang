@@ -1178,6 +1178,30 @@ fn output_must_not_overwrite_the_source() {
 }
 
 #[test]
+fn output_must_not_overwrite_a_source_hardlink() {
+    let temporary = TestDirectory::new();
+    let source = temporary.join("keep.sali");
+    let output_path = temporary.join("keep.ll");
+    let original = b"let main(): i32 = 0\n";
+    fs::write(&source, original).expect("write source fixture");
+    fs::hard_link(&source, &output_path).expect("create source hardlink");
+
+    let output = salic()
+        .arg("emit-ir")
+        .arg(&source)
+        .arg("-o")
+        .arg(&output_path)
+        .output()
+        .expect("reject output hardlink");
+    assert_eq!(output.status.code(), Some(2), "{}", output_text(&output));
+    assert_eq!(fs::read(&source).expect("read preserved source"), original);
+    assert_eq!(
+        fs::read(&output_path).expect("read preserved hardlink"),
+        original
+    );
+}
+
+#[test]
 fn package_default_target_accepts_directory_manifest_and_cwd_discovery() {
     let project = TestDirectory::new();
     let manifest = project.write(
@@ -1327,6 +1351,7 @@ path = "src/right.sali"
         "{}",
         output_text(&ambiguous)
     );
+    assert!(!multiple_bins.join("salicin.lock").exists());
 
     let library_only = TestDirectory::new();
     library_only.write(
@@ -1408,6 +1433,375 @@ broken = 42
     );
     let stderr = String::from_utf8_lossy(&dependency.stderr).to_lowercase();
     assert!(stderr.contains("depend"), "{}", output_text(&dependency));
+}
+
+#[test]
+fn local_path_dependency_runs_only_its_library_and_writes_a_stable_lockfile() {
+    let workspace = TestDirectory::new();
+    workspace.write(
+        "app/salicin.toml",
+        r#"[package]
+name = "dependency-app"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+math = { path = "../math" }
+"#,
+    );
+    workspace.write("app/src/main.sali", "let main(): i32 = math.answer()\n");
+    workspace.write(
+        "app/src/lib.sali",
+        "pub let library_answer(): i32 = math.answer()\n",
+    );
+    workspace.write(
+        "math/salicin.toml",
+        r#"[package]
+name = "math-library"
+version = "1.2.3"
+edition = "2026"
+
+[[bin]]
+name = "broken-tool"
+path = "src/broken.sali"
+"#,
+    );
+    let dependency_library = "pub let answer(): i32 = internal.value()\n";
+    let dependency_library_path = workspace.write("math/src/lib.sali", dependency_library);
+    workspace.write(
+        "math/src/internal.sali",
+        "pub(package) let value(): i32 = 42\n",
+    );
+    workspace.write(
+        "math/src/broken.sali",
+        "this deliberately is not valid Salicin\n",
+    );
+
+    let app = workspace.join("app");
+    let run = salic()
+        .arg("run")
+        .arg(&app)
+        .output()
+        .expect("run package with a local dependency");
+    assert_eq!(run.status.code(), Some(42), "{}", output_text(&run));
+
+    for command in ["check", "emit-ir"] {
+        let library = salic()
+            .arg(command)
+            .arg("--lib")
+            .arg(&app)
+            .output()
+            .expect("compile the root library with its dependency");
+        assert!(library.status.success(), "{}", output_text(&library));
+    }
+
+    let lock_path = app.join("salicin.lock");
+    let first = fs::read_to_string(&lock_path).expect("read generated lockfile");
+    assert_eq!(first.matches("[[package]]").count(), 2, "{first}");
+    assert!(first.contains("name = \"math-library\""), "{first}");
+    assert!(first.contains("path = \"../math\""), "{first}");
+
+    let checked = salic()
+        .arg("check")
+        .arg(&app)
+        .output()
+        .expect("check package again");
+    assert!(checked.status.success(), "{}", output_text(&checked));
+    assert_eq!(fs::read_to_string(&lock_path).unwrap(), first);
+
+    let overwrite = salic()
+        .arg("emit-ir")
+        .arg(&app)
+        .arg("-o")
+        .arg(&lock_path)
+        .output()
+        .expect("reject lockfile overwrite");
+    assert_eq!(
+        overwrite.status.code(),
+        Some(2),
+        "{}",
+        output_text(&overwrite)
+    );
+    assert_eq!(fs::read_to_string(&lock_path).unwrap(), first);
+
+    let dependency_overwrite = salic()
+        .arg("emit-ir")
+        .arg(&app)
+        .arg("-o")
+        .arg(&dependency_library_path)
+        .output()
+        .expect("reject dependency source overwrite");
+    assert_eq!(
+        dependency_overwrite.status.code(),
+        Some(2),
+        "{}",
+        output_text(&dependency_overwrite)
+    );
+    assert_eq!(
+        fs::read_to_string(&dependency_library_path).unwrap(),
+        dependency_library
+    );
+}
+
+#[test]
+fn dependency_visibility_stops_package_and_private_items_at_the_boundary() {
+    let workspace = TestDirectory::new();
+    workspace.write(
+        "app/salicin.toml",
+        r#"[package]
+name = "visibility-app"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+restricted = { path = "../restricted" }
+secret = { path = "../secret" }
+"#,
+    );
+    workspace.write(
+        "app/src/main.sali",
+        "let main(): i32 = restricted.hidden() + secret.hidden()\n",
+    );
+    workspace.write(
+        "restricted/salicin.toml",
+        "[package]\nname = \"restricted\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    );
+    workspace.write(
+        "restricted/src/lib.sali",
+        "pub(package) let hidden(): i32 = 20\n",
+    );
+    workspace.write(
+        "secret/salicin.toml",
+        "[package]\nname = \"secret\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    );
+    workspace.write("secret/src/lib.sali", "let hidden(): i32 = 22\n");
+
+    let output = salic()
+        .arg("check")
+        .arg(workspace.join("app"))
+        .output()
+        .expect("check cross-package visibility");
+    assert_eq!(output.status.code(), Some(1), "{}", output_text(&output));
+    assert!(workspace.join("app/salicin.lock").is_file());
+    let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+    assert!(stderr.contains("pub(package)"), "{}", output_text(&output));
+    assert!(stderr.contains("private"), "{}", output_text(&output));
+}
+
+#[test]
+fn private_dependency_traits_do_not_leak_method_candidates() {
+    let workspace = TestDirectory::new();
+    workspace.write(
+        "app/salicin.toml",
+        r#"[package]
+name = "trait-privacy-app"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+dep = { path = "../dep" }
+"#,
+    );
+    workspace.write(
+        "dep/salicin.toml",
+        "[package]\nname = \"trait-privacy-dep\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    );
+    workspace.write(
+        "dep/src/lib.sali",
+        r#"pub let Number = struct(value: i32)
+let Secret = trait {
+  let reveal(borrow self)(): i32
+}
+extend Number: Secret {
+  let reveal(borrow self)(): i32 = self.value
+}
+pub let make(): Number = Number(value: 21)
+pub let maybe(): Option(Number) = Option(Number).Some(make())
+pub let reveal(T: type)(move number: Number): i32 = number.reveal()
+pub let answer(): i32 = {
+  let number = make()
+  number.reveal()
+}
+"#,
+    );
+    workspace.write(
+        "app/src/main.sali",
+        r#"let main(): i32 = {
+  let number = dep.make()
+  number.reveal()
+}
+"#,
+    );
+
+    let app = workspace.join("app");
+    let denied = salic()
+        .arg("check")
+        .arg(&app)
+        .output()
+        .expect("reject a private dependency trait method");
+    assert_eq!(denied.status.code(), Some(1), "{}", output_text(&denied));
+    let stderr = String::from_utf8_lossy(&denied.stderr).to_lowercase();
+    assert!(
+        stderr.contains("trait method") && stderr.contains("private"),
+        "{}",
+        output_text(&denied)
+    );
+
+    workspace.write(
+        "app/src/main.sali",
+        "let main(): i32 = dep.maybe()?.reveal() ?? 0\n",
+    );
+    let optional = salic()
+        .arg("check")
+        .arg(&app)
+        .output()
+        .expect("reject an optionally chained private trait method");
+    assert_eq!(
+        optional.status.code(),
+        Some(1),
+        "{}",
+        output_text(&optional)
+    );
+    assert!(
+        String::from_utf8_lossy(&optional.stderr)
+            .to_lowercase()
+            .contains("private"),
+        "{}",
+        output_text(&optional)
+    );
+
+    workspace.write(
+        "app/src/main.sali",
+        "let main(): i32 = dep.reveal(i32)(dep.make()) + dep.answer()\n",
+    );
+    let internal = salic()
+        .arg("run")
+        .arg(&app)
+        .output()
+        .expect("run dependency code using its own private trait");
+    assert_eq!(
+        internal.status.code(),
+        Some(42),
+        "{}",
+        output_text(&internal)
+    );
+}
+
+#[test]
+fn transitive_diamond_dependencies_share_nominal_identity() {
+    let workspace = TestDirectory::new();
+    workspace.write(
+        "shared/salicin.toml",
+        "[package]\nname = \"shared-token\"\nversion = \"1.0.0\"\nedition = \"2026\"\n",
+    );
+    workspace.write(
+        "shared/src/lib.sali",
+        "pub let Token = struct(value: i32)\npub let make(value: i32): Token = Token(value: value)\n",
+    );
+    for side in ["left", "right"] {
+        workspace.write(
+            &format!("{side}/salicin.toml"),
+            &format!(
+                "[package]\nname = \"{side}-side\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nshared = {{ path = \"../shared\" }}\n"
+            ),
+        );
+        workspace.write(
+            &format!("{side}/src/lib.sali"),
+            "pub use shared.Token\npub let make(value: i32): Token = shared.make(value)\n",
+        );
+    }
+    workspace.write(
+        "app/salicin.toml",
+        r#"[package]
+name = "diamond-app"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+left = { path = "../left" }
+right = { path = "../right" }
+"#,
+    );
+    workspace.write(
+        "app/src/main.sali",
+        r#"let bridge(move value: left.Token): right.Token = value
+let main(): i32 = bridge(left.make(42)).value
+"#,
+    );
+
+    let app = workspace.join("app");
+    let output = salic()
+        .arg("run")
+        .arg(&app)
+        .output()
+        .expect("run diamond dependency graph");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+
+    let lock = fs::read_to_string(app.join("salicin.lock")).unwrap();
+    assert_eq!(lock.matches("[[package]]").count(), 4, "{lock}");
+    assert_eq!(lock.matches("name = \"shared-token\"").count(), 3, "{lock}");
+}
+
+#[test]
+fn dependency_cycles_and_binary_only_dependencies_fail_before_writing_a_lockfile() {
+    let cycle = TestDirectory::new();
+    cycle.write(
+        "app/salicin.toml",
+        "[package]\nname = \"cycle-app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nb = { path = \"../b\" }\n",
+    );
+    cycle.write("app/src/lib.sali", "pub let value(): i32 = 1\n");
+    cycle.write("app/src/main.sali", "let main(): i32 = 0\n");
+    cycle.write(
+        "b/salicin.toml",
+        "[package]\nname = \"cycle-b\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\napp = { path = \"../app\" }\n",
+    );
+    cycle.write("b/src/lib.sali", "pub let value(): i32 = 2\n");
+
+    let cyclic = salic()
+        .arg("check")
+        .arg(cycle.join("app"))
+        .output()
+        .expect("reject local dependency cycle");
+    assert_eq!(cyclic.status.code(), Some(2), "{}", output_text(&cyclic));
+    assert!(
+        String::from_utf8_lossy(&cyclic.stderr)
+            .to_lowercase()
+            .contains("cycle"),
+        "{}",
+        output_text(&cyclic)
+    );
+    assert!(!cycle.join("app/salicin.lock").exists());
+
+    let missing = TestDirectory::new();
+    missing.write(
+        "app/salicin.toml",
+        "[package]\nname = \"missing-lib-app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\ntool = { path = \"../tool\" }\n",
+    );
+    missing.write("app/src/main.sali", "let main(): i32 = 0\n");
+    missing.write(
+        "tool/salicin.toml",
+        "[package]\nname = \"binary-tool\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    );
+    missing.write("tool/src/main.sali", "let main(): i32 = 0\n");
+
+    let no_library = salic()
+        .arg("check")
+        .arg(missing.join("app"))
+        .output()
+        .expect("reject binary-only dependency");
+    assert_eq!(
+        no_library.status.code(),
+        Some(2),
+        "{}",
+        output_text(&no_library)
+    );
+    let stderr = String::from_utf8_lossy(&no_library.stderr).to_lowercase();
+    assert!(
+        stderr.contains("library") && stderr.contains("tool"),
+        "{}",
+        output_text(&no_library)
+    );
+    assert!(!missing.join("app/salicin.lock").exists());
 }
 
 #[test]
