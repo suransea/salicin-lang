@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.21.0 - 2026-07-21
+
+- Allowed local `FnOnce` closures to own nominal values that need drop. Each move capture now has
+  stable environment storage and a recursive runtime drop slot from closure construction until
+  abandonment or invocation.
+- Transferred capture ownership through the existing early-exit argument staging before calling
+  the lifted function. Successful calls clear environment flags; later-argument return paths clean
+  staged captures; uncalled and conditionally called closures clean exactly the captures they retain.
+- Removed the `LocalClosureCapture` pending capability and added cleanup-plan plus native coverage
+  for single, multiple, conditional, abandoned, custom-`Drop`, and early-return capture paths.
+  General partial applications remain Copy-only and still retain their separate pending marker.
+
 ## 0.20.0 - 2026-07-21
 
 - Enabled drop-bearing pattern bindings in guarded match arms through speculative binding storage.

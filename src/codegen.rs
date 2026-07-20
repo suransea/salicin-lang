@@ -7136,12 +7136,6 @@ impl Analyzer {
                     ));
                     continue;
                 }
-                ClosureCaptureMode::Move if self.type_needs_drop(&local.ty) => {
-                    self.error(format!(
-                        "FnOnce move capture `{name}` cannot own a value that needs drop until closure-environment cleanup lowering is complete"
-                    ));
-                    continue;
-                }
                 _ => {}
             }
 
@@ -12234,12 +12228,6 @@ impl<'a> HirCleanupPlanner<'a> {
                 Some(cursor)
             }
             HirExprKind::LocalClosure(closure) => {
-                self.builder
-                    .record_pending(PendingCapability::LocalClosureCapture {
-                        block: cursor.block,
-                        function: closure.function.clone(),
-                        fn_once: closure.is_fn_once,
-                    });
                 let mut current = Some(cursor);
                 for (index, capture) in closure.captures.iter().enumerate() {
                     let Some(cursor) = current else {
@@ -13545,6 +13533,13 @@ struct RuntimeDropSlot {
     children: Vec<RuntimeDropSlot>,
 }
 
+#[derive(Clone)]
+struct StoredCapture {
+    ty: Ty,
+    pointer: String,
+    drop_flag: Option<String>,
+}
+
 struct FunctionEmitter<'a> {
     function: &'a HirFunction,
     program: &'a HirProgram,
@@ -13553,7 +13548,7 @@ struct FunctionEmitter<'a> {
     next_register: usize,
     next_label: usize,
     locals: HashMap<LocalId, String>,
-    partial_captures: HashMap<LocalId, Vec<Option<(Ty, String)>>>,
+    partial_captures: HashMap<LocalId, Vec<Option<StoredCapture>>>,
     entry_allocas: String,
     loops: Vec<EmitLoopTarget>,
     drop_slots: Vec<RuntimeDropSlot>,
@@ -14263,16 +14258,20 @@ impl<'a> FunctionEmitter<'a> {
                             "internal error: unknown capture {index} for partial binding {binding}"
                         ))
                     })?;
-                let Some((ty, pointer)) = capture else {
+                let Some(capture) = capture else {
                     return Ok(Operand::unit());
                 };
                 let register = self.fresh_register();
                 self.instruction(format!(
-                    "{register} = load {}, ptr {pointer}",
-                    llvm_value_type(&ty)?
+                    "{register} = load {}, ptr {}",
+                    llvm_value_type(&capture.ty)?,
+                    capture.pointer
                 ));
+                if let Some(flag) = capture.drop_flag {
+                    self.instruction(format!("store i1 false, ptr {flag}"));
+                }
                 Ok(Operand {
-                    ty,
+                    ty: capture.ty,
                     value: Some(register),
                 })
             }
@@ -14311,7 +14310,27 @@ impl<'a> FunctionEmitter<'a> {
                                         "store {ty} {}, ptr {pointer}",
                                         value.value()?
                                     ));
-                                    stored.push(Some((value.ty, pointer)));
+                                    let drop_flag = if self.program.needs_drop(&value.ty) {
+                                        self.register_drop_slot(
+                                            None,
+                                            value.ty.clone(),
+                                            pointer.clone(),
+                                        )?;
+                                        Some(
+                                            self.drop_slots
+                                                .last()
+                                                .expect("registered closure capture slot")
+                                                .flag
+                                                .clone(),
+                                        )
+                                    } else {
+                                        None
+                                    };
+                                    stored.push(Some(StoredCapture {
+                                        ty: value.ty,
+                                        pointer,
+                                        drop_flag,
+                                    }));
                                 }
                                 if !self.terminated {
                                     self.partial_captures.insert(binding.id, stored);
@@ -14345,7 +14364,27 @@ impl<'a> FunctionEmitter<'a> {
                                         "store {ty} {}, ptr {pointer}",
                                         capture.value()?
                                     ));
-                                    stored.push(Some((capture.ty, pointer)));
+                                    let drop_flag = if self.program.needs_drop(&capture.ty) {
+                                        self.register_drop_slot(
+                                            None,
+                                            capture.ty.clone(),
+                                            pointer.clone(),
+                                        )?;
+                                        Some(
+                                            self.drop_slots
+                                                .last()
+                                                .expect("registered partial capture slot")
+                                                .flag
+                                                .clone(),
+                                        )
+                                    } else {
+                                        None
+                                    };
+                                    stored.push(Some(StoredCapture {
+                                        ty: capture.ty,
+                                        pointer,
+                                        drop_flag,
+                                    }));
                                 }
                                 if !self.terminated {
                                     self.partial_captures.insert(binding.id, stored);
@@ -20175,6 +20214,24 @@ let run(): i32 = {
                 path.place.projections.as_slice(),
                 [CleanupProjection::Capture(0)]
             )
+        }));
+
+        let closure = cleanup_plan_text(
+            r#"
+let Resource = struct(value: i32)
+extend Resource: Drop {
+  let drop(mut borrow self)(): () = ()
+}
+let consume(move value: Resource): () = ()
+let run(): () = {
+  let resource = Resource(1)
+  let once = { -> consume(resource) }
+}
+"#,
+            "run",
+        );
+        assert!(closure.move_paths.iter().any(|path| {
+            path.needs_drop && path.place.projections.as_slice() == [CleanupProjection::Capture(0)]
         }));
     }
 

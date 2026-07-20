@@ -215,11 +215,6 @@ pub(crate) enum PendingCapability {
         block: BasicBlockId,
         function: String,
     },
-    LocalClosureCapture {
-        block: BasicBlockId,
-        function: String,
-        fn_once: bool,
-    },
     PatternBindingTransfer {
         block: BasicBlockId,
         binding: LocalId,
@@ -1800,8 +1795,7 @@ impl CleanupPlan {
                         }
                     }
                 }
-                PendingCapability::PartialApplicationCapture { block, .. }
-                | PendingCapability::LocalClosureCapture { block, .. } => {
+                PendingCapability::PartialApplicationCapture { block, .. } => {
                     self.verify_pending_block(*block, "cleanup capability", errors);
                 }
                 PendingCapability::BorrowedPlaceMutation {

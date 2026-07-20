@@ -100,10 +100,17 @@ owns its selected subtree, while resource siblings at every enclosing struct and
 level retain independent cleanup slots on normal and early-return exits. Traversal through a type
 with custom `Drop` remains forbidden because its destructor requires an intact value. Guarded
 resource transfer still awaits rollback-aware lowering.
+
+The v0.21 emitter gives local `FnOnce` move captures stable environment storage and recursive drop
+slots. Abandoned and conditionally invoked closures clean retained captures; invocation transfers
+them through early-exit argument staging to the lifted function without double drop. The cleanup
+plan no longer reports `LocalClosureCapture` as pending. General partial applications remain
+Copy-only, and first-class or escaping callable environments still need an explicit ABI layout.
 Compile-time globals are independently materialized at each use and are
 outside the cleanup plan; resource-bearing global semantics must be settled before `Drop` is
 allowed on globals.
 
-The adjacent standard-library route is therefore: finish closure cleanup details; then define raw
-pointers and the allocator ABI. Only after those boundaries are real will `alloc` be added, followed
+The adjacent standard-library route is therefore: finish partial/first-class callable layout and
+borrowed mutation details; then define raw pointers and the allocator ABI. Only after those
+boundaries are real will `alloc` be added, followed
 by platform `std` over the C ABI and minimal runtime.

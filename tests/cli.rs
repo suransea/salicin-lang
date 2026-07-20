@@ -531,6 +531,38 @@ fn guarded_match_payload_moves_commit_only_after_success() {
 }
 
 #[test]
+fn fn_once_resource_captures_drop_exactly_once() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "drop_closure_once.sali"))
+        .output()
+        .expect("run resource-owning FnOnce closure");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+
+    for (fixture_name, failure) in [
+        (
+            "drop_closure_abandon_trap.sali",
+            "an abandoned closure environment was not dropped",
+        ),
+        (
+            "drop_closure_early_trap.sali",
+            "a capture staged before an early argument return was not dropped",
+        ),
+    ] {
+        let trapped = salic()
+            .arg("run")
+            .arg(fixture("pass", fixture_name))
+            .output()
+            .expect("run closure capture cleanup trap");
+        assert!(
+            !trapped.status.success(),
+            "{failure}:\n{}",
+            output_text(&trapped)
+        );
+    }
+}
+
+#[test]
 fn source_backed_copy_errors_report_their_cause() {
     for (name, expected) in [
         (
