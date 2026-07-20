@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.37.0 - 2026-07-21
+
+- Implemented blanket generic trait extensions such as
+  `extend(T: type) Cell(T): Read where T: Read`, selected lazily for each concrete nominal
+  instance.
+- Substituted target parameters through trait arguments, method signatures and bodies, where
+  predicates, and associated-type definitions including `let Item = T`.
+- Added conditional nested selection, deterministic blanket-overlap rejection, and the general
+  package orphan rule requiring either the trait or target type to be local.
+- Kept blanket `Copy` and `Drop` implementations reserved for their structural fixed-point and
+  destruction-coherence work.
+
 ## 0.36.0 - 2026-07-21
 
 - Added `where` predicates to blanket generic inherent extensions with the documented multiline

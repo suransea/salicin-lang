@@ -161,6 +161,15 @@ struct GenericInherentExtension {
     origin: ItemOrigin,
 }
 
+#[derive(Clone)]
+struct GenericTraitExtension {
+    target_arguments: Vec<String>,
+    trait_ref: Type,
+    where_predicates: Vec<crate::ast::WherePredicate>,
+    members: Vec<ExtendMember>,
+    origin: ItemOrigin,
+}
+
 #[derive(Debug, Clone)]
 struct InferredTypeArgument {
     ty: Ty,
@@ -1150,6 +1159,7 @@ struct Analyzer {
     nominal_accesses: HashMap<String, AccessBoundary>,
     inherent_members: HashMap<String, InherentMemberSet>,
     generic_inherent_extensions: HashMap<String, Vec<GenericInherentExtension>>,
+    generic_trait_extensions: HashMap<String, Vec<GenericTraitExtension>>,
     generic_inherent_functions: HashMap<(String, String), String>,
     suppress_generic_inherent_instantiation: usize,
     traits: HashMap<String, TraitSchema>,
@@ -1209,6 +1219,7 @@ impl Analyzer {
             nominal_accesses: HashMap::new(),
             inherent_members: HashMap::new(),
             generic_inherent_extensions: HashMap::new(),
+            generic_trait_extensions: HashMap::new(),
             generic_inherent_functions: HashMap::new(),
             suppress_generic_inherent_instantiation: 0,
             traits: HashMap::new(),
@@ -2255,6 +2266,19 @@ impl Analyzer {
             ));
             return;
         }
+        let target_package = self
+            .nominal_accesses
+            .get(nominal_name(&target).expect("trait targets are nominal"))
+            .map(|access| access.origin.package);
+        if target_package != Some(origin.package) && schema.access.origin.package != origin.package
+        {
+            let target = self.diagnostic_type_name(&target);
+            self.error(format!(
+                "trait implementation of `{}` for `{target}` must be declared in the package that defines the trait or the type",
+                key.trait_ref.name
+            ));
+            return;
+        }
         if is_drop && self.copy_nominals.contains(&target) {
             let target = self.diagnostic_type_name(&target);
             self.error(format!(
@@ -2479,6 +2503,26 @@ impl Analyzer {
 
         let mut methods = HashMap::new();
         for (method_name, canonical, function) in registered {
+            let groups = function
+                .groups
+                .iter()
+                .map(|group| {
+                    group
+                        .iter()
+                        .map(|parameter| ParamSig {
+                            name: parameter.name.clone(),
+                            ty: self.lower_source_type(&parameter.ty),
+                            mode: parameter.mode,
+                        })
+                        .collect()
+                })
+                .collect();
+            let result = function
+                .return_type
+                .as_ref()
+                .map(|result| self.lower_source_type(result));
+            self.signatures
+                .insert(canonical.clone(), FunctionSig { groups, result });
             self.function_order.push(canonical.clone());
             self.functions.insert(canonical.clone(), function);
             self.function_origins
@@ -2507,9 +2551,7 @@ impl Analyzer {
     fn collect_extension(&mut self, extension: ExtendDef, origin: ItemOrigin) {
         if !extension.compile_groups.is_empty() {
             if extension.trait_ref.is_some() {
-                self.error(
-                    "generic trait implementations are not supported until where-clause selection is implemented",
-                );
+                self.collect_generic_trait_extension(extension, origin);
             } else {
                 self.collect_generic_inherent_extension(extension, origin);
             }
@@ -2708,6 +2750,236 @@ impl Analyzer {
                 }
             }
         }
+    }
+
+    fn collect_generic_trait_extension(&mut self, extension: ExtendDef, origin: ItemOrigin) {
+        if !self
+            .validate_where_predicate_shapes("generic trait extension", &extension.where_predicates)
+        {
+            return;
+        }
+        let parameters = extension
+            .compile_groups
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+        if extension.compile_groups.len() != 1 || parameters.is_empty() {
+            self.error("generic trait extend requires exactly one non-empty type parameter group");
+            return;
+        }
+        let mut declared = HashSet::new();
+        for parameter in &parameters {
+            if parameter.name == "Self" || !declared.insert(parameter.name.clone()) {
+                self.error(format!(
+                    "invalid or duplicate generic extend parameter `{}`",
+                    parameter.name
+                ));
+                return;
+            }
+        }
+        let Type::Named(target_template, target_sources) = &extension.target else {
+            self.error("generic trait extend target must be a generic nominal type");
+            return;
+        };
+        let expected = self
+            .struct_templates
+            .get(target_template)
+            .map(|definition| definition.compile_groups.iter().flatten().count())
+            .or_else(|| {
+                self.enum_templates
+                    .get(target_template)
+                    .map(|definition| definition.compile_groups.iter().flatten().count())
+            });
+        let Some(expected) = expected else {
+            self.error(format!(
+                "generic trait extend target `{target_template}` is not a generic nominal type"
+            ));
+            return;
+        };
+        if target_sources.len() != expected {
+            self.error(format!(
+                "generic extend target `{target_template}` expects {expected} type arguments, found {}",
+                target_sources.len()
+            ));
+            return;
+        }
+        let mut target_arguments = Vec::new();
+        let mut determined = HashSet::new();
+        for source in target_sources {
+            let Type::Named(name, arguments) = source else {
+                self.error(
+                    "generic trait extend target arguments must be bare declared type parameters",
+                );
+                return;
+            };
+            if !arguments.is_empty() || !declared.contains(name) || !determined.insert(name.clone())
+            {
+                self.error(
+                    "generic trait extend target arguments must use every declared type parameter exactly once",
+                );
+                return;
+            }
+            target_arguments.push(name.clone());
+        }
+        if determined.len() != parameters.len() {
+            self.error(
+                "every generic trait extend parameter must be determined by the target type",
+            );
+            return;
+        }
+
+        let trait_ref = extension
+            .trait_ref
+            .as_ref()
+            .expect("generic trait extension has a trait reference");
+        let Type::Named(trait_name, trait_arguments) = trait_ref else {
+            self.error("generic trait extension must reference a named trait");
+            return;
+        };
+        let Some(schema) = self.traits.get(trait_name).cloned() else {
+            self.error(format!("unknown trait `{trait_name}`"));
+            return;
+        };
+        if !schema.valid {
+            return;
+        }
+        if trait_arguments.len() != schema.compile_parameters.len() {
+            self.error(format!(
+                "trait argument count mismatch for `{trait_name}`: expected {}, found {}",
+                schema.compile_parameters.len(),
+                trait_arguments.len()
+            ));
+            return;
+        }
+        if trait_name == self.lang_item_name(LangItemKind::Copy)
+            || trait_name == self.lang_item_name(LangItemKind::Drop)
+        {
+            self.error(format!(
+                "generic implementation of language trait `{trait_name}` is not supported yet"
+            ));
+            return;
+        }
+        let target_package = self
+            .nominal_accesses
+            .get(target_template)
+            .map(|access| access.origin.package);
+        if target_package != Some(origin.package) && schema.access.origin.package != origin.package
+        {
+            self.error(format!(
+                "generic trait implementation of `{trait_name}` for `{target_template}` must be declared in the package that defines the trait or the type"
+            ));
+            return;
+        }
+        if self
+            .generic_trait_extensions
+            .get(target_template)
+            .is_some_and(|extensions| {
+                extensions.iter().any(|existing| {
+                    matches!(&existing.trait_ref, Type::Named(name, _) if name == trait_name)
+                })
+            })
+        {
+            self.error(format!(
+                "overlapping generic trait implementation of `{trait_name}` for `{target_template}`"
+            ));
+            return;
+        }
+
+        let template = GenericTraitExtension {
+            target_arguments,
+            trait_ref: trait_ref.clone(),
+            where_predicates: extension.where_predicates.clone(),
+            members: extension.members.clone(),
+            origin: origin.clone(),
+        };
+        self.generic_trait_extensions
+            .entry(target_template.clone())
+            .or_default()
+            .push(template.clone());
+
+        let existing = self
+            .nominal_instances
+            .iter()
+            .filter(|(_, instance)| instance.key.template == *target_template)
+            .map(|(canonical, instance)| (canonical.clone(), instance.key.arguments.clone()))
+            .collect::<Vec<_>>();
+        for (canonical, arguments) in existing {
+            let Some(source_arguments) = arguments
+                .iter()
+                .map(|argument| self.source_type_for_ty(argument))
+                .collect::<Option<Vec<_>>>()
+            else {
+                continue;
+            };
+            self.instantiate_generic_trait_extension(
+                target_template,
+                &canonical,
+                &source_arguments,
+                &template,
+            );
+        }
+    }
+
+    fn instantiate_generic_trait_extension(
+        &mut self,
+        target_template: &str,
+        canonical: &str,
+        source_arguments: &[Type],
+        extension: &GenericTraitExtension,
+    ) {
+        if source_arguments.len() != extension.target_arguments.len() {
+            self.error(format!(
+                "internal error: invalid generic trait extension arguments for `{target_template}`"
+            ));
+            return;
+        }
+        let substitutions = extension
+            .target_arguments
+            .iter()
+            .cloned()
+            .zip(source_arguments.iter().cloned())
+            .collect::<HashMap<_, _>>();
+        let mut predicates = extension.where_predicates.clone();
+        for predicate in &mut predicates {
+            substitute_type_parameters(&mut predicate.subject, &substitutions);
+            substitute_type_parameters(&mut predicate.trait_ref, &substitutions);
+            for binding in &mut predicate.associated_types {
+                substitute_type_parameters(&mut binding.ty, &substitutions);
+            }
+        }
+        if predicates
+            .iter()
+            .any(|predicate| !self.concrete_where_predicate_holds(predicate))
+        {
+            return;
+        }
+        let mut trait_ref = extension.trait_ref.clone();
+        substitute_type_parameters(&mut trait_ref, &substitutions);
+        let mut members = extension.members.clone();
+        for member in &mut members {
+            match member {
+                ExtendMember::Function(function) => {
+                    substitute_function_types(function, &substitutions)
+                }
+                ExtendMember::Const(binding) => {
+                    if let Some(annotation) = &mut binding.annotation {
+                        substitute_type_parameters(annotation, &substitutions);
+                    }
+                    substitute_type_expression_parameters(&mut binding.value, &substitutions);
+                }
+            }
+        }
+        self.collect_trait_extension(
+            ExtendDef {
+                compile_groups: Vec::new(),
+                target: Type::Named(canonical.to_owned(), Vec::new()),
+                trait_ref: Some(trait_ref),
+                where_predicates: Vec::new(),
+                members,
+            },
+            extension.origin.clone(),
+        );
     }
 
     fn collect_generic_inherent_extension(&mut self, extension: ExtendDef, origin: ItemOrigin) {
@@ -3550,6 +3822,19 @@ impl Analyzer {
                 .unwrap_or_default();
             for extension in &extensions {
                 self.instantiate_generic_inherent_extension(
+                    template_name,
+                    &canonical,
+                    &instance_source_arguments,
+                    extension,
+                );
+            }
+            let trait_extensions = self
+                .generic_trait_extensions
+                .get(template_name)
+                .cloned()
+                .unwrap_or_default();
+            for extension in &trait_extensions {
+                self.instantiate_generic_trait_extension(
                     template_name,
                     &canonical,
                     &instance_source_arguments,
@@ -17817,6 +18102,62 @@ fn substitute_expr_types(expression: &mut Expr, substitutions: &HashMap<String, 
     }
 }
 
+fn substitute_type_expression_parameters(
+    expression: &mut Expr,
+    substitutions: &HashMap<String, Type>,
+) {
+    match expression {
+        Expr::Name(name) => {
+            if let Some(replacement) = substitutions.get(name) {
+                *expression = source_type_expression(replacement);
+            }
+        }
+        Expr::Call(callee, arguments) => {
+            substitute_type_expression_parameters(callee, substitutions);
+            for argument in arguments {
+                substitute_type_expression_parameters(&mut argument.value, substitutions);
+            }
+        }
+        Expr::Unit => {}
+        _ => substitute_expr_types(expression, substitutions),
+    }
+}
+
+fn source_type_expression(source: &Type) -> Expr {
+    match source {
+        Type::Unit => Expr::Unit,
+        Type::I32 => Expr::Name("i32".to_owned()),
+        Type::I64 => Expr::Name("i64".to_owned()),
+        Type::U32 => Expr::Name("u32".to_owned()),
+        Type::U64 => Expr::Name("u64".to_owned()),
+        Type::Bool => Expr::Name("bool".to_owned()),
+        Type::Array(element, length) => Expr::Call(
+            Box::new(Expr::Name("Array".to_owned())),
+            vec![
+                CallArg {
+                    label: None,
+                    value: source_type_expression(element),
+                },
+                CallArg {
+                    label: None,
+                    value: Expr::Integer(i128::from(*length)),
+                },
+            ],
+        ),
+        Type::Named(name, arguments) if arguments.is_empty() => Expr::Name(name.clone()),
+        Type::Named(name, arguments) => Expr::Call(
+            Box::new(Expr::Name(name.clone())),
+            arguments
+                .iter()
+                .map(|argument| CallArg {
+                    label: None,
+                    value: source_type_expression(argument),
+                })
+                .collect(),
+        ),
+    }
+}
+
 fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<String, Type>) {
     match ty {
         Type::Named(name, arguments) if arguments.is_empty() => {
@@ -19591,6 +19932,89 @@ let main(): i32 = 0
     }
 
     #[test]
+    fn generic_trait_extensions_materialize_conditionally_with_associated_types() {
+        compile_text(
+            r#"
+let Read = trait {
+  let read(borrow self)(): i32
+}
+let Leaf = struct(value: i32)
+extend Leaf: Read {
+  let read(borrow self)(): i32 = self.value
+}
+let Cell(T: type) = struct(value: T)
+extend(T: type) Cell(T): Read
+where T: Read {
+  let read(borrow self)(): i32 = self.value.read()
+}
+
+let read_cell(T: type)(borrow cell: Cell(T)): i32
+where T: Read = cell.read()
+
+let Value = trait {
+  let Item: type
+  let take(move self)(): Item
+}
+extend(T: type) Cell(T): Value {
+  let Item = T
+  let take(move self)(): T = self.value
+}
+
+let main(): i32 = {
+  let cell = Cell(Leaf(42))
+  let read = read_cell(cell)
+  let leaf = cell.take()
+  let wrapped = Cell(leaf)
+  wrapped.read() + read - 42
+}
+"#,
+        )
+        .expect("generic trait extensions should instantiate for matching nominal arguments");
+
+        let errors = compile_text(
+            r#"
+let Read = trait {
+  let read(borrow self)(): i32
+}
+let Leaf = struct(value: i32)
+let Cell(T: type) = struct(value: T)
+extend(T: type) Cell(T): Read
+where T: Read {
+  let read(borrow self)(): i32 = self.value.read()
+}
+let main(): i32 = {
+  let cell = Cell(Leaf(42))
+  cell.read()
+}
+"#,
+        )
+        .expect_err("an unsatisfied blanket implementation must not materialize");
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("unknown method `read`")));
+
+        let errors = compile_text(
+            r#"
+let Read = trait {
+  let read(borrow self)(): i32
+}
+let Cell(T: type) = struct(value: T)
+extend(T: type) Cell(T): Read {
+  let read(borrow self)(): i32 = 1
+}
+extend(T: type) Cell(T): Read {
+  let read(borrow self)(): i32 = 2
+}
+let main(): i32 = 0
+"#,
+        )
+        .expect_err("overlapping blanket implementations must be rejected");
+        assert!(errors.iter().any(|error| error
+            .message
+            .contains("overlapping generic trait implementation")));
+    }
+
+    #[test]
     fn rejects_recursive_value_layouts() {
         let errors = compile_text(
             r#"
@@ -19803,6 +20227,55 @@ let main(): i32 = {
         assert!(direct
             .iter()
             .any(|error| error.message.contains("cannot be called directly")));
+    }
+
+    #[test]
+    fn ordinary_trait_implementations_obey_the_package_orphan_rule() {
+        let concrete = compile_with_origins(
+            r#"
+pub let Read = trait {
+  let read(borrow self)(): i32
+}
+pub let Foreign = struct(value: i32)
+extend Foreign: Read {
+  let read(borrow self)(): i32 = self.value
+}
+let main(): i32 = 0
+"#,
+            vec![
+                origin(1, &["traits"]),
+                origin(2, &["types"]),
+                origin(3, &["consumer"]),
+                origin(3, &["consumer"]),
+            ],
+        )
+        .expect_err("a third package cannot join a foreign trait and type");
+        assert!(concrete.iter().any(|error| error
+            .message
+            .contains("package that defines the trait or the type")));
+
+        let generic = compile_with_origins(
+            r#"
+pub let Read = trait {
+  let read(borrow self)(): i32
+}
+pub let Cell(T: type) = struct(value: T)
+extend(T: type) Cell(T): Read {
+  let read(borrow self)(): i32 = 0
+}
+let main(): i32 = 0
+"#,
+            vec![
+                origin(1, &["traits"]),
+                origin(2, &["types"]),
+                origin(3, &["consumer"]),
+                origin(3, &["consumer"]),
+            ],
+        )
+        .expect_err("blanket implementations must obey the same orphan rule");
+        assert!(generic.iter().any(|error| error
+            .message
+            .contains("package that defines the trait or the type")));
     }
 
     #[test]

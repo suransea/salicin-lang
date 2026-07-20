@@ -423,8 +423,9 @@ layout intrinsic，v0.30 以普通 alloc 源实现首个 owning `Box(T)`，v0.31
 所有权访问，v0.32 落地 blanket generic inherent extension 与 Box 方法表面，v0.33 落地泛型函数
 普通 `where T: Trait` 谓词、`Copy` 抽象证明与具体调用点检查，v0.34 接通不涉及关联类型的 bound
 method 静态分派和泛型间证明转交，v0.35 加入 `Output = T` 关联类型等式与受约束泛型运算符，
-v0.36 开放带 where 的 blanket inherent extension 和按实例条件成员。下一步加入泛型 trait impl 与
-生命周期化 Box 借用，再以相同 allocator/drop 基础推进 `Vec(T)`；泛型 callable
+v0.36 开放带 where 的 blanket inherent extension 和按实例条件成员，v0.37 又加入普通泛型 trait
+impl、关联类型替换、按 where 条件选择和跨包孤儿规则。下一步补齐 blanket `Copy` / `Drop` 的结构
+一致性并推进生命周期化 Box 借用，再以相同 allocator/drop 基础推进 `Vec(T)`；泛型 callable
 参数将在正式的 `where` / `Fn` 约束语法落地后开放。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
 运行时之后。
 
@@ -440,12 +441,12 @@ let main(): i32 = add(1)(41)
 当前借用期采用词法范围。固定数组只允许 `Copy` 元素并仅支持只读索引；循环回边禁止移动
 循环外部绑定，以保证下一轮仍拥有相同的可用值。方法的临时 receiver 目前需先绑定到局部；bound
 method 的部分应用只允许捕获 `Copy` receiver 和实参。名义 `Copy` 必须以具体、同包且结构合法的
-实现显式选择加入；尚无 blanket/generic impl，但泛型函数可用 `where T: Copy` 消费已有具体证明。
+实现显式选择加入；尚无 blanket/generic `Copy` impl，但泛型函数可用 `where T: Copy` 消费已有具体证明。
 函数类型和闭包类型也不实现 `Copy`。
 表达式路径中的 `Self` 与
 `A.method(a)()` 完全限定调用尚未开放。省略编译期组的嵌套推断仍受当前表达式类型探测能力限制；
-无法唯一推断时需用 `T: Concrete` 形式的命名编译期实参。trait 首版
-暂不支持泛型 trait impl、默认方法、泛型关联类型、完全限定调用
+无法唯一推断时需用 `T: Concrete` 形式的命名编译期实参。普通泛型 trait impl 已按具体实例静态
+选择；暂不支持默认方法、泛型关联类型、完全限定调用
 和 trait object；无约束的抽象类型
 不能声明为 `copy` 参数。`Add`、`Sub`、`Mul`、`Div` 与 `Rem` 已由 edition core 登记为 lang item，
 但重载路径目前仍要求左操作数能静态探测为具体名义类型；多个 `Rhs` 候选并存时，无法静态探测的

@@ -853,8 +853,8 @@ v0.34 进一步允许泛型体通过普通 trait bound 静态调用 method，并
 泛型函数。v0.35 实现关联类型等式，因此 `where T: Add(T, Output = T)` 可为 `x + y` 同时确定右
 操作数和结果，`Produce(Item = i32)` 也可确定普通 method 签名。模板检查阶段使用会完整回滚的
 假设实现；单态化后重新选择具体 `extend` 实现并核对关联类型。v0.36 也允许 blanket generic
-inherent extension 携带 where：满足谓词的实例才物化 method，关联函数则在调用点检查谓词。泛型
-trait implementation selection 留给后续版本。
+inherent extension 携带 where：满足谓词的实例才物化 method，关联函数则在调用点检查谓词。
+v0.37 将相同的按实例选择用于 blanket generic trait implementation。
 
 ## 10. Trait 与实现
 
@@ -935,9 +935,12 @@ let value = cell.take()
 
 类型参数从 target 的具体实例反向代入方法；关联函数则像普通泛型函数一样从实参、期望结果类型或
 `Cell.new(T: i64)(42)` 这样的命名类型参数推断。多参数 target 可以重排，但首版要求每个声明参数都
-作为裸 target argument 恰好出现一次。generic member、associated constant、具体 specialization、
-generic trait implementation 尚未开放；它不会被悄悄当作 inherent 实现。v0.36 起 blanket inherent
-extension 可以使用同一套 where predicates 条件选择成员。
+作为裸 target argument 恰好出现一次。generic member、inherent associated constant 与具体
+specialization 仍未开放。v0.36 起 blanket inherent
+extension 可以使用同一套 where predicates 条件选择成员；v0.37 起同样可写 blanket trait 实现，
+其中方法、trait 参数和 `let Item = T` 形式的关联类型会随具体 target instance 一同替换。只有 where
+谓词全部成立的实例才获得该 trait 实现。`Copy` 与 `Drop` 的 blanket 实现仍等待单独的结构 fixed
+point 与析构一致性规则。
 
 实现参数必须能从目标类型、trait 参数或 where 约束唯一决定，防止产生无法选择的自由参数。
 
@@ -945,7 +948,8 @@ extension 可以使用同一套 where predicates 条件选择成员。
 
 采用孤儿规则：一个实现只有在 trait 或目标类型至少一个定义于当前包时才合法。对同一
 “类型 + trait + 类型参数组合”最多存在一个实现。任意两个可统一的实现也视为重叠，例如
-`extend(T) List(T): Foo` 与 `extend List(i32): Foo` 不能同时存在。首版不支持 specialization。
+`extend(T) List(T): Foo` 与 `extend List(i32): Foo` 不能同时存在。当前实现对同一 generic target 与
+trait 名保守地只接受一个 blanket 实现；首版不支持 specialization。
 
 `Copy`、`Drop`、`Fn`、`FnMut`、`FnOnce`、`Try`、`FromResidual`、运算符协议和 `Future` 是
 编译器登记的 lang-item traits，但其声明由匹配工具链版本的 `core` 提供。首版只做静态分派；
