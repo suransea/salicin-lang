@@ -240,12 +240,25 @@ v0.15.0 开放 source-backed `Drop` 并生成递归 glue：
 - LLVM 已生成并验证 custom-drop、struct、enum 的递归 glue，且原生链接测试通过；scope-exit 调用、
   flag storage/branch 和 unwind 仍在下一版接入，因此当前还不能依赖析构副作用发生。
 
+v0.16.0 执行结构化 scope cleanup：
+
+- LLVM emitter 消费每个函数已验证的 `CleanupPlan` move-path 分类，为拥有参数和局部 storage 物化
+  drop flag；root move 清 flag，重新初始化置 flag，overwrite 在写入前条件清理旧值。
+- 局部按声明逆序在普通块结束、显式/隐式 `return` 和 `break` 上清理；条件移动、match scrutinee、
+  丢弃表达式和拥有参数也会把所有权交给对应 glue。
+- 聚合字段和调用实参在后续求值完成前进入临时 cleanup storage；后续表达式提前 `return` 时清理
+  已求值资源，完整构造或成功调用时再原子转移所有权。
+- 原生 trap 测试覆盖实际执行、不重复析构、条件移动、overwrite、return、break、match、丢弃值和
+  部分构造提前退出。
+- 从需析构聚合中部分移动/重建、需析构 pattern binding、临时值字段提取和拥有资源的闭包环境暂时
+  明确拒绝，待 projection flags 完成后重新开放。
+
 标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
 所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
 `Copy`，v0.9 建立 cleanup CFG，v0.10 补齐资源 storage/transfer，v0.11 完成完整 move-path forest 与
 初始化 fixed point，v0.12 再完成 temporary storage liveness，v0.14 已加入 `needs_drop` 与控制流敏感
-drop-flag 计划；这些都属于已经开始的 `core` 阶段，但还不发出析构。下一步提供 source-backed
-`Drop` 与递归 drop glue；下一步把 v0.14 的 obligations/flags 降为真实 scope-exit 调用，其后才固定
+drop-flag 计划，v0.15 提供 `Drop` 与递归 glue，v0.16 完成第一阶段结构化 scope-exit lowering。
+下一步补齐 projection flags 与剩余 cleanup pending，其后才固定
 raw pointer 与 allocator ABI 并进入 `alloc`。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
 运行时之后。
 

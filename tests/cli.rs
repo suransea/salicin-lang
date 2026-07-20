@@ -418,6 +418,38 @@ fn source_backed_drop_glue_links_and_runs() {
 }
 
 #[test]
+fn drop_runs_on_structured_scope_exits_without_double_drop() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "drop_scope.sali"))
+        .output()
+        .expect("run structured Drop program");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+
+    let trapped = salic()
+        .arg("run")
+        .arg(fixture("pass", "drop_trap.sali"))
+        .output()
+        .expect("run observable Drop trap");
+    assert!(
+        !trapped.status.success(),
+        "Drop was not executed:\n{}",
+        output_text(&trapped)
+    );
+
+    let partial_exit = salic()
+        .arg("run")
+        .arg(fixture("pass", "drop_partial_exit.sali"))
+        .output()
+        .expect("run partial-construction cleanup trap");
+    assert!(
+        !partial_exit.status.success(),
+        "an owned constructor field leaked across return:\n{}",
+        output_text(&partial_exit)
+    );
+}
+
+#[test]
 fn source_backed_copy_errors_report_their_cause() {
     for (name, expected) in [
         (

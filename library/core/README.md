@@ -69,14 +69,21 @@ Implementations are restricted to the nominal's defining package, conflict with 
 be invoked directly. Exact recursive `needs_drop` now emits LLVM glue for custom drops, containing
 structs, and active enum variants; the glue passes native parsing and linking tests.
 
-That plan is still a boundary, not executable scope cleanup. Borrowed mutation, conditional
-maybe-overwrite cleanup, match/pattern transfer, and partial or closure capture details remain
-pending. LLVM flag allocation, scope-exit branching, and cleanup calls are not emitted yet.
+The v0.16 emitter consumes the verified cleanup plan's typed root classification and materializes
+LLVM flags and glue calls for owned parameters, locals, reverse lexical scope exit, return, break,
+conditional root moves, overwrite, discarded values, and match scrutinees. Aggregate fields and
+call arguments are staged so a later early return cleans already evaluated owned values before
+their transfer commits. Native trap tests make execution and double-drop failures observable.
+
+Borrowed mutation, full conditional maybe-overwrite cleanup, projection-level partial drop,
+match payload transfer, and resource-owning closure capture details remain pending. Those forms are
+rejected when observable `Drop` would otherwise be incorrect rather than silently leaking or
+double-dropping.
 Compile-time globals are independently materialized at each use and are
 outside the cleanup plan; resource-bearing global semantics must be settled before `Drop` is
 exposed.
 
-The adjacent standard-library route is therefore: lower the existing obligations and flags into
-calls to the generated glue; then finish remaining cleanup details and define raw
+The adjacent standard-library route is therefore: materialize projection flags and finish the
+remaining cleanup details; then define raw
 pointers and the allocator ABI. Only after those boundaries are real will `alloc` be added, followed
 by platform `std` over the C ABI and minimal runtime.

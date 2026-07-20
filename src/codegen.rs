@@ -73,10 +73,10 @@ fn compile_target(program: &Program, require_entry_point: bool) -> Result<String
     }
 
     let hir = hir.expect("analysis without diagnostics must produce HIR");
-    let _cleanup_plans = build_and_verify_cleanup_plans(&hir)?;
+    let cleanup_plans = build_and_verify_cleanup_plans(&hir)?;
     let constants = evaluate_globals(&hir)?;
 
-    match Emitter::new(&hir, constants).emit_module(require_entry_point) {
+    match Emitter::new(&hir, constants, &cleanup_plans).emit_module(require_entry_point) {
         Ok(ir) => Ok(ir),
         Err(error) => Err(vec![error]),
     }
@@ -6168,6 +6168,50 @@ impl Analyzer {
         self.type_is_copy_with_nominals(ty, &self.copy_nominals)
     }
 
+    fn type_needs_drop(&self, ty: &Ty) -> bool {
+        self.type_needs_drop_inner(ty, &mut HashSet::new())
+    }
+
+    fn type_needs_drop_inner(&self, ty: &Ty, visiting: &mut HashSet<Ty>) -> bool {
+        if !visiting.insert(ty.clone()) {
+            return true;
+        }
+        let has_custom_drop = self.trait_impls.keys().any(|key| {
+            key.self_ty == *ty
+                && key.trait_ref.name == self.lang_item_name(LangItemKind::Drop)
+                && key.trait_ref.arguments.is_empty()
+        });
+        let result = has_custom_drop
+            || match ty {
+                Ty::Array(element, _) => self.type_needs_drop_inner(element, visiting),
+                Ty::Struct(name) => self.struct_layouts.get(name).is_some_and(|layout| {
+                    layout
+                        .fields
+                        .iter()
+                        .any(|field| self.type_needs_drop_inner(&field.ty, visiting))
+                }),
+                Ty::Enum(name) => self.enum_layouts.get(name).is_some_and(|layout| {
+                    layout.variants.iter().any(|variant| {
+                        variant
+                            .fields
+                            .iter()
+                            .any(|field| self.type_needs_drop_inner(&field.ty, visiting))
+                    })
+                }),
+                Ty::Function(_) => true,
+                Ty::I32
+                | Ty::I64
+                | Ty::U32
+                | Ty::U64
+                | Ty::Bool
+                | Ty::Unit
+                | Ty::Never
+                | Ty::Error => false,
+            };
+        visiting.remove(ty);
+        result
+    }
+
     fn effective_pass_mode(&self, mode: PassMode, ty: &Ty) -> PassMode {
         match mode {
             PassMode::Inferred if self.is_copy_type(ty) => PassMode::Copy,
@@ -6451,6 +6495,14 @@ impl Analyzer {
                 // particular, `x = x` must not resurrect an unavailable `x`.
                 let value = self.lower_expr(value, Some(&place.ty), context);
                 let assignment = self.mark_initialized(&place, context);
+                if !place.projections.is_empty()
+                    && assignment != AssignmentKind::Overwrite
+                    && self.type_needs_drop(&place.root_ty)
+                {
+                    self.error(
+                        "reinitializing fields of a partially moved value that needs drop is not supported until partial-drop LLVM lowering is complete",
+                    );
+                }
                 HirExpr {
                     ty: Ty::Unit,
                     kind: HirExprKind::Assign {
@@ -7046,6 +7098,12 @@ impl Analyzer {
                     ));
                     continue;
                 }
+                ClosureCaptureMode::Move if self.type_needs_drop(&local.ty) => {
+                    self.error(format!(
+                        "FnOnce move capture `{name}` cannot own a value that needs drop until closure-environment cleanup lowering is complete"
+                    ));
+                    continue;
+                }
                 _ => {}
             }
 
@@ -7494,6 +7552,10 @@ impl Analyzer {
             AccessKind::Move => {
                 if place.capability != LocalCapability::Owned {
                     self.error("cannot move out of a borrowed value");
+                } else if !place.projections.is_empty() && self.type_needs_drop(&place.root_ty) {
+                    self.error(
+                        "moving a field out of a value that needs drop is not supported until partial-drop LLVM lowering is complete",
+                    );
                 } else if context.guard_move_restricted.contains(&place.local)
                     && !self.is_copy_type(&place.ty)
                 {
@@ -7917,6 +7979,11 @@ impl Analyzer {
         };
         if !self.require_field_access(struct_name, field, &context.origin) {
             return error_expr();
+        }
+        if self.type_needs_drop(&base.ty) {
+            self.error(
+                "taking a field from a temporary value that needs drop is not supported until partial-drop LLVM lowering is complete",
+            );
         }
         HirExpr {
             ty: field.ty.clone(),
@@ -8856,6 +8923,11 @@ impl Analyzer {
         context: &mut LowerCtx,
         bindings: &mut Vec<HirPatternBinding>,
     ) {
+        if self.type_needs_drop(&ty) {
+            self.error(
+                "moving a value that needs drop into a pattern binding is not supported until partial-drop LLVM lowering is complete",
+            );
+        }
         if context
             .scopes
             .last()
@@ -13127,11 +13199,20 @@ impl ConstantEvaluator<'_> {
 struct Emitter<'a> {
     program: &'a HirProgram,
     constants: HashMap<String, ConstValue>,
+    cleanup_plans: &'a [CleanupPlan],
 }
 
 impl<'a> Emitter<'a> {
-    fn new(program: &'a HirProgram, constants: HashMap<String, ConstValue>) -> Self {
-        Self { program, constants }
+    fn new(
+        program: &'a HirProgram,
+        constants: HashMap<String, ConstValue>,
+        cleanup_plans: &'a [CleanupPlan],
+    ) -> Self {
+        Self {
+            program,
+            constants,
+            cleanup_plans,
+        }
     }
 
     fn emit_module(&self, include_entry_point: bool) -> Result<String, Diagnostic> {
@@ -13186,8 +13267,13 @@ impl<'a> Emitter<'a> {
             output.push('\n');
         }
 
-        for function in &self.program.functions {
-            let mut emitter = FunctionEmitter::new(function, self.program);
+        if self.cleanup_plans.len() != self.program.functions.len() {
+            return Err(Diagnostic::new(
+                "internal error: cleanup plan count does not match HIR function count",
+            ));
+        }
+        for (function, cleanup_plan) in self.program.functions.iter().zip(self.cleanup_plans) {
+            let mut emitter = FunctionEmitter::new(function, self.program, cleanup_plan);
             output.push_str(&emitter.emit()?);
             output.push('\n');
         }
@@ -13391,11 +13477,21 @@ impl Operand {
 struct EmitLoopTarget {
     break_label: String,
     result: Option<(Ty, String)>,
+    cleanup_depth: usize,
+}
+
+#[derive(Clone)]
+struct RuntimeDropSlot {
+    local: Option<LocalId>,
+    ty: Ty,
+    pointer: String,
+    flag: String,
 }
 
 struct FunctionEmitter<'a> {
     function: &'a HirFunction,
     program: &'a HirProgram,
+    cleanup_plan: &'a CleanupPlan,
     output: String,
     next_register: usize,
     next_label: usize,
@@ -13403,15 +13499,21 @@ struct FunctionEmitter<'a> {
     partial_captures: HashMap<LocalId, Vec<Option<(Ty, String)>>>,
     entry_allocas: String,
     loops: Vec<EmitLoopTarget>,
+    drop_slots: Vec<RuntimeDropSlot>,
     current_label: String,
     terminated: bool,
 }
 
 impl<'a> FunctionEmitter<'a> {
-    fn new(function: &'a HirFunction, program: &'a HirProgram) -> Self {
+    fn new(
+        function: &'a HirFunction,
+        program: &'a HirProgram,
+        cleanup_plan: &'a CleanupPlan,
+    ) -> Self {
         Self {
             function,
             program,
+            cleanup_plan,
             output: String::new(),
             next_register: 0,
             next_label: 0,
@@ -13419,6 +13521,7 @@ impl<'a> FunctionEmitter<'a> {
             partial_captures: HashMap::new(),
             entry_allocas: String::new(),
             loops: Vec::new(),
+            drop_slots: Vec::new(),
             current_label: "entry".to_owned(),
             terminated: false,
         }
@@ -13473,10 +13576,18 @@ impl<'a> FunctionEmitter<'a> {
             let pointer = self.entry_alloca(&ty, &llvm_comment(&parameter.name));
             self.instruction(format!("store {ty} %arg.{index}, ptr {pointer}"));
             self.locals.insert(parameter.id, pointer);
+            if self.source_local_needs_drop(parameter.id)? {
+                self.register_drop_slot(
+                    Some(parameter.id),
+                    parameter.ty.clone(),
+                    self.locals[&parameter.id].clone(),
+                );
+            }
         }
 
         let body = self.emit_expr(&self.function.body)?;
         if !self.terminated {
+            self.emit_cleanup_range(0)?;
             match self.function.result {
                 Ty::Unit => self.terminate("ret void"),
                 _ => {
@@ -13489,6 +13600,121 @@ impl<'a> FunctionEmitter<'a> {
             .insert_str(entry_alloca_offset, &self.entry_allocas);
         self.output.push_str("}\n");
         Ok(std::mem::take(&mut self.output))
+    }
+
+    fn register_drop_slot(&mut self, local: Option<LocalId>, ty: Ty, pointer: String) {
+        let flag = self.entry_alloca("i1", "drop flag");
+        self.instruction(format!("store i1 true, ptr {flag}"));
+        self.drop_slots.push(RuntimeDropSlot {
+            local,
+            ty,
+            pointer,
+            flag,
+        });
+    }
+
+    fn source_local_needs_drop(&self, source_local: LocalId) -> Result<bool, Diagnostic> {
+        let local = self
+            .cleanup_plan
+            .locals
+            .iter()
+            .find(|local| {
+                local.source_local == Some(source_local)
+                    && local.ownership == CleanupLocalOwnership::Owned
+            })
+            .ok_or_else(|| {
+                Diagnostic::new(format!(
+                    "internal error: HIR local {source_local} has no owned cleanup local"
+                ))
+            })?;
+        let root = self
+            .cleanup_plan
+            .move_paths
+            .iter()
+            .find(|path| path.place.local == local.id && path.parent.is_none())
+            .ok_or_else(|| {
+                Diagnostic::new(format!(
+                    "internal error: cleanup local {:?} has no root move path",
+                    local.id
+                ))
+            })?;
+        Ok(root.needs_drop)
+    }
+
+    fn set_local_drop_flag(&mut self, local: LocalId, value: bool) {
+        if let Some(slot) = self
+            .drop_slots
+            .iter()
+            .rev()
+            .find(|slot| slot.local == Some(local))
+            .cloned()
+        {
+            self.instruction(format!("store i1 {value}, ptr {}", slot.flag));
+        }
+    }
+
+    fn emit_cleanup_range(&mut self, start: usize) -> Result<(), Diagnostic> {
+        let slots = self.drop_slots[start..].to_vec();
+        for slot in slots.into_iter().rev() {
+            self.emit_conditional_drop(&slot)?;
+        }
+        Ok(())
+    }
+
+    fn release_drop_slots(&mut self, start: usize) {
+        let flags = self.drop_slots[start..]
+            .iter()
+            .map(|slot| slot.flag.clone())
+            .collect::<Vec<_>>();
+        for flag in flags {
+            self.instruction(format!("store i1 false, ptr {flag}"));
+        }
+        self.drop_slots.truncate(start);
+    }
+
+    fn hold_operand_for_early_exit(&mut self, operand: &Operand) -> Result<(), Diagnostic> {
+        if !self.program.needs_drop(&operand.ty) {
+            return Ok(());
+        }
+        let ty = llvm_value_type(&operand.ty)?;
+        let pointer = self.entry_alloca(&ty, "staged owned value");
+        self.instruction(format!("store {ty} {}, ptr {pointer}", operand.value()?));
+        self.register_drop_slot(None, operand.ty.clone(), pointer);
+        Ok(())
+    }
+
+    fn emit_conditional_drop(&mut self, slot: &RuntimeDropSlot) -> Result<(), Diagnostic> {
+        let flag = self.fresh_register();
+        self.instruction(format!("{flag} = load i1, ptr {}", slot.flag));
+        let drop_label = self.fresh_label("drop.run");
+        let done_label = self.fresh_label("drop.done");
+        self.terminate(format!(
+            "br i1 {flag}, label %{drop_label}, label %{done_label}"
+        ));
+        self.start_block(&drop_label);
+        self.instruction(format!("store i1 false, ptr {}", slot.flag));
+        self.instruction(format!(
+            "call void @{}(ptr {})",
+            drop_glue_symbol(&slot.ty),
+            slot.pointer
+        ));
+        self.terminate(format!("br label %{done_label}"));
+        self.start_block(&done_label);
+        Ok(())
+    }
+
+    fn emit_drop_operand(&mut self, operand: &Operand) -> Result<(), Diagnostic> {
+        if !self.program.needs_drop(&operand.ty) {
+            return Ok(());
+        }
+        let ty = llvm_value_type(&operand.ty)?;
+        let pointer = self.entry_alloca(&ty, "discarded drop value");
+        self.instruction(format!("store {ty} {}, ptr {pointer}", operand.value()?));
+        self.instruction(format!(
+            "call void @{}(ptr {pointer})",
+            drop_glue_symbol(&operand.ty)
+        ));
+        Ok(())
     }
 
     fn emit_expr(&mut self, expression: &HirExpr) -> Result<Operand, Diagnostic> {
@@ -13516,13 +13742,16 @@ impl<'a> FunctionEmitter<'a> {
             }),
             HirExprKind::Unit => Ok(Operand::unit()),
             HirExprKind::Array(elements) => {
+                let cleanup_depth = self.drop_slots.len();
                 let aggregate_ty = llvm_value_type(&expression.ty)?;
                 let mut aggregate = "zeroinitializer".to_owned();
                 for (index, element) in elements.iter().enumerate() {
                     let element = self.emit_expr(element)?;
                     if self.terminated {
+                        self.drop_slots.truncate(cleanup_depth);
                         return Ok(Operand::never());
                     }
+                    self.hold_operand_for_early_exit(&element)?;
                     let register = self.fresh_register();
                     self.instruction(format!(
                         "{register} = insertvalue {aggregate_ty} {aggregate}, {} {}, {index}",
@@ -13531,6 +13760,7 @@ impl<'a> FunctionEmitter<'a> {
                     ));
                     aggregate = register;
                 }
+                self.release_drop_slots(cleanup_depth);
                 Ok(Operand {
                     ty: expression.ty.clone(),
                     value: Some(aggregate),
@@ -13542,7 +13772,6 @@ impl<'a> FunctionEmitter<'a> {
                 length,
             } => self.emit_index(expression, base, index, *length),
             HirExprKind::Read { place, kind } => {
-                let _ = kind;
                 if expression.ty == Ty::Unit {
                     return Ok(Operand::unit());
                 }
@@ -13550,6 +13779,12 @@ impl<'a> FunctionEmitter<'a> {
                 let register = self.fresh_register();
                 let ty = llvm_value_type(&expression.ty)?;
                 self.instruction(format!("{register} = load {ty}, ptr {pointer}"));
+                if *kind == HirReadKind::Move
+                    && place.projections.is_empty()
+                    && self.program.needs_drop(&place.root_ty)
+                {
+                    self.set_local_drop_flag(place.local, false);
+                }
                 Ok(Operand {
                     ty: expression.ty.clone(),
                     value: Some(register),
@@ -13574,13 +13809,16 @@ impl<'a> FunctionEmitter<'a> {
                 "function value `{name}` reached LLVM emission"
             ))),
             HirExprKind::ConstructStruct { name, fields } => {
+                let cleanup_depth = self.drop_slots.len();
                 let aggregate_ty = llvm_value_type(&Ty::Struct(name.clone()))?;
                 let mut aggregate = "zeroinitializer".to_owned();
                 for (index, field) in fields {
                     let field = self.emit_expr(field)?;
                     if self.terminated {
+                        self.drop_slots.truncate(cleanup_depth);
                         return Ok(Operand::never());
                     }
+                    self.hold_operand_for_early_exit(&field)?;
                     if field.ty == Ty::Unit {
                         continue;
                     }
@@ -13592,6 +13830,7 @@ impl<'a> FunctionEmitter<'a> {
                     ));
                     aggregate = register;
                 }
+                self.release_drop_slots(cleanup_depth);
                 Ok(Operand {
                     ty: expression.ty.clone(),
                     value: Some(aggregate),
@@ -13602,6 +13841,7 @@ impl<'a> FunctionEmitter<'a> {
                 variant,
                 fields,
             } => {
+                let cleanup_depth = self.drop_slots.len();
                 let layout = self.program.enum_layout(name).ok_or_else(|| {
                     Diagnostic::new(format!("internal error: missing enum layout `{name}`"))
                 })?;
@@ -13615,8 +13855,10 @@ impl<'a> FunctionEmitter<'a> {
                 for (index, field) in fields {
                     let field = self.emit_expr(field)?;
                     if self.terminated {
+                        self.drop_slots.truncate(cleanup_depth);
                         return Ok(Operand::never());
                     }
+                    self.hold_operand_for_early_exit(&field)?;
                     if field.ty == Ty::Unit {
                         continue;
                     }
@@ -13629,6 +13871,7 @@ impl<'a> FunctionEmitter<'a> {
                     ));
                     aggregate = register;
                 }
+                self.release_drop_slots(cleanup_depth);
                 Ok(Operand {
                     ty: expression.ty.clone(),
                     value: Some(aggregate),
@@ -13728,9 +13971,6 @@ impl<'a> FunctionEmitter<'a> {
                 value,
                 assignment,
             } => {
-                // Kept in HIR for the cleanup planner; stores are identical
-                // until source-backed `Drop` is introduced.
-                let _ = assignment;
                 let value = self.emit_expr(value)?;
                 if self.terminated {
                     return Ok(Operand::never());
@@ -13740,7 +13980,37 @@ impl<'a> FunctionEmitter<'a> {
                 }
                 let ty = llvm_value_type(&value.ty)?;
                 let pointer = self.emit_place_address(place)?;
+                if self.program.needs_drop(&place.ty)
+                    && matches!(
+                        assignment,
+                        AssignmentKind::Overwrite | AssignmentKind::MaybeOverwrite
+                    )
+                {
+                    if place.projections.is_empty() {
+                        let slot = self
+                            .drop_slots
+                            .iter()
+                            .rev()
+                            .find(|slot| slot.local == Some(place.local))
+                            .cloned()
+                            .ok_or_else(|| {
+                                Diagnostic::new(format!(
+                                    "internal error: missing drop slot for local {}",
+                                    place.local
+                                ))
+                            })?;
+                        self.emit_conditional_drop(&slot)?;
+                    } else {
+                        self.instruction(format!(
+                            "call void @{}(ptr {pointer})",
+                            drop_glue_symbol(&place.ty)
+                        ));
+                    }
+                }
                 self.instruction(format!("store {ty} {}, ptr {pointer}", value.value()?));
+                if place.projections.is_empty() && self.program.needs_drop(&place.ty) {
+                    self.set_local_drop_flag(place.local, true);
+                }
                 Ok(Operand::unit())
             }
             HirExprKind::Call {
@@ -13748,12 +14018,14 @@ impl<'a> FunctionEmitter<'a> {
                 arguments,
                 ..
             } => {
+                let cleanup_depth = self.drop_slots.len();
                 let mut emitted_arguments = Vec::new();
                 for argument in arguments {
                     match argument {
                         HirArgument::Copy(argument) | HirArgument::Move(argument) => {
                             let argument = self.emit_expr(argument)?;
                             if self.terminated {
+                                self.drop_slots.truncate(cleanup_depth);
                                 return Ok(Operand::never());
                             }
                             if argument.ty == Ty::Unit {
@@ -13764,6 +14036,7 @@ impl<'a> FunctionEmitter<'a> {
                                 llvm_value_type(&argument.ty)?,
                                 argument.value()?
                             ));
+                            self.hold_operand_for_early_exit(&argument)?;
                         }
                         HirArgument::SharedBorrow(place) | HirArgument::MutBorrow(place) => {
                             if place.ty == Ty::Unit {
@@ -13774,6 +14047,7 @@ impl<'a> FunctionEmitter<'a> {
                         }
                     }
                 }
+                self.release_drop_slots(cleanup_depth);
                 let call = format!(
                     "call {} @{}({})",
                     llvm_return_type(&expression.ty)?,
@@ -13831,6 +14105,7 @@ impl<'a> FunctionEmitter<'a> {
                 closure.function
             ))),
             HirExprKind::Block(statements, tail) => {
+                let cleanup_depth = self.drop_slots.len();
                 for statement in statements {
                     if self.terminated {
                         break;
@@ -13918,19 +14193,34 @@ impl<'a> FunctionEmitter<'a> {
                                 value.value()?
                             ));
                             self.locals.insert(binding.id, pointer);
+                            if self.source_local_needs_drop(binding.id)? {
+                                self.register_drop_slot(
+                                    Some(binding.id),
+                                    binding.ty.clone(),
+                                    self.locals[&binding.id].clone(),
+                                );
+                            }
                         }
                         HirStmt::Expr(expression) => {
-                            self.emit_expr(expression)?;
+                            let value = self.emit_expr(expression)?;
+                            if !self.terminated {
+                                self.emit_drop_operand(&value)?;
+                            }
                         }
                     }
                 }
-                if self.terminated {
+                let result = if self.terminated {
                     Ok(Operand::never())
                 } else if let Some(tail) = tail {
                     self.emit_expr(tail)
                 } else {
                     Ok(Operand::unit())
+                };
+                if !self.terminated {
+                    self.emit_cleanup_range(cleanup_depth)?;
                 }
+                self.drop_slots.truncate(cleanup_depth);
+                result
             }
             HirExprKind::If {
                 condition,
@@ -13943,6 +14233,7 @@ impl<'a> FunctionEmitter<'a> {
                     if self.terminated {
                         return Ok(Operand::never());
                     }
+                    self.emit_cleanup_range(0)?;
                     if value.ty == Ty::Unit {
                         self.terminate("ret void");
                     } else {
@@ -13950,6 +14241,7 @@ impl<'a> FunctionEmitter<'a> {
                         self.terminate(format!("ret {ty} {}", value.value()?));
                     }
                 } else {
+                    self.emit_cleanup_range(0)?;
                     self.terminate("ret void");
                 }
                 Ok(Operand::never())
@@ -14074,6 +14366,7 @@ impl<'a> FunctionEmitter<'a> {
         self.loops.push(EmitLoopTarget {
             break_label: end_label.clone(),
             result: None,
+            cleanup_depth: self.drop_slots.len(),
         });
 
         self.start_block(&condition_label);
@@ -14108,6 +14401,7 @@ impl<'a> FunctionEmitter<'a> {
         self.loops.push(EmitLoopTarget {
             break_label: end_label.clone(),
             result: result.clone(),
+            cleanup_depth: self.drop_slots.len(),
         });
         self.start_block(&body_label);
         self.emit_expr(body)?;
@@ -14160,6 +14454,7 @@ impl<'a> FunctionEmitter<'a> {
             }
             (None, None) | (None, Some(_)) => {}
         }
+        self.emit_cleanup_range(target.cleanup_depth)?;
         self.terminate(format!("br label %{}", target.break_label));
         Ok(Operand::never())
     }
@@ -14173,6 +14468,13 @@ impl<'a> FunctionEmitter<'a> {
         let scrutinee = self.emit_expr(scrutinee)?;
         if self.terminated {
             return Ok(Operand::never());
+        }
+        let match_cleanup_depth = self.drop_slots.len();
+        if self.program.needs_drop(&scrutinee.ty) {
+            let ty = llvm_value_type(&scrutinee.ty)?;
+            let pointer = self.entry_alloca(&ty, "match scrutinee");
+            self.instruction(format!("store {ty} {}, ptr {pointer}", scrutinee.value()?));
+            self.register_drop_slot(None, scrutinee.ty.clone(), pointer);
         }
         let Ty::Enum(enum_name) = &scrutinee.ty else {
             return Err(Diagnostic::new(
@@ -14253,6 +14555,7 @@ impl<'a> FunctionEmitter<'a> {
 
                 let body = self.emit_expr(&arm.body)?;
                 if !self.terminated {
+                    self.emit_cleanup_range(match_cleanup_depth)?;
                     let predecessor = self.current_label.clone();
                     self.terminate(format!("br label %{merge_label}"));
                     incoming.push((body, predecessor));
@@ -14261,9 +14564,11 @@ impl<'a> FunctionEmitter<'a> {
         }
 
         if incoming.is_empty() {
+            self.drop_slots.truncate(match_cleanup_depth);
             self.terminated = true;
             return Ok(Operand::never());
         }
+        self.drop_slots.truncate(match_cleanup_depth);
         self.start_block(&merge_label);
         if expression.ty == Ty::Unit {
             return Ok(Operand::unit());
@@ -16657,6 +16962,48 @@ let main(): i32 = {
             drop_glue_symbol(&resource)
         )));
         assert!(ir.contains("switch i32 %tag, label %done"));
+        assert!(ir.contains("alloca i1 ; drop flag"));
+        assert!(ir.contains(&format!("call void @{}(ptr", drop_glue_symbol(&choice))));
+    }
+
+    #[test]
+    fn rejects_partial_moves_and_rebuilds_that_drop_lowering_cannot_yet_execute() {
+        let partial_move = compile_text(
+            r#"
+let Resource = struct(value: i32)
+let Wrapper = struct(resource: Resource, plain: i32)
+extend Resource: Drop {
+  let drop(mut borrow self)(): () = ()
+}
+let main(): i32 = {
+  let wrapper = Wrapper(Resource(1), 0)
+  let resource = wrapper.resource
+  0
+}
+"#,
+        )
+        .expect_err("partial movement from drop storage must be rejected for now");
+        assert!(partial_move
+            .iter()
+            .any(|error| error.message.contains("partial-drop LLVM lowering")));
+
+        let pattern_move = compile_text(
+            r#"
+let Resource = struct(value: i32)
+let Choice = enum { Some(Resource), None }
+extend Resource: Drop {
+  let drop(mut borrow self)(): () = ()
+}
+let main(): i32 = Choice.Some(Resource(1)) match {
+  Some(resource) => 1,
+  None => 0
+}
+"#,
+        )
+        .expect_err("drop payload pattern moves must be rejected for now");
+        assert!(pattern_move
+            .iter()
+            .any(|error| error.message.contains("pattern binding")));
     }
 
     #[test]

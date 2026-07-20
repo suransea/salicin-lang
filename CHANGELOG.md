@@ -6,6 +6,23 @@ subset.
 
 ## Unreleased
 
+## 0.16.0 - 2026-07-21
+
+- Connected each LLVM function emitter to its verified `CleanupPlan` and materialized drop flags
+  for owned parameters and locals whose typed root move paths need destruction.
+- Updated flags on root moves and reinitialization, conditionally dropped overwritten values before
+  stores, and emitted reverse-order cleanup on normal block exit, explicit and implicit returns,
+  loop breaks, match scrutinees, discarded expressions, and callee-owned parameters.
+- Staged owned aggregate fields and call arguments until construction or invocation commits. If a
+  later operand returns early, already evaluated resources are cleaned; successful completion clears
+  the staging flags and transfers ownership exactly once.
+- Added native observable cleanup tests using runtime traps, covering once-only destruction,
+  conditional moves, overwrite, return, break, match, discarded values, and partial-construction
+  early exits.
+- Explicitly rejected projection moves/rebuilds, drop-bearing pattern bindings and temporary field
+  extraction, and resource-owning closure captures until projection-level and closure-environment
+  cleanup lowering can execute those cases correctly.
+
 ## 0.15.0 - 2026-07-21
 
 - Added the canonical `Drop` trait to the edition 2026 core source and validated its exact
