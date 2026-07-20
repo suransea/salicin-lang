@@ -3663,6 +3663,9 @@ impl Analyzer {
             let next_closure = self.next_closure;
             let inherent_members_before = self.inherent_members.clone();
             let copy_nominals_before = self.copy_nominals.clone();
+            let trait_impl_headers_before = self.trait_impl_headers.clone();
+            let trait_impls_before = self.trait_impls.clone();
+            let trait_methods_before = self.trait_methods_by_receiver.clone();
 
             let mut function = template;
             substitute_function_types(&mut function, &substitutions);
@@ -3680,6 +3683,7 @@ impl Analyzer {
                     self.copy_nominals.insert(subject);
                 }
             }
+            self.install_assumed_where_predicates(&template_name, &function.where_predicates);
             let validation_name = generic_validation_name(&template_name);
             function.name = validation_name.clone();
             function.compile_groups.clear();
@@ -3728,6 +3732,89 @@ impl Analyzer {
             self.next_closure = next_closure;
             self.inherent_members = inherent_members_before;
             self.copy_nominals = copy_nominals_before;
+            self.trait_impl_headers = trait_impl_headers_before;
+            self.trait_impls = trait_impls_before;
+            self.trait_methods_by_receiver = trait_methods_before;
+        }
+    }
+
+    fn install_assumed_where_predicates(
+        &mut self,
+        function: &str,
+        predicates: &[crate::ast::WherePredicate],
+    ) {
+        for predicate in predicates {
+            let Type::Named(trait_name, source_arguments) = &predicate.trait_ref else {
+                continue;
+            };
+            let Some(schema) = self.traits.get(trait_name).cloned() else {
+                continue;
+            };
+            let self_ty = self.lower_source_type(&predicate.subject);
+            let arguments = source_arguments
+                .iter()
+                .map(|argument| self.lower_source_type(argument))
+                .collect::<Vec<_>>();
+            if self_ty == Ty::Error || arguments.contains(&Ty::Error) {
+                continue;
+            }
+            let key = TraitImplKey {
+                self_ty,
+                trait_ref: TraitRefKey {
+                    name: trait_name.clone(),
+                    arguments,
+                },
+            };
+            self.trait_impl_headers.insert(key.clone());
+            if !schema.associated_types.is_empty() || self.trait_impls.contains_key(&key) {
+                continue;
+            }
+
+            let mut substitutions = HashMap::new();
+            substitutions.insert("Self".to_owned(), predicate.subject.clone());
+            for (parameter, argument) in schema.compile_parameters.iter().zip(source_arguments) {
+                substitutions.insert(parameter.name.clone(), argument.clone());
+            }
+            let mut methods = HashMap::new();
+            for method_name in &schema.method_order {
+                let mut method = schema.methods[method_name].clone();
+                substitute_function_types(&mut method, &substitutions);
+                let canonical = assumed_trait_method_name(function, &key, method_name);
+                let groups = method
+                    .groups
+                    .iter()
+                    .map(|group| {
+                        group
+                            .iter()
+                            .map(|parameter| ParamSig {
+                                name: parameter.name.clone(),
+                                ty: self.lower_source_type(&parameter.ty),
+                                mode: parameter.mode,
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let result = method
+                    .return_type
+                    .as_ref()
+                    .map(|result| self.lower_source_type(result));
+                self.signatures
+                    .insert(canonical.clone(), FunctionSig { groups, result });
+                methods.insert(method_name.clone(), canonical);
+                self.trait_methods_by_receiver
+                    .entry((key.self_ty.clone(), method_name.clone()))
+                    .or_default()
+                    .push(key.clone());
+            }
+            self.trait_impls.insert(
+                key.clone(),
+                TraitImplInfo {
+                    key,
+                    associated_types: HashMap::new(),
+                    methods,
+                    access: schema.access,
+                },
+            );
         }
     }
 
@@ -17745,6 +17832,13 @@ fn trait_method_name(key: &TraitImplKey, member: &str) -> String {
     canonical
 }
 
+fn assumed_trait_method_name(function: &str, key: &TraitImplKey, member: &str) -> String {
+    let mut canonical = String::from("$generic$bound$");
+    push_canonical_component(&mut canonical, function);
+    push_canonical_component(&mut canonical, &trait_method_name(key, member));
+    canonical
+}
+
 fn function_symbol(name: &str) -> String {
     format!("sali.fn.{}", hex_name(name))
 }
@@ -18820,6 +18914,44 @@ let main(): i32 = {
             assert!(!ir.contains(&marker));
             assert!(!ir.contains(&hex_name(&marker)));
         }
+    }
+
+    #[test]
+    fn where_bound_validation_rolls_back_assumed_trait_implementations() {
+        let program = crate::parser::parse(
+            "let Measure = trait { let measure(borrow self)(): i32 }\n\
+             let Value = struct(value: i32)\n\
+             extend Value: Measure {\n\
+               let measure(borrow self)(): i32 = self.value\n\
+             }\n\
+             let read(T: type)(borrow value: T): i32\n\
+             where T: Measure = value.measure()\n\
+             let main(): i32 = { let value = Value(42); read(value) }\n",
+        )
+        .expect("where-bound method source must parse");
+        let mut analyzer = Analyzer::new(&program);
+        assert!(
+            analyzer
+                .signatures
+                .keys()
+                .all(|name| !name.contains("$generic$bound$")),
+            "assumed method signatures escaped template validation"
+        );
+        assert!(analyzer.trait_impls.keys().all(|key| {
+            !analyzer
+                .abstract_type_parameters
+                .keys()
+                .any(|marker| nominal_name(&key.self_ty) == Some(marker.as_str()))
+        }));
+
+        analyzer
+            .analyze()
+            .expect("concrete monomorphization must select the real implementation");
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "{:?}",
+            analyzer.diagnostics
+        );
     }
 
     #[test]

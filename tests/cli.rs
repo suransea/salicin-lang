@@ -307,6 +307,38 @@ fn where_copy_bounds_validate_generic_bodies_and_concrete_calls() {
 }
 
 #[test]
+fn where_trait_bounds_enable_abstract_method_dispatch() {
+    for name in [
+        "where_method_dispatch.sali",
+        "where_generic_trait_method.sali",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run generic where-bound method dispatch");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+
+    let output = salic()
+        .arg("check")
+        .arg(fixture("fail", "where_method_missing_bound.sali"))
+        .output()
+        .expect("reject unbounded abstract method dispatch");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("unknown method"),
+        "{}",
+        output_text(&output)
+    );
+}
+
+#[test]
 fn generic_inherent_extensions_resolve_across_file_modules() {
     let project = TestDirectory::new();
     project.write(

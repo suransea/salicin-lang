@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.34.0 - 2026-07-21
+
+- Enabled static method dispatch on abstract values through ordinary generic-function trait bounds,
+  so a body constrained by `where T: Measure` may call `value.measure()`.
+- Added temporary assumed trait implementations during template checking. Their signatures and
+  selection entries are fully rolled back, while concrete monomorphizations select the real impl.
+- Propagated bounds through nested generic calls: a constrained generic function can satisfy the
+  equivalent predicate required by another generic function without prematurely choosing a concrete
+  type.
+- Kept methods involving associated types disabled until associated-type equality predicates can
+  determine their signatures.
+
 ## 0.33.0 - 2026-07-21
 
 - Added source-level `where T: Trait` predicates to generic functions, including multiple predicates
