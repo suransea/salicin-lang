@@ -218,12 +218,23 @@ v0.13.0 重做泛型调用推断语法：
   `make(value: 10)` 可明确选择运行时参数。
 - `_` 继续用于模式通配符和匿名函数类型槽，但在类型和表达式位置会直接报错。
 
+v0.14.0 完成析构需求与 drop-flag 规划：
+
+- HIR cleanup planner 为每个静态 move path 记录 `needs_drop`；内建 `Copy` 值不需要析构，非
+  `Copy` 名义聚合与 callable 先按保守规则保留析构义务。
+- cleanup fixed point 在每个 `StorageDead` 前生成树形 drop obligations：确定完整的值静态析构，
+  条件完整的值使用稳定编号的 flag，部分聚合只递归到仍可能初始化的字段，避免父子重复析构。
+- drop flags 带有随 `StorageLive`、初始化、移动、Transfer、discriminant 更新和 `StorageDead`
+  变化的 set/clear action；缓存分析会由 verifier 重算并校验。
+- 这一版只建立可执行 lowering 所需的准确计划；尚未公开 `Drop`，也未在 LLVM 中分配 flag 或调用
+  析构函数。下一步把 source-backed `Drop`、递归 drop glue 与这些 obligations 一起降到 LLVM。
+
 标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
 所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
 `Copy`，v0.9 建立 cleanup CFG，v0.10 补齐资源 storage/transfer，v0.11 完成完整 move-path forest 与
-初始化 fixed point，v0.12 再完成 temporary storage liveness；这些都属于已经开始的 `core` 阶段，
-但还不发出析构。下一步先完成 `needs_drop` 与 runtime drop flags，再提供 source-backed `Drop` 和
-drop glue；其后才固定
+初始化 fixed point，v0.12 再完成 temporary storage liveness，v0.14 已加入 `needs_drop` 与控制流敏感
+drop-flag 计划；这些都属于已经开始的 `core` 阶段，但还不发出析构。下一步提供 source-backed
+`Drop`、递归 drop glue 和 LLVM cleanup lowering；其后才固定
 raw pointer 与 allocator ABI 并进入 `alloc`。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
 运行时之后。
 

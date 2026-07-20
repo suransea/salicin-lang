@@ -27,6 +27,7 @@ index_id!(ScopeId);
 index_id!(LocalId);
 index_id!(MovePathId);
 index_id!(BasicBlockId);
+index_id!(DropFlagId);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ScopeKind {
@@ -116,6 +117,9 @@ pub(crate) struct MovePath {
     pub(crate) id: MovePathId,
     pub(crate) place: Place,
     pub(crate) parent: Option<MovePathId>,
+    /// Supplied by typed semantic analysis. The cleanup module never infers
+    /// this property from move-only storage on its own.
+    pub(crate) needs_drop: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -325,6 +329,77 @@ pub(crate) enum StorageLiveness {
     Live,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DropCondition {
+    Static,
+    Flag(DropFlagId),
+}
+
+/// A tree-shaped cleanup decision. When a flag is set, `path` is complete and
+/// its drop glue owns recursive cleanup. When it is clear, only the listed
+/// partially initialized children may be dropped.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DropObligation {
+    pub(crate) path: MovePathId,
+    pub(crate) condition: DropCondition,
+    pub(crate) children_when_clear: Vec<DropObligation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DropSite {
+    pub(crate) block: BasicBlockId,
+    pub(crate) operation_index: usize,
+    pub(crate) local: LocalId,
+    pub(crate) obligations: Vec<DropObligation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DropFlag {
+    pub(crate) id: DropFlagId,
+    pub(crate) path: MovePathId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DropFlagValue {
+    Clear,
+    Set,
+}
+
+/// A flag update performed immediately after the indexed cleanup operation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DropFlagAction {
+    pub(crate) block: BasicBlockId,
+    pub(crate) operation_index: usize,
+    pub(crate) flag: DropFlagId,
+    pub(crate) value: DropFlagValue,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DropFlagAnalysis {
+    computed: bool,
+    pub(crate) flags: Vec<DropFlag>,
+    pub(crate) actions: Vec<DropFlagAction>,
+    pub(crate) sites: Vec<DropSite>,
+}
+
+impl DropFlagAnalysis {
+    fn uncomputed() -> Self {
+        Self {
+            computed: false,
+            flags: Vec::new(),
+            actions: Vec::new(),
+            sites: Vec::new(),
+        }
+    }
+
+    pub(crate) fn flag_for_path(&self, path: MovePathId) -> Option<DropFlagId> {
+        self.computed
+            .then(|| self.flags.iter().find(|flag| flag.path == path))
+            .flatten()
+            .map(|flag| flag.id)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum CompletionRule {
     Explicit,
@@ -394,6 +469,7 @@ pub(crate) struct CleanupPlan {
     pub(crate) blocks: Vec<BasicBlock>,
     pub(crate) pending_capabilities: Vec<PendingCapability>,
     pub(crate) move_state: MoveStateAnalysis,
+    pub(crate) drop_flags: DropFlagAnalysis,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -510,6 +586,12 @@ impl MovePathTopology {
         self.preorder_paths[start..self.subtree_end[path.index()]]
             .iter()
             .copied()
+    }
+
+    fn contains_path(&self, ancestor: MovePathId, descendant: MovePathId) -> bool {
+        let start = self.preorder_index[ancestor.index()];
+        let descendant = self.preorder_index[descendant.index()];
+        start <= descendant && descendant < self.subtree_end[ancestor.index()]
     }
 
     fn enum_variants(&self, path: MovePathId) -> Option<&[(u32, MovePathId)]> {
@@ -880,6 +962,10 @@ impl MoveState {
         }
     }
 
+    fn path_may_be_fully_initialized(&self, path: MovePathId) -> bool {
+        self.may_init.contains(path.index())
+    }
+
     fn inactive_downcast(
         &self,
         path: MovePathId,
@@ -908,6 +994,210 @@ impl MoveState {
             cursor = parent;
         }
         None
+    }
+}
+
+impl DropFlagAnalysis {
+    fn compute(plan: &CleanupPlan, move_state: &MoveStateAnalysis) -> Self {
+        let topology = &move_state.topology;
+        let mut conditional_paths = HashSet::new();
+        for block in &plan.blocks {
+            for (operation_index, operation) in block.operations.iter().enumerate() {
+                let CleanupOp::StorageDead(local) = *operation else {
+                    continue;
+                };
+                let Some(root) = topology.roots_by_local[local.index()] else {
+                    continue;
+                };
+                let Some(state) = move_state.state_before(plan, block.id, operation_index) else {
+                    continue;
+                };
+                Self::collect_conditional_paths(
+                    plan,
+                    topology,
+                    &state,
+                    root,
+                    &mut conditional_paths,
+                );
+            }
+        }
+        let mut conditional_paths = conditional_paths.into_iter().collect::<Vec<_>>();
+        conditional_paths.sort_unstable();
+        let flags = conditional_paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| DropFlag {
+                id: DropFlagId(index),
+                path: *path,
+            })
+            .collect::<Vec<_>>();
+        let flags_by_path = flags
+            .iter()
+            .map(|flag| (flag.path, flag.id))
+            .collect::<HashMap<_, _>>();
+
+        let mut actions = Vec::new();
+        for block in &plan.blocks {
+            let Some(mut state) = move_state.block_entry(block.id).cloned() else {
+                continue;
+            };
+            if !state.reachable {
+                continue;
+            }
+            for (operation_index, operation) in block.operations.iter().enumerate() {
+                state.apply_operation(operation, plan, topology);
+                for flag in &flags {
+                    let flag_path = flag.path;
+                    let flag_local = plan.move_paths[flag_path.index()].place.local;
+                    let value = match *operation {
+                        CleanupOp::StorageLive(local) | CleanupOp::StorageDead(local)
+                            if local == flag_local =>
+                        {
+                            Some(DropFlagValue::Clear)
+                        }
+                        CleanupOp::Init(path) | CleanupOp::Overwrite(path)
+                            if (topology.contains_path(path, flag_path)
+                                || topology.contains_path(flag_path, path))
+                                && state.path_initialization(flag_path, topology)
+                                    == PathInitialization::Initialized =>
+                        {
+                            Some(DropFlagValue::Set)
+                        }
+                        CleanupOp::MoveOut(path)
+                            if topology.contains_path(path, flag_path)
+                                || topology.contains_path(flag_path, path) =>
+                        {
+                            Some(DropFlagValue::Clear)
+                        }
+                        CleanupOp::SetDiscriminant { destination, .. }
+                            if topology.contains_path(destination, flag_path)
+                                || topology.contains_path(flag_path, destination) =>
+                        {
+                            Some(DropFlagValue::Clear)
+                        }
+                        CleanupOp::Transfer {
+                            source,
+                            destination,
+                            ..
+                        } => {
+                            let source_affects = topology.contains_path(source, flag_path)
+                                || topology.contains_path(flag_path, source);
+                            let destination_affects = topology
+                                .contains_path(destination, flag_path)
+                                || topology.contains_path(flag_path, destination);
+                            if destination_affects
+                                && state.path_initialization(flag_path, topology)
+                                    == PathInitialization::Initialized
+                            {
+                                Some(DropFlagValue::Set)
+                            } else if source_affects {
+                                Some(DropFlagValue::Clear)
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    };
+                    if let Some(value) = value {
+                        actions.push(DropFlagAction {
+                            block: block.id,
+                            operation_index,
+                            flag: flag.id,
+                            value,
+                        });
+                    }
+                }
+            }
+        }
+
+        let mut sites = Vec::new();
+        for block in &plan.blocks {
+            for (operation_index, operation) in block.operations.iter().enumerate() {
+                let CleanupOp::StorageDead(local) = *operation else {
+                    continue;
+                };
+                let Some(root) = topology.roots_by_local[local.index()] else {
+                    continue;
+                };
+                let Some(state) = move_state.state_before(plan, block.id, operation_index) else {
+                    continue;
+                };
+                let obligations =
+                    Self::obligations_for_path(plan, topology, &state, root, &flags_by_path);
+                if !obligations.is_empty() {
+                    sites.push(DropSite {
+                        block: block.id,
+                        operation_index,
+                        local,
+                        obligations,
+                    });
+                }
+            }
+        }
+        Self {
+            computed: true,
+            flags,
+            actions,
+            sites,
+        }
+    }
+
+    fn collect_conditional_paths(
+        plan: &CleanupPlan,
+        topology: &MovePathTopology,
+        state: &MoveState,
+        path: MovePathId,
+        paths: &mut HashSet<MovePathId>,
+    ) {
+        if state.path_initialization(path, topology) != PathInitialization::MaybeOrPartial {
+            return;
+        }
+        if plan.move_paths[path.index()].needs_drop && state.path_may_be_fully_initialized(path) {
+            paths.insert(path);
+        }
+        for child in &topology.children[path.index()] {
+            Self::collect_conditional_paths(plan, topology, state, *child, paths);
+        }
+    }
+
+    fn obligations_for_path(
+        plan: &CleanupPlan,
+        topology: &MovePathTopology,
+        state: &MoveState,
+        path: MovePathId,
+        flags: &HashMap<MovePathId, DropFlagId>,
+    ) -> Vec<DropObligation> {
+        let status = state.path_initialization(path, topology);
+        if status == PathInitialization::Uninitialized {
+            return Vec::new();
+        }
+        let children = || {
+            topology.children[path.index()]
+                .iter()
+                .flat_map(|child| Self::obligations_for_path(plan, topology, state, *child, flags))
+                .collect::<Vec<_>>()
+        };
+        let needs_drop = plan.move_paths[path.index()].needs_drop;
+        match status {
+            PathInitialization::Initialized if needs_drop => vec![DropObligation {
+                path,
+                condition: DropCondition::Static,
+                children_when_clear: Vec::new(),
+            }],
+            PathInitialization::Initialized => children(),
+            PathInitialization::MaybeOrPartial
+                if needs_drop && state.path_may_be_fully_initialized(path) =>
+            {
+                let flag = flags[&path];
+                vec![DropObligation {
+                    path,
+                    condition: DropCondition::Flag(flag),
+                    children_when_clear: children(),
+                }]
+            }
+            PathInitialization::MaybeOrPartial => children(),
+            PathInitialization::Uninitialized => Vec::new(),
+        }
     }
 }
 
@@ -1042,16 +1332,23 @@ impl MoveStateAnalysis {
 
 impl CleanupPlan {
     pub(crate) fn verify(&self) -> Result<(), Vec<VerifyError>> {
-        let analysis = self.analyze_and_verify()?;
-        if self.move_state.computed && self.move_state != analysis {
+        let (move_state, drop_flags) = self.analyze_and_verify()?;
+        if self.move_state.computed && self.move_state != move_state {
             return Err(vec![VerifyError::new(
                 "cached move-state analysis does not match the cleanup plan",
+            )]);
+        }
+        if self.drop_flags.computed && self.drop_flags != drop_flags {
+            return Err(vec![VerifyError::new(
+                "cached drop-flag analysis does not match the cleanup plan",
             )]);
         }
         Ok(())
     }
 
-    fn analyze_and_verify(&self) -> Result<MoveStateAnalysis, Vec<VerifyError>> {
+    fn analyze_and_verify(
+        &self,
+    ) -> Result<(MoveStateAnalysis, DropFlagAnalysis), Vec<VerifyError>> {
         let mut errors = Vec::new();
 
         self.verify_scopes(&mut errors);
@@ -1072,7 +1369,8 @@ impl CleanupPlan {
         let analysis = MoveStateAnalysis::compute(self, topology);
         self.verify_stable_move_state(&analysis, &mut errors);
         if errors.is_empty() {
-            Ok(analysis)
+            let drop_flags = DropFlagAnalysis::compute(self, &analysis);
+            Ok((analysis, drop_flags))
         } else {
             Err(errors)
         }
@@ -1341,6 +1639,12 @@ impl CleanupPlan {
                             path.id
                         )));
                     }
+                    if path.needs_drop && !parent.needs_drop {
+                        errors.push(VerifyError::new(format!(
+                            "drop-requiring move path {:?} has non-dropping parent {parent_id:?}",
+                            path.id
+                        )));
+                    }
                 }
                 None => {
                     if let Some(count) = roots.get_mut(path.place.local.index()) {
@@ -1520,7 +1824,7 @@ impl CleanupPlan {
                         {
                             errors.push(VerifyError::new(
                                 "pending borrowed place mutation must refer to a visible mutable borrow alias",
-                            ));
+                        ));
                         }
                         if self.move_paths.get(source.index()).is_none()
                             || !block.operations.contains(&CleanupOp::MoveOut(*source))
@@ -2219,6 +2523,7 @@ impl CleanupPlanBuilder {
                 }],
                 pending_capabilities: Vec::new(),
                 move_state: MoveStateAnalysis::uncomputed(),
+                drop_flags: DropFlagAnalysis::uncomputed(),
             },
         }
     }
@@ -2322,6 +2627,15 @@ impl CleanupPlanBuilder {
         place: Place,
         parent: Option<MovePathId>,
     ) -> Result<MovePathId, BuildError> {
+        self.new_move_path_with_drop(place, parent, false)
+    }
+
+    pub(crate) fn new_move_path_with_drop(
+        &mut self,
+        place: Place,
+        parent: Option<MovePathId>,
+        needs_drop: bool,
+    ) -> Result<MovePathId, BuildError> {
         if self.plan.locals.get(place.local.index()).is_none() {
             return Err(BuildError::new(format!(
                 "cannot create move path for invalid local {:?}",
@@ -2336,7 +2650,12 @@ impl CleanupPlanBuilder {
             }
         }
         let id = MovePathId(self.plan.move_paths.len());
-        self.plan.move_paths.push(MovePath { id, place, parent });
+        self.plan.move_paths.push(MovePath {
+            id,
+            place,
+            parent,
+            needs_drop,
+        });
         Ok(id)
     }
 
@@ -2391,8 +2710,9 @@ impl CleanupPlanBuilder {
     }
 
     pub(crate) fn finish(mut self) -> Result<CleanupPlan, Vec<VerifyError>> {
-        let analysis = self.plan.analyze_and_verify()?;
-        self.plan.move_state = analysis;
+        let (move_state, drop_flags) = self.plan.analyze_and_verify()?;
+        self.plan.move_state = move_state;
+        self.plan.drop_flags = drop_flags;
         Ok(self.plan)
     }
 
@@ -4080,5 +4400,230 @@ mod tests {
             plan.path_initialization_before(after, 0, path),
             Some(PathInitialization::Uninitialized)
         );
+    }
+
+    #[test]
+    fn plans_static_drop_without_a_runtime_flag() {
+        let mut builder = CleanupPlanBuilder::new();
+        let scope = builder.root_scope();
+        let block = builder.entry_block();
+        let local = builder
+            .new_local(scope, LocalKind::User, LocalOwnership::Owned, false)
+            .unwrap();
+        let path = builder
+            .new_move_path_with_drop(Place::local(local), None, true)
+            .unwrap();
+        for operation in [
+            CleanupOp::StorageLive(local),
+            CleanupOp::Init(path),
+            CleanupOp::StorageDead(local),
+        ] {
+            builder.push_operation(block, operation).unwrap();
+        }
+        builder
+            .set_terminator(
+                block,
+                Terminator::Return {
+                    exited_scopes: vec![],
+                },
+            )
+            .unwrap();
+
+        let plan = builder.finish().expect("static drop plan");
+        assert!(plan.drop_flags.flags.is_empty());
+        assert_eq!(plan.drop_flags.sites.len(), 1);
+        assert_eq!(
+            plan.drop_flags.sites[0].obligations,
+            vec![DropObligation {
+                path,
+                condition: DropCondition::Static,
+                children_when_clear: Vec::new(),
+            }]
+        );
+    }
+
+    #[test]
+    fn allocates_a_flag_for_conditionally_initialized_drop_storage() {
+        let mut builder = CleanupPlanBuilder::new();
+        let scope = builder.root_scope();
+        let entry = builder.entry_block();
+        let then_block = builder.new_block(scope).unwrap();
+        let else_block = builder.new_block(scope).unwrap();
+        let join = builder.new_block(scope).unwrap();
+        let condition = builder
+            .new_local(scope, LocalKind::User, LocalOwnership::Owned, false)
+            .unwrap();
+        let condition_path = builder
+            .new_move_path(Place::local(condition), None)
+            .unwrap();
+        let local = builder
+            .new_local(scope, LocalKind::User, LocalOwnership::Owned, false)
+            .unwrap();
+        let path = builder
+            .new_move_path_with_drop(Place::local(local), None, true)
+            .unwrap();
+        for operation in [
+            CleanupOp::StorageLive(condition),
+            CleanupOp::Init(condition_path),
+            CleanupOp::StorageLive(local),
+        ] {
+            builder.push_operation(entry, operation).unwrap();
+        }
+        builder
+            .set_terminator(
+                entry,
+                Terminator::Branch {
+                    condition,
+                    then_edge: CleanupEdge::new(then_block, vec![]),
+                    else_edge: CleanupEdge::new(else_block, vec![]),
+                },
+            )
+            .unwrap();
+        builder
+            .push_operation(then_block, CleanupOp::Init(path))
+            .unwrap();
+        for block in [then_block, else_block] {
+            builder
+                .set_terminator(block, Terminator::Goto(CleanupEdge::new(join, vec![])))
+                .unwrap();
+        }
+        builder
+            .push_operation(join, CleanupOp::StorageDead(local))
+            .unwrap();
+        builder
+            .set_terminator(
+                join,
+                Terminator::Return {
+                    exited_scopes: vec![],
+                },
+            )
+            .unwrap();
+
+        let plan = builder.finish().expect("conditional drop plan");
+        assert_eq!(plan.drop_flags.flags.len(), 1);
+        let flag = plan.drop_flags.flag_for_path(path).expect("path flag");
+        assert!(plan.drop_flags.actions.iter().any(|action| {
+            action.flag == flag && action.block == then_block && action.value == DropFlagValue::Set
+        }));
+        assert!(plan.drop_flags.actions.iter().any(|action| {
+            action.flag == flag && action.block == join && action.value == DropFlagValue::Clear
+        }));
+        assert_eq!(plan.drop_flags.sites.len(), 1);
+        assert_eq!(
+            plan.drop_flags.sites[0].obligations[0].condition,
+            DropCondition::Flag(flag)
+        );
+    }
+
+    #[test]
+    fn drops_only_initialized_children_of_a_partial_aggregate() {
+        let mut builder = CleanupPlanBuilder::new();
+        let scope = builder.root_scope();
+        let block = builder.entry_block();
+        let local = builder
+            .new_local(scope, LocalKind::User, LocalOwnership::Owned, false)
+            .unwrap();
+        let root = builder
+            .new_move_path_with_drop(Place::local(local), None, true)
+            .unwrap();
+        let left = builder
+            .new_move_path_with_drop(
+                Place::local(local).project(Projection::Field(0)),
+                Some(root),
+                true,
+            )
+            .unwrap();
+        builder
+            .new_move_path_with_drop(
+                Place::local(local).project(Projection::Field(1)),
+                Some(root),
+                true,
+            )
+            .unwrap();
+        for operation in [
+            CleanupOp::StorageLive(local),
+            CleanupOp::Init(root),
+            CleanupOp::MoveOut(root),
+            CleanupOp::Init(left),
+            CleanupOp::StorageDead(local),
+        ] {
+            builder.push_operation(block, operation).unwrap();
+        }
+        builder
+            .set_terminator(
+                block,
+                Terminator::Return {
+                    exited_scopes: vec![],
+                },
+            )
+            .unwrap();
+
+        let plan = builder.finish().expect("partial aggregate drop plan");
+        assert!(plan.drop_flags.flags.is_empty());
+        assert_eq!(
+            plan.drop_flags.sites[0].obligations,
+            vec![DropObligation {
+                path: left,
+                condition: DropCondition::Static,
+                children_when_clear: Vec::new(),
+            }]
+        );
+    }
+
+    #[test]
+    fn rejects_a_stale_cached_drop_flag_analysis() {
+        let mut builder = CleanupPlanBuilder::new();
+        let scope = builder.root_scope();
+        let block = builder.entry_block();
+        let local = builder
+            .new_local(scope, LocalKind::User, LocalOwnership::Owned, false)
+            .unwrap();
+        let path = builder
+            .new_move_path_with_drop(Place::local(local), None, true)
+            .unwrap();
+        for operation in [
+            CleanupOp::StorageLive(local),
+            CleanupOp::Init(path),
+            CleanupOp::StorageDead(local),
+        ] {
+            builder.push_operation(block, operation).unwrap();
+        }
+        builder
+            .set_terminator(
+                block,
+                Terminator::Return {
+                    exited_scopes: vec![],
+                },
+            )
+            .unwrap();
+
+        let mut plan = builder.finish().expect("drop analysis must verify");
+        plan.drop_flags.sites.clear();
+        let errors = messages(&plan);
+        assert!(errors
+            .iter()
+            .any(|message| message.contains("cached drop-flag analysis")));
+    }
+
+    #[test]
+    fn rejects_a_drop_child_beneath_a_non_dropping_parent() {
+        let mut builder = CleanupPlanBuilder::new();
+        let scope = builder.root_scope();
+        let local = builder
+            .new_local(scope, LocalKind::User, LocalOwnership::Owned, false)
+            .unwrap();
+        let root = builder.new_move_path(Place::local(local), None).unwrap();
+        builder
+            .new_move_path_with_drop(
+                Place::local(local).project(Projection::Field(0)),
+                Some(root),
+                true,
+            )
+            .unwrap();
+        let plan = builder.into_unverified();
+        let errors = messages(&plan);
+        assert!(errors
+            .iter()
+            .any(|message| message.contains("non-dropping parent")));
     }
 }

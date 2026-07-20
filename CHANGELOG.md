@@ -6,6 +6,22 @@ subset.
 
 ## Unreleased
 
+## 0.14.0 - 2026-07-21
+
+- Added a semantic `needs_drop` classification to every static cleanup move path. Built-in `Copy`
+  values remain trivial; non-`Copy` nominal aggregates and callables conservatively retain cleanup
+  obligations until source-backed `Drop` provides exact recursive glue.
+- Derived tree-shaped drop obligations from the cached `may_init`/`must_init` fixed point at every
+  `StorageDead`. Definitely initialized values use static obligations, conditionally complete values
+  use stable drop flags, and partial aggregates recurse into live children without double-dropping a
+  parent and its fields.
+- Added deterministic flag set/clear actions for storage lifetime changes, initialization,
+  overwrite, move, transfer, and discriminant updates. Cleanup verification recomputes this analysis
+  and rejects stale caches.
+- Added cleanup and HIR regression coverage for `Copy` versus resource paths, static and conditional
+  drops, partial aggregate cleanup, flag transitions, malformed drop forests, and cache consistency.
+  This release plans destruction but does not yet expose `Drop` or emit LLVM flag storage and calls.
+
 ## 0.13.0 - 2026-07-20
 
 - Removed `_` type and expression inference nodes from the AST and parser. Generic calls now infer

@@ -300,6 +300,7 @@ struct HirProgram {
     enums: Vec<EnumLayout>,
     globals: Vec<HirGlobal>,
     functions: Vec<HirFunction>,
+    copy_nominals: HashSet<Ty>,
 }
 
 impl HirProgram {
@@ -314,6 +315,31 @@ impl HirProgram {
     fn is_uninhabited(&self, ty: &Ty) -> bool {
         *ty == Ty::Never
             || matches!(ty, Ty::Enum(name) if self.enum_layout(name).is_some_and(|layout| layout.variants.is_empty()))
+    }
+
+    fn is_copy(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool | Ty::Unit | Ty::Never | Ty::Error => {
+                true
+            }
+            Ty::Array(element, _) => self.is_copy(element),
+            Ty::Struct(_) | Ty::Enum(_) => self.copy_nominals.contains(ty),
+            Ty::Function(_) => false,
+        }
+    }
+
+    /// Conservative until source-backed `Drop` is registered: every owned,
+    /// non-Copy nominal or callable carries a drop obligation. Recursive glue
+    /// can later prove an obligation trivial without weakening flag safety.
+    fn needs_drop(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::Array(element, _) => self.needs_drop(element),
+            Ty::Struct(_) | Ty::Enum(_) => !self.is_copy(ty),
+            Ty::Function(_) => true,
+            Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool | Ty::Unit | Ty::Never | Ty::Error => {
+                false
+            }
+        }
     }
 }
 
@@ -3110,6 +3136,7 @@ impl Analyzer {
                 .map(|name| self.hir_globals[name].clone())
                 .collect(),
             functions,
+            copy_nominals: self.copy_nominals.clone(),
         })
     }
 
@@ -11382,6 +11409,7 @@ impl<'a> HirCleanupPlanner<'a> {
         &mut self,
         place: CleanupPlace,
         parent: Option<CleanupMovePathId>,
+        needs_drop: bool,
     ) -> Result<CleanupMovePathId, Diagnostic> {
         if let Some(path) = self.move_paths.get(&place) {
             return Ok(*path);
@@ -11393,7 +11421,7 @@ impl<'a> HirCleanupPlanner<'a> {
         }
         let path = self
             .builder
-            .new_move_path(place.clone(), parent)
+            .new_move_path_with_drop(place.clone(), parent, needs_drop)
             .map_err(|error| self.diagnostic(error))?;
         self.move_paths.insert(place, path);
         Ok(path)
@@ -11415,7 +11443,7 @@ impl<'a> HirCleanupPlanner<'a> {
         ty: &Ty,
         visiting: &mut HashSet<(NominalKind, String)>,
     ) -> Result<CleanupMovePathId, Diagnostic> {
-        let path = self.register_move_path(place.clone(), parent)?;
+        let path = self.register_move_path(place.clone(), parent, self.program.needs_drop(ty))?;
         match ty {
             Ty::Array(element, length) => {
                 for index in 0..*length {
@@ -11487,8 +11515,14 @@ impl<'a> HirCleanupPlanner<'a> {
                         ))
                     })?;
                     let variant_place = place.clone().project(CleanupProjection::Downcast(variant));
-                    let variant_path =
-                        self.register_move_path(variant_place.clone(), Some(path))?;
+                    let variant_needs_drop = fields
+                        .iter()
+                        .any(|field_ty| self.program.needs_drop(field_ty));
+                    let variant_path = self.register_move_path(
+                        variant_place.clone(),
+                        Some(path),
+                        variant_needs_drop,
+                    )?;
                     for (field_index, field_ty) in fields.iter().enumerate() {
                         let field = u32::try_from(field_index).map_err(|_| {
                             self.diagnostic(format!(
@@ -11672,7 +11706,7 @@ impl<'a> HirCleanupPlanner<'a> {
                 &mut HashSet::new(),
             )?
         } else {
-            self.register_move_path(place.clone(), Some(destination.path))?
+            self.register_move_path(place.clone(), Some(destination.path), false)?
         };
         Ok(CleanupDestination { place, path })
     }
@@ -19538,5 +19572,64 @@ let classify(flag: bool): i32 = {
             .pending_capabilities
             .iter()
             .any(|pending| { matches!(pending, PendingCapability::MaybeOverwrite { .. }) }));
+    }
+
+    #[test]
+    fn cleanup_plan_classifies_drop_paths_and_conditional_flags_from_types() {
+        let conditional = cleanup_plan_text(
+            r#"
+let Boxed = struct(value: i32)
+let consume(move value: Boxed): () = ()
+let finish(flag: bool): () = {
+  let boxed = Boxed(42);
+  if flag { consume(boxed) };
+  ()
+}
+"#,
+            "finish",
+        );
+        let boxed = conditional
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some("boxed"))
+            .expect("boxed local");
+        let root = conditional
+            .move_paths
+            .iter()
+            .find(|path| path.place.local == boxed.id && path.parent.is_none())
+            .expect("boxed root path");
+        assert!(root.needs_drop);
+        assert!(conditional.drop_flags.flag_for_path(root.id).is_some());
+        assert!(conditional
+            .drop_flags
+            .sites
+            .iter()
+            .any(|site| site.local == boxed.id));
+
+        let copy = cleanup_plan_text(
+            r#"
+let Plain = struct(value: i32)
+extend Plain: Copy {}
+let finish(): () = { let value = Plain(42); () }
+"#,
+            "finish",
+        );
+        let value = copy
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some("value"))
+            .expect("Copy local");
+        let root = copy
+            .move_paths
+            .iter()
+            .find(|path| path.place.local == value.id && path.parent.is_none())
+            .expect("Copy root path");
+        assert!(!root.needs_drop);
+        assert!(copy.drop_flags.flag_for_path(root.id).is_none());
+        assert!(copy
+            .drop_flags
+            .sites
+            .iter()
+            .all(|site| site.local != value.id));
     }
 }
