@@ -72,7 +72,7 @@ do {
 let n = 1                         // 值
 let add(x: i32)(y: i32) = x + y // 函数值
 let Point = struct(x: i32, y: i32) // 类型
-let Add = trait { ... }           // trait
+let Display = trait { ... }       // trait
 let Math = struct { ... }         // 模块
 ```
 
@@ -122,6 +122,9 @@ let never = enum {}
 零 variant 枚举，因此没有任何值。`return`、`throw`、无可达 `break` 的循环和其他不终止表达式
 具有 `never` 类型，并可强制转换到任意期望类型。用户声明的其他零 variant 枚举同样是
 uninhabited type；对其做空 `match {}` 会产生 `never`。
+
+当前引导实现已经从普通 `core` 源解析 `never`；在通用类型别名 item 落地前，parser 仍把 `void`
+直接规范化为 `()`。这是引导期实现限制，不改变上述语言语义。
 
 整数文字先作为“未定整数”参与推断；若上下文没有约束，默认 `i32`。有符号整数溢出在
 debug 构建中检查，release 构建默认二进制补码回绕；可另行提供显式 checked/wrapping API。
@@ -1268,7 +1271,16 @@ prelude 是按 edition 固定的一组隐式导入；升级标准库不能向旧
 运行时；是否启用 `alloc`/`std` 由 target 与项目清单决定。LLVM IR/bitcode 和 Salicin 私有 ABI
 都不是稳定的跨编译器版本发布格式。
 
+v0.5 的引导实现把 edition 2026 的最小 `core` 源嵌入编译器，并用普通前端解析其中的
+`Option`、`Result`、`never` 和 `Add`。工具链先严格校验声明形状，再登记结构化 lang-item 身份；
+同名用户模块声明不会获得特殊 lowering。当前 prelude 尚未作为可显式寻址的完整虚拟包挂载，
+`void` 也仍是引导别名内建；这两项会随类型别名与 sysroot/core 包装载继续收敛。
+
 ## 20. 建议的分阶段范围
+
+下列 M0–M4 表示能力之间的依赖层级，不与 `v0.x` 发布号或实际落地顺序一一对应。实现可以先完成
+后层的独立基础，再返回补齐前层依赖；当前 v0.5 正是在 v0.4 的模块/包基础上开始收敛 M1–M2 的
+`core` 与 edition prelude，之后才会按资源与平台依赖进入 `alloc`、`std`。
 
 ### M0：单文件可执行核心
 

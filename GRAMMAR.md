@@ -212,6 +212,9 @@ type_argument  = type_expr | "_" | INTEGER ;
 `let never = enum {}`，不是 lexer 关键字。零 variant enum 合法；其值位置可以用空的
 `match {}` 消除。
 
+v0.5 的引导前端已经从 `core` 源加载 `never`；通用类型别名 item 尚未实现，因此 `void` 暂由
+parser 直接规范化为 `()`。
+
 匿名签名槽只有在模式为 `auto` 时可省略 `_:`：
 
 ```sali

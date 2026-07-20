@@ -1,9 +1,10 @@
 [package]
 name = "salicin-lang"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 description = "The compiler and language specification for the Salicin programming language"
 license = "MIT"
+repository = "https://github.com/suransea/salicin-lang"
 
 [[bin]]
 name = "salic"

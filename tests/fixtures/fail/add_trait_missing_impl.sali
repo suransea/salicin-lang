@@ -1,8 +1,3 @@
-let Add(Rhs: type) = trait {
-  let Output: type
-  let add(move self)(move rhs: Rhs): Output
-}
-
 let Number = struct(value: i32)
 
 let main(): i32 = {

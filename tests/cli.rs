@@ -853,7 +853,6 @@ fn m2_add_trait_errors_report_their_cause() {
         ("add_trait_ambiguous_literal.sali", "ambiguous"),
         ("add_trait_use_after_move.sali", "moved"),
         ("add_trait_rhs_use_after_move.sali", "moved"),
-        ("add_trait_malformed_schema.sali", "Add"),
     ] {
         let output = salic()
             .arg("check")
@@ -1684,6 +1683,188 @@ pub let answer(): i32 = {
         Some(42),
         "{}",
         output_text(&internal)
+    );
+}
+
+#[test]
+fn embedded_core_lang_items_are_shared_but_module_names_cannot_spoof_them() {
+    let workspace = TestDirectory::new();
+    workspace.write(
+        "app/salicin.toml",
+        r#"[package]
+name = "core-app"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+dep = { path = "../dep" }
+"#,
+    );
+    workspace.write(
+        "dep/salicin.toml",
+        "[package]\nname = \"core-dependency\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    );
+    workspace.write(
+        "dep/src/lib.sali",
+        r#"pub let Number = struct(value: i32)
+extend Number: Add(Number) {
+  let Output = Number
+  let add(move self)(move rhs: Number): Number = Number(self.value + rhs.value)
+}
+pub let make(value: i32): Number = Number(value)
+pub let value(move number: Number): i32 = number.value
+pub let maybe(value: i32): Option(i32) = Option(i32).Some(value)
+"#,
+    );
+    workspace.write(
+        "app/src/main.sali",
+        r#"let main(): i32 = {
+  let sum = dep.make(19) + dep.make(23)
+  dep.value(sum) + (dep.maybe(0) ?? 0)
+}
+"#,
+    );
+
+    let app = workspace.join("app");
+    let shared = salic()
+        .arg("run")
+        .arg(&app)
+        .output()
+        .expect("run two packages using the embedded core identity");
+    assert_eq!(shared.status.code(), Some(42), "{}", output_text(&shared));
+
+    workspace.write(
+        "app/src/fake.sali",
+        r#"pub let Option(T: type) = enum { Some(T), None }
+pub let make_option(): Option(i32) = Option(i32).Some(42)
+
+pub let Add(Rhs: type) = trait {
+  let Output: type
+  let add(move self)(move rhs: Rhs): Output
+}
+pub let Number = struct(value: i32)
+extend Number: Add(Number) {
+  let Output = Number
+  let add(move self)(move rhs: Number): Number = Number(self.value + rhs.value)
+}
+pub let make_number(value: i32): Number = Number(value)
+"#,
+    );
+    workspace.write(
+        "app/src/main.sali",
+        "let main(): i32 = fake.make_option() ?? 0\n",
+    );
+    let fake_option = salic()
+        .arg("check")
+        .arg(&app)
+        .output()
+        .expect("reject a module type spoofing core Option");
+    assert_eq!(
+        fake_option.status.code(),
+        Some(1),
+        "{}",
+        output_text(&fake_option)
+    );
+    assert!(
+        String::from_utf8_lossy(&fake_option.stderr)
+            .contains("requires `Option(T)` or `Result(T, E)`"),
+        "{}",
+        output_text(&fake_option)
+    );
+
+    workspace.write(
+        "app/src/main.sali",
+        "let main(): i32 = fake.make_number(20) + fake.make_number(22)\n",
+    );
+    let fake_add = salic()
+        .arg("check")
+        .arg(&app)
+        .output()
+        .expect("reject a module trait spoofing core Add");
+    assert_eq!(
+        fake_add.status.code(),
+        Some(1),
+        "{}",
+        output_text(&fake_add)
+    );
+    assert!(
+        String::from_utf8_lossy(&fake_add.stderr).contains("no matching `Add` implementation"),
+        "{}",
+        output_text(&fake_add)
+    );
+
+    workspace.write(
+        "app/src/main.sali",
+        "use root.fake as Option\nlet main(): i32 = Option(_).None ?? 42\n",
+    );
+    let module_option = salic()
+        .arg("check")
+        .arg(&app)
+        .output()
+        .expect("reject a module alias falling back to core Option");
+    assert_eq!(
+        module_option.status.code(),
+        Some(1),
+        "{}",
+        output_text(&module_option)
+    );
+    assert!(
+        String::from_utf8_lossy(&module_option.stderr)
+            .contains("module `Option` cannot be used as a value or callable"),
+        "{}",
+        output_text(&module_option)
+    );
+
+    workspace.write(
+        "app/src/main.sali",
+        r#"use root.fake as Add
+let Number = struct(value: i32)
+extend Number: Add(Number) {
+  let Output = i32
+  let add(move self)(move rhs: Number): i32 = self.value + rhs.value
+}
+let main(): i32 = Number(20) + Number(22)
+"#,
+    );
+    let module_add = salic()
+        .arg("check")
+        .arg(&app)
+        .output()
+        .expect("reject a module alias falling back to core Add");
+    assert_eq!(
+        module_add.status.code(),
+        Some(1),
+        "{}",
+        output_text(&module_add)
+    );
+    assert!(
+        String::from_utf8_lossy(&module_add.stderr)
+            .contains("module `Add` cannot be used as a type"),
+        "{}",
+        output_text(&module_add)
+    );
+
+    workspace.write("app/src/never.sali", "let marker = 0\n");
+    workspace.write(
+        "app/src/main.sali",
+        "let stop(): never = loop {}\nlet main(): i32 = 42\n",
+    );
+    let module_never = salic()
+        .arg("check")
+        .arg(&app)
+        .output()
+        .expect("reject a child module falling back to core never");
+    assert_eq!(
+        module_never.status.code(),
+        Some(1),
+        "{}",
+        output_text(&module_never)
+    );
+    assert!(
+        String::from_utf8_lossy(&module_never.stderr)
+            .contains("module `never` cannot be used as a type"),
+        "{}",
+        output_text(&module_never)
     );
 }
 

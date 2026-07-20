@@ -10,8 +10,10 @@ use std::fmt;
 use crate::ast::{
     BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EnumDef, Expr, ExtendDef,
     ExtendMember, Function, Item, ItemOrigin, MatchArm, PassMode, Pattern, PatternFields, Program,
-    Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantDef, VariantFields, Visibility,
+    Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantFields, Visibility,
 };
+use crate::core::{CoreBundle, LangItemKind, LangItems};
+use crate::manifest::Edition;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
@@ -47,7 +49,8 @@ pub fn compile_library(program: &Program) -> Result<String, Vec<Diagnostic>> {
 }
 
 fn compile_target(program: &Program, require_entry_point: bool) -> Result<String, Vec<Diagnostic>> {
-    let mut analyzer = Analyzer::new(program);
+    let mut analyzer =
+        Analyzer::try_new(program).map_err(|error| vec![Diagnostic::new(error.to_string())])?;
     let hir = if require_entry_point {
         analyzer.analyze()
     } else {
@@ -70,7 +73,8 @@ fn compile_target(program: &Program, require_entry_point: bool) -> Result<String
 /// point. Global constants are still evaluated so library checks report the
 /// same constant-expression diagnostics as binary compilation.
 pub fn check_library(program: &Program) -> Result<(), Vec<Diagnostic>> {
-    let mut analyzer = Analyzer::new(program);
+    let mut analyzer =
+        Analyzer::try_new(program).map_err(|error| vec![Diagnostic::new(error.to_string())])?;
     let hir = analyzer.analyze_target(false);
     if !analyzer.diagnostics.is_empty() {
         return Err(analyzer.diagnostics);
@@ -78,50 +82,6 @@ pub fn check_library(program: &Program) -> Result<(), Vec<Diagnostic>> {
 
     let hir = hir.expect("analysis without diagnostics must produce HIR");
     evaluate_globals(&hir).map(|_| ())
-}
-
-fn builtin_prelude_items() -> [Item; 3] {
-    let type_parameter = |name: &str| CompileParam {
-        name: name.to_owned(),
-        kind: CompileParamKind::Type,
-    };
-    let named_type = |name: &str| Type::Named(name.to_owned(), Vec::new());
-
-    [
-        Item::Enum(EnumDef {
-            name: "Option".to_owned(),
-            compile_groups: vec![vec![type_parameter("T")]],
-            variants: vec![
-                VariantDef {
-                    name: "Some".to_owned(),
-                    fields: VariantFields::Positional(vec![named_type("T")]),
-                },
-                VariantDef {
-                    name: "None".to_owned(),
-                    fields: VariantFields::Unit,
-                },
-            ],
-        }),
-        Item::Enum(EnumDef {
-            name: "Result".to_owned(),
-            compile_groups: vec![vec![type_parameter("T"), type_parameter("E")]],
-            variants: vec![
-                VariantDef {
-                    name: "Ok".to_owned(),
-                    fields: VariantFields::Positional(vec![named_type("T")]),
-                },
-                VariantDef {
-                    name: "Err".to_owned(),
-                    fields: VariantFields::Positional(vec![named_type("E")]),
-                },
-            ],
-        }),
-        Item::Enum(EnumDef {
-            name: "never".to_owned(),
-            compile_groups: Vec::new(),
-            variants: Vec::new(),
-        }),
-    ]
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -781,6 +741,14 @@ impl LowerCtx {
             .find_map(|scope| scope.names.get(name))
     }
 
+    fn has_type_parameter(&self, name: &str) -> bool {
+        self.type_substitutions.contains_key(name)
+    }
+
+    fn shadows_top_level_name(&self, name: &str) -> bool {
+        self.lookup(name).is_some() || self.has_type_parameter(name)
+    }
+
     fn fresh_local(&mut self) -> LocalId {
         let id = self.next_local;
         self.next_local += 1;
@@ -911,6 +879,7 @@ struct NominalSnapshot {
 }
 
 struct Analyzer {
+    lang_items: LangItems,
     functions: HashMap<String, Function>,
     function_origins: HashMap<String, ItemOrigin>,
     function_templates: HashMap<String, Function>,
@@ -955,8 +924,10 @@ struct Analyzer {
 }
 
 impl Analyzer {
-    fn new(program: &Program) -> Self {
+    fn try_new(program: &Program) -> Result<Self, crate::core::CoreBundleError> {
+        let core = CoreBundle::for_edition(Edition::Edition2026)?;
         let mut analyzer = Self {
+            lang_items: core.lang_items().clone(),
             functions: HashMap::new(),
             function_origins: HashMap::new(),
             function_templates: HashMap::new(),
@@ -1004,25 +975,44 @@ impl Analyzer {
                 "unresolved `use` declarations reached semantic analysis; resolve source modules before code generation",
             );
         }
-        analyzer.collect_items(program);
-        analyzer
+        analyzer.collect_items(core.program(), program);
+        Ok(analyzer)
     }
 
-    fn collect_items(&mut self, program: &Program) {
+    #[cfg(test)]
+    fn new(program: &Program) -> Self {
+        Self::try_new(program)
+            .expect("the compiler-embedded edition 2026 core bundle must be valid")
+    }
+
+    fn lang_item_name(&self, kind: LangItemKind) -> &str {
+        self.lang_items.get(kind).canonical_name()
+    }
+
+    fn fallible_type_name(&self, kind: BuiltinFallibleKind) -> &str {
+        match kind {
+            BuiltinFallibleKind::Option => self.lang_item_name(LangItemKind::Option),
+            BuiltinFallibleKind::Result => self.lang_item_name(LangItemKind::Result),
+        }
+    }
+
+    fn collect_items(&mut self, core: &Program, program: &Program) {
         // `void` is implemented as the prelude's alias of `()` rather than as
         // a distinct nominal item, but still occupies the unified namespace.
         let mut names = HashSet::from(["void".to_owned()]);
         let mut extensions = Vec::new();
-        let prelude = builtin_prelude_items();
         if program.items.len() != program.item_visibilities.len()
             || program.items.len() != program.item_origins.len()
         {
             self.error("program item metadata count does not match item count");
             return;
         }
-        let prelude_items = prelude
+        let prelude_items = core
+            .items
             .iter()
-            .map(|item| (item, Visibility::Public, ItemOrigin::default()));
+            .zip(&core.item_visibilities)
+            .zip(&core.item_origins)
+            .map(|((item, visibility), origin)| (item, *visibility, origin.clone()));
         let source_items = program
             .items
             .iter()
@@ -1155,6 +1145,11 @@ impl Analyzer {
             self.collect_extension(extension, origin);
         }
 
+        let never = self.lang_item_name(LangItemKind::Never);
+        if !self.enum_defs.contains_key(never) {
+            self.error("compiler core did not register its validated `never` declaration");
+        }
+
         for name in self.function_order.clone() {
             let function = self.functions[&name].clone();
             let groups = function
@@ -1264,7 +1259,9 @@ impl Analyzer {
         origin: ItemOrigin,
     ) {
         let mut valid = true;
-        if definition.name == "Add" && !Self::add_lang_item_has_required_shape(&definition) {
+        if definition.name == self.lang_item_name(LangItemKind::Add)
+            && !Self::add_lang_item_has_required_shape(&definition)
+        {
             self.error(
                 "`Add` language trait must have shape `let Add(Rhs: type) = trait { let Output: type; let add(move self)(move rhs: Rhs): Output }`",
             );
@@ -3299,7 +3296,7 @@ impl Analyzer {
         let Expr::Name(name) = root else {
             return None;
         };
-        if context.lookup(name).is_some() {
+        if context.shadows_top_level_name(name) {
             return None;
         }
         if groups.is_empty() {
@@ -3621,7 +3618,8 @@ impl Analyzer {
         expected: Option<&Ty>,
         context: &LowerCtx,
     ) -> Vec<AddCandidate> {
-        if !self.traits.get("Add").is_some_and(|schema| schema.valid) {
+        let add = self.lang_item_name(LangItemKind::Add);
+        if !self.traits.get(add).is_some_and(|schema| schema.valid) {
             return Vec::new();
         }
 
@@ -3630,7 +3628,7 @@ impl Analyzer {
             .values()
             .filter_map(|implementation| {
                 if implementation.key.self_ty != *receiver
-                    || implementation.key.trait_ref.name != "Add"
+                    || implementation.key.trait_ref.name != add
                     || !Self::access_boundary_allows(&context.origin, &implementation.access)
                 {
                     return None;
@@ -3717,23 +3715,30 @@ impl Analyzer {
         if instance.key.kind != NominalKind::Enum {
             return None;
         }
-        match (
-            instance.key.template.as_str(),
-            instance.key.arguments.as_slice(),
-        ) {
-            ("Option", [payload]) => Some(BuiltinFallibleInfo {
+        let template = instance.key.template.as_str();
+        let arguments = instance.key.arguments.as_slice();
+        if template == self.lang_item_name(LangItemKind::Option) {
+            let [payload] = arguments else {
+                return None;
+            };
+            Some(BuiltinFallibleInfo {
                 kind: BuiltinFallibleKind::Option,
                 payload: payload.clone(),
                 payload_source: self.source_type_for_ty(payload),
                 error: None,
-            }),
-            ("Result", [payload, error]) => Some(BuiltinFallibleInfo {
+            })
+        } else if template == self.lang_item_name(LangItemKind::Result) {
+            let [payload, error] = arguments else {
+                return None;
+            };
+            Some(BuiltinFallibleInfo {
                 kind: BuiltinFallibleKind::Result,
                 payload: payload.clone(),
                 payload_source: self.source_type_for_ty(payload),
                 error: Some(error.clone()),
-            }),
-            _ => None,
+            })
+        } else {
+            None
         }
     }
 
@@ -3748,20 +3753,28 @@ impl Analyzer {
         let TypeProbe::KnownSource(Ty::Enum(_), Type::Named(template, arguments)) = probe else {
             return None;
         };
-        match (template.as_str(), arguments.as_slice()) {
-            ("Option", [payload]) => Some(BuiltinFallibleInfo {
+        if template == self.lang_item_name(LangItemKind::Option) {
+            let [payload] = arguments.as_slice() else {
+                return None;
+            };
+            Some(BuiltinFallibleInfo {
                 kind: BuiltinFallibleKind::Option,
                 payload: self.probe_source_ty(payload)?,
                 payload_source: Some(payload.clone()),
                 error: None,
-            }),
-            ("Result", [payload, error]) => Some(BuiltinFallibleInfo {
+            })
+        } else if template == self.lang_item_name(LangItemKind::Result) {
+            let [payload, error] = arguments.as_slice() else {
+                return None;
+            };
+            Some(BuiltinFallibleInfo {
                 kind: BuiltinFallibleKind::Result,
                 payload: self.probe_source_ty(payload)?,
                 payload_source: Some(payload.clone()),
                 error: Some(self.probe_source_ty(error)?),
-            }),
-            _ => None,
+            })
+        } else {
+            None
         }
     }
 
@@ -3863,10 +3876,7 @@ impl Analyzer {
         else {
             return TypeProbe::Unsupported;
         };
-        let template = match info.kind {
-            BuiltinFallibleKind::Option => "Option",
-            BuiltinFallibleKind::Result => "Result",
-        };
+        let template = self.fallible_type_name(info.kind).to_owned();
         let key = NominalInstanceKey {
             kind: NominalKind::Enum,
             template: template.to_owned(),
@@ -4086,7 +4096,7 @@ impl Analyzer {
         let Expr::Name(name) = flatten_call(expression, &mut groups) else {
             return false;
         };
-        if context.lookup(name).is_some() || shadowed_short_variants.contains(name) {
+        if context.shadows_top_level_name(name) || shadowed_short_variants.contains(name) {
             return false;
         }
         if self.functions.contains_key(name)
@@ -4157,10 +4167,12 @@ impl Analyzer {
             return None;
         };
         let (name, type_groups) = self.inferred_generic_enum_type_head(base, context)?;
-        let kind = match name.as_str() {
-            "Option" => BuiltinFallibleKind::Option,
-            "Result" => BuiltinFallibleKind::Result,
-            _ => return None,
+        let kind = if name == self.lang_item_name(LangItemKind::Option) {
+            BuiltinFallibleKind::Option
+        } else if name == self.lang_item_name(LangItemKind::Result) {
+            BuiltinFallibleKind::Result
+        } else {
+            return None;
         };
         Some(InferredCoalesceLhs {
             kind,
@@ -4257,6 +4269,8 @@ impl Analyzer {
             Expr::Name(name) => {
                 if let Some(local) = context.lookup(name) {
                     TypeProbe::Known(local.ty.clone())
+                } else if context.has_type_parameter(name) {
+                    TypeProbe::Unsupported
                 } else if let Some(Some(annotation)) = self.global_annotations.get(name) {
                     TypeProbe::Known(annotation.clone())
                 } else if let Some(global) = self.hir_globals.get(name) {
@@ -4474,7 +4488,7 @@ impl Analyzer {
         let Expr::Name(name) = root else {
             return TypeProbe::Unsupported;
         };
-        if context.lookup(name).is_some() {
+        if context.shadows_top_level_name(name) {
             return TypeProbe::Unsupported;
         }
         if let Some(template) = self.struct_templates.get(name) {
@@ -5264,6 +5278,9 @@ impl Analyzer {
                             .expect("a resolved local name is a place");
                         self.access_place(place, AccessKind::Auto, context)
                     }
+                } else if context.has_type_parameter(name) {
+                    self.error(format!("type parameter `{name}` cannot be used as a value"));
+                    error_expr()
                 } else if self.globals.contains_key(name) {
                     HirExpr {
                         ty: self.global_type(name),
@@ -6268,6 +6285,12 @@ impl Analyzer {
             self.error("FnOnce capture requires a direct named-function call");
             return false;
         };
+        if outer.has_type_parameter(function) {
+            self.error(format!(
+                "type parameter `{function}` is not a top-level named function"
+            ));
+            return false;
+        }
         let (signature, runtime_groups) = if let Some(signature) = self.signatures.get(function) {
             (signature.clone(), groups.as_slice())
         } else if self.function_templates.contains_key(function) {
@@ -6339,7 +6362,9 @@ impl Analyzer {
         match expression {
             Expr::Name(name) => {
                 let Some(local) = context.lookup(name).cloned() else {
-                    if self.globals.contains_key(name) {
+                    if context.has_type_parameter(name) {
+                        self.error(format!("type parameter `{name}` is not a data place"));
+                    } else if self.globals.contains_key(name) {
                         self.error(format!(
                             "global constant `{name}` is not a borrowable place"
                         ));
@@ -6612,7 +6637,7 @@ impl Analyzer {
             Ok(None) => {}
         }
         if let Expr::Name(target) = base {
-            if context.lookup(target).is_none()
+            if !context.shadows_top_level_name(target)
                 && (self.struct_layouts.contains_key(target)
                     || self.enum_layouts.contains_key(target))
             {
@@ -6638,7 +6663,7 @@ impl Analyzer {
                     return error_expr();
                 }
             }
-            if context.lookup(target).is_none() {
+            if !context.shadows_top_level_name(target) {
                 if let Some(layout) = self.enum_layouts.get(target).cloned() {
                     if let Some((variant, variant_layout)) = layout
                         .variants
@@ -7168,10 +7193,7 @@ impl Analyzer {
             );
             return error_expr();
         }
-        let template = match info.kind {
-            BuiltinFallibleKind::Option => "Option",
-            BuiltinFallibleKind::Result => "Result",
-        };
+        let template = self.fallible_type_name(info.kind).to_owned();
         let mut arguments = vec![output];
         if info.kind == BuiltinFallibleKind::Result {
             arguments.push(info.error.clone().expect("Result has an error type"));
@@ -7185,7 +7207,7 @@ impl Analyzer {
             return error_expr();
         };
         let Some(canonical) =
-            self.ensure_nominal_instance(NominalKind::Enum, template, source_arguments, arguments)
+            self.ensure_nominal_instance(NominalKind::Enum, &template, source_arguments, arguments)
         else {
             return error_expr();
         };
@@ -7735,7 +7757,8 @@ impl Analyzer {
         expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
-        let Some(schema) = self.traits.get("Add") else {
+        let add = self.lang_item_name(LangItemKind::Add);
+        let Some(schema) = self.traits.get(add) else {
             self.error(format!(
                 "operator `+` for `{receiver}` requires the top-level `Add` trait"
             ));
@@ -8006,6 +8029,10 @@ impl Analyzer {
                 self.error(format!("local value `{name}` is not callable"));
                 return error_expr();
             }
+            if context.has_type_parameter(name) {
+                self.error(format!("type parameter `{name}` is not callable"));
+                return error_expr();
+            }
             if self.struct_layouts.contains_key(name) {
                 return self.lower_struct_constructor(name, &groups, context);
             }
@@ -8090,7 +8117,7 @@ impl Analyzer {
                 Ok(None) => {}
             }
             if let Expr::Name(enum_name) = base.as_ref() {
-                if context.lookup(enum_name).is_none()
+                if !context.shadows_top_level_name(enum_name)
                     && (self.struct_layouts.contains_key(enum_name)
                         || self.enum_layouts.contains_key(enum_name))
                 {
@@ -8113,7 +8140,7 @@ impl Analyzer {
                         return error_expr();
                     }
                 }
-                if context.lookup(enum_name).is_none() {
+                if !context.shadows_top_level_name(enum_name) {
                     if let Some(layout) = self.enum_layouts.get(enum_name) {
                         if let Some(variant) = layout
                             .variants
@@ -8254,7 +8281,7 @@ impl Analyzer {
         let Expr::Name(name) = root else {
             return None;
         };
-        if context.lookup(name).is_some() || !self.enum_templates.contains_key(name) {
+        if context.shadows_top_level_name(name) || !self.enum_templates.contains_key(name) {
             return None;
         }
         let compile_group_count = self.enum_templates[name].compile_groups.len();
@@ -8659,7 +8686,14 @@ impl Analyzer {
         context: &LowerCtx,
     ) -> Result<Option<(String, NominalKind)>, ()> {
         match expression {
-            Expr::Name(name) if context.lookup(name).is_none() => {
+            Expr::Name(name) if context.lookup(name).is_some() => Ok(None),
+            Expr::Name(name) if context.has_type_parameter(name) => {
+                self.error(format!(
+                    "type parameter `{name}` has no statically known associated members"
+                ));
+                Err(())
+            }
+            Expr::Name(name) if !context.shadows_top_level_name(name) => {
                 if self.struct_layouts.contains_key(name) {
                     Ok(Some((name.clone(), NominalKind::Struct)))
                 } else if self.enum_layouts.contains_key(name) {
@@ -8681,9 +8715,17 @@ impl Analyzer {
                 let Expr::Name(name) = root else {
                     return Ok(None);
                 };
-                if context.lookup(name).is_some()
-                    || (!self.struct_templates.contains_key(name)
-                        && !self.enum_templates.contains_key(name))
+                if context.lookup(name).is_some() {
+                    return Ok(None);
+                }
+                if context.has_type_parameter(name) {
+                    self.error(format!(
+                        "type parameter `{name}` cannot be used as a generic type constructor"
+                    ));
+                    return Err(());
+                }
+                if !self.struct_templates.contains_key(name)
+                    && !self.enum_templates.contains_key(name)
                 {
                     return Ok(None);
                 }
@@ -12223,7 +12265,7 @@ mod tests {
     }
 
     #[test]
-    fn registers_fallible_containers_and_never_as_prelude_types() {
+    fn registers_source_backed_core_lang_items() {
         let analyzer = Analyzer::new(&Program::new(Vec::new()));
         assert!(
             analyzer.diagnostics.is_empty(),
@@ -12265,6 +12307,11 @@ mod tests {
         assert!(never.compile_groups.is_empty());
         assert!(never.variants.is_empty());
         assert!(analyzer.enum_layouts["never"].variants.is_empty());
+        assert!(analyzer.traits["Add"].valid);
+        assert_eq!(
+            analyzer.lang_item_name(LangItemKind::Add),
+            analyzer.lang_items.add().source_name()
+        );
         assert_eq!(analyzer.nominal_instances.len(), 1);
         assert_eq!(analyzer.nominal_instance_names.len(), 1);
         assert!(analyzer.functions.is_empty());
@@ -12642,6 +12689,39 @@ let main(): i32 = {
             .diagnostics
             .iter()
             .any(|diagnostic| { diagnostic.message == "duplicate top-level name `void`" }));
+
+        let program = crate::parser::parse("let Add = struct(value: i32)\nlet main(): i32 = 42\n")
+            .expect("reserved Add source must parse");
+        let analyzer = Analyzer::new(&program);
+        assert!(analyzer
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.message == "duplicate top-level name `Add`" }));
+        assert!(analyzer.traits["Add"].valid);
+    }
+
+    #[test]
+    fn type_parameters_shadow_core_lang_item_names_in_type_heads() {
+        for (name, source) in [
+            (
+                "Option",
+                "let choose(Option: type)(): i32 = Option(_).None ?? 42\n\
+                 let main(): i32 = choose(i32)()\n",
+            ),
+            (
+                "Result",
+                "let choose(Result: type)(): i32 = Result(_, _).Ok(1) ?? 42\n\
+                 let main(): i32 = choose(i32)()\n",
+            ),
+        ] {
+            let errors = compile_text(source).unwrap_err();
+            assert!(
+                errors.iter().any(|diagnostic| diagnostic
+                    .message
+                    .contains(&format!("type parameter `{name}`"))),
+                "type parameter `{name}` incorrectly acquired core semantics: {errors:?}"
+            );
+        }
     }
 
     #[test]
@@ -13462,22 +13542,18 @@ let main(): i32 = {
     }
 
     #[test]
-    fn lowers_alpha_equivalent_add_trait_to_a_static_call() {
+    fn lowers_core_add_trait_to_a_static_call() {
         let program = crate::parser::parse(
             r#"
-let Add(Other: type) = trait {
-  let add(move self)(move other: Other): Output
-  let Output: type
-}
 let Number = struct(value: i32)
 extend Number: Add(Number) {
   let Output = i32
-  let add(move self)(move other: Number): i32 = self.value + other.value
+  let add(move self)(move rhs: Number): i32 = self.value + rhs.value
 }
 let main(): i32 = Number(40) + Number(2)
 "#,
         )
-        .expect("alpha-equivalent Add source must parse");
+        .expect("core Add source must parse");
         let key = TraitImplKey {
             self_ty: Ty::Struct("Number".into()),
             trait_ref: TraitRefKey {
@@ -13486,7 +13562,7 @@ let main(): i32 = Number(40) + Number(2)
             },
         };
         let symbol = function_symbol(&trait_method_name(&key, "add"));
-        let ir = compile(&program).expect("alpha-equivalent Add source must compile");
+        let ir = compile(&program).expect("core Add source must compile");
         assert!(ir.contains(&format!("call i32 @{symbol}(")));
         assert!(
             ir.contains("add i32"),
@@ -13498,10 +13574,6 @@ let main(): i32 = Number(40) + Number(2)
     fn add_output_participates_in_outer_generic_inference() {
         let ir = compile_text(
             r#"
-let Add(Rhs: type) = trait {
-  let Output: type
-  let add(move self)(move rhs: Rhs): Output
-}
 let Number = struct(value: i32)
 extend Number: Add(i32) {
   let Output = i32
@@ -13523,10 +13595,6 @@ let main(): i32 = identity(_)(Number(40) + 2)
     fn add_literal_range_eliminates_incompatible_rhs_candidates() {
         let program = crate::parser::parse(
             r#"
-let Add(Rhs: type) = trait {
-  let Output: type
-  let add(move self)(move rhs: Rhs): Output
-}
 let Number = struct(value: i32)
 extend Number: Add(i32) {
   let Output = i64
@@ -13568,10 +13636,6 @@ let main(): i32 = {
     fn add_lowering_is_independent_of_inferred_producer_declaration_order() {
         let program = crate::parser::parse(
             r#"
-let Add(Rhs: type) = trait {
-  let Output: type
-  let add(move self)(move rhs: Rhs): Output
-}
 let Number = struct(value: i32)
 extend Number: Add(Number) {
   let Output = Number
@@ -13613,10 +13677,6 @@ let make() = 40
     fn add_reports_when_no_ambiguous_candidate_has_the_expected_output() {
         let errors = compile_text(
             r#"
-let Add(Rhs: type) = trait {
-  let Output: type
-  let add(move self)(move rhs: Rhs): Output
-}
 let Number = struct(value: i32)
 extend Number: Add(i32) {
   let Output = bool

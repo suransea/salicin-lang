@@ -5,6 +5,19 @@ the accepted language, while patch releases preserve source semantics within the
 
 ## Unreleased
 
+## 0.5.0 - 2026-07-20
+
+- Started the standard-library bootstrap with an edition-pinned `library/core` source bundle that is
+  embedded into the compiler and parsed through the ordinary Salicin frontend.
+- Moved `Option`, `Result`, and `never` out of hand-built Rust AST, promoted `Add` from per-program
+  declarations, and placed all four in ordinary `.sali` source with deterministic shape validation.
+- Added a structured lang-item registry that records the validated core declaration identities used
+  by optional chaining, coalescing, propagation, throwing, and overloaded addition.
+- Made `Add` part of the edition prelude, so implementations use the compiler-matched core trait
+  without redeclaring it in each program.
+- Ensured one core identity is shared across package graphs; same-spelled declarations, module
+  aliases, child modules, and shadowing type parameters cannot acquire compiler language semantics.
+
 ## 0.4.0 - 2026-07-20
 
 - Added strict `salicin.toml` package loading, default and explicit library/binary targets, target

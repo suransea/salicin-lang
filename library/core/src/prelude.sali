@@ -1,0 +1,18 @@
+// `void` remains a compiler-provided alias of `()` until general type aliases land.
+
+pub let Option(T: type) = enum {
+  Some(T),
+  None,
+}
+
+pub let Result(T: type, E: type) = enum {
+  Ok(T),
+  Err(E),
+}
+
+pub let never = enum {}
+
+pub let Add(Rhs: type) = trait {
+  let Output: type
+  let add(move self)(move rhs: Rhs): Output
+}

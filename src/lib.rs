@@ -1,5 +1,6 @@
 pub mod ast;
 pub mod codegen;
+pub mod core;
 pub mod lexer;
 pub mod lockfile;
 pub mod manifest;

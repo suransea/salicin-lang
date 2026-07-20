@@ -28,6 +28,12 @@ pub struct SourceUnit {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PackageId(pub usize);
 
+impl PackageId {
+    /// Compiler-owned package identity used by the edition-pinned `core`
+    /// bundle. Source package graphs must never claim this identity.
+    pub const CORE: Self = Self(usize::MAX);
+}
+
 /// All source files and direct dependency aliases belonging to one package.
 ///
 /// Package IDs provide definition identity; aliases are local to the package
@@ -221,6 +227,12 @@ fn validate_package_layout(
 
     let mut package_roots = HashMap::new();
     for package in packages {
+        if package.id == PackageId::CORE {
+            diagnostics.push(format!(
+                "<packages>: error: package ID {} is reserved for compiler core",
+                PackageId::CORE.0
+            ));
+        }
         let root = if package.is_primary {
             Vec::new()
         } else {
@@ -1243,6 +1255,8 @@ impl Resolver {
                 }
                 if let Some(canonical) = self.resolve_logical_path(&segments, context) {
                     *name = canonical;
+                } else {
+                    self.reject_bare_module(&segments, context, "a type");
                 }
             }
             Type::I32
@@ -1268,6 +1282,8 @@ impl Resolver {
                     let logical = vec![name.clone()];
                     if let Some(canonical) = self.resolve_logical_path(&logical, context) {
                         *name = canonical;
+                    } else {
+                        self.reject_bare_module(&logical, context, "a value or callable");
                     }
                 }
             }
@@ -1400,6 +1416,8 @@ impl Resolver {
                         let mut resolved = vec![canonical];
                         resolved.extend(path[consumed..].iter().cloned());
                         *path = resolved;
+                    } else {
+                        self.reject_bare_module(path, context, "a constructor");
                     }
                 }
                 match fields {
@@ -1446,7 +1464,11 @@ impl Resolver {
             // under a known module. A plain Member tree would otherwise be
             // interpreted as a method receiver by the current analyzer and
             // lose its module prefix in the eventual diagnostic.
-            if self.longest_module_prefix(&segments, context) > 0 {
+            let module_prefix = self.longest_module_prefix(&segments, context);
+            if module_prefix > 0 {
+                if module_prefix == segments.len() {
+                    self.reject_bare_module(&segments, context, "a value or callable");
+                }
                 *expression = Expr::Name(segments.join("."));
                 return;
             }
@@ -1611,6 +1633,23 @@ impl Resolver {
             }
         }
         0
+    }
+
+    fn reject_bare_module(
+        &mut self,
+        logical_path: &[String],
+        context: ResolveContext<'_>,
+        usage: &str,
+    ) {
+        if !logical_path.is_empty()
+            && self.longest_module_prefix(logical_path, context) == logical_path.len()
+        {
+            self.diagnostics.push(format!(
+                "{}: error: module `{}` cannot be used as {usage}",
+                context.source_path,
+                logical_path.join(".")
+            ));
+        }
     }
 }
 
@@ -2039,6 +2078,45 @@ mod tests {
             Some(Expr::Call(ref callee, _))
                 if callee.as_ref() == &Expr::Name("implementation::answer".into())
         ));
+    }
+
+    #[test]
+    fn rejects_bare_modules_before_they_can_fall_back_to_prelude_names() {
+        let errors = resolve_sources(&[
+            unit(
+                "root.sali",
+                &[],
+                r#"use root.fake as Option
+use root.fake as Add
+
+let Number = struct(value: i32)
+extend Number: Add(Number) {
+  let Output = i32
+  let add(move self)(move rhs: Number): i32 = self.value + rhs.value
+}
+
+let stop(): never = loop {}
+let main(): i32 = Option(_).None ?? 42
+"#,
+                true,
+            ),
+            unit("fake.sali", &["fake"], "let marker = 0\n", false),
+            unit("never.sali", &["never"], "let marker = 0\n", false),
+        ])
+        .unwrap_err();
+
+        for expected in [
+            "module `Option` cannot be used as a value or callable",
+            "module `Add` cannot be used as a type",
+            "module `never` cannot be used as a type",
+        ] {
+            assert!(
+                errors
+                    .iter()
+                    .any(|diagnostic| diagnostic.contains(expected)),
+                "missing `{expected}` in {errors:?}"
+            );
+        }
     }
 
     #[test]
@@ -2599,6 +2677,20 @@ mod tests {
         assert!(invalid
             .iter()
             .any(|diagnostic| diagnostic.contains("not reachable")));
+
+        let reserved = resolve_packages(&[package(
+            PackageId::CORE.0,
+            true,
+            &[],
+            vec![unit("root.sali", &[], "let main(): i32 = 0\n", true)],
+        )])
+        .unwrap_err();
+        assert!(reserved
+            .iter()
+            .any(|diagnostic| diagnostic.contains(&format!(
+                "package ID {} is reserved for compiler core",
+                PackageId::CORE.0
+            ))));
     }
 
     fn expression_names(expression: Option<&Expr>) -> HashSet<String> {
