@@ -6,6 +6,26 @@ subset.
 
 ## Unreleased
 
+## 0.8.0 - 2026-07-20
+
+- Added the canonical source-backed `pub let Copy = trait {}` marker to the edition `core` bundle,
+  with strict declaration-shape and lang-item identity validation; same-named user traits cannot
+  acquire compiler `Copy` semantics.
+- Made primitive types, `()`, `never`, the compiler's internal error-recovery type, and arrays whose
+  elements are `Copy` intrinsically copyable.
+- Added explicit nominal `Copy` implementations with `extend T: Copy {}`. Struct fields and every
+  enum variant payload are checked recursively, including private representation fields and arrays,
+  and only the package defining the nominal type may provide the implementation.
+- Kept concrete generic implementations local to the exact instance: for example,
+  `extend Cell(i32): Copy {}` does not make `Cell(bool)` or the generic template `Copy`; blanket and
+  generic `Copy` implementations and `where`-based proofs remain unsupported.
+- Routed validated nominal `Copy` through ordinary reads, inferred parameter modes, closure captures,
+  and function or bound-method partial application. Unannotated parameters copy `Copy` values and
+  move other values, while an explicit `move` still consumes even a `Copy` value.
+- Kept function and closure types non-`Copy` in this implementation. `Drop` is not public yet: the
+  next ownership step is internal scope cleanup and drop flags, before `Drop`, raw pointers, and the
+  allocator ABI can unlock `alloc`; platform-facing `std` follows later.
+
 ## 0.7.0 - 2026-07-20
 
 - Added source-backed `Sub(Rhs)`, `Mul(Rhs)`, `Div(Rhs)`, and `Rem(Rhs)` core lang-item traits

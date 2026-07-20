@@ -141,10 +141,24 @@ v0.7.0 扩展 source-backed core 运算协议：
 - 用户声明的同名 trait 不会伪造 lang-item 身份。整数的五种运算仍是内建 lowering；内建 `/`、
   `%` 遇到除数为零或有符号 `MIN / -1`、`MIN % -1` 时在运行期 trap，对应非法常量在编译期拒绝。
 
+v0.8.0 把 `Copy` 接入 source-backed core 与所有权检查：
+
+- edition core 以普通源码声明 canonical `pub let Copy = trait {}`，编译器严格校验其形状和身份；
+  用户包中同名的 trait 不会获得语言语义。
+- 整数、`bool`、`()`、`never`、编译器内部错误恢复类型，以及元素为 `Copy` 的 `Array(T, N)`
+  由编译器内建为 `Copy`。名义 struct/enum 必须显式写 `extend T: Copy {}`，且所有字段和每个 enum
+  variant payload（包括私有表示）都必须递归为 `Copy`。
+- 名义 `Copy` 实现只能位于类型定义包。`extend Cell(i32): Copy {}` 只作用于该具体实例，不会泛化
+  到 `Cell(bool)` 或模板；当前也不支持 blanket/generic `Copy` impl 或 `where` 证明。
+- 未标注参数对 `Copy` 类型默认为复制，否则默认为移动；显式 `move` 始终优先并消费实参。相同判定
+  已用于普通读取、闭包捕获以及函数和 bound method 的部分应用。
+- 当前函数类型和闭包类型自身仍不是 `Copy`，`Drop` 也尚未公开。
+
 标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
-所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core；接下来继续实现
-所有权、析构、指针与 slice 基础。`alloc` 要等待 `Drop`、raw pointer 和分配器 ABI，平台 `std`
-的 IO、文件、环境与进程则放在 C ABI 和最小运行时之后。
+所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
+`Copy`。下一步先建立内部 scope cleanup 与 drop flags，再公开 `Drop`，随后实现 raw pointer 和
+分配器 ABI；到那时才进入 `alloc`。平台 `std` 的 IO、文件、环境与进程则放在 C ABI 和最小运行时
+之后。
 
 最小示例：
 
@@ -155,9 +169,11 @@ let main(): i32 = add(1)(41)
 ```
 
 捕获闭包目前采用保守子集：多参数组必须在一次调用链中完整应用，且只支持受限捕获形状和直接调用。
-当前借用期采用词法范围。固定数组首版只允许 `Copy` 元素并仅支持只读索引；循环回边禁止移动
+当前借用期采用词法范围。固定数组只允许 `Copy` 元素并仅支持只读索引；循环回边禁止移动
 循环外部绑定，以保证下一轮仍拥有相同的可用值。方法的临时 receiver 目前需先绑定到局部；bound
-method 的部分应用只允许捕获 `Copy` receiver 和实参。表达式路径中的 `Self` 与
+method 的部分应用只允许捕获 `Copy` receiver 和实参。名义 `Copy` 必须以具体、同包且结构合法的
+实现显式选择加入；尚无 blanket/generic impl 或 `where` 证明，函数类型和闭包类型也不实现 `Copy`。
+表达式路径中的 `Self` 与
 `A.method(a)()` 完全限定调用尚未开放。`_` 首版只能占据完整的编译期实参槽；嵌套占位和声明类型
 中的占位尚未开放，嵌套的推断式泛型调用以及闭包捕获扫描中的泛型调用仍需显式类型实参。trait 首版
 暂不支持 `where`、泛型 impl、默认方法、泛型关联类型、完全限定调用和 trait object；无约束的抽象类型

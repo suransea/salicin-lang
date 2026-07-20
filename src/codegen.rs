@@ -12,7 +12,10 @@ use crate::ast::{
     Function, Item, ItemOrigin, MatchArm, PassMode, Pattern, PatternFields, Program, Stmt,
     StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantFields, Visibility,
 };
-use crate::core::{operator_trait_has_required_shape, CoreBundle, LangItemKind, LangItems};
+use crate::core::{
+    copy_trait_has_required_shape, operator_trait_has_required_shape, CoreBundle, LangItemKind,
+    LangItems,
+};
 use crate::manifest::Edition;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -968,6 +971,8 @@ struct Analyzer {
     trait_impl_headers: HashSet<TraitImplKey>,
     trait_impls: HashMap<TraitImplKey, TraitImplInfo>,
     trait_methods_by_receiver: HashMap<(Ty, String), Vec<TraitImplKey>>,
+    copy_nominals: HashSet<Ty>,
+    copy_impls_finalized: bool,
     function_order: Vec<String>,
     global_order: Vec<String>,
     struct_order: Vec<String>,
@@ -1019,6 +1024,8 @@ impl Analyzer {
             trait_impl_headers: HashSet::new(),
             trait_impls: HashMap::new(),
             trait_methods_by_receiver: HashMap::new(),
+            copy_nominals: HashSet::new(),
+            copy_impls_finalized: false,
             function_order: Vec::new(),
             global_order: Vec::new(),
             struct_order: Vec::new(),
@@ -1231,8 +1238,19 @@ impl Analyzer {
 
         self.validate_generic_nominal_cycles();
         self.collect_nominal_layouts();
-        self.validate_trait_schemas();
+        let mut remaining_extensions = Vec::new();
         for (extension, origin) in extensions {
+            if self.is_core_copy_extension(&extension) {
+                self.collect_extension(extension, origin);
+            } else {
+                remaining_extensions.push((extension, origin));
+            }
+        }
+        self.validate_copy_implementations();
+        self.copy_impls_finalized = true;
+        self.validate_deferred_array_elements();
+        self.validate_trait_schemas();
+        for (extension, origin) in remaining_extensions {
             self.collect_extension(extension, origin);
         }
 
@@ -1276,6 +1294,170 @@ impl Analyzer {
         self.validate_function_templates();
     }
 
+    fn is_core_copy_extension(&self, extension: &ExtendDef) -> bool {
+        matches!(
+            extension.trait_ref.as_ref(),
+            Some(Type::Named(name, arguments))
+                if name == self.lang_item_name(LangItemKind::Copy) && arguments.is_empty()
+        )
+    }
+
+    fn validate_copy_implementations(&mut self) {
+        let copy_name = self.lang_item_name(LangItemKind::Copy);
+        let mut candidates = self
+            .trait_impls
+            .iter()
+            .filter(|(key, _)| {
+                key.trait_ref.name == copy_name && key.trait_ref.arguments.is_empty()
+            })
+            .map(|(key, _)| (key.self_ty.clone(), key.clone()))
+            .collect::<Vec<_>>();
+        candidates.sort_by(|(left, _), (right, _)| {
+            canonical_type_encoding(left).cmp(&canonical_type_encoding(right))
+        });
+
+        let mut valid = HashSet::new();
+        loop {
+            let previous_len = valid.len();
+            for (target, _) in &candidates {
+                if self.copy_layout_is_valid(target, &valid) {
+                    valid.insert(target.clone());
+                }
+            }
+            if valid.len() == previous_len {
+                break;
+            }
+        }
+
+        for (target, key) in &candidates {
+            if valid.contains(target) {
+                continue;
+            }
+            let target_name = self.diagnostic_type_name(target);
+            if let Some((member, ty)) = self.first_non_copy_member(target, &valid) {
+                let ty = self.diagnostic_type_name(&ty);
+                self.error(format!(
+                    "`{target_name}` cannot implement `Copy`: {member} has type `{ty}`, which does not implement `Copy`"
+                ));
+            } else {
+                self.error(format!(
+                    "`{target_name}` cannot implement `Copy` because its value layout is not Copy"
+                ));
+            }
+            self.trait_impls.remove(key);
+        }
+        self.copy_nominals = valid;
+    }
+
+    fn copy_layout_is_valid(&self, target: &Ty, valid: &HashSet<Ty>) -> bool {
+        match target {
+            Ty::Struct(name) => self.struct_layouts.get(name).is_some_and(|layout| {
+                layout
+                    .fields
+                    .iter()
+                    .all(|field| self.type_is_copy_with_nominals(&field.ty, valid))
+            }),
+            Ty::Enum(name) => self.enum_layouts.get(name).is_some_and(|layout| {
+                layout.variants.iter().all(|variant| {
+                    variant
+                        .fields
+                        .iter()
+                        .all(|field| self.type_is_copy_with_nominals(&field.ty, valid))
+                })
+            }),
+            _ => false,
+        }
+    }
+
+    fn first_non_copy_member(&self, target: &Ty, valid: &HashSet<Ty>) -> Option<(String, Ty)> {
+        let target_name = self.diagnostic_type_name(target);
+        match target {
+            Ty::Struct(name) => self
+                .struct_layouts
+                .get(name)?
+                .fields
+                .iter()
+                .find_map(|field| {
+                    (!self.type_is_copy_with_nominals(&field.ty, valid)).then(|| {
+                        (
+                            format!("field `{target_name}.{}`", field.name),
+                            field.ty.clone(),
+                        )
+                    })
+                }),
+            Ty::Enum(name) => self
+                .enum_layouts
+                .get(name)?
+                .variants
+                .iter()
+                .find_map(|variant| {
+                    variant.fields.iter().find_map(|field| {
+                        (!self.type_is_copy_with_nominals(&field.ty, valid)).then(|| {
+                            (
+                                format!("field `{target_name}.{}.{}`", variant.name, field.name),
+                                field.ty.clone(),
+                            )
+                        })
+                    })
+                }),
+            _ => None,
+        }
+    }
+
+    fn type_is_copy_with_nominals(&self, ty: &Ty, valid: &HashSet<Ty>) -> bool {
+        match ty {
+            Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool | Ty::Unit | Ty::Never | Ty::Error => {
+                true
+            }
+            Ty::Array(element, _) => self.type_is_copy_with_nominals(element, valid),
+            Ty::Enum(name) if name == self.lang_item_name(LangItemKind::Never) => true,
+            Ty::Struct(_) | Ty::Enum(_) => valid.contains(ty),
+            Ty::Function(_) => false,
+        }
+    }
+
+    fn validate_deferred_array_elements(&mut self) {
+        let mut diagnostics = Vec::new();
+        for layout in self.struct_layouts.values() {
+            let owner = self.diagnostic_type_name(&Ty::Struct(layout.name.clone()));
+            for field in &layout.fields {
+                self.collect_invalid_array_element(
+                    &field.ty,
+                    &format!("field `{owner}.{}`", field.name),
+                    &mut diagnostics,
+                );
+            }
+        }
+        for layout in self.enum_layouts.values() {
+            let owner = self.diagnostic_type_name(&Ty::Enum(layout.name.clone()));
+            for variant in &layout.variants {
+                for field in &variant.fields {
+                    self.collect_invalid_array_element(
+                        &field.ty,
+                        &format!("field `{owner}.{}.{}`", variant.name, field.name),
+                        &mut diagnostics,
+                    );
+                }
+            }
+        }
+        diagnostics.sort();
+        diagnostics.dedup();
+        for diagnostic in diagnostics {
+            self.error(diagnostic);
+        }
+    }
+
+    fn collect_invalid_array_element(&self, ty: &Ty, context: &str, diagnostics: &mut Vec<String>) {
+        if let Ty::Array(element, _) = ty {
+            if !self.is_copy_type(element) {
+                let element = self.diagnostic_type_name(element);
+                diagnostics.push(format!(
+                    "array element type `{element}` must implement Copy in the first version ({context})"
+                ));
+            }
+        }
+    }
+
     fn collect_trait_schema(
         &mut self,
         definition: TraitDef,
@@ -1283,6 +1465,12 @@ impl Analyzer {
         origin: ItemOrigin,
     ) {
         let mut valid = true;
+        if definition.name == self.lang_item_name(LangItemKind::Copy)
+            && !copy_trait_has_required_shape(&definition)
+        {
+            self.error("`Copy` language trait must have shape `let Copy = trait {}`");
+            valid = false;
+        }
         let operator_trait = BINARY_OPERATOR_TRAITS
             .iter()
             .copied()
@@ -1461,7 +1649,7 @@ impl Analyzer {
                         &method_type_names,
                     );
                     if parameter.mode == PassMode::Copy
-                        && !Self::trait_source_type_is_definitely_copy(&parameter.ty)
+                        && !self.trait_source_type_is_definitely_copy(&parameter.ty)
                     {
                         self.error(format!(
                             "trait method `{}.{method_name}` parameter `{}` requires `Copy`, but its type is not provably Copy without a trait bound",
@@ -1487,13 +1675,9 @@ impl Analyzer {
         }
     }
 
-    fn trait_source_type_is_definitely_copy(source: &Type) -> bool {
-        match source {
-            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => true,
-            Type::Array(element, _) => Self::trait_source_type_is_definitely_copy(element),
-            Type::Named(name, arguments) if name == "()" && arguments.is_empty() => true,
-            Type::Infer | Type::Named(_, _) => false,
-        }
+    fn trait_source_type_is_definitely_copy(&self, source: &Type) -> bool {
+        self.probe_source_ty(source)
+            .is_some_and(|ty| self.is_copy_type(&ty))
     }
 
     fn validate_trait_source_type(
@@ -1845,6 +2029,18 @@ impl Analyzer {
             self_ty: target.clone(),
             trait_ref,
         };
+        if key.trait_ref.name == self.lang_item_name(LangItemKind::Copy)
+            && self
+                .nominal_accesses
+                .get(nominal_name(&target).expect("trait targets are nominal"))
+                .is_some_and(|access| access.origin.package != origin.package)
+        {
+            let target = self.diagnostic_type_name(&target);
+            self.error(format!(
+                "`Copy` for `{target}` must be implemented in the package that defines the type"
+            ));
+            return;
+        }
         let mut implementation_access =
             self.restrict_access_boundary_to_type(&schema.access, &target, &origin);
         for argument in &key.trait_ref.arguments {
@@ -2984,7 +3180,8 @@ impl Analyzer {
                 } else if element == Ty::Unit {
                     self.error("array element type `()` is not supported in the first version");
                     Ty::Error
-                } else if !is_copy_type(&element) {
+                } else if self.copy_impls_finalized && !self.is_copy_type(&element) {
+                    let element = self.diagnostic_type_name(&element);
                     self.error(format!(
                         "array element type `{element}` must implement Copy in the first version"
                     ));
@@ -3204,6 +3401,62 @@ impl Analyzer {
                 }
             }
             Ty::Never | Ty::Function(_) | Ty::Error => None,
+        }
+    }
+
+    /// Render an internal type using source-level names for diagnostics.
+    ///
+    /// Concrete generic nominals use canonical `$mono$type$...` names in HIR
+    /// and layout maps. Those names are intentionally stable for compiler
+    /// identity, but they are not part of Salicin's user-facing syntax.
+    fn diagnostic_type_name(&self, ty: &Ty) -> String {
+        match ty {
+            Ty::I32 => "i32".to_owned(),
+            Ty::I64 => "i64".to_owned(),
+            Ty::U32 => "u32".to_owned(),
+            Ty::U64 => "u64".to_owned(),
+            Ty::Bool => "bool".to_owned(),
+            Ty::Unit => "()".to_owned(),
+            Ty::Array(element, length) => {
+                format!("Array({}, {length})", self.diagnostic_type_name(element))
+            }
+            Ty::Struct(name) | Ty::Enum(name) => {
+                if let Some(parameter) = self.abstract_type_parameters.get(name) {
+                    return parameter.clone();
+                }
+                let Some(instance) = self.nominal_instances.get(name) else {
+                    return name.clone();
+                };
+                if instance.key.arguments.is_empty() {
+                    return instance.key.template.clone();
+                }
+                let arguments = instance
+                    .key
+                    .arguments
+                    .iter()
+                    .map(|argument| self.diagnostic_type_name(argument))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{}({arguments})", instance.key.template)
+            }
+            Ty::Never => "never".to_owned(),
+            Ty::Error => "<error>".to_owned(),
+            Ty::Function(function) => {
+                let mut rendered = String::new();
+                for group in &function.groups {
+                    rendered.push('(');
+                    rendered.push_str(
+                        &group
+                            .iter()
+                            .map(|parameter| self.diagnostic_type_name(parameter))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    );
+                    rendered.push_str("): ");
+                }
+                rendered.push_str(&self.diagnostic_type_name(&function.result));
+                rendered
+            }
         }
     }
 
@@ -5717,11 +5970,24 @@ impl Analyzer {
     }
 
     fn validate_parameter_mode(&mut self, function: &str, param: &ParamSig) {
-        if param.mode == PassMode::Copy && !is_copy_type(&param.ty) {
+        if param.mode == PassMode::Copy && !self.is_copy_type(&param.ty) {
+            let ty = self.diagnostic_type_name(&param.ty);
             self.error(format!(
                 "parameter `{}` in function `{function}` requires `Copy`, but nominal type `{}` does not implement Copy",
-                param.name, param.ty
+                param.name, ty
             ));
+        }
+    }
+
+    fn is_copy_type(&self, ty: &Ty) -> bool {
+        self.type_is_copy_with_nominals(ty, &self.copy_nominals)
+    }
+
+    fn effective_pass_mode(&self, mode: PassMode, ty: &Ty) -> PassMode {
+        match mode {
+            PassMode::Inferred if self.is_copy_type(ty) => PassMode::Copy,
+            PassMode::Inferred => PassMode::Move,
+            mode => mode,
         }
     }
 
@@ -6302,6 +6568,14 @@ impl Analyzer {
         };
 
         if let Some((element_ty, length)) = expected_array {
+            if element_ty == Ty::Unit {
+                self.error("array element type `()` is not supported in the first version");
+            } else if !self.is_copy_type(&element_ty) {
+                let element_ty = self.diagnostic_type_name(&element_ty);
+                self.error(format!(
+                    "array element type `{element_ty}` must implement Copy in the first version"
+                ));
+            }
             if elements.len() as u64 != length {
                 self.error(format!(
                     "array literal length mismatch: expected {length}, found {}",
@@ -6326,7 +6600,8 @@ impl Analyzer {
         let element_ty = first.ty.clone();
         if element_ty == Ty::Unit {
             self.error("array element type `()` is not supported in the first version");
-        } else if !is_copy_type(&element_ty) {
+        } else if !self.is_copy_type(&element_ty) {
+            let element_ty = self.diagnostic_type_name(&element_ty);
             self.error(format!(
                 "array element type `{element_ty}` must implement Copy in the first version"
             ));
@@ -6571,10 +6846,10 @@ impl Analyzer {
             }
             match capture.mode {
                 ClosureCaptureMode::Shared | ClosureCaptureMode::Mutable
-                    if !matches!(local.ty, Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool) =>
+                    if !self.is_copy_type(&local.ty) =>
                 {
                     self.error(format!(
-                        "closure capture `{name}` must be a Copy scalar for this capture mode"
+                        "closure capture `{name}` must implement Copy for this capture mode"
                     ));
                     continue;
                 }
@@ -6777,7 +7052,7 @@ impl Analyzer {
                 }
                 valid
             }
-            Expr::ChainMember(base, _) => {
+            Expr::Member(base, _) | Expr::ChainMember(base, _) => {
                 self.scan_simple_closure_captures(base, bound, outer, captures)
             }
             Expr::Call(_, _) => {
@@ -6899,15 +7174,20 @@ impl Analyzer {
                     Expr::Name(name) if bound.contains(name) => {}
                     Expr::Name(name) => {
                         if let Some(local) = outer.lookup(name) {
-                            let mode = effective_pass_mode(parameter.mode, &parameter.ty);
+                            let mode = self.effective_pass_mode(parameter.mode, &parameter.ty);
                             if mode == PassMode::Move
                                 && matches!(local.ty, Ty::Struct(_) | Ty::Enum(_))
                                 && local.ty == parameter.ty
                             {
                                 record_closure_capture(captures, name, ClosureCaptureMode::Move);
+                            } else if mode == PassMode::Copy
+                                && self.is_copy_type(&local.ty)
+                                && local.ty == parameter.ty
+                            {
+                                record_closure_capture(captures, name, ClosureCaptureMode::Shared);
                             } else {
                                 self.error(format!(
-                                    "closure call capture `{name}` must be a nominal root passed to a move parameter"
+                                    "closure call capture `{name}` must match a Copy parameter or a nominal move parameter"
                                 ));
                                 valid = false;
                             }
@@ -7000,7 +7280,7 @@ impl Analyzer {
         context: &mut LowerCtx,
     ) -> HirExpr {
         let access = if requested == AccessKind::Auto {
-            if is_copy_type(&place.ty) {
+            if self.is_copy_type(&place.ty) {
                 AccessKind::Copy
             } else {
                 AccessKind::Move
@@ -7012,10 +7292,10 @@ impl Analyzer {
         self.ensure_no_conflicting_loan(&place, access, context);
         match access {
             AccessKind::Copy => {
-                if !is_copy_type(&place.ty) {
+                if !self.is_copy_type(&place.ty) {
+                    let ty = self.diagnostic_type_name(&place.ty);
                     self.error(format!(
-                        "type `{}` does not implement Copy and cannot be copied",
-                        place.ty
+                        "type `{ty}` does not implement Copy and cannot be copied"
                     ));
                 }
                 HirExpr {
@@ -9964,7 +10244,7 @@ impl Analyzer {
                         index,
                     },
                 };
-                match effective_pass_mode(parameter.mode, &parameter.ty) {
+                match self.effective_pass_mode(parameter.mode, &parameter.ty) {
                     PassMode::Copy => HirArgument::Copy(capture),
                     PassMode::Move => HirArgument::Move(capture),
                     PassMode::Borrow | PassMode::MutBorrow => {
@@ -10041,7 +10321,7 @@ impl Analyzer {
         context: &mut LowerCtx,
         temporary_loans: &mut Vec<LoanId>,
     ) -> HirArgument {
-        let mode = effective_pass_mode(parameter.mode, &parameter.ty);
+        let mode = self.effective_pass_mode(parameter.mode, &parameter.ty);
         match mode {
             PassMode::Copy | PassMode::Move => {
                 let value =
@@ -10061,10 +10341,11 @@ impl Analyzer {
                     format!("argument for parameter `{}`", parameter.name),
                 );
                 if mode == PassMode::Copy {
-                    if !is_copy_type(&parameter.ty) {
+                    if !self.is_copy_type(&parameter.ty) {
+                        let ty = self.diagnostic_type_name(&parameter.ty);
                         self.error(format!(
                             "parameter `{}` requires Copy, but `{}` does not implement Copy",
-                            parameter.name, parameter.ty
+                            parameter.name, ty
                         ));
                     }
                     HirArgument::Copy(value)
@@ -10435,22 +10716,6 @@ fn record_closure_capture(
             name: name.to_owned(),
             mode,
         });
-    }
-}
-
-fn is_copy_type(ty: &Ty) -> bool {
-    match ty {
-        Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool | Ty::Unit | Ty::Never | Ty::Error => true,
-        Ty::Array(element, _) => is_copy_type(element),
-        Ty::Struct(_) | Ty::Enum(_) | Ty::Function(_) => false,
-    }
-}
-
-fn effective_pass_mode(mode: PassMode, ty: &Ty) -> PassMode {
-    match mode {
-        PassMode::Inferred if is_copy_type(ty) => PassMode::Copy,
-        PassMode::Inferred => PassMode::Move,
-        mode => mode,
     }
 }
 
@@ -14095,6 +14360,150 @@ let main(): i32 = 0
     }
 
     #[test]
+    fn source_backed_copy_nominals_support_reads_and_parameter_modes() {
+        compile_text(
+            r#"
+let Pair = struct(left: i32, right: i32)
+extend Pair: Copy {}
+
+let inferred(value: Pair): i32 = value.left + value.right
+let explicit(copy value: Pair): i32 = value.left + value.right
+
+let main(): i32 = {
+  let pair = Pair(left: 19, right: 23)
+  let duplicate = pair
+  let first = inferred(pair)
+  let second = explicit(pair)
+  if first == 42 && second == 42 && duplicate.left + pair.right == 42 { 42 } else { 0 }
+}
+"#,
+        )
+        .expect("a validated core Copy implementation must preserve its source place");
+    }
+
+    #[test]
+    fn explicit_move_still_consumes_a_copy_nominal() {
+        let errors = compile_text(
+            r#"
+let Pair = struct(left: i32, right: i32)
+extend Pair: Copy {}
+let consume(move value: Pair): i32 = value.left + value.right
+let main(): i32 = {
+  let pair = Pair(19, 23)
+  let answer = consume(pair)
+  answer + pair.left
+}
+"#,
+        )
+        .expect_err("an explicit move must override nominal Copy semantics");
+        assert!(errors.iter().any(|error| error.message.contains("moved")));
+    }
+
+    #[test]
+    fn copy_validation_is_structural_transitive_and_source_order_independent() {
+        compile_text(
+            r#"
+let Inner = struct(value: i32)
+let Outer = struct(inner: Inner)
+let Choice = enum { Empty, Value(Outer), Named(value: Inner) }
+let Holder = struct(values: Array(Outer, 2))
+
+extend Holder: Copy {}
+extend Choice: Copy {}
+extend Outer: Copy {}
+extend Inner: Copy {}
+
+let main(): i32 = {
+  let values = [Outer(Inner(19)), Outer(Inner(23))]
+  let holder = Holder(values)
+  let duplicate = holder
+  let choice = Choice.Value(holder.values[1])
+  let copied = choice
+  let left = holder.values[0].inner.value
+  let right = duplicate.values[1].inner.value
+  copied match {
+    Value(_) => left + right,
+    _ => 0,
+  }
+}
+"#,
+        )
+        .expect("Copy dependencies, enums, and arrays must validate independently of source order");
+    }
+
+    #[test]
+    fn rejects_non_structural_copy_and_does_not_generalize_concrete_instances() {
+        let structural = compile_text(
+            r#"
+let Token = struct(value: i32)
+let Invalid = struct(token: Token)
+extend Invalid: Copy {}
+let main(): i32 = 0
+"#,
+        )
+        .expect_err("Copy must inspect every private representation field");
+        assert!(structural.iter().any(|error| {
+            error.message.contains("cannot implement `Copy`")
+                && error.message.contains("Invalid.token")
+        }));
+
+        let concrete = compile_text(
+            r#"
+let Cell(T: type) = struct(value: T)
+extend Cell(i32): Copy {}
+let consume(value: Cell(bool)): bool = value.value
+let main(): i32 = {
+  let cell = Cell(bool)(true)
+  let answer = consume(cell)
+  if answer && cell.value { 42 } else { 0 }
+}
+"#,
+        )
+        .expect_err("Cell(i32): Copy must not make Cell(bool) Copy");
+        assert!(concrete.iter().any(|error| error.message.contains("moved")));
+    }
+
+    #[test]
+    fn copy_diagnostics_render_concrete_generic_source_types() {
+        let parameter = compile_text(
+            r#"
+let Cell(T: type) = struct(value: T)
+extend Cell(i32): Copy {}
+let read(copy cell: Cell(i64)): i64 = cell.value
+let main(): i32 = 0
+"#,
+        )
+        .expect_err("a concrete instance without its own Copy impl must be rejected");
+        assert!(parameter.iter().any(|error| {
+            error
+                .message
+                .contains("nominal type `Cell(i64)` does not implement Copy")
+        }));
+        assert!(parameter
+            .iter()
+            .all(|error| !error.message.contains("$mono$type$")));
+
+        let structural = compile_text(
+            r#"
+let Token = struct(value: i32)
+let Cell(T: type) = struct(value: T)
+extend Cell(Token): Copy {}
+let main(): i32 = 0
+"#,
+        )
+        .expect_err("a concrete Copy impl must still validate its instantiated fields");
+        assert!(structural.iter().any(|error| {
+            error
+                .message
+                .contains("`Cell(Token)` cannot implement `Copy`")
+                && error.message.contains("field `Cell(Token).value`")
+        }));
+        assert!(structural
+            .iter()
+            .all(|error| !error.message.contains("$mono$type$")));
+    }
+
+    #[test]
     fn reports_a_value_moved_on_only_one_if_path_as_possibly_moved() {
         let errors = compile_text(
             r#"
@@ -15124,6 +15533,47 @@ let main(): i32 = 0
                 "missing `{expected}` in {diagnostics:?}"
             );
         }
+    }
+
+    #[test]
+    fn trait_copy_parameters_accept_validated_concrete_copy_nominals() {
+        compile_text(
+            r#"
+let Cell(T: type) = struct(value: T)
+let Reader = trait {
+  let read(borrow self)(copy value: Cell(i32)): i32
+}
+
+let Host = struct(value: i32)
+extend Host: Reader {
+  let read(borrow self)(copy value: Cell(i32)): i32 = self.value + value.value
+}
+extend Cell(i32): Copy {}
+
+let main(): i32 = {
+  let host = Host(19)
+  let cell = Cell(i32)(23)
+  host.read(cell) + cell.value - 23
+}
+"#,
+        )
+        .expect("trait schemas must see concrete Copy implementations collected later in source");
+    }
+
+    #[test]
+    fn rejects_non_copy_array_elements_in_uninstantiated_layout_fields() {
+        let errors = compile_text(
+            r#"
+let Payload = struct(value: i32)
+let Holder = struct(values: Array(Payload, 1))
+let main(): i32 = 42
+"#,
+        )
+        .expect_err("array field layouts must be checked even when no value is constructed");
+        assert!(errors.iter().any(|error| {
+            error.message.contains("array element type `Payload`")
+                && error.message.contains("Holder.values")
+        }));
     }
 
     #[test]

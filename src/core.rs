@@ -26,6 +26,7 @@ pub enum LangItemKind {
     Option,
     Result,
     Never,
+    Copy,
     Add,
     Sub,
     Mul,
@@ -34,10 +35,11 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 9] = [
         Self::Option,
         Self::Result,
         Self::Never,
+        Self::Copy,
         Self::Add,
         Self::Sub,
         Self::Mul,
@@ -50,6 +52,7 @@ impl LangItemKind {
             Self::Option => "Option",
             Self::Result => "Result",
             Self::Never => "never",
+            Self::Copy => "Copy",
             Self::Add => "Add",
             Self::Sub => "Sub",
             Self::Mul => "Mul",
@@ -61,7 +64,7 @@ impl LangItemKind {
     const fn expected_kind(self) -> &'static str {
         match self {
             Self::Option | Self::Result | Self::Never => "enum",
-            Self::Add | Self::Sub | Self::Mul | Self::Div | Self::Rem => "trait",
+            Self::Copy | Self::Add | Self::Sub | Self::Mul | Self::Div | Self::Rem => "trait",
         }
     }
 
@@ -72,7 +75,7 @@ impl LangItemKind {
             Self::Mul => Some("mul"),
             Self::Div => Some("div"),
             Self::Rem => Some("rem"),
-            Self::Option | Self::Result | Self::Never => None,
+            Self::Option | Self::Result | Self::Never | Self::Copy => None,
         }
     }
 }
@@ -121,6 +124,7 @@ pub struct LangItems {
     option: LangItem,
     result: LangItem,
     never: LangItem,
+    copy: LangItem,
     add: LangItem,
     sub: LangItem,
     mul: LangItem,
@@ -139,6 +143,10 @@ impl LangItems {
 
     pub const fn never(&self) -> &LangItem {
         &self.never
+    }
+
+    pub const fn copy(&self) -> &LangItem {
+        &self.copy
     }
 
     pub const fn add(&self) -> &LangItem {
@@ -166,6 +174,7 @@ impl LangItems {
             LangItemKind::Option => &self.option,
             LangItemKind::Result => &self.result,
             LangItemKind::Never => &self.never,
+            LangItemKind::Copy => &self.copy,
             LangItemKind::Add => &self.add,
             LangItemKind::Sub => &self.sub,
             LangItemKind::Mul => &self.mul,
@@ -353,6 +362,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         option: item(LangItemKind::Option),
         result: item(LangItemKind::Result),
         never: item(LangItemKind::Never),
+        copy: item(LangItemKind::Copy),
         add: item(LangItemKind::Add),
         sub: item(LangItemKind::Sub),
         mul: item(LangItemKind::Mul),
@@ -396,6 +406,7 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         (LangItemKind::Option, Item::Enum(definition)) => validate_option(definition, diagnostics),
         (LangItemKind::Result, Item::Enum(definition)) => validate_result(definition, diagnostics),
         (LangItemKind::Never, Item::Enum(definition)) => validate_never(definition, diagnostics),
+        (LangItemKind::Copy, Item::Trait(definition)) => validate_copy(definition, diagnostics),
         (kind, Item::Trait(definition)) if kind.operator_method().is_some() => {
             validate_operator(kind, definition, diagnostics)
         }
@@ -466,6 +477,17 @@ fn validate_never(definition: &EnumDef, diagnostics: &mut Vec<String>) {
     }
 }
 
+fn validate_copy(definition: &TraitDef, diagnostics: &mut Vec<String>) {
+    if !copy_trait_has_required_shape(definition) {
+        diagnostics.push("lang item `Copy` must have shape `pub let Copy = trait {}`".to_owned());
+    }
+}
+
+/// Check the marker contract shared by core bootstrapping and ownership lowering.
+pub(crate) fn copy_trait_has_required_shape(definition: &TraitDef) -> bool {
+    definition.compile_groups.is_empty() && definition.members.is_empty()
+}
+
 fn validate_operator(kind: LangItemKind, definition: &TraitDef, diagnostics: &mut Vec<String>) {
     let method = kind
         .operator_method()
@@ -527,12 +549,46 @@ fn valid_operator_method(function: &Function, method: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn core_source_with_copy(copy_declaration: &str) -> String {
+        [
+            r#"
+pub let Option(T: type) = enum { Some(T), None }
+pub let Result(T: type, E: type) = enum { Ok(T), Err(E) }
+pub let never = enum {}
+"#,
+            copy_declaration,
+            r#"
+pub let Add(Rhs: type) = trait {
+  let Output: type
+  let add(move self)(move rhs: Rhs): Output
+}
+pub let Sub(Rhs: type) = trait {
+  let Output: type
+  let sub(move self)(move rhs: Rhs): Output
+}
+pub let Mul(Rhs: type) = trait {
+  let Output: type
+  let mul(move self)(move rhs: Rhs): Output
+}
+pub let Div(Rhs: type) = trait {
+  let Output: type
+  let div(move self)(move rhs: Rhs): Output
+}
+pub let Rem(Rhs: type) = trait {
+  let Output: type
+  let rem(move self)(move rhs: Rhs): Output
+}
+"#,
+        ]
+        .concat()
+    }
+
     #[test]
     fn edition_2026_bundle_parses_and_validates() {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), 8);
+        assert_eq!(bundle.program().items.len(), 9);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -558,6 +614,7 @@ pub let Rem(Rhs: type) = trait {
   let Output: type
   let rem(move self)(move rhs: Rhs): Output
 }
+pub let Copy = trait {}
 pub let Add(Rhs: type) = trait {
   let Output: type
   let add(move self)(move rhs: Rhs): Output
@@ -581,13 +638,14 @@ pub let Mul(Rhs: type) = trait {
         let bundle = CoreBundle::from_source(Edition::Edition2026, source).unwrap();
 
         assert_eq!(bundle.lang_items().rem().item_index(), 0);
-        assert_eq!(bundle.lang_items().add().item_index(), 1);
-        assert_eq!(bundle.lang_items().never().item_index(), 2);
-        assert_eq!(bundle.lang_items().option().item_index(), 3);
-        assert_eq!(bundle.lang_items().result().item_index(), 4);
-        assert_eq!(bundle.lang_items().div().item_index(), 5);
-        assert_eq!(bundle.lang_items().sub().item_index(), 6);
-        assert_eq!(bundle.lang_items().mul().item_index(), 7);
+        assert_eq!(bundle.lang_items().copy().item_index(), 1);
+        assert_eq!(bundle.lang_items().add().item_index(), 2);
+        assert_eq!(bundle.lang_items().never().item_index(), 3);
+        assert_eq!(bundle.lang_items().option().item_index(), 4);
+        assert_eq!(bundle.lang_items().result().item_index(), 5);
+        assert_eq!(bundle.lang_items().div().item_index(), 6);
+        assert_eq!(bundle.lang_items().sub().item_index(), 7);
+        assert_eq!(bundle.lang_items().mul().item_index(), 8);
         for kind in LangItemKind::ALL {
             let item = bundle.lang_items().get(kind);
             assert_eq!(
@@ -603,6 +661,7 @@ pub let Mul(Rhs: type) = trait {
 let Option(T: type) = enum { Some(T), None }
 pub let Result = struct(value: i32)
 pub let never = enum { Reachable }
+pub let Copy(T: type) = trait {}
 pub let Add(Rhs: type) = trait {
   let add(move self)(move rhs: Rhs): Rhs
 }
@@ -630,15 +689,16 @@ pub let Rem(Rhs: type) = trait {
             error.diagnostics(),
             [
                 "lang item `Option` must be `pub`, found private visibility",
-                "unexpected declaration `Extra` at item 5",
+                "unexpected declaration `Extra` at item 6",
                 "lang item `Result` must be enum, found struct",
                 "lang item `never` must have shape `pub let never = enum {}`",
+                "lang item `Copy` must have shape `pub let Copy = trait {}`",
                 "lang item `Add` must have shape `pub let Add(Rhs: type) = trait { let Output: type; let add(move self)(move rhs: Rhs): Output }`",
             ]
         );
         assert_eq!(
             error.to_string(),
-            "invalid embedded core bundle for edition 2026\n- lang item `Option` must be `pub`, found private visibility\n- unexpected declaration `Extra` at item 5\n- lang item `Result` must be enum, found struct\n- lang item `never` must have shape `pub let never = enum {}`\n- lang item `Add` must have shape `pub let Add(Rhs: type) = trait { let Output: type; let add(move self)(move rhs: Rhs): Output }`"
+            "invalid embedded core bundle for edition 2026\n- lang item `Option` must be `pub`, found private visibility\n- unexpected declaration `Extra` at item 6\n- lang item `Result` must be enum, found struct\n- lang item `never` must have shape `pub let never = enum {}`\n- lang item `Copy` must have shape `pub let Copy = trait {}`\n- lang item `Add` must have shape `pub let Add(Rhs: type) = trait { let Output: type; let add(move self)(move rhs: Rhs): Output }`"
         );
     }
 
@@ -676,8 +736,29 @@ pub let Rem(Rhs: type) = trait {
             [
                 "duplicate lang item `Option` appears 2 times",
                 "missing lang item `Result`",
+                "missing lang item `Copy`",
             ]
         );
+    }
+
+    #[test]
+    fn rejects_copy_compile_parameters_associated_types_and_methods() {
+        let malformed_declarations = [
+            "pub let Copy(T: type) = trait {}",
+            "pub let Copy = trait { let Item: type }",
+            "pub let Copy = trait { let clone(borrow self)(): Self }",
+        ];
+
+        for declaration in malformed_declarations {
+            let source = core_source_with_copy(declaration);
+            let error = CoreBundle::from_source(Edition::Edition2026, &source).unwrap_err();
+
+            assert_eq!(
+                error.diagnostics(),
+                ["lang item `Copy` must have shape `pub let Copy = trait {}`"],
+                "unexpected diagnostic for `{declaration}`"
+            );
+        }
     }
 
     #[test]
@@ -686,6 +767,7 @@ pub let Rem(Rhs: type) = trait {
 pub let Option(T: type) = enum { Some(T), None }
 pub let Result(T: type, E: type) = enum { Ok(T), Err(E) }
 pub let never = enum {}
+pub let Copy = trait {}
 pub let Add(Rhs: type) = trait {
   let Output: type
   let add(move self)(move rhs: Rhs): Output

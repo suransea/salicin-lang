@@ -319,6 +319,80 @@ fn m1_ownership_errors_report_their_cause() {
 }
 
 #[test]
+fn source_backed_copy_programs_run_with_expected_result() {
+    for name in [
+        "copy_nominal_repeated_and_parameters.sali",
+        "copy_nominal_capture.sali",
+        "copy_nominal_enum_array.sali",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run source-backed Copy fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn source_backed_copy_errors_report_their_cause() {
+    for (name, expected) in [
+        (
+            "copy_non_copy.sali",
+            &["requires `Copy`", "does not implement Copy"][..],
+        ),
+        (
+            "copy_nominal_invalid_struct_impl.sali",
+            &["Container", "cannot implement `Copy`", "Payload"][..],
+        ),
+        (
+            "copy_nominal_invalid_enum_impl.sali",
+            &["Message", "cannot implement `Copy`", "Payload"][..],
+        ),
+        (
+            "copy_nominal_transitive_invalid_impl.sali",
+            &["Branch", "Tree", "cannot implement `Copy`"][..],
+        ),
+        ("copy_nominal_explicit_move_reuse.sali", &["moved"][..]),
+        (
+            "copy_nominal_concrete_generic_impl.sali",
+            &[
+                "function `read`",
+                "requires `Copy`",
+                "Cell(i64)",
+                "does not implement Copy",
+            ][..],
+        ),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid source-backed Copy fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        for fragment in expected {
+            assert!(
+                stderr.contains(fragment),
+                "{name} did not report `{fragment}`:\n{}",
+                output_text(&output)
+            );
+        }
+        assert!(
+            !stderr.contains("$mono$type$"),
+            "{name} leaked an internal monomorphization name:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn m1_local_closure_programs_run_with_expected_result() {
     for name in [
         "capturing_closure.sali",
@@ -1958,6 +2032,140 @@ let main(): i32 = Number(20) + Number(22)
             .contains("module `never` cannot be used as a type"),
         "{}",
         output_text(&module_never)
+    );
+}
+
+#[test]
+fn core_copy_identity_and_implementation_ownership_hold_across_packages() {
+    let workspace = TestDirectory::new();
+    workspace.write(
+        "app/salicin.toml",
+        r#"[package]
+name = "copy-app"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+dep = { path = "../dep" }
+"#,
+    );
+    workspace.write(
+        "dep/salicin.toml",
+        "[package]\nname = \"copy-dependency\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    );
+    workspace.write(
+        "dep/src/lib.sali",
+        r#"pub let Token = struct(value: i32)
+pub let make(value: i32): Token = Token(value)
+"#,
+    );
+    workspace.write(
+        "app/src/main.sali",
+        r#"extend dep.Token: Copy {}
+let main(): i32 = 42
+"#,
+    );
+
+    let app = workspace.join("app");
+    let orphan = salic()
+        .arg("check")
+        .arg(&app)
+        .output()
+        .expect("reject a downstream Copy implementation for an upstream type");
+    assert_eq!(orphan.status.code(), Some(1), "{}", output_text(&orphan));
+    let stderr = String::from_utf8_lossy(&orphan.stderr);
+    assert!(
+        stderr.contains("`Copy` for") && stderr.contains("package that defines the type"),
+        "{}",
+        output_text(&orphan)
+    );
+
+    workspace.write(
+        "dep/src/lib.sali",
+        r#"pub let Token = struct(value: i32)
+extend Token: Copy {}
+pub let make(value: i32): Token = Token(value)
+pub let read(copy token: Token): i32 = token.value
+"#,
+    );
+    workspace.write(
+        "app/src/main.sali",
+        r#"let main(): i32 = {
+  let token = dep.make(42)
+  let first = dep.read(token)
+  if first == dep.read(token) { first } else { 0 }
+}
+"#,
+    );
+
+    let owner_impl = salic()
+        .arg("run")
+        .arg(&app)
+        .output()
+        .expect("use an upstream Copy implementation in a downstream package");
+    assert_eq!(
+        owner_impl.status.code(),
+        Some(42),
+        "{}",
+        output_text(&owner_impl)
+    );
+
+    workspace.write("app/src/fake.sali", "pub let Copy = trait {}\n");
+    workspace.write(
+        "app/src/main.sali",
+        r#"use root.fake.Copy as FakeCopy
+let Local = struct(value: i32)
+extend Local: FakeCopy {}
+let read(copy local: Local): i32 = local.value
+let main(): i32 = read(Local(42))
+"#,
+    );
+
+    let alias_spoof = salic()
+        .arg("check")
+        .arg(&app)
+        .output()
+        .expect("reject an alias of a fake Copy trait as a language marker");
+    assert_eq!(
+        alias_spoof.status.code(),
+        Some(1),
+        "{}",
+        output_text(&alias_spoof)
+    );
+    let stderr = String::from_utf8_lossy(&alias_spoof.stderr);
+    assert!(
+        stderr.contains("requires `Copy`") && stderr.contains("does not implement Copy"),
+        "{}",
+        output_text(&alias_spoof)
+    );
+
+    workspace.write(
+        "app/src/fake.sali",
+        r#"pub let Copy = trait {}
+pub let Token = struct(value: i32)
+
+extend Token: Copy {}
+
+pub let make(value: i32): Token = Token(value)
+pub let read(copy token: Token): i32 = token.value
+"#,
+    );
+    workspace.write(
+        "app/src/main.sali",
+        "let main(): i32 = fake.read(fake.make(42))\n",
+    );
+
+    let spoof = salic()
+        .arg("check")
+        .arg(&app)
+        .output()
+        .expect("reject a module trait spoofing core Copy semantics");
+    assert_eq!(spoof.status.code(), Some(1), "{}", output_text(&spoof));
+    let stderr = String::from_utf8_lossy(&spoof.stderr);
+    assert!(
+        stderr.contains("requires `Copy`") && stderr.contains("does not implement Copy"),
+        "{}",
+        output_text(&spoof)
     );
 }
 

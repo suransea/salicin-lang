@@ -12,6 +12,8 @@ pub let Result(T: type, E: type) = enum {
 
 pub let never = enum {}
 
+pub let Copy = trait {}
+
 pub let Add(Rhs: type) = trait {
   let Output: type
   let add(move self)(move rhs: Rhs): Output
