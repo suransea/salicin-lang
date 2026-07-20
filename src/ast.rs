@@ -4,6 +4,7 @@ pub struct Program {
     /// Visibility is stored alongside top-level items until module lowering
     /// gives declarations stable module identities.
     pub item_visibilities: Vec<Visibility>,
+    pub uses: Vec<UseDecl>,
 }
 
 impl Program {
@@ -12,10 +13,19 @@ impl Program {
         Self {
             items,
             item_visibilities,
+            uses: Vec::new(),
         }
     }
 
     pub fn with_visibilities(items: Vec<Item>, item_visibilities: Vec<Visibility>) -> Self {
+        Self::with_uses(items, item_visibilities, Vec::new())
+    }
+
+    pub fn with_uses(
+        items: Vec<Item>,
+        item_visibilities: Vec<Visibility>,
+        uses: Vec<UseDecl>,
+    ) -> Self {
         assert_eq!(
             items.len(),
             item_visibilities.len(),
@@ -24,8 +34,16 @@ impl Program {
         Self {
             items,
             item_visibilities,
+            uses,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UseDecl {
+    pub visibility: Visibility,
+    pub path: Vec<String>,
+    pub alias: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

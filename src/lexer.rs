@@ -5,6 +5,10 @@ pub enum TokenKind {
     Let,
     Pub,
     Package,
+    Use,
+    As,
+    Root,
+    Super,
     Mut,
     Copy,
     Move,
@@ -105,6 +109,10 @@ fn keyword(text: &str) -> Option<TokenKind> {
         "let" => TokenKind::Let,
         "pub" => TokenKind::Pub,
         "package" => TokenKind::Package,
+        "use" => TokenKind::Use,
+        "as" => TokenKind::As,
+        "root" => TokenKind::Root,
+        "super" => TokenKind::Super,
         "mut" => TokenKind::Mut,
         "copy" => TokenKind::Copy,
         "move" => TokenKind::Move,
@@ -453,11 +461,27 @@ mod tests {
     }
 
     #[test]
+    fn recognizes_import_and_path_keywords_but_keeps_self_contextual() {
+        let tokens = lex("pub use root.net.Client as HttpClient\nuse super.self.helper").unwrap();
+        for kind in [
+            TokenKind::Use,
+            TokenKind::As,
+            TokenKind::Root,
+            TokenKind::Super,
+        ] {
+            assert!(tokens.iter().any(|token| token.kind == kind));
+        }
+        assert!(tokens
+            .iter()
+            .any(|token| token.kind == TokenKind::Ident("self".into())));
+    }
+
+    #[test]
     fn exposes_the_same_keyword_set_used_by_tokenization() {
         for text in [
-            "let", "pub", "package", "mut", "copy", "move", "borrow", "type", "do", "if", "else",
-            "return", "throw", "while", "loop", "break", "extend", "struct", "enum", "trait",
-            "match", "try", "true", "false",
+            "let", "pub", "package", "use", "as", "root", "super", "mut", "copy", "move", "borrow",
+            "type", "do", "if", "else", "return", "throw", "while", "loop", "break", "extend",
+            "struct", "enum", "trait", "match", "try", "true", "false",
         ] {
             assert!(is_keyword(text), "`{text}` was not reported as a keyword");
             assert!(!matches!(lex(text).unwrap()[0].kind, TokenKind::Ident(_)));

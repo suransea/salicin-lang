@@ -1651,3 +1651,233 @@ fn file_module_paths_reject_keywords_and_the_inference_placeholder() {
         );
     }
 }
+
+#[test]
+fn private_use_supports_groups_aliases_and_relative_module_roots() {
+    let project = TestDirectory::new();
+    project.write(
+        "salicin.toml",
+        r#"[package]
+name = "use-paths"
+version = "0.1.0"
+edition = "2026"
+"#,
+    );
+    project.write(
+        "src/main.sali",
+        r#"let root_bonus(): i32 = 3
+let main(): i32 = nested.deep.answer()
+"#,
+    );
+    project.write(
+        "src/kit.sali",
+        r#"pub(package) let Number = struct(value: i32)
+pub(package) let Outcome = enum {
+  Ready(i32),
+  Empty,
+}
+pub(package) let zero(): i32 = 0
+pub(package) let increment(value: i32): i32 = value + 1
+pub(package) let make_number(value: i32): Number = Number(value: value)
+"#,
+    );
+    project.write("src/nested.sali", "let parent_bonus(): i32 = 2\n");
+    project.write(
+        "src/nested/deep.sali",
+        r#"use root.kit.{Number, Outcome, increment}
+use root.kit.make_number as make
+use root.kit as utilities
+use self.local_bonus as local
+use super.parent_bonus as parent
+use root.root_bonus as from_root
+
+let local_bonus(): i32 = 1
+
+pub(package) let answer(): i32 = {
+  let number: Number = make(35)
+  let outcome: Outcome = Outcome.Ready(increment(number.value))
+  let value = outcome match {
+    Outcome.Ready(value) => value,
+    Outcome.Empty => 0
+  }
+  value + utilities.zero() + local() + parent() + from_root()
+}
+"#,
+    );
+
+    let output = salic()
+        .arg("run")
+        .arg(&project.0)
+        .output()
+        .expect("run project with private and relative imports");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
+fn public_and_package_use_build_facade_modules() {
+    let project = TestDirectory::new();
+    project.write(
+        "salicin.toml",
+        r#"[package]
+name = "use-facades"
+version = "0.1.0"
+edition = "2026"
+"#,
+    );
+    project.write(
+        "src/main.sali",
+        "let main(): i32 = facade.answer() + package_facade.extra()\n",
+    );
+    project.write("src/implementation.sali", "pub let answer(): i32 = 40\n");
+    project.write(
+        "src/package_implementation.sali",
+        "pub(package) let extra(): i32 = 2\n",
+    );
+    project.write("src/facade.sali", "pub use root.implementation.answer\n");
+    project.write(
+        "src/package_facade.sali",
+        "pub(package) use root.package_implementation.extra\n",
+    );
+
+    let output = salic()
+        .arg("run")
+        .arg(&project.0)
+        .output()
+        .expect("run project through public facade imports");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
+fn local_bindings_shadow_imports_without_hiding_them_from_outer_scopes() {
+    let project = TestDirectory::new();
+    project.write(
+        "salicin.toml",
+        r#"[package]
+name = "use-shadowing"
+version = "0.1.0"
+edition = "2026"
+"#,
+    );
+    project.write(
+        "src/main.sali",
+        r#"use root.numbers.answer
+
+let main(): i32 = {
+  let imported = answer()
+  let local = do {
+    let answer = 2
+    answer
+  }
+  imported + local
+}
+"#,
+    );
+    project.write("src/numbers.sali", "pub(package) let answer(): i32 = 40\n");
+
+    let output = salic()
+        .arg("run")
+        .arg(&project.0)
+        .output()
+        .expect("run project where a local shadows an import");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
+fn invalid_imports_report_alias_paths_and_visibility() {
+    struct Case {
+        name: &'static str,
+        root: &'static str,
+        modules: &'static [(&'static str, &'static str)],
+        expected: &'static [&'static str],
+    }
+
+    let cases = [
+        Case {
+            name: "duplicate-alias",
+            root: r#"use root.first.answer as selected
+use root.second.answer as selected
+let main(): i32 = selected()
+"#,
+            modules: &[
+                ("src/first.sali", "pub(package) let answer(): i32 = 1\n"),
+                ("src/second.sali", "pub(package) let answer(): i32 = 2\n"),
+            ],
+            expected: &["duplicate", "selected", "first.answer", "second.answer"],
+        },
+        Case {
+            name: "unknown-import",
+            root: "use root.net.missing as answer\nlet main(): i32 = answer()\n",
+            modules: &[("src/net.sali", "pub(package) let present(): i32 = 42\n")],
+            expected: &["unknown", "net.missing"],
+        },
+        Case {
+            name: "private-sibling-import",
+            root: "use root.sibling.secret\nlet main(): i32 = secret()\n",
+            modules: &[("src/sibling.sali", "let secret(): i32 = 42\n")],
+            expected: &["private", "sibling.secret"],
+        },
+        Case {
+            name: "public-private-promotion",
+            root: "let main(): i32 = 0\n",
+            modules: &[(
+                "src/facade.sali",
+                "let secret(): i32 = 1\npub use self.secret as exposed\n",
+            )],
+            expected: &["pub use", "private", "facade.secret"],
+        },
+        Case {
+            name: "public-package-promotion",
+            root: "let main(): i32 = 0\n",
+            modules: &[(
+                "src/facade.sali",
+                "pub(package) let internal(): i32 = 1\npub use self.internal as exposed\n",
+            )],
+            expected: &["pub use", "pub(package)", "facade.internal"],
+        },
+        Case {
+            name: "private-module-alias",
+            root: "let main(): i32 = 0\n",
+            modules: &[
+                ("src/secret.sali", "pub let open(): i32 = 1\n"),
+                ("src/a.sali", "use root.secret as hidden\n"),
+                ("src/b.sali", "use root.a.hidden.open as leak\n"),
+            ],
+            expected: &["private", "a.hidden"],
+        },
+    ];
+
+    for case in cases {
+        let project = TestDirectory::new();
+        project.write(
+            "salicin.toml",
+            &format!(
+                "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+                case.name
+            ),
+        );
+        project.write("src/main.sali", case.root);
+        for (path, source) in case.modules {
+            project.write(path, source);
+        }
+
+        let output = salic()
+            .arg("check")
+            .arg(&project.0)
+            .output()
+            .expect("check invalid import project");
+        assert!(
+            !output.status.success(),
+            "{} unexpectedly passed",
+            case.name
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+        for expected in case.expected {
+            assert!(
+                stderr.contains(expected),
+                "{} did not report `{expected}`:\n{}",
+                case.name,
+                output_text(&output)
+            );
+        }
+    }
+}

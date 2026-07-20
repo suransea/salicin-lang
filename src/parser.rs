@@ -1,10 +1,10 @@
-use std::fmt;
+use std::{collections::HashSet, fmt};
 
 use crate::ast::{
     BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EnumDef, Expr, ExtendDef,
     ExtendMember, Field, Function, Item, MatchArm, Param, PassMode, Pattern, PatternField,
-    PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantDef,
-    VariantFields, Visibility,
+    PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp, UseDecl,
+    VariantDef, VariantFields, Visibility,
 };
 use crate::lexer::{lex, LexError, Token, TokenKind};
 
@@ -59,22 +59,27 @@ impl Parser {
     fn program(mut self) -> Result<Program, ParseError> {
         let mut items = Vec::new();
         let mut item_visibilities = Vec::new();
+        let mut uses = Vec::new();
         self.skip_separators();
 
         while !self.at(&TokenKind::Eof) {
             let visibility = self.visibility()?;
-            if visibility != Visibility::Private && self.at(&TokenKind::Extend) {
-                return Err(self.error_here("`extend` declarations cannot have visibility"));
+            if self.at(&TokenKind::Use) {
+                uses.extend(self.use_declaration(visibility)?);
+            } else {
+                if visibility != Visibility::Private && self.at(&TokenKind::Extend) {
+                    return Err(self.error_here("`extend` declarations cannot have visibility"));
+                }
+                items.push(self.item()?);
+                item_visibilities.push(visibility);
             }
-            items.push(self.item()?);
-            item_visibilities.push(visibility);
             if !self.at(&TokenKind::Eof) && !self.at_separator() {
                 return Err(self.error_here("expected a newline or `;` after declaration"));
             }
             self.skip_separators();
         }
 
-        Ok(Program::with_visibilities(items, item_visibilities))
+        Ok(Program::with_uses(items, item_visibilities, uses))
     }
 
     fn visibility(&mut self) -> Result<Visibility, ParseError> {
@@ -88,6 +93,92 @@ impl Parser {
         self.expect(&TokenKind::Package, "`package` in visibility")?;
         self.expect(&TokenKind::RParen, "`)` after package visibility")?;
         Ok(Visibility::Package)
+    }
+
+    fn use_declaration(&mut self, visibility: Visibility) -> Result<Vec<UseDecl>, ParseError> {
+        self.expect(&TokenKind::Use, "`use`")?;
+        let mut path = vec![self.expect_path_start("an import path")?];
+
+        while self.take(&TokenKind::Dot) {
+            if self.take(&TokenKind::LBrace) {
+                return self.use_group(visibility, path);
+            }
+            let segment =
+                self.expect_path_continuation(&path, "an import path segment after `.`")?;
+            path.push(segment);
+        }
+
+        let alias = if self.take(&TokenKind::As) {
+            Some(self.expect_import_alias()?)
+        } else {
+            None
+        };
+        if alias.is_none()
+            && path
+                .last()
+                .is_some_and(|binding| matches!(binding.as_str(), "self" | "root" | "super" | "_"))
+        {
+            return Err(self.error_here(format!(
+                "import path `{}` requires an explicit usable alias",
+                path.join(".")
+            )));
+        }
+        Ok(vec![UseDecl {
+            visibility,
+            path,
+            alias,
+        }])
+    }
+
+    fn use_group(
+        &mut self,
+        visibility: Visibility,
+        prefix: Vec<String>,
+    ) -> Result<Vec<UseDecl>, ParseError> {
+        self.skip_newlines();
+        if self.at(&TokenKind::RBrace) {
+            return Err(self.error_here("import groups cannot be empty"));
+        }
+
+        let mut declarations = Vec::new();
+        let mut bindings = HashSet::new();
+        loop {
+            let member = self.expect_relative_path_segment("an import name")?;
+            let alias = if self.take(&TokenKind::As) {
+                Some(self.expect_import_alias()?)
+            } else {
+                None
+            };
+            if alias.is_none() && member == "self" {
+                return Err(self.error_here("import name `self` requires an explicit usable alias"));
+            }
+            let binding = alias.as_deref().unwrap_or(&member);
+            if !bindings.insert(binding.to_owned()) {
+                return Err(self.error_here(format!(
+                    "duplicate import binding `{binding}` in import group"
+                )));
+            }
+
+            let mut path = prefix.clone();
+            path.push(member);
+            declarations.push(UseDecl {
+                visibility,
+                path,
+                alias,
+            });
+
+            if self.take(&TokenKind::Comma) {
+                self.skip_newlines();
+                if self.take(&TokenKind::RBrace) {
+                    break;
+                }
+            } else {
+                self.skip_newlines();
+                self.expect(&TokenKind::RBrace, "`}` after import group")?;
+                break;
+            }
+        }
+        Ok(declarations)
     }
 
     fn item(&mut self) -> Result<Item, ParseError> {
@@ -687,11 +778,12 @@ impl Parser {
             return Ok(Type::Infer);
         }
 
-        let mut name = self.expect_ident("a type")?;
+        let mut path = vec![self.expect_path_start("a type")?];
         while self.take(&TokenKind::Dot) {
-            name.push('.');
-            name.push_str(&self.expect_ident("a type path segment after `.`")?);
+            let segment = self.expect_path_continuation(&path, "a type path segment after `.`")?;
+            path.push(segment);
         }
+        let name = path.join(".");
         if name == "Array" && self.take(&TokenKind::LParen) {
             let element = self.type_expr()?;
             self.expect(&TokenKind::Comma, "`,` before array length")?;
@@ -853,7 +945,7 @@ impl Parser {
                 self.advance();
                 Ok(Pattern::Wildcard)
             }
-            TokenKind::Ident(_) => self.named_pattern(),
+            TokenKind::Ident(_) | TokenKind::Root | TokenKind::Super => self.named_pattern(),
             _ => Err(self.error_at(
                 &token,
                 format!("expected a pattern, found {}", describe(&token.kind)),
@@ -862,14 +954,18 @@ impl Parser {
     }
 
     fn named_pattern(&mut self) -> Result<Pattern, ParseError> {
-        let mut path = vec![self.expect_ident("a pattern name")?];
+        let anchored = self.at(&TokenKind::Root) || self.at(&TokenKind::Super);
+        let mut path = vec![self.expect_path_start("a pattern name")?];
         while self.take(&TokenKind::Dot) {
-            path.push(self.expect_ident("a name after `.`")?);
+            let segment = self.expect_path_continuation(&path, "a name after `.`")?;
+            path.push(segment);
         }
 
         let has_payload = self.at(&TokenKind::LParen);
-        let looks_like_constructor =
-            path.len() > 1 || has_payload || path[0].chars().next().is_some_and(char::is_uppercase);
+        let looks_like_constructor = anchored
+            || path.len() > 1
+            || has_payload
+            || path[0].chars().next().is_some_and(char::is_uppercase);
         if !looks_like_constructor {
             return Ok(Pattern::Binding(path.pop().expect("path has one element")));
         }
@@ -1124,7 +1220,14 @@ impl Parser {
                 if self.take(&TokenKind::Try) {
                     expression = Expr::Try(Box::new(expression));
                 } else {
-                    let member = self.expect_ident("a member name after `.`")?;
+                    let member = if self.at(&TokenKind::Super)
+                        && Self::is_super_path_expression(&expression)
+                    {
+                        self.advance();
+                        "super".to_owned()
+                    } else {
+                        self.expect_relative_path_segment("a member name after `.`")?
+                    };
                     expression = Expr::Member(Box::new(expression), member);
                 }
             } else if self.take(&TokenKind::QuestionDot) {
@@ -1174,6 +1277,14 @@ impl Parser {
                 } else {
                     Ok(Expr::Name(name))
                 }
+            }
+            TokenKind::Root => {
+                self.advance();
+                Ok(Expr::Name("root".into()))
+            }
+            TokenKind::Super => {
+                self.advance();
+                Ok(Expr::Name("super".into()))
             }
             TokenKind::LParen => {
                 self.advance();
@@ -1399,6 +1510,10 @@ impl Parser {
         }
     }
 
+    fn skip_newlines(&mut self) {
+        while self.take(&TokenKind::Newline) {}
+    }
+
     /// Consumes logical newlines only when the next token is one of the
     /// explicitly permitted declaration-header continuations. On failure the
     /// parser position is restored, so ordinary expression calls never gain
@@ -1449,6 +1564,89 @@ impl Parser {
                 format!("expected {expected}, found {}", describe(&token.kind)),
             ))
         }
+    }
+
+    fn expect_path_start(&mut self, expected: &str) -> Result<String, ParseError> {
+        match self.current().kind.clone() {
+            TokenKind::Ident(name) if name != "_" => {
+                self.advance();
+                Ok(name)
+            }
+            TokenKind::Root => {
+                self.advance();
+                Ok("root".into())
+            }
+            TokenKind::Super => {
+                self.advance();
+                Ok("super".into())
+            }
+            _ => Err(self.error_here(format!(
+                "expected {expected}, found {}",
+                describe(&self.current().kind)
+            ))),
+        }
+    }
+
+    fn expect_path_continuation(
+        &mut self,
+        prefix: &[String],
+        expected: &str,
+    ) -> Result<String, ParseError> {
+        if self.at(&TokenKind::Super) && prefix.iter().all(|segment| segment == "super") {
+            self.advance();
+            return Ok("super".into());
+        }
+        self.expect_relative_path_segment(expected)
+    }
+
+    fn expect_relative_path_segment(&mut self, expected: &str) -> Result<String, ParseError> {
+        let token = self.current().clone();
+        match &token.kind {
+            TokenKind::Ident(name) if name != "_" => {
+                let name = name.clone();
+                self.advance();
+                Ok(name)
+            }
+            _ => Err(self.error_at(
+                &token,
+                format!(
+                    "expected {expected}, found {}; `root` is only valid as the first path segment, and `super` only in a leading chain",
+                    describe(&token.kind)
+                ),
+            )),
+        }
+    }
+
+    fn is_super_path_expression(expression: &Expr) -> bool {
+        match expression {
+            Expr::Name(name) => name == "super",
+            Expr::Member(base, member) => member == "super" && Self::is_super_path_expression(base),
+            _ => false,
+        }
+    }
+
+    fn expect_import_alias(&mut self) -> Result<String, ParseError> {
+        let token = self.current().clone();
+        let alias = match &token.kind {
+            TokenKind::Ident(alias) => alias.clone(),
+            _ => {
+                return Err(self.error_at(
+                    &token,
+                    format!(
+                        "expected an import alias after `as`, found {}",
+                        describe(&token.kind)
+                    ),
+                ));
+            }
+        };
+        if alias == "self" || alias == "_" {
+            return Err(self.error_at(
+                &token,
+                format!("`{alias}` cannot be used as an import alias"),
+            ));
+        }
+        self.advance();
+        Ok(alias)
     }
 
     fn expect(&mut self, kind: &TokenKind, expected: &str) -> Result<(), ParseError> {
@@ -1507,6 +1705,10 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::Let => "`let`",
         TokenKind::Pub => "`pub`",
         TokenKind::Package => "`package`",
+        TokenKind::Use => "`use`",
+        TokenKind::As => "`as`",
+        TokenKind::Root => "`root`",
+        TokenKind::Super => "`super`",
         TokenKind::Mut => "`mut`",
         TokenKind::Copy => "`copy`",
         TokenKind::Move => "`move`",
@@ -1600,6 +1802,172 @@ mod tests {
             vec![Visibility::Private, Visibility::Public, Visibility::Package,]
         );
         assert_eq!(program.items.len(), program.item_visibilities.len());
+        assert!(program.uses.is_empty());
+    }
+
+    #[test]
+    fn parses_and_expands_import_declarations() {
+        let program = parse(
+            "use net.http.Client\n\
+             use net.http.Client as OtherClient\n\
+             pub use net.http.{get, post as send}\n\
+             pub(package) use root.core.Value\n\
+             let answer = 42\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            program.uses,
+            vec![
+                UseDecl {
+                    visibility: Visibility::Private,
+                    path: vec!["net".into(), "http".into(), "Client".into()],
+                    alias: None,
+                },
+                UseDecl {
+                    visibility: Visibility::Private,
+                    path: vec!["net".into(), "http".into(), "Client".into()],
+                    alias: Some("OtherClient".into()),
+                },
+                UseDecl {
+                    visibility: Visibility::Public,
+                    path: vec!["net".into(), "http".into(), "get".into()],
+                    alias: None,
+                },
+                UseDecl {
+                    visibility: Visibility::Public,
+                    path: vec!["net".into(), "http".into(), "post".into()],
+                    alias: Some("send".into()),
+                },
+                UseDecl {
+                    visibility: Visibility::Package,
+                    path: vec!["root".into(), "core".into(), "Value".into()],
+                    alias: None,
+                },
+            ]
+        );
+        assert_eq!(program.items.len(), 1);
+        assert_eq!(program.item_visibilities, vec![Visibility::Private]);
+    }
+
+    #[test]
+    fn rejects_empty_duplicate_and_invalid_imports() {
+        let empty = parse("use net.http.{}\n").unwrap_err();
+        assert!(empty.message.contains("cannot be empty"));
+
+        let duplicate = parse("use net.http.{get, post as get}\n").unwrap_err();
+        assert!(duplicate.message.contains("duplicate import binding `get`"));
+
+        let duplicates_for_semantic_resolution =
+            parse("use net.http.get\nuse other.get\n").unwrap();
+        assert_eq!(duplicates_for_semantic_resolution.uses.len(), 2);
+
+        for alias in ["self", "_"] {
+            let error = parse(&format!("use net.http.Client as {alias}\n")).unwrap_err();
+            assert!(error.message.contains("cannot be used as an import alias"));
+        }
+
+        let missing_alias = parse("use net.http.Client as\n").unwrap_err();
+        assert!(missing_alias.message.contains("import alias"));
+
+        for source in ["use root\n", "use super.super\n", "use self\n"] {
+            let error = parse(source).unwrap_err();
+            assert!(error.message.contains("explicit usable alias"), "{error:?}");
+        }
+        for source in [
+            "use root.super.value\n",
+            "use super.root.value\n",
+            "use net.{root}\n",
+            "use net.{super}\n",
+            "use net.{_}\n",
+        ] {
+            let error = parse(source).unwrap_err();
+            assert!(
+                error.message.contains("path segment"),
+                "{source}: {error:?}"
+            );
+        }
+
+        let anchors = parse(
+            "use root as package_root\n\
+             use super.super as ancestor\n\
+             use self as current\n",
+        )
+        .unwrap();
+        assert_eq!(
+            anchors
+                .uses
+                .iter()
+                .map(|import| import.alias.as_deref())
+                .collect::<Vec<_>>(),
+            vec![Some("package_root"), Some("ancestor"), Some("current")]
+        );
+
+        let contextual = parse("use net.{self as contextual}\nuse root.self.value\n").unwrap();
+        assert_eq!(contextual.uses[0].alias.as_deref(), Some("contextual"));
+        let implicit_self = parse("use net.{self}\n").unwrap_err();
+        assert!(implicit_self.message.contains("explicit usable alias"));
+    }
+
+    #[test]
+    fn rejects_misplaced_ordinary_path_anchors() {
+        for source in [
+            "let bad(): foo.root.Value = 0\n",
+            "let bad(): i32 = root.super.value\n",
+            "let bad(value: root.Option): i32 = value match { root.super.Option.None => 0 }\n",
+        ] {
+            let error = parse(source).unwrap_err();
+            assert!(error.message.contains("first path segment"), "{error:?}");
+        }
+
+        parse(
+            "let ok(value: super.super.model.Value): i32 = super.super.api.read(root.self.value)\n",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn accepts_root_super_and_contextual_self_in_ordinary_paths() {
+        let program = parse(
+            "let resolve(value: root.model.Value): super.model.Result = root.api.call(super.value)\n\
+             let unwrap(value: root.Option): i32 = value match { root.Option.Some(self) => self }\n",
+        )
+        .unwrap();
+
+        let Item::Function(resolve) = &program.items[0] else {
+            panic!("expected function");
+        };
+        assert_eq!(
+            resolve.groups[0][0].ty,
+            Type::Named("root.model.Value".into(), Vec::new())
+        );
+        assert_eq!(
+            resolve.return_type,
+            Some(Type::Named("super.model.Result".into(), Vec::new()))
+        );
+        assert!(matches!(
+            &resolve.body,
+            Some(Expr::Call(callee, arguments))
+                if matches!(callee.as_ref(), Expr::Member(base, name)
+                    if name == "call"
+                        && matches!(base.as_ref(), Expr::Member(root, name)
+                            if name == "api" && root.as_ref() == &Expr::Name("root".into())))
+                    && matches!(&arguments[0].value, Expr::Member(base, name)
+                        if name == "value" && base.as_ref() == &Expr::Name("super".into()))
+        ));
+
+        let Item::Function(unwrap) = &program.items[1] else {
+            panic!("expected function");
+        };
+        let Some(Expr::Match { arms, .. }) = &unwrap.body else {
+            panic!("expected match");
+        };
+        assert!(matches!(
+            &arms[0].pattern,
+            Pattern::Constructor { path, fields: PatternFields::Positional(fields) }
+                if path == &vec!["root".to_owned(), "Option".to_owned(), "Some".to_owned()]
+                    && fields == &vec![Pattern::Binding("self".into())]
+        ));
     }
 
     #[test]

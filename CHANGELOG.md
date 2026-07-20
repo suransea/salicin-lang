@@ -15,6 +15,9 @@ the accepted language, while patch releases preserve source semantics within the
 - Added private, `pub(package)` and `pub` top-level visibility, descendant access to private names,
   lexical shadowing during module resolution, and diagnostics for private, duplicate, conflicting,
   invalid and unknown qualified module names.
+- Added declaration and module imports with aliases and grouped syntax, explicit `root` / `self` /
+  `super` anchors, visibility-preserving `pub use` facades, cycle diagnostics, and access-chain
+  checks that prevent private aliases from becoming visibility backdoors.
 
 ## 0.3.0 - 2026-07-20
 

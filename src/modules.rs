@@ -1,15 +1,15 @@
 //! Multi-file package module resolution.
 //!
-//! This first module layer deliberately has no imports. Source files provide
-//! their module path out of band; declarations are collected package-wide and
-//! then flattened to canonical names understood by the existing codegen.
+//! Source files provide their module path out of band; declarations and
+//! module-level imports are collected package-wide and then flattened to
+//! canonical names understood by the existing codegen.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::ast::{
     Binding, EnumDef, Expr, ExtendDef, ExtendMember, Field, Function, Item, MatchArm, Param,
     Pattern, PatternField, PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember, Type,
-    VariantFields, Visibility,
+    UseDecl, VariantFields, Visibility,
 };
 use crate::{lexer, parser};
 
@@ -62,9 +62,15 @@ pub fn resolve_sources(sources: &[SourceUnit]) -> Result<Program, Vec<String>> {
         return Err(collection_diagnostics);
     }
 
+    let (aliases, import_diagnostics) = collect_imports(&parsed, &symbols, &module_paths);
+    if !import_diagnostics.is_empty() {
+        return Err(import_diagnostics);
+    }
+
     let mut resolver = Resolver {
         symbols,
         module_paths,
+        aliases,
         diagnostics: Vec::new(),
     };
     let mut items = Vec::new();
@@ -74,6 +80,7 @@ pub fn resolve_sources(sources: &[SourceUnit]) -> Result<Program, Vec<String>> {
         let Program {
             items: unit_items,
             item_visibilities: unit_visibilities,
+            uses: _,
         } = program;
         debug_assert_eq!(unit_items.len(), unit_visibilities.len());
 
@@ -107,6 +114,21 @@ struct Symbol {
     visibility: Visibility,
     source_path: String,
 }
+
+#[derive(Clone, Debug)]
+enum AliasTarget {
+    Declaration(String),
+    Module(Vec<String>),
+}
+
+#[derive(Clone, Debug)]
+struct ResolvedAlias {
+    target: AliasTarget,
+    visibility: Visibility,
+    module_path: Vec<String>,
+}
+
+type AliasTable = HashMap<Vec<String>, ResolvedAlias>;
 
 type SymbolTable = HashMap<Vec<String>, Symbol>;
 
@@ -226,6 +248,425 @@ fn collect_symbols(parsed: &[ParsedUnit<'_>]) -> (SymbolTable, HashSet<Vec<Strin
     (symbols, module_paths, diagnostics)
 }
 
+#[derive(Clone, Debug)]
+struct ImportDef {
+    path: Vec<String>,
+    alias: String,
+    visibility: Visibility,
+    module_path: Vec<String>,
+    source_path: String,
+}
+
+fn collect_imports(
+    parsed: &[ParsedUnit<'_>],
+    symbols: &SymbolTable,
+    module_paths: &HashSet<Vec<String>>,
+) -> (AliasTable, Vec<String>) {
+    let mut definitions: HashMap<Vec<String>, ImportDef> = HashMap::new();
+    let mut diagnostics = Vec::new();
+
+    for unit in parsed {
+        for declaration in &unit.program.uses {
+            let Some(alias) = import_alias(declaration) else {
+                diagnostics.push(format!(
+                    "{}: error: import path must not be empty",
+                    unit.source.path
+                ));
+                continue;
+            };
+            if !is_valid_import_alias(&alias) {
+                diagnostics.push(format!(
+                    "{}: error: `{alias}` cannot be used as an import alias",
+                    unit.source.path
+                ));
+                continue;
+            }
+            if let Err(message) = validate_import_path(declaration) {
+                diagnostics.push(format!("{}: error: {message}", unit.source.path));
+                continue;
+            }
+
+            let mut key = unit.source.module_path.clone();
+            key.push(alias.clone());
+            let definition = ImportDef {
+                path: declaration.path.clone(),
+                alias,
+                visibility: declaration.visibility,
+                module_path: unit.source.module_path.clone(),
+                source_path: unit.source.path.clone(),
+            };
+
+            if let Some(symbol) = symbols.get(&key) {
+                diagnostics.push(format!(
+                    "{}: error: import alias `{}` conflicts with declaration in {}",
+                    unit.source.path, definition.alias, symbol.source_path
+                ));
+            } else if module_paths.contains(&key) {
+                diagnostics.push(format!(
+                    "{}: error: import alias `{}` conflicts with child module `{}`",
+                    unit.source.path,
+                    definition.alias,
+                    key.join(".")
+                ));
+            } else if let Some(previous) = definitions.get(&key) {
+                diagnostics.push(format!(
+                    "{}: error: duplicate import alias `{}` for `{}` and `{}`",
+                    unit.source.path,
+                    definition.alias,
+                    display_path(&previous.path),
+                    display_path(&definition.path)
+                ));
+            } else {
+                definitions.insert(key, definition);
+            }
+        }
+    }
+
+    if !diagnostics.is_empty() {
+        return (HashMap::new(), diagnostics);
+    }
+
+    let mut graph = ImportGraph {
+        definitions,
+        symbols,
+        module_paths,
+        resolved: HashMap::new(),
+        failed: HashSet::new(),
+        stack: Vec::new(),
+        diagnostics: Vec::new(),
+    };
+    let mut keys: Vec<Vec<String>> = graph.definitions.keys().cloned().collect();
+    keys.sort();
+    for key in keys {
+        let _ = graph.resolve_alias(&key);
+    }
+    (graph.resolved, graph.diagnostics)
+}
+
+fn import_alias(declaration: &UseDecl) -> Option<String> {
+    declaration
+        .alias
+        .clone()
+        .or_else(|| declaration.path.last().cloned())
+}
+
+fn is_valid_import_alias(alias: &str) -> bool {
+    if alias == "_" || alias == "self" || lexer::is_keyword(alias) {
+        return false;
+    }
+    let mut characters = alias.chars();
+    let Some(first) = characters.next() else {
+        return false;
+    };
+    (first == '_' || first.is_alphabetic())
+        && characters.all(|character| character == '_' || character.is_alphanumeric())
+}
+
+fn validate_import_path(declaration: &UseDecl) -> Result<(), String> {
+    if declaration.path.is_empty() {
+        return Err("import path must not be empty".into());
+    }
+    let leading_supers = declaration
+        .path
+        .iter()
+        .take_while(|segment| segment.as_str() == "super")
+        .count();
+    for (index, segment) in declaration.path.iter().enumerate() {
+        if matches!(segment.as_str(), "root" | "super")
+            && index > 0
+            && !(segment == "super" && index < leading_supers)
+        {
+            return Err(format!(
+                "import anchor `{segment}` is only valid at the start of a path"
+            ));
+        }
+    }
+    let anchor_only = declaration
+        .path
+        .iter()
+        .all(|segment| matches!(segment.as_str(), "root" | "self" | "super"));
+    if anchor_only && declaration.alias.is_none() {
+        return Err(format!(
+            "anchor-only import `{}` requires an explicit alias",
+            display_path(&declaration.path)
+        ));
+    }
+    Ok(())
+}
+
+fn display_path(path: &[String]) -> String {
+    path.join(".")
+}
+
+struct ImportGraph<'a> {
+    definitions: HashMap<Vec<String>, ImportDef>,
+    symbols: &'a SymbolTable,
+    module_paths: &'a HashSet<Vec<String>>,
+    resolved: AliasTable,
+    failed: HashSet<Vec<String>>,
+    stack: Vec<Vec<String>>,
+    diagnostics: Vec<String>,
+}
+
+#[derive(Clone)]
+struct ImportReference {
+    target: AliasTarget,
+    accesses: Vec<ImportAccess>,
+}
+
+#[derive(Clone)]
+struct ImportAccess {
+    visibility: Visibility,
+    module_path: Vec<String>,
+    display: String,
+}
+
+impl ImportGraph<'_> {
+    fn resolve_alias(&mut self, key: &[String]) -> Result<ResolvedAlias, ()> {
+        if let Some(alias) = self.resolved.get(key) {
+            return Ok(alias.clone());
+        }
+        if self.failed.contains(key) {
+            return Err(());
+        }
+        if let Some(start) = self.stack.iter().position(|entry| entry == key) {
+            let mut cycle: Vec<String> = self.stack[start..]
+                .iter()
+                .map(|entry| entry.join("."))
+                .collect();
+            cycle.push(key.join("."));
+            let source = self
+                .definitions
+                .get(key)
+                .map(|definition| definition.source_path.as_str())
+                .unwrap_or("<package>");
+            self.diagnostics.push(format!(
+                "{source}: error: cyclic import aliases: {}",
+                cycle.join(" -> ")
+            ));
+            self.failed.extend(self.stack[start..].iter().cloned());
+            return Err(());
+        }
+
+        let Some(definition) = self.definitions.get(key).cloned() else {
+            return Err(());
+        };
+        self.stack.push(key.to_vec());
+        let reference = self.resolve_import_path(&definition);
+        self.stack.pop();
+        let reference = match reference {
+            Ok(reference) => reference,
+            Err(()) => {
+                self.failed.insert(key.to_vec());
+                return Err(());
+            }
+        };
+
+        for access in &reference.accesses {
+            if access.visibility == Visibility::Private
+                && !definition
+                    .module_path
+                    .starts_with(access.module_path.as_slice())
+            {
+                self.diagnostics.push(format!(
+                    "{}: error: import `{}` cannot access private target `{}`",
+                    definition.source_path,
+                    display_path(&definition.path),
+                    access.display
+                ));
+                self.failed.insert(key.to_vec());
+                return Err(());
+            }
+        }
+
+        let limiting_access = reference
+            .accesses
+            .iter()
+            .min_by_key(|access| visibility_rank(access.visibility))
+            .expect("every import target has an access boundary");
+        if visibility_rank(definition.visibility) > visibility_rank(limiting_access.visibility) {
+            self.diagnostics.push(format!(
+                "{}: error: {} use `{}` cannot re-export {} target `{}`",
+                definition.source_path,
+                visibility_source(definition.visibility),
+                display_path(&definition.path),
+                visibility_description(limiting_access.visibility),
+                limiting_access.display
+            ));
+            self.failed.insert(key.to_vec());
+            return Err(());
+        }
+
+        let alias = ResolvedAlias {
+            target: reference.target,
+            visibility: definition.visibility,
+            module_path: definition.module_path,
+        };
+        self.resolved.insert(key.to_vec(), alias.clone());
+        Ok(alias)
+    }
+
+    fn resolve_import_path(&mut self, definition: &ImportDef) -> Result<ImportReference, ()> {
+        let candidates = match anchored_candidates(&definition.path, &definition.module_path) {
+            Ok(candidates) => candidates,
+            Err(message) => {
+                self.diagnostics
+                    .push(format!("{}: error: {message}", definition.source_path));
+                return Err(());
+            }
+        };
+        let unanchored = !definition
+            .path
+            .first()
+            .is_some_and(|segment| matches!(segment.as_str(), "root" | "self" | "super"));
+        for candidate in candidates {
+            if unanchored
+                && self
+                    .stack
+                    .last()
+                    .is_some_and(|current| current == &candidate)
+            {
+                continue;
+            }
+            if let Some(reference) = self.lookup_import_candidate(&candidate, 0)? {
+                return Ok(reference);
+            }
+        }
+        self.diagnostics.push(format!(
+            "{}: error: unknown import `{}`",
+            definition.source_path,
+            display_path(&definition.path)
+        ));
+        Err(())
+    }
+
+    fn lookup_import_candidate(
+        &mut self,
+        candidate: &[String],
+        depth: usize,
+    ) -> Result<Option<ImportReference>, ()> {
+        if depth > self.definitions.len() + 1 {
+            return Ok(None);
+        }
+        if let Some(symbol) = self.symbols.get(candidate) {
+            return Ok(Some(ImportReference {
+                target: AliasTarget::Declaration(symbol.canonical.clone()),
+                accesses: vec![ImportAccess {
+                    visibility: symbol.visibility,
+                    module_path: symbol.module_path.clone(),
+                    display: symbol.canonical.replace("::", "."),
+                }],
+            }));
+        }
+        if self.definitions.contains_key(candidate) {
+            let alias = self.resolve_alias(candidate)?;
+            return Ok(Some(ImportReference {
+                target: alias.target,
+                accesses: vec![ImportAccess {
+                    visibility: alias.visibility,
+                    module_path: alias.module_path,
+                    display: candidate.join("."),
+                }],
+            }));
+        }
+        if self.module_paths.contains(candidate) {
+            return Ok(Some(ImportReference {
+                target: AliasTarget::Module(candidate.to_vec()),
+                accesses: vec![ImportAccess {
+                    visibility: Visibility::Public,
+                    module_path: candidate[..candidate.len().saturating_sub(1)].to_vec(),
+                    display: candidate.join("."),
+                }],
+            }));
+        }
+
+        for length in (1..candidate.len()).rev() {
+            let prefix = &candidate[..length];
+            if !self.definitions.contains_key(prefix) {
+                continue;
+            }
+            let alias = self.resolve_alias(prefix)?;
+            if let AliasTarget::Module(module) = alias.target {
+                let mut expanded = module;
+                expanded.extend_from_slice(&candidate[length..]);
+                if let Some(mut reference) = self.lookup_import_candidate(&expanded, depth + 1)? {
+                    reference.accesses.push(ImportAccess {
+                        visibility: alias.visibility,
+                        module_path: alias.module_path,
+                        display: prefix.join("."),
+                    });
+                    return Ok(Some(reference));
+                }
+            }
+        }
+        Ok(None)
+    }
+}
+
+fn anchored_candidates(
+    path: &[String],
+    module_path: &[String],
+) -> Result<Vec<Vec<String>>, String> {
+    let Some(first) = path.first().map(String::as_str) else {
+        return Ok(Vec::new());
+    };
+    match first {
+        "root" => Ok(vec![path[1..].to_vec()]),
+        "self" => {
+            let mut candidate = module_path.to_vec();
+            candidate.extend_from_slice(&path[1..]);
+            Ok(vec![candidate])
+        }
+        "super" => {
+            let count = path
+                .iter()
+                .take_while(|segment| *segment == "super")
+                .count();
+            if count > module_path.len() {
+                return Err(format!(
+                    "import path `{}` escapes above the package root",
+                    display_path(path)
+                ));
+            }
+            let mut candidate = module_path[..module_path.len() - count].to_vec();
+            candidate.extend_from_slice(&path[count..]);
+            Ok(vec![candidate])
+        }
+        _ => Ok((0..=module_path.len())
+            .rev()
+            .map(|depth| {
+                let mut candidate = module_path[..depth].to_vec();
+                candidate.extend_from_slice(path);
+                candidate
+            })
+            .collect()),
+    }
+}
+
+fn visibility_rank(visibility: Visibility) -> u8 {
+    match visibility {
+        Visibility::Private => 0,
+        Visibility::Package => 1,
+        Visibility::Public => 2,
+    }
+}
+
+fn visibility_source(visibility: Visibility) -> &'static str {
+    match visibility {
+        Visibility::Private => "private",
+        Visibility::Package => "pub(package)",
+        Visibility::Public => "pub",
+    }
+}
+
+fn visibility_description(visibility: Visibility) -> &'static str {
+    match visibility {
+        Visibility::Private => "private",
+        Visibility::Package => "pub(package)",
+        Visibility::Public => "public",
+    }
+}
+
 fn declaration_name(item: &Item) -> Option<&str> {
     match item {
         Item::Function(function) => Some(&function.name),
@@ -262,7 +703,14 @@ struct ResolveContext<'a> {
 struct Resolver {
     symbols: SymbolTable,
     module_paths: HashSet<Vec<String>>,
+    aliases: AliasTable,
     diagnostics: Vec<String>,
+}
+
+#[derive(Clone)]
+struct NameReference {
+    canonical: String,
+    accesses: Vec<(Visibility, Vec<String>)>,
 }
 
 impl Resolver {
@@ -430,7 +878,10 @@ impl Resolver {
                     self.rewrite_type(argument, context, type_scope);
                 }
                 let segments: Vec<String> = name.split('.').map(str::to_owned).collect();
-                if segments.len() == 1 && type_scope.contains(&segments[0]) {
+                if segments
+                    .first()
+                    .is_some_and(|first| type_scope.contains(first))
+                {
                     return;
                 }
                 if let Some(canonical) = self.resolve_logical_path(&segments, context) {
@@ -668,34 +1119,65 @@ impl Resolver {
         logical_path: &[String],
         context: ResolveContext<'_>,
     ) -> Option<String> {
-        let symbol = self
-            .find_symbol(logical_path, context.module_path)
-            .map(|symbol| {
-                (
-                    symbol.canonical.clone(),
-                    symbol.module_path.clone(),
-                    symbol.visibility,
-                )
-            })?;
-
-        if symbol.2 == Visibility::Private && !context.module_path.starts_with(symbol.1.as_slice())
-        {
-            self.diagnostics.push(format!(
-                "{}: error: `{}` is private to module `{}`",
-                context.source_path,
-                logical_path.join("."),
-                display_module(&symbol.1)
-            ));
+        let reference = self.find_name(logical_path, context.module_path)?;
+        for (visibility, module_path) in &reference.accesses {
+            if *visibility == Visibility::Private
+                && !context.module_path.starts_with(module_path.as_slice())
+            {
+                self.diagnostics.push(format!(
+                    "{}: error: `{}` is private to module `{}`",
+                    context.source_path,
+                    logical_path.join("."),
+                    display_module(module_path)
+                ));
+            }
         }
-        Some(symbol.0)
+        Some(reference.canonical)
     }
 
-    fn find_symbol(&self, logical_path: &[String], module_path: &[String]) -> Option<&Symbol> {
-        for depth in (0..=module_path.len()).rev() {
-            let mut candidate = module_path[..depth].to_vec();
-            candidate.extend_from_slice(logical_path);
-            if let Some(symbol) = self.symbols.get(&candidate) {
-                return Some(symbol);
+    fn find_name(&self, logical_path: &[String], module_path: &[String]) -> Option<NameReference> {
+        let candidates = anchored_candidates(logical_path, module_path).ok()?;
+        for candidate in candidates {
+            if let Some(reference) = self.find_absolute_name(&candidate, 0) {
+                return Some(reference);
+            }
+        }
+        None
+    }
+
+    fn find_absolute_name(&self, candidate: &[String], depth: usize) -> Option<NameReference> {
+        if depth > self.aliases.len() + 1 {
+            return None;
+        }
+        if let Some(symbol) = self.symbols.get(candidate) {
+            return Some(NameReference {
+                canonical: symbol.canonical.clone(),
+                accesses: vec![(symbol.visibility, symbol.module_path.clone())],
+            });
+        }
+        if let Some(alias) = self.aliases.get(candidate) {
+            if let AliasTarget::Declaration(canonical) = &alias.target {
+                return Some(NameReference {
+                    canonical: canonical.clone(),
+                    accesses: vec![(alias.visibility, alias.module_path.clone())],
+                });
+            }
+        }
+        for length in (1..candidate.len()).rev() {
+            let prefix = &candidate[..length];
+            let Some(alias) = self.aliases.get(prefix) else {
+                continue;
+            };
+            let AliasTarget::Module(module) = &alias.target else {
+                continue;
+            };
+            let mut expanded = module.clone();
+            expanded.extend_from_slice(&candidate[length..]);
+            if let Some(mut reference) = self.find_absolute_name(&expanded, depth + 1) {
+                reference
+                    .accesses
+                    .push((alias.visibility, alias.module_path.clone()));
+                return Some(reference);
             }
         }
         None
@@ -703,10 +1185,18 @@ impl Resolver {
 
     fn longest_module_prefix(&self, segments: &[String], module_path: &[String]) -> usize {
         for length in (1..=segments.len()).rev() {
-            for depth in (0..=module_path.len()).rev() {
-                let mut candidate = module_path[..depth].to_vec();
-                candidate.extend_from_slice(&segments[..length]);
+            let Ok(candidates) = anchored_candidates(&segments[..length], module_path) else {
+                continue;
+            };
+            for candidate in candidates {
                 if self.module_paths.contains(&candidate) {
+                    return length;
+                }
+                if self
+                    .aliases
+                    .get(&candidate)
+                    .is_some_and(|alias| matches!(alias.target, AliasTarget::Module(_)))
+                {
                     return length;
                 }
             }
@@ -1091,5 +1581,274 @@ mod tests {
                 "segment `{segment}` was not rejected: {error:?}"
             );
         }
+    }
+
+    #[test]
+    fn resolves_forward_aliases_module_aliases_and_reexport_chains() {
+        let program = resolve_sources(&[
+            unit(
+                "root.sali",
+                &[],
+                "use root.facade.answer as selected\nlet main(): i32 = selected()\n",
+                true,
+            ),
+            unit(
+                "facade.sali",
+                &["facade"],
+                "pub use root.implementation.answer\n",
+                false,
+            ),
+            unit(
+                "implementation.sali",
+                &["implementation"],
+                "pub let answer(): i32 = 42\n",
+                false,
+            ),
+        ])
+        .unwrap();
+
+        assert!(program.uses.is_empty());
+        assert!(matches!(
+            function(&program, "main").body,
+            Some(Expr::Call(ref callee, _))
+                if callee.as_ref() == &Expr::Name("implementation::answer".into())
+        ));
+    }
+
+    #[test]
+    fn resolves_root_self_super_and_anchor_only_module_aliases() {
+        let program = resolve_sources(&[
+            unit(
+                "root.sali",
+                &[],
+                "let root_value(): i32 = 10\nlet main(): i32 = nested.deep.answer()\n",
+                true,
+            ),
+            unit(
+                "nested.sali",
+                &["nested"],
+                "let parent_value(): i32 = 20\n",
+                false,
+            ),
+            unit(
+                "nested/deep.sali",
+                &["nested", "deep"],
+                "use root as pkg\n\
+                 use self.local_value as local\n\
+                 use super.parent_value as parent\n\
+                 let local_value(): i32 = 12\n\
+                 pub(package) let answer(): i32 = pkg.root_value() + parent() + local()\n",
+                false,
+            ),
+        ])
+        .unwrap();
+
+        let names = expression_names(function(&program, "nested::deep::answer").body.as_ref());
+        assert!(names.contains("root_value"));
+        assert!(names.contains("nested::parent_value"));
+        assert!(names.contains("nested::deep::local_value"));
+    }
+
+    #[test]
+    fn rejects_import_cycles_privacy_and_visibility_escalation() {
+        let cycle = resolve_sources(&[unit(
+            "root.sali",
+            &[],
+            "use root.second as first\nuse root.first as second\nlet main(): i32 = 0\n",
+            true,
+        )])
+        .unwrap_err();
+        assert!(cycle.iter().any(|diagnostic| {
+            diagnostic.contains("cyclic import aliases")
+                && diagnostic.contains("first")
+                && diagnostic.contains("second")
+        }));
+
+        let private = resolve_sources(&[
+            unit(
+                "root.sali",
+                &[],
+                "use root.sibling.secret\nlet main(): i32 = secret()\n",
+                true,
+            ),
+            unit(
+                "sibling.sali",
+                &["sibling"],
+                "let secret(): i32 = 1\n",
+                false,
+            ),
+        ])
+        .unwrap_err();
+        assert!(private.iter().any(|diagnostic| {
+            diagnostic.contains("private") && diagnostic.contains("sibling.secret")
+        }));
+
+        let promotion = resolve_sources(&[
+            unit("root.sali", &[], "let main(): i32 = 0\n", true),
+            unit(
+                "facade.sali",
+                &["facade"],
+                "pub(package) let internal(): i32 = 1\npub use self.internal as exposed\n",
+                false,
+            ),
+        ])
+        .unwrap_err();
+        assert!(promotion.iter().any(|diagnostic| {
+            diagnostic.contains("pub use")
+                && diagnostic.contains("pub(package)")
+                && diagnostic.contains("facade.internal")
+        }));
+    }
+
+    #[test]
+    fn preserves_private_module_alias_boundaries_and_skips_relative_self_aliases() {
+        let program = resolve_sources(&[
+            unit(
+                "root.sali",
+                &[],
+                "pub(package) let answer(): i32 = 42\nlet main(): i32 = child.read()\n",
+                true,
+            ),
+            unit(
+                "child.sali",
+                &["child"],
+                "use answer\npub(package) let read(): i32 = answer()\n",
+                false,
+            ),
+        ])
+        .unwrap();
+        assert!(matches!(
+            function(&program, "child::read").body,
+            Some(Expr::Call(ref callee, _))
+                if callee.as_ref() == &Expr::Name("answer".into())
+        ));
+
+        let bypass = resolve_sources(&[
+            unit("root.sali", &[], "let main(): i32 = 0\n", true),
+            unit(
+                "net.sali",
+                &["net"],
+                "pub(package) let value(): i32 = 1\n",
+                false,
+            ),
+            unit(
+                "owner.sali",
+                &["owner"],
+                "use root.net as hidden\nlet local(): i32 = hidden.value()\n",
+                false,
+            ),
+            unit(
+                "sibling.sali",
+                &["sibling"],
+                "use root.owner.hidden.value as stolen\nlet read(): i32 = stolen()\n",
+                false,
+            ),
+        ])
+        .unwrap_err();
+        assert!(bypass.iter().any(|diagnostic| {
+            diagnostic.contains("private") && diagnostic.contains("owner.hidden")
+        }));
+
+        let unknown = resolve_sources(&[unit(
+            "root.sali",
+            &[],
+            "use missing as value\nlet main(): i32 = 0\n",
+            true,
+        )])
+        .unwrap_err();
+        assert_eq!(
+            unknown
+                .iter()
+                .filter(|diagnostic| diagnostic.contains("unknown import"))
+                .count(),
+            1,
+            "{unknown:?}"
+        );
+    }
+
+    fn expression_names(expression: Option<&Expr>) -> HashSet<String> {
+        fn visit(expression: &Expr, names: &mut HashSet<String>) {
+            match expression {
+                Expr::Name(name) => {
+                    names.insert(name.clone());
+                }
+                Expr::Unary(_, value)
+                | Expr::Try(value)
+                | Expr::Throw(value)
+                | Expr::Borrow { value, .. }
+                | Expr::ChainMember(value, _)
+                | Expr::Loop { body: value } => visit(value, names),
+                Expr::Binary(left, _, right)
+                | Expr::Coalesce(left, right)
+                | Expr::Assign(left, right) => {
+                    visit(left, names);
+                    visit(right, names);
+                }
+                Expr::Call(callee, arguments) => {
+                    visit(callee, names);
+                    for argument in arguments {
+                        visit(&argument.value, names);
+                    }
+                }
+                Expr::Member(base, _) => visit(base, names),
+                Expr::Array(elements) => {
+                    for element in elements {
+                        visit(element, names);
+                    }
+                }
+                Expr::Index { base, index } => {
+                    visit(base, names);
+                    visit(index, names);
+                }
+                Expr::Block(statements, tail) => {
+                    for statement in statements {
+                        match statement {
+                            Stmt::Let(binding) => visit(&binding.value, names),
+                            Stmt::Expr(expression) => visit(expression, names),
+                        }
+                    }
+                    if let Some(tail) = tail {
+                        visit(tail, names);
+                    }
+                }
+                Expr::Closure(_, body) => visit(body, names),
+                Expr::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                } => {
+                    visit(condition, names);
+                    visit(then_branch, names);
+                    if let Some(else_branch) = else_branch {
+                        visit(else_branch, names);
+                    }
+                }
+                Expr::Return(value) | Expr::Break(value) => {
+                    if let Some(value) = value {
+                        visit(value, names);
+                    }
+                }
+                Expr::While { condition, body } => {
+                    visit(condition, names);
+                    visit(body, names);
+                }
+                Expr::Match { scrutinee, arms } => {
+                    visit(scrutinee, names);
+                    for arm in arms {
+                        if let Some(guard) = &arm.guard {
+                            visit(guard, names);
+                        }
+                        visit(&arm.body, names);
+                    }
+                }
+                Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Infer => {}
+            }
+        }
+
+        let mut names = HashSet::new();
+        if let Some(expression) = expression {
+            visit(expression, &mut names);
+        }
+        names
     }
 }

@@ -982,6 +982,11 @@ impl Analyzer {
             hir_globals: HashMap::new(),
             diagnostics: Vec::new(),
         };
+        if !program.uses.is_empty() {
+            analyzer.error(
+                "unresolved `use` declarations reached semantic analysis; resolve source modules before code generation",
+            );
+        }
         analyzer.collect_items(program);
         analyzer
     }
