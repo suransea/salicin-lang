@@ -837,6 +837,21 @@ where T: Add(T, Output = T), T: Copy = x + x
 
 没有约束的泛型函数只能使用对所有 `T` 都成立的操作。
 
+v0.33 首先开放普通 trait 谓词：
+
+```sali
+let duplicate(T: type)(copy value: T): T
+where T: Copy, = {
+  let first = value
+  value
+}
+```
+
+谓词可跨行、可写多个并允许尾逗号。泛型体检查把 `T: Copy` 当作抽象证明；每个单态化调用仍须
+证明具体实参实现所有列出的 trait。谓词中的 trait 和类型也参与模块解析、可见性及参数数量检查。
+当前尚不在泛型体内通过普通 trait bound 分派抽象方法；关联类型等式、extension 的 where 和泛型
+trait implementation selection 留给后续版本。
+
 ## 10. Trait 与实现
 
 ```sali
@@ -900,7 +915,7 @@ where T: Display {
 }
 ```
 
-v0.32 实际开放的是 blanket generic inherent extension：
+v0.32 开放的是 blanket generic inherent extension，v0.33 又加入泛型函数普通 where predicates：
 
 ```sali
 let Cell(T: type) = struct(value: T)
@@ -917,7 +932,8 @@ let value = cell.take()
 类型参数从 target 的具体实例反向代入方法；关联函数则像普通泛型函数一样从实参、期望结果类型或
 `Cell.new(T: i64)(42)` 这样的命名类型参数推断。多参数 target 可以重排，但首版要求每个声明参数都
 作为裸 target argument 恰好出现一次。generic member、associated constant、具体 specialization、
-generic trait implementation 和 `where` selection 尚未开放；它们不会被悄悄当作 inherent 实现。
+generic trait implementation、extension where 与关联类型 selection 尚未开放；它们不会被悄悄当作
+inherent 实现。
 
 实现参数必须能从目标类型、trait 参数或 where 约束唯一决定，防止产生无法选择的自由参数。
 

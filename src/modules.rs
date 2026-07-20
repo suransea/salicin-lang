@@ -1268,6 +1268,26 @@ fn validate_function_api(
             diagnostics,
         );
     }
+    for (index, predicate) in function.where_predicates.iter().enumerate() {
+        validate_exposed_type(
+            &predicate.subject,
+            boundary,
+            source_path,
+            &bound_types,
+            &format!("{description} where predicate {} subject", index + 1),
+            nominal_boundaries,
+            diagnostics,
+        );
+        validate_exposed_type(
+            &predicate.trait_ref,
+            boundary,
+            source_path,
+            &bound_types,
+            &format!("{description} where predicate {} trait", index + 1),
+            nominal_boundaries,
+            diagnostics,
+        );
+    }
 }
 
 fn validate_exposed_type(
@@ -1536,6 +1556,10 @@ impl Resolver {
         }
         if let Some(return_type) = &mut function.return_type {
             self.rewrite_type(return_type, context, &type_scope);
+        }
+        for predicate in &mut function.where_predicates {
+            self.rewrite_type(&mut predicate.subject, context, &type_scope);
+            self.rewrite_type(&mut predicate.trait_ref, context, &type_scope);
         }
         if let Some(body) = &mut function.body {
             self.rewrite_expr(body, context, &type_scope, &value_scope);
@@ -3117,6 +3141,26 @@ let main(): i32 = Option()
             diagnostic.contains("global `shared` type")
                 && diagnostic.contains("exposes private type `Hidden`")
         }));
+    }
+
+    #[test]
+    fn rejects_traits_that_are_narrower_than_public_where_predicates() {
+        let errors = resolve_sources(&[unit(
+            "src/lib.sali",
+            &[],
+            "let Hidden = trait {}\n\
+             pub let expose(T: type)(value: T): T where T: Hidden = value\n",
+            true,
+        )])
+        .unwrap_err();
+
+        assert!(
+            errors.iter().any(|diagnostic| {
+                diagnostic.contains("where predicate 1 trait")
+                    && diagnostic.contains("exposes private type `Hidden`")
+            }),
+            "{errors:?}"
+        );
     }
 
     #[test]

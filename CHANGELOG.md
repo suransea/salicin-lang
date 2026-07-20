@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.33.0 - 2026-07-21
+
+- Added source-level `where T: Trait` predicates to generic functions, including multiple predicates
+  and trailing commas without introducing a new argument delimiter.
+- Generic template checking now treats `where T: Copy` as proof that abstract `T` values may be
+  copied, while every concrete monomorphization verifies all predicates against collected impls.
+- Added module rewriting and public-API visibility checks for predicate subjects, traits, and trait
+  arguments; unknown traits, arity mismatches, duplicate predicates, and unsatisfied bounds are
+  deterministic errors.
+- Kept associated-type equalities, bounded abstract method dispatch, constrained extensions, and
+  generic trait implementations reserved for subsequent constraint-system milestones.
+
 ## 0.32.0 - 2026-07-21
 
 - Implemented blanket generic inherent extensions with the specified

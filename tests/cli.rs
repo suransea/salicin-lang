@@ -275,6 +275,38 @@ fn generic_inherent_extensions_infer_and_dispatch_concrete_instances() {
 }
 
 #[test]
+fn where_copy_bounds_validate_generic_bodies_and_concrete_calls() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "where_copy_bound.sali"))
+        .output()
+        .expect("run generic function with a Copy bound");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+
+    for (name, expected) in [
+        ("where_copy_unsatisfied.sali", "not satisfied"),
+        ("where_unknown_trait.sali", "unknown trait"),
+        (
+            "where_duplicate_predicate.sali",
+            "duplicate where predicate",
+        ),
+        ("where_trait_arity.sali", "argument count mismatch"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid where predicate");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn generic_inherent_extensions_resolve_across_file_modules() {
     let project = TestDirectory::new();
     project.write(

@@ -167,7 +167,14 @@ pub struct Function {
     /// partial application without changing the parser.
     pub groups: Vec<Vec<Param>>,
     pub return_type: Option<Type>,
+    pub where_predicates: Vec<WherePredicate>,
     pub body: Option<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WherePredicate {
+    pub subject: Type,
+    pub trait_ref: Type,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -197,7 +204,7 @@ pub enum PassMode {
     MutBorrow,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
     I32,
     I64,

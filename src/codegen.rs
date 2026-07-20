@@ -3626,6 +3626,9 @@ impl Analyzer {
                 ));
                 continue;
             }
+            if !self.validate_where_predicate_shapes(&template_name, &template.where_predicates) {
+                continue;
+            }
 
             let mut substitutions = HashMap::new();
             for (index, parameter) in template.compile_groups.iter().flatten().enumerate() {
@@ -3659,9 +3662,24 @@ impl Analyzer {
             let lifted_functions_before = self.lifted_functions.clone();
             let next_closure = self.next_closure;
             let inherent_members_before = self.inherent_members.clone();
+            let copy_nominals_before = self.copy_nominals.clone();
 
             let mut function = template;
             substitute_function_types(&mut function, &substitutions);
+            for predicate in &function.where_predicates {
+                let subject = self.lower_source_type(&predicate.subject);
+                if let Type::Named(_, arguments) = &predicate.trait_ref {
+                    for argument in arguments {
+                        self.lower_source_type(argument);
+                    }
+                }
+                if matches!(&predicate.trait_ref, Type::Named(name, arguments)
+                    if name == self.lang_item_name(LangItemKind::Copy) && arguments.is_empty())
+                    && subject != Ty::Error
+                {
+                    self.copy_nominals.insert(subject);
+                }
+            }
             let validation_name = generic_validation_name(&template_name);
             function.name = validation_name.clone();
             function.compile_groups.clear();
@@ -3709,7 +3727,93 @@ impl Analyzer {
             self.lifted_functions = lifted_functions_before;
             self.next_closure = next_closure;
             self.inherent_members = inherent_members_before;
+            self.copy_nominals = copy_nominals_before;
         }
+    }
+
+    fn validate_where_predicate_shapes(
+        &mut self,
+        function: &str,
+        predicates: &[crate::ast::WherePredicate],
+    ) -> bool {
+        let mut valid = true;
+        let mut seen = HashSet::new();
+        for predicate in predicates {
+            if !seen.insert((predicate.subject.clone(), predicate.trait_ref.clone())) {
+                self.error(format!(
+                    "duplicate where predicate in generic function `{function}`"
+                ));
+                valid = false;
+                continue;
+            }
+            let Type::Named(name, arguments) = &predicate.trait_ref else {
+                self.error(format!(
+                    "where predicate in generic function `{function}` must reference a trait"
+                ));
+                valid = false;
+                continue;
+            };
+            let Some(schema) = self.traits.get(name) else {
+                self.error(format!(
+                    "unknown trait `{name}` in where predicate of generic function `{function}`"
+                ));
+                valid = false;
+                continue;
+            };
+            if arguments.len() != schema.compile_parameters.len() {
+                self.error(format!(
+                    "trait argument count mismatch for `{name}` in where predicate of `{function}`: expected {}, found {}",
+                    schema.compile_parameters.len(),
+                    arguments.len()
+                ));
+                valid = false;
+            }
+        }
+        valid
+    }
+
+    fn validate_concrete_where_predicates(
+        &mut self,
+        function: &str,
+        predicates: &[crate::ast::WherePredicate],
+    ) -> bool {
+        let mut valid = true;
+        for predicate in predicates {
+            let subject = self.lower_source_type(&predicate.subject);
+            let Type::Named(name, source_arguments) = &predicate.trait_ref else {
+                valid = false;
+                continue;
+            };
+            let arguments = source_arguments
+                .iter()
+                .map(|argument| self.lower_source_type(argument))
+                .collect::<Vec<_>>();
+            if subject == Ty::Error || arguments.contains(&Ty::Error) {
+                valid = false;
+                continue;
+            }
+            let satisfied =
+                if name == self.lang_item_name(LangItemKind::Copy) && arguments.is_empty() {
+                    self.is_copy_type(&subject)
+                } else {
+                    self.trait_impl_headers.contains(&TraitImplKey {
+                        self_ty: subject.clone(),
+                        trait_ref: TraitRefKey {
+                            name: name.clone(),
+                            arguments,
+                        },
+                    })
+                };
+            if !satisfied {
+                self.error(format!(
+                    "where predicate `{}: {}` is not satisfied while instantiating `{function}`",
+                    self.diagnostic_type_name(&subject),
+                    name
+                ));
+                valid = false;
+            }
+        }
+        valid
     }
 
     fn lower_source_type(&mut self, source: &Type) -> Ty {
@@ -6431,6 +6535,12 @@ impl Analyzer {
             }
         }
 
+        let mut function = template;
+        substitute_function_types(&mut function, &substitutions);
+        if !self.validate_concrete_where_predicates(template_name, &function.where_predicates) {
+            return None;
+        }
+
         let canonical = function_instance_name(&key);
         if let Some(existing) = self.function_instances.get(&canonical) {
             self.error(format!(
@@ -6451,8 +6561,6 @@ impl Analyzer {
         self.function_type_substitutions
             .insert(canonical.clone(), substitutions.clone());
 
-        let mut function = template;
-        substitute_function_types(&mut function, &substitutions);
         function.name = canonical.clone();
         function.compile_groups.clear();
         let groups = function
@@ -17340,6 +17448,10 @@ fn substitute_function_types(function: &mut Function, substitutions: &HashMap<St
     if let Some(result) = &mut function.return_type {
         substitute_type_parameters(result, substitutions);
     }
+    for predicate in &mut function.where_predicates {
+        substitute_type_parameters(&mut predicate.subject, substitutions);
+        substitute_type_parameters(&mut predicate.trait_ref, substitutions);
+    }
     if let Some(body) = &mut function.body {
         substitute_expr_types(body, substitutions);
     }
@@ -17723,6 +17835,7 @@ mod tests {
             compile_groups: Vec::new(),
             groups,
             return_type: Some(result),
+            where_predicates: Vec::new(),
             body: Some(body),
         })
     }

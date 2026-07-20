@@ -24,7 +24,8 @@ The v0.8 compiler likewise validates `Copy` by canonical identity and exact shap
 unit, `never`, the internal error-recovery type, and arrays of `Copy` elements are intrinsic. A
 nominal struct or enum opts in with `extend T: Copy {}` only in its defining package, and every field
 or variant payload must recursively be `Copy`. An implementation for a concrete generic instance
-does not generalize; blanket/generic implementations and `where` proofs are not supported yet.
+does not generalize; blanket/generic implementations are not supported yet. Since v0.33, generic
+functions may require and consume an existing concrete `Copy` proof with `where T: Copy`.
 Validated nominal `Copy` participates in inferred parameter passing, ordinary reads, closure
 captures, and partial application, while explicit `move` still consumes. Function and closure types
 remain non-`Copy`, and same-named user traits cannot spoof the lang item.
@@ -154,5 +155,6 @@ validated private `Box(T)` representation and returns it through the same alloca
 deref APIs and generic callable parameters still await the source-level constraint surface. v0.31
 adds verified move-out/forget primitives used by alloc's safe `box_into_inner` and `box_replace`
 ownership operations. v0.32 adds blanket generic inherent extensions and uses them for Box methods;
-trait bounds and lifetime-carrying safe dereference still await the constraint surface. Platform
+v0.33 adds ordinary generic-function trait predicates and `Copy` proof checking. Associated-type
+equalities, abstract bound-method dispatch, and lifetime-carrying safe dereference remain next. Platform
 `std` remains later work over the C ABI and minimal runtime.

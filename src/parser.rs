@@ -4,7 +4,7 @@ use crate::ast::{
     BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EnumDef, Expr, ExtendDef,
     ExtendMember, Field, Function, Item, MatchArm, Param, PassMode, Pattern, PatternField,
     PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp, UseDecl,
-    VariantDef, VariantFields, Visibility,
+    VariantDef, VariantFields, Visibility, WherePredicate,
 };
 use crate::lexer::{lex, LexError, Token, TokenKind};
 
@@ -212,13 +212,20 @@ impl Parser {
         };
 
         if !compile_groups.is_empty() || !groups.is_empty() {
-            self.take_newlines_if_followed_by(&[TokenKind::Equal]);
+            self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::Equal]);
         }
+
+        let where_predicates = self.where_clause()?;
+        if !where_predicates.is_empty() && compile_groups.is_empty() {
+            return Err(self.error_here("`where` requires compile-time parameters"));
+        }
+        self.take_newlines_if_followed_by(&[TokenKind::Equal]);
 
         self.expect(&TokenKind::Equal, "`=`")?;
 
         if self.at(&TokenKind::Struct) || self.at(&TokenKind::Enum) || self.at(&TokenKind::Trait) {
-            if mutable || annotation.is_some() || !groups.is_empty() {
+            if mutable || annotation.is_some() || !groups.is_empty() || !where_predicates.is_empty()
+            {
                 return Err(self.error_here(
                     "data declarations cannot be mutable, annotated, or have runtime parameters",
                 ));
@@ -252,6 +259,7 @@ impl Parser {
                 compile_groups,
                 groups,
                 return_type: annotation,
+                where_predicates,
                 body: Some(body),
             }))
         }
@@ -320,8 +328,13 @@ impl Parser {
             None
         };
         if !compile_groups.is_empty() || !groups.is_empty() {
-            self.take_newlines_if_followed_by(&[TokenKind::Equal]);
+            self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::Equal]);
         }
+        let where_predicates = self.where_clause()?;
+        if !where_predicates.is_empty() {
+            return Err(self.error_here("where clauses on extend members are not supported yet"));
+        }
+        self.take_newlines_if_followed_by(&[TokenKind::Equal]);
         self.expect(&TokenKind::Equal, "`=` in extend member")?;
 
         if self.at(&TokenKind::Struct) || self.at(&TokenKind::Enum) || self.at(&TokenKind::Trait) {
@@ -346,9 +359,31 @@ impl Parser {
                 compile_groups,
                 groups,
                 return_type: annotation,
+                where_predicates,
                 body: Some(body),
             }))
         }
+    }
+
+    fn where_clause(&mut self) -> Result<Vec<WherePredicate>, ParseError> {
+        if !self.take(&TokenKind::Where) {
+            return Ok(Vec::new());
+        }
+        let mut predicates = Vec::new();
+        loop {
+            let subject = self.type_expr()?;
+            self.expect(&TokenKind::Colon, "`:` in where predicate")?;
+            let trait_ref = self.type_expr()?;
+            predicates.push(WherePredicate { subject, trait_ref });
+            if !self.take(&TokenKind::Comma) {
+                break;
+            }
+            while self.take(&TokenKind::Newline) {}
+            if self.at(&TokenKind::Equal) {
+                break;
+            }
+        }
+        Ok(predicates)
     }
 
     fn declaration_groups(
@@ -697,6 +732,11 @@ impl Parser {
             );
         }
 
+        self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::Equal]);
+        let where_predicates = self.where_clause()?;
+        if !where_predicates.is_empty() {
+            return Err(self.error_here("where clauses on trait members are not supported yet"));
+        }
         self.take_newlines_if_followed_by(&[TokenKind::Equal]);
         let body = if self.take(&TokenKind::Equal) {
             Some(if self.at(&TokenKind::LBrace) {
@@ -713,6 +753,7 @@ impl Parser {
             compile_groups,
             groups,
             return_type,
+            where_predicates,
             body,
         }))
     }
@@ -1748,6 +1789,7 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::Struct => "`struct`",
         TokenKind::Enum => "`enum`",
         TokenKind::Trait => "`trait`",
+        TokenKind::Where => "`where`",
         TokenKind::Match => "`match`",
         TokenKind::Try => "`try`",
         TokenKind::True => "`true`",
@@ -3001,6 +3043,28 @@ mod tests {
         assert_eq!(
             extension.target,
             Type::Named("Cell".into(), vec![Type::Named("T".into(), Vec::new())])
+        );
+    }
+
+    #[test]
+    fn parses_multiline_where_predicates_without_inference_placeholders() {
+        let program = parse(
+            "let choose(T: type)(copy value: T): T\n\
+             where T: Copy,\n\
+                   T: Marker(i32), = value\n",
+        )
+        .unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected a generic function");
+        };
+        assert_eq!(function.where_predicates.len(), 2);
+        assert_eq!(
+            function.where_predicates[0].subject,
+            Type::Named("T".into(), Vec::new())
+        );
+        assert_eq!(
+            function.where_predicates[1].trait_ref,
+            Type::Named("Marker".into(), vec![Type::I32])
         );
     }
 
