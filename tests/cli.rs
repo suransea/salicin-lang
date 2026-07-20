@@ -227,7 +227,6 @@ fn m1_match_and_partial_errors_report_their_cause() {
     for (name, expected) in [
         ("non_exhaustive_match.sali", "exhaustive"),
         ("pattern_type_mismatch.sali", "pattern"),
-        ("partial_application_escape.sali", "escape"),
     ] {
         let output = salic()
             .arg("check")
@@ -602,6 +601,41 @@ fn callable_aliases_move_named_partial_closure_and_resource_environments() {
         .output()
         .expect("run callable alias program");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
+fn concrete_partial_environments_return_across_function_boundaries() {
+    for fixture_name in [
+        "callable_return.sali",
+        "callable_resource_return.sali",
+        "closure_resource_return.sali",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", fixture_name))
+            .output()
+            .expect("run returned callable environment");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{fixture_name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+
+    let abandoned = salic()
+        .arg("run")
+        .arg(fixture(
+            "pass",
+            "callable_resource_return_abandon_trap.sali",
+        ))
+        .output()
+        .expect("run abandoned returned callable environment");
+    assert!(
+        !abandoned.status.success(),
+        "returned resource environment was not dropped:\n{}",
+        output_text(&abandoned)
+    );
 }
 
 #[test]

@@ -132,11 +132,18 @@ borrowed captures retain their lexical loans. `FnOnce` invocation now consumes t
 cleanup IR after argument staging. This is concrete, statically known relocation rather than
 implicit boxing or dynamic erasure; cross-function callable return and parameter ABI remains open.
 
+The v0.26 compiler assigns a named LLVM environment struct to every anonymous concrete closure or
+partial type. Owning environments return by value across function boundaries, retain a statically
+known call target, and participate in move forests, flag trees, and recursive drop glue. Copy and
+resource captures, relocation after return, consumption, and abandonment have native coverage.
+Borrow-capturing environments still cannot escape; generic callable parameters await the source-
+level `Fn`/`FnMut`/`FnOnce` constraint surface.
+
 Compile-time globals are independently materialized at each use and are
 outside the cleanup plan; resource-bearing global semantics must be settled before `Drop` is
 allowed on globals.
 
-The adjacent standard-library route is therefore: finish the cross-function concrete callable ABI,
-then define raw pointers and the allocator ABI. Only after those
+The adjacent standard-library route is therefore: finish generic callable parameters, then define
+raw pointers and the allocator ABI. Only after those
 boundaries are real will `alloc` be added, followed
 by platform `std` over the C ABI and minimal runtime.

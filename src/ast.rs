@@ -187,7 +187,7 @@ pub struct Param {
     pub ty: Type,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PassMode {
     Inferred,
     Copy,

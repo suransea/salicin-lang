@@ -6,6 +6,20 @@ subset.
 
 ## Unreleased
 
+## 0.26.0 - 2026-07-21
+
+- Gave every closure and partial application a concrete compiler-generated environment type. Its
+  identity includes the static call target, remaining call shape, capability, capture modes, and
+  capture types; different anonymous callable types therefore do not silently erase into one ABI.
+- Allowed owning partial applications and `FnOnce` closures to return across function boundaries.
+  LLVM uses named environment structs passed by value, with no allocator, hidden code pointer, or
+  dynamic dispatch. Callers can move, invoke, or abandon the returned value.
+- Extended cleanup forests, runtime flag trees, and generated drop glue over concrete environment
+  fields. Native tests cover Copy captures, resource captures, post-return relocation, successful
+  consumption, and abandoned returned environments with observable destruction.
+- Continued to reject escaping shared or mutable borrow captures. Callable parameters remain gated
+  on generic `Fn`/`FnMut`/`FnOnce` constraints so anonymous concrete types do not need source names.
+
 ## 0.25.0 - 2026-07-21
 
 - Allowed named functions, local closures, and partial applications to move into another local

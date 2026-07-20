@@ -337,6 +337,17 @@ v0.25.0 开放 concrete callable 的局部移动别名：
 - 这不是隐式装箱或动态擦除。跨函数返回/传递 concrete callable 仍被拒绝，下一阶段将为匿名具体
   callable 定义可单态化的返回与参数 ABI。
 
+v0.26.0 接通 concrete callable 的跨函数返回 ABI：
+
+- 每个 partial/closure 获得编译器生成的匿名具体环境类型；身份包含静态调用目标、剩余参数组、调用
+  能力及 capture 类型/模式，不同闭包不会因调用签名相同而被隐式擦除。
+- owning partial 与 `FnOnce` closure 可按值返回。LLVM 使用具名环境 struct，调用入口仍静态已知，
+  不需要 allocator、隐藏代码指针或动态分派。
+- 环境字段进入完整 move-path forest、drop flag tree 和递归 glue；调用方可继续移动、调用或放弃返回值。
+  Copy capture、资源 capture、返回后别名转移和放弃环境均有原生执行/trap 覆盖。
+- 捕获共享/可变借用的 closure 仍禁止逃逸。匿名 callable 作为参数将通过泛型
+  `Fn` / `FnMut` / `FnOnce` 约束开放，而不是要求用户拼写匿名类型。
+
 标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
 所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
 `Copy`，v0.9 建立 cleanup CFG，v0.10 补齐资源 storage/transfer，v0.11 完成完整 move-path forest 与
@@ -345,8 +356,8 @@ drop-flag 计划，v0.15 提供 `Drop` 与递归 glue，v0.16 完成第一阶段
 v0.17 已物化 struct projection flags，v0.18 接通直接 enum payload binding，v0.19 补齐嵌套
 downcast remainder，v0.20 完成 guard rollback，v0.21 完成本地 `FnOnce` resource captures，v0.22
 开放 owning partial captures，v0.23 完成 borrowed overwrite cleanup，v0.24 完成 match planner 与
-正式 cleanup IR 的对齐，v0.25 开放 concrete callable 的局部移动。下一步确定其跨函数返回/参数
-布局，其后固定
+正式 cleanup IR 的对齐，v0.25 开放 concrete callable 的局部移动，v0.26 接通拥有环境的跨函数返回。
+下一步开放泛型 callable 参数约束，其后固定
 raw pointer 与 allocator ABI 并进入 `alloc`。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
 运行时之后。
 

@@ -112,6 +112,7 @@ enum Ty {
     Enum(String),
     Never,
     Function(FunctionTy),
+    Callable(CallableTy),
     Error,
 }
 
@@ -225,6 +226,33 @@ struct FunctionTy {
     result: Box<Ty>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct CallableTy {
+    signature: FunctionTy,
+    captures: Vec<CallableCaptureTy>,
+    kind: CallableKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct CallableCaptureTy {
+    ty: Ty,
+    mode: PassMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum CallableKind {
+    Partial {
+        function: String,
+        consumed_groups: usize,
+        is_fn_once: bool,
+    },
+    Closure {
+        function: String,
+        is_fn_mut: bool,
+        is_fn_once: bool,
+    },
+}
+
 impl Ty {
     fn is_integer(&self) -> bool {
         matches!(self, Self::I32 | Self::I64 | Self::U32 | Self::U64)
@@ -261,6 +289,7 @@ impl fmt::Display for Ty {
                 }
                 write!(f, "{}", function.result)
             }
+            Self::Callable(callable) => write!(f, "{}", Ty::Function(callable.signature.clone())),
         }
     }
 }
@@ -338,6 +367,10 @@ impl HirProgram {
                     })
             }
             Ty::Function(_) => true,
+            Ty::Callable(callable) => callable.captures.iter().any(|capture| {
+                !matches!(capture.mode, PassMode::Borrow | PassMode::MutBorrow)
+                    && self.needs_drop(&capture.ty)
+            }),
             Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool | Ty::Unit | Ty::Never | Ty::Error => {
                 false
             }
@@ -499,6 +532,8 @@ enum HirExprKind {
     PartialCapture {
         binding: LocalId,
         index: usize,
+        moves: bool,
+        callable_ty: Ty,
     },
     LocalClosure(ClosureInfo),
     ConstructStruct {
@@ -964,7 +999,7 @@ impl BinaryOperatorTrait {
 
 enum BinaryOperatorLeft<'a> {
     Source(&'a Expr),
-    Lowered(HirExpr),
+    Lowered(Box<HirExpr>),
 }
 
 const BINARY_OPERATOR_TRAITS: [BinaryOperatorTrait; 5] = [
@@ -1502,7 +1537,7 @@ impl Analyzer {
             Ty::Array(element, _) => self.type_is_copy_with_nominals(element, valid),
             Ty::Enum(name) if name == self.lang_item_name(LangItemKind::Never) => true,
             Ty::Struct(_) | Ty::Enum(_) => valid.contains(ty),
-            Ty::Function(_) => false,
+            Ty::Function(_) | Ty::Callable(_) => false,
         }
     }
 
@@ -3501,7 +3536,7 @@ impl Analyzer {
                     None
                 }
             }
-            Ty::Never | Ty::Function(_) | Ty::Error => None,
+            Ty::Never | Ty::Function(_) | Ty::Callable(_) | Ty::Error => None,
         }
     }
 
@@ -3557,6 +3592,9 @@ impl Analyzer {
                 }
                 rendered.push_str(&self.diagnostic_type_name(&function.result));
                 rendered
+            }
+            Ty::Callable(callable) => {
+                self.diagnostic_type_name(&Ty::Function(callable.signature.clone()))
             }
         }
     }
@@ -4248,6 +4286,20 @@ impl Analyzer {
                         visited,
                     )
                 }
+                Ty::Callable(callable) => {
+                    let mut restricted = visit(
+                        analyzer,
+                        access,
+                        &Ty::Function(callable.signature.clone()),
+                        fallback_origin,
+                        visited,
+                    );
+                    for capture in &callable.captures {
+                        restricted =
+                            visit(analyzer, restricted, &capture.ty, fallback_origin, visited);
+                    }
+                    restricted
+                }
                 Ty::Struct(name) | Ty::Enum(name) => {
                     let mut restricted =
                         analyzer
@@ -4319,6 +4371,24 @@ impl Analyzer {
                     visited,
                     diagnostics,
                 );
+            }
+            Ty::Callable(callable) => {
+                self.collect_type_api_leaks(
+                    &Ty::Function(callable.signature.clone()),
+                    exposed,
+                    description,
+                    visited,
+                    diagnostics,
+                );
+                for capture in &callable.captures {
+                    self.collect_type_api_leaks(
+                        &capture.ty,
+                        exposed,
+                        description,
+                        visited,
+                        diagnostics,
+                    );
+                }
             }
             Ty::Struct(name) | Ty::Enum(name) => {
                 if self.abstract_type_parameters.contains_key(name) {
@@ -6203,6 +6273,10 @@ impl Analyzer {
                     })
                 }),
                 Ty::Function(_) => true,
+                Ty::Callable(callable) => callable.captures.iter().any(|capture| {
+                    !matches!(capture.mode, PassMode::Borrow | PassMode::MutBorrow)
+                        && self.type_needs_drop_inner(&capture.ty, visiting)
+                }),
                 Ty::I32
                 | Ty::I64
                 | Ty::U32
@@ -6354,16 +6428,25 @@ impl Analyzer {
             Expr::Array(elements) => self.lower_array_literal(elements, expected, context),
             Expr::Name(name) => {
                 if let Some(local) = context.lookup(name).cloned() {
-                    if local.partial.is_some() {
-                        self.error(format!(
-                            "local partial application `{name}` cannot escape; call it directly"
-                        ));
-                        error_expr()
-                    } else if local.closure.is_some() {
-                        self.error(format!(
-                            "local closure `{name}` cannot escape; call it directly"
-                        ));
-                        error_expr()
+                    if local.partial.is_some() || local.closure.is_some() {
+                        if matches!(&local.ty, Ty::Callable(callable) if callable.captures.iter().any(|capture| matches!(capture.mode, PassMode::Borrow | PassMode::MutBorrow)))
+                        {
+                            self.error(format!(
+                                "local callable `{name}` cannot escape while it captures a borrow"
+                            ));
+                            error_expr()
+                        } else {
+                            let place = HirPlace {
+                                local: local.id,
+                                root_ty: local.ty.clone(),
+                                projections: Vec::new(),
+                                ty: local.ty.clone(),
+                                capability: local.capability,
+                                root_mutable: local.mutable,
+                                loan: None,
+                            };
+                            self.access_place(place, AccessKind::Auto, context)
+                        }
                     } else {
                         let place = self
                             .lower_place(expression, context)
@@ -6624,14 +6707,14 @@ impl Analyzer {
                                 HirExprKind::Read { .. } => callable_source
                                     .as_ref()
                                     .and_then(|source| source.partial.clone()),
-                                _ => None,
+                                _ => partial_info_for_callable(&ty),
                             };
                             let closure = match &value.kind {
                                 HirExprKind::LocalClosure(closure) => Some(closure.clone()),
                                 HirExprKind::Read { .. } => callable_source
                                     .as_ref()
                                     .and_then(|source| source.closure.clone()),
-                                _ => None,
+                                _ => closure_info_for_callable(&ty),
                             };
                             let (capability, alias) = match &value.kind {
                                 HirExprKind::Borrow { place, mutable } => (
@@ -7302,6 +7385,31 @@ impl Analyzer {
             body: lowered_body,
         });
 
+        let callable_ty = Ty::Callable(CallableTy {
+            signature: FunctionTy {
+                groups: groups
+                    .iter()
+                    .map(|group| group.iter().map(|param| param.ty.clone()).collect())
+                    .collect(),
+                result: Box::new(result.clone()),
+            },
+            captures: captures
+                .iter()
+                .map(|capture| CallableCaptureTy {
+                    ty: capture.place.ty.clone(),
+                    mode: match capture.mode {
+                        ClosureCaptureMode::Shared => PassMode::Borrow,
+                        ClosureCaptureMode::Mutable => PassMode::MutBorrow,
+                        ClosureCaptureMode::Move => PassMode::Move,
+                    },
+                })
+                .collect(),
+            kind: CallableKind::Closure {
+                function: function.clone(),
+                is_fn_mut,
+                is_fn_once,
+            },
+        });
         let info = ClosureInfo {
             function,
             groups: groups.clone(),
@@ -7311,13 +7419,7 @@ impl Analyzer {
             is_fn_once,
         };
         HirExpr {
-            ty: Ty::Function(FunctionTy {
-                groups: groups
-                    .into_iter()
-                    .map(|group| group.into_iter().map(|param| param.ty).collect())
-                    .collect(),
-                result: Box::new(result),
-            }),
+            ty: callable_ty,
             kind: HirExprKind::LocalClosure(info),
         }
     }
@@ -9143,7 +9245,7 @@ impl Analyzer {
                     &receiver_parameter.ty,
                     format!("left operand of overloaded `{spelling}`"),
                 );
-                HirArgument::Move(left)
+                HirArgument::Move(*left)
             }
             BinaryOperatorLeft::Source(left) => {
                 self.lower_call_argument(left, &receiver_parameter, context, &mut temporary_loans)
@@ -9189,7 +9291,7 @@ impl Analyzer {
                     let receiver = lowered_left.ty.clone();
                     return self.lower_trait_binary(
                         operator_trait,
-                        BinaryOperatorLeft::Lowered(lowered_left),
+                        BinaryOperatorLeft::Lowered(Box::new(lowered_left)),
                         right,
                         &receiver,
                         expected,
@@ -10340,11 +10442,17 @@ impl Analyzer {
                 },
             }
         } else {
-            HirExpr {
-                ty: Ty::Function(FunctionTy {
+            let callable_ty = partial_callable_ty(
+                canonical.clone(),
+                consumed_groups,
+                FunctionTy {
                     groups: function_ty.groups[consumed_groups..].to_vec(),
                     result: function_ty.result.clone(),
-                }),
+                },
+                &arguments,
+            );
+            HirExpr {
+                ty: callable_ty,
                 kind: HirExprKind::Partial {
                     function: canonical,
                     consumed_groups,
@@ -10436,6 +10544,8 @@ impl Analyzer {
                     kind: HirExprKind::PartialCapture {
                         binding: local.id,
                         index,
+                        moves: true,
+                        callable_ty: local.ty.clone(),
                     },
                 }),
             })
@@ -10546,11 +10656,17 @@ impl Analyzer {
             }
         } else {
             let remaining = function_ty.groups[groups.len()..].to_vec();
-            HirExpr {
-                ty: Ty::Function(FunctionTy {
+            let callable_ty = partial_callable_ty(
+                name.to_owned(),
+                groups.len(),
+                FunctionTy {
                     groups: remaining,
                     result: function_ty.result.clone(),
-                }),
+                },
+                &arguments,
+            );
+            HirExpr {
+                ty: callable_ty,
                 kind: HirExprKind::Partial {
                     function: name.to_owned(),
                     consumed_groups: groups.len(),
@@ -10698,6 +10814,9 @@ impl Analyzer {
                     kind: HirExprKind::PartialCapture {
                         binding: local.id,
                         index,
+                        moves: self.effective_pass_mode(parameter.mode, &parameter.ty)
+                            == PassMode::Move,
+                        callable_ty: local.ty.clone(),
                     },
                 };
                 match self.effective_pass_mode(parameter.mode, &parameter.ty) {
@@ -10760,11 +10879,17 @@ impl Analyzer {
                 },
             }
         } else {
-            HirExpr {
-                ty: Ty::Function(FunctionTy {
+            let callable_ty = partial_callable_ty(
+                partial.function.clone(),
+                consumed_groups,
+                FunctionTy {
                     groups: function_ty.groups[consumed_groups..].to_vec(),
                     result: function_ty.result.clone(),
-                }),
+                },
+                &arguments,
+            );
+            HirExpr {
+                ty: callable_ty,
                 kind: HirExprKind::Partial {
                     function: partial.function.clone(),
                     consumed_groups,
@@ -11130,6 +11255,127 @@ impl Analyzer {
     fn error(&mut self, message: impl Into<String>) {
         self.diagnostics.push(Diagnostic::new(message));
     }
+}
+
+fn partial_callable_ty(
+    function: String,
+    consumed_groups: usize,
+    signature: FunctionTy,
+    arguments: &[HirArgument],
+) -> Ty {
+    let captures = arguments
+        .iter()
+        .map(|argument| match argument {
+            HirArgument::Copy(value) => CallableCaptureTy {
+                ty: value.ty.clone(),
+                mode: PassMode::Copy,
+            },
+            HirArgument::Move(value) => CallableCaptureTy {
+                ty: value.ty.clone(),
+                mode: PassMode::Move,
+            },
+            HirArgument::SharedBorrow(place) => CallableCaptureTy {
+                ty: place.ty.clone(),
+                mode: PassMode::Borrow,
+            },
+            HirArgument::MutBorrow(place) => CallableCaptureTy {
+                ty: place.ty.clone(),
+                mode: PassMode::MutBorrow,
+            },
+        })
+        .collect::<Vec<_>>();
+    let is_fn_once = captures
+        .iter()
+        .any(|capture| capture.mode == PassMode::Move);
+    Ty::Callable(CallableTy {
+        signature,
+        captures,
+        kind: CallableKind::Partial {
+            function,
+            consumed_groups,
+            is_fn_once,
+        },
+    })
+}
+
+fn partial_info_for_callable(ty: &Ty) -> Option<PartialInfo> {
+    let Ty::Callable(callable) = ty else {
+        return None;
+    };
+    let CallableKind::Partial {
+        function,
+        consumed_groups,
+        is_fn_once,
+    } = &callable.kind
+    else {
+        return None;
+    };
+    Some(PartialInfo {
+        function: function.clone(),
+        consumed_groups: *consumed_groups,
+        capture_count: callable.captures.len(),
+        is_fn_once: *is_fn_once,
+    })
+}
+
+fn closure_info_for_callable(ty: &Ty) -> Option<ClosureInfo> {
+    let Ty::Callable(callable) = ty else {
+        return None;
+    };
+    let CallableKind::Closure {
+        function,
+        is_fn_mut,
+        is_fn_once,
+    } = &callable.kind
+    else {
+        return None;
+    };
+    let captures = callable
+        .captures
+        .iter()
+        .map(|capture| ClosureCapture {
+            place: HirPlace {
+                local: usize::MAX,
+                root_ty: capture.ty.clone(),
+                projections: Vec::new(),
+                ty: capture.ty.clone(),
+                capability: LocalCapability::Owned,
+                root_mutable: false,
+                loan: None,
+            },
+            mode: match capture.mode {
+                PassMode::Borrow => ClosureCaptureMode::Shared,
+                PassMode::MutBorrow => ClosureCaptureMode::Mutable,
+                PassMode::Move | PassMode::Copy | PassMode::Inferred => ClosureCaptureMode::Move,
+            },
+            value: None,
+        })
+        .collect();
+    let groups = callable
+        .signature
+        .groups
+        .iter()
+        .enumerate()
+        .map(|(group_index, group)| {
+            group
+                .iter()
+                .enumerate()
+                .map(|(parameter_index, ty)| ParamSig {
+                    name: format!("arg{group_index}_{parameter_index}"),
+                    ty: ty.clone(),
+                    mode: PassMode::Inferred,
+                })
+                .collect()
+        })
+        .collect();
+    Some(ClosureInfo {
+        function: function.clone(),
+        groups,
+        result: (*callable.signature.result).clone(),
+        captures,
+        is_fn_mut: *is_fn_mut,
+        is_fn_once: *is_fn_once,
+    })
 }
 
 fn error_expr() -> HirExpr {
@@ -11797,6 +12043,28 @@ impl<'a> HirCleanupPlanner<'a> {
                 }
                 visiting.remove(&key);
             }
+            Ty::Callable(callable) => {
+                for (index, capture) in callable.captures.iter().enumerate() {
+                    let capture_index = u32::try_from(index).map_err(|_| {
+                        self.diagnostic(format!(
+                            "callable capture index {index} does not fit in u32"
+                        ))
+                    })?;
+                    let capture_place = place
+                        .clone()
+                        .project(CleanupProjection::Capture(capture_index));
+                    if matches!(capture.mode, PassMode::Borrow | PassMode::MutBorrow) {
+                        self.register_move_path(capture_place, Some(path), false)?;
+                    } else {
+                        self.register_typed_move_path(
+                            capture_place,
+                            Some(path),
+                            &capture.ty,
+                            visiting,
+                        )?;
+                    }
+                }
+            }
             Ty::I32
             | Ty::I64
             | Ty::U32
@@ -11953,7 +12221,9 @@ impl<'a> HirCleanupPlanner<'a> {
             .place
             .clone()
             .project(CleanupProjection::Capture(capture));
-        let path = if let Some(value_ty) = value_ty {
+        let path = if let Some(path) = self.move_paths.get(&place).copied() {
+            path
+        } else if let Some(value_ty) = value_ty {
             self.register_typed_move_path(
                 place.clone(),
                 Some(destination.path),
@@ -13444,7 +13714,32 @@ impl<'a> Emitter<'a> {
                 fields.join(", ")
             ));
         }
-        if !self.program.structs.is_empty() || !self.program.enums.is_empty() {
+        let callable_types = self.callable_types();
+        for callable_ty in &callable_types {
+            let Ty::Callable(callable) = callable_ty else {
+                unreachable!("callable type collector only returns callables");
+            };
+            let fields = callable
+                .captures
+                .iter()
+                .map(|capture| {
+                    if matches!(capture.mode, PassMode::Borrow | PassMode::MutBorrow) {
+                        Ok("ptr".to_owned())
+                    } else {
+                        llvm_field_type(&capture.ty)
+                    }
+                })
+                .collect::<Result<Vec<_>, Diagnostic>>()?;
+            output.push_str(&format!(
+                "%{} = type {{ {} }}\n",
+                type_symbol(&canonical_type_encoding(callable_ty)),
+                fields.join(", ")
+            ));
+        }
+        if !self.program.structs.is_empty()
+            || !self.program.enums.is_empty()
+            || !callable_types.is_empty()
+        {
             output.push('\n');
         }
 
@@ -13512,6 +13807,63 @@ impl<'a> Emitter<'a> {
         Ok(output)
     }
 
+    fn callable_types(&self) -> Vec<Ty> {
+        fn collect(ty: &Ty, types: &mut HashSet<Ty>) {
+            match ty {
+                Ty::Array(element, _) => collect(element, types),
+                Ty::Function(function) => {
+                    for parameter in function.groups.iter().flatten() {
+                        collect(parameter, types);
+                    }
+                    collect(&function.result, types);
+                }
+                Ty::Callable(callable) => {
+                    if !types.insert(ty.clone()) {
+                        return;
+                    }
+                    for capture in &callable.captures {
+                        collect(&capture.ty, types);
+                    }
+                    collect(&Ty::Function(callable.signature.clone()), types);
+                }
+                Ty::I32
+                | Ty::I64
+                | Ty::U32
+                | Ty::U64
+                | Ty::Bool
+                | Ty::Unit
+                | Ty::Struct(_)
+                | Ty::Enum(_)
+                | Ty::Never
+                | Ty::Error => {}
+            }
+        }
+
+        let mut types = HashSet::new();
+        for global in &self.program.globals {
+            collect(&global.ty, &mut types);
+        }
+        for function in &self.program.functions {
+            collect(&function.result, &mut types);
+            for parameter in &function.params {
+                collect(&parameter.ty, &mut types);
+            }
+        }
+        for layout in &self.program.structs {
+            for field in &layout.fields {
+                collect(&field.ty, &mut types);
+            }
+        }
+        for layout in &self.program.enums {
+            for field in layout.variants.iter().flat_map(|variant| &variant.fields) {
+                collect(&field.ty, &mut types);
+            }
+        }
+        let mut types = types.into_iter().collect::<Vec<_>>();
+        types.sort_by_key(canonical_type_encoding);
+        types
+    }
+
     fn drop_glue_types(&self) -> Vec<Ty> {
         let mut types = HashSet::new();
         for layout in &self.program.structs {
@@ -13522,6 +13874,9 @@ impl<'a> Emitter<'a> {
             for field in &layout.fields {
                 self.collect_drop_glue_type(&field.ty, &mut types);
             }
+        }
+        for ty in self.callable_types() {
+            self.collect_drop_glue_type(&ty, &mut types);
         }
         for layout in &self.program.enums {
             let ty = Ty::Enum(layout.name.clone());
@@ -13555,6 +13910,11 @@ impl<'a> Emitter<'a> {
                     for field in layout.variants.iter().flat_map(|variant| &variant.fields) {
                         self.collect_drop_glue_type(&field.ty, types);
                     }
+                }
+            }
+            Ty::Callable(callable) => {
+                for capture in &callable.captures {
+                    self.collect_drop_glue_type(&capture.ty, types);
                 }
             }
             Ty::I32
@@ -13631,6 +13991,21 @@ impl<'a> Emitter<'a> {
                     output.push_str(&format!(
                         "  %element.{index} = getelementptr inbounds {aggregate_ty}, ptr %value, i32 0, i32 {index}\n  call void @{}(ptr %element.{index})\n",
                         drop_glue_symbol(element)
+                    ));
+                }
+                output.push_str("  ret void\n}\n");
+            }
+            Ty::Callable(callable) => {
+                let aggregate_ty = llvm_value_type(ty)?;
+                for (index, capture) in callable.captures.iter().enumerate() {
+                    if matches!(capture.mode, PassMode::Borrow | PassMode::MutBorrow)
+                        || !self.program.needs_drop(&capture.ty)
+                    {
+                        continue;
+                    }
+                    output.push_str(&format!(
+                        "  %capture.{index} = getelementptr inbounds {aggregate_ty}, ptr %value, i32 0, i32 {index}\n  call void @{}(ptr %capture.{index})\n",
+                        drop_glue_symbol(&capture.ty)
                     ));
                 }
                 output.push_str("  ret void\n}\n");
@@ -13858,6 +14233,28 @@ impl<'a> FunctionEmitter<'a> {
                         field.ty.clone(),
                         field_pointer,
                         field_projections,
+                    )?);
+                }
+            }
+            if let Ty::Callable(callable) = &ty {
+                let aggregate_ty = llvm_value_type(&ty)?;
+                for (index, capture) in callable.captures.iter().enumerate() {
+                    if matches!(capture.mode, PassMode::Borrow | PassMode::MutBorrow)
+                        || !self.program.needs_drop(&capture.ty)
+                    {
+                        continue;
+                    }
+                    let capture_pointer = self.fresh_register();
+                    self.instruction(format!(
+                        "{capture_pointer} = getelementptr inbounds {aggregate_ty}, ptr {pointer}, i32 0, i32 {index}"
+                    ));
+                    let mut capture_projections = projections.clone();
+                    capture_projections.push(index);
+                    children.push(self.build_drop_slot(
+                        local,
+                        capture.ty.clone(),
+                        capture_pointer,
+                        capture_projections,
                     )?);
                 }
             }
@@ -14099,6 +14496,12 @@ impl<'a> FunctionEmitter<'a> {
                 length,
             } => self.emit_index(expression, base, index, *length),
             HirExprKind::Read { place, kind } => {
+                if place.projections.is_empty()
+                    && matches!(expression.ty, Ty::Callable(_))
+                    && self.partial_captures.contains_key(&place.local)
+                {
+                    return self.emit_stored_callable_read(expression, place.local, *kind);
+                }
                 if *kind == HirReadKind::Move && self.program.needs_drop(&place.root_ty) {
                     self.update_place_drop_flags(place.local, &place.projections, false, false);
                 }
@@ -14412,37 +14815,61 @@ impl<'a> FunctionEmitter<'a> {
                     })
                 }
             }
-            HirExprKind::Partial { .. } => Err(Diagnostic::new(
-                "local partial application escaped its binding",
-            )),
+            HirExprKind::Partial { captures, .. } => {
+                self.emit_callable_environment(expression, captures)
+            }
             HirExprKind::Borrow { .. } => Err(Diagnostic::new(
                 "borrow value escaped the local binding that owns its loan",
             )),
-            HirExprKind::PartialCapture { binding, index } => {
-                let capture = self
+            HirExprKind::PartialCapture {
+                binding,
+                index,
+                moves,
+                callable_ty,
+            } => {
+                let stored = self
                     .partial_captures
                     .get(binding)
                     .and_then(|captures| captures.get(*index))
-                    .cloned()
-                    .ok_or_else(|| {
-                        Diagnostic::new(format!(
-                            "internal error: unknown capture {index} for partial binding {binding}"
-                        ))
-                    })?;
-                let Some(capture) = capture else {
-                    return Ok(Operand::unit());
-                };
-                let register = self.fresh_register();
+                    .cloned();
+                if let Some(stored) = stored {
+                    let Some(capture) = stored else {
+                        return Ok(Operand::unit());
+                    };
+                    let register = self.fresh_register();
+                    self.instruction(format!(
+                        "{register} = load {}, ptr {}",
+                        llvm_value_type(&capture.ty)?,
+                        capture.pointer
+                    ));
+                    if *moves {
+                        if let Some(flag) = capture.drop_flag {
+                            self.instruction(format!("store i1 false, ptr {flag}"));
+                        }
+                    }
+                    return Ok(Operand {
+                        ty: capture.ty,
+                        value: Some(register),
+                    });
+                }
+                let environment = self.locals.get(binding).cloned().ok_or_else(|| {
+                    Diagnostic::new(format!(
+                        "internal error: unknown callable environment local {binding}"
+                    ))
+                })?;
+                let environment_ty = llvm_value_type(callable_ty)?;
+                let pointer = self.fresh_register();
                 self.instruction(format!(
-                    "{register} = load {}, ptr {}",
-                    llvm_value_type(&capture.ty)?,
-                    capture.pointer
+                    "{pointer} = getelementptr inbounds {environment_ty}, ptr {environment}, i32 0, i32 {index}"
                 ));
-                if let Some(flag) = capture.drop_flag {
-                    self.instruction(format!("store i1 false, ptr {flag}"));
+                let register = self.fresh_register();
+                let capture_ty = llvm_value_type(&expression.ty)?;
+                self.instruction(format!("{register} = load {capture_ty}, ptr {pointer}"));
+                if *moves && self.program.needs_drop(callable_ty) {
+                    self.update_place_drop_flags(*binding, &[*index], false, false);
                 }
                 Ok(Operand {
-                    ty: capture.ty,
+                    ty: expression.ty.clone(),
                     value: Some(register),
                 })
             }
@@ -14467,7 +14894,9 @@ impl<'a> FunctionEmitter<'a> {
                                 kind: HirReadKind::Move,
                             } = &binding.value.kind
                             {
-                                if matches!(binding.ty, Ty::Function(_)) {
+                                if matches!(binding.ty, Ty::Function(_) | Ty::Callable(_))
+                                    && self.partial_captures.contains_key(&place.local)
+                                {
                                     self.relocate_callable_captures(place.local, binding.id)?;
                                     continue;
                                 }
@@ -15295,6 +15724,107 @@ impl<'a> FunctionEmitter<'a> {
         Ok(pointer)
     }
 
+    fn emit_callable_environment(
+        &mut self,
+        expression: &HirExpr,
+        captures: &[HirArgument],
+    ) -> Result<Operand, Diagnostic> {
+        let cleanup_depth = self.drop_slots.len();
+        let environment_ty = llvm_value_type(&expression.ty)?;
+        let mut environment = "zeroinitializer".to_owned();
+        for (index, capture) in captures.iter().enumerate() {
+            let (field_ty, value) = match capture {
+                HirArgument::Copy(value) | HirArgument::Move(value) => {
+                    let value = self.emit_expr(value)?;
+                    if self.terminated {
+                        self.drop_slots.truncate(cleanup_depth);
+                        return Ok(Operand::never());
+                    }
+                    if value.ty == Ty::Unit {
+                        ("[0 x i8]".to_owned(), "zeroinitializer".to_owned())
+                    } else {
+                        self.hold_operand_for_early_exit(&value)?;
+                        (llvm_value_type(&value.ty)?, value.value()?.to_owned())
+                    }
+                }
+                HirArgument::SharedBorrow(place) | HirArgument::MutBorrow(place) => {
+                    ("ptr".to_owned(), self.emit_place_address(place)?)
+                }
+            };
+            let register = self.fresh_register();
+            self.instruction(format!(
+                "{register} = insertvalue {environment_ty} {environment}, {field_ty} {value}, {index}"
+            ));
+            environment = register;
+        }
+        self.release_drop_slots(cleanup_depth);
+        Ok(Operand {
+            ty: expression.ty.clone(),
+            value: Some(environment),
+        })
+    }
+
+    fn emit_stored_callable_read(
+        &mut self,
+        expression: &HirExpr,
+        source: LocalId,
+        kind: HirReadKind,
+    ) -> Result<Operand, Diagnostic> {
+        let Ty::Callable(callable) = &expression.ty else {
+            return Err(Diagnostic::new(
+                "internal error: stored callable read has a non-callable type",
+            ));
+        };
+        let stored =
+            self.partial_captures.get(&source).cloned().ok_or_else(|| {
+                Diagnostic::new("internal error: callable environment is missing")
+            })?;
+        if stored.len() != callable.captures.len() {
+            return Err(Diagnostic::new(
+                "internal error: callable environment layout does not match its type",
+            ));
+        }
+        let environment_ty = llvm_value_type(&expression.ty)?;
+        let mut environment = "zeroinitializer".to_owned();
+        for (index, (capture, stored)) in callable.captures.iter().zip(stored).enumerate() {
+            if matches!(capture.mode, PassMode::Borrow | PassMode::MutBorrow) {
+                return Err(Diagnostic::new(
+                    "borrowed callable environment escaped local lowering",
+                ));
+            }
+            let (field_ty, value) = if capture.ty == Ty::Unit {
+                ("[0 x i8]".to_owned(), "zeroinitializer".to_owned())
+            } else {
+                let stored = stored.ok_or_else(|| {
+                    Diagnostic::new(format!(
+                        "internal error: callable capture {index} has no storage"
+                    ))
+                })?;
+                let field_ty = llvm_value_type(&capture.ty)?;
+                let value = self.fresh_register();
+                self.instruction(format!("{value} = load {field_ty}, ptr {}", stored.pointer));
+                if kind == HirReadKind::Move {
+                    if let Some(flag) = stored.drop_flag {
+                        self.instruction(format!("store i1 false, ptr {flag}"));
+                    }
+                }
+                (field_ty, value)
+            };
+            let next = self.fresh_register();
+            self.instruction(format!(
+                "{next} = insertvalue {environment_ty} {environment}, {field_ty} {value}, {index}"
+            ));
+            environment = next;
+        }
+        if kind == HirReadKind::Move {
+            self.partial_captures.remove(&source);
+        }
+        Ok(Operand {
+            ty: expression.ty.clone(),
+            value: Some(environment),
+        })
+    }
+
     fn relocate_callable_captures(
         &mut self,
         source: LocalId,
@@ -15402,6 +15932,7 @@ fn llvm_value_type(ty: &Ty) -> Result<String, Diagnostic> {
         Ty::Bool => Ok("i1".to_owned()),
         Ty::Array(element, length) => Ok(format!("[{length} x {}]", llvm_value_type(element)?)),
         Ty::Struct(name) | Ty::Enum(name) => Ok(format!("%{}", type_symbol(name))),
+        Ty::Callable(_) => Ok(format!("%{}", type_symbol(&canonical_type_encoding(ty)))),
         Ty::Unit | Ty::Never | Ty::Function(_) | Ty::Error => Err(Diagnostic::new(format!(
             "internal error: `{ty}` has no first-class LLVM representation"
         ))),
@@ -15450,7 +15981,7 @@ fn zero_const(ty: &Ty, program: &HirProgram) -> Option<ConstValue> {
             );
             Some(ConstValue::Aggregate(fields))
         }
-        Ty::Never | Ty::Function(_) | Ty::Error => None,
+        Ty::Never | Ty::Function(_) | Ty::Callable(_) | Ty::Error => None,
     }
 }
 
@@ -15778,6 +16309,48 @@ fn canonical_type_encoding(ty: &Ty) -> String {
                 }
             }
             push_canonical_component(&mut encoded, &canonical_type_encoding(&function.result));
+            encoded
+        }
+        Ty::Callable(callable) => {
+            let mut encoded = String::from("callable");
+            match &callable.kind {
+                CallableKind::Partial {
+                    function,
+                    consumed_groups,
+                    is_fn_once,
+                } => {
+                    encoded.push('p');
+                    push_canonical_component(&mut encoded, function);
+                    encoded.push_str(&format!("{consumed_groups}:{}:", u8::from(*is_fn_once)));
+                }
+                CallableKind::Closure {
+                    function,
+                    is_fn_mut,
+                    is_fn_once,
+                } => {
+                    encoded.push('c');
+                    push_canonical_component(&mut encoded, function);
+                    encoded.push_str(&format!(
+                        "{}:{}:",
+                        u8::from(*is_fn_mut),
+                        u8::from(*is_fn_once)
+                    ));
+                }
+            }
+            for capture in &callable.captures {
+                encoded.push_str(match capture.mode {
+                    PassMode::Inferred => "i",
+                    PassMode::Copy => "c",
+                    PassMode::Move => "m",
+                    PassMode::Borrow => "b",
+                    PassMode::MutBorrow => "u",
+                });
+                push_canonical_component(&mut encoded, &canonical_type_encoding(&capture.ty));
+            }
+            push_canonical_component(
+                &mut encoded,
+                &canonical_type_encoding(&Ty::Function(callable.signature.clone())),
+            );
             encoded
         }
         Ty::Error => "error".to_owned(),
@@ -18277,6 +18850,27 @@ let main(): i32 = {
         .unwrap();
         let closure = function_symbol("__closure.0");
         assert!(ir.contains(&format!("call i32 @{closure}(ptr")));
+        assert!(ir.contains(&format!("call i32 @{}(", function_symbol("add"))));
+    }
+
+    #[test]
+    fn returns_a_concrete_partial_environment_across_a_function_boundary() {
+        let ir = compile_text(
+            r#"
+let add(left: i32)(right: i32): i32 = left + right
+let make() = {
+  let pending = add(40)
+  pending
+}
+let main(): i32 = {
+  let pending = make()
+  pending(2)
+}
+"#,
+        )
+        .unwrap();
+        assert!(ir.contains(" = type { i32 }"));
+        assert!(ir.contains("call %sali.type."));
         assert!(ir.contains(&format!("call i32 @{}(", function_symbol("add"))));
     }
 
