@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.35.0 - 2026-07-21
+
+- Added associated-type equality bindings in where trait references, including
+  `where T: Add(T, Output = T)` and user traits such as `Produce(Item = i32)`.
+- Validated equality names and duplicates at template definition time, substituted equality types
+  into assumed method signatures, and checked every concrete impl's associated types during
+  monomorphization.
+- Enabled generic arithmetic through the source-backed `Add`, `Sub`, `Mul`, `Div`, and `Rem` lang
+  items when their `Output` is determined, including intrinsic integer implementations.
+- Forwarded associated-type proofs through nested constrained generic calls while retaining full
+  rollback of assumed selection state.
+
 ## 0.34.0 - 2026-07-21
 
 - Enabled static method dispatch on abstract values through ordinary generic-function trait bounds,

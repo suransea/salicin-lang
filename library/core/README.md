@@ -156,6 +156,6 @@ deref APIs and generic callable parameters still await the source-level constrai
 adds verified move-out/forget primitives used by alloc's safe `box_into_inner` and `box_replace`
 ownership operations. v0.32 adds blanket generic inherent extensions and uses them for Box methods;
 v0.33 adds ordinary generic-function trait predicates and `Copy` proof checking; v0.34 adds static
-bound-method dispatch when no associated-type projection is required. Associated-type equalities and
-lifetime-carrying safe dereference remain next. Platform
+bound-method dispatch; v0.35 adds associated-type equality proofs and generic arithmetic dispatch.
+Constrained extensions and lifetime-carrying safe dereference remain next. Platform
 `std` remains later work over the C ABI and minimal runtime.

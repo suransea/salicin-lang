@@ -1287,6 +1287,21 @@ fn validate_function_api(
             nominal_boundaries,
             diagnostics,
         );
+        for binding in &predicate.associated_types {
+            validate_exposed_type(
+                &binding.ty,
+                boundary,
+                source_path,
+                &bound_types,
+                &format!(
+                    "{description} where predicate {} associated type `{}`",
+                    index + 1,
+                    binding.name
+                ),
+                nominal_boundaries,
+                diagnostics,
+            );
+        }
     }
 }
 
@@ -1560,6 +1575,9 @@ impl Resolver {
         for predicate in &mut function.where_predicates {
             self.rewrite_type(&mut predicate.subject, context, &type_scope);
             self.rewrite_type(&mut predicate.trait_ref, context, &type_scope);
+            for binding in &mut predicate.associated_types {
+                self.rewrite_type(&mut binding.ty, context, &type_scope);
+            }
         }
         if let Some(body) = &mut function.body {
             self.rewrite_expr(body, context, &type_scope, &value_scope);

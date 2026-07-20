@@ -339,6 +339,47 @@ fn where_trait_bounds_enable_abstract_method_dispatch() {
 }
 
 #[test]
+fn where_associated_equalities_enable_operator_dispatch() {
+    for name in ["where_operator_output.sali", "where_associated_method.sali"] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run generic dispatch through an associated type equality");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+
+    let output = salic()
+        .arg("check")
+        .arg(fixture("fail", "where_associated_type_mismatch.sali"))
+        .output()
+        .expect("reject an unsatisfied associated type equality");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("not satisfied"),
+        "{}",
+        output_text(&output)
+    );
+
+    let output = salic()
+        .arg("check")
+        .arg(fixture("fail", "where_unknown_associated_type.sali"))
+        .output()
+        .expect("reject an unknown associated type equality");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("unknown associated type"),
+        "{}",
+        output_text(&output)
+    );
+}
+
+#[test]
 fn generic_inherent_extensions_resolve_across_file_modules() {
     let project = TestDirectory::new();
     project.write(

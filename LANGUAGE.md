@@ -849,9 +849,10 @@ where T: Copy, = {
 
 谓词可跨行、可写多个并允许尾逗号。泛型体检查把 `T: Copy` 当作抽象证明；每个单态化调用仍须
 证明具体实参实现所有列出的 trait。谓词中的 trait 和类型也参与模块解析、可见性及参数数量检查。
-v0.34 进一步允许泛型体通过普通 trait bound 静态调用不涉及关联类型的 method，并可把同一证明
-转交给另一个受约束泛型函数。模板检查阶段使用会完整回滚的假设实现；单态化后重新选择具体
-`extend` 实现。关联类型等式、涉及关联类型的 bound method、extension 的 where 和泛型 trait
+v0.34 进一步允许泛型体通过普通 trait bound 静态调用 method，并可把同一证明转交给另一个受约束
+泛型函数。v0.35 实现关联类型等式，因此 `where T: Add(T, Output = T)` 可为 `x + y` 同时确定右
+操作数和结果，`Produce(Item = i32)` 也可确定普通 method 签名。模板检查阶段使用会完整回滚的
+假设实现；单态化后重新选择具体 `extend` 实现并核对关联类型。extension 的 where 和泛型 trait
 implementation selection 留给后续版本。
 
 ## 10. Trait 与实现

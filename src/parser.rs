@@ -1,10 +1,10 @@
 use std::{collections::HashSet, fmt};
 
 use crate::ast::{
-    BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EnumDef, Expr, ExtendDef,
-    ExtendMember, Field, Function, Item, MatchArm, Param, PassMode, Pattern, PatternField,
-    PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp, UseDecl,
-    VariantDef, VariantFields, Visibility, WherePredicate,
+    AssociatedTypeBinding, BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EnumDef,
+    Expr, ExtendDef, ExtendMember, Field, Function, Item, MatchArm, Param, PassMode, Pattern,
+    PatternField, PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp,
+    UseDecl, VariantDef, VariantFields, Visibility, WherePredicate,
 };
 use crate::lexer::{lex, LexError, Token, TokenKind};
 
@@ -373,8 +373,12 @@ impl Parser {
         loop {
             let subject = self.type_expr()?;
             self.expect(&TokenKind::Colon, "`:` in where predicate")?;
-            let trait_ref = self.type_expr()?;
-            predicates.push(WherePredicate { subject, trait_ref });
+            let (trait_ref, associated_types) = self.where_trait_ref()?;
+            predicates.push(WherePredicate {
+                subject,
+                trait_ref,
+                associated_types,
+            });
             if !self.take(&TokenKind::Comma) {
                 break;
             }
@@ -384,6 +388,48 @@ impl Parser {
             }
         }
         Ok(predicates)
+    }
+
+    fn where_trait_ref(&mut self) -> Result<(Type, Vec<AssociatedTypeBinding>), ParseError> {
+        let mut path = vec![self.expect_path_start("a trait")?];
+        while self.take(&TokenKind::Dot) {
+            path.push(self.expect_path_continuation(&path, "a trait path segment after `.`")?);
+        }
+        let name = path.join(".");
+        let mut arguments = Vec::new();
+        let mut associated_types = Vec::new();
+        let mut saw_associated = false;
+        if self.take(&TokenKind::LParen) && !self.take(&TokenKind::RParen) {
+            loop {
+                if matches!(self.current().kind, TokenKind::Ident(_))
+                    && self.at_offset(1, &TokenKind::Equal)
+                {
+                    saw_associated = true;
+                    let binding = self.expect_ident("an associated type name")?;
+                    self.expect(&TokenKind::Equal, "`=` in associated type equality")?;
+                    associated_types.push(AssociatedTypeBinding {
+                        name: binding,
+                        ty: self.type_expr()?,
+                    });
+                } else {
+                    if saw_associated {
+                        return Err(self.error_here(
+                            "positional trait arguments must precede associated type equalities",
+                        ));
+                    }
+                    arguments.push(self.type_expr()?);
+                }
+                if self.take(&TokenKind::Comma) {
+                    if self.take(&TokenKind::RParen) {
+                        break;
+                    }
+                } else {
+                    self.expect(&TokenKind::RParen, "`)` after trait arguments")?;
+                    break;
+                }
+            }
+        }
+        Ok((Type::Named(name, arguments), associated_types))
     }
 
     fn declaration_groups(
@@ -3051,7 +3097,7 @@ mod tests {
         let program = parse(
             "let choose(T: type)(copy value: T): T\n\
              where T: Copy,\n\
-                   T: Marker(i32), = value\n",
+                   T: Marker(i32, Item = T), = value\n",
         )
         .unwrap();
         let Item::Function(function) = &program.items[0] else {
@@ -3065,6 +3111,15 @@ mod tests {
         assert_eq!(
             function.where_predicates[1].trait_ref,
             Type::Named("Marker".into(), vec![Type::I32])
+        );
+        assert_eq!(function.where_predicates[1].associated_types.len(), 1);
+        assert_eq!(
+            function.where_predicates[1].associated_types[0].name,
+            "Item"
+        );
+        assert_eq!(
+            function.where_predicates[1].associated_types[0].ty,
+            Type::Named("T".into(), Vec::new())
         );
     }
 

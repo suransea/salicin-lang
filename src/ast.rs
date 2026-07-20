@@ -175,6 +175,13 @@ pub struct Function {
 pub struct WherePredicate {
     pub subject: Type,
     pub trait_ref: Type,
+    pub associated_types: Vec<AssociatedTypeBinding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AssociatedTypeBinding {
+    pub name: String,
+    pub ty: Type,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

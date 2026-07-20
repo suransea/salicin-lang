@@ -3676,6 +3676,9 @@ impl Analyzer {
                         self.lower_source_type(argument);
                     }
                 }
+                for binding in &predicate.associated_types {
+                    self.lower_source_type(&binding.ty);
+                }
                 if matches!(&predicate.trait_ref, Type::Named(name, arguments)
                     if name == self.lang_item_name(LangItemKind::Copy) && arguments.is_empty())
                     && subject != Ty::Error
@@ -3755,7 +3758,15 @@ impl Analyzer {
                 .iter()
                 .map(|argument| self.lower_source_type(argument))
                 .collect::<Vec<_>>();
-            if self_ty == Ty::Error || arguments.contains(&Ty::Error) {
+            let associated_types = predicate
+                .associated_types
+                .iter()
+                .map(|binding| (binding.name.clone(), self.lower_source_type(&binding.ty)))
+                .collect::<HashMap<_, _>>();
+            if self_ty == Ty::Error
+                || arguments.contains(&Ty::Error)
+                || associated_types.values().any(|ty| *ty == Ty::Error)
+            {
                 continue;
             }
             let key = TraitImplKey {
@@ -3766,7 +3777,7 @@ impl Analyzer {
                 },
             };
             self.trait_impl_headers.insert(key.clone());
-            if !schema.associated_types.is_empty() || self.trait_impls.contains_key(&key) {
+            if self.trait_impls.contains_key(&key) {
                 continue;
             }
 
@@ -3775,8 +3786,19 @@ impl Analyzer {
             for (parameter, argument) in schema.compile_parameters.iter().zip(source_arguments) {
                 substitutions.insert(parameter.name.clone(), argument.clone());
             }
+            for binding in &predicate.associated_types {
+                substitutions.insert(binding.name.clone(), binding.ty.clone());
+            }
             let mut methods = HashMap::new();
-            for method_name in &schema.method_order {
+            let associated_types_complete = schema
+                .associated_types
+                .iter()
+                .all(|name| associated_types.contains_key(name));
+            for method_name in schema
+                .method_order
+                .iter()
+                .filter(|_| associated_types_complete)
+            {
                 let mut method = schema.methods[method_name].clone();
                 substitute_function_types(&mut method, &substitutions);
                 let canonical = assumed_trait_method_name(function, &key, method_name);
@@ -3810,7 +3832,7 @@ impl Analyzer {
                 key.clone(),
                 TraitImplInfo {
                     key,
-                    associated_types: HashMap::new(),
+                    associated_types,
                     methods,
                     access: schema.access,
                 },
@@ -3840,7 +3862,7 @@ impl Analyzer {
                 valid = false;
                 continue;
             };
-            let Some(schema) = self.traits.get(name) else {
+            let Some(schema) = self.traits.get(name).cloned() else {
                 self.error(format!(
                     "unknown trait `{name}` in where predicate of generic function `{function}`"
                 ));
@@ -3854,6 +3876,22 @@ impl Analyzer {
                     arguments.len()
                 ));
                 valid = false;
+            }
+            let mut associated = HashSet::new();
+            for binding in &predicate.associated_types {
+                if !schema.associated_types.contains(&binding.name) {
+                    self.error(format!(
+                        "unknown associated type `{name}.{}` in where predicate of `{function}`",
+                        binding.name
+                    ));
+                    valid = false;
+                } else if !associated.insert(binding.name.clone()) {
+                    self.error(format!(
+                        "duplicate associated type equality `{name}.{}` in where predicate of `{function}`",
+                        binding.name
+                    ));
+                    valid = false;
+                }
             }
         }
         valid
@@ -3875,21 +3913,44 @@ impl Analyzer {
                 .iter()
                 .map(|argument| self.lower_source_type(argument))
                 .collect::<Vec<_>>();
-            if subject == Ty::Error || arguments.contains(&Ty::Error) {
+            let associated_types = predicate
+                .associated_types
+                .iter()
+                .map(|binding| (binding.name.clone(), self.lower_source_type(&binding.ty)))
+                .collect::<HashMap<_, _>>();
+            if subject == Ty::Error
+                || arguments.contains(&Ty::Error)
+                || associated_types.values().any(|ty| *ty == Ty::Error)
+            {
                 valid = false;
                 continue;
             }
             let satisfied =
                 if name == self.lang_item_name(LangItemKind::Copy) && arguments.is_empty() {
                     self.is_copy_type(&subject)
+                } else if BINARY_OPERATOR_TRAITS
+                    .iter()
+                    .any(|operator| name == self.lang_item_name(operator.lang_item))
+                    && subject.is_integer()
+                    && arguments.as_slice() == [subject.clone()]
+                {
+                    associated_types
+                        .get("Output")
+                        .is_none_or(|output| output == &subject)
                 } else {
-                    self.trait_impl_headers.contains(&TraitImplKey {
-                        self_ty: subject.clone(),
-                        trait_ref: TraitRefKey {
-                            name: name.clone(),
-                            arguments,
-                        },
-                    })
+                    self.trait_impls
+                        .get(&TraitImplKey {
+                            self_ty: subject.clone(),
+                            trait_ref: TraitRefKey {
+                                name: name.clone(),
+                                arguments,
+                            },
+                        })
+                        .is_some_and(|implementation| {
+                            associated_types.iter().all(|(name, expected)| {
+                                implementation.associated_types.get(name) == Some(expected)
+                            })
+                        })
                 };
             if !satisfied {
                 self.error(format!(
@@ -17538,6 +17599,9 @@ fn substitute_function_types(function: &mut Function, substitutions: &HashMap<St
     for predicate in &mut function.where_predicates {
         substitute_type_parameters(&mut predicate.subject, substitutions);
         substitute_type_parameters(&mut predicate.trait_ref, substitutions);
+        for binding in &mut predicate.associated_types {
+            substitute_type_parameters(&mut binding.ty, substitutions);
+        }
     }
     if let Some(body) = &mut function.body {
         substitute_expr_types(body, substitutions);
