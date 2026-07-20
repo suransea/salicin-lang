@@ -253,12 +253,25 @@ v0.16.0 执行结构化 scope cleanup：
 - 从需析构聚合中部分移动/重建、需析构 pattern binding、临时值字段提取和拥有资源的闭包环境暂时
   明确拒绝，待 projection flags 完成后重新开放。
 
+v0.17.0 物化 struct projection drop flags：
+
+- 没有 custom `Drop` 的 struct 为每个递归需要析构的字段建立子 flag；字段移动会清 root、沿途父
+  projection 与目标子树，但保留未移动 sibling 的 flag。
+- scope exit 在 root 完整时调用一次 root glue；root 不完整时沿 `children_when_clear` 递归，只清理
+  仍初始化的字段，嵌套 struct 使用同一规则。
+- 字段重新初始化会恢复目标子树；所有字段重新完整时重新置 root flag。条件移动后的
+  maybe-overwrite 先按字段 flag 清理可能存在的旧值，再 store 新值并重组父级。
+- 原生测试覆盖直接/嵌套字段移动、条件移动、部分值清理、字段重建和条件重建，并用 sibling 内 trap
+  证明 fallback cleanup 没有漏掉未移动字段。
+- 类型自身实现 custom `Drop` 时仍必须保持完整，不能移动穿过它的字段；drop-bearing pattern
+  binding、enum payload transfer、临时 drop 值字段提取和资源闭包环境仍待后续 lowering。
+
 标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
 所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
 `Copy`，v0.9 建立 cleanup CFG，v0.10 补齐资源 storage/transfer，v0.11 完成完整 move-path forest 与
 初始化 fixed point，v0.12 再完成 temporary storage liveness，v0.14 已加入 `needs_drop` 与控制流敏感
-drop-flag 计划，v0.15 提供 `Drop` 与递归 glue，v0.16 完成第一阶段结构化 scope-exit lowering。
-下一步补齐 projection flags 与剩余 cleanup pending，其后才固定
+drop-flag 计划，v0.15 提供 `Drop` 与递归 glue，v0.16 完成第一阶段结构化 scope-exit lowering，
+v0.17 已物化 struct projection flags。下一步补齐 enum/pattern/capture cleanup pending，其后才固定
 raw pointer 与 allocator ABI 并进入 `alloc`。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
 运行时之后。
 

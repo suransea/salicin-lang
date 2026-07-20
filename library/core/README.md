@@ -75,15 +75,18 @@ conditional root moves, overwrite, discarded values, and match scrutinees. Aggre
 call arguments are staged so a later early return cleans already evaluated owned values before
 their transfer commits. Native trap tests make execution and double-drop failures observable.
 
-Borrowed mutation, full conditional maybe-overwrite cleanup, projection-level partial drop,
-match payload transfer, and resource-owning closure capture details remain pending. Those forms are
-rejected when observable `Drop` would otherwise be incorrect rather than silently leaking or
-double-dropping.
+The v0.17 emitter materializes a recursive flag tree for fields of structural structs. Moving a
+field clears its root, ancestors, and target subtree while preserving sibling flags; a cleared root
+falls back through child obligations. Reinitialization restores the subtree and re-enables whole-
+value glue once semantic flow proves the root complete. Conditional field overwrite consults the
+projection flag before dropping the old value. Native tests cover nested movement, sibling cleanup,
+and conditional reconstruction. Fields cannot be moved through a type that itself has custom
+`Drop`, and enum payload, pattern, and closure-environment projections remain pending.
 Compile-time globals are independently materialized at each use and are
 outside the cleanup plan; resource-bearing global semantics must be settled before `Drop` is
-exposed.
+allowed on globals.
 
-The adjacent standard-library route is therefore: materialize projection flags and finish the
-remaining cleanup details; then define raw
+The adjacent standard-library route is therefore: finish enum, pattern, and closure cleanup
+details; then define raw
 pointers and the allocator ABI. Only after those boundaries are real will `alloc` be added, followed
 by platform `std` over the C ABI and minimal runtime.

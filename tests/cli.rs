@@ -450,6 +450,27 @@ fn drop_runs_on_structured_scope_exits_without_double_drop() {
 }
 
 #[test]
+fn projection_drop_flags_preserve_unmoved_fields_and_rebuild_roots() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "drop_partial_field.sali"))
+        .output()
+        .expect("run projection drop-flag program");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+
+    let trapped = salic()
+        .arg("run")
+        .arg(fixture("pass", "drop_partial_field_trap.sali"))
+        .output()
+        .expect("run unmoved-field cleanup trap");
+    assert!(
+        !trapped.status.success(),
+        "the unmoved sibling field was not dropped:\n{}",
+        output_text(&trapped)
+    );
+}
+
+#[test]
 fn source_backed_copy_errors_report_their_cause() {
     for (name, expected) in [
         (

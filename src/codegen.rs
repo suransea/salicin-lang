@@ -480,6 +480,7 @@ enum HirExprKind {
         place: HirPlace,
         value: Box<HirExpr>,
         assignment: AssignmentKind,
+        root_initialized: bool,
     },
     Call {
         function: String,
@@ -6212,6 +6213,35 @@ impl Analyzer {
         result
     }
 
+    fn type_has_custom_drop(&self, ty: &Ty) -> bool {
+        self.trait_impls.keys().any(|key| {
+            key.self_ty == *ty
+                && key.trait_ref.name == self.lang_item_name(LangItemKind::Drop)
+                && key.trait_ref.arguments.is_empty()
+        })
+    }
+
+    fn projected_place_crosses_custom_drop(&self, place: &HirPlace) -> bool {
+        let mut ty = &place.root_ty;
+        for projection in &place.projections {
+            if self.type_has_custom_drop(ty) {
+                return true;
+            }
+            let Ty::Struct(name) = ty else {
+                return false;
+            };
+            let Some(field) = self
+                .struct_layouts
+                .get(name)
+                .and_then(|layout| layout.fields.get(*projection))
+            else {
+                return false;
+            };
+            ty = &field.ty;
+        }
+        false
+    }
+
     fn effective_pass_mode(&self, mode: PassMode, ty: &Ty) -> PassMode {
         match mode {
             PassMode::Inferred if self.is_copy_type(ty) => PassMode::Copy,
@@ -6495,12 +6525,18 @@ impl Analyzer {
                 // particular, `x = x` must not resurrect an unavailable `x`.
                 let value = self.lower_expr(value, Some(&place.ty), context);
                 let assignment = self.mark_initialized(&place, context);
-                if !place.projections.is_empty()
-                    && assignment != AssignmentKind::Overwrite
-                    && self.type_needs_drop(&place.root_ty)
+                let mut root = place.clone();
+                root.projections.clear();
+                root.ty = root.root_ty.clone();
+                let root_initialized = context
+                    .flow
+                    .initialization_status(&self.place_leaf_keys(&root))
+                    == InitializationStatus::Initialized;
+                if assignment != AssignmentKind::Overwrite
+                    && self.projected_place_crosses_custom_drop(&place)
                 {
                     self.error(
-                        "reinitializing fields of a partially moved value that needs drop is not supported until partial-drop LLVM lowering is complete",
+                        "reinitializing a field through a type with custom Drop is not allowed because its destructor requires a complete value",
                     );
                 }
                 HirExpr {
@@ -6509,6 +6545,7 @@ impl Analyzer {
                         place,
                         value: Box::new(value),
                         assignment,
+                        root_initialized,
                     },
                 }
             }
@@ -7552,9 +7589,9 @@ impl Analyzer {
             AccessKind::Move => {
                 if place.capability != LocalCapability::Owned {
                     self.error("cannot move out of a borrowed value");
-                } else if !place.projections.is_empty() && self.type_needs_drop(&place.root_ty) {
+                } else if self.projected_place_crosses_custom_drop(&place) {
                     self.error(
-                        "moving a field out of a value that needs drop is not supported until partial-drop LLVM lowering is complete",
+                        "moving a field out through a type with custom Drop is not allowed because its destructor requires a complete value",
                     );
                 } else if context.guard_move_restricted.contains(&place.local)
                     && !self.is_copy_type(&place.ty)
@@ -12015,6 +12052,7 @@ impl<'a> HirCleanupPlanner<'a> {
                 place,
                 value,
                 assignment,
+                ..
             } => {
                 let (_, stage) = self.prepare_temporary_destination(cursor, &value.ty)?;
                 let Some(cursor) =
@@ -13486,6 +13524,8 @@ struct RuntimeDropSlot {
     ty: Ty,
     pointer: String,
     flag: String,
+    projections: Vec<usize>,
+    children: Vec<RuntimeDropSlot>,
 }
 
 struct FunctionEmitter<'a> {
@@ -13581,7 +13621,7 @@ impl<'a> FunctionEmitter<'a> {
                     Some(parameter.id),
                     parameter.ty.clone(),
                     self.locals[&parameter.id].clone(),
-                );
+                )?;
             }
         }
 
@@ -13602,15 +13642,65 @@ impl<'a> FunctionEmitter<'a> {
         Ok(std::mem::take(&mut self.output))
     }
 
-    fn register_drop_slot(&mut self, local: Option<LocalId>, ty: Ty, pointer: String) {
+    fn register_drop_slot(
+        &mut self,
+        local: Option<LocalId>,
+        ty: Ty,
+        pointer: String,
+    ) -> Result<(), Diagnostic> {
+        let slot = self.build_drop_slot(local, ty, pointer, Vec::new())?;
+        self.drop_slots.push(slot);
+        Ok(())
+    }
+
+    fn build_drop_slot(
+        &mut self,
+        local: Option<LocalId>,
+        ty: Ty,
+        pointer: String,
+        projections: Vec<usize>,
+    ) -> Result<RuntimeDropSlot, Diagnostic> {
         let flag = self.entry_alloca("i1", "drop flag");
         self.instruction(format!("store i1 true, ptr {flag}"));
-        self.drop_slots.push(RuntimeDropSlot {
+        let mut children = Vec::new();
+        if !self.program.drop_methods.contains_key(&ty) {
+            if let Ty::Struct(name) = &ty {
+                let fields = self
+                    .program
+                    .struct_layout(name)
+                    .ok_or_else(|| {
+                        Diagnostic::new(format!("internal error: missing struct layout `{name}`"))
+                    })?
+                    .fields
+                    .clone();
+                let aggregate_ty = llvm_value_type(&ty)?;
+                for (index, field) in fields.iter().enumerate() {
+                    if !self.program.needs_drop(&field.ty) {
+                        continue;
+                    }
+                    let field_pointer = self.fresh_register();
+                    self.instruction(format!(
+                        "{field_pointer} = getelementptr inbounds {aggregate_ty}, ptr {pointer}, i32 0, i32 {index}"
+                    ));
+                    let mut field_projections = projections.clone();
+                    field_projections.push(index);
+                    children.push(self.build_drop_slot(
+                        local,
+                        field.ty.clone(),
+                        field_pointer,
+                        field_projections,
+                    )?);
+                }
+            }
+        }
+        Ok(RuntimeDropSlot {
             local,
             ty,
             pointer,
             flag,
-        });
+            projections,
+            children,
+        })
     }
 
     fn source_local_needs_drop(&self, source_local: LocalId) -> Result<bool, Diagnostic> {
@@ -13641,7 +13731,13 @@ impl<'a> FunctionEmitter<'a> {
         Ok(root.needs_drop)
     }
 
-    fn set_local_drop_flag(&mut self, local: LocalId, value: bool) {
+    fn update_place_drop_flags(
+        &mut self,
+        local: LocalId,
+        projections: &[usize],
+        initialized: bool,
+        root_initialized: bool,
+    ) {
         if let Some(slot) = self
             .drop_slots
             .iter()
@@ -13649,8 +13745,57 @@ impl<'a> FunctionEmitter<'a> {
             .find(|slot| slot.local == Some(local))
             .cloned()
         {
-            self.instruction(format!("store i1 {value}, ptr {}", slot.flag));
+            let mut updates = Vec::new();
+            Self::collect_place_flag_updates(
+                &slot,
+                projections,
+                initialized,
+                root_initialized,
+                &mut updates,
+            );
+            for (flag, value) in updates {
+                self.instruction(format!("store i1 {value}, ptr {flag}"));
+            }
         }
+    }
+
+    fn collect_place_flag_updates(
+        slot: &RuntimeDropSlot,
+        projections: &[usize],
+        initialized: bool,
+        root_initialized: bool,
+        updates: &mut Vec<(String, bool)>,
+    ) {
+        let slot_is_ancestor = projections.starts_with(&slot.projections);
+        let slot_is_descendant = slot.projections.starts_with(projections);
+        let update = if root_initialized {
+            Some(true)
+        } else if initialized {
+            slot_is_descendant.then_some(true)
+        } else {
+            (slot_is_ancestor || slot_is_descendant).then_some(false)
+        };
+        if let Some(value) = update {
+            updates.push((slot.flag.clone(), value));
+        }
+        for child in &slot.children {
+            Self::collect_place_flag_updates(
+                child,
+                projections,
+                initialized,
+                root_initialized,
+                updates,
+            );
+        }
+    }
+
+    fn find_drop_slot(slot: &RuntimeDropSlot, projections: &[usize]) -> Option<RuntimeDropSlot> {
+        if slot.projections == projections {
+            return Some(slot.clone());
+        }
+        slot.children
+            .iter()
+            .find_map(|child| Self::find_drop_slot(child, projections))
     }
 
     fn emit_cleanup_range(&mut self, start: usize) -> Result<(), Diagnostic> {
@@ -13662,14 +13807,21 @@ impl<'a> FunctionEmitter<'a> {
     }
 
     fn release_drop_slots(&mut self, start: usize) {
-        let flags = self.drop_slots[start..]
-            .iter()
-            .map(|slot| slot.flag.clone())
-            .collect::<Vec<_>>();
+        let mut flags = Vec::new();
+        for slot in &self.drop_slots[start..] {
+            Self::collect_slot_flags(slot, &mut flags);
+        }
         for flag in flags {
             self.instruction(format!("store i1 false, ptr {flag}"));
         }
         self.drop_slots.truncate(start);
+    }
+
+    fn collect_slot_flags(slot: &RuntimeDropSlot, flags: &mut Vec<String>) {
+        flags.push(slot.flag.clone());
+        for child in &slot.children {
+            Self::collect_slot_flags(child, flags);
+        }
     }
 
     fn hold_operand_for_early_exit(&mut self, operand: &Operand) -> Result<(), Diagnostic> {
@@ -13679,7 +13831,7 @@ impl<'a> FunctionEmitter<'a> {
         let ty = llvm_value_type(&operand.ty)?;
         let pointer = self.entry_alloca(&ty, "staged owned value");
         self.instruction(format!("store {ty} {}, ptr {pointer}", operand.value()?));
-        self.register_drop_slot(None, operand.ty.clone(), pointer);
+        self.register_drop_slot(None, operand.ty.clone(), pointer)?;
         Ok(())
     }
 
@@ -13687,9 +13839,10 @@ impl<'a> FunctionEmitter<'a> {
         let flag = self.fresh_register();
         self.instruction(format!("{flag} = load i1, ptr {}", slot.flag));
         let drop_label = self.fresh_label("drop.run");
+        let fallback_label = self.fresh_label("drop.fields");
         let done_label = self.fresh_label("drop.done");
         self.terminate(format!(
-            "br i1 {flag}, label %{drop_label}, label %{done_label}"
+            "br i1 {flag}, label %{drop_label}, label %{fallback_label}"
         ));
         self.start_block(&drop_label);
         self.instruction(format!("store i1 false, ptr {}", slot.flag));
@@ -13698,6 +13851,11 @@ impl<'a> FunctionEmitter<'a> {
             drop_glue_symbol(&slot.ty),
             slot.pointer
         ));
+        self.terminate(format!("br label %{done_label}"));
+        self.start_block(&fallback_label);
+        for child in &slot.children {
+            self.emit_conditional_drop(child)?;
+        }
         self.terminate(format!("br label %{done_label}"));
         self.start_block(&done_label);
         Ok(())
@@ -13772,6 +13930,9 @@ impl<'a> FunctionEmitter<'a> {
                 length,
             } => self.emit_index(expression, base, index, *length),
             HirExprKind::Read { place, kind } => {
+                if *kind == HirReadKind::Move && self.program.needs_drop(&place.root_ty) {
+                    self.update_place_drop_flags(place.local, &place.projections, false, false);
+                }
                 if expression.ty == Ty::Unit {
                     return Ok(Operand::unit());
                 }
@@ -13779,12 +13940,6 @@ impl<'a> FunctionEmitter<'a> {
                 let register = self.fresh_register();
                 let ty = llvm_value_type(&expression.ty)?;
                 self.instruction(format!("{register} = load {ty}, ptr {pointer}"));
-                if *kind == HirReadKind::Move
-                    && place.projections.is_empty()
-                    && self.program.needs_drop(&place.root_ty)
-                {
-                    self.set_local_drop_flag(place.local, false);
-                }
                 Ok(Operand {
                     ty: expression.ty.clone(),
                     value: Some(register),
@@ -13970,6 +14125,7 @@ impl<'a> FunctionEmitter<'a> {
                 place,
                 value,
                 assignment,
+                root_initialized,
             } => {
                 let value = self.emit_expr(value)?;
                 if self.terminated {
@@ -13986,30 +14142,33 @@ impl<'a> FunctionEmitter<'a> {
                         AssignmentKind::Overwrite | AssignmentKind::MaybeOverwrite
                     )
                 {
-                    if place.projections.is_empty() {
-                        let slot = self
-                            .drop_slots
-                            .iter()
-                            .rev()
-                            .find(|slot| slot.local == Some(place.local))
-                            .cloned()
-                            .ok_or_else(|| {
-                                Diagnostic::new(format!(
-                                    "internal error: missing drop slot for local {}",
-                                    place.local
-                                ))
-                            })?;
-                        self.emit_conditional_drop(&slot)?;
-                    } else {
-                        self.instruction(format!(
-                            "call void @{}(ptr {pointer})",
-                            drop_glue_symbol(&place.ty)
-                        ));
-                    }
+                    let root = self
+                        .drop_slots
+                        .iter()
+                        .rev()
+                        .find(|slot| slot.local == Some(place.local))
+                        .ok_or_else(|| {
+                            Diagnostic::new(format!(
+                                "internal error: missing drop slot for local {}",
+                                place.local
+                            ))
+                        })?;
+                    let slot = Self::find_drop_slot(root, &place.projections).ok_or_else(|| {
+                        Diagnostic::new(format!(
+                            "internal error: missing projection drop slot for local {}",
+                            place.local
+                        ))
+                    })?;
+                    self.emit_conditional_drop(&slot)?;
                 }
                 self.instruction(format!("store {ty} {}, ptr {pointer}", value.value()?));
-                if place.projections.is_empty() && self.program.needs_drop(&place.ty) {
-                    self.set_local_drop_flag(place.local, true);
+                if self.program.needs_drop(&place.root_ty) {
+                    self.update_place_drop_flags(
+                        place.local,
+                        &place.projections,
+                        true,
+                        *root_initialized,
+                    );
                 }
                 Ok(Operand::unit())
             }
@@ -14198,7 +14357,7 @@ impl<'a> FunctionEmitter<'a> {
                                     Some(binding.id),
                                     binding.ty.clone(),
                                     self.locals[&binding.id].clone(),
-                                );
+                                )?;
                             }
                         }
                         HirStmt::Expr(expression) => {
@@ -14474,7 +14633,7 @@ impl<'a> FunctionEmitter<'a> {
             let ty = llvm_value_type(&scrutinee.ty)?;
             let pointer = self.entry_alloca(&ty, "match scrutinee");
             self.instruction(format!("store {ty} {}, ptr {pointer}", scrutinee.value()?));
-            self.register_drop_slot(None, scrutinee.ty.clone(), pointer);
+            self.register_drop_slot(None, scrutinee.ty.clone(), pointer)?;
         }
         let Ty::Enum(enum_name) = &scrutinee.ty else {
             return Err(Diagnostic::new(
@@ -16967,8 +17126,8 @@ let main(): i32 = {
     }
 
     #[test]
-    fn rejects_partial_moves_and_rebuilds_that_drop_lowering_cannot_yet_execute() {
-        let partial_move = compile_text(
+    fn permits_struct_projection_drop_but_keeps_custom_drop_and_patterns_complete() {
+        compile_text(
             r#"
 let Resource = struct(value: i32)
 let Wrapper = struct(resource: Resource, plain: i32)
@@ -16982,10 +17141,26 @@ let main(): i32 = {
 }
 "#,
         )
-        .expect_err("partial movement from drop storage must be rejected for now");
-        assert!(partial_move
+        .expect("a field with Drop may move out of a containing structural wrapper");
+
+        let custom_drop_field = compile_text(
+            r#"
+let Resource = struct(value: i32)
+extend Resource: Drop {
+  let drop(mut borrow self)(): () = ()
+}
+let consume_i32(move value: i32): () = ()
+let main(): i32 = {
+  let resource = Resource(1)
+  consume_i32(resource.value)
+  0
+}
+"#,
+        )
+        .expect_err("custom Drop storage must remain complete");
+        assert!(custom_drop_field
             .iter()
-            .any(|error| error.message.contains("partial-drop LLVM lowering")));
+            .any(|error| error.message.contains("type with custom Drop")));
 
         let pattern_move = compile_text(
             r#"

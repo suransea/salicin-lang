@@ -6,6 +6,20 @@ subset.
 
 ## Unreleased
 
+## 0.17.0 - 2026-07-21
+
+- Materialized recursive runtime flag trees for fields of structs without custom `Drop`. A field
+  move clears the root, its projection ancestors, and the moved subtree while preserving initialized
+  sibling flags.
+- Lowered `children_when_clear` behavior: a complete root invokes whole-value glue once, while an
+  incomplete root recursively drops only live child projections, including nested structs.
+- Restored projection flags on field initialization and re-enabled the root when semantic flow proves
+  every field complete. Conditional field overwrite now consults its own flag before cleaning a
+  possibly present old value.
+- Added native coverage for direct, nested, and conditional field moves, sibling fallback cleanup,
+  field reconstruction, and conditional reconstruction. Types with custom `Drop` remain indivisible;
+  drop-bearing enum patterns and closure environments are still rejected pending their lowering.
+
 ## 0.16.0 - 2026-07-21
 
 - Connected each LLVM function emitter to its verified `CleanupPlan` and materialized drop flags
