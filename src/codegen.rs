@@ -736,6 +736,7 @@ struct PartialInfo {
     function: String,
     consumed_groups: usize,
     capture_count: usize,
+    is_fn_once: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -6588,6 +6589,9 @@ impl Analyzer {
                                     function: function.clone(),
                                     consumed_groups: *consumed_groups,
                                     capture_count: captures.len(),
+                                    is_fn_once: captures
+                                        .iter()
+                                        .any(|capture| matches!(capture, HirArgument::Move(_))),
                                 }),
                                 _ => None,
                             };
@@ -10278,12 +10282,15 @@ impl Analyzer {
 
         let complete = consumed_groups == signature.groups.len();
         if !complete
-            && arguments
-                .iter()
-                .any(|argument| !matches!(argument, HirArgument::Copy(_)))
+            && arguments.iter().any(|argument| {
+                matches!(
+                    argument,
+                    HirArgument::SharedBorrow(_) | HirArgument::MutBorrow(_)
+                )
+            })
         {
             self.error(format!(
-                "partial application of bound method `{target}.{member}` may only capture Copy arguments"
+                "partial application of bound method `{target}.{member}` cannot capture borrowed arguments"
             ));
         }
         self.release_loans(&temporary_loans, context);
@@ -10473,11 +10480,14 @@ impl Analyzer {
 
         let complete = groups.len() == function_ty.groups.len();
         if !complete
-            && arguments
-                .iter()
-                .any(|argument| !matches!(argument, HirArgument::Copy(_)))
+            && arguments.iter().any(|argument| {
+                matches!(
+                    argument,
+                    HirArgument::SharedBorrow(_) | HirArgument::MutBorrow(_)
+                )
+            })
         {
-            self.error("partial application may only capture Copy arguments for now");
+            self.error("partial application cannot capture borrowed arguments");
         }
         self.release_loans(&temporary_loans, context);
 
@@ -10604,6 +10614,31 @@ impl Analyzer {
             ));
             return error_expr();
         }
+        if partial.is_fn_once {
+            let callable = HirPlace {
+                local: local.id,
+                root_ty: local.ty.clone(),
+                projections: Vec::new(),
+                ty: local.ty.clone(),
+                capability: LocalCapability::Owned,
+                root_mutable: local.mutable,
+                loan: None,
+            };
+            let leaves = self.place_leaf_keys(&callable);
+            match context.flow.initialization_status(&leaves) {
+                InitializationStatus::Uninitialized => {
+                    self.error(format!(
+                        "FnOnce partial application `{local_name}` was already consumed"
+                    ));
+                }
+                InitializationStatus::MaybeUninitialized => {
+                    self.error(format!(
+                        "FnOnce partial application `{local_name}` may already be consumed"
+                    ));
+                }
+                InitializationStatus::Initialized => self.mark_moved(&callable, context),
+            }
+        }
         let mut arguments: Vec<_> = captured_params
             .into_iter()
             .enumerate()
@@ -10654,11 +10689,14 @@ impl Analyzer {
 
         let consumed_groups = partial.consumed_groups + groups.len();
         if consumed_groups != function_ty.groups.len()
-            && arguments
-                .iter()
-                .any(|argument| !matches!(argument, HirArgument::Copy(_)))
+            && arguments.iter().any(|argument| {
+                matches!(
+                    argument,
+                    HirArgument::SharedBorrow(_) | HirArgument::MutBorrow(_)
+                )
+            })
         {
-            self.error("partial application may only capture Copy arguments for now");
+            self.error("partial application cannot capture borrowed arguments");
         }
         self.release_loans(&temporary_loans, context);
         if consumed_groups == function_ty.groups.len() {
@@ -12169,14 +12207,7 @@ impl<'a> HirCleanupPlanner<'a> {
                     None
                 }
             }
-            HirExprKind::Partial {
-                function, captures, ..
-            } => {
-                self.builder
-                    .record_pending(PendingCapability::PartialApplicationCapture {
-                        block: cursor.block,
-                        function: function.clone(),
-                    });
+            HirExprKind::Partial { captures, .. } => {
                 let mut current = Some(cursor);
                 for (index, capture) in captures.iter().enumerate() {
                     let Some(cursor) = current else {
@@ -12218,12 +12249,7 @@ impl<'a> HirCleanupPlanner<'a> {
                     None
                 }
             }
-            HirExprKind::PartialCapture { binding, .. } => {
-                self.builder
-                    .record_pending(PendingCapability::PartialApplicationCapture {
-                        block: cursor.block,
-                        function: format!("{}::<partial-local-{binding}>", self.function.name),
-                    });
+            HirExprKind::PartialCapture { .. } => {
                 self.initialize_result(cursor, &result_use)?;
                 Some(cursor)
             }
@@ -18171,6 +18197,29 @@ let main(): i32 = {
     }
 
     #[test]
+    fn rejects_calling_a_resource_partial_application_twice() {
+        let errors = compile_text(
+            r#"
+let Resource = struct(value: i32)
+extend Resource: Drop {
+  let drop(mut borrow self)(): () = ()
+}
+let finish(move resource: Resource)(value: i32): i32 = value
+let main(): i32 = {
+  let pending = finish(Resource(1))
+  pending(1)
+  pending(2)
+}
+"#,
+        )
+        .expect_err("a partial with a move capture must be FnOnce");
+        assert!(errors.iter().any(|error| {
+            error.message.contains("FnOnce partial application")
+                && error.message.contains("consumed")
+        }));
+    }
+
+    #[test]
     fn moves_an_fn_once_source_when_the_closure_is_created() {
         let errors = compile_text(
             r#"
@@ -20206,9 +20255,6 @@ let run(): i32 = {
 "#,
             "run",
         );
-        assert!(partial.pending_capabilities.iter().any(|pending| {
-            matches!(pending, PendingCapability::PartialApplicationCapture { .. })
-        }));
         assert!(partial.move_paths.iter().any(|path| {
             matches!(
                 path.place.projections.as_slice(),

@@ -211,10 +211,6 @@ pub(crate) enum PendingCapability {
         source: MovePathId,
         description: String,
     },
-    PartialApplicationCapture {
-        block: BasicBlockId,
-        function: String,
-    },
     PatternBindingTransfer {
         block: BasicBlockId,
         binding: LocalId,
@@ -1794,9 +1790,6 @@ impl CleanupPlan {
                             )));
                         }
                     }
-                }
-                PendingCapability::PartialApplicationCapture { block, .. } => {
-                    self.verify_pending_block(*block, "cleanup capability", errors);
                 }
                 PendingCapability::BorrowedPlaceMutation {
                     block,

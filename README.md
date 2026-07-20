@@ -300,14 +300,23 @@ v0.21.0 为本地 `FnOnce` 补齐资源型 capture cleanup：
 - `LocalClosureCapture` 已从 cleanup pending 中删除。普通 partial application 仍限 Copy captures，
   first-class callable environment layout 与 escaping closure 仍是后续范围。
 
+v0.22.0 把同一 environment ownership 扩展到本地 partial application：
+
+- `let pending = finish(resource)` 可以捕获 owning `move` 参数；包含任意 move capture 的 partial 为
+  `FnOnce`，重复调用或条件调用后再用会按 flow state 拒绝。
+- capture 可继续跨多个柯里化组转移，最终调用、未调用、条件调用和后续实参提前返回都使用稳定 flag，
+  与闭包 capture 一样保证恰好一次清理。
+- `PartialApplicationCapture` pending 已删除，callable capture 不再有 pending marker。borrow capture、
+  escaping/first-class callable 和统一公开 ABI 仍待后续。
+
 标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
 所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
 `Copy`，v0.9 建立 cleanup CFG，v0.10 补齐资源 storage/transfer，v0.11 完成完整 move-path forest 与
 初始化 fixed point，v0.12 再完成 temporary storage liveness，v0.14 已加入 `needs_drop` 与控制流敏感
 drop-flag 计划，v0.15 提供 `Drop` 与递归 glue，v0.16 完成第一阶段结构化 scope-exit lowering，
 v0.17 已物化 struct projection flags，v0.18 接通直接 enum payload binding，v0.19 补齐嵌套
-downcast remainder，v0.20 完成 guard rollback，v0.21 完成本地 `FnOnce` resource captures。下一步
-收敛 partial/first-class callable layout 与 borrowed mutation，其后才固定
+downcast remainder，v0.20 完成 guard rollback，v0.21 完成本地 `FnOnce` resource captures，v0.22
+开放 owning partial captures。下一步收敛 first-class callable layout 与 borrowed mutation，其后才固定
 raw pointer 与 allocator ABI 并进入 `alloc`。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
 运行时之后。
 

@@ -106,11 +106,17 @@ slots. Abandoned and conditionally invoked closures clean retained captures; inv
 them through early-exit argument staging to the lifted function without double drop. The cleanup
 plan no longer reports `LocalClosureCapture` as pending. General partial applications remain
 Copy-only, and first-class or escaping callable environments still need an explicit ABI layout.
+
+The v0.22 emitter permits owning move captures in local partial applications. Such a partial is
+`FnOnce`; capture flags transfer through further currying, final invocation, conditional use, and
+early-return staging. Abandoned partials clean their retained captures. The separate
+`PartialApplicationCapture` pending capability has been removed, leaving no callable-capture
+pending marker. Borrowed captures and first-class or escaping callables still require a public ABI.
 Compile-time globals are independently materialized at each use and are
 outside the cleanup plan; resource-bearing global semantics must be settled before `Drop` is
 allowed on globals.
 
-The adjacent standard-library route is therefore: finish partial/first-class callable layout and
-borrowed mutation details; then define raw pointers and the allocator ABI. Only after those
+The adjacent standard-library route is therefore: finish first-class callable layout and borrowed
+mutation details; then define raw pointers and the allocator ABI. Only after those
 boundaries are real will `alloc` be added, followed
 by platform `std` over the C ABI and minimal runtime.

@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.22.0 - 2026-07-21
+
+- Allowed local partial applications to capture owning `move` arguments, including values with
+  custom or recursive `Drop`, instead of restricting every captured argument to `Copy`.
+- Classified any partial with a move capture as `FnOnce`, rejected repeated or maybe-repeated use,
+  and transferred captures through chained currying, final invocation, conditional calls, and
+  later-argument early exits using stable environment flags.
+- Removed `PartialApplicationCapture`, the final callable-capture pending capability. Native tests
+  cover invocation, continued currying, abandonment, conditional use, early return, and observable
+  sibling cleanup. Borrowed captures and escaping/first-class callables remain outside this ABI.
+
 ## 0.21.0 - 2026-07-21
 
 - Allowed local `FnOnce` closures to own nominal values that need drop. Each move capture now has

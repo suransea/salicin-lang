@@ -563,6 +563,38 @@ fn fn_once_resource_captures_drop_exactly_once() {
 }
 
 #[test]
+fn resource_partial_applications_transfer_and_drop_captures() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "drop_partial_application.sali"))
+        .output()
+        .expect("run resource-owning partial applications");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+
+    for (fixture_name, failure) in [
+        (
+            "drop_partial_application_abandon_trap.sali",
+            "an abandoned partial capture was not dropped",
+        ),
+        (
+            "drop_partial_application_early_trap.sali",
+            "a partial capture staged before early return was not dropped",
+        ),
+    ] {
+        let trapped = salic()
+            .arg("run")
+            .arg(fixture("pass", fixture_name))
+            .output()
+            .expect("run partial capture cleanup trap");
+        assert!(
+            !trapped.status.success(),
+            "{failure}:\n{}",
+            output_text(&trapped)
+        );
+    }
+}
+
+#[test]
 fn source_backed_copy_errors_report_their_cause() {
     for (name, expected) in [
         (
