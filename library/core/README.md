@@ -126,11 +126,17 @@ success edge for guarded arms. The verifier checks enum topology, liveness, and 
 `MatchDispatch`, `PatternBindingTransfer`, `MaybeOverwrite`, and the entire `PendingCapability`
 infrastructure have been removed.
 
+The v0.25 compiler lets named functions, closures, and partial applications move between local
+bindings. Owning captures relocate to fresh environment storage while old flags are cleared;
+borrowed captures retain their lexical loans. `FnOnce` invocation now consumes the callable root in
+cleanup IR after argument staging. This is concrete, statically known relocation rather than
+implicit boxing or dynamic erasure; cross-function callable return and parameter ABI remains open.
+
 Compile-time globals are independently materialized at each use and are
 outside the cleanup plan; resource-bearing global semantics must be settled before `Drop` is
 allowed on globals.
 
-The adjacent standard-library route is therefore: define the first-class callable layout, then raw
-pointers and the allocator ABI. Only after those
+The adjacent standard-library route is therefore: finish the cross-function concrete callable ABI,
+then define raw pointers and the allocator ABI. Only after those
 boundaries are real will `alloc` be added, followed
 by platform `std` over the C ABI and minimal runtime.

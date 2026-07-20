@@ -486,6 +486,7 @@ enum HirExprKind {
     Call {
         function: String,
         arguments: Vec<HirArgument>,
+        consumed_callable: Option<LocalId>,
         /// Preserves an uninhabited callee result even when contextual
         /// coercion gives the enclosing expression a different type.
         diverges: bool,
@@ -6567,6 +6568,12 @@ impl Analyzer {
                                 .annotation
                                 .as_ref()
                                 .map(|ty| self.lower_source_type(ty));
+                            let callable_source = match &binding.value {
+                                Expr::Name(name) => context.lookup(name).cloned().filter(|local| {
+                                    local.partial.is_some() || local.closure.is_some()
+                                }),
+                                _ => None,
+                            };
                             let value = match &binding.value {
                                 Expr::Closure(params, body) => {
                                     if annotation.is_some() {
@@ -6576,6 +6583,21 @@ impl Analyzer {
                                         ));
                                     }
                                     self.lower_local_closure(params, body, context)
+                                }
+                                Expr::Name(_) if callable_source.is_some() => {
+                                    let source = callable_source
+                                        .as_ref()
+                                        .expect("callable source was resolved");
+                                    let place = HirPlace {
+                                        local: source.id,
+                                        root_ty: source.ty.clone(),
+                                        projections: Vec::new(),
+                                        ty: source.ty.clone(),
+                                        capability: source.capability,
+                                        root_mutable: source.mutable,
+                                        loan: None,
+                                    };
+                                    self.access_place(place, AccessKind::Move, context)
                                 }
                                 _ => self.lower_expr(&binding.value, annotation.as_ref(), context),
                             };
@@ -6593,10 +6615,22 @@ impl Analyzer {
                                         .iter()
                                         .any(|capture| matches!(capture, HirArgument::Move(_))),
                                 }),
+                                HirExprKind::Function(function) => Some(PartialInfo {
+                                    function: function.clone(),
+                                    consumed_groups: 0,
+                                    capture_count: 0,
+                                    is_fn_once: false,
+                                }),
+                                HirExprKind::Read { .. } => callable_source
+                                    .as_ref()
+                                    .and_then(|source| source.partial.clone()),
                                 _ => None,
                             };
                             let closure = match &value.kind {
                                 HirExprKind::LocalClosure(closure) => Some(closure.clone()),
+                                HirExprKind::Read { .. } => callable_source
+                                    .as_ref()
+                                    .and_then(|source| source.closure.clone()),
                                 _ => None,
                             };
                             let (capability, alias) = match &value.kind {
@@ -9122,6 +9156,7 @@ impl Analyzer {
             kind: HirExprKind::Call {
                 function: candidate.method,
                 arguments: vec![left, right],
+                consumed_callable: None,
                 diverges: self.is_uninhabited_type(&candidate.output),
             },
         }
@@ -10300,6 +10335,7 @@ impl Analyzer {
                 kind: HirExprKind::Call {
                     function: canonical,
                     arguments,
+                    consumed_callable: None,
                     diverges: self.is_uninhabited_type(&function_ty.result),
                 },
             }
@@ -10355,30 +10391,36 @@ impl Analyzer {
             }
         }
 
-        if closure.is_fn_once {
-            let callable = HirPlace {
-                local: local.id,
-                root_ty: local.ty.clone(),
-                projections: Vec::new(),
-                ty: local.ty.clone(),
-                capability: LocalCapability::Owned,
-                root_mutable: local.mutable,
-                loan: None,
-            };
-            let leaves = self.place_leaf_keys(&callable);
-            match context.flow.initialization_status(&leaves) {
-                InitializationStatus::Uninitialized => {
-                    self.error(format!(
-                        "FnOnce closure `{local_name}` was already consumed"
-                    ));
-                }
-                InitializationStatus::MaybeUninitialized => {
-                    self.error(format!(
-                        "FnOnce closure `{local_name}` may already be consumed"
-                    ));
-                }
-                InitializationStatus::Initialized => self.mark_moved(&callable, context),
+        let callable = HirPlace {
+            local: local.id,
+            root_ty: local.ty.clone(),
+            projections: Vec::new(),
+            ty: local.ty.clone(),
+            capability: LocalCapability::Owned,
+            root_mutable: local.mutable,
+            loan: None,
+        };
+        let leaves = self.place_leaf_keys(&callable);
+        let callable_kind = if closure.is_fn_once {
+            "FnOnce closure"
+        } else {
+            "closure"
+        };
+        match context.flow.initialization_status(&leaves) {
+            InitializationStatus::Uninitialized => {
+                self.error(format!(
+                    "{callable_kind} `{local_name}` was moved or already consumed"
+                ));
             }
+            InitializationStatus::MaybeUninitialized => {
+                self.error(format!(
+                    "{callable_kind} `{local_name}` may have been moved or consumed"
+                ));
+            }
+            InitializationStatus::Initialized if closure.is_fn_once => {
+                self.mark_moved(&callable, context)
+            }
+            InitializationStatus::Initialized => {}
         }
 
         let mut lowered_arguments: Vec<_> = closure
@@ -10429,6 +10471,7 @@ impl Analyzer {
             kind: HirExprKind::Call {
                 function: closure.function.clone(),
                 arguments: lowered_arguments,
+                consumed_callable: closure.is_fn_once.then_some(local.id),
                 diverges: self.is_uninhabited_type(&closure.result),
             },
         }
@@ -10497,6 +10540,7 @@ impl Analyzer {
                 kind: HirExprKind::Call {
                     function: name.to_owned(),
                     arguments,
+                    consumed_callable: None,
                     diverges: self.is_uninhabited_type(&function_ty.result),
                 },
             }
@@ -10614,30 +10658,36 @@ impl Analyzer {
             ));
             return error_expr();
         }
-        if partial.is_fn_once {
-            let callable = HirPlace {
-                local: local.id,
-                root_ty: local.ty.clone(),
-                projections: Vec::new(),
-                ty: local.ty.clone(),
-                capability: LocalCapability::Owned,
-                root_mutable: local.mutable,
-                loan: None,
-            };
-            let leaves = self.place_leaf_keys(&callable);
-            match context.flow.initialization_status(&leaves) {
-                InitializationStatus::Uninitialized => {
-                    self.error(format!(
-                        "FnOnce partial application `{local_name}` was already consumed"
-                    ));
-                }
-                InitializationStatus::MaybeUninitialized => {
-                    self.error(format!(
-                        "FnOnce partial application `{local_name}` may already be consumed"
-                    ));
-                }
-                InitializationStatus::Initialized => self.mark_moved(&callable, context),
+        let callable = HirPlace {
+            local: local.id,
+            root_ty: local.ty.clone(),
+            projections: Vec::new(),
+            ty: local.ty.clone(),
+            capability: LocalCapability::Owned,
+            root_mutable: local.mutable,
+            loan: None,
+        };
+        let leaves = self.place_leaf_keys(&callable);
+        let callable_kind = if partial.is_fn_once {
+            "FnOnce partial application"
+        } else {
+            "partial application"
+        };
+        match context.flow.initialization_status(&leaves) {
+            InitializationStatus::Uninitialized => {
+                self.error(format!(
+                    "{callable_kind} `{local_name}` was moved or already consumed"
+                ));
             }
+            InitializationStatus::MaybeUninitialized => {
+                self.error(format!(
+                    "{callable_kind} `{local_name}` may have been moved or consumed"
+                ));
+            }
+            InitializationStatus::Initialized if partial.is_fn_once => {
+                self.mark_moved(&callable, context)
+            }
+            InitializationStatus::Initialized => {}
         }
         let mut arguments: Vec<_> = captured_params
             .into_iter()
@@ -10705,6 +10755,7 @@ impl Analyzer {
                 kind: HirExprKind::Call {
                     function: partial.function.clone(),
                     arguments,
+                    consumed_callable: partial.is_fn_once.then_some(local.id),
                     diverges: self.is_uninhabited_type(&function_ty.result),
                 },
             }
@@ -12150,6 +12201,7 @@ impl<'a> HirCleanupPlanner<'a> {
             }
             HirExprKind::Call {
                 arguments,
+                consumed_callable,
                 diverges,
                 ..
             } => {
@@ -12174,6 +12226,15 @@ impl<'a> HirCleanupPlanner<'a> {
                     };
                 }
                 if let Some(cursor) = current {
+                    if let Some(source_local) = consumed_callable {
+                        let cleanup_local =
+                            self.hir_locals.get(source_local).copied().ok_or_else(|| {
+                                self.diagnostic(format!(
+                                    "consumed callable refers to unmapped HIR local {source_local}"
+                                ))
+                            })?;
+                        self.move_out(cursor, self.root_move_path(cleanup_local)?)?;
+                    }
                     for argument in by_value {
                         self.move_out(cursor, argument.path)?;
                     }
@@ -14397,6 +14458,20 @@ impl<'a> FunctionEmitter<'a> {
                     }
                     match statement {
                         HirStmt::Let(binding) => {
+                            if matches!(binding.value.kind, HirExprKind::Function(_)) {
+                                self.partial_captures.insert(binding.id, Vec::new());
+                                continue;
+                            }
+                            if let HirExprKind::Read {
+                                place,
+                                kind: HirReadKind::Move,
+                            } = &binding.value.kind
+                            {
+                                if matches!(binding.ty, Ty::Function(_)) {
+                                    self.relocate_callable_captures(place.local, binding.id)?;
+                                    continue;
+                                }
+                            }
                             if let HirExprKind::LocalClosure(closure) = &binding.value.kind {
                                 let mut stored = Vec::new();
                                 for capture in &closure.captures {
@@ -15218,6 +15293,52 @@ impl<'a> FunctionEmitter<'a> {
             llvm_value_type(&place.root_ty)?
         ));
         Ok(pointer)
+    }
+
+    fn relocate_callable_captures(
+        &mut self,
+        source: LocalId,
+        destination: LocalId,
+    ) -> Result<(), Diagnostic> {
+        let captures = self.partial_captures.remove(&source).ok_or_else(|| {
+            Diagnostic::new(format!(
+                "internal error: callable local {source} has no stored environment"
+            ))
+        })?;
+        let mut relocated = Vec::with_capacity(captures.len());
+        for capture in captures {
+            let Some(capture) = capture else {
+                relocated.push(None);
+                continue;
+            };
+            let ty = llvm_value_type(&capture.ty)?;
+            let value = self.fresh_register();
+            self.instruction(format!("{value} = load {ty}, ptr {}", capture.pointer));
+            if let Some(flag) = capture.drop_flag {
+                self.instruction(format!("store i1 false, ptr {flag}"));
+            }
+            let pointer = self.entry_alloca(&ty, "moved callable capture");
+            self.instruction(format!("store {ty} {value}, ptr {pointer}"));
+            let drop_flag = if self.program.needs_drop(&capture.ty) {
+                self.register_drop_slot(None, capture.ty.clone(), pointer.clone())?;
+                Some(
+                    self.drop_slots
+                        .last()
+                        .expect("registered relocated callable capture slot")
+                        .flag
+                        .clone(),
+                )
+            } else {
+                None
+            };
+            relocated.push(Some(StoredCapture {
+                ty: capture.ty,
+                pointer,
+                drop_flag,
+            }));
+        }
+        self.partial_captures.insert(destination, relocated);
+        Ok(())
     }
 
     fn entry_alloca(&mut self, ty: &str, comment: &str) -> String {
@@ -18138,21 +18259,42 @@ let main(): i32 = {
     }
 
     #[test]
-    fn rejects_aliasing_a_local_closure() {
+    fn moves_named_functions_partials_and_closures_between_local_bindings() {
+        let ir = compile_text(
+            r#"
+let add(left: i32)(right: i32): i32 = left + right
+let main(): i32 = {
+  let base = 40
+  let named = add
+  let add_one = named(1)
+  let moved_partial = add_one
+  let add_base = { (increment: i32) -> base + increment }
+  let alias = add_base
+  alias(moved_partial(1))
+}
+"#,
+        )
+        .unwrap();
+        let closure = function_symbol("__closure.0");
+        assert!(ir.contains(&format!("call i32 @{closure}(ptr")));
+        assert!(ir.contains(&format!("call i32 @{}(", function_symbol("add"))));
+    }
+
+    #[test]
+    fn rejects_using_a_callable_after_moving_it_to_an_alias() {
         let errors = compile_text(
             r#"
 let main(): i32 = {
   let base = 40
   let add_base = { (increment: i32) -> base + increment }
   let alias = add_base
-  0
+  alias(2)
+  add_base(2)
 }
 "#,
         )
         .unwrap_err();
-        assert!(errors
-            .iter()
-            .any(|error| error.message.contains("cannot escape")));
+        assert!(errors.iter().any(|error| error.message.contains("moved")));
     }
 
     #[test]
@@ -20428,6 +20570,56 @@ let run(): () = {
         );
         assert!(closure.move_paths.iter().any(|path| {
             path.needs_drop && path.place.projections.as_slice() == [CleanupProjection::Capture(0)]
+        }));
+    }
+
+    #[test]
+    fn cleanup_plan_transfers_and_consumes_callable_alias_environments() {
+        let plan = cleanup_plan_text(
+            r#"
+let Resource = struct(value: i32)
+extend Resource: Drop {
+  let drop(mut borrow self)(): () = ()
+}
+let finish(move resource: Resource)(value: i32): i32 = value
+let main(): i32 = {
+  let pending = finish(Resource(1))
+  let alias = pending
+  alias(42)
+}
+"#,
+            "main",
+        );
+        let capture_roots = plan
+            .move_paths
+            .iter()
+            .filter_map(|path| {
+                matches!(
+                    path.place.projections.last(),
+                    Some(CleanupProjection::Capture(_))
+                )
+                .then_some(path.parent)
+                .flatten()
+            })
+            .collect::<HashSet<_>>();
+        let alias_destination = plan.blocks.iter().find_map(|block| {
+            block
+                .operations
+                .iter()
+                .find_map(|operation| match operation {
+                    CleanupOp::Transfer {
+                        source,
+                        destination,
+                        kind: TransferKind::Initialize,
+                    } if capture_roots.contains(source) => Some(*destination),
+                    _ => None,
+                })
+        });
+        let alias_destination = alias_destination.expect("callable alias must transfer its root");
+        assert!(plan.blocks.iter().any(|block| {
+            block
+                .operations
+                .contains(&CleanupOp::MoveOut(alias_destination))
         }));
     }
 

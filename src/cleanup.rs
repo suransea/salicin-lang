@@ -591,9 +591,10 @@ impl MovePathTopology {
             if is_callable_environment(source_children)
                 || is_callable_environment(destination_children)
             {
-                // Function types do not yet encode their environment layout.
-                // Concrete capture paths remain explicitly pending and may
-                // differ across otherwise compatible callable storage.
+                // Function types do not yet encode their concrete environment
+                // layout. Expression-backed capture forests may therefore
+                // differ across a callable move even though the callable
+                // lowering relocates the matching runtime environment.
                 continue;
             }
             if source_children.len() != destination_children.len() {

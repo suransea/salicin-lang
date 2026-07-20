@@ -326,6 +326,17 @@ v0.24.0 令 match cleanup plan 完全可执行、可验证：
 - `MatchDispatch`、`PatternBindingTransfer`、`MaybeOverwrite` 及整个 `PendingCapability` 基础设施均已删除。
   move-state 与 drop-flag 验证现在只依赖正式 cleanup CFG，不再依赖“后续会 lowering”的旁路承诺。
 
+v0.25.0 开放 concrete callable 的局部移动别名：
+
+- 命名函数、闭包和部分应用都可以写成 `let alias = callable`；源 binding 按普通 move 规则失效，
+  `Fn` / `FnMut` / `FnOnce` 能力及可变性要求随目标 binding 保留。
+- owning capture 搬入新的稳定 environment storage，旧 drop flag 同步清除，目标环境接管递归 cleanup；
+  borrowed capture 仍受原有词法 loan 限制。资源型 partial/closure 的转移由原生测试验证。
+- `FnOnce` 调用会在实参 staging 完成后于 cleanup IR 中正式 `MoveOut` callable root，后续实参提前退出
+  时仍由 staging 精确清理。
+- 这不是隐式装箱或动态擦除。跨函数返回/传递 concrete callable 仍被拒绝，下一阶段将为匿名具体
+  callable 定义可单态化的返回与参数 ABI。
+
 标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
 所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
 `Copy`，v0.9 建立 cleanup CFG，v0.10 补齐资源 storage/transfer，v0.11 完成完整 move-path forest 与
@@ -334,7 +345,8 @@ drop-flag 计划，v0.15 提供 `Drop` 与递归 glue，v0.16 完成第一阶段
 v0.17 已物化 struct projection flags，v0.18 接通直接 enum payload binding，v0.19 补齐嵌套
 downcast remainder，v0.20 完成 guard rollback，v0.21 完成本地 `FnOnce` resource captures，v0.22
 开放 owning partial captures，v0.23 完成 borrowed overwrite cleanup，v0.24 完成 match planner 与
-正式 cleanup IR 的对齐。下一步确定 first-class callable layout，其后固定
+正式 cleanup IR 的对齐，v0.25 开放 concrete callable 的局部移动。下一步确定其跨函数返回/参数
+布局，其后固定
 raw pointer 与 allocator ABI 并进入 `alloc`。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
 运行时之后。
 

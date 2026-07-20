@@ -6,6 +6,21 @@ subset.
 
 ## Unreleased
 
+## 0.25.0 - 2026-07-21
+
+- Allowed named functions, local closures, and partial applications to move into another local
+  binding. Callable identity and `Fn`/`FnMut`/`FnOnce` behavior follow the destination binding, while
+  every use of the moved source is rejected by ordinary ownership flow.
+- Relocated concrete callable environments at LLVM emission. Owning captures move to fresh stable
+  storage, old flags are cleared, and the destination environment assumes exact recursive cleanup;
+  borrowed closure captures retain their existing lexical loans.
+- Made consuming a `FnOnce` closure or partial application explicit in cleanup IR by moving out its
+  callable root after argument staging. This covers later-argument early exits without duplicating
+  environment ownership.
+- Kept cross-function callable escape rejected. Bare function signatures still describe call shape,
+  not an implicitly boxed or dynamically erased environment; concrete return/parameter ABI remains
+  the next callable boundary.
+
 ## 0.24.0 - 2026-07-21
 
 - Made enum match refinement explicit in cleanup IR with `AssumeDiscriminant`. The verifier rejects

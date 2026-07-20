@@ -595,6 +595,16 @@ fn resource_partial_applications_transfer_and_drop_captures() {
 }
 
 #[test]
+fn callable_aliases_move_named_partial_closure_and_resource_environments() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "callable_alias.sali"))
+        .output()
+        .expect("run callable alias program");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn mutable_borrow_overwrite_drops_the_replaced_value() {
     let output = salic()
         .arg("run")
