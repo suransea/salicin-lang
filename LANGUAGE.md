@@ -1457,6 +1457,10 @@ pub extern "C" let add(a: c_int, b: c_int): c_int = a + b
 C 函数需要 `unsafe`。`core.ffi` 提供 `c_char`、`c_int`、`c_long` 等平台 C 类型；Salicin
 `char` 是 Unicode scalar，不能代替 C `char`。
 
+当前 v0.27 引导子集先提供 `Ptr(borrow place)`、`MutPtr(mut borrow place)` 和 `unsafe do` 中的 `*p`
+读写，且 pointee 必须实现 `Copy`。指针值采用 LLVM `ptr` 表示并实现 `Copy`；取址仍保留词法 loan。
+null、指针算术、allocator、`unsafe let`、属性和完整 C ABI 尚未实现。
+
 首版 C ABI 只允许标量、原始指针、C ABI 函数指针和 `@repr(C)` 聚合。C 函数只有一个参数组，
 不允许柯里化、泛型、闭包环境、trait、Future 或 Salicin 私有容器；`borrow` 不跨 ABI，必须转换为
 显式指针。普通 `bool`、`String`、slice、`Option`、`Result` 默认都不是 C ABI 类型。

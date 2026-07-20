@@ -107,6 +107,7 @@ enum Ty {
     U64,
     Bool,
     Unit,
+    Pointer { pointee: Box<Ty>, mutable: bool },
     Array(Box<Ty>, u64),
     Struct(String),
     Enum(String),
@@ -272,6 +273,9 @@ impl fmt::Display for Ty {
             Self::U64 => f.write_str("u64"),
             Self::Bool => f.write_str("bool"),
             Self::Unit => f.write_str("()"),
+            Self::Pointer { pointee, mutable } => {
+                write!(f, "{}({pointee})", if *mutable { "MutPtr" } else { "Ptr" })
+            }
             Self::Array(element, length) => write!(f, "Array({element}, {length})"),
             Self::Struct(name) | Self::Enum(name) => f.write_str(name),
             Self::Never => f.write_str("never"),
@@ -349,6 +353,7 @@ impl HirProgram {
     fn needs_drop(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Array(element, _) => self.needs_drop(element),
+            Ty::Pointer { .. } => false,
             Ty::Struct(name) => {
                 self.drop_methods.contains_key(ty)
                     || self.struct_layout(name).is_some_and(|layout| {
@@ -552,6 +557,14 @@ enum HirExprKind {
     Borrow {
         place: HirPlace,
         mutable: bool,
+    },
+    RawAddress {
+        place: HirPlace,
+    },
+    RawLoad(Box<HirExpr>),
+    RawStore {
+        pointer: Box<HirExpr>,
+        value: Box<HirExpr>,
     },
     Block(Vec<HirStmt>, Option<Box<HirExpr>>),
     If {
@@ -827,6 +840,7 @@ struct LowerCtx {
     type_substitutions: HashMap<String, Type>,
     loops: Vec<LoopFrame>,
     guard_move_restricted: HashSet<LocalId>,
+    unsafe_depth: usize,
 }
 
 impl LowerCtx {
@@ -844,6 +858,7 @@ impl LowerCtx {
             type_substitutions: HashMap::new(),
             loops: Vec::new(),
             guard_move_restricted: HashSet::new(),
+            unsafe_depth: 0,
         }
     }
 
@@ -861,6 +876,7 @@ impl LowerCtx {
             type_substitutions: HashMap::new(),
             loops: Vec::new(),
             guard_move_restricted: HashSet::new(),
+            unsafe_depth: 0,
         }
     }
 
@@ -1531,9 +1547,15 @@ impl Analyzer {
 
     fn type_is_copy_with_nominals(&self, ty: &Ty, valid: &HashSet<Ty>) -> bool {
         match ty {
-            Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool | Ty::Unit | Ty::Never | Ty::Error => {
-                true
-            }
+            Ty::I32
+            | Ty::I64
+            | Ty::U32
+            | Ty::U64
+            | Ty::Bool
+            | Ty::Unit
+            | Ty::Pointer { .. }
+            | Ty::Never
+            | Ty::Error => true,
             Ty::Array(element, _) => self.type_is_copy_with_nominals(element, valid),
             Ty::Enum(name) if name == self.lang_item_name(LangItemKind::Never) => true,
             Ty::Struct(_) | Ty::Enum(_) => valid.contains(ty),
@@ -3333,6 +3355,17 @@ impl Analyzer {
                 }
             }
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => Ty::Unit,
+            Type::Named(name, arguments) if matches!(name.as_str(), "Ptr" | "MutPtr") => {
+                if arguments.len() != 1 {
+                    self.error(format!("type `{name}` expects exactly one type argument"));
+                    Ty::Error
+                } else {
+                    Ty::Pointer {
+                        pointee: Box::new(self.lower_source_type(&arguments[0])),
+                        mutable: name == "MutPtr",
+                    }
+                }
+            }
             Type::Named(name, arguments)
                 if arguments.is_empty() && self.abstract_type_parameters.contains_key(name) =>
             {
@@ -3500,7 +3533,7 @@ impl Analyzer {
                 }
             }
             _ => {
-                self.error("generic type arguments must be type names, type applications, or `_`");
+                self.error("generic type arguments must be type names or type applications");
                 None
             }
         }
@@ -3517,6 +3550,10 @@ impl Analyzer {
             Ty::Array(element, length) => Some(Type::Array(
                 Box::new(self.source_type_for_ty(element)?),
                 *length,
+            )),
+            Ty::Pointer { pointee, mutable } => Some(Type::Named(
+                if *mutable { "MutPtr" } else { "Ptr" }.to_owned(),
+                vec![self.source_type_for_ty(pointee)?],
             )),
             Ty::Struct(name) | Ty::Enum(name) => {
                 if let Some(instance) = self.nominal_instances.get(name) {
@@ -3556,6 +3593,11 @@ impl Analyzer {
             Ty::Array(element, length) => {
                 format!("Array({}, {length})", self.diagnostic_type_name(element))
             }
+            Ty::Pointer { pointee, mutable } => format!(
+                "{}({})",
+                if *mutable { "MutPtr" } else { "Ptr" },
+                self.diagnostic_type_name(pointee)
+            ),
             Ty::Struct(name) | Ty::Enum(name) => {
                 if let Some(parameter) = self.abstract_type_parameters.get(name) {
                     return parameter.clone();
@@ -4272,6 +4314,9 @@ impl Analyzer {
         ) -> AccessBoundary {
             match ty {
                 Ty::Array(element, _) => visit(analyzer, access, element, fallback_origin, visited),
+                Ty::Pointer { pointee, .. } => {
+                    visit(analyzer, access, pointee, fallback_origin, visited)
+                }
                 Ty::Function(function) => {
                     let mut restricted = access;
                     for parameter in function.groups.iter().flatten() {
@@ -4353,6 +4398,9 @@ impl Analyzer {
         match ty {
             Ty::Array(element, _) => {
                 self.collect_type_api_leaks(element, exposed, description, visited, diagnostics)
+            }
+            Ty::Pointer { pointee, .. } => {
+                self.collect_type_api_leaks(pointee, exposed, description, visited, diagnostics)
             }
             Ty::Function(function) => {
                 for parameter in function.groups.iter().flatten() {
@@ -5057,6 +5105,7 @@ impl Analyzer {
     fn unknown_return_value_prefers_success(expression: &Expr) -> bool {
         match expression {
             Expr::Block(_, Some(tail)) => Self::unknown_return_value_prefers_success(tail),
+            Expr::Unsafe(body) => Self::unknown_return_value_prefers_success(body),
             Expr::If {
                 then_branch,
                 else_branch: Some(else_branch),
@@ -5236,10 +5285,20 @@ impl Analyzer {
                 }
             }
             Expr::Borrow { value, .. } => self.probe_expr_ty(value, hint, context),
+            Expr::Unsafe(body) => self.probe_expr_ty(body, hint, context),
             Expr::Unary(UnaryOp::Neg, operand) => {
                 self.probe_expr_ty(operand, hint.filter(|ty| ty.is_signed()), context)
             }
             Expr::Unary(UnaryOp::Not, _) => TypeProbe::Known(Ty::Bool),
+            Expr::Unary(UnaryOp::Deref, operand) => {
+                match self.probe_expr_ty(operand, None, context) {
+                    TypeProbe::Known(Ty::Pointer { pointee, .. })
+                    | TypeProbe::KnownSource(Ty::Pointer { pointee, .. }, _) => {
+                        TypeProbe::Known(*pointee)
+                    }
+                    _ => TypeProbe::Unsupported,
+                }
+            }
             Expr::Binary(left, operator, right) => match operator {
                 BinaryOp::And
                 | BinaryOp::Or
@@ -6258,6 +6317,7 @@ impl Analyzer {
         let result = has_custom_drop
             || match ty {
                 Ty::Array(element, _) => self.type_needs_drop_inner(element, visiting),
+                Ty::Pointer { .. } => false,
                 Ty::Struct(name) => self.struct_layouts.get(name).is_some_and(|layout| {
                     layout
                         .fields
@@ -6528,7 +6588,39 @@ impl Analyzer {
                     },
                 }
             }
+            Expr::Unsafe(body) => {
+                context.unsafe_depth += 1;
+                let result = self.lower_expr(body, expected, context);
+                context.unsafe_depth -= 1;
+                result
+            }
             Expr::Unary(operator, operand) => {
+                if *operator == UnaryOp::Deref {
+                    let pointer = self.lower_expr(operand, None, context);
+                    if context.unsafe_depth == 0 {
+                        self.error("raw pointer dereference requires an `unsafe do` block");
+                        return error_expr();
+                    }
+                    let Ty::Pointer { pointee, .. } = &pointer.ty else {
+                        self.error(format!(
+                            "unary `*` requires a raw pointer, found `{}`",
+                            pointer.ty
+                        ));
+                        return error_expr();
+                    };
+                    let pointee = (**pointee).clone();
+                    if !self.is_copy_type(&pointee) {
+                        self.error(format!(
+                            "raw pointer reads require a Copy pointee in the first version, found `{}`",
+                            self.diagnostic_type_name(&pointee)
+                        ));
+                        return error_expr();
+                    }
+                    return HirExpr {
+                        ty: pointee,
+                        kind: HirExprKind::RawLoad(Box::new(pointer)),
+                    };
+                }
                 if *operator == UnaryOp::Neg {
                     if let Expr::Integer(value) = operand.as_ref() {
                         let ty = match expected {
@@ -6566,6 +6658,7 @@ impl Analyzer {
                 let operand_expected = match operator {
                     UnaryOp::Not => Some(Ty::Bool),
                     UnaryOp::Neg => expected.filter(|ty| ty.is_integer()).cloned(),
+                    UnaryOp::Deref => unreachable!(),
                 };
                 let operand = self.lower_expr(operand, operand_expected.as_ref(), context);
                 let ty = match operator {
@@ -6584,6 +6677,7 @@ impl Analyzer {
                             operand.ty.clone()
                         }
                     }
+                    UnaryOp::Deref => unreachable!(),
                 };
                 HirExpr {
                     ty,
@@ -6597,6 +6691,40 @@ impl Analyzer {
             Expr::Try(value) => self.lower_try(value, expected, context),
             Expr::Throw(value) => self.lower_throw(value, context),
             Expr::Assign(place, value) => {
+                if let Expr::Unary(UnaryOp::Deref, pointer) = place.as_ref() {
+                    let pointer = self.lower_expr(pointer, None, context);
+                    if context.unsafe_depth == 0 {
+                        self.error("raw pointer assignment requires an `unsafe do` block");
+                        return error_expr();
+                    }
+                    let Ty::Pointer { pointee, mutable } = &pointer.ty else {
+                        self.error(format!(
+                            "raw pointer assignment requires `MutPtr(T)`, found `{}`",
+                            pointer.ty
+                        ));
+                        return error_expr();
+                    };
+                    if !*mutable {
+                        self.error("cannot assign through an immutable `Ptr(T)`");
+                        return error_expr();
+                    }
+                    let pointee = (**pointee).clone();
+                    if !self.is_copy_type(&pointee) {
+                        self.error(format!(
+                            "raw pointer writes require a Copy pointee in the first version, found `{}`",
+                            self.diagnostic_type_name(&pointee)
+                        ));
+                        return error_expr();
+                    }
+                    let value = self.lower_expr(value, Some(&pointee), context);
+                    return HirExpr {
+                        ty: Ty::Unit,
+                        kind: HirExprKind::RawStore {
+                            pointer: Box::new(pointer),
+                            value: Box::new(value),
+                        },
+                    };
+                }
                 if matches!(place.as_ref(), Expr::Index { .. }) {
                     self.error("indexed array assignment is not supported yet");
                     let _ = self.lower_expr(value, None, context);
@@ -9450,6 +9578,9 @@ impl Analyzer {
             return self.lower_chain(base, member, Some(&groups), expected, context);
         }
         if let Expr::Name(name) = root {
+            if matches!(name.as_str(), "Ptr" | "MutPtr") {
+                return self.lower_raw_pointer_constructor(name, &groups, context);
+            }
             if let Some(local) = context.lookup(name).cloned() {
                 if local.closure.is_some() {
                     return self.lower_local_closure_call(name, &local, &groups, context);
@@ -9606,6 +9737,78 @@ impl Analyzer {
         }
         self.error("calls require a named function, constructor, associated function, or method");
         error_expr()
+    }
+
+    fn lower_raw_pointer_constructor(
+        &mut self,
+        name: &str,
+        groups: &[&[CallArg]],
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        if groups.len() != 1 || groups[0].len() != 1 {
+            self.error(format!(
+                "`{name}` expects exactly one argument: `{name}({}borrow place)`",
+                if name == "MutPtr" { "mut " } else { "" }
+            ));
+            return error_expr();
+        }
+        let argument = &groups[0][0];
+        if argument.label.is_some() {
+            self.error(format!("`{name}` does not accept a named argument"));
+            return error_expr();
+        }
+        let required_mutable = name == "MutPtr";
+        let Expr::Borrow { mutable, value } = &argument.value else {
+            self.error(format!(
+                "`{name}` requires an explicit `{}borrow` argument",
+                if required_mutable { "mut " } else { "" }
+            ));
+            return error_expr();
+        };
+        if *mutable != required_mutable {
+            self.error(format!(
+                "`{name}` requires `{}` borrowing",
+                if required_mutable {
+                    "mut borrow"
+                } else {
+                    "borrow"
+                }
+            ));
+            return error_expr();
+        }
+        if matches!(value.as_ref(), Expr::Index { .. }) {
+            self.error("taking a raw pointer to an indexed array element is not supported yet");
+            return error_expr();
+        }
+        let Some(mut place) = self.lower_place(value, context) else {
+            return error_expr();
+        };
+        if required_mutable {
+            self.ensure_writable(&place);
+        }
+        let loan = self.acquire_loan(
+            &place,
+            if required_mutable {
+                LoanKind::Mutable
+            } else {
+                LoanKind::Shared
+            },
+            true,
+            context,
+        );
+        place.capability = if required_mutable {
+            LocalCapability::MutParam
+        } else {
+            LocalCapability::SharedParam
+        };
+        place.loan = loan;
+        HirExpr {
+            ty: Ty::Pointer {
+                pointee: Box::new(place.ty.clone()),
+                mutable: required_mutable,
+            },
+            kind: HirExprKind::RawAddress { place },
+        }
     }
 
     fn lower_nominal_type_member_call(
@@ -12071,6 +12274,7 @@ impl<'a> HirCleanupPlanner<'a> {
             | Ty::U64
             | Ty::Bool
             | Ty::Unit
+            | Ty::Pointer { .. }
             | Ty::Never
             | Ty::Function(_)
             | Ty::Error => {}
@@ -12396,6 +12600,27 @@ impl<'a> HirCleanupPlanner<'a> {
                 } else {
                     self.initialize_result(cursor, &result_use)?;
                 }
+                Some(cursor)
+            }
+            HirExprKind::RawAddress { .. } => {
+                self.initialize_result(cursor, &result_use)?;
+                Some(cursor)
+            }
+            HirExprKind::RawLoad(pointer) => {
+                let Some(cursor) = self.walk_expr(pointer, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                self.initialize_result(cursor, &result_use)?;
+                Some(cursor)
+            }
+            HirExprKind::RawStore { pointer, value } => {
+                let Some(cursor) = self.walk_expr(pointer, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                let Some(cursor) = self.walk_expr(value, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                self.initialize_result(cursor, &result_use)?;
                 Some(cursor)
             }
             HirExprKind::Unary(_, operand) => {
@@ -13569,6 +13794,9 @@ impl ConstantEvaluator<'_> {
             }
             HirExprKind::Assign { .. }
             | HirExprKind::Borrow { .. }
+            | HirExprKind::RawAddress { .. }
+            | HirExprKind::RawLoad(_)
+            | HirExprKind::RawStore { .. }
             | HirExprKind::Call { .. }
             | HirExprKind::Partial { .. }
             | HirExprKind::PartialCapture { .. }
@@ -13832,6 +14060,7 @@ impl<'a> Emitter<'a> {
                 | Ty::U64
                 | Ty::Bool
                 | Ty::Unit
+                | Ty::Pointer { .. }
                 | Ty::Struct(_)
                 | Ty::Enum(_)
                 | Ty::Never
@@ -13923,6 +14152,7 @@ impl<'a> Emitter<'a> {
             | Ty::U64
             | Ty::Bool
             | Ty::Unit
+            | Ty::Pointer { .. }
             | Ty::Never
             | Ty::Function(_)
             | Ty::Error => {}
@@ -14517,6 +14747,40 @@ impl<'a> FunctionEmitter<'a> {
                     value: Some(register),
                 })
             }
+            HirExprKind::RawAddress { place } => Ok(Operand {
+                ty: expression.ty.clone(),
+                value: Some(self.emit_place_address(place)?),
+            }),
+            HirExprKind::RawLoad(pointer) => {
+                let pointer = self.emit_expr(pointer)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                let register = self.fresh_register();
+                let ty = llvm_value_type(&expression.ty)?;
+                self.instruction(format!("{register} = load {ty}, ptr {}", pointer.value()?));
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: Some(register),
+                })
+            }
+            HirExprKind::RawStore { pointer, value } => {
+                let pointer = self.emit_expr(pointer)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                let value = self.emit_expr(value)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                self.instruction(format!(
+                    "store {} {}, ptr {}",
+                    llvm_value_type(&value.ty)?,
+                    value.value()?,
+                    pointer.value()?
+                ));
+                Ok(Operand::unit())
+            }
             HirExprKind::Global(name) => {
                 if expression.ty == Ty::Unit {
                     return Ok(Operand::unit());
@@ -14636,6 +14900,11 @@ impl<'a> FunctionEmitter<'a> {
                     }
                     UnaryOp::Not => {
                         self.instruction(format!("{register} = xor i1 {}, true", operand.value()?))
+                    }
+                    UnaryOp::Deref => {
+                        return Err(Diagnostic::new(
+                            "internal error: raw dereference reached generic unary emission",
+                        ));
                     }
                 }
                 Ok(Operand {
@@ -15931,6 +16200,7 @@ fn llvm_value_type(ty: &Ty) -> Result<String, Diagnostic> {
         Ty::I64 | Ty::U64 => Ok("i64".to_owned()),
         Ty::Bool => Ok("i1".to_owned()),
         Ty::Array(element, length) => Ok(format!("[{length} x {}]", llvm_value_type(element)?)),
+        Ty::Pointer { .. } => Ok("ptr".to_owned()),
         Ty::Struct(name) | Ty::Enum(name) => Ok(format!("%{}", type_symbol(name))),
         Ty::Callable(_) => Ok(format!("%{}", type_symbol(&canonical_type_encoding(ty)))),
         Ty::Unit | Ty::Never | Ty::Function(_) | Ty::Error => Err(Diagnostic::new(format!(
@@ -15952,6 +16222,7 @@ fn zero_const(ty: &Ty, program: &HirProgram) -> Option<ConstValue> {
         Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 => Some(ConstValue::Integer(0)),
         Ty::Bool => Some(ConstValue::Bool(false)),
         Ty::Unit => Some(ConstValue::Unit),
+        Ty::Pointer { .. } => None,
         Ty::Array(element, length) => {
             let length = usize::try_from(*length).ok()?;
             Some(ConstValue::Aggregate(
@@ -16122,9 +16393,10 @@ fn substitute_function_types(function: &mut Function, substitutions: &HashMap<St
 fn substitute_expr_types(expression: &mut Expr, substitutions: &HashMap<String, Type>) {
     match expression {
         Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => {}
-        Expr::Unary(_, operand) | Expr::Try(operand) | Expr::Throw(operand) => {
-            substitute_expr_types(operand, substitutions)
-        }
+        Expr::Unary(_, operand)
+        | Expr::Try(operand)
+        | Expr::Throw(operand)
+        | Expr::Unsafe(operand) => substitute_expr_types(operand, substitutions),
         Expr::Borrow { value, .. } => substitute_expr_types(value, substitutions),
         Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
             substitute_expr_types(left, substitutions);
@@ -16280,6 +16552,11 @@ fn canonical_type_encoding(ty: &Ty) -> String {
         Ty::U64 => "u64".to_owned(),
         Ty::Bool => "bool".to_owned(),
         Ty::Unit => "unit".to_owned(),
+        Ty::Pointer { pointee, mutable } => {
+            let mut encoded = if *mutable { "mutptr" } else { "ptr" }.to_owned();
+            push_canonical_component(&mut encoded, &canonical_type_encoding(pointee));
+            encoded
+        }
         Ty::Array(element, length) => {
             let element = canonical_type_encoding(element);
             let mut encoded = format!("array{length}:");

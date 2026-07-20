@@ -285,6 +285,7 @@ pub enum Expr {
         index: Box<Expr>,
     },
     Block(Vec<Stmt>, Option<Box<Expr>>),
+    Unsafe(Box<Expr>),
     Closure(Vec<Param>, Box<Expr>),
     If {
         condition: Box<Expr>,
@@ -310,6 +311,7 @@ pub enum Expr {
 pub enum UnaryOp {
     Neg,
     Not,
+    Deref,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

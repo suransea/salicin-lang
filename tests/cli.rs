@@ -155,6 +155,23 @@ fn run_supports_grouped_calls_and_unit_main() {
 }
 
 #[test]
+fn raw_pointer_read_and_write_run_with_expected_result() {
+    for name in ["raw_pointer_read.sali", "raw_pointer_write.sali"] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run raw pointer fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn m1_struct_programs_run_with_expected_result() {
     for name in [
         "struct_fields.sali",

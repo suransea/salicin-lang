@@ -1614,6 +1614,7 @@ impl Resolver {
             Expr::Unary(_, operand)
             | Expr::Try(operand)
             | Expr::Throw(operand)
+            | Expr::Unsafe(operand)
             | Expr::Borrow { value: operand, .. } => {
                 self.rewrite_expr(operand, context, type_scope, value_scope);
             }
@@ -3163,6 +3164,7 @@ let main(): i32 = Option()
                 Expr::Unary(_, value)
                 | Expr::Try(value)
                 | Expr::Throw(value)
+                | Expr::Unsafe(value)
                 | Expr::Borrow { value, .. }
                 | Expr::ChainMember(value, _)
                 | Expr::Loop { body: value } => visit(value, names),

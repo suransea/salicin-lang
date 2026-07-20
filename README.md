@@ -348,6 +348,17 @@ v0.26.0 接通 concrete callable 的跨函数返回 ABI：
 - 捕获共享/可变借用的 closure 仍禁止逃逸。匿名 callable 作为参数将通过泛型
   `Fn` / `FnMut` / `FnOnce` 约束开放，而不是要求用户拼写匿名类型。
 
+v0.27.0 建立 raw pointer 与最小 `unsafe` 边界：
+
+- `Ptr(T)` / `MutPtr(T)` 是 `Copy` 的 LLVM `ptr` 标量；`Ptr(borrow place)` 与
+  `MutPtr(mut borrow place)` 从现有 place 取址，并保留对应词法 loan。
+- `unsafe do { *pointer }` 读取，`unsafe do { *pointer = value }` 通过 `MutPtr` 写入；安全上下文中的
+  裸解引用和通过共享 `Ptr` 写入都会被拒绝。
+- 第一阶段只允许读写 `Copy` pointee，避免裸访问绕过资源 move/drop 规则。null、指针算术、allocator
+  与 C ABI 后续开放。
+- `_` 类型推断占位符保持完全移除；泛型推断只通过省略编译期参数组、运行时实参（包括命名实参）和
+  期望结果完成。
+
 标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
 所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
 `Copy`，v0.9 建立 cleanup CFG，v0.10 补齐资源 storage/transfer，v0.11 完成完整 move-path forest 与
@@ -356,9 +367,9 @@ drop-flag 计划，v0.15 提供 `Drop` 与递归 glue，v0.16 完成第一阶段
 v0.17 已物化 struct projection flags，v0.18 接通直接 enum payload binding，v0.19 补齐嵌套
 downcast remainder，v0.20 完成 guard rollback，v0.21 完成本地 `FnOnce` resource captures，v0.22
 开放 owning partial captures，v0.23 完成 borrowed overwrite cleanup，v0.24 完成 match planner 与
-正式 cleanup IR 的对齐，v0.25 开放 concrete callable 的局部移动，v0.26 接通拥有环境的跨函数返回。
-下一步开放泛型 callable 参数约束，其后固定
-raw pointer 与 allocator ABI 并进入 `alloc`。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
+正式 cleanup IR 的对齐，v0.25 开放 concrete callable 的局部移动，v0.26 接通拥有环境的跨函数返回，
+v0.27 建立 raw pointer 与最小 `unsafe` 边界。下一步固定 allocator ABI 并进入 `alloc`；泛型 callable
+参数将在正式的 `where` / `Fn` 约束语法落地后开放。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
 运行时之后。
 
 最小示例：

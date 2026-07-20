@@ -1019,6 +1019,7 @@ impl Parser {
             Expr::Name(_) => true,
             Expr::Member(base, _) => Self::is_assignable_place(base),
             Expr::Index { base, .. } => Self::is_assignable_place(base),
+            Expr::Unary(UnaryOp::Deref, _) => true,
             _ => false,
         }
     }
@@ -1135,6 +1136,9 @@ impl Parser {
         } else if self.take(&TokenKind::Bang) {
             let operand = self.unary(allow_trailing_closure)?;
             Ok(Expr::Unary(UnaryOp::Not, Box::new(operand)))
+        } else if self.take(&TokenKind::Star) {
+            let operand = self.unary(allow_trailing_closure)?;
+            Ok(Expr::Unary(UnaryOp::Deref, Box::new(operand)))
         } else if self.take(&TokenKind::Borrow) {
             let borrow = self.previous().clone();
             self.borrow_expression(false, &borrow, allow_trailing_closure)
@@ -1299,6 +1303,11 @@ impl Parser {
             TokenKind::Do => {
                 self.advance();
                 self.block()
+            }
+            TokenKind::Unsafe => {
+                self.advance();
+                self.expect(&TokenKind::Do, "`do` after `unsafe`")?;
+                Ok(Expr::Unsafe(Box::new(self.block()?)))
             }
             TokenKind::If => self.if_expression(),
             TokenKind::Return => self.return_expression(allow_trailing_closure),
@@ -1715,6 +1724,7 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::Borrow => "`borrow`",
         TokenKind::Type => "`type`",
         TokenKind::Do => "`do`",
+        TokenKind::Unsafe => "`unsafe`",
         TokenKind::If => "`if`",
         TokenKind::Else => "`else`",
         TokenKind::Return => "`return`",
@@ -2220,6 +2230,29 @@ mod tests {
             assert!(error.message.contains("`_`"));
             assert!(error.message.contains("inference") || error.message.contains("inferred"));
         }
+    }
+
+    #[test]
+    fn parses_unsafe_raw_pointer_dereference_and_assignment() {
+        let program = parse(
+            "let main(): i32 = {\n  let mut value = 41\n  let pointer = MutPtr(mut borrow value)\n  unsafe do {\n    *pointer = *pointer + 1\n  }\n  value\n}\n",
+        )
+        .unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        let Some(Expr::Block(statements, _)) = &function.body else {
+            panic!("expected function block");
+        };
+        assert!(matches!(
+            &statements[2],
+            Stmt::Expr(Expr::Unsafe(body))
+                if matches!(body.as_ref(), Expr::Block(_, Some(tail)) if matches!(
+                    tail.as_ref(),
+                    Expr::Assign(left, _)
+                        if matches!(left.as_ref(), Expr::Unary(UnaryOp::Deref, _))
+                ))
+        ));
     }
 
     #[test]
