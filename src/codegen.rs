@@ -566,6 +566,15 @@ enum HirExprKind {
         pointer: Box<HirExpr>,
         value: Box<HirExpr>,
     },
+    RawAlloc {
+        size: Box<HirExpr>,
+        align: Box<HirExpr>,
+    },
+    RawDealloc {
+        pointer: Box<HirExpr>,
+        size: Box<HirExpr>,
+        align: Box<HirExpr>,
+    },
     Block(Vec<HirStmt>, Option<Box<HirExpr>>),
     If {
         condition: Box<HirExpr>,
@@ -1210,7 +1219,13 @@ impl Analyzer {
     fn collect_items(&mut self, core: &Program, program: &Program) {
         // `void` is implemented as the prelude's alias of `()` rather than as
         // a distinct nominal item, but still occupies the unified namespace.
-        let mut names = HashSet::from(["void".to_owned()]);
+        let mut names = HashSet::from([
+            "void".to_owned(),
+            "Ptr".to_owned(),
+            "MutPtr".to_owned(),
+            "raw_alloc".to_owned(),
+            "raw_dealloc".to_owned(),
+        ]);
         let mut extensions = Vec::new();
         if program.items.len() != program.item_visibilities.len()
             || program.items.len() != program.item_origins.len()
@@ -9578,6 +9593,12 @@ impl Analyzer {
             return self.lower_chain(base, member, Some(&groups), expected, context);
         }
         if let Expr::Name(name) = root {
+            if name == "raw_alloc" {
+                return self.lower_raw_alloc(&groups, expected, context);
+            }
+            if name == "raw_dealloc" {
+                return self.lower_raw_dealloc(&groups, context);
+            }
             if matches!(name.as_str(), "Ptr" | "MutPtr") {
                 return self.lower_raw_pointer_constructor(name, &groups, context);
             }
@@ -9737,6 +9758,146 @@ impl Analyzer {
         }
         self.error("calls require a named function, constructor, associated function, or method");
         error_expr()
+    }
+
+    fn explicit_raw_pointee(
+        &mut self,
+        owner: &str,
+        group: &[CallArg],
+        context: &LowerCtx,
+    ) -> Option<Ty> {
+        if group.len() != 1 {
+            self.error(format!(
+                "compile-time argument group of `{owner}` expects exactly one type"
+            ));
+            return None;
+        }
+        if group[0].label.as_deref().is_some_and(|label| label != "T") {
+            self.error(format!(
+                "unknown compile-time parameter `{}` in `{owner}`; expected `T`",
+                group[0].label.as_deref().unwrap_or_default()
+            ));
+            return None;
+        }
+        let source = self.type_argument_from_expr(&group[0].value, &context.type_substitutions)?;
+        Some(self.lower_source_type(&source))
+    }
+
+    fn lower_raw_alloc(
+        &mut self,
+        groups: &[&[CallArg]],
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        if context.unsafe_depth == 0 {
+            self.error("`raw_alloc` requires an `unsafe do` block");
+            return error_expr();
+        }
+        let (pointee, runtime) = match groups {
+            [runtime] => {
+                let Some(Ty::Pointer {
+                    pointee,
+                    mutable: true,
+                }) = expected
+                else {
+                    self.error(
+                        "cannot infer `raw_alloc` pointee type; use `raw_alloc(T)(size, align)` or provide an expected `MutPtr(T)` type",
+                    );
+                    return error_expr();
+                };
+                ((**pointee).clone(), *runtime)
+            }
+            [compile, runtime] => {
+                let Some(pointee) = self.explicit_raw_pointee("raw_alloc", compile, context) else {
+                    return error_expr();
+                };
+                (pointee, *runtime)
+            }
+            _ => {
+                self.error(
+                    "`raw_alloc` expects one runtime group and at most one compile-time type group",
+                );
+                return error_expr();
+            }
+        };
+        let names = ["size".to_owned(), "align".to_owned()];
+        let Some(arguments) = self.ordered_call_arguments("raw_alloc", 1, runtime, &names) else {
+            return error_expr();
+        };
+        let size = self.lower_expr(&arguments[0].value, Some(&Ty::U64), context);
+        let align = self.lower_expr(&arguments[1].value, Some(&Ty::U64), context);
+        HirExpr {
+            ty: Ty::Pointer {
+                pointee: Box::new(pointee),
+                mutable: true,
+            },
+            kind: HirExprKind::RawAlloc {
+                size: Box::new(size),
+                align: Box::new(align),
+            },
+        }
+    }
+
+    fn lower_raw_dealloc(&mut self, groups: &[&[CallArg]], context: &mut LowerCtx) -> HirExpr {
+        if context.unsafe_depth == 0 {
+            self.error("`raw_dealloc` requires an `unsafe do` block");
+            return error_expr();
+        }
+        let (explicit, runtime) = match groups {
+            [runtime] => (None, *runtime),
+            [compile, runtime] => {
+                let Some(pointee) = self.explicit_raw_pointee("raw_dealloc", compile, context)
+                else {
+                    return error_expr();
+                };
+                (Some(pointee), *runtime)
+            }
+            _ => {
+                self.error(
+                    "`raw_dealloc` expects one runtime group and at most one compile-time type group",
+                );
+                return error_expr();
+            }
+        };
+        let names = ["pointer".to_owned(), "size".to_owned(), "align".to_owned()];
+        let Some(arguments) = self.ordered_call_arguments("raw_dealloc", 1, runtime, &names) else {
+            return error_expr();
+        };
+        let pointer_expected = explicit.as_ref().map(|pointee| Ty::Pointer {
+            pointee: Box::new(pointee.clone()),
+            mutable: true,
+        });
+        let pointer = self.lower_expr(&arguments[0].value, pointer_expected.as_ref(), context);
+        let Ty::Pointer {
+            pointee,
+            mutable: true,
+        } = &pointer.ty
+        else {
+            self.error(format!(
+                "`raw_dealloc` requires a `MutPtr(T)`, found `{}`",
+                pointer.ty
+            ));
+            return error_expr();
+        };
+        if let Some(explicit) = &explicit {
+            if explicit != pointee.as_ref() {
+                self.error(format!(
+                    "`raw_dealloc` explicit pointee `{explicit}` does not match pointer type `{}`",
+                    pointer.ty
+                ));
+                return error_expr();
+            }
+        }
+        let size = self.lower_expr(&arguments[1].value, Some(&Ty::U64), context);
+        let align = self.lower_expr(&arguments[2].value, Some(&Ty::U64), context);
+        HirExpr {
+            ty: Ty::Unit,
+            kind: HirExprKind::RawDealloc {
+                pointer: Box::new(pointer),
+                size: Box::new(size),
+                align: Box::new(align),
+            },
+        }
     }
 
     fn lower_raw_pointer_constructor(
@@ -12623,6 +12784,33 @@ impl<'a> HirCleanupPlanner<'a> {
                 self.initialize_result(cursor, &result_use)?;
                 Some(cursor)
             }
+            HirExprKind::RawAlloc { size, align } => {
+                let Some(cursor) = self.walk_expr(size, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                let Some(cursor) = self.walk_expr(align, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                self.initialize_result(cursor, &result_use)?;
+                Some(cursor)
+            }
+            HirExprKind::RawDealloc {
+                pointer,
+                size,
+                align,
+            } => {
+                let Some(cursor) = self.walk_expr(pointer, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                let Some(cursor) = self.walk_expr(size, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                let Some(cursor) = self.walk_expr(align, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                self.initialize_result(cursor, &result_use)?;
+                Some(cursor)
+            }
             HirExprKind::Unary(_, operand) => {
                 let Some(cursor) = self.walk_expr(operand, cursor, ResultUse::Discard)? else {
                     return Ok(None);
@@ -13797,6 +13985,8 @@ impl ConstantEvaluator<'_> {
             | HirExprKind::RawAddress { .. }
             | HirExprKind::RawLoad(_)
             | HirExprKind::RawStore { .. }
+            | HirExprKind::RawAlloc { .. }
+            | HirExprKind::RawDealloc { .. }
             | HirExprKind::Call { .. }
             | HirExprKind::Partial { .. }
             | HirExprKind::PartialCapture { .. }
@@ -13916,7 +14106,7 @@ impl<'a> Emitter<'a> {
     fn emit_module(&self, include_entry_point: bool) -> Result<String, Diagnostic> {
         let mut output = String::new();
         output.push_str(
-            "; ModuleID = 'salicin'\nsource_filename = \"salicin\"\n\ndeclare void @llvm.trap()\n\n",
+            "; ModuleID = 'salicin'\nsource_filename = \"salicin\"\n\ndeclare void @llvm.trap()\ndeclare ptr @salicin_alloc(i64, i64)\ndeclare void @salicin_dealloc(ptr, i64, i64)\n\n",
         );
 
         for layout in &self.program.structs {
@@ -14778,6 +14968,51 @@ impl<'a> FunctionEmitter<'a> {
                     llvm_value_type(&value.ty)?,
                     value.value()?,
                     pointer.value()?
+                ));
+                Ok(Operand::unit())
+            }
+            HirExprKind::RawAlloc { size, align } => {
+                let size = self.emit_expr(size)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                let align = self.emit_expr(align)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                let register = self.fresh_register();
+                self.instruction(format!(
+                    "{register} = call ptr @salicin_alloc(i64 {}, i64 {})",
+                    size.value()?,
+                    align.value()?
+                ));
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: Some(register),
+                })
+            }
+            HirExprKind::RawDealloc {
+                pointer,
+                size,
+                align,
+            } => {
+                let pointer = self.emit_expr(pointer)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                let size = self.emit_expr(size)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                let align = self.emit_expr(align)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                self.instruction(format!(
+                    "call void @salicin_dealloc(ptr {}, i64 {}, i64 {})",
+                    pointer.value()?,
+                    size.value()?,
+                    align.value()?
                 ));
                 Ok(Operand::unit())
             }

@@ -359,6 +359,16 @@ v0.27.0 建立 raw pointer 与最小 `unsafe` 边界：
 - `_` 类型推断占位符保持完全移除；泛型推断只通过省略编译期参数组、运行时实参（包括命名实参）和
   期望结果完成。
 
+v0.28.0 固定可替换 allocator ABI：
+
+- `raw_alloc(T)(size, align)` 与 `raw_dealloc(pointer, size, align)` 是 edition 保留 intrinsic，只能在
+  `unsafe do` 中调用；前者返回非空 `MutPtr(T)`，并支持从期望类型省略 `T`，后者从 pointer 推断。
+- LLVM 只依赖 `salicin_alloc(i64, i64) -> ptr` 和 `salicin_dealloc(ptr, i64, i64) -> void` 两个符号。
+  `salic build/run` 自动链接弱默认 C11 实现，`emit-ir` 保持未解析声明。
+- 默认实现校验非零二次幂 alignment、处理高于 `max_align_t` 的对齐、在 OOM/非法 layout 时 abort；
+  释放要求完全相同的 size/alignment。
+- 外部强符号可覆盖默认实现；原生链接测试用自定义 allocator 覆盖两个弱符号并验证实际分派。
+
 标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
 所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
 `Copy`，v0.9 建立 cleanup CFG，v0.10 补齐资源 storage/transfer，v0.11 完成完整 move-path forest 与
@@ -368,7 +378,8 @@ v0.17 已物化 struct projection flags，v0.18 接通直接 enum payload bindin
 downcast remainder，v0.20 完成 guard rollback，v0.21 完成本地 `FnOnce` resource captures，v0.22
 开放 owning partial captures，v0.23 完成 borrowed overwrite cleanup，v0.24 完成 match planner 与
 正式 cleanup IR 的对齐，v0.25 开放 concrete callable 的局部移动，v0.26 接通拥有环境的跨函数返回，
-v0.27 建立 raw pointer 与最小 `unsafe` 边界。下一步固定 allocator ABI 并进入 `alloc`；泛型 callable
+v0.27 建立 raw pointer 与最小 `unsafe` 边界，v0.28 固定可替换 allocator ABI。下一步进入 `alloc`
+并实现首个 owning `Box(T)`；泛型 callable
 参数将在正式的 `where` / `Fn` 约束语法落地后开放。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
 运行时之后。
 

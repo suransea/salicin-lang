@@ -143,7 +143,8 @@ Compile-time globals are independently materialized at each use and are
 outside the cleanup plan; resource-bearing global semantics must be settled before `Drop` is
 allowed on globals.
 
-The adjacent standard-library route is therefore: finish generic callable parameters, then define
-raw pointers and the allocator ABI. Only after those
-boundaries are real will `alloc` be added, followed
-by platform `std` over the C ABI and minimal runtime.
+The v0.27 compiler defines `Ptr(T)`, `MutPtr(T)`, lexical address conversion, and Copy-only raw
+loads/stores inside `unsafe do`. v0.28 adds the reserved `raw_alloc`/`raw_dealloc` intrinsics and a
+two-symbol replaceable allocator ABI with a weak default runtime. These boundaries are now ready for
+the first owning `alloc` type (`Box(T)`), followed later by platform `std` over the C ABI and minimal
+runtime. Generic callable parameters still await the source-level constraint surface.

@@ -172,6 +172,78 @@ fn raw_pointer_read_and_write_run_with_expected_result() {
 }
 
 #[test]
+fn raw_allocator_abi_allocates_aligned_storage_and_deallocates_it() {
+    for name in ["raw_allocator_i32.sali", "raw_allocator_inferred.sali"] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run raw allocator fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn raw_allocator_runtime_rejects_an_invalid_layout() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "raw_allocator_invalid_alignment.sali"))
+        .output()
+        .expect("run invalid allocator layout fixture");
+    assert!(
+        !output.status.success(),
+        "invalid allocator layout unexpectedly succeeded: {}",
+        output_text(&output)
+    );
+}
+
+#[test]
+fn raw_allocator_abi_can_be_replaced_by_strong_link_symbols() {
+    let directory = TestDirectory::new();
+    let source = directory.write(
+        "main.sali",
+        "let main(): i32 = {\n  let pointer = unsafe do { raw_alloc(i32)(4, 4) }\n  unsafe do { *pointer = 42 }\n  unsafe do { raw_dealloc(pointer, 4, 4) }\n  0\n}\n",
+    );
+    let ir = directory.join("main.ll");
+    let executable = directory.join("main");
+    let custom = directory.write(
+        "custom.c",
+        "#include <stdint.h>\n#include <stdlib.h>\n_Alignas(64) static unsigned char storage[64];\nvoid *salicin_alloc(uint64_t size, uint64_t align) { (void)size; (void)align; return storage; }\nvoid salicin_dealloc(void *pointer, uint64_t size, uint64_t align) { (void)pointer; (void)size; (void)align; _Exit(42); }\n",
+    );
+    let emitted = salic()
+        .args(["emit-ir"])
+        .arg(&source)
+        .arg("-o")
+        .arg(&ir)
+        .output()
+        .expect("emit allocator ABI IR");
+    assert!(emitted.status.success(), "{}", output_text(&emitted));
+
+    let runtime = Path::new(env!("CARGO_MANIFEST_DIR")).join("runtime/allocator.c");
+    let linked = Command::new("/usr/bin/clang")
+        .args(["-Wno-override-module", "-x", "ir"])
+        .arg(&ir)
+        .args(["-x", "c", "-std=c11"])
+        .arg(&custom)
+        .arg(&runtime)
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .expect("link replacement allocator");
+    assert!(linked.status.success(), "{}", output_text(&linked));
+
+    let status = Command::new(&executable)
+        .status()
+        .expect("run replacement allocator fixture");
+    assert_eq!(status.code(), Some(42));
+}
+
+#[test]
 fn m1_struct_programs_run_with_expected_result() {
     for name in [
         "struct_fields.sali",

@@ -1,0 +1,9 @@
+let main(): i32 = {
+  let pointer = unsafe do {
+    raw_alloc(i32)(4, 3)
+  }
+  unsafe do {
+    raw_dealloc(pointer, 4, 3)
+  }
+  0
+}

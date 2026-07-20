@@ -18,6 +18,8 @@ use salicin_lang::{
     compile_source_packages,
 };
 
+const DEFAULT_ALLOCATOR_RUNTIME: &str = include_str!("../runtime/allocator.c");
+
 const HELP: &str = "Salicin compiler
 
 Usage:
@@ -897,18 +899,21 @@ fn emit_ir(ir: &str, output: Option<&Path>) -> Result<(), String> {
 fn native_build(ir: &str, output: &Path) -> Result<(), String> {
     let temporary = TemporaryDirectory::new()?;
     let ir_path = temporary.path().join("module.ll");
+    let runtime_path = temporary.path().join("allocator.c");
     fs::write(&ir_path, ir).map_err(|error| {
         format!(
             "could not write temporary LLVM IR '{}': {error}",
             ir_path.display()
         )
     })?;
-    invoke_clang(&ir_path, output)
+    write_allocator_runtime(&runtime_path)?;
+    invoke_clang(&ir_path, &runtime_path, output)
 }
 
 fn compile_and_run(ir: &str, args: &[OsString]) -> Result<i32, String> {
     let temporary = TemporaryDirectory::new()?;
     let ir_path = temporary.path().join("module.ll");
+    let runtime_path = temporary.path().join("allocator.c");
     let executable = temporary.path().join(executable_name("program"));
 
     fs::write(&ir_path, ir).map_err(|error| {
@@ -917,7 +922,8 @@ fn compile_and_run(ir: &str, args: &[OsString]) -> Result<i32, String> {
             ir_path.display()
         )
     })?;
-    invoke_clang(&ir_path, &executable)?;
+    write_allocator_runtime(&runtime_path)?;
+    invoke_clang(&ir_path, &runtime_path, &executable)?;
 
     let status = Command::new(&executable)
         .args(args)
@@ -926,7 +932,16 @@ fn compile_and_run(ir: &str, args: &[OsString]) -> Result<i32, String> {
     Ok(program_exit_code(status))
 }
 
-fn invoke_clang(ir: &Path, output: &Path) -> Result<(), String> {
+fn write_allocator_runtime(path: &Path) -> Result<(), String> {
+    fs::write(path, DEFAULT_ALLOCATOR_RUNTIME).map_err(|error| {
+        format!(
+            "could not write allocator runtime '{}': {error}",
+            path.display()
+        )
+    })
+}
+
+fn invoke_clang(ir: &Path, runtime: &Path, output: &Path) -> Result<(), String> {
     let system_clang = Path::new("/usr/bin/clang");
     let compiler: &OsStr = if system_clang.is_file() {
         system_clang.as_os_str()
@@ -939,6 +954,10 @@ fn invoke_clang(ir: &Path, output: &Path) -> Result<(), String> {
         .arg("-x")
         .arg("ir")
         .arg(ir)
+        .arg("-x")
+        .arg("c")
+        .arg("-std=c11")
+        .arg(runtime)
         .arg("-o")
         .arg(output)
         .status()

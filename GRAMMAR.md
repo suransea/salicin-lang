@@ -331,6 +331,10 @@ closure_literal = [ "move" ], "{",
 async_expr = "async", closure_literal | "async", "do", block ;
 ```
 
+`raw_alloc(T)(size, align)` 与 `raw_dealloc(pointer, size, align)` 使用普通调用语法，但它们是 edition
+保留的 allocator intrinsic，只能出现在 `unsafe do` 的动态作用域内；`raw_alloc` 的类型组可由期望
+`MutPtr(T)` 省略。
+
 非空闭包必须有 `->`。`{}` 是零参空闭包；`{ -> expression }` 是非空零参闭包；
 `{ (x: T)(y: U) -> expression }` 是多组闭包。
 

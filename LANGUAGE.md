@@ -1459,7 +1459,24 @@ C 函数需要 `unsafe`。`core.ffi` 提供 `c_char`、`c_int`、`c_long` 等平
 
 当前 v0.27 引导子集先提供 `Ptr(borrow place)`、`MutPtr(mut borrow place)` 和 `unsafe do` 中的 `*p`
 读写，且 pointee 必须实现 `Copy`。指针值采用 LLVM `ptr` 表示并实现 `Copy`；取址仍保留词法 loan。
-null、指针算术、allocator、`unsafe let`、属性和完整 C ABI 尚未实现。
+null、指针算术、`unsafe let`、属性和完整 C ABI 尚未实现。
+
+v0.28 固定最小可替换 allocator ABI。编译器保留以下两个 intrinsic；它们只能在 `unsafe do` 中调用：
+
+```sali
+let pointer = unsafe do { raw_alloc(T)(size: bytes, align: alignment) }
+unsafe do { raw_dealloc(pointer: pointer, size: bytes, align: alignment) }
+```
+
+`raw_alloc` 返回非空 `MutPtr(T)`，失败或非法 layout 会终止进程；若期望类型是 `MutPtr(T)`，类型组可
+省略。`raw_dealloc` 从 `MutPtr(T)` 推断 `T`，也允许显式写出。`size` 与 `align` 是 `u64`，alignment
+必须是非零二次幂；释放必须传回创建 allocation 时完全相同的 layout。使用已释放指针、重复释放、
+错误 layout 或访问未初始化内存均属于调用者在 `unsafe` 边界内承担的责任。
+
+LLVM 私有 lowering 调用 `salicin_alloc(i64, i64) -> ptr` 与
+`salicin_dealloc(ptr, i64, i64) -> void`。`salic build/run` 链接弱默认实现，平台运行时或嵌入程序可用
+同 ABI 的强符号替换；`emit-ir` 保留未解析声明。这个 ABI 不承诺 Salicin 普通函数的名称修饰或调用
+约定，只承诺上述两个运行时符号。
 
 首版 C ABI 只允许标量、原始指针、C ABI 函数指针和 `@repr(C)` 聚合。C 函数只有一个参数组，
 不允许柯里化、泛型、闭包环境、trait、Future 或 Salicin 私有容器；`borrow` 不跨 ABI，必须转换为
