@@ -583,6 +583,8 @@ enum HirExprKind {
         pointer: Box<HirExpr>,
         value: Box<HirExpr>,
     },
+    RawTake(Box<HirExpr>),
+    Forget(Box<HirExpr>),
     RawAlloc {
         size: Box<HirExpr>,
         align: Box<HirExpr>,
@@ -1250,6 +1252,8 @@ impl Analyzer {
             "raw_alloc".to_owned(),
             "raw_dealloc".to_owned(),
             "raw_init".to_owned(),
+            "raw_take".to_owned(),
+            "forget".to_owned(),
             "size_of".to_owned(),
             "align_of".to_owned(),
         ]);
@@ -9685,6 +9689,12 @@ impl Analyzer {
             if name == "raw_init" {
                 return self.lower_raw_init(&groups, context);
             }
+            if name == "raw_take" {
+                return self.lower_raw_take(&groups, context);
+            }
+            if name == "forget" {
+                return self.lower_forget(&groups, context);
+            }
             if matches!(name.as_str(), "Ptr" | "MutPtr") {
                 return self.lower_raw_pointer_constructor(name, &groups, context);
             }
@@ -10063,6 +10073,66 @@ impl Analyzer {
                 pointer: Box::new(pointer),
                 value: Box::new(value),
             },
+        }
+    }
+
+    fn lower_raw_take(&mut self, groups: &[&[CallArg]], context: &mut LowerCtx) -> HirExpr {
+        if context.unsafe_depth == 0 {
+            self.error("`raw_take` requires an `unsafe do` block");
+            return error_expr();
+        }
+        let [runtime] = groups else {
+            self.error("`raw_take` expects exactly one runtime argument group");
+            return error_expr();
+        };
+        let names = ["pointer".to_owned()];
+        let Some(arguments) = self.ordered_call_arguments("raw_take", 1, runtime, &names) else {
+            return error_expr();
+        };
+        let pointer = self.lower_expr(&arguments[0].value, None, context);
+        let Ty::Pointer {
+            pointee,
+            mutable: true,
+        } = &pointer.ty
+        else {
+            self.error(format!(
+                "`raw_take` requires a `MutPtr(T)`, found `{}`",
+                pointer.ty
+            ));
+            return error_expr();
+        };
+        if matches!(pointee.as_ref(), Ty::Never | Ty::Function(_) | Ty::Error) {
+            self.error(format!(
+                "`raw_take` cannot move a value without a concrete data representation: `{}`",
+                self.diagnostic_type_name(pointee)
+            ));
+            return error_expr();
+        }
+        HirExpr {
+            ty: (**pointee).clone(),
+            kind: HirExprKind::RawTake(Box::new(pointer)),
+        }
+    }
+
+    fn lower_forget(&mut self, groups: &[&[CallArg]], context: &mut LowerCtx) -> HirExpr {
+        let [runtime] = groups else {
+            self.error("`forget` expects exactly one runtime argument group");
+            return error_expr();
+        };
+        let names = ["value".to_owned()];
+        let Some(arguments) = self.ordered_call_arguments("forget", 1, runtime, &names) else {
+            return error_expr();
+        };
+        let value = if let Some(place) =
+            self.lower_place_without_diagnostic(&arguments[0].value, context)
+        {
+            self.access_place(place, AccessKind::Move, context)
+        } else {
+            self.lower_expr(&arguments[0].value, None, context)
+        };
+        HirExpr {
+            ty: Ty::Unit,
+            kind: HirExprKind::Forget(Box::new(value)),
         }
     }
 
@@ -12965,6 +13035,24 @@ impl<'a> HirCleanupPlanner<'a> {
                 self.initialize_result(cursor, &result_use)?;
                 Some(cursor)
             }
+            HirExprKind::RawTake(pointer) => {
+                let Some(cursor) = self.walk_expr(pointer, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                self.initialize_result(cursor, &result_use)?;
+                Some(cursor)
+            }
+            HirExprKind::Forget(value) => {
+                let (_, stage) = self.prepare_temporary_destination(cursor, &value.ty)?;
+                let Some(cursor) =
+                    self.walk_expr(value, cursor, ResultUse::Store(stage.clone()))?
+                else {
+                    return Ok(None);
+                };
+                self.move_out(cursor, stage.path)?;
+                self.initialize_result(cursor, &result_use)?;
+                Some(cursor)
+            }
             HirExprKind::RawAlloc { size, align } => {
                 let Some(cursor) = self.walk_expr(size, cursor, ResultUse::Discard)? else {
                     return Ok(None);
@@ -14171,6 +14259,8 @@ impl ConstantEvaluator<'_> {
             | HirExprKind::RawLoad(_)
             | HirExprKind::RawStore { .. }
             | HirExprKind::RawInit { .. }
+            | HirExprKind::RawTake(_)
+            | HirExprKind::Forget(_)
             | HirExprKind::RawAlloc { .. }
             | HirExprKind::RawDealloc { .. }
             | HirExprKind::Call { .. }
@@ -15215,6 +15305,33 @@ impl<'a> FunctionEmitter<'a> {
                         pointer.value()?
                     ));
                 }
+                Ok(Operand::unit())
+            }
+            HirExprKind::RawTake(pointer) => {
+                let pointer = self.emit_expr(pointer)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                if expression.ty == Ty::Unit {
+                    return Ok(Operand::unit());
+                }
+                let result = self.fresh_register();
+                self.instruction(format!(
+                    "{result} = load {}, ptr {}",
+                    llvm_value_type(&expression.ty)?,
+                    pointer.value()?
+                ));
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: Some(result),
+                })
+            }
+            HirExprKind::Forget(value) => {
+                let value = self.emit_expr(value)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                let _ = value;
                 Ok(Operand::unit())
             }
             HirExprKind::RawAlloc { size, align } => {
@@ -17743,9 +17860,11 @@ mod tests {
         assert_eq!(analyzer.nominal_instances.len(), 1);
         assert_eq!(analyzer.nominal_instance_names.len(), 1);
         assert!(analyzer.functions.is_empty());
-        assert_eq!(analyzer.function_templates.len(), 2);
+        assert_eq!(analyzer.function_templates.len(), 4);
         assert!(analyzer.function_templates.contains_key("box_new"));
         assert!(analyzer.function_templates.contains_key("box_ptr"));
+        assert!(analyzer.function_templates.contains_key("box_into_inner"));
+        assert!(analyzer.function_templates.contains_key("box_replace"));
         assert!(analyzer.function_order.is_empty());
     }
 

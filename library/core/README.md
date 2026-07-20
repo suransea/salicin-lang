@@ -151,5 +151,6 @@ padding, and alignment from LLVM rather than a host assumption. These boundaries
 the first owning `alloc` type. v0.30 embeds an independently validated ordinary Salicin alloc bundle:
 `box_new` move-initializes target-laid-out heap storage, while compiler glue recursively drops the
 validated private `Box(T)` representation and returns it through the same allocator ABI. Safe generic
-deref APIs and generic callable parameters still await the source-level constraint surface; platform
-`std` remains later work over the C ABI and minimal runtime.
+deref APIs and generic callable parameters still await the source-level constraint surface. v0.31
+adds verified move-out/forget primitives used by alloc's safe `box_into_inner` and `box_replace`
+ownership operations; platform `std` remains later work over the C ABI and minimal runtime.

@@ -338,6 +338,10 @@ async_expr = "async", closure_literal | "async", "do", block ;
 `raw_init(pointer, value)` 是第三个 `unsafe` allocator intrinsic：它以 move 语义把 `value` 初始化到
 尚未初始化的 `MutPtr(T)` storage，区别于表示覆盖写且限于 `Copy` pointee 的 `*pointer = value`。
 
+`raw_take(pointer)` 从 `MutPtr(T)` storage move 出 `T`，并将该 storage 留为未初始化；调用者必须在
+再次读取或释放 owner 前重新初始化，或只释放 allocation。`forget(value)` 则消费一个 owning value
+而不运行 drop glue；它不需要 `unsafe`，但会有意泄漏该值拥有的资源。
+
 `size_of(T)` 与 `align_of(T)` 同样使用普通单组调用外形，但该组只接受一个类型实参；结果为 `u64`，
 布局由最终 LLVM target 决定。
 

@@ -11,3 +11,26 @@ pub let box_new(T: type)(move value: T): Box(T) = {
 }
 
 pub let box_ptr(T: type)(borrow boxed: Box(T)): MutPtr(T) = boxed.pointer
+
+pub let box_into_inner(T: type)(move boxed: Box(T)): T = {
+  let pointer = boxed.pointer
+  let value = unsafe do {
+    raw_take(pointer)
+  }
+  unsafe do {
+    raw_dealloc(pointer, size_of(T), align_of(T))
+  }
+  forget(boxed)
+  value
+}
+
+pub let box_replace(T: type)(mut borrow boxed: Box(T))(move value: T): T = {
+  let pointer = boxed.pointer
+  let previous = unsafe do {
+    raw_take(pointer)
+  }
+  unsafe do {
+    raw_init(pointer, value)
+  }
+  previous
+}

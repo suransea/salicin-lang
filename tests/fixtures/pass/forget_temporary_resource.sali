@@ -1,0 +1,12 @@
+let Resource = struct(value: i32)
+
+extend Resource: Drop {
+  let drop(mut borrow self)(): () = {
+    let trap = 1 / self.value
+  }
+}
+
+let main(): i32 = {
+  forget(Resource(0))
+  42
+}

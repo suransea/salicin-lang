@@ -6,6 +6,40 @@ subset.
 
 ## Unreleased
 
+## 0.31.0 - 2026-07-21
+
+- Added safe source-backed `box_into_inner` and `box_replace` operations. The former consumes the
+  unique Box and transfers its pointee to the caller; the latter mutably borrows a Box, returns its
+  old pointee, and installs a new owner without an intermediate drop.
+- Added unsafe `raw_take(MutPtr(T)): T` for move-initialized storage and safe `forget(value)` for
+  explicitly abandoning an owner. Both participate in move analysis and cleanup verification;
+  use-after-forget and safe-context raw takes are rejected.
+- Added native custom-`Drop` coverage proving into-inner destruction exactly once, replacement of
+  two resources exactly twice, and intentional forget without destructor execution.
+
+## 0.30.0 - 2026-07-21
+
+- Embedded an edition-pinned ordinary Salicin `alloc` bundle with validated `Box(T)`, `box_new`, and
+  `box_ptr` declarations.
+- Added move-initializing `raw_init`, recursive Box pointee drop glue, and target-layout-matched
+  deallocation. Native tests cover nested and recursive Box layouts, ZSTs, custom Drop, and unique
+  ownership relocation.
+
+## 0.29.0 - 2026-07-21
+
+- Added target-aware `size_of(T)` and `align_of(T)` intrinsics lowered through LLVM layout constant
+  expressions, including aggregates and concrete generic instances.
+
+## 0.28.0 - 2026-07-21
+
+- Defined replaceable `salicin_alloc` and `salicin_dealloc` ABI symbols with a weak default C
+  runtime and strong-symbol override coverage.
+
+## 0.27.0 - 2026-07-21
+
+- Added `Ptr(T)` and `MutPtr(T)`, explicit `unsafe do`, raw load/store, and reserved allocator
+  intrinsics as the first audited unsafe boundary.
+
 ## 0.26.0 - 2026-07-21
 
 - Gave every closure and partial application a concrete compiler-generated environment type. Its

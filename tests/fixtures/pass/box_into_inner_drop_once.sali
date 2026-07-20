@@ -1,0 +1,27 @@
+let Resource = struct(counter: MutPtr(i32))
+
+extend Resource: Drop {
+  let drop(mut borrow self)(): () = unsafe do {
+    *self.counter = *self.counter + 1
+  }
+}
+
+let main(): i32 = {
+  let counter = unsafe do {
+    raw_alloc(i32)(size_of(i32), align_of(i32))
+  }
+  unsafe do {
+    *counter = 0
+  }
+  do {
+    let boxed = box_new(Resource(counter))
+    let resource = box_into_inner(boxed)
+  }
+  let drops = unsafe do {
+    *counter
+  }
+  unsafe do {
+    raw_dealloc(counter, size_of(i32), align_of(i32))
+  }
+  41 + drops
+}

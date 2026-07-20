@@ -1506,7 +1506,23 @@ drop glue，再以同一 layout 调用 `raw_dealloc`；`Box(())`、嵌套 Box、
 Copy-only 覆盖写。
 
 当前引导期尚无泛型 inherent `extend` / `Deref` 约束，因此构造和 raw pointer 访问暂用自由函数
-`box_new` / `box_ptr`；安全借用解引用、`into_inner` 与统一 `Box.new` API 会随泛型约束表面补齐。
+`box_new` / `box_ptr`；安全借用解引用与统一 `Box.new` API 会随泛型约束表面补齐。
+
+v0.31 加入两个不需要借用逃逸的安全 owning access：
+
+```sali
+let value = box_into_inner(boxed)
+let previous = box_replace(boxed)(replacement)
+```
+
+`box_into_inner` 消费 Box，将 pointee 的所有权移回调用者并只释放 allocation；Box 本身不会再运行
+递归 drop。`box_replace` 要求 `mut borrow Box(T)`，move 出旧值、move-initialize 新值并返回旧 owner；
+因此旧值与新值之后各自恰好由一条 cleanup 路径负责。
+
+实现依赖两个 edition 保留原语：unsafe `raw_take(MutPtr(T)): T` 将 storage 留为未初始化；安全
+`forget(value)` 消费 owner 而不运行 drop。后者与 Rust `mem::forget` 一样允许有意泄漏，但不允许
+再次使用已消费的绑定。普通安全代码不直接接触未初始化窗口；alloc 源在 `raw_take` 后要么立即
+`raw_init`，要么先释放 allocation 再 forget 已拆空的 Box。
 
 首版 C ABI 只允许标量、原始指针、C ABI 函数指针和 `@repr(C)` 聚合。C 函数只有一个参数组，
 不允许柯里化、泛型、闭包环境、trait、Future 或 Salicin 私有容器；`borrow` 不跨 ABI，必须转换为

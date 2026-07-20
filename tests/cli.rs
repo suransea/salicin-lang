@@ -217,6 +217,10 @@ fn alloc_box_owns_copy_and_resource_payloads() {
         "box_drop_once.sali",
         "box_nested_and_unit.sali",
         "box_recursive_layout.sali",
+        "box_into_inner_drop_once.sali",
+        "box_replace_drop.sali",
+        "forget_resource.sali",
+        "forget_temporary_resource.sali",
     ] {
         let output = salic()
             .arg("run")
