@@ -248,6 +248,118 @@ fn alloc_box_owns_copy_and_resource_payloads() {
 }
 
 #[test]
+fn generic_inherent_extensions_infer_and_dispatch_concrete_instances() {
+    for name in [
+        "generic_inherent_extend.sali",
+        "generic_inherent_reordered.sali",
+        "generic_inherent_resource.sali",
+        "generic_inherent_existing_instance.sali",
+        "generic_enum_inherent_extend.sali",
+        "generic_inherent_internal_dispatch.sali",
+        "generic_inherent_from_generic_function.sali",
+        "box_methods.sali",
+        "box_method_context_inference.sali",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run generic inherent extension fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn generic_inherent_extensions_resolve_across_file_modules() {
+    let project = TestDirectory::new();
+    project.write(
+        "salicin.toml",
+        r#"[package]
+name = "generic-extend-modules"
+version = "0.1.0"
+edition = "2026"
+"#,
+    );
+    project.write(
+        "src/main.sali",
+        "let main(): i32 = {\n  let cell = api.Cell.new(42)\n  cell.take()\n}\n",
+    );
+    project.write(
+        "src/api.sali",
+        "pub(package) let Cell(T: type) = struct(value: T)\n\
+         extend(T: type) Cell(T) {\n\
+           let new(move value: T): Cell(T) = Cell(value)\n\
+           let take(move self)(): T = self.value\n\
+         }\n",
+    );
+
+    let output = salic()
+        .arg("run")
+        .arg(&project.0)
+        .output()
+        .expect("run package with a generic extension module");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
+fn inherent_extensions_cannot_be_added_outside_the_defining_package() {
+    let project = TestDirectory::new();
+    project.write(
+        "dep/salicin.toml",
+        r#"[package]
+name = "generic-cell"
+version = "0.1.0"
+edition = "2026"
+
+[lib]
+path = "src/lib.sali"
+"#,
+    );
+    project.write(
+        "dep/src/lib.sali",
+        "pub let Cell(T: type) = struct(pub value: T)\n",
+    );
+    project.write(
+        "app/salicin.toml",
+        r#"[package]
+name = "foreign-extend"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+dep = { path = "../dep" }
+"#,
+    );
+    project.write(
+        "app/src/main.sali",
+        "extend(T: type) dep.Cell(T) {\n\
+           let take(move self)(): T = self.value\n\
+         }\n\
+         let main(): i32 = 0\n",
+    );
+
+    let output = salic()
+        .arg("check")
+        .arg(project.join("app"))
+        .output()
+        .expect("reject foreign inherent extension");
+    assert!(
+        !output.status.success(),
+        "foreign extension unexpectedly passed"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("package that defines the type"),
+        "{}",
+        output_text(&output)
+    );
+}
+
+#[test]
 fn raw_allocator_runtime_rejects_an_invalid_layout() {
     let output = salic()
         .arg("run")

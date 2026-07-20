@@ -1,0 +1,6 @@
+let Cell(T: type) = struct(value: T)
+let Marker = trait {}
+
+extend(T: type) Cell(T): Marker {}
+
+let main(): i32 = 0

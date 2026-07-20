@@ -1494,13 +1494,14 @@ impl Resolver {
     }
 
     fn rewrite_extend(&mut self, extension: &mut ExtendDef, context: ResolveContext<'_>) {
-        let header_type_scope = HashSet::new();
+        let header_type_scope = compile_parameter_names(&extension.compile_groups, &HashSet::new());
         self.rewrite_type(&mut extension.target, context, &header_type_scope);
         if let Some(trait_ref) = &mut extension.trait_ref {
             self.rewrite_type(trait_ref, context, &header_type_scope);
         }
 
-        let mut member_type_scope = HashSet::from(["Self".to_owned()]);
+        let mut member_type_scope = header_type_scope;
+        member_type_scope.insert("Self".to_owned());
         if extension.trait_ref.is_some() {
             member_type_scope.extend(extension.members.iter().filter_map(|member| match member {
                 ExtendMember::Const(binding) => Some(binding.name.clone()),
@@ -2295,6 +2296,56 @@ mod tests {
             .collect::<HashMap<_, _>>();
         assert_eq!(associated_values["A"], Expr::Name("Self".into()));
         assert_eq!(associated_values["B"], Expr::Name("A".into()));
+    }
+
+    #[test]
+    fn preserves_generic_extend_parameters_while_qualifying_the_target() {
+        let program = resolve_sources(&[
+            unit(
+                "src/main.sali",
+                &[],
+                "let main(): i32 = api.Cell.new(42).take()\n",
+                true,
+            ),
+            unit(
+                "src/api.sali",
+                &["api"],
+                "pub(package) let Cell(T: type) = struct(value: T)\n\
+                 extend(T: type) Cell(T) {\n\
+                   let new(move value: T): Cell(T) = Cell(value)\n\
+                   let take(move self)(): T = self.value\n\
+                 }\n",
+                false,
+            ),
+        ])
+        .unwrap();
+
+        let extension = program
+            .items
+            .iter()
+            .find_map(|item| match item {
+                Item::Extend(extension) if !extension.compile_groups.is_empty() => Some(extension),
+                _ => None,
+            })
+            .expect("missing generic extension");
+        assert_eq!(extension.compile_groups[0][0].name, "T");
+        assert_eq!(
+            extension.target,
+            Type::Named(
+                "api::Cell".into(),
+                vec![Type::Named("T".into(), Vec::new())]
+            )
+        );
+        let ExtendMember::Function(new) = &extension.members[0] else {
+            panic!("missing associated constructor");
+        };
+        assert_eq!(
+            new.return_type,
+            Some(Type::Named(
+                "api::Cell".into(),
+                vec![Type::Named("T".into(), Vec::new())]
+            ))
+        );
     }
 
     #[test]

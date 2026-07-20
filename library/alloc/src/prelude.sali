@@ -34,3 +34,10 @@ pub let box_replace(T: type)(mut borrow boxed: Box(T))(move value: T): T = {
   }
   previous
 }
+
+extend(T: type) Box(T) {
+  let new(move value: T): Box(T) = box_new(value)
+  let as_mut_ptr(borrow self)(): MutPtr(T) = box_ptr(self)
+  let into_inner(move self)(): T = box_into_inner(self)
+  let replace(mut borrow self)(move value: T): T = box_replace(self)(value)
+}

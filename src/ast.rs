@@ -111,6 +111,7 @@ pub enum TraitMember {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExtendDef {
+    pub compile_groups: Vec<Vec<CompileParam>>,
     pub target: Type,
     pub trait_ref: Option<Type>,
     pub members: Vec<ExtendMember>,

@@ -398,6 +398,17 @@ v0.31.0 补齐首组安全 Box owning access：
 - 新的 unsafe `raw_take` 只负责从 `MutPtr(T)` move-out，安全 `forget` 明确消费但不析构 owner。
   两者都进入 cleanup verifier；安全 alloc wrapper 封闭未初始化 storage 窗口。
 
+v0.32.0 落地 generic inherent extension：
+
+- `extend(T: type) Cell(T) { ... }` 会随每个 concrete struct/enum instance 单态化；target 参数可重排，
+  但必须完整决定 extension 参数。
+- 泛型关联函数支持 `Cell.new(42)` 的省略推断、期望结果类型和 `Cell.new(T: i64)(42)` 命名类型参数；
+  `_` 推断语法仍不存在。
+- module resolver 保留 header 参数作用域并限定到定义类型的 package；重复方法、自由参数、generic
+  member、associated constant 与尚无 where selection 的 generic trait impl 都给出确定错误。
+- alloc 现在公开 `Box.new`、`as_mut_ptr`、`into_inner`、`replace` 方法；它们来自普通
+  `extend(T: type) Box(T)` 源，原有自由函数继续兼容。
+
 标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
 所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
 `Copy`，v0.9 建立 cleanup CFG，v0.10 补齐资源 storage/transfer，v0.11 完成完整 move-path forest 与
@@ -409,8 +420,8 @@ downcast remainder，v0.20 完成 guard rollback，v0.21 完成本地 `FnOnce` r
 正式 cleanup IR 的对齐，v0.25 开放 concrete callable 的局部移动，v0.26 接通拥有环境的跨函数返回，
 v0.27 建立 raw pointer 与最小 `unsafe` 边界，v0.28 固定可替换 allocator ABI，v0.29 提供 target-aware
 layout intrinsic，v0.30 以普通 alloc 源实现首个 owning `Box(T)`，v0.31 补齐 `into_inner` 与 replace
-所有权访问。下一步补齐泛型 `extend`、约束和生命周期化 Box 借用，再以相同 allocator/drop 基础推进
-`Vec(T)`；泛型 callable
+所有权访问，v0.32 落地 blanket generic inherent extension 与 Box 方法表面。下一步加入 `where`
+约束和生命周期化 Box 借用，再以相同 allocator/drop 基础推进 `Vec(T)`；泛型 callable
 参数将在正式的 `where` / `Fn` 约束语法落地后开放。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
 运行时之后。
 

@@ -900,6 +900,25 @@ where T: Display {
 }
 ```
 
+v0.32 实际开放的是 blanket generic inherent extension：
+
+```sali
+let Cell(T: type) = struct(value: T)
+
+extend(T: type) Cell(T) {
+  let new(move value: T): Cell(T) = Cell(value)
+  let take(move self)(): T = self.value
+}
+
+let cell = Cell.new(42)
+let value = cell.take()
+```
+
+类型参数从 target 的具体实例反向代入方法；关联函数则像普通泛型函数一样从实参、期望结果类型或
+`Cell.new(T: i64)(42)` 这样的命名类型参数推断。多参数 target 可以重排，但首版要求每个声明参数都
+作为裸 target argument 恰好出现一次。generic member、associated constant、具体 specialization、
+generic trait implementation 和 `where` selection 尚未开放；它们不会被悄悄当作 inherent 实现。
+
 实现参数必须能从目标类型、trait 参数或 where 约束唯一决定，防止产生无法选择的自由参数。
 
 ### 10.3 一致性规则
@@ -1523,6 +1542,17 @@ let previous = box_replace(boxed)(replacement)
 `forget(value)` 消费 owner 而不运行 drop。后者与 Rust `mem::forget` 一样允许有意泄漏，但不允许
 再次使用已消费的绑定。普通安全代码不直接接触未初始化窗口；alloc 源在 `raw_take` 后要么立即
 `raw_init`，要么先释放 allocation 再 forget 已拆空的 Box。
+
+v0.32 用 generic inherent extension 给同一套 alloc 实现加上方法表面：
+
+```sali
+let mut boxed = Box.new(40)
+let previous = boxed.replace(41)
+let value = boxed.into_inner()
+```
+
+也支持显式 `Box(i32).new(40)`、期望类型推断和 `boxed.as_mut_ptr()`。自由函数继续保留作为兼容与
+bootstrap 表面；方法只是普通 Salicin extension 单态化，不是 compiler hard-code dispatch。
 
 首版 C ABI 只允许标量、原始指针、C ABI 函数指针和 `@repr(C)` 聚合。C 函数只有一个参数组，
 不允许柯里化、泛型、闭包环境、trait、Future 或 Salicin 私有容器；`borrow` 不跨 ABI，必须转换为

@@ -259,6 +259,17 @@ impl Parser {
 
     fn extend_definition(&mut self) -> Result<ExtendDef, ParseError> {
         self.expect(&TokenKind::Extend, "`extend`")?;
+        let (compile_groups, runtime_groups) = self.declaration_groups(false)?;
+        if !runtime_groups.is_empty() {
+            return Err(self.error_here(
+                "extend headers accept only compile-time parameters before the target type",
+            ));
+        }
+        if compile_groups.len() > 1 {
+            return Err(
+                self.error_here("extend headers support exactly one compile-time parameter group")
+            );
+        }
         let target = self.type_expr()?;
         let trait_ref = if self.take(&TokenKind::Colon) {
             Some(self.type_expr()?)
@@ -282,6 +293,7 @@ impl Parser {
         self.expect(&TokenKind::RBrace, "`}` after extend members")?;
 
         Ok(ExtendDef {
+            compile_groups,
             target,
             trait_ref,
             members,
@@ -2365,12 +2377,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_runtime_parameters_on_generic_data_and_generic_extend_headers() {
+    fn rejects_runtime_parameters_on_generic_data_and_extend_headers() {
         let data = parse("let Bad(T: type)(value: T) = struct(value: T)\n").unwrap_err();
         assert!(data.message.contains("runtime parameters"));
 
-        let extension = parse("extend(T: type) Cell(T) {}\n").unwrap_err();
-        assert!(extension.message.contains("expected `)`"));
+        let extension = parse("extend(value: i32) Cell(i32) {}\n").unwrap_err();
+        assert!(extension.message.contains("only compile-time parameters"));
     }
 
     #[test]
@@ -2969,6 +2981,27 @@ mod tests {
         };
         assert_eq!(make.compile_groups.len(), 1);
         assert_eq!(make.groups.len(), 1);
+    }
+
+    #[test]
+    fn parses_compile_parameters_on_extend_headers() {
+        let program = parse(
+            "let Cell(T: type) = struct(value: T)\n\
+             extend(T: type) Cell(T) {\n\
+               let get(borrow self)(): T = self.value\n\
+             }\n",
+        )
+        .unwrap();
+
+        let Item::Extend(extension) = &program.items[1] else {
+            panic!("expected extend declaration");
+        };
+        assert_eq!(extension.compile_groups.len(), 1);
+        assert_eq!(extension.compile_groups[0][0].name, "T");
+        assert_eq!(
+            extension.target,
+            Type::Named("Cell".into(), vec![Type::Named("T".into(), Vec::new())])
+        );
     }
 
     #[test]

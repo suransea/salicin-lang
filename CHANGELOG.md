@@ -6,6 +6,20 @@ subset.
 
 ## Unreleased
 
+## 0.32.0 - 2026-07-21
+
+- Implemented blanket generic inherent extensions with the specified
+  `extend(T: type) Cell(T) { ... }` syntax. Header parameters survive module qualification and are
+  substituted when each concrete struct or enum instance is materialized.
+- Added inferred generic associated-function dispatch, including runtime arguments, expected result
+  types, named type arguments, reordered target parameters, and qualified file-module types. Methods
+  use the existing concrete receiver ABI and preserve move, mutable-borrow, and recursive cleanup.
+- Added `Box.new`, `Box(T).new`, `boxed.as_mut_ptr()`, `boxed.into_inner()`, and `boxed.replace(value)`
+  in ordinary alloc source while retaining the free-function compatibility surface.
+- Enforced defining-package ownership, determined extension parameters, duplicate-member rejection,
+  and first-slice diagnostics for generic members, associated constants, specialization, and generic
+  trait implementations that still await `where`-clause selection.
+
 ## 0.31.0 - 2026-07-21
 
 - Added safe source-backed `box_into_inner` and `box_replace` operations. The former consumes the

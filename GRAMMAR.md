@@ -167,6 +167,12 @@ where T: Display {
 }
 ```
 
+v0.32 实现其中不带 trait/where 的 blanket inherent 子集。每个声明参数必须在 target arguments 中
+作为裸类型参数恰好出现一次，因此 `extend(T: type) Box(T)` 与参数重排合法，自由参数、具体
+specialization、generic member 和 associated constant 暂不合法。关联函数可写 `Box.new(value)`，其
+参数通过实参、期望结果或命名参数推断，不使用 `_` placeholder。泛型 trait implementation 与
+`where` selection 仍保留为后续语义。
+
 ### 4.4 导入与 FFI
 
 ```ebnf

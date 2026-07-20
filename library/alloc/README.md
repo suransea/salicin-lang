@@ -12,3 +12,7 @@ monomorphizer, visibility checker, ownership analysis, and LLVM lowering.
 allocation. `box_replace` requires a mutable borrow and exchanges the heap value without duplicating
 ownership. Their small unsafe regions use the reserved `raw_take`, `raw_init`, and allocator
 intrinsics; callers see safe owning operations and ordinary move diagnostics.
+
+Since v0.32 the bundle also defines `extend(T: type) Box(T)` in source. This supplies inferred
+`Box.new`, `as_mut_ptr`, `into_inner`, and `replace` members through the compiler's general generic
+inherent-extension monomorphizer; the free functions remain the bootstrap and compatibility layer.

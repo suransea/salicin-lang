@@ -153,4 +153,6 @@ the first owning `alloc` type. v0.30 embeds an independently validated ordinary 
 validated private `Box(T)` representation and returns it through the same allocator ABI. Safe generic
 deref APIs and generic callable parameters still await the source-level constraint surface. v0.31
 adds verified move-out/forget primitives used by alloc's safe `box_into_inner` and `box_replace`
-ownership operations; platform `std` remains later work over the C ABI and minimal runtime.
+ownership operations. v0.32 adds blanket generic inherent extensions and uses them for Box methods;
+trait bounds and lifetime-carrying safe dereference still await the constraint surface. Platform
+`std` remains later work over the C ABI and minimal runtime.

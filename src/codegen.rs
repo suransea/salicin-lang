@@ -152,6 +152,13 @@ struct NominalInstanceInfo {
     canonical: String,
 }
 
+#[derive(Clone)]
+struct GenericInherentExtension {
+    target_arguments: Vec<String>,
+    members: Vec<ExtendMember>,
+    origin: ItemOrigin,
+}
+
 #[derive(Debug, Clone)]
 struct InferredTypeArgument {
     ty: Ty,
@@ -991,7 +998,7 @@ impl LowerCtx {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct InherentMemberSet {
     methods: HashMap<String, String>,
     functions: HashMap<String, String>,
@@ -1140,6 +1147,9 @@ struct Analyzer {
     enum_layouts: HashMap<String, EnumLayout>,
     nominal_accesses: HashMap<String, AccessBoundary>,
     inherent_members: HashMap<String, InherentMemberSet>,
+    generic_inherent_extensions: HashMap<String, Vec<GenericInherentExtension>>,
+    generic_inherent_functions: HashMap<(String, String), String>,
+    suppress_generic_inherent_instantiation: usize,
     traits: HashMap<String, TraitSchema>,
     trait_impl_headers: HashSet<TraitImplKey>,
     trait_impls: HashMap<TraitImplKey, TraitImplInfo>,
@@ -1196,6 +1206,9 @@ impl Analyzer {
             enum_layouts: HashMap::new(),
             nominal_accesses: HashMap::new(),
             inherent_members: HashMap::new(),
+            generic_inherent_extensions: HashMap::new(),
+            generic_inherent_functions: HashMap::new(),
+            suppress_generic_inherent_instantiation: 0,
             traits: HashMap::new(),
             trait_impl_headers: HashSet::new(),
             trait_impls: HashMap::new(),
@@ -2490,6 +2503,16 @@ impl Analyzer {
     }
 
     fn collect_extension(&mut self, extension: ExtendDef, origin: ItemOrigin) {
+        if !extension.compile_groups.is_empty() {
+            if extension.trait_ref.is_some() {
+                self.error(
+                    "generic trait implementations are not supported until where-clause selection is implemented",
+                );
+            } else {
+                self.collect_generic_inherent_extension(extension, origin);
+            }
+            return;
+        }
         if extension.trait_ref.is_some() {
             self.collect_trait_extension(extension, origin);
             return;
@@ -2518,7 +2541,23 @@ impl Analyzer {
             self.error(format!("unknown extension target `{target}`"));
             return;
         }
-        let member_access = self.nominal_access_or_internal(&target);
+        if self
+            .nominal_accesses
+            .get(&target)
+            .is_some_and(|access| access.origin.package != origin.package)
+        {
+            self.error(format!(
+                "inherent extension for `{target}` must be declared in the package that defines the type"
+            ));
+            return;
+        }
+        let mut member_access = self.nominal_access_or_internal(&target);
+        let target_ty = if self.struct_defs.contains_key(&target) {
+            Ty::Struct(target.clone())
+        } else {
+            Ty::Enum(target.clone())
+        };
+        member_access = self.restrict_access_boundary_to_type(&member_access, &target_ty, &origin);
 
         for member in extension.members {
             match member {
@@ -2576,20 +2615,36 @@ impl Analyzer {
                         continue;
                     }
 
-                    for group in &mut function.groups {
-                        for parameter in group {
-                            substitute_self_type(&mut parameter.ty, &target);
-                        }
-                    }
-                    if let Some(result) = &mut function.return_type {
-                        substitute_self_type(result, &target);
-                    }
+                    let mut self_substitution = HashMap::new();
+                    self_substitution
+                        .insert("Self".to_owned(), Type::Named(target.clone(), Vec::new()));
+                    substitute_function_types(&mut function, &self_substitution);
                     let canonical = if is_method {
                         inherent_method_name(&target, &short_name)
                     } else {
                         associated_function_name(&target, &short_name)
                     };
                     function.name = canonical.clone();
+                    let groups = function
+                        .groups
+                        .iter()
+                        .map(|group| {
+                            group
+                                .iter()
+                                .map(|parameter| ParamSig {
+                                    name: parameter.name.clone(),
+                                    ty: self.lower_source_type(&parameter.ty),
+                                    mode: parameter.mode,
+                                })
+                                .collect()
+                        })
+                        .collect();
+                    let result = function
+                        .return_type
+                        .as_ref()
+                        .map(|result| self.lower_source_type(result));
+                    self.signatures
+                        .insert(canonical.clone(), FunctionSig { groups, result });
                     self.function_order.push(canonical.clone());
                     self.functions.insert(canonical.clone(), function);
                     self.function_origins
@@ -2651,6 +2706,254 @@ impl Analyzer {
                 }
             }
         }
+    }
+
+    fn collect_generic_inherent_extension(&mut self, extension: ExtendDef, origin: ItemOrigin) {
+        let parameters = extension
+            .compile_groups
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+        if extension.compile_groups.len() != 1 || parameters.is_empty() {
+            self.error(
+                "generic inherent extend requires exactly one non-empty type parameter group",
+            );
+            return;
+        }
+        let mut declared = HashSet::new();
+        for parameter in &parameters {
+            if parameter.name == "Self" || !declared.insert(parameter.name.clone()) {
+                self.error(format!(
+                    "invalid or duplicate generic extend parameter `{}`",
+                    parameter.name
+                ));
+                return;
+            }
+        }
+        let Type::Named(target_template, target_sources) = &extension.target else {
+            self.error("generic inherent extend target must be a generic nominal type");
+            return;
+        };
+        let expected = self
+            .struct_templates
+            .get(target_template)
+            .map(|definition| definition.compile_groups.iter().flatten().count())
+            .or_else(|| {
+                self.enum_templates
+                    .get(target_template)
+                    .map(|definition| definition.compile_groups.iter().flatten().count())
+            });
+        let Some(expected) = expected else {
+            self.error(format!(
+                "generic inherent extend target `{target_template}` is not a generic nominal type"
+            ));
+            return;
+        };
+        if self
+            .nominal_accesses
+            .get(target_template)
+            .is_some_and(|access| access.origin.package != origin.package)
+        {
+            self.error(format!(
+                "generic inherent extension for `{target_template}` must be declared in the package that defines the type"
+            ));
+            return;
+        }
+        if target_sources.len() != expected {
+            self.error(format!(
+                "generic extend target `{target_template}` expects {expected} type arguments, found {}",
+                target_sources.len()
+            ));
+            return;
+        }
+        let mut target_arguments = Vec::new();
+        let mut determined = HashSet::new();
+        for source in target_sources {
+            let Type::Named(name, arguments) = source else {
+                self.error(
+                    "generic inherent extend target arguments must be bare declared type parameters in the first version",
+                );
+                return;
+            };
+            if !arguments.is_empty() || !declared.contains(name) || !determined.insert(name.clone())
+            {
+                self.error(
+                    "generic inherent extend target arguments must use every declared type parameter exactly once",
+                );
+                return;
+            }
+            target_arguments.push(name.clone());
+        }
+        if determined.len() != parameters.len() {
+            self.error(
+                "every generic inherent extend parameter must be determined by the target type",
+            );
+            return;
+        }
+
+        for member in &extension.members {
+            let ExtendMember::Function(function) = member else {
+                self.error("generic inherent associated constants are not supported yet");
+                return;
+            };
+            if !function.compile_groups.is_empty() {
+                self.error(
+                    "generic members inside a generic inherent extend are not supported yet",
+                );
+                return;
+            }
+            let is_method = function
+                .groups
+                .first()
+                .is_some_and(|group| group.len() == 1 && group[0].name == "self");
+            if self
+                .generic_inherent_extensions
+                .get(target_template)
+                .is_some_and(|extensions| {
+                    extensions.iter().any(|existing| {
+                        existing.members.iter().any(|member| {
+                            let ExtendMember::Function(existing) = member else {
+                                return false;
+                            };
+                            existing.name == function.name
+                                && existing.groups.first().is_some_and(|group| {
+                                    group.len() == 1 && group[0].name == "self"
+                                }) == is_method
+                        })
+                    })
+                })
+            {
+                self.error(if is_method {
+                    format!(
+                        "duplicate generic inherent method `{target_template}.{}`",
+                        function.name
+                    )
+                } else {
+                    format!(
+                        "duplicate generic associated function `{target_template}.{}`",
+                        function.name
+                    )
+                });
+                return;
+            }
+        }
+
+        let template = GenericInherentExtension {
+            target_arguments,
+            members: extension.members.clone(),
+            origin: origin.clone(),
+        };
+
+        for member in &extension.members {
+            let ExtendMember::Function(function) = member else {
+                unreachable!("generic associated constants were rejected")
+            };
+            let is_method = function
+                .groups
+                .first()
+                .is_some_and(|group| group.len() == 1 && group[0].name == "self");
+            if is_method {
+                continue;
+            }
+            let key = (target_template.clone(), function.name.clone());
+            if self.generic_inherent_functions.contains_key(&key) {
+                self.error(format!(
+                    "duplicate generic associated function `{target_template}.{}`",
+                    function.name
+                ));
+                continue;
+            }
+            let canonical = generic_inherent_function_name(target_template, &function.name);
+            let mut generic = function.clone();
+            generic.name = canonical.clone();
+            generic.compile_groups = extension.compile_groups.clone();
+            let mut self_substitution = HashMap::new();
+            self_substitution.insert("Self".to_owned(), extension.target.clone());
+            substitute_function_types(&mut generic, &self_substitution);
+            self.function_template_order.push(canonical.clone());
+            self.function_templates.insert(canonical.clone(), generic);
+            self.function_template_origins
+                .insert(canonical.clone(), origin.clone());
+            let access = self.nominal_access_or_internal(target_template);
+            self.function_accesses.insert(canonical.clone(), access);
+            self.generic_inherent_functions.insert(key, canonical);
+        }
+
+        self.generic_inherent_extensions
+            .entry(target_template.clone())
+            .or_default()
+            .push(template.clone());
+
+        let existing = self
+            .nominal_instances
+            .iter()
+            .filter(|(_, instance)| instance.key.template == *target_template)
+            .map(|(canonical, instance)| {
+                (
+                    canonical.clone(),
+                    instance.key.arguments.clone(),
+                    instance.key.kind,
+                )
+            })
+            .collect::<Vec<_>>();
+        for (canonical, arguments, _) in existing {
+            let Some(source_arguments) = arguments
+                .iter()
+                .map(|argument| self.source_type_for_ty(argument))
+                .collect::<Option<Vec<_>>>()
+            else {
+                continue;
+            };
+            self.instantiate_generic_inherent_extension(
+                target_template,
+                &canonical,
+                &source_arguments,
+                &template,
+            );
+        }
+    }
+
+    fn instantiate_generic_inherent_extension(
+        &mut self,
+        target_template: &str,
+        canonical: &str,
+        source_arguments: &[Type],
+        extension: &GenericInherentExtension,
+    ) {
+        if source_arguments.len() != extension.target_arguments.len() {
+            self.error(format!(
+                "internal error: invalid generic extension arguments for `{target_template}`"
+            ));
+            return;
+        }
+        let mut substitutions = HashMap::new();
+        for (name, source) in extension.target_arguments.iter().zip(source_arguments) {
+            substitutions.insert(name.clone(), source.clone());
+        }
+        let mut members = extension.members.clone();
+        for member in &mut members {
+            match member {
+                ExtendMember::Function(function) => {
+                    substitute_function_types(function, &substitutions)
+                }
+                ExtendMember::Const(binding) => {
+                    if let Some(annotation) = &mut binding.annotation {
+                        substitute_type_parameters(annotation, &substitutions);
+                    }
+                    substitute_expr_types(&mut binding.value, &substitutions);
+                }
+            }
+        }
+        self.collect_extension(
+            ExtendDef {
+                compile_groups: Vec::new(),
+                target: Type::Named(canonical.to_owned(), Vec::new()),
+                trait_ref: None,
+                members,
+            },
+            extension.origin.clone(),
+        );
     }
 
     fn collect_nominal_layouts(&mut self) {
@@ -2976,9 +3279,11 @@ impl Analyzer {
                 arguments.push(Ty::Struct(marker));
             }
             let snapshot = self.snapshot_nominals();
-            if let Some(canonical) =
-                self.ensure_nominal_instance(kind, &template_name, source_arguments, arguments)
-            {
+            self.suppress_generic_inherent_instantiation += 1;
+            let instance =
+                self.ensure_nominal_instance(kind, &template_name, source_arguments, arguments);
+            self.suppress_generic_inherent_instantiation -= 1;
+            if let Some(canonical) = instance {
                 let mut states = HashMap::new();
                 let mut stack = Vec::new();
                 self.visit_nominal_layout(&canonical, &mut states, &mut stack);
@@ -3075,6 +3380,7 @@ impl Analyzer {
             ));
             return None;
         }
+        let instance_source_arguments = source_arguments.clone();
         let mut substitutions = HashMap::new();
         for (parameter, argument) in parameters.iter().zip(source_arguments) {
             if substitutions
@@ -3160,6 +3466,21 @@ impl Analyzer {
         }
         self.nominal_instance_states
             .insert(key, NominalInstanceState::Ready);
+        if self.suppress_generic_inherent_instantiation == 0 {
+            let extensions = self
+                .generic_inherent_extensions
+                .get(template_name)
+                .cloned()
+                .unwrap_or_default();
+            for extension in &extensions {
+                self.instantiate_generic_inherent_extension(
+                    template_name,
+                    &canonical,
+                    &instance_source_arguments,
+                    extension,
+                );
+            }
+        }
         Some(canonical)
     }
 
@@ -3324,6 +3645,7 @@ impl Analyzer {
 
             let functions_before = self.functions.clone();
             let function_origins_before = self.function_origins.clone();
+            let function_accesses_before = self.function_accesses.clone();
             let function_order_before = self.function_order.clone();
             let signatures_before = self.signatures.clone();
             let function_states_before = self.function_states.clone();
@@ -3336,6 +3658,7 @@ impl Analyzer {
             let type_substitutions_before = self.function_type_substitutions.clone();
             let lifted_functions_before = self.lifted_functions.clone();
             let next_closure = self.next_closure;
+            let inherent_members_before = self.inherent_members.clone();
 
             let mut function = template;
             substitute_function_types(&mut function, &substitutions);
@@ -3372,6 +3695,7 @@ impl Analyzer {
             self.lower_function(&validation_name);
             self.functions = functions_before;
             self.function_origins = function_origins_before;
+            self.function_accesses = function_accesses_before;
             self.function_order = function_order_before;
             self.signatures = signatures_before;
             self.function_states = function_states_before;
@@ -3384,6 +3708,7 @@ impl Analyzer {
             self.function_type_substitutions = type_substitutions_before;
             self.lifted_functions = lifted_functions_before;
             self.next_closure = next_closure;
+            self.inherent_members = inherent_members_before;
         }
     }
 
@@ -9769,6 +10094,18 @@ impl Analyzer {
                     &groups,
                     context,
                 );
+            }
+            if let Expr::Name(target_template) = base.as_ref() {
+                if !context.shadows_top_level_name(target_template) {
+                    if let Some(canonical) = self
+                        .generic_inherent_functions
+                        .get(&(target_template.clone(), variant_name.clone()))
+                        .cloned()
+                    {
+                        return self
+                            .lower_generic_function_call(&canonical, &groups, expected, context);
+                    }
+                }
             }
             match self.resolve_nominal_type_head(base, context) {
                 Ok(Some((target, kind))) => {
@@ -17275,6 +17612,10 @@ fn associated_function_name(target: &str, member: &str) -> String {
     format!("{target}::function::{member}")
 }
 
+fn generic_inherent_function_name(target: &str, member: &str) -> String {
+    format!("$generic$inherent${target}::function::{member}")
+}
+
 fn associated_constant_name(target: &str, member: &str) -> String {
     format!("{target}::constant::{member}")
 }
@@ -17460,6 +17801,45 @@ mod tests {
             .collect();
         assert_eq!(nominal_instances.len(), 1);
         assert_eq!(nominal_instances[0].key.arguments, vec![Ty::I32]);
+    }
+
+    #[test]
+    fn generic_inherent_extensions_materialize_members_per_nominal_instance() {
+        let program = crate::parser::parse(
+            "let Cell(T: type) = struct(value: T)\n\
+             extend(T: type) Cell(T) {\n\
+               let new(move value: T): Cell(T) = Cell(value)\n\
+               let take(move self)(): T = self.value\n\
+             }\n\
+             let main(): i32 = { let cell = Cell.new(42); cell.take() }\n",
+        )
+        .expect("generic inherent extension source must parse");
+        let mut analyzer = Analyzer::new(&program);
+        let hir = analyzer
+            .analyze()
+            .expect("generic inherent extension must lower");
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+
+        let key = NominalInstanceKey {
+            kind: NominalKind::Struct,
+            template: "Cell".into(),
+            arguments: vec![Ty::I32],
+        };
+        let canonical = &analyzer.nominal_instance_names[&key];
+        let members = &analyzer.inherent_members[canonical];
+        assert!(members.functions.contains_key("new"));
+        assert!(members.methods.contains_key("take"));
+        assert!(hir
+            .functions
+            .iter()
+            .any(|function| function.name == members.methods["take"]));
+        assert!(analyzer
+            .generic_inherent_functions
+            .contains_key(&("Cell".to_owned(), "new".to_owned())));
     }
 
     #[test]
@@ -17860,11 +18240,14 @@ mod tests {
         assert_eq!(analyzer.nominal_instances.len(), 1);
         assert_eq!(analyzer.nominal_instance_names.len(), 1);
         assert!(analyzer.functions.is_empty());
-        assert_eq!(analyzer.function_templates.len(), 4);
+        assert_eq!(analyzer.function_templates.len(), 5);
         assert!(analyzer.function_templates.contains_key("box_new"));
         assert!(analyzer.function_templates.contains_key("box_ptr"));
         assert!(analyzer.function_templates.contains_key("box_into_inner"));
         assert!(analyzer.function_templates.contains_key("box_replace"));
+        assert!(analyzer
+            .generic_inherent_functions
+            .contains_key(&("Box".to_owned(), "new".to_owned())));
         assert!(analyzer.function_order.is_empty());
     }
 
@@ -18710,6 +19093,26 @@ let main(): i32 = 0
         assert!(errors.iter().any(|error| {
             error.message.contains("global") && error.message.contains("private type `Hidden`")
         }));
+    }
+
+    #[test]
+    fn generic_inherent_member_boundaries_include_concrete_type_arguments() {
+        compile_text(
+            r#"
+let Hidden = struct(value: i32)
+pub let Cell(T: type) = struct(pub value: T)
+extend(T: type) Cell(T) {
+  let new(move value: T): Cell(T) = Cell(value)
+  let take(move self)(): T = self.value
+}
+let use_hidden(): i32 = {
+  let cell = Cell.new(Hidden(42))
+  cell.take().value
+}
+let main(): i32 = use_hidden()
+"#,
+        )
+        .expect("private type arguments must narrow concrete generic member APIs");
     }
 
     #[test]
