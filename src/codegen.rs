@@ -8656,15 +8656,6 @@ impl Analyzer {
                     scrutinee.ty
                 ));
             }
-            if self.type_needs_drop(&scrutinee.ty)
-                && bindings
-                    .iter()
-                    .any(|binding| binding.moves && binding.path.len() > 1)
-            {
-                self.error(
-                    "moving a nested pattern binding out of a value that needs drop is not supported yet",
-                );
-            }
             if arm.guard.is_some() && self.type_needs_drop(&scrutinee.ty) && moves_payload {
                 self.error(
                     "guarded match arms cannot move pattern bindings out of a value that needs drop yet",
@@ -8956,6 +8947,7 @@ impl Analyzer {
                     struct_name,
                     &context.origin,
                 );
+                let binding_start = bindings.len();
                 for (index, pattern) in nested {
                     let mut nested_path = path.clone();
                     nested_path.push(index);
@@ -8966,6 +8958,15 @@ impl Analyzer {
                         context,
                         bindings,
                     );
+                }
+                if self.type_has_custom_drop(ty)
+                    && bindings[binding_start..]
+                        .iter()
+                        .any(|binding| binding.moves)
+                {
+                    self.error(format!(
+                        "cannot move a nested pattern binding through `{ty}` because it implements `Drop`"
+                    ));
                 }
             }
             Pattern::Integer(_) | Pattern::Bool(_) => self.error(format!(
@@ -14794,16 +14795,16 @@ impl<'a> FunctionEmitter<'a> {
             return Ok(());
         }
 
-        let moved_fields = bindings
-            .iter()
-            .filter(|binding| binding.moves && binding.path.len() == 1)
-            .map(|binding| binding.path[0])
-            .collect::<HashSet<_>>();
         let variant = &layout.variants[variant];
         let aggregate_ty = llvm_value_type(&root.ty)?;
         for (field_index, field) in variant.fields.iter().enumerate() {
             let llvm_index = 1 + variant.payload_offset + field_index;
-            if moved_fields.contains(&llvm_index) || !self.program.needs_drop(&field.ty) {
+            let moved_paths = bindings
+                .iter()
+                .filter(|binding| binding.moves && binding.path.first() == Some(&llvm_index))
+                .map(|binding| binding.path[1..].to_vec())
+                .collect::<Vec<_>>();
+            if !self.program.needs_drop(&field.ty) {
                 continue;
             }
             let pointer = self.fresh_register();
@@ -14811,7 +14812,56 @@ impl<'a> FunctionEmitter<'a> {
                 "{pointer} = getelementptr inbounds {aggregate_ty}, ptr {}, i32 0, i32 {llvm_index}",
                 root.pointer
             ));
-            self.register_drop_slot(None, field.ty.clone(), pointer)?;
+            self.register_match_remainder(&field.ty, pointer, &moved_paths)?;
+        }
+        Ok(())
+    }
+
+    fn register_match_remainder(
+        &mut self,
+        ty: &Ty,
+        pointer: String,
+        moved_paths: &[Vec<usize>],
+    ) -> Result<(), Diagnostic> {
+        if moved_paths.is_empty() {
+            return self.register_drop_slot(None, ty.clone(), pointer);
+        }
+        if moved_paths.iter().any(Vec::is_empty) || !self.program.needs_drop(ty) {
+            return Ok(());
+        }
+        if self.program.drop_methods.contains_key(ty) {
+            return Err(Diagnostic::new(format!(
+                "internal error: match split custom Drop type `{ty}`"
+            )));
+        }
+        let Ty::Struct(name) = ty else {
+            return Err(Diagnostic::new(format!(
+                "internal error: match move path descends through non-struct `{ty}`"
+            )));
+        };
+        let fields = self
+            .program
+            .struct_layout(name)
+            .ok_or_else(|| {
+                Diagnostic::new(format!("internal error: missing struct layout `{name}`"))
+            })?
+            .fields
+            .clone();
+        let aggregate_ty = llvm_value_type(ty)?;
+        for (index, field) in fields.iter().enumerate() {
+            if !self.program.needs_drop(&field.ty) {
+                continue;
+            }
+            let child_paths = moved_paths
+                .iter()
+                .filter(|path| path.first() == Some(&index))
+                .map(|path| path[1..].to_vec())
+                .collect::<Vec<_>>();
+            let child_pointer = self.fresh_register();
+            self.instruction(format!(
+                "{child_pointer} = getelementptr inbounds {aggregate_ty}, ptr {pointer}, i32 0, i32 {index}"
+            ));
+            self.register_match_remainder(&field.ty, child_pointer, &child_paths)?;
         }
         Ok(())
     }
@@ -17284,6 +17334,29 @@ let main(): i32 = Choice.Some(Resource(1)) match {
         assert!(guarded_move
             .iter()
             .any(|error| error.message.contains("guarded match arms")));
+
+        let nested_custom_drop = compile_text(
+            r#"
+let Resource = struct(value: i32)
+let Wrapper = struct(resource: Resource)
+let Choice = enum { Some(Wrapper), None }
+extend Resource: Drop {
+  let drop(mut borrow self)(): () = ()
+}
+extend Wrapper: Drop {
+  let drop(mut borrow self)(): () = ()
+}
+let main(): i32 = Choice.Some(Wrapper(Resource(1))) match {
+  Some(Wrapper(resource)) => 1,
+  None => 0
+}
+"#,
+        )
+        .expect_err("a nested custom Drop aggregate must remain complete");
+        assert!(nested_custom_drop.iter().any(|error| {
+            error.message.contains("nested pattern binding")
+                && error.message.contains("implements `Drop`")
+        }));
     }
 
     #[test]

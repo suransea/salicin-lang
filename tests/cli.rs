@@ -489,6 +489,24 @@ fn match_payload_moves_transfer_drop_ownership() {
         "the unmatched payload sibling was not dropped:\n{}",
         output_text(&trapped)
     );
+
+    let nested = salic()
+        .arg("run")
+        .arg(fixture("pass", "drop_match_nested.sali"))
+        .output()
+        .expect("run nested match payload drop program");
+    assert_eq!(nested.status.code(), Some(42), "{}", output_text(&nested));
+
+    let nested_trap = salic()
+        .arg("run")
+        .arg(fixture("pass", "drop_match_nested_trap.sali"))
+        .output()
+        .expect("run nested match sibling cleanup trap");
+    assert!(
+        !nested_trap.status.success(),
+        "the nested unmatched sibling was not dropped:\n{}",
+        output_text(&nested_trap)
+    );
 }
 
 #[test]

@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.19.0 - 2026-07-21
+
+- Extended enum match ownership transfer through nested structural payload patterns. Recursive
+  remainder lowering now partitions each moved path from still-owned siblings at every struct
+  level and assigns cleanup slots only to the surviving subtrees.
+- Preserved nested remainder cleanup across normal arm completion and early return, with native
+  success and trap tests covering siblings both inside the destructured struct and beside it in the
+  active enum variant.
+- Rejected nested movement through a type with custom `Drop`, whose destructor requires an intact
+  `self`. Guarded resource moves remain pending rollback-aware lowering.
+
 ## 0.18.0 - 2026-07-21
 
 - Lowered ownership transfer from enum match payloads into pattern bindings. Moving a payload clears

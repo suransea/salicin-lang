@@ -275,13 +275,21 @@ v0.18.0 接通 enum match payload 的所有权转移：
 - 自身有 custom `Drop` 的 enum 仍不可拆分；带资源的嵌套 pattern move 与 guarded payload move 暂时
   拒绝，分别等待 downcast 子树和 guard-failure rollback。
 
+v0.19.0 将 transfer 递归到嵌套结构 payload：
+
+- `Some(Bundle(left, _), _)` 这类 pattern 可把深层字段移入 binding；lowering 沿路径逐层拆分结构，
+  对内部和 active variant 同级的未移动资源分别建立 cleanup slot。
+- 嵌套 remainder 在分支正常结束和提前 `return` 上使用同一套逆序清理。穿过 custom-`Drop` 类型的
+  嵌套移动仍被拒绝，因为其 destructor 必须观察完整 `self`。
+- guarded resource move 仍等待 guard 失败时的所有权回滚；closure environment cleanup 随后处理。
+
 标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
 所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
 `Copy`，v0.9 建立 cleanup CFG，v0.10 补齐资源 storage/transfer，v0.11 完成完整 move-path forest 与
 初始化 fixed point，v0.12 再完成 temporary storage liveness，v0.14 已加入 `needs_drop` 与控制流敏感
 drop-flag 计划，v0.15 提供 `Drop` 与递归 glue，v0.16 完成第一阶段结构化 scope-exit lowering，
-v0.17 已物化 struct projection flags，v0.18 接通直接 enum payload binding。下一步补齐嵌套
-downcast/guard rollback 与 capture cleanup pending，其后才固定
+v0.17 已物化 struct projection flags，v0.18 接通直接 enum payload binding，v0.19 补齐嵌套
+downcast remainder。下一步完成 guard rollback 与 capture cleanup pending，其后才固定
 raw pointer 与 allocator ABI 并进入 `alloc`。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
 运行时之后。
 

@@ -1,0 +1,22 @@
+let Resource = struct(value: i32)
+let Bundle = struct(left: Resource, right: Resource)
+let Choice = enum { Some(Bundle, Resource), None }
+
+extend Resource: Drop {
+  let drop(mut borrow self)(): () = {
+    let trapped = 1 / self.value
+  }
+}
+
+let consume(move value: Resource): () = ()
+
+let main(): i32 = Choice.Some(
+  Bundle(Resource(1), Resource(0)),
+  Resource(1)
+) match {
+  Some(Bundle(left, _), _) => do {
+    consume(left)
+    0
+  },
+  None => 0
+}

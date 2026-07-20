@@ -88,11 +88,17 @@ whole-enum ownership, registers moved resource bindings independently, and prese
 resource siblings as fallback cleanup slots across normal and early-return exits. Custom-`Drop`
 enums remain indivisible; nested payload moves and guarded resource moves await downcast trees and
 guard rollback. Closure-environment projections remain pending.
+
+The v0.19 emitter recursively partitions nested structural payload patterns. A deep moved binding
+owns its selected subtree, while resource siblings at every enclosing struct and active-variant
+level retain independent cleanup slots on normal and early-return exits. Traversal through a type
+with custom `Drop` remains forbidden because its destructor requires an intact value. Guarded
+resource transfer still awaits rollback-aware lowering.
 Compile-time globals are independently materialized at each use and are
 outside the cleanup plan; resource-bearing global semantics must be settled before `Drop` is
 allowed on globals.
 
-The adjacent standard-library route is therefore: finish nested enum, guarded-pattern, and closure
-cleanup details; then define raw
+The adjacent standard-library route is therefore: finish guarded-pattern and closure cleanup
+details; then define raw
 pointers and the allocator ABI. Only after those boundaries are real will `alloc` be added, followed
 by platform `std` over the C ABI and minimal runtime.
