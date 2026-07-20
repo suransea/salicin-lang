@@ -173,12 +173,33 @@ fn raw_pointer_read_and_write_run_with_expected_result() {
 
 #[test]
 fn raw_allocator_abi_allocates_aligned_storage_and_deallocates_it() {
-    for name in ["raw_allocator_i32.sali", "raw_allocator_inferred.sali"] {
+    for name in [
+        "raw_allocator_i32.sali",
+        "raw_allocator_inferred.sali",
+        "raw_allocator_layout.sali",
+    ] {
         let output = salic()
             .arg("run")
             .arg(fixture("pass", name))
             .output()
             .expect("run raw allocator fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn target_layout_intrinsics_cover_globals_aggregates_and_generic_instances() {
+    for name in ["layout_intrinsics.sali", "layout_intrinsics_generic.sali"] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run target layout fixture");
         assert_eq!(
             output.status.code(),
             Some(42),

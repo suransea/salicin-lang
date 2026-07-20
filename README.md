@@ -369,6 +369,15 @@ v0.28.0 固定可替换 allocator ABI：
   释放要求完全相同的 size/alignment。
 - 外部强符号可覆盖默认实现；原生链接测试用自定义 allocator 覆盖两个弱符号并验证实际分派。
 
+v0.29.0 提供 target-aware 类型布局查询：
+
+- `size_of(T)` / `align_of(T)` 返回 `u64`，覆盖标量、raw pointer、array、struct/enum、具体泛型实例与
+  concrete callable；无数据表示的类型会被拒绝。
+- lowering 使用 LLVM `getelementptr`/`ptrtoint` 常量表达式，从最终 target 获得 pointer width、padding
+  与 alignment，不在 Salicin 编译器或库中硬编码 LP64 假设。
+- 查询可参与函数中的普通整数表达式，也可单独初始化顶层常量；target-dependent 顶层符号运算暂时
+  明确拒绝。allocator 原生测试已经直接使用查询结果分配、访问并释放聚合。
+
 标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
 所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
 `Copy`，v0.9 建立 cleanup CFG，v0.10 补齐资源 storage/transfer，v0.11 完成完整 move-path forest 与
@@ -378,8 +387,8 @@ v0.17 已物化 struct projection flags，v0.18 接通直接 enum payload bindin
 downcast remainder，v0.20 完成 guard rollback，v0.21 完成本地 `FnOnce` resource captures，v0.22
 开放 owning partial captures，v0.23 完成 borrowed overwrite cleanup，v0.24 完成 match planner 与
 正式 cleanup IR 的对齐，v0.25 开放 concrete callable 的局部移动，v0.26 接通拥有环境的跨函数返回，
-v0.27 建立 raw pointer 与最小 `unsafe` 边界，v0.28 固定可替换 allocator ABI。下一步进入 `alloc`
-并实现首个 owning `Box(T)`；泛型 callable
+v0.27 建立 raw pointer 与最小 `unsafe` 边界，v0.28 固定可替换 allocator ABI，v0.29 提供 target-aware
+layout intrinsic。下一步进入 `alloc` 并实现首个 owning `Box(T)`；泛型 callable
 参数将在正式的 `where` / `Fn` 约束语法落地后开放。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
 运行时之后。
 

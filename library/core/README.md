@@ -145,6 +145,8 @@ allowed on globals.
 
 The v0.27 compiler defines `Ptr(T)`, `MutPtr(T)`, lexical address conversion, and Copy-only raw
 loads/stores inside `unsafe do`. v0.28 adds the reserved `raw_alloc`/`raw_dealloc` intrinsics and a
-two-symbol replaceable allocator ABI with a weak default runtime. These boundaries are now ready for
+two-symbol replaceable allocator ABI with a weak default runtime. v0.29 target-layout intrinsics
+(`size_of(T)` and `align_of(T)`) derive pointer width, aggregate
+padding, and alignment from LLVM rather than a host assumption. These boundaries are now ready for
 the first owning `alloc` type (`Box(T)`), followed later by platform `std` over the C ABI and minimal
 runtime. Generic callable parameters still await the source-level constraint surface.

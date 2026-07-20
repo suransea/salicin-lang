@@ -488,6 +488,12 @@ enum HirMatcher {
     All,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LayoutQueryKind {
+    Size,
+    Align,
+}
+
 #[derive(Debug, Clone)]
 struct HirMatchArm {
     matcher: HirMatcher,
@@ -574,6 +580,10 @@ enum HirExprKind {
         pointer: Box<HirExpr>,
         size: Box<HirExpr>,
         align: Box<HirExpr>,
+    },
+    LayoutQuery {
+        queried: Ty,
+        kind: LayoutQueryKind,
     },
     Block(Vec<HirStmt>, Option<Box<HirExpr>>),
     If {
@@ -1225,6 +1235,8 @@ impl Analyzer {
             "MutPtr".to_owned(),
             "raw_alloc".to_owned(),
             "raw_dealloc".to_owned(),
+            "size_of".to_owned(),
+            "align_of".to_owned(),
         ]);
         let mut extensions = Vec::new();
         if program.items.len() != program.item_visibilities.len()
@@ -9593,6 +9605,9 @@ impl Analyzer {
             return self.lower_chain(base, member, Some(&groups), expected, context);
         }
         if let Expr::Name(name) = root {
+            if matches!(name.as_str(), "size_of" | "align_of") {
+                return self.lower_layout_query(name, &groups, context);
+            }
             if name == "raw_alloc" {
                 return self.lower_raw_alloc(&groups, expected, context);
             }
@@ -9758,6 +9773,36 @@ impl Analyzer {
         }
         self.error("calls require a named function, constructor, associated function, or method");
         error_expr()
+    }
+
+    fn lower_layout_query(
+        &mut self,
+        name: &str,
+        groups: &[&[CallArg]],
+        context: &LowerCtx,
+    ) -> HirExpr {
+        let [group] = groups else {
+            self.error(format!("`{name}` expects exactly one type argument group"));
+            return error_expr();
+        };
+        let Some(queried) = self.explicit_raw_pointee(name, group, context) else {
+            return error_expr();
+        };
+        if matches!(queried, Ty::Function(_) | Ty::Error) {
+            self.error(format!("`{name}` cannot query layout of `{queried}`"));
+            return error_expr();
+        }
+        HirExpr {
+            ty: Ty::U64,
+            kind: HirExprKind::LayoutQuery {
+                queried,
+                kind: if name == "size_of" {
+                    LayoutQueryKind::Size
+                } else {
+                    LayoutQueryKind::Align
+                },
+            },
+        }
     }
 
     fn explicit_raw_pointee(
@@ -12683,6 +12728,7 @@ impl<'a> HirCleanupPlanner<'a> {
             HirExprKind::Integer(_)
             | HirExprKind::Bool(_)
             | HirExprKind::Unit
+            | HirExprKind::LayoutQuery { .. }
             | HirExprKind::Global(_)
             | HirExprKind::Function(_) => {
                 self.initialize_result(cursor, &result_use)?;
@@ -13765,6 +13811,7 @@ enum ConstValue {
     Bool(bool),
     Unit,
     Aggregate(Vec<ConstValue>),
+    LayoutQuery(Ty, LayoutQueryKind),
 }
 
 fn evaluate_globals(program: &HirProgram) -> Result<HashMap<String, ConstValue>, Vec<Diagnostic>> {
@@ -13826,6 +13873,9 @@ impl ConstantEvaluator<'_> {
             HirExprKind::Integer(value) => Some(ConstValue::Integer(*value)),
             HirExprKind::Bool(value) => Some(ConstValue::Bool(*value)),
             HirExprKind::Unit => Some(ConstValue::Unit),
+            HirExprKind::LayoutQuery { queried, kind } => {
+                Some(ConstValue::LayoutQuery(queried.clone(), *kind))
+            }
             HirExprKind::Array(elements) => Some(ConstValue::Aggregate(
                 elements
                     .iter()
@@ -14009,6 +14059,12 @@ impl ConstantEvaluator<'_> {
         operand: ConstValue,
         ty: &Ty,
     ) -> Option<ConstValue> {
+        if matches!(&operand, ConstValue::LayoutQuery(_, _)) {
+            self.error(
+                "target layout queries may only be standalone global constants in this version",
+            );
+            return None;
+        }
         match (operator, operand) {
             (UnaryOp::Not, ConstValue::Bool(value)) => Some(ConstValue::Bool(!value)),
             (UnaryOp::Neg, ConstValue::Integer(value)) => value
@@ -14031,6 +14087,14 @@ impl ConstantEvaluator<'_> {
         operand_ty: &Ty,
     ) -> Option<ConstValue> {
         use BinaryOp::*;
+        if matches!(&left, ConstValue::LayoutQuery(_, _))
+            || matches!(&right, ConstValue::LayoutQuery(_, _))
+        {
+            self.error(
+                "target layout queries may only be standalone global constants in this version",
+            );
+            return None;
+        }
         match (left, right) {
             (ConstValue::Integer(left), ConstValue::Integer(right)) => {
                 if matches!(operator, Div | Rem)
@@ -14885,6 +14949,10 @@ impl<'a> FunctionEmitter<'a> {
                 value: Some(if *value { "1" } else { "0" }.to_owned()),
             }),
             HirExprKind::Unit => Ok(Operand::unit()),
+            HirExprKind::LayoutQuery { queried, kind } => Ok(Operand {
+                ty: Ty::U64,
+                value: Some(llvm_layout_const(queried, *kind)?),
+            }),
             HirExprKind::Array(elements) => {
                 let cleanup_depth = self.drop_slots.len();
                 let aggregate_ty = llvm_value_type(&expression.ty)?;
@@ -16452,6 +16520,25 @@ fn llvm_field_type(ty: &Ty) -> Result<String, Diagnostic> {
     }
 }
 
+fn llvm_layout_const(ty: &Ty, kind: LayoutQueryKind) -> Result<String, Diagnostic> {
+    if matches!(ty, Ty::Unit | Ty::Never) {
+        return Ok(match kind {
+            LayoutQueryKind::Size => "0",
+            LayoutQueryKind::Align => "1",
+        }
+        .to_owned());
+    }
+    let llvm_ty = llvm_value_type(ty)?;
+    Ok(match kind {
+        LayoutQueryKind::Size => {
+            format!("ptrtoint (ptr getelementptr ({llvm_ty}, ptr null, i32 1) to i64)")
+        }
+        LayoutQueryKind::Align => format!(
+            "ptrtoint (ptr getelementptr ({{ i8, {llvm_ty} }}, ptr null, i32 0, i32 1) to i64)"
+        ),
+    })
+}
+
 fn zero_const(ty: &Ty, program: &HirProgram) -> Option<ConstValue> {
     match ty {
         Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 => Some(ConstValue::Integer(0)),
@@ -16496,6 +16583,7 @@ fn const_ir(value: &ConstValue, ty: &Ty, program: &HirProgram) -> Result<String,
         (ConstValue::Integer(value), ty) if ty.is_integer() => Ok(value.to_string()),
         (ConstValue::Bool(value), Ty::Bool) => Ok(if *value { "1" } else { "0" }.to_owned()),
         (ConstValue::Unit, Ty::Unit) => Ok("zeroinitializer".to_owned()),
+        (ConstValue::LayoutQuery(queried, kind), Ty::U64) => llvm_layout_const(queried, *kind),
         (ConstValue::Aggregate(values), Ty::Array(element, length)) => {
             if values.len() as u64 != *length {
                 return Err(Diagnostic::new(

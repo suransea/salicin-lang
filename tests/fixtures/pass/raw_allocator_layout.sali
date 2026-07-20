@@ -1,0 +1,19 @@
+let Payload = struct(left: i32, right: i32)
+
+extend Payload: Copy {}
+
+let main(): i32 = {
+  let pointer = unsafe do {
+    raw_alloc(Payload)(size_of(Payload), align_of(Payload))
+  }
+  unsafe do {
+    *pointer = Payload(left: 40, right: 2)
+  }
+  let payload = unsafe do {
+    *pointer
+  }
+  unsafe do {
+    raw_dealloc(pointer, size_of(Payload), align_of(Payload))
+  }
+  payload.left + payload.right
+}
