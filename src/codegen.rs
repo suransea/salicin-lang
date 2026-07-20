@@ -8,11 +8,11 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::ast::{
-    BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EnumDef, Expr, ExtendDef,
-    ExtendMember, Field, Function, Item, ItemOrigin, MatchArm, PassMode, Pattern, PatternFields,
-    Program, Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantFields, Visibility,
+    BinaryOp, Binding, CallArg, CompileParam, EnumDef, Expr, ExtendDef, ExtendMember, Field,
+    Function, Item, ItemOrigin, MatchArm, PassMode, Pattern, PatternFields, Program, Stmt,
+    StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantFields, Visibility,
 };
-use crate::core::{CoreBundle, LangItemKind, LangItems};
+use crate::core::{operator_trait_has_required_shape, CoreBundle, LangItemKind, LangItems};
 use crate::manifest::Edition;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -631,6 +631,7 @@ impl FlowState {
     }
 }
 
+#[derive(Clone)]
 struct ScopeFrame {
     names: HashMap<String, LocalInfo>,
     locals: Vec<LocalId>,
@@ -684,6 +685,7 @@ struct ClosureCaptureUse {
     mode: ClosureCaptureMode,
 }
 
+#[derive(Clone)]
 struct LoopFrame {
     result_ty: Option<Ty>,
     unit_only: bool,
@@ -691,6 +693,7 @@ struct LoopFrame {
     break_flows: Vec<FlowState>,
 }
 
+#[derive(Clone)]
 struct LowerCtx {
     scopes: Vec<ScopeFrame>,
     flow: FlowState,
@@ -846,10 +849,59 @@ struct AccessBoundary {
 }
 
 #[derive(Debug, Clone)]
-struct AddCandidate {
+struct BinaryOperatorCandidate {
     method: String,
     rhs: Ty,
     output: Ty,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BinaryOperatorTrait {
+    operator: BinaryOp,
+    lang_item: LangItemKind,
+}
+
+impl BinaryOperatorTrait {
+    fn method(self) -> &'static str {
+        self.lang_item
+            .operator_method()
+            .expect("binary operator lang items have a method")
+    }
+}
+
+enum BinaryOperatorLeft<'a> {
+    Source(&'a Expr),
+    Lowered(HirExpr),
+}
+
+const BINARY_OPERATOR_TRAITS: [BinaryOperatorTrait; 5] = [
+    BinaryOperatorTrait {
+        operator: BinaryOp::Add,
+        lang_item: LangItemKind::Add,
+    },
+    BinaryOperatorTrait {
+        operator: BinaryOp::Sub,
+        lang_item: LangItemKind::Sub,
+    },
+    BinaryOperatorTrait {
+        operator: BinaryOp::Mul,
+        lang_item: LangItemKind::Mul,
+    },
+    BinaryOperatorTrait {
+        operator: BinaryOp::Div,
+        lang_item: LangItemKind::Div,
+    },
+    BinaryOperatorTrait {
+        operator: BinaryOp::Rem,
+        lang_item: LangItemKind::Rem,
+    },
+];
+
+fn binary_operator_trait(operator: BinaryOp) -> Option<BinaryOperatorTrait> {
+    BINARY_OPERATOR_TRAITS
+        .iter()
+        .copied()
+        .find(|candidate| candidate.operator == operator)
 }
 
 #[derive(Debug, Clone)]
@@ -1224,73 +1276,6 @@ impl Analyzer {
         self.validate_function_templates();
     }
 
-    fn add_lang_item_has_required_shape(definition: &TraitDef) -> bool {
-        let [compile_group] = definition.compile_groups.as_slice() else {
-            return false;
-        };
-        let [rhs_parameter] = compile_group.as_slice() else {
-            return false;
-        };
-        if rhs_parameter.kind != CompileParamKind::Type || definition.members.len() != 2 {
-            return false;
-        }
-
-        let rhs_type = Type::Named(rhs_parameter.name.clone(), Vec::new());
-        let self_type = Type::Named("Self".to_owned(), Vec::new());
-        let output_type = Type::Named("Output".to_owned(), Vec::new());
-        let mut found_output = false;
-        let mut found_add = false;
-
-        for member in &definition.members {
-            match member {
-                TraitMember::AssociatedType {
-                    name,
-                    compile_groups,
-                    default,
-                } => {
-                    if found_output
-                        || name != "Output"
-                        || !compile_groups.is_empty()
-                        || default.is_some()
-                    {
-                        return false;
-                    }
-                    found_output = true;
-                }
-                TraitMember::Function(function) => {
-                    if found_add
-                        || function.name != "add"
-                        || !function.compile_groups.is_empty()
-                        || function.body.is_some()
-                        || function.return_type.as_ref() != Some(&output_type)
-                    {
-                        return false;
-                    }
-                    let [receiver_group, rhs_group] = function.groups.as_slice() else {
-                        return false;
-                    };
-                    let [receiver] = receiver_group.as_slice() else {
-                        return false;
-                    };
-                    let [rhs] = rhs_group.as_slice() else {
-                        return false;
-                    };
-                    if receiver.name != "self"
-                        || receiver.mode != PassMode::Move
-                        || receiver.ty != self_type
-                        || rhs.mode != PassMode::Move
-                        || rhs.ty != rhs_type
-                    {
-                        return false;
-                    }
-                    found_add = true;
-                }
-            }
-        }
-
-        found_output && found_add
-    }
-
     fn collect_trait_schema(
         &mut self,
         definition: TraitDef,
@@ -1298,13 +1283,19 @@ impl Analyzer {
         origin: ItemOrigin,
     ) {
         let mut valid = true;
-        if definition.name == self.lang_item_name(LangItemKind::Add)
-            && !Self::add_lang_item_has_required_shape(&definition)
-        {
-            self.error(
-                "`Add` language trait must have shape `let Add(Rhs: type) = trait { let Output: type; let add(move self)(move rhs: Rhs): Output }`",
-            );
-            valid = false;
+        let operator_trait = BINARY_OPERATOR_TRAITS
+            .iter()
+            .copied()
+            .find(|candidate| definition.name == self.lang_item_name(candidate.lang_item));
+        if let Some(operator_trait) = operator_trait {
+            if !operator_trait_has_required_shape(operator_trait.lang_item, &definition) {
+                let trait_name = operator_trait.lang_item.source_name();
+                let method = operator_trait.method();
+                self.error(format!(
+                    "`{trait_name}` language trait must have shape `let {trait_name}(Rhs: type) = trait {{ let Output: type; let {method}(move self)(move rhs: Rhs): Output }}`"
+                ));
+                valid = false;
+            }
         }
         if definition.compile_groups.len() > 1 {
             self.error(format!(
@@ -4108,15 +4099,20 @@ impl Analyzer {
             })
     }
 
-    fn add_candidates(
+    fn binary_operator_candidates(
         &self,
+        operator_trait: BinaryOperatorTrait,
         receiver: &Ty,
         right: &Expr,
         expected: Option<&Ty>,
         context: &LowerCtx,
-    ) -> Vec<AddCandidate> {
-        let add = self.lang_item_name(LangItemKind::Add);
-        if !self.traits.get(add).is_some_and(|schema| schema.valid) {
+    ) -> Vec<BinaryOperatorCandidate> {
+        let trait_name = self.lang_item_name(operator_trait.lang_item);
+        if !self
+            .traits
+            .get(trait_name)
+            .is_some_and(|schema| schema.valid)
+        {
             return Vec::new();
         }
 
@@ -4125,7 +4121,7 @@ impl Analyzer {
             .values()
             .filter_map(|implementation| {
                 if implementation.key.self_ty != *receiver
-                    || implementation.key.trait_ref.name != add
+                    || implementation.key.trait_ref.name != trait_name
                     || !Self::access_boundary_allows(&context.origin, &implementation.access)
                 {
                     return None;
@@ -4133,13 +4129,13 @@ impl Analyzer {
                 let [rhs] = implementation.key.trait_ref.arguments.as_slice() else {
                     return None;
                 };
-                let method = implementation.methods.get("add")?;
+                let method = implementation.methods.get(operator_trait.method())?;
                 let output = implementation.associated_types.get("Output")?;
                 if integer_literal_value(right).is_some_and(|value| !integer_fits(value, rhs)) {
                     return None;
                 }
                 let right_probe = self.probe_expr_ty(right, Some(rhs), context);
-                Self::probe_matches_type(&right_probe, rhs).then(|| AddCandidate {
+                Self::probe_matches_type(&right_probe, rhs).then(|| BinaryOperatorCandidate {
                     method: method.clone(),
                     rhs: rhs.clone(),
                     output: output.clone(),
@@ -4156,9 +4152,14 @@ impl Analyzer {
                 .then_with(|| left.method.cmp(&right.method))
         });
 
-        if candidates.len() > 1 {
-            if let Some(expected) = expected.filter(|ty| **ty != Ty::Error) {
+        if let Some(expected) = expected.filter(|ty| **ty != Ty::Error) {
+            let has_exact_output = candidates
+                .iter()
+                .any(|candidate| candidate.output == *expected);
+            if has_exact_output {
                 candidates.retain(|candidate| candidate.output == *expected);
+            } else {
+                candidates.retain(|candidate| self.is_uninhabited_type(&candidate.output));
             }
         }
         candidates
@@ -4186,8 +4187,9 @@ impl Analyzer {
         }
     }
 
-    fn probe_add_ty(
+    fn probe_arithmetic_ty(
         &self,
+        operator: BinaryOp,
         left: &Expr,
         right: &Expr,
         expected: Option<&Ty>,
@@ -4195,7 +4197,15 @@ impl Analyzer {
     ) -> TypeProbe {
         let left_probe = self.probe_expr_ty(left, None, context);
         if let Some(receiver) = Self::nominal_ty_from_probe(&left_probe) {
-            let candidates = self.add_candidates(&receiver, right, expected, context);
+            let operator_trait = binary_operator_trait(operator)
+                .expect("arithmetic operators have a core trait specification");
+            let candidates = self.binary_operator_candidates(
+                operator_trait,
+                &receiver,
+                right,
+                expected,
+                context,
+            );
             return match candidates.as_slice() {
                 [candidate] => TypeProbe::Known(candidate.output.clone()),
                 [] | [_, _, ..] => TypeProbe::Unsupported,
@@ -4795,9 +4805,8 @@ impl Analyzer {
                 | BinaryOp::Le
                 | BinaryOp::Gt
                 | BinaryOp::Ge => TypeProbe::Known(Ty::Bool),
-                BinaryOp::Add => self.probe_add_ty(left, right, hint, context),
-                BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
-                    self.probe_numeric_binary_ty(left, right, hint, context)
+                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
+                    self.probe_arithmetic_ty(*operator, left, right, hint, context)
                 }
             },
             Expr::Coalesce(left, right) => self.probe_coalesce_ty(left, right, hint, context),
@@ -4896,9 +4905,57 @@ impl Analyzer {
                 self.probe_chain_ty(base, member, None, hint, context)
             }
             Expr::Call(_, _) => self.probe_call_ty(expression, hint, context),
-            Expr::Block(statements, tail) if statements.is_empty() => {
+            Expr::Block(statements, tail) => {
+                let mut block_context = context.clone();
+                block_context.push_scope();
+                for statement in statements {
+                    let Stmt::Let(binding) = statement else {
+                        if matches!(
+                            statement,
+                            Stmt::Expr(
+                                Expr::Return(_)
+                                    | Expr::Break(_)
+                                    | Expr::Throw(_)
+                                    | Expr::While { .. }
+                                    | Expr::Loop { .. }
+                            )
+                        ) {
+                            return TypeProbe::Unsupported;
+                        }
+                        continue;
+                    };
+                    let annotation = binding.annotation.as_ref().and_then(|source| {
+                        let mut source = source.clone();
+                        substitute_type_parameters(&mut source, &block_context.type_substitutions);
+                        self.probe_source_ty(&source)
+                    });
+                    let value =
+                        self.probe_expr_ty(&binding.value, annotation.as_ref(), &block_context);
+                    let inferred = match value {
+                        TypeProbe::Known(ty)
+                        | TypeProbe::KnownSource(ty, _)
+                        | TypeProbe::Defaultable(ty) => Some(ty),
+                        TypeProbe::Unsupported => None,
+                    };
+                    let Some(ty) = annotation.or(inferred) else {
+                        continue;
+                    };
+                    let id = block_context.fresh_local();
+                    block_context.insert_local(
+                        binding.name.clone(),
+                        LocalInfo {
+                            id,
+                            ty,
+                            mutable: binding.mutable,
+                            capability: LocalCapability::Owned,
+                            alias: None,
+                            partial: None,
+                            closure: None,
+                        },
+                    );
+                }
                 tail.as_ref().map_or(TypeProbe::Known(Ty::Unit), |tail| {
-                    self.probe_expr_ty(tail, hint, context)
+                    self.probe_expr_ty(tail, hint, &block_context)
                 })
             }
             Expr::If {
@@ -4933,7 +4990,6 @@ impl Analyzer {
             }
             Expr::Infer
             | Expr::Assign(_, _)
-            | Expr::Block(_, _)
             | Expr::Closure(_, _)
             | Expr::If { .. }
             | Expr::Return(_)
@@ -8286,19 +8342,22 @@ impl Analyzer {
         });
     }
 
-    fn lower_trait_add(
+    fn lower_trait_binary(
         &mut self,
-        left: &Expr,
-        lowered_left: Option<HirExpr>,
+        operator_trait: BinaryOperatorTrait,
+        left: BinaryOperatorLeft<'_>,
         right: &Expr,
         receiver: &Ty,
         expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
-        let add = self.lang_item_name(LangItemKind::Add);
-        let Some(schema) = self.traits.get(add) else {
+        let trait_name = self.lang_item_name(operator_trait.lang_item).to_owned();
+        let trait_display_name = operator_trait.lang_item.source_name();
+        let method_name = operator_trait.method();
+        let spelling = binary_spelling(operator_trait.operator);
+        let Some(schema) = self.traits.get(&trait_name) else {
             self.error(format!(
-                "operator `+` for `{receiver}` requires the top-level `Add` trait"
+                "operator `{spelling}` for `{receiver}` requires the core `{trait_display_name}` trait"
             ));
             return error_expr();
         };
@@ -8306,7 +8365,8 @@ impl Analyzer {
             return error_expr();
         }
 
-        let candidates = self.add_candidates(receiver, right, expected, context);
+        let candidates =
+            self.binary_operator_candidates(operator_trait, receiver, right, expected, context);
         let candidate = match candidates.as_slice() {
             [candidate] => candidate.clone(),
             [] => {
@@ -8323,11 +8383,11 @@ impl Analyzer {
                     .unwrap_or_default();
                 if let Some(right_ty) = right_ty {
                     self.error(format!(
-                        "no matching `Add` implementation for `{receiver}` with right operand `{right_ty}`{expected_output}"
+                        "no matching `{trait_display_name}` implementation for `{receiver}` with right operand `{right_ty}`{expected_output}"
                     ));
                 } else {
                     self.error(format!(
-                        "no matching `Add` implementation for `{receiver}` with an unresolved right operand{expected_output}"
+                        "no matching `{trait_display_name}` implementation for `{receiver}` with an unresolved right operand{expected_output}"
                     ));
                 }
                 return error_expr();
@@ -8336,19 +8396,24 @@ impl Analyzer {
                 let descriptions = candidates
                     .iter()
                     .map(|candidate| {
-                        format!("`Add({}, Output = {})`", candidate.rhs, candidate.output)
+                        format!(
+                            "`{trait_display_name}({}, Output = {})`",
+                            candidate.rhs, candidate.output
+                        )
                     })
                     .collect::<Vec<_>>()
                     .join(", ");
                 self.error(format!(
-                    "ambiguous `+` for `{receiver}`; matching implementations: {descriptions}"
+                    "ambiguous `{spelling}` for `{receiver}`; matching implementations: {descriptions}"
                 ));
                 return error_expr();
             }
         };
 
         let Some(signature) = self.signatures.get(&candidate.method).cloned() else {
-            self.error("internal error: `Add.add` implementation has no function signature");
+            self.error(format!(
+                "internal error: `{trait_display_name}.{method_name}` implementation has no function signature"
+            ));
             return error_expr();
         };
         let valid_signature = signature.groups.len() == 2
@@ -8360,21 +8425,26 @@ impl Analyzer {
             && signature.groups[1][0].mode == PassMode::Move
             && signature.result.as_ref() == Some(&candidate.output);
         if !valid_signature {
-            self.error("internal error: invalid registered `Add.add` signature");
+            self.error(format!(
+                "internal error: invalid registered `{trait_display_name}.{method_name}` signature"
+            ));
             return error_expr();
         }
         let receiver_parameter = signature.groups[0][0].clone();
         let rhs_parameter = signature.groups[1][0].clone();
         let mut temporary_loans = Vec::new();
-        let left = if let Some(left) = lowered_left {
-            self.require_same_type(
-                &left.ty,
-                &receiver_parameter.ty,
-                "left operand of overloaded `+`",
-            );
-            HirArgument::Move(left)
-        } else {
-            self.lower_call_argument(left, &receiver_parameter, context, &mut temporary_loans)
+        let left = match left {
+            BinaryOperatorLeft::Lowered(left) => {
+                self.require_same_type(
+                    &left.ty,
+                    &receiver_parameter.ty,
+                    format!("left operand of overloaded `{spelling}`"),
+                );
+                HirArgument::Move(left)
+            }
+            BinaryOperatorLeft::Source(left) => {
+                self.lower_call_argument(left, &receiver_parameter, context, &mut temporary_loans)
+            }
         };
         let right = self.lower_call_argument(right, &rhs_parameter, context, &mut temporary_loans);
         self.release_loans(&temporary_loans, context);
@@ -8396,18 +8466,25 @@ impl Analyzer {
         context: &mut LowerCtx,
     ) -> HirExpr {
         use BinaryOp::*;
-        if operator == Add {
+        if let Some(operator_trait) = binary_operator_trait(operator) {
             let left_probe = self.probe_expr_ty(left, None, context);
             if let Some(receiver) = Self::nominal_ty_from_probe(&left_probe) {
-                return self.lower_trait_add(left, None, right, &receiver, expected, context);
+                return self.lower_trait_binary(
+                    operator_trait,
+                    BinaryOperatorLeft::Source(left),
+                    right,
+                    &receiver,
+                    expected,
+                    context,
+                );
             }
             if left_probe == TypeProbe::Unsupported {
                 let lowered_left = self.lower_expr(left, None, context);
                 if matches!(lowered_left.ty, Ty::Struct(_) | Ty::Enum(_)) {
                     let receiver = lowered_left.ty.clone();
-                    return self.lower_trait_add(
-                        left,
-                        Some(lowered_left),
+                    return self.lower_trait_binary(
+                        operator_trait,
+                        BinaryOperatorLeft::Lowered(lowered_left),
                         right,
                         &receiver,
                         expected,
@@ -8419,15 +8496,24 @@ impl Analyzer {
                 let lowered_right = self.lower_expr(right, right_hint, context);
                 if !lowered_left.ty.is_integer() {
                     self.error(format!(
-                        "operator `+` requires integer operands, found `{}`",
-                        lowered_left.ty
+                        "operator `{}` requires integer operands, found `{}`",
+                        binary_spelling(operator),
+                        lowered_left.ty,
                     ));
                 }
-                self.require_same_type(&lowered_left.ty, &lowered_right.ty, "operands of `+`");
+                self.require_same_type(
+                    &lowered_left.ty,
+                    &lowered_right.ty,
+                    format!("operands of `{}`", binary_spelling(operator)),
+                );
                 let ty = lowered_left.ty.clone();
                 return HirExpr {
                     ty,
-                    kind: HirExprKind::Binary(Box::new(lowered_left), Add, Box::new(lowered_right)),
+                    kind: HirExprKind::Binary(
+                        Box::new(lowered_left),
+                        operator,
+                        Box::new(lowered_right),
+                    ),
                 };
             }
         }
@@ -10388,6 +10474,14 @@ fn integer_fits(value: i128, ty: &Ty) -> bool {
     }
 }
 
+fn signed_integer_min(ty: &Ty) -> Option<i128> {
+    match ty {
+        Ty::I32 => Some(i128::from(i32::MIN)),
+        Ty::I64 => Some(i128::from(i64::MIN)),
+        _ => None,
+    }
+}
+
 fn nominal_name(ty: &Ty) -> Option<&str> {
     match ty {
         Ty::Struct(name) | Ty::Enum(name) => Some(name),
@@ -10706,6 +10800,13 @@ impl ConstantEvaluator<'_> {
         use BinaryOp::*;
         match (left, right) {
             (ConstValue::Integer(left), ConstValue::Integer(right)) => {
+                if matches!(operator, Div | Rem)
+                    && right == -1
+                    && signed_integer_min(operand_ty) == Some(left)
+                {
+                    self.error(format!("constant arithmetic overflows `{operand_ty}`"));
+                    return None;
+                }
                 let arithmetic = match operator {
                     Add => left.checked_add(right),
                     Sub => left.checked_sub(right),
@@ -11177,6 +11278,9 @@ impl<'a> FunctionEmitter<'a> {
                 if self.terminated {
                     return Ok(Operand::never());
                 }
+                if matches!(operator, BinaryOp::Div | BinaryOp::Rem) {
+                    self.emit_integer_division_guard(&left, &right)?;
+                }
                 let register = self.fresh_register();
                 let ty = llvm_value_type(&left.ty)?;
                 let instruction = match operator {
@@ -11498,6 +11602,50 @@ impl<'a> FunctionEmitter<'a> {
                 })
             }
         }
+    }
+
+    fn emit_integer_division_guard(
+        &mut self,
+        left: &Operand,
+        right: &Operand,
+    ) -> Result<(), Diagnostic> {
+        let ty = llvm_value_type(&left.ty)?;
+        let left_value = left.value()?.to_owned();
+        let right_value = right.value()?.to_owned();
+        let is_zero = self.fresh_register();
+        self.instruction(format!("{is_zero} = icmp eq {ty} {right_value}, 0"));
+
+        let invalid = if let Some(minimum) = signed_integer_min(&left.ty) {
+            let is_minimum = self.fresh_register();
+            self.instruction(format!(
+                "{is_minimum} = icmp eq {ty} {left_value}, {minimum}"
+            ));
+            let is_negative_one = self.fresh_register();
+            self.instruction(format!(
+                "{is_negative_one} = icmp eq {ty} {right_value}, -1"
+            ));
+            let overflows = self.fresh_register();
+            self.instruction(format!(
+                "{overflows} = and i1 {is_minimum}, {is_negative_one}"
+            ));
+            let invalid = self.fresh_register();
+            self.instruction(format!("{invalid} = or i1 {is_zero}, {overflows}"));
+            invalid
+        } else {
+            is_zero
+        };
+
+        let ok_label = self.fresh_label("arithmetic.ok");
+        let trap_label = self.fresh_label("arithmetic.trap");
+        self.terminate(format!(
+            "br i1 {invalid}, label %{trap_label}, label %{ok_label}"
+        ));
+
+        self.start_block(&trap_label);
+        self.instruction("call void @llvm.trap()");
+        self.terminate("unreachable");
+        self.start_block(&ok_label);
+        Ok(())
     }
 
     fn emit_while(&mut self, condition: &HirExpr, body: &HirExpr) -> Result<Operand, Diagnostic> {
@@ -12907,11 +13055,17 @@ mod tests {
         assert!(never.compile_groups.is_empty());
         assert!(never.variants.is_empty());
         assert!(analyzer.enum_layouts["never"].variants.is_empty());
-        assert!(analyzer.traits["Add"].valid);
-        assert_eq!(
-            analyzer.lang_item_name(LangItemKind::Add),
-            analyzer.lang_items.add().source_name()
-        );
+        for operator_trait in BINARY_OPERATOR_TRAITS {
+            let name = operator_trait.lang_item.source_name();
+            assert!(analyzer.traits[name].valid);
+            assert_eq!(
+                analyzer.lang_item_name(operator_trait.lang_item),
+                analyzer
+                    .lang_items
+                    .get(operator_trait.lang_item)
+                    .source_name()
+            );
+        }
         assert_eq!(analyzer.nominal_instances.len(), 1);
         assert_eq!(analyzer.nominal_instance_names.len(), 1);
         assert!(analyzer.functions.is_empty());
@@ -14424,6 +14578,264 @@ let main(): i32 = Number(40) + Number(2)
             ir.contains("add i32"),
             "integer addition must stay built in"
         );
+    }
+
+    #[test]
+    fn lowers_all_core_arithmetic_traits_to_their_static_methods() {
+        let program = crate::parser::parse(
+            r#"
+let Number = struct(value: i32)
+extend Number: Sub(Number) {
+  let Output = Number
+  let sub(move self)(move rhs: Number): Number = Number(self.value - rhs.value)
+}
+extend Number: Mul(Number) {
+  let Output = Number
+  let mul(move self)(move rhs: Number): Number = Number(self.value * rhs.value)
+}
+extend Number: Div(Number) {
+  let Output = Number
+  let div(move self)(move rhs: Number): Number = Number(self.value / rhs.value)
+}
+extend Number: Rem(Number) {
+  let Output = Number
+  let rem(move self)(move rhs: Number): Number = Number(self.value % rhs.value)
+}
+let main(): i32 = {
+  let difference = Number(50) - Number(8)
+  let product = Number(6) * Number(7)
+  let quotient = Number(84) / Number(2)
+  let remainder = Number(85) % Number(43)
+  difference.value + product.value + quotient.value + remainder.value
+}
+"#,
+        )
+        .expect("core arithmetic trait source must parse");
+        let ir = compile(&program).expect("all core arithmetic traits must compile");
+
+        for (trait_name, method) in [
+            ("Sub", "sub"),
+            ("Mul", "mul"),
+            ("Div", "div"),
+            ("Rem", "rem"),
+        ] {
+            let key = TraitImplKey {
+                self_ty: Ty::Struct("Number".into()),
+                trait_ref: TraitRefKey {
+                    name: trait_name.into(),
+                    arguments: vec![Ty::Struct("Number".into())],
+                },
+            };
+            let symbol = function_symbol(&trait_method_name(&key, method));
+            assert!(
+                ir.contains(&format!("call %sali.type.4e756d626572 @{symbol}(")),
+                "operator must statically call {trait_name}.{method}"
+            );
+        }
+    }
+
+    #[test]
+    fn builtin_integer_arithmetic_keeps_direct_signed_and_unsigned_llvm_ops() {
+        let ir = compile_text(
+            r#"
+let signed(x: i32, y: i32): i32 = (x - y) * (x / y) + (x % y)
+let unsigned(x: u32, y: u32): u32 = (x / y) + (x % y)
+let main(): i32 = signed(9, 3)
+"#,
+        )
+        .expect("built-in integer arithmetic must compile");
+
+        for instruction in ["sub i32", "mul i32", "sdiv i32", "srem i32"] {
+            assert!(ir.contains(instruction), "missing `{instruction}`");
+        }
+        assert!(ir.contains("udiv i32"));
+        assert!(ir.contains("urem i32"));
+        assert!(!ir.contains("trait::"));
+    }
+
+    #[test]
+    fn builtin_division_and_remainder_guard_llvm_undefined_cases() {
+        let ir = compile_text(
+            r#"
+let signed_div(x: i32, y: i32): i32 = x / y
+let signed_rem(x: i32, y: i32): i32 = x % y
+let unsigned_div(x: u32, y: u32): u32 = x / y
+let unsigned_rem(x: u32, y: u32): u32 = x % y
+let main(): i32 = signed_div(84, 2) + signed_rem(85, 43)
+"#,
+        )
+        .expect("guarded built-in division and remainder must compile");
+
+        assert_eq!(ir.matches("call void @llvm.trap()").count(), 4);
+        assert!(ir.contains("icmp eq i32"));
+        assert!(ir.contains("-2147483648"));
+        let zero_check = ir.find("icmp eq i32").unwrap();
+        let trap = ir.find("call void @llvm.trap()").unwrap();
+        let division = ir.find("sdiv i32").unwrap();
+        assert!(zero_check < trap && trap < division);
+    }
+
+    #[test]
+    fn constant_signed_minimum_remainder_by_negative_one_is_rejected() {
+        let errors = compile_text(
+            r#"
+let invalid: i32 = -2147483648 % -1
+let main(): i32 = invalid
+"#,
+        )
+        .expect_err("signed MIN % -1 must not reach LLVM srem undefined behavior");
+
+        assert!(errors.iter().any(|error| {
+            error
+                .message
+                .contains("constant arithmetic overflows `i32`")
+        }));
+    }
+
+    #[test]
+    fn a_unique_operator_candidate_must_match_the_expected_output() {
+        let errors = compile_text(
+            r#"
+let Number = struct(value: i32)
+extend Number: Add(i32) {
+  let Output = bool
+  let add(move self)(move rhs: i32): bool = self.value == rhs
+}
+let main(): i32 = Number(42) + 42
+"#,
+        )
+        .expect_err("a unique Add implementation cannot ignore its expected Output");
+
+        assert!(errors.iter().any(|error| {
+            error.message.contains("no matching `Add` implementation")
+                && error.message.contains("producing `i32`")
+        }));
+    }
+
+    #[test]
+    fn uninhabited_operator_output_coerces_when_no_exact_output_exists() {
+        compile_text(
+            r#"
+let Number = struct(value: i32)
+extend Number: Sub(i32) {
+  let Output = never
+  let sub(move self)(move rhs: i32): never = loop {}
+}
+let main(): i32 = Number(42) - 1
+"#,
+        )
+        .expect("an uninhabited operator Output must coerce to the expected type");
+    }
+
+    #[test]
+    fn exact_operator_output_takes_precedence_over_uninhabited_output() {
+        let program = crate::parser::parse(
+            r#"
+let Number = struct(value: i32)
+extend Number: Sub(i32) {
+  let Output = never
+  let sub(move self)(move rhs: i32): never = loop {}
+}
+extend Number: Sub(i64) {
+  let Output = i32
+  let sub(move self)(move rhs: i64): i32 = 42
+}
+let main(): i32 = Number(42) - 1
+"#,
+        )
+        .expect("operator output precedence source must parse");
+        let exact = TraitImplKey {
+            self_ty: Ty::Struct("Number".into()),
+            trait_ref: TraitRefKey {
+                name: "Sub".into(),
+                arguments: vec![Ty::I64],
+            },
+        };
+        let uninhabited = TraitImplKey {
+            self_ty: Ty::Struct("Number".into()),
+            trait_ref: TraitRefKey {
+                name: "Sub".into(),
+                arguments: vec![Ty::I32],
+            },
+        };
+        let ir = compile(&program).expect("exact Output must resolve the operator candidate");
+        assert!(ir.contains(&format!(
+            "call i32 @{}(",
+            function_symbol(&trait_method_name(&exact, "sub"))
+        )));
+        let uninhabited_symbol = function_symbol(&trait_method_name(&uninhabited, "sub"));
+        assert!(!ir.lines().any(
+            |line| line.contains("call ") && line.contains(&format!("@{uninhabited_symbol}("))
+        ));
+    }
+
+    #[test]
+    fn operator_candidates_probe_bindings_in_nonempty_rhs_blocks() {
+        let program = crate::parser::parse(
+            r#"
+let Number = struct(value: i32)
+extend Number: Sub(i32) {
+  let Output = i32
+  let sub(move self)(move rhs: i32): i32 = self.value - rhs
+}
+extend Number: Sub(bool) {
+  let Output = i32
+  let sub(move self)(move rhs: bool): i32 = if rhs { 42 } else { 0 }
+}
+let main(): i32 = Number(1) - do {
+  let flag = true
+  flag
+}
+"#,
+        )
+        .expect("nonempty RHS block source must parse");
+        let boolean = TraitImplKey {
+            self_ty: Ty::Struct("Number".into()),
+            trait_ref: TraitRefKey {
+                name: "Sub".into(),
+                arguments: vec![Ty::Bool],
+            },
+        };
+        let integer = TraitImplKey {
+            self_ty: Ty::Struct("Number".into()),
+            trait_ref: TraitRefKey {
+                name: "Sub".into(),
+                arguments: vec![Ty::I32],
+            },
+        };
+        let ir = compile(&program).expect("the RHS block type must select Sub(bool)");
+        let boolean_symbol = function_symbol(&trait_method_name(&boolean, "sub"));
+        let integer_symbol = function_symbol(&trait_method_name(&integer, "sub"));
+        assert!(ir
+            .lines()
+            .any(|line| line.contains("call ") && line.contains(&format!("@{boolean_symbol}("))));
+        assert!(!ir
+            .lines()
+            .any(|line| line.contains("call ") && line.contains(&format!("@{integer_symbol}("))));
+    }
+
+    #[test]
+    fn non_add_output_participates_in_outer_generic_inference() {
+        let ir = compile_text(
+            r#"
+let Number = struct(value: i32)
+extend Number: Sub(i32) {
+  let Output = i64
+  let sub(move self)(move rhs: i32): i64 = 42
+}
+let identity(T: type)(move value: T): T = value
+let main(): i32 = {
+  let answer = identity(_)(Number(44) - 2)
+  if answer == 42 { 42 } else { 0 }
+}
+"#,
+        )
+        .expect("Sub Output must be visible to generic inference");
+        let identity = function_instance_name(&FunctionInstanceKey {
+            template: "identity".into(),
+            arguments: vec![Ty::I64],
+        });
+        assert!(ir.contains(&format!("call i64 @{}(", function_symbol(&identity))));
     }
 
     #[test]

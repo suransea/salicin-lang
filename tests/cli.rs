@@ -534,6 +534,25 @@ fn dynamic_array_out_of_bounds_traps() {
 }
 
 #[test]
+fn invalid_builtin_division_and_remainder_trap() {
+    for name in [
+        "runtime_division_by_zero.sali",
+        "runtime_remainder_overflow.sali",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run invalid built-in arithmetic fixture");
+        assert!(
+            !output.status.success(),
+            "{name} unexpectedly avoided its arithmetic trap:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn m1_inherent_members_run_with_expected_result() {
     for name in [
         "inherent_reset_and_constant.sali",
@@ -719,6 +738,7 @@ fn m2_inferred_type_arguments_run_with_expected_result() {
         "infer_argument_once.sali",
         "infer_constraint_order.sali",
         "infer_fresh_constructor.sali",
+        "infer_nonempty_block.sali",
     ] {
         let output = salic()
             .arg("run")
@@ -741,7 +761,6 @@ fn m2_inferred_type_argument_errors_report_their_cause() {
         ("infer_expected_conflict.sali", "conflicting"),
         ("infer_unconstrained.sali", "cannot infer"),
         ("infer_incomplete_application.sali", "cannot infer"),
-        ("infer_unsupported_probe.sali", "explicit type argument"),
         ("infer_nested_hole.sali", "nested"),
         ("infer_moved_argument.sali", "moved"),
         ("infer_borrow_temporary.sali", "place"),
@@ -859,6 +878,51 @@ fn m2_add_trait_errors_report_their_cause() {
             .arg(fixture("fail", name))
             .output()
             .expect("check invalid Add-trait fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected),
+            "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn arithmetic_trait_programs_run_with_expected_result() {
+    for name in [
+        "arithmetic_traits_nominal_dispatch.sali",
+        "arithmetic_trait_operands_once.sali",
+        "arithmetic_trait_expected_output.sali",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run arithmetic-trait fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn arithmetic_trait_errors_report_their_cause() {
+    for (name, expected) in [
+        ("arithmetic_trait_ambiguous_literal.sali", "ambiguous"),
+        ("arithmetic_trait_rhs_mismatch.sali", "Div"),
+        ("arithmetic_trait_use_after_move.sali", "moved"),
+        ("arithmetic_trait_scalar_rhs_use_after_move.sali", "moved"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid arithmetic-trait fixture");
         assert!(!output.status.success(), "{name} unexpectedly passed");
 
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1742,10 +1806,18 @@ pub let Add(Rhs: type) = trait {
   let Output: type
   let add(move self)(move rhs: Rhs): Output
 }
+pub let Sub(Rhs: type) = trait {
+  let Output: type
+  let sub(move self)(move rhs: Rhs): Output
+}
 pub let Number = struct(value: i32)
 extend Number: Add(Number) {
   let Output = Number
   let add(move self)(move rhs: Number): Number = Number(self.value + rhs.value)
+}
+extend Number: Sub(Number) {
+  let Output = Number
+  let sub(move self)(move rhs: Number): Number = Number(self.value - rhs.value)
 }
 pub let make_number(value: i32): Number = Number(value)
 "#,
@@ -1791,6 +1863,27 @@ pub let make_number(value: i32): Number = Number(value)
         String::from_utf8_lossy(&fake_add.stderr).contains("no matching `Add` implementation"),
         "{}",
         output_text(&fake_add)
+    );
+
+    workspace.write(
+        "app/src/main.sali",
+        "let main(): i32 = fake.make_number(44) - fake.make_number(2)\n",
+    );
+    let fake_sub = salic()
+        .arg("check")
+        .arg(&app)
+        .output()
+        .expect("reject a module trait spoofing core Sub");
+    assert_eq!(
+        fake_sub.status.code(),
+        Some(1),
+        "{}",
+        output_text(&fake_sub)
+    );
+    assert!(
+        String::from_utf8_lossy(&fake_sub.stderr).contains("no matching `Sub` implementation"),
+        "{}",
+        output_text(&fake_sub)
     );
 
     workspace.write(

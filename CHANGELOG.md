@@ -6,6 +6,22 @@ subset.
 
 ## Unreleased
 
+## 0.7.0 - 2026-07-20
+
+- Added source-backed `Sub(Rhs)`, `Mul(Rhs)`, `Div(Rhs)`, and `Rem(Rhs)` core lang-item traits
+  alongside `Add(Rhs)`. Each strictly validated contract has an `Output` associated type and a
+  matching method that receives both `self` and `rhs` by move.
+- Extended `+`, `-`, `*`, `/`, and `%` to statically dispatch through their compiler-matched core
+  trait for nominal left operands, while preserving direct built-in integer lowering.
+- Generalized arithmetic-trait candidate selection to use expected `Output` constraints and integer
+  literal range filtering, including type probing through local bindings in nonempty blocks, with
+  deterministic mismatch and ambiguity diagnostics and single evaluation of both operands.
+- Kept lang-item semantics identity-based: user traits with the same names cannot spoof an arithmetic
+  operator contract or intercept its lowering.
+- Guarded built-in integer division and remainder before LLVM lowering: a zero divisor and signed
+  `MIN / -1` or `MIN % -1` trap at runtime, while the equivalent invalid constant expressions are
+  rejected during compilation.
+
 ## 0.6.0 - 2026-07-20
 
 - **Breaking:** struct and named enum payload fields are now private by default. Existing

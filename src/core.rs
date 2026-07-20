@@ -27,10 +27,23 @@ pub enum LangItemKind {
     Result,
     Never,
     Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
 }
 
 impl LangItemKind {
-    const ALL: [Self; 4] = [Self::Option, Self::Result, Self::Never, Self::Add];
+    const ALL: [Self; 8] = [
+        Self::Option,
+        Self::Result,
+        Self::Never,
+        Self::Add,
+        Self::Sub,
+        Self::Mul,
+        Self::Div,
+        Self::Rem,
+    ];
 
     pub const fn source_name(self) -> &'static str {
         match self {
@@ -38,13 +51,28 @@ impl LangItemKind {
             Self::Result => "Result",
             Self::Never => "never",
             Self::Add => "Add",
+            Self::Sub => "Sub",
+            Self::Mul => "Mul",
+            Self::Div => "Div",
+            Self::Rem => "Rem",
         }
     }
 
     const fn expected_kind(self) -> &'static str {
         match self {
             Self::Option | Self::Result | Self::Never => "enum",
-            Self::Add => "trait",
+            Self::Add | Self::Sub | Self::Mul | Self::Div | Self::Rem => "trait",
+        }
+    }
+
+    pub(crate) const fn operator_method(self) -> Option<&'static str> {
+        match self {
+            Self::Add => Some("add"),
+            Self::Sub => Some("sub"),
+            Self::Mul => Some("mul"),
+            Self::Div => Some("div"),
+            Self::Rem => Some("rem"),
+            Self::Option | Self::Result | Self::Never => None,
         }
     }
 }
@@ -94,6 +122,10 @@ pub struct LangItems {
     result: LangItem,
     never: LangItem,
     add: LangItem,
+    sub: LangItem,
+    mul: LangItem,
+    div: LangItem,
+    rem: LangItem,
 }
 
 impl LangItems {
@@ -113,12 +145,32 @@ impl LangItems {
         &self.add
     }
 
+    pub const fn sub(&self) -> &LangItem {
+        &self.sub
+    }
+
+    pub const fn mul(&self) -> &LangItem {
+        &self.mul
+    }
+
+    pub const fn div(&self) -> &LangItem {
+        &self.div
+    }
+
+    pub const fn rem(&self) -> &LangItem {
+        &self.rem
+    }
+
     pub const fn get(&self, kind: LangItemKind) -> &LangItem {
         match kind {
             LangItemKind::Option => &self.option,
             LangItemKind::Result => &self.result,
             LangItemKind::Never => &self.never,
             LangItemKind::Add => &self.add,
+            LangItemKind::Sub => &self.sub,
+            LangItemKind::Mul => &self.mul,
+            LangItemKind::Div => &self.div,
+            LangItemKind::Rem => &self.rem,
         }
     }
 }
@@ -302,6 +354,10 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         result: item(LangItemKind::Result),
         never: item(LangItemKind::Never),
         add: item(LangItemKind::Add),
+        sub: item(LangItemKind::Sub),
+        mul: item(LangItemKind::Mul),
+        div: item(LangItemKind::Div),
+        rem: item(LangItemKind::Rem),
     })
 }
 
@@ -340,7 +396,9 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         (LangItemKind::Option, Item::Enum(definition)) => validate_option(definition, diagnostics),
         (LangItemKind::Result, Item::Enum(definition)) => validate_result(definition, diagnostics),
         (LangItemKind::Never, Item::Enum(definition)) => validate_never(definition, diagnostics),
-        (LangItemKind::Add, Item::Trait(definition)) => validate_add(definition, diagnostics),
+        (kind, Item::Trait(definition)) if kind.operator_method().is_some() => {
+            validate_operator(kind, definition, diagnostics)
+        }
         (kind, item) => diagnostics.push(format!(
             "lang item `{kind}` must be {}, found {}",
             kind.expected_kind(),
@@ -408,7 +466,24 @@ fn validate_never(definition: &EnumDef, diagnostics: &mut Vec<String>) {
     }
 }
 
-fn validate_add(definition: &TraitDef, diagnostics: &mut Vec<String>) {
+fn validate_operator(kind: LangItemKind, definition: &TraitDef, diagnostics: &mut Vec<String>) {
+    let method = kind
+        .operator_method()
+        .expect("operator lang items have a method name");
+    if !operator_trait_has_required_shape(kind, definition) {
+        diagnostics.push(
+            format!(
+                "lang item `{kind}` must have shape `pub let {kind}(Rhs: type) = trait {{ let Output: type; let {method}(move self)(move rhs: Rhs): Output }}`"
+            ),
+        );
+    }
+}
+
+/// Check the operator contract shared by core bootstrapping and HIR lowering.
+pub(crate) fn operator_trait_has_required_shape(kind: LangItemKind, definition: &TraitDef) -> bool {
+    let Some(method) = kind.operator_method() else {
+        return false;
+    };
     let valid_groups = definition.compile_groups == vec![vec![type_parameter("Rhs")]];
     let valid_members = match definition.members.as_slice() {
         [TraitMember::AssociatedType {
@@ -419,19 +494,14 @@ fn validate_add(definition: &TraitDef, diagnostics: &mut Vec<String>) {
             name == "Output"
                 && compile_groups.is_empty()
                 && default.is_none()
-                && valid_add_method(function)
+                && valid_operator_method(function, method)
         }
         _ => false,
     };
-    if !valid_groups || !valid_members {
-        diagnostics.push(
-            "lang item `Add` must have shape `pub let Add(Rhs: type) = trait { let Output: type; let add(move self)(move rhs: Rhs): Output }`"
-                .to_owned(),
-        );
-    }
+    valid_groups && valid_members
 }
 
-fn valid_add_method(function: &Function) -> bool {
+fn valid_operator_method(function: &Function, method: &str) -> bool {
     let [receiver_group, rhs_group] = function.groups.as_slice() else {
         return false;
     };
@@ -441,7 +511,7 @@ fn valid_add_method(function: &Function) -> bool {
     let [rhs] = rhs_group.as_slice() else {
         return false;
     };
-    function.name == "add"
+    function.name == method
         && function.compile_groups.is_empty()
         && function.return_type == Some(named_type("Output"))
         && function.body.is_none()
@@ -462,7 +532,7 @@ mod tests {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), 4);
+        assert_eq!(bundle.program().items.len(), 8);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -484,6 +554,10 @@ mod tests {
     #[test]
     fn lang_item_identities_follow_validated_declarations_not_source_order() {
         let source = r#"
+pub let Rem(Rhs: type) = trait {
+  let Output: type
+  let rem(move self)(move rhs: Rhs): Output
+}
 pub let Add(Rhs: type) = trait {
   let Output: type
   let add(move self)(move rhs: Rhs): Output
@@ -491,13 +565,29 @@ pub let Add(Rhs: type) = trait {
 pub let never = enum {}
 pub let Option(T: type) = enum { Some(T), None }
 pub let Result(T: type, E: type) = enum { Ok(T), Err(E) }
+pub let Div(Rhs: type) = trait {
+  let Output: type
+  let div(move self)(move rhs: Rhs): Output
+}
+pub let Sub(Rhs: type) = trait {
+  let Output: type
+  let sub(move self)(move rhs: Rhs): Output
+}
+pub let Mul(Rhs: type) = trait {
+  let Output: type
+  let mul(move self)(move rhs: Rhs): Output
+}
 "#;
         let bundle = CoreBundle::from_source(Edition::Edition2026, source).unwrap();
 
-        assert_eq!(bundle.lang_items().add().item_index(), 0);
-        assert_eq!(bundle.lang_items().never().item_index(), 1);
-        assert_eq!(bundle.lang_items().option().item_index(), 2);
-        assert_eq!(bundle.lang_items().result().item_index(), 3);
+        assert_eq!(bundle.lang_items().rem().item_index(), 0);
+        assert_eq!(bundle.lang_items().add().item_index(), 1);
+        assert_eq!(bundle.lang_items().never().item_index(), 2);
+        assert_eq!(bundle.lang_items().option().item_index(), 3);
+        assert_eq!(bundle.lang_items().result().item_index(), 4);
+        assert_eq!(bundle.lang_items().div().item_index(), 5);
+        assert_eq!(bundle.lang_items().sub().item_index(), 6);
+        assert_eq!(bundle.lang_items().mul().item_index(), 7);
         for kind in LangItemKind::ALL {
             let item = bundle.lang_items().get(kind);
             assert_eq!(
@@ -517,6 +607,22 @@ pub let Add(Rhs: type) = trait {
   let add(move self)(move rhs: Rhs): Rhs
 }
 pub let Extra = enum {}
+pub let Sub(Rhs: type) = trait {
+  let Output: type
+  let sub(move self)(move rhs: Rhs): Output
+}
+pub let Mul(Rhs: type) = trait {
+  let Output: type
+  let mul(move self)(move rhs: Rhs): Output
+}
+pub let Div(Rhs: type) = trait {
+  let Output: type
+  let div(move self)(move rhs: Rhs): Output
+}
+pub let Rem(Rhs: type) = trait {
+  let Output: type
+  let rem(move self)(move rhs: Rhs): Output
+}
 "#;
         let error = CoreBundle::from_source(Edition::Edition2026, source).unwrap_err();
 
@@ -546,6 +652,22 @@ pub let Add(Rhs: type) = trait {
   let Output: type
   let add(move self)(move rhs: Rhs): Output
 }
+pub let Sub(Rhs: type) = trait {
+  let Output: type
+  let sub(move self)(move rhs: Rhs): Output
+}
+pub let Mul(Rhs: type) = trait {
+  let Output: type
+  let mul(move self)(move rhs: Rhs): Output
+}
+pub let Div(Rhs: type) = trait {
+  let Output: type
+  let div(move self)(move rhs: Rhs): Output
+}
+pub let Rem(Rhs: type) = trait {
+  let Output: type
+  let rem(move self)(move rhs: Rhs): Output
+}
 "#;
         let error = CoreBundle::from_source(Edition::Edition2026, source).unwrap_err();
 
@@ -554,6 +676,45 @@ pub let Add(Rhs: type) = trait {
             [
                 "duplicate lang item `Option` appears 2 times",
                 "missing lang item `Result`",
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_operator_traits_in_fixed_role_order() {
+        let source = r#"
+pub let Option(T: type) = enum { Some(T), None }
+pub let Result(T: type, E: type) = enum { Ok(T), Err(E) }
+pub let never = enum {}
+pub let Add(Rhs: type) = trait {
+  let Output: type
+  let add(move self)(move rhs: Rhs): Output
+}
+pub let Sub = trait {
+  let Output: type
+  let sub(move self)(move rhs: Rhs): Output
+}
+pub let Mul(Rhs: type) = trait {
+  let mul(move self)(move rhs: Rhs): Rhs
+}
+pub let Div(Rhs: type) = trait {
+  let Output: type
+  let divide(move self)(move rhs: Rhs): Output
+}
+pub let Rem(Rhs: type) = trait {
+  let Output: type
+  let rem(move self)(move rhs: Rhs): Output = rhs
+}
+"#;
+        let error = CoreBundle::from_source(Edition::Edition2026, source).unwrap_err();
+
+        assert_eq!(
+            error.diagnostics(),
+            [
+                "lang item `Sub` must have shape `pub let Sub(Rhs: type) = trait { let Output: type; let sub(move self)(move rhs: Rhs): Output }`",
+                "lang item `Mul` must have shape `pub let Mul(Rhs: type) = trait { let Output: type; let mul(move self)(move rhs: Rhs): Output }`",
+                "lang item `Div` must have shape `pub let Div(Rhs: type) = trait { let Output: type; let div(move self)(move rhs: Rhs): Output }`",
+                "lang item `Rem` must have shape `pub let Rem(Rhs: type) = trait { let Output: type; let rem(move self)(move rhs: Rhs): Output }`",
             ]
         );
     }
