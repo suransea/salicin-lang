@@ -80,7 +80,7 @@ pub fn check_library(program: &Program) -> Result<(), Vec<Diagnostic>> {
     evaluate_globals(&hir).map(|_| ())
 }
 
-fn builtin_prelude_items() -> [Item; 2] {
+fn builtin_prelude_items() -> [Item; 3] {
     let type_parameter = |name: &str| CompileParam {
         name: name.to_owned(),
         kind: CompileParamKind::Type,
@@ -115,6 +115,11 @@ fn builtin_prelude_items() -> [Item; 2] {
                     fields: VariantFields::Positional(vec![named_type("E")]),
                 },
             ],
+        }),
+        Item::Enum(EnumDef {
+            name: "never".to_owned(),
+            compile_groups: Vec::new(),
+            variants: Vec::new(),
         }),
     ]
 }
@@ -328,6 +333,11 @@ impl HirProgram {
 
     fn enum_layout(&self, name: &str) -> Option<&EnumLayout> {
         self.enums.iter().find(|layout| layout.name == name)
+    }
+
+    fn is_uninhabited(&self, ty: &Ty) -> bool {
+        *ty == Ty::Never
+            || matches!(ty, Ty::Enum(name) if self.enum_layout(name).is_some_and(|layout| layout.variants.is_empty()))
     }
 }
 
@@ -977,7 +987,9 @@ impl Analyzer {
     }
 
     fn collect_items(&mut self, program: &Program) {
-        let mut names = HashSet::new();
+        // `void` is implemented as the prelude's alias of `()` rather than as
+        // a distinct nominal item, but still occupies the unified namespace.
+        let mut names = HashSet::from(["void".to_owned()]);
         let mut extensions = Vec::new();
         let prelude = builtin_prelude_items();
         for item in prelude.iter().chain(&program.items) {
@@ -1399,7 +1411,7 @@ impl Analyzer {
 
     fn trait_source_type_is_definitely_copy(source: &Type) -> bool {
         match source {
-            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Void => true,
+            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => true,
             Type::Array(element, _) => Self::trait_source_type_is_definitely_copy(element),
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => true,
             Type::Infer | Type::Named(_, _) => false,
@@ -1414,7 +1426,7 @@ impl Analyzer {
         type_names: &HashSet<String>,
     ) -> bool {
         match source {
-            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Void => true,
+            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => true,
             Type::Infer => {
                 self.error(format!(
                     "trait member `{trait_name}.{member_name}` cannot use inferred type `_`"
@@ -1506,7 +1518,7 @@ impl Analyzer {
 
     fn source_type_is_concrete(&self, source: &Type) -> bool {
         match source {
-            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Void => true,
+            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => true,
             Type::Infer => false,
             Type::Array(element, _) => self.source_type_is_concrete(element),
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => true,
@@ -1713,7 +1725,7 @@ impl Analyzer {
             | Type::U32
             | Type::U64
             | Type::Bool
-            | Type::Void
+            | Type::Unit
             | Type::Infer => Some(source.clone()),
         }
     }
@@ -2177,9 +2189,6 @@ impl Analyzer {
     }
 
     fn build_enum_layout(&mut self, name: &str, definition: EnumDef) {
-        if definition.variants.is_empty() {
-            self.error(format!("enum `{name}` must declare at least one variant"));
-        }
         let mut seen_variants = HashSet::new();
         let mut variants = Vec::new();
         let mut payload_offset = 0;
@@ -2812,7 +2821,7 @@ impl Analyzer {
             Type::U32 => Ty::U32,
             Type::U64 => Ty::U64,
             Type::Bool => Ty::Bool,
-            Type::Void => Ty::Unit,
+            Type::Unit => Ty::Unit,
             Type::Infer => {
                 self.error("`_` type inference is not supported in the first generic slice");
                 Ty::Error
@@ -2958,7 +2967,7 @@ impl Analyzer {
                 );
                 None
             }
-            Expr::Unit => Some(Type::Void),
+            Expr::Unit => Some(Type::Unit),
             Expr::Name(name) => {
                 if let Some(replacement) = substitutions.get(name) {
                     return Some(replacement.clone());
@@ -2969,7 +2978,7 @@ impl Analyzer {
                     "u32" => Type::U32,
                     "u64" => Type::U64,
                     "bool" => Type::Bool,
-                    "void" => Type::Void,
+                    "void" => Type::Unit,
                     _ => Type::Named(name.clone(), Vec::new()),
                 })
             }
@@ -3024,7 +3033,7 @@ impl Analyzer {
             Ty::U32 => Some(Type::U32),
             Ty::U64 => Some(Type::U64),
             Ty::Bool => Some(Type::Bool),
-            Ty::Unit => Some(Type::Void),
+            Ty::Unit => Some(Type::Unit),
             Ty::Array(element, length) => Some(Type::Array(
                 Box::new(self.source_type_for_ty(element)?),
                 *length,
@@ -3058,7 +3067,7 @@ impl Analyzer {
     ) -> Option<Type> {
         match expression {
             Expr::Infer => None,
-            Expr::Unit => Some(Type::Void),
+            Expr::Unit => Some(Type::Unit),
             Expr::Name(name) => substitutions.get(name).cloned().or_else(|| {
                 Some(match name.as_str() {
                     "i32" => Type::I32,
@@ -3066,7 +3075,7 @@ impl Analyzer {
                     "u32" => Type::U32,
                     "u64" => Type::U64,
                     "bool" => Type::Bool,
-                    "void" => Type::Void,
+                    "void" => Type::Unit,
                     _ => Type::Named(name.clone(), Vec::new()),
                 })
             }),
@@ -3108,7 +3117,7 @@ impl Analyzer {
             Type::U32 => Some(Ty::U32),
             Type::U64 => Some(Ty::U64),
             Type::Bool => Some(Ty::Bool),
-            Type::Void => Some(Ty::Unit),
+            Type::Unit => Some(Ty::Unit),
             Type::Infer => None,
             Type::Array(element, length) => {
                 Some(Ty::Array(Box::new(self.probe_source_ty(element)?), *length))
@@ -3286,7 +3295,7 @@ impl Analyzer {
                         previous.ty, previous.origin
                     ));
                 }
-                if matches!(actual, Ty::Never | Ty::Error) {
+                if *actual == Ty::Error || self.is_uninhabited_type(actual) {
                     return Err(format!(
                         "cannot infer type parameter `{name}` from `{actual}` in {origin}"
                     ));
@@ -3314,7 +3323,7 @@ impl Analyzer {
             Type::U32 => (*actual == Ty::U32).then_some(false).ok_or_else(mismatch),
             Type::U64 => (*actual == Ty::U64).then_some(false).ok_or_else(mismatch),
             Type::Bool => (*actual == Ty::Bool).then_some(false).ok_or_else(mismatch),
-            Type::Void => (*actual == Ty::Unit).then_some(false).ok_or_else(mismatch),
+            Type::Unit => (*actual == Ty::Unit).then_some(false).ok_or_else(mismatch),
             Type::Array(element, length) => {
                 let Ty::Array(actual_element, actual_length) = actual else {
                     return Err(mismatch());
@@ -3410,7 +3419,7 @@ impl Analyzer {
             Type::U32 => Some(Ty::U32),
             Type::U64 => Some(Ty::U64),
             Type::Bool => Some(Ty::Bool),
-            Type::Void => Some(Ty::Unit),
+            Type::Unit => Some(Ty::Unit),
             Type::Infer => None,
             Type::Array(element, length) => Some(Ty::Array(
                 Box::new(self.resolved_template_ty(element, compile_parameters, inferred)?),
@@ -3778,7 +3787,7 @@ impl Analyzer {
         }
 
         let payload = expected
-            .filter(|ty| !matches!(ty, Ty::Never | Ty::Error))
+            .filter(|ty| **ty != Ty::Error && !self.is_uninhabited_type(ty))
             .cloned()
             .or_else(|| self.inferred_try_payload(&inferred, context))?;
         let mut arguments = vec![payload];
@@ -4809,7 +4818,10 @@ impl Analyzer {
     }
 
     fn finish_return_value(&mut self, value: HirExpr, boundary: &ReturnBoundary) -> HirExpr {
-        if matches!(value.ty, Ty::Never | Ty::Error) || value.ty == boundary.container {
+        if value.ty == Ty::Error
+            || self.is_uninhabited_type(&value.ty)
+            || value.ty == boundary.container
+        {
             return value;
         }
         if value.ty == boundary.success {
@@ -4959,7 +4971,7 @@ impl Analyzer {
             }
             declared
         } else {
-            let mut inferred = if lowered_body.ty == Ty::Never {
+            let mut inferred = if self.is_uninhabited_type(&lowered_body.ty) {
                 None
             } else {
                 Some(lowered_body.ty.clone())
@@ -5432,7 +5444,9 @@ impl Analyzer {
                     {
                         let (else_branch, else_flow) =
                             self.lower_expr_from_flow(else_ast, None, &entry_flow, context);
-                        let branch_hint = if matches!(else_branch.ty, Ty::Never | Ty::Error) {
+                        let branch_hint = if else_branch.ty == Ty::Error
+                            || self.is_uninhabited_type(&else_branch.ty)
+                        {
                             None
                         } else {
                             Some(&else_branch.ty)
@@ -5447,7 +5461,9 @@ impl Analyzer {
                     } else {
                         let (then_branch, then_flow) =
                             self.lower_expr_from_flow(then_branch, None, &entry_flow, context);
-                        let branch_hint = if matches!(then_branch.ty, Ty::Never | Ty::Error) {
+                        let branch_hint = if then_branch.ty == Ty::Error
+                            || self.is_uninhabited_type(&then_branch.ty)
+                        {
                             None
                         } else {
                             Some(&then_branch.ty)
@@ -5526,6 +5542,9 @@ impl Analyzer {
             Expr::Match { scrutinee, arms } => self.lower_match(scrutinee, arms, expected, context),
         };
 
+        if self.is_uninhabited_type(&lowered.ty) {
+            context.flow.reachable = false;
+        }
         if let Some(expected) = expected {
             self.require_same_type(&lowered.ty, expected, "expression");
         }
@@ -5950,7 +5969,7 @@ impl Analyzer {
         }
 
         let lowered_body = self.lower_expr(body, None, &mut context);
-        let mut result = if lowered_body.ty == Ty::Never {
+        let mut result = if self.is_uninhabited_type(&lowered_body.ty) {
             None
         } else {
             Some(lowered_body.ty.clone())
@@ -6751,7 +6770,7 @@ impl Analyzer {
             match self.inferred_coalesce_payload_probe(
                 inferred.kind,
                 &inferred.type_groups,
-                expected.filter(|ty| !matches!(ty, Ty::Never | Ty::Error)),
+                expected.filter(|ty| **ty != Ty::Error && !self.is_uninhabited_type(ty)),
                 right,
                 context,
             ) {
@@ -7205,7 +7224,7 @@ impl Analyzer {
             .clone()
             .expect("Result return boundary has an error type");
         let error = self.lower_expr(value, Some(&error_ty), context);
-        if error.ty == Ty::Never {
+        if self.is_uninhabited_type(&error.ty) {
             return error;
         }
         let result = self.construct_boundary_variant(&boundary, false, Some(error));
@@ -7261,7 +7280,7 @@ impl Analyzer {
             let branch_expected = expected.or_else(|| {
                 result_ty
                     .as_ref()
-                    .filter(|ty| !matches!(ty, Ty::Never | Ty::Error))
+                    .filter(|ty| **ty != Ty::Error && !self.is_uninhabited_type(ty))
             });
             let body = self.lower_expr(&arm.body, branch_expected, context);
             let guard_fallthrough = guard_flow.map(|flow| context.flow_without_current_scope(flow));
@@ -7307,11 +7326,17 @@ impl Analyzer {
                 missing.join(", ")
             ));
         }
-        if arms.is_empty() {
+        if arms.is_empty() && !layout.variants.is_empty() {
             self.error("match must contain at least one arm");
         }
         HirExpr {
-            ty: result_ty.unwrap_or(Ty::Error),
+            ty: result_ty.unwrap_or({
+                if layout.variants.is_empty() {
+                    Ty::Never
+                } else {
+                    Ty::Error
+                }
+            }),
             kind: HirExprKind::Match {
                 scrutinee: Box::new(scrutinee),
                 arms: lowered_arms,
@@ -9456,7 +9481,7 @@ impl Analyzer {
 
     fn require_same_type(&mut self, actual: &Ty, expected: &Ty, context: impl fmt::Display) {
         if actual == expected
-            || *actual == Ty::Never
+            || self.is_uninhabited_type(actual)
             || *actual == Ty::Error
             || *expected == Ty::Error
         {
@@ -9471,10 +9496,10 @@ impl Analyzer {
         if left == right {
             return left.clone();
         }
-        if *left == Ty::Never {
+        if self.is_uninhabited_type(left) {
             return right.clone();
         }
-        if *right == Ty::Never {
+        if self.is_uninhabited_type(right) {
             return left.clone();
         }
         if *left == Ty::Error || *right == Ty::Error {
@@ -9484,6 +9509,11 @@ impl Analyzer {
             "type mismatch for {context}: `{left}` and `{right}` cannot be unified"
         ));
         Ty::Error
+    }
+
+    fn is_uninhabited_type(&self, ty: &Ty) -> bool {
+        *ty == Ty::Never
+            || matches!(ty, Ty::Enum(name) if self.enum_layouts.get(name).is_some_and(|layout| layout.variants.is_empty()))
     }
 
     fn validate_entry_point(&mut self) {
@@ -10144,7 +10174,19 @@ impl<'a> FunctionEmitter<'a> {
         self.output.push_str(") {\nentry:\n");
         let entry_alloca_offset = self.output.len();
 
+        if self
+            .function
+            .params
+            .iter()
+            .any(|parameter| self.program.is_uninhabited(&parameter.ty))
+        {
+            self.terminate("unreachable");
+        }
+
         for (index, parameter) in self.function.params.iter().enumerate() {
+            if self.terminated {
+                break;
+            }
             if parameter.ty == Ty::Unit {
                 continue;
             }
@@ -10178,6 +10220,16 @@ impl<'a> FunctionEmitter<'a> {
         if self.terminated {
             return Ok(Operand::never());
         }
+        let operand = self.emit_expr_inner(expression)?;
+        if !self.terminated && self.program.is_uninhabited(&operand.ty) {
+            self.terminate("unreachable");
+            Ok(Operand::never())
+        } else {
+            Ok(operand)
+        }
+    }
+
+    fn emit_expr_inner(&mut self, expression: &HirExpr) -> Result<Operand, Diagnostic> {
         match &expression.kind {
             HirExprKind::Integer(value) => Ok(Operand {
                 ty: expression.ty.clone(),
@@ -10448,6 +10500,10 @@ impl<'a> FunctionEmitter<'a> {
                 } else {
                     let register = self.fresh_register();
                     self.instruction(format!("{register} = {call}"));
+                    if self.program.is_uninhabited(&expression.ty) {
+                        self.terminate("unreachable");
+                        return Ok(Operand::never());
+                    }
                     Ok(Operand {
                         ty: expression.ty.clone(),
                         value: Some(register),
@@ -11278,7 +11334,7 @@ fn collect_nominal_type_dependencies(
         | Type::U32
         | Type::U64
         | Type::Bool
-        | Type::Void
+        | Type::Unit
         | Type::Infer
         | Type::Named(_, _) => {}
     }
@@ -11419,7 +11475,7 @@ fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<String, Typ
                 substitute_type_parameters(argument, substitutions);
             }
         }
-        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Void | Type::Infer => {}
+        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit | Type::Infer => {}
     }
 }
 
@@ -11529,7 +11585,7 @@ fn substitute_self_type(ty: &mut Type, target: &str) {
                 substitute_self_type(argument, target);
             }
         }
-        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Void | Type::Infer => {}
+        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit | Type::Infer => {}
     }
 }
 
@@ -11591,6 +11647,11 @@ mod tests {
     fn compile_text(source: &str) -> Result<String, Vec<Diagnostic>> {
         let program = crate::parser::parse(source).expect("test source must parse");
         compile(&program)
+    }
+
+    fn compile_library_text(source: &str) -> Result<String, Vec<Diagnostic>> {
+        let program = crate::parser::parse(source).expect("test source must parse");
+        compile_library(&program)
     }
 
     fn function(name: &str, groups: Vec<Vec<Param>>, result: Type, body: Expr) -> Item {
@@ -11781,8 +11842,14 @@ mod tests {
         }));
         assert!(analyzer.function_instances.is_empty());
         assert!(analyzer.function_instance_names.is_empty());
-        assert!(analyzer.nominal_instances.is_empty());
-        assert!(analyzer.nominal_instance_names.is_empty());
+        assert!(analyzer
+            .nominal_instances
+            .values()
+            .all(|instance| instance.key.template == "never"));
+        assert!(analyzer
+            .nominal_instance_names
+            .keys()
+            .all(|key| key.template == "never"));
     }
 
     #[test]
@@ -12014,7 +12081,7 @@ mod tests {
     }
 
     #[test]
-    fn registers_option_and_result_as_validated_prelude_templates() {
+    fn registers_fallible_containers_and_never_as_prelude_types() {
         let analyzer = Analyzer::new(&Program { items: Vec::new() });
         assert!(
             analyzer.diagnostics.is_empty(),
@@ -12052,9 +12119,12 @@ mod tests {
         assert_eq!(result.variants[0].name, "Ok");
         assert_eq!(result.variants[1].name, "Err");
 
-        assert!(analyzer.nominal_instances.is_empty());
-        assert!(analyzer.nominal_instance_names.is_empty());
-        assert!(analyzer.enum_layouts.is_empty());
+        let never = &analyzer.enum_defs["never"];
+        assert!(never.compile_groups.is_empty());
+        assert!(never.variants.is_empty());
+        assert!(analyzer.enum_layouts["never"].variants.is_empty());
+        assert_eq!(analyzer.nominal_instances.len(), 1);
+        assert_eq!(analyzer.nominal_instance_names.len(), 1);
         assert!(analyzer.functions.is_empty());
         assert!(analyzer.function_templates.is_empty());
         assert!(analyzer.function_order.is_empty());
@@ -12094,6 +12164,25 @@ let main(): i32 = {
         };
         assert!(ir.contains(&hex_name(&nominal_instance_name(&option))));
         assert!(ir.contains(&hex_name(&nominal_instance_name(&result))));
+    }
+
+    #[test]
+    fn empty_enums_are_uninhabited_and_never_supports_empty_match() {
+        let ir = compile_library_text(
+            r#"
+let Empty = enum {}
+let from_never(move value: never): i32 = value match {}
+let from_empty(move value: Empty): bool = value match {}
+let stop(): never = loop {}
+let choose(flag: bool): i32 = if flag { 42 } else { stop() }
+"#,
+        )
+        .expect("empty enums and empty matches must compile");
+
+        assert!(ir.contains(&type_symbol("never")));
+        assert!(ir.contains(&type_symbol("Empty")));
+        assert!(ir.contains("unreachable"));
+        assert!(!ir.contains("define i32 @main()"));
     }
 
     #[test]
@@ -12393,6 +12482,24 @@ let main(): i32 = {
                 }
             );
         }
+
+        let program =
+            crate::parser::parse("let never = struct(value: i32)\nlet main(): i32 = 42\n")
+                .expect("reserved never source must parse");
+        let analyzer = Analyzer::new(&program);
+        assert!(analyzer
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.message == "duplicate top-level name `never`" }));
+        assert!(analyzer.enum_defs["never"].variants.is_empty());
+
+        let program = crate::parser::parse("let void = ()\nlet main(): i32 = 42\n")
+            .expect("reserved void source must parse");
+        let analyzer = Analyzer::new(&program);
+        assert!(analyzer
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.message == "duplicate top-level name `void`" }));
     }
 
     #[test]
@@ -12409,8 +12516,14 @@ let main(): i32 = {
             "unexpected validation diagnostics: {:?}",
             analyzer.diagnostics
         );
-        assert!(analyzer.nominal_instances.is_empty());
-        assert!(analyzer.nominal_instance_names.is_empty());
+        assert!(analyzer
+            .nominal_instances
+            .values()
+            .all(|instance| instance.key.template == "never"));
+        assert!(analyzer
+            .nominal_instance_names
+            .keys()
+            .all(|key| key.template == "never"));
         assert!(analyzer.struct_layouts.is_empty());
         assert!(analyzer.struct_order.is_empty());
 
@@ -12638,7 +12751,7 @@ let main(): i32 = 0
 
     #[test]
     fn unit_entry_uses_i32_c_wrapper() {
-        let main = function("main", vec![vec![]], Type::Void, Expr::Unit);
+        let main = function("main", vec![vec![]], Type::Unit, Expr::Unit);
         let ir = compile(&Program { items: vec![main] }).unwrap();
         assert!(ir.contains("define internal void @sali.fn.6d61696e()"));
         assert!(ir.contains("call void @sali.fn.6d61696e()"));

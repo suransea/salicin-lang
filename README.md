@@ -83,9 +83,12 @@ v0.3.0（M2）在此基础上还支持：
 - `throw error` 在显式 `Result(U, E)` 返回边界中把错误值包装成外层 `Err` 并立即返回；错误表达式
   只求值一次，并按边界的精确 `E` 类型检查。
 
-当前 main 分支正在实现 M3，并已支持严格校验的 `salicin.toml`、默认 `src/lib.sali` /
-`src/main.sali` target 发现、自定义 `[lib]` / `[[bin]]`、项目级 target 选择和 `build/` 输出目录；
-单文件命令保持兼容。
+当前 main 分支正在实现 M3，并新增：
+
+- 严格校验的 `salicin.toml`、默认 `src/lib.sali` / `src/main.sali` target 发现、自定义 `[lib]` /
+  `[[bin]]`、项目级 target 选择和 `build/` 输出目录；单文件命令保持兼容。
+- `void` 作为 `()` 的预导入类型别名，以及作为零 variant enum 预导入的 `never`；空 enum 是
+  uninhabited type，可通过空 `match {}` 消除并参与发散控制流的类型统一。
 
 最小示例：
 

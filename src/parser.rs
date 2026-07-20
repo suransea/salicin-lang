@@ -299,7 +299,7 @@ impl Parser {
             let name = self.expect_ident("a compile-time parameter name")?;
             if matches!(
                 name.as_str(),
-                "_" | "i32" | "i64" | "u32" | "u64" | "bool" | "void"
+                "_" | "i32" | "i64" | "u32" | "u64" | "bool" | "void" | "never"
             ) {
                 return Err(self.error_at(
                     &name_token,
@@ -651,7 +651,7 @@ impl Parser {
     fn type_expr(&mut self) -> Result<Type, ParseError> {
         if self.take(&TokenKind::LParen) {
             self.expect(&TokenKind::RParen, "`)` in unit type")?;
-            return Ok(Type::Void);
+            return Ok(Type::Unit);
         }
 
         if matches!(&self.current().kind, TokenKind::Ident(name) if name == "_") {
@@ -704,7 +704,7 @@ impl Parser {
                 "u32" => Type::U32,
                 "u64" => Type::U64,
                 "bool" => Type::Bool,
-                "void" => Type::Void,
+                "void" => Type::Unit,
                 _ => Type::Named(name, arguments),
             })
         } else {
@@ -1553,6 +1553,22 @@ mod tests {
     }
 
     #[test]
+    fn parses_void_as_an_alias_of_the_unit_type() {
+        let program = parse(
+            "let canonical(): () = ()\n\
+             let alias(): void = ()\n",
+        )
+        .unwrap();
+
+        for item in &program.items {
+            let Item::Function(function) = item else {
+                panic!("expected function");
+            };
+            assert_eq!(function.return_type, Some(Type::Unit));
+        }
+    }
+
+    #[test]
     fn separates_compile_time_and_runtime_parameter_groups() {
         let program = parse(
             "let identity(T: type)(value: T): T = value\n\
@@ -1871,7 +1887,7 @@ mod tests {
 
     #[test]
     fn rejects_reserved_compile_parameter_names() {
-        for name in ["_", "i32", "i64", "u32", "u64", "bool", "void"] {
+        for name in ["_", "i32", "i64", "u32", "u64", "bool", "void", "never"] {
             let source = format!("let invalid({name}: type)(value: i32): i32 = value\n");
             let error = parse(&source).unwrap_err();
             assert_eq!(

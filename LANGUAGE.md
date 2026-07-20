@@ -11,7 +11,7 @@
 
 1. `let` 是统一的不可变名称绑定语法，可以绑定值、函数、类型、trait 和模块。
 2. `let mut` 只建立可重新赋值的值绑定，不允许用来改变类型、函数、trait 或模块。
-3. 所有表达式都有类型；无结果表达式的类型是 `()`，`void` 仅作为 `()` 的兼容拼写。
+3. 所有表达式都有类型；无结果表达式的类型是 `()`，prelude 中的 `void` 只是该类型的普通别名。
 4. 函数默认柯里化。每一对参数括号形成一个参数组。
 5. 值默认不可变；资源类型默认移动，可复制类型默认复制。
 6. 泛型在静态编译时单态化，运行时不保留 `type` 参数。
@@ -105,14 +105,23 @@ pub let Point = struct(pub x: i32, pub y: i32)
 i8 i16 i32 i64 i128 isize
 u8 u16 u32 u64 u128 usize
 f32 f64
-bool char () never type
+bool char () type
 ```
 
 - `()` 是单元类型，只有一个值 `()`。
-- `void` 是函数返回位置中 `()` 的别名。源码可按偏好使用二者；`void` 强调“不关心结果”，
-  `()` 强调它仍是一个具有唯一值的正常类型。
-- `never` 没有值，用于 `return`、`throw` 和不终止表达式，并可强制转换到任意类型。
 - `type` 是类型参数的 kind，只能出现在编译期参数位置，不能作为普通运行时值类型。
+
+`void` 和 `never` 不是额外的原始类型；edition prelude 等价于包含以下普通声明：
+
+```sali
+let void = ()
+let never = enum {}
+```
+
+其中 `void` 是 `()` 的类型别名，没有独立的类型身份或 ABI；源码可按偏好使用二者。`never` 是
+零 variant 枚举，因此没有任何值。`return`、`throw`、无可达 `break` 的循环和其他不终止表达式
+具有 `never` 类型，并可强制转换到任意期望类型。用户声明的其他零 variant 枚举同样是
+uninhabited type；对其做空 `match {}` 会产生 `never`。
 
 整数文字先作为“未定整数”参与推断；若上下文没有约束，默认 `i32`。有符号整数溢出在
 debug 构建中检查，release 构建默认二进制补码回绕；可另行提供显式 checked/wrapping API。
@@ -1314,15 +1323,14 @@ prelude 是按 edition 固定的一组隐式导入；升级标准库不能向旧
 
 以下问题会影响语法或类型系统，不应留到后端实现时临时决定：
 
-1. 单元类型在诊断和生成文档中优先显示 `()` 还是 `void`；源码暂保留两种拼写。
-2. 是否长期允许位置式构造带名字字段的公开结构体；Draft 0.2 允许但推荐标签形式。
-3. trait object、动态分派、对象安全和显式 callable 擦除是否进入 1.0。
-4. `Send`/`Sync` 一类并发 auto-trait、线程内存模型和数据竞争定义。
-5. `salicin.toml` 的注册表、feature、target 条件和 workspace 完整格式。
-6. 稳定 ABI 的版本策略、动态库兼容范围以及属性的正式语法。
-7. 宏、编译期求值和代码生成能力进入哪个里程碑。
-8. release 整数溢出是否始终回绕，还是允许由 package profile 选择 checked/abort/wrap。
+1. 是否长期允许位置式构造带名字字段的公开结构体；Draft 0.2 允许但推荐标签形式。
+2. trait object、动态分派、对象安全和显式 callable 擦除是否进入 1.0。
+3. `Send`/`Sync` 一类并发 auto-trait、线程内存模型和数据竞争定义。
+4. `salicin.toml` 的注册表、feature、target 条件和 workspace 完整格式。
+5. 稳定 ABI 的版本策略、动态库兼容范围以及属性的正式语法。
+6. 宏、编译期求值和代码生成能力进入哪个里程碑。
+7. release 整数溢出是否始终回绕，还是允许由 package profile 选择 checked/abort/wrap。
 
 以下已在 Draft 0.2 确定，不再列为开放问题：语言名 Salicin、`.sali`、`do {}`、后缀 `match`、
-尾随闭包新建参数组、显式 region、enum 语法、三级可见性、用户实现 `Chain`/`Coalesce`、冷 Future、
-abort panic，以及无默认 GC 的拥有容器模型。
+尾随闭包新建参数组、显式 region、enum 语法、三级可见性、`void`/`never` 的 prelude 定义、用户实现
+`Chain`/`Coalesce`、冷 Future、abort panic，以及无默认 GC 的拥有容器模型。

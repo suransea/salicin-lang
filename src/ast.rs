@@ -123,7 +123,7 @@ pub enum Type {
     U32,
     U64,
     Bool,
-    Void,
+    Unit,
     Infer,
     Array(Box<Type>, u64),
     Named(String, Vec<Type>),

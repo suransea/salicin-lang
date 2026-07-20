@@ -1452,3 +1452,28 @@ path = "src/other.sali"
     assert_eq!(build.status.code(), Some(2), "{}", output_text(&build));
     assert_eq!(fs::read_to_string(&other).unwrap(), other_text);
 }
+
+#[test]
+fn prelude_never_coerces_through_diverging_calls() {
+    let temporary = TestDirectory::new();
+    let source = temporary.write(
+        "never.sali",
+        r#"let stop(): never = loop {}
+let absurd(move value: never): i32 = value
+let propagate(move value: never): Result(i32, ()) = value
+let throw_never(move value: never): Result(i32, ()) = { throw value }
+let Empty = enum {}
+let Holder = struct(value: Empty)
+let project(move holder: Holder): i32 = holder.value
+let choose(flag: bool): i32 = if flag { 42 } else { stop() }
+let main(): i32 = choose(true)
+"#,
+    );
+
+    let output = salic()
+        .arg("run")
+        .arg(source)
+        .output()
+        .expect("run program with never coercion");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}

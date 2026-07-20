@@ -208,6 +208,10 @@ type_arguments = "(", type_argument, { ",", type_argument }, [ "," ], ")" ;
 type_argument  = type_expr | "_" | INTEGER ;
 ```
 
+`void` 和 `never` 按普通 prelude 名称解析，分别等价于 `let void = ()` 与
+`let never = enum {}`，不是 lexer 关键字。零 variant enum 合法；其值位置可以用空的
+`match {}` 消除。
+
 匿名签名槽只有在模式为 `auto` 时可省略 `_:`：
 
 ```sali
