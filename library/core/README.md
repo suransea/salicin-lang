@@ -29,6 +29,19 @@ Validated nominal `Copy` participates in inferred parameter passing, ordinary re
 captures, and partial application, while explicit `move` still consumes. Function and closure types
 remain non-`Copy`, and same-named user traits cannot spoof the lang item.
 
-`Drop` is not public in v0.8. The next ownership layer is internal scope cleanup and drop flags,
-followed by `Drop`, raw pointers, and an allocator ABI. Only then will `alloc` be added; the platform
-`std` layer follows C-ABI and runtime interfaces.
+The v0.9 compiler normalizes move-path initialization alternatives, permits sound root and field
+reinitialization, conservatively widens after 64 exact alternatives, and prevents non-`Copy`
+pattern bindings from being moved in match guards. It also builds and verifies a type-independent
+`CleanupPlan` from each function's real HIR scopes and control-flow edges.
+
+That plan is a boundary, not executable destruction. It explicitly keeps pending cases for
+unmaterialized resource results, move-state dataflow, temporary liveness, loop-break transfer,
+borrowed mutation, maybe-overwrite state, match/pattern transfer, and partial or closure captures.
+There is no `needs_drop`, runtime drop flag, public source-backed `Drop`, drop glue, or LLVM cleanup
+emission yet. Compile-time globals are independently materialized at each use and are outside the
+cleanup plan; resource-bearing global semantics must be settled before `Drop` is exposed.
+
+The adjacent standard-library route is therefore: finish cleanup materialization and dataflow in
+`core`; add `needs_drop` and drop flags; expose source-backed `Drop` and emit glue; then define raw
+pointers and the allocator ABI. Only after those boundaries are real will `alloc` be added, followed
+by platform `std` over the C ABI and minimal runtime.

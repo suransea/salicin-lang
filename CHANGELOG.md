@@ -6,6 +6,31 @@ subset.
 
 ## Unreleased
 
+## 0.9.0 - 2026-07-20
+
+- Replaced the single moved-place set with normalized alternatives of uninitialized move-path
+  leaves. Root and projected moves can now be rebuilt by assigning the root or every field, while
+  branch joins preserve correlated alternatives and loop backedges validate the resulting state.
+- Bounded exact initialization alternatives at 64. Larger state spaces conservatively widen to
+  fully initialized versus the union of possibly uninitialized leaves, preventing exponential
+  growth without accepting a use that the exact analysis would reject.
+- Distinguished initialized, uninitialized, and maybe-uninitialized uses and assignment kinds, so
+  root/field reinitialization and conditional overwrites receive stable ownership diagnostics.
+- Prevented a non-`Copy` pattern binding from being moved in a `match` guard: a failed guard may try
+  a later candidate, so only a `Copy` binding may be explicitly consumed there.
+- Added and verified one type-independent `CleanupPlan` per lowered HIR function. The plan records
+  lexical, loop, and match-arm scopes, owned and borrowed locals, move paths, storage/init/move/
+  overwrite events, and real branch, loop, guard, break, and return edges. Both checking and code
+  generation build and verify this ownership CFG before continuing.
+- Kept cleanup lowering deliberately non-executable. Pending capabilities explicitly cover
+  unmaterialized resource results, move-path state dataflow, temporary-storage liveness, loop-break
+  value transfer, mutation through borrowed places, maybe-overwrite state, match dispatch and
+  pattern-binding transfer, and partial-application or closure captures.
+- Did not add `needs_drop`, runtime drop flags, source-backed `Drop`, drop glue, or LLVM destructor
+  emission. Compile-time globals are still constants materialized independently at each use and do
+  not participate in `CleanupPlan`; resource-bearing globals and their `Drop` semantics must be
+  fixed before `Drop` becomes observable.
+
 ## 0.8.0 - 2026-07-20
 
 - Added the canonical source-backed `pub let Copy = trait {}` marker to the edition `core` bundle,

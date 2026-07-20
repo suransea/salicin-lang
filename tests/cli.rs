@@ -319,6 +319,74 @@ fn m1_ownership_errors_report_their_cause() {
 }
 
 #[test]
+fn v09_reinitialization_programs_run_with_expected_result() {
+    for name in [
+        "reinit_after_root_move.sali",
+        "reinit_partial_field.sali",
+        "reinit_root_move_field_by_field.sali",
+        "reinit_after_both_if_branches.sali",
+        "reinit_loop_backedge.sali",
+        "reinit_after_explicit_copy_move.sali",
+        "match_guard_copy_binding.sali",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run v0.9 reinitialization fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn v09_reinitialization_errors_preserve_flow_safety() {
+    for (name, expected) in [
+        (
+            "reinit_only_one_if_branch.sali",
+            &["possibly", "uninitialized"][..],
+        ),
+        (
+            "move_only_one_if_branch.sali",
+            &["possibly", "uninitialized"][..],
+        ),
+        (
+            "reinit_root_move_incomplete_fields.sali",
+            &["uninitialized"][..],
+        ),
+        ("reinit_self_assignment_after_move.sali", &["moved"][..]),
+        (
+            "match_guard_move_non_copy_binding.sali",
+            &["guard", "move"][..],
+        ),
+        (
+            "reinit_widening_many_independent_branches.sali",
+            &["possibly", "uninitialized"][..],
+        ),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid v0.9 reinitialization fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        for fragment in expected {
+            assert!(
+                stderr.contains(fragment),
+                "{name} did not report `{fragment}`:\n{}",
+                output_text(&output)
+            );
+        }
+    }
+}
+
+#[test]
 fn source_backed_copy_programs_run_with_expected_result() {
     for name in [
         "copy_nominal_repeated_and_parameters.sali",

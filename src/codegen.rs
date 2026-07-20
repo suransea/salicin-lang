@@ -12,6 +12,13 @@ use crate::ast::{
     Function, Item, ItemOrigin, MatchArm, PassMode, Pattern, PatternFields, Program, Stmt,
     StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantFields, Visibility,
 };
+use crate::cleanup::{
+    BasicBlockId as CleanupBlockId, CleanupEdge, CleanupOp, CleanupPlan, CleanupPlanBuilder,
+    LocalId as CleanupLocalId, LocalKind as CleanupLocalKind,
+    LocalOwnership as CleanupLocalOwnership, MovePathId as CleanupMovePathId, PendingCapability,
+    Place as CleanupPlace, Projection as CleanupProjection, ScopeId as CleanupScopeId,
+    ScopeKind as CleanupScopeKind, Terminator as CleanupTerminator,
+};
 use crate::core::{
     copy_trait_has_required_shape, operator_trait_has_required_shape, CoreBundle, LangItemKind,
     LangItems,
@@ -66,6 +73,7 @@ fn compile_target(program: &Program, require_entry_point: bool) -> Result<String
     }
 
     let hir = hir.expect("analysis without diagnostics must produce HIR");
+    let _cleanup_plans = build_and_verify_cleanup_plans(&hir)?;
     let constants = evaluate_globals(&hir)?;
 
     match Emitter::new(&hir, constants).emit_module(require_entry_point) {
@@ -87,6 +95,7 @@ pub fn check_library(program: &Program) -> Result<(), Vec<Diagnostic>> {
     }
 
     let hir = hir.expect("analysis without diagnostics must produce HIR");
+    let _cleanup_plans = build_and_verify_cleanup_plans(&hir)?;
     evaluate_globals(&hir).map(|_| ())
 }
 
@@ -336,6 +345,7 @@ struct HirBinding {
     id: LocalId,
     name: String,
     ty: Ty,
+    mutable: bool,
     value: HirExpr,
 }
 
@@ -366,6 +376,18 @@ struct HirPlace {
 enum HirReadKind {
     Copy,
     Move,
+}
+
+/// Describes whether an assignment replaces a value that is definitely live.
+///
+/// This is intentionally independent of `Copy` and of any future `Drop`
+/// decision.  The cleanup planner can use it later to decide whether an old
+/// value may need cleanup before the store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AssignmentKind {
+    Initialize,
+    Overwrite,
+    MaybeOverwrite,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -426,7 +448,11 @@ enum HirExprKind {
     Function(String),
     Unary(UnaryOp, Box<HirExpr>),
     Binary(Box<HirExpr>, BinaryOp, Box<HirExpr>),
-    Assign(HirPlace, Box<HirExpr>),
+    Assign {
+        place: HirPlace,
+        value: Box<HirExpr>,
+        assignment: AssignmentKind,
+    },
     Call {
         function: String,
         arguments: Vec<HirArgument>,
@@ -551,9 +577,10 @@ impl From<&HirPlace> for PlaceKey {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MoveStatus {
-    Moved,
-    MaybeMoved,
+enum InitializationStatus {
+    Initialized,
+    Uninitialized,
+    MaybeUninitialized,
 }
 
 type LoanId = usize;
@@ -573,15 +600,27 @@ struct Loan {
 #[derive(Debug, Clone)]
 struct FlowState {
     reachable: bool,
-    moves: HashMap<PlaceKey, MoveStatus>,
+    /// Exact alternatives of normalized, uninitialized leaf move paths.
+    ///
+    /// A reachable flow always has at least one alternative. Keeping the
+    /// alternatives disjoint until a use lets joins preserve correlations such
+    /// as "the left field is moved on one branch and the right field on the
+    /// other": the root is then definitely unavailable while either field is
+    /// only possibly unavailable.
+    uninitialized: Vec<HashSet<PlaceKey>>,
     loans: HashMap<LoanId, Loan>,
 }
+
+/// Preserve exact branch correlations while they remain small, then widen to
+/// a conservative maybe-uninitialized summary. This prevents independent
+/// branches from making ownership analysis exponential in source size.
+const MAX_INITIALIZATION_ALTERNATIVES: usize = 64;
 
 impl Default for FlowState {
     fn default() -> Self {
         Self {
             reachable: true,
-            moves: HashMap::new(),
+            uninitialized: vec![HashSet::new()],
             loans: HashMap::new(),
         }
     }
@@ -593,44 +632,52 @@ impl FlowState {
         match reachable.as_slice() {
             [] => Self {
                 reachable: false,
-                moves: HashMap::new(),
+                uninitialized: Vec::new(),
                 loans: HashMap::new(),
             },
             [only] => (*only).clone(),
             _ => {
-                let places: HashSet<_> = reachable
-                    .iter()
-                    .flat_map(|flow| flow.moves.keys().cloned())
-                    .collect();
-                let moves = places
-                    .into_iter()
-                    .map(|place| {
-                        let statuses: Vec<_> = reachable
-                            .iter()
-                            .map(|flow| flow.moves.get(&place).copied())
-                            .collect();
-                        let status = if statuses
-                            .iter()
-                            .all(|status| *status == Some(MoveStatus::Moved))
-                        {
-                            MoveStatus::Moved
-                        } else {
-                            MoveStatus::MaybeMoved
-                        };
-                        (place, status)
-                    })
-                    .collect();
+                let uninitialized = normalize_uninitialized_alternatives(
+                    reachable
+                        .iter()
+                        .flat_map(|flow| flow.uninitialized.iter().cloned()),
+                );
                 let loans = reachable
                     .iter()
                     .flat_map(|flow| flow.loans.iter().map(|(id, loan)| (*id, loan.clone())))
                     .collect();
                 Self {
                     reachable: true,
-                    moves,
+                    uninitialized,
                     loans,
                 }
             }
         }
+    }
+
+    fn initialization_status(&self, leaves: &[PlaceKey]) -> InitializationStatus {
+        if !self.reachable {
+            return InitializationStatus::Initialized;
+        }
+        let unavailable = self
+            .uninitialized
+            .iter()
+            .filter(|alternative| leaves.iter().any(|leaf| alternative.contains(leaf)))
+            .count();
+        match unavailable {
+            0 => InitializationStatus::Initialized,
+            count if count == self.uninitialized.len() => InitializationStatus::Uninitialized,
+            _ => InitializationStatus::MaybeUninitialized,
+        }
+    }
+
+    fn normalize_uninitialized(&mut self) {
+        if !self.reachable {
+            self.uninitialized.clear();
+            return;
+        }
+        self.uninitialized =
+            normalize_uninitialized_alternatives(std::mem::take(&mut self.uninitialized));
     }
 }
 
@@ -709,6 +756,7 @@ struct LowerCtx {
     origin: ItemOrigin,
     type_substitutions: HashMap<String, Type>,
     loops: Vec<LoopFrame>,
+    guard_move_restricted: HashSet<LocalId>,
 }
 
 impl LowerCtx {
@@ -725,6 +773,7 @@ impl LowerCtx {
             origin,
             type_substitutions: HashMap::new(),
             loops: Vec::new(),
+            guard_move_restricted: HashSet::new(),
         }
     }
 
@@ -741,6 +790,7 @@ impl LowerCtx {
             origin,
             type_substitutions: HashMap::new(),
             loops: Vec::new(),
+            guard_move_restricted: HashSet::new(),
         }
     }
 
@@ -774,9 +824,10 @@ impl LowerCtx {
         for loan in scope.lexical_loans {
             self.flow.loans.remove(&loan);
         }
-        self.flow
-            .moves
-            .retain(|place, _| !scope.locals.contains(&place.local));
+        for alternative in &mut self.flow.uninitialized {
+            alternative.retain(|place| !scope.locals.contains(&place.local));
+        }
+        self.flow.normalize_uninitialized();
     }
 
     fn flow_without_current_scope(&self, mut flow: FlowState) -> FlowState {
@@ -784,8 +835,10 @@ impl LowerCtx {
         for loan in &scope.lexical_loans {
             flow.loans.remove(loan);
         }
-        flow.moves
-            .retain(|place, _| !scope.locals.contains(&place.local));
+        for alternative in &mut flow.uninitialized {
+            alternative.retain(|place| !scope.locals.contains(&place.local));
+        }
+        flow.normalize_uninitialized();
         flow
     }
 
@@ -794,9 +847,11 @@ impl LowerCtx {
             for loan in &scope.lexical_loans {
                 flow.loans.remove(loan);
             }
-            flow.moves
-                .retain(|place, _| !scope.locals.contains(&place.local));
+            for alternative in &mut flow.uninitialized {
+                alternative.retain(|place| !scope.locals.contains(&place.local));
+            }
         }
+        flow.normalize_uninitialized();
         flow
     }
 
@@ -6265,13 +6320,18 @@ impl Analyzer {
                     return error_expr();
                 };
                 self.ensure_writable(&place);
-                self.ensure_available(&place, context);
                 self.ensure_no_conflicting_loan(&place, AccessKind::MutBorrow, context);
+                // The right-hand side observes the pre-assignment state.  In
+                // particular, `x = x` must not resurrect an unavailable `x`.
                 let value = self.lower_expr(value, Some(&place.ty), context);
-                self.mark_initialized(&place, context);
+                let assignment = self.mark_initialized(&place, context);
                 HirExpr {
                     ty: Ty::Unit,
-                    kind: HirExprKind::Assign(place, Box::new(value)),
+                    kind: HirExprKind::Assign {
+                        place,
+                        value: Box::new(value),
+                        assignment,
+                    },
                 }
             }
             Expr::Call(_, _) => self.lower_call(expression, expected, context),
@@ -6384,6 +6444,7 @@ impl Analyzer {
                                 id,
                                 name: binding.name.clone(),
                                 ty,
+                                mutable: binding.mutable,
                                 value,
                             }));
                         }
@@ -6778,11 +6839,11 @@ impl Analyzer {
         backedge: &FlowState,
         outer_locals: &HashSet<LocalId>,
     ) {
-        let mut reported = HashSet::new();
-        for (place, status) in &backedge.moves {
-            if !outer_locals.contains(&place.local)
-                || entry.moves.get(place) == Some(status)
-                || !reported.insert(place.local)
+        for local in outer_locals {
+            let entry_alternatives = projected_uninitialized_alternatives(entry, *local);
+            let backedge_alternatives = projected_uninitialized_alternatives(backedge, *local);
+            if alternative_sets_equal(&entry_alternatives, &backedge_alternatives)
+                || backedge_alternatives.iter().all(HashSet::is_empty)
             {
                 continue;
             }
@@ -7309,6 +7370,10 @@ impl Analyzer {
             AccessKind::Move => {
                 if place.capability != LocalCapability::Owned {
                     self.error("cannot move out of a borrowed value");
+                } else if context.guard_move_restricted.contains(&place.local)
+                    && !self.is_copy_type(&place.ty)
+                {
+                    self.error("cannot move a non-Copy pattern binding in a match guard");
                 } else {
                     self.mark_moved(&place, context);
                 }
@@ -7330,21 +7395,15 @@ impl Analyzer {
         if !context.flow.reachable {
             return;
         }
-        let requested = PlaceKey::from(place);
-        let mut possibly_moved = false;
-        for (moved, status) in &context.flow.moves {
-            if places_overlap(&requested, moved) {
-                match status {
-                    MoveStatus::Moved => {
-                        self.error("use of moved value");
-                        return;
-                    }
-                    MoveStatus::MaybeMoved => possibly_moved = true,
-                }
+        let leaves = self.place_leaf_keys(place);
+        match context.flow.initialization_status(&leaves) {
+            InitializationStatus::Initialized => {}
+            InitializationStatus::Uninitialized => {
+                self.error("use of moved or uninitialized value")
             }
-        }
-        if possibly_moved {
-            self.error("use of possibly moved value");
+            InitializationStatus::MaybeUninitialized => {
+                self.error("use of possibly moved or uninitialized value")
+            }
         }
     }
 
@@ -7398,20 +7457,90 @@ impl Analyzer {
         if !context.flow.reachable {
             return;
         }
-        let moved = PlaceKey::from(place);
-        context
-            .flow
-            .moves
-            .retain(|existing, _| !is_place_prefix(&moved, existing));
-        context.flow.moves.insert(moved, MoveStatus::Moved);
+        let leaves = self.place_leaf_keys(place);
+        for alternative in &mut context.flow.uninitialized {
+            alternative.extend(leaves.iter().cloned());
+        }
+        context.flow.normalize_uninitialized();
     }
 
-    fn mark_initialized(&mut self, place: &HirPlace, context: &mut LowerCtx) {
-        let initialized = PlaceKey::from(place);
-        context
-            .flow
-            .moves
-            .retain(|moved, _| !is_place_prefix(&initialized, moved));
+    fn mark_initialized(&mut self, place: &HirPlace, context: &mut LowerCtx) -> AssignmentKind {
+        if !context.flow.reachable {
+            return AssignmentKind::Overwrite;
+        }
+        let leaves = self.place_leaf_keys(place);
+        let mut saw_overwrite = false;
+        let mut saw_initialize = false;
+        let mut saw_partial = false;
+        for alternative in &context.flow.uninitialized {
+            let unavailable = leaves
+                .iter()
+                .filter(|leaf| alternative.contains(*leaf))
+                .count();
+            if unavailable == 0 {
+                saw_overwrite = true;
+            } else if unavailable == leaves.len() {
+                saw_initialize = true;
+            } else {
+                saw_partial = true;
+            }
+        }
+        let assignment = match (saw_overwrite, saw_initialize, saw_partial) {
+            (true, false, false) => AssignmentKind::Overwrite,
+            (false, true, false) => AssignmentKind::Initialize,
+            _ => AssignmentKind::MaybeOverwrite,
+        };
+        for alternative in &mut context.flow.uninitialized {
+            alternative.retain(|leaf| !leaves.contains(leaf));
+        }
+        context.flow.normalize_uninitialized();
+        assignment
+    }
+
+    fn place_leaf_keys(&self, place: &HirPlace) -> Vec<PlaceKey> {
+        let mut leaves = Vec::new();
+        self.append_leaf_keys(
+            PlaceKey::from(place),
+            &place.ty,
+            &mut HashSet::new(),
+            &mut leaves,
+        );
+        leaves
+    }
+
+    fn append_leaf_keys(
+        &self,
+        key: PlaceKey,
+        ty: &Ty,
+        visiting: &mut HashSet<String>,
+        leaves: &mut Vec<PlaceKey>,
+    ) {
+        let Ty::Struct(name) = ty else {
+            leaves.push(key);
+            return;
+        };
+        // Recursive value layouts are diagnosed separately. Keep move-path
+        // construction finite while that invalid source continues lowering.
+        if !visiting.insert(name.clone()) {
+            leaves.push(key);
+            return;
+        }
+        let Some(layout) = self.struct_layouts.get(name) else {
+            visiting.remove(name);
+            leaves.push(key);
+            return;
+        };
+        if layout.fields.is_empty() {
+            visiting.remove(name);
+            leaves.push(key);
+            return;
+        }
+        for (index, field) in layout.fields.iter().enumerate() {
+            let mut field_key = key.clone();
+            field_key.projections.push(index);
+            self.append_leaf_keys(field_key, &field.ty, visiting, leaves);
+        }
+        visiting.remove(name);
     }
 
     fn acquire_loan(
@@ -8296,10 +8425,18 @@ impl Analyzer {
                 .filter_map(|index| fallthrough_flows[*index].clone())
                 .collect();
             context.flow = FlowState::join(&incoming_flows);
+            let previous_guard_restrictions = context.guard_move_restricted.clone();
+            context.guard_move_restricted.extend(
+                bindings
+                    .iter()
+                    .filter(|binding| !self.is_copy_type(&binding.ty))
+                    .map(|binding| binding.id),
+            );
             let guard = arm
                 .guard
                 .as_ref()
                 .map(|guard| self.lower_expr(guard, Some(&Ty::Bool), context));
+            context.guard_move_restricted = previous_guard_restrictions;
             let guard_flow = guard.as_ref().map(|_| context.flow.clone());
             let branch_expected = expected.or_else(|| {
                 result_ty
@@ -10050,23 +10187,19 @@ impl Analyzer {
                 root_mutable: local.mutable,
                 loan: None,
             };
-            let key = PlaceKey::from(&callable);
-            if let Some(status) = context
-                .flow
-                .moves
-                .iter()
-                .find_map(|(moved, status)| places_overlap(&key, moved).then_some(*status))
-            {
-                self.error(match status {
-                    MoveStatus::Moved => {
-                        format!("FnOnce closure `{local_name}` was already consumed")
-                    }
-                    MoveStatus::MaybeMoved => {
-                        format!("FnOnce closure `{local_name}` may already be consumed")
-                    }
-                });
-            } else {
-                self.mark_moved(&callable, context);
+            let leaves = self.place_leaf_keys(&callable);
+            match context.flow.initialization_status(&leaves) {
+                InitializationStatus::Uninitialized => {
+                    self.error(format!(
+                        "FnOnce closure `{local_name}` was already consumed"
+                    ));
+                }
+                InitializationStatus::MaybeUninitialized => {
+                    self.error(format!(
+                        "FnOnce closure `{local_name}` may already be consumed"
+                    ));
+                }
+                InitializationStatus::Initialized => self.mark_moved(&callable, context),
             }
         }
 
@@ -10729,6 +10862,55 @@ fn places_overlap(left: &PlaceKey, right: &PlaceKey) -> bool {
     is_place_prefix(left, right) || is_place_prefix(right, left)
 }
 
+fn projected_uninitialized_alternatives(
+    flow: &FlowState,
+    local: LocalId,
+) -> Vec<HashSet<PlaceKey>> {
+    normalize_uninitialized_alternatives(flow.uninitialized.iter().map(|alternative| {
+        alternative
+            .iter()
+            .filter(|place| place.local == local)
+            .cloned()
+            .collect()
+    }))
+}
+
+fn normalize_uninitialized_alternatives(
+    alternatives: impl IntoIterator<Item = HashSet<PlaceKey>>,
+) -> Vec<HashSet<PlaceKey>> {
+    let mut unique = Vec::new();
+    let mut union = HashSet::new();
+    let mut widened = false;
+    for alternative in alternatives {
+        union.extend(alternative.iter().cloned());
+        if widened || unique.iter().any(|existing| existing == &alternative) {
+            continue;
+        }
+        unique.push(alternative);
+        if unique.len() > MAX_INITIALIZATION_ALTERNATIVES {
+            widened = true;
+            unique.clear();
+        }
+    }
+
+    if widened {
+        if union.is_empty() {
+            vec![HashSet::new()]
+        } else {
+            vec![HashSet::new(), union]
+        }
+    } else {
+        unique
+    }
+}
+
+fn alternative_sets_equal(left: &[HashSet<PlaceKey>], right: &[HashSet<PlaceKey>]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .all(|alternative| right.iter().any(|other| other == alternative))
+}
+
 fn integer_fits(value: i128, ty: &Ty) -> bool {
     match ty {
         Ty::I32 => i32::try_from(value).is_ok(),
@@ -10793,6 +10975,1146 @@ fn binary_spelling(operator: BinaryOp) -> &'static str {
         BinaryOp::Ge => ">=",
         BinaryOp::And => "&&",
         BinaryOp::Or => "||",
+    }
+}
+
+fn build_and_verify_cleanup_plans(
+    program: &HirProgram,
+) -> Result<Vec<CleanupPlan>, Vec<Diagnostic>> {
+    let mut plans = Vec::with_capacity(program.functions.len());
+    let mut diagnostics = Vec::new();
+    for function in &program.functions {
+        match HirCleanupPlanner::build(function) {
+            Ok(plan) => plans.push(plan),
+            Err(mut errors) => diagnostics.append(&mut errors),
+        }
+    }
+    if diagnostics.is_empty() {
+        Ok(plans)
+    } else {
+        Err(diagnostics)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CleanupCursor {
+    block: CleanupBlockId,
+    scope: CleanupScopeId,
+}
+
+#[derive(Clone, Copy)]
+struct CleanupTrackedLocal {
+    id: CleanupLocalId,
+    ownership: CleanupLocalOwnership,
+    kind: CleanupLocalKind,
+}
+
+#[derive(Clone, Copy)]
+struct CleanupLoopFrame {
+    break_target: CleanupBlockId,
+    exit_scope: CleanupScopeId,
+    saw_break: bool,
+}
+
+/// Builds a type-independent ownership CFG from typed HIR. This is not drop
+/// lowering: it records storage, initialization, moves and scope exits, while
+/// retaining explicit pending capabilities for cases which still need stable
+/// temporary identities or runtime liveness before drop glue can be emitted.
+struct HirCleanupPlanner<'a> {
+    function: &'a HirFunction,
+    builder: CleanupPlanBuilder,
+    root_scope: CleanupScopeId,
+    scope_parents: HashMap<CleanupScopeId, Option<CleanupScopeId>>,
+    scope_locals: HashMap<CleanupScopeId, Vec<CleanupTrackedLocal>>,
+    hir_locals: HashMap<LocalId, CleanupLocalId>,
+    local_ownership: HashMap<CleanupLocalId, CleanupLocalOwnership>,
+    move_paths: HashMap<CleanupPlace, CleanupMovePathId>,
+    return_path: Option<CleanupMovePathId>,
+    loops: Vec<CleanupLoopFrame>,
+}
+
+impl<'a> HirCleanupPlanner<'a> {
+    fn build(function: &'a HirFunction) -> Result<CleanupPlan, Vec<Diagnostic>> {
+        let mut builder = CleanupPlanBuilder::new();
+        let root_scope = builder.root_scope();
+        let function_scope = builder
+            .new_scope(root_scope, CleanupScopeKind::FunctionBody)
+            .map_err(|error| vec![Self::build_diagnostic(function, error)])?;
+        let mut scope_parents = HashMap::new();
+        scope_parents.insert(root_scope, None);
+        scope_parents.insert(function_scope, Some(root_scope));
+        let mut planner = Self {
+            function,
+            builder,
+            root_scope,
+            scope_parents,
+            scope_locals: HashMap::new(),
+            hir_locals: HashMap::new(),
+            local_ownership: HashMap::new(),
+            move_paths: HashMap::new(),
+            return_path: None,
+            loops: Vec::new(),
+        };
+        let function_entry = planner
+            .new_block(function_scope)
+            .map_err(|error| vec![error])?;
+        planner
+            .terminate(
+                planner.builder.entry_block(),
+                CleanupTerminator::Goto(CleanupEdge::new(function_entry, Vec::new())),
+            )
+            .map_err(|error| vec![error])?;
+        let mut cursor = CleanupCursor {
+            block: function_entry,
+            scope: function_scope,
+        };
+
+        for param in &function.params {
+            let ownership = match param.mode {
+                PassMode::Borrow => CleanupLocalOwnership::SharedBorrow,
+                PassMode::MutBorrow => CleanupLocalOwnership::MutableBorrow,
+                PassMode::Inferred | PassMode::Copy | PassMode::Move => {
+                    CleanupLocalOwnership::Owned
+                }
+            };
+            let local = planner
+                .declare_source_local(
+                    function_scope,
+                    CleanupLocalKind::Argument,
+                    ownership,
+                    param.mode == PassMode::MutBorrow,
+                    param.id,
+                    &param.name,
+                )
+                .map_err(|error| vec![error])?;
+            planner
+                .operation(cursor.block, CleanupOp::StorageLive(local))
+                .map_err(|error| vec![error])?;
+            if ownership == CleanupLocalOwnership::Owned {
+                let path = planner.root_move_path(local).map_err(|error| vec![error])?;
+                planner
+                    .operation(cursor.block, CleanupOp::Init(path))
+                    .map_err(|error| vec![error])?;
+            }
+        }
+
+        if !matches!(function.result, Ty::Unit | Ty::Never | Ty::Error) {
+            let return_local = planner
+                .declare_generated_local(
+                    function_scope,
+                    CleanupLocalKind::ReturnPlace,
+                    CleanupLocalOwnership::Owned,
+                    true,
+                )
+                .map_err(|error| vec![error])?;
+            planner
+                .operation(cursor.block, CleanupOp::StorageLive(return_local))
+                .map_err(|error| vec![error])?;
+            planner.return_path = Some(
+                planner
+                    .root_move_path(return_local)
+                    .map_err(|error| vec![error])?,
+            );
+        }
+
+        let body_has_place = planner.return_path.is_some();
+        let end = planner
+            .walk_expr(&function.body, cursor, body_has_place)
+            .map_err(|error| vec![error])?;
+        if let Some(end) = end {
+            cursor = end;
+            if let Some(return_path) = planner.return_path {
+                planner
+                    .operation(cursor.block, CleanupOp::Init(return_path))
+                    .map_err(|error| vec![error])?;
+            }
+            planner
+                .emit_storage_dead_to(cursor.block, cursor.scope, planner.root_scope)
+                .map_err(|error| vec![error])?;
+            let exited_scopes = planner
+                .exit_chain(cursor.scope, planner.root_scope)
+                .map_err(|error| vec![error])?;
+            planner
+                .terminate(cursor.block, CleanupTerminator::Return { exited_scopes })
+                .map_err(|error| vec![error])?;
+        }
+
+        planner.builder.finish().map_err(|errors| {
+            errors
+                .into_iter()
+                .map(|error| {
+                    Diagnostic::new(format!(
+                        "internal cleanup plan error in function `{}`: {}",
+                        function.name, error
+                    ))
+                })
+                .collect()
+        })
+    }
+
+    fn build_diagnostic(function: &HirFunction, error: impl fmt::Display) -> Diagnostic {
+        Diagnostic::new(format!(
+            "internal cleanup planner error in function `{}`: {error}",
+            function.name
+        ))
+    }
+
+    fn diagnostic(&self, error: impl fmt::Display) -> Diagnostic {
+        Self::build_diagnostic(self.function, error)
+    }
+
+    fn new_scope(
+        &mut self,
+        parent: CleanupScopeId,
+        kind: CleanupScopeKind,
+    ) -> Result<CleanupScopeId, Diagnostic> {
+        let scope = self
+            .builder
+            .new_scope(parent, kind)
+            .map_err(|error| self.diagnostic(error))?;
+        self.scope_parents.insert(scope, Some(parent));
+        Ok(scope)
+    }
+
+    fn new_block(&mut self, scope: CleanupScopeId) -> Result<CleanupBlockId, Diagnostic> {
+        self.builder
+            .new_block(scope)
+            .map_err(|error| self.diagnostic(error))
+    }
+
+    fn operation(&mut self, block: CleanupBlockId, operation: CleanupOp) -> Result<(), Diagnostic> {
+        self.builder
+            .push_operation(block, operation)
+            .map_err(|error| self.diagnostic(error))
+    }
+
+    fn terminate(
+        &mut self,
+        block: CleanupBlockId,
+        terminator: CleanupTerminator,
+    ) -> Result<(), Diagnostic> {
+        self.builder
+            .set_terminator(block, terminator)
+            .map_err(|error| self.diagnostic(error))
+    }
+
+    fn declare_source_local(
+        &mut self,
+        scope: CleanupScopeId,
+        kind: CleanupLocalKind,
+        ownership: CleanupLocalOwnership,
+        mutable: bool,
+        source_local: LocalId,
+        name: &str,
+    ) -> Result<CleanupLocalId, Diagnostic> {
+        let local = self
+            .builder
+            .new_source_local(scope, kind, ownership, mutable, source_local, name)
+            .map_err(|error| self.diagnostic(error))?;
+        if self.hir_locals.insert(source_local, local).is_some() {
+            return Err(self.diagnostic(format!(
+                "HIR local {source_local} was declared more than once"
+            )));
+        }
+        self.track_local(scope, local, kind, ownership);
+        Ok(local)
+    }
+
+    fn declare_generated_local(
+        &mut self,
+        scope: CleanupScopeId,
+        kind: CleanupLocalKind,
+        ownership: CleanupLocalOwnership,
+        mutable: bool,
+    ) -> Result<CleanupLocalId, Diagnostic> {
+        let local = self
+            .builder
+            .new_local(scope, kind, ownership, mutable)
+            .map_err(|error| self.diagnostic(error))?;
+        self.track_local(scope, local, kind, ownership);
+        Ok(local)
+    }
+
+    fn track_local(
+        &mut self,
+        scope: CleanupScopeId,
+        local: CleanupLocalId,
+        kind: CleanupLocalKind,
+        ownership: CleanupLocalOwnership,
+    ) {
+        self.scope_locals
+            .entry(scope)
+            .or_default()
+            .push(CleanupTrackedLocal {
+                id: local,
+                ownership,
+                kind,
+            });
+        self.local_ownership.insert(local, ownership);
+    }
+
+    fn root_move_path(&mut self, local: CleanupLocalId) -> Result<CleanupMovePathId, Diagnostic> {
+        self.move_path(CleanupPlace::local(local))
+    }
+
+    fn move_path(&mut self, place: CleanupPlace) -> Result<CleanupMovePathId, Diagnostic> {
+        if let Some(path) = self.move_paths.get(&place) {
+            return Ok(*path);
+        }
+        let parent = if place.projections.is_empty() {
+            None
+        } else {
+            let mut parent_place = place.clone();
+            parent_place.projections.pop();
+            Some(self.move_path(parent_place)?)
+        };
+        let path = self
+            .builder
+            .new_move_path(place.clone(), parent)
+            .map_err(|error| self.diagnostic(error))?;
+        self.move_paths.insert(place, path);
+        Ok(path)
+    }
+
+    fn move_path_for_hir_place(
+        &mut self,
+        place: &HirPlace,
+    ) -> Result<Option<CleanupMovePathId>, Diagnostic> {
+        let Some(local) = self.hir_locals.get(&place.local).copied() else {
+            return Err(self.diagnostic(format!(
+                "HIR place refers to unmapped local {}",
+                place.local
+            )));
+        };
+        if self.local_ownership.get(&local) != Some(&CleanupLocalOwnership::Owned) {
+            return Ok(None);
+        }
+        let mut cleanup_place = CleanupPlace::local(local);
+        for projection in &place.projections {
+            let field = u32::try_from(*projection).map_err(|_| {
+                self.diagnostic(format!("field projection {projection} does not fit in u32"))
+            })?;
+            cleanup_place = cleanup_place.project(CleanupProjection::Field(field));
+        }
+        self.move_path(cleanup_place).map(Some)
+    }
+
+    fn exit_chain(
+        &self,
+        from: CleanupScopeId,
+        target: CleanupScopeId,
+    ) -> Result<Vec<CleanupScopeId>, Diagnostic> {
+        let mut chain = Vec::new();
+        let mut cursor = from;
+        while cursor != target {
+            if cursor == self.root_scope {
+                return Err(self.diagnostic("scope exit target is not an ancestor"));
+            }
+            chain.push(cursor);
+            cursor = self
+                .scope_parents
+                .get(&cursor)
+                .copied()
+                .flatten()
+                .ok_or_else(|| self.diagnostic("cleanup scope has no recorded parent"))?;
+        }
+        Ok(chain)
+    }
+
+    fn emit_storage_dead_to(
+        &mut self,
+        block: CleanupBlockId,
+        from: CleanupScopeId,
+        target: CleanupScopeId,
+    ) -> Result<(), Diagnostic> {
+        for scope in self.exit_chain(from, target)? {
+            let locals = self.scope_locals.get(&scope).cloned().unwrap_or_default();
+            for local in locals.into_iter().rev() {
+                if local.ownership == CleanupLocalOwnership::Owned
+                    && local.kind != CleanupLocalKind::ReturnPlace
+                {
+                    self.operation(block, CleanupOp::StorageDead(local.id))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn goto_exiting(
+        &mut self,
+        cursor: CleanupCursor,
+        target_block: CleanupBlockId,
+        target_scope: CleanupScopeId,
+    ) -> Result<(), Diagnostic> {
+        self.emit_storage_dead_to(cursor.block, cursor.scope, target_scope)?;
+        let exited_scopes = self.exit_chain(cursor.scope, target_scope)?;
+        self.terminate(
+            cursor.block,
+            CleanupTerminator::Goto(CleanupEdge::new(target_block, exited_scopes)),
+        )
+    }
+
+    fn prepare_temporary(
+        &mut self,
+        cursor: CleanupCursor,
+    ) -> Result<(CleanupLocalId, CleanupMovePathId), Diagnostic> {
+        let local = self.declare_generated_local(
+            cursor.scope,
+            CleanupLocalKind::Temporary,
+            CleanupLocalOwnership::Owned,
+            false,
+        )?;
+        self.operation(cursor.block, CleanupOp::StorageLive(local))?;
+        self.builder
+            .record_pending(PendingCapability::TemporaryStorageLiveness {
+                block: cursor.block,
+                local,
+            });
+        let path = self.root_move_path(local)?;
+        Ok((local, path))
+    }
+
+    fn record_unmaterialized_resource_result(
+        &mut self,
+        expression: &HirExpr,
+        cursor: CleanupCursor,
+        destination_expected: bool,
+    ) {
+        let may_hold_resources = matches!(
+            expression.ty,
+            Ty::Array(_, _) | Ty::Struct(_) | Ty::Enum(_) | Ty::Function(_)
+        );
+        let requires_result_materialization = matches!(
+            expression.kind,
+            HirExprKind::Global(_)
+                | HirExprKind::Array(_)
+                | HirExprKind::Index { .. }
+                | HirExprKind::Read { .. }
+                | HirExprKind::Unary(_, _)
+                | HirExprKind::Binary(_, _, _)
+                | HirExprKind::Call { .. }
+                | HirExprKind::Partial { .. }
+                | HirExprKind::PartialCapture { .. }
+                | HirExprKind::LocalClosure(_)
+                | HirExprKind::ConstructStruct { .. }
+                | HirExprKind::ConstructEnum { .. }
+                | HirExprKind::Field { .. }
+                | HirExprKind::Block(_, _)
+                | HirExprKind::If { .. }
+                | HirExprKind::Loop { .. }
+                | HirExprKind::Match { .. }
+        );
+        if may_hold_resources && requires_result_materialization {
+            let expression_kind = match &expression.kind {
+                HirExprKind::Global(_) => "global read",
+                HirExprKind::Array(_) => "array",
+                HirExprKind::Index { .. } => "index",
+                HirExprKind::Read { .. } => "place read",
+                HirExprKind::Unary(_, _) => "unary operator",
+                HirExprKind::Binary(_, _, _) => "binary operator",
+                HirExprKind::Call { .. } => "call",
+                HirExprKind::Partial { .. } | HirExprKind::PartialCapture { .. } => {
+                    "partial application"
+                }
+                HirExprKind::LocalClosure(_) => "closure",
+                HirExprKind::ConstructStruct { .. } => "struct constructor",
+                HirExprKind::ConstructEnum { .. } => "enum constructor",
+                HirExprKind::Field { .. } => "field projection",
+                HirExprKind::Block(_, _) => "block",
+                HirExprKind::If { .. } => "if",
+                HirExprKind::Loop { .. } => "loop",
+                HirExprKind::Match { .. } => "match",
+                _ => unreachable!("materialized cleanup result kind was filtered above"),
+            };
+            self.builder
+                .record_pending(PendingCapability::UnmaterializedResourceResult {
+                    block: cursor.block,
+                    destination_expected,
+                    description: format!(
+                        "{expression_kind} result of type `{}` has no cleanup move path",
+                        expression.ty,
+                    ),
+                });
+        }
+    }
+
+    fn walk_expr(
+        &mut self,
+        expression: &HirExpr,
+        cursor: CleanupCursor,
+        result_has_place: bool,
+    ) -> Result<Option<CleanupCursor>, Diagnostic> {
+        // Record the missing place before walking operands. An operand may
+        // diverge after partially constructing the result, and that cleanup
+        // obligation must remain explicit even when this expression never
+        // reaches its normal continuation.
+        self.record_unmaterialized_resource_result(expression, cursor, result_has_place);
+        let result = match &expression.kind {
+            HirExprKind::Integer(_)
+            | HirExprKind::Bool(_)
+            | HirExprKind::Unit
+            | HirExprKind::Global(_)
+            | HirExprKind::Function(_) => Some(cursor),
+            HirExprKind::Array(elements) => {
+                let mut current = Some(cursor);
+                for element in elements {
+                    current = match current {
+                        Some(cursor) => self.walk_expr(element, cursor, false)?,
+                        None => None,
+                    };
+                }
+                current
+            }
+            HirExprKind::Index { base, index, .. } => {
+                let Some(cursor) = self.walk_expr(base, cursor, false)? else {
+                    return Ok(None);
+                };
+                match index {
+                    HirIndex::Static(_) => Some(cursor),
+                    HirIndex::Dynamic(index) => self.walk_expr(index, cursor, false)?,
+                }
+            }
+            HirExprKind::Read { place, kind } => {
+                if *kind == HirReadKind::Move {
+                    if let Some(path) = self.move_path_for_hir_place(place)? {
+                        self.operation(cursor.block, CleanupOp::MoveOut(path))?;
+                        self.builder
+                            .record_pending(PendingCapability::MovePathStateDataflow {
+                                block: cursor.block,
+                                path,
+                            });
+                    }
+                }
+                Some(cursor)
+            }
+            HirExprKind::Unary(_, operand) => self.walk_expr(operand, cursor, false)?,
+            HirExprKind::Binary(left, operator @ (BinaryOp::And | BinaryOp::Or), right) => {
+                self.walk_short_circuit(left, *operator, right, cursor)?
+            }
+            HirExprKind::Binary(left, _, right) => {
+                let Some(cursor) = self.walk_expr(left, cursor, false)? else {
+                    return Ok(None);
+                };
+                self.walk_expr(right, cursor, false)?
+            }
+            HirExprKind::Assign {
+                place,
+                value,
+                assignment,
+            } => {
+                let Some(cursor) = self.walk_expr(value, cursor, true)? else {
+                    return Ok(None);
+                };
+                if let Some(path) = self.move_path_for_hir_place(place)? {
+                    match assignment {
+                        AssignmentKind::Initialize => {
+                            self.operation(cursor.block, CleanupOp::Init(path))?;
+                        }
+                        AssignmentKind::Overwrite => {
+                            self.operation(cursor.block, CleanupOp::Overwrite(path))?;
+                        }
+                        AssignmentKind::MaybeOverwrite => {
+                            self.operation(cursor.block, CleanupOp::Overwrite(path))?;
+                            self.builder
+                                .record_pending(PendingCapability::MaybeOverwrite {
+                                    block: cursor.block,
+                                    path,
+                                });
+                        }
+                    }
+                } else {
+                    let alias = self.hir_locals.get(&place.local).copied().ok_or_else(|| {
+                        self.diagnostic(format!(
+                            "assignment place refers to unmapped HIR local {}",
+                            place.local
+                        ))
+                    })?;
+                    if matches!(
+                        self.local_ownership.get(&alias),
+                        Some(
+                            CleanupLocalOwnership::SharedBorrow
+                                | CleanupLocalOwnership::MutableBorrow
+                        )
+                    ) {
+                        self.builder
+                            .record_pending(PendingCapability::BorrowedPlaceMutation {
+                                block: cursor.block,
+                                alias,
+                                description: format!(
+                                    "assignment through borrowed place requires referent cleanup ({assignment:?})"
+                                ),
+                            });
+                    }
+                }
+                Some(cursor)
+            }
+            HirExprKind::Call { arguments, .. } => {
+                let mut current = Some(cursor);
+                for argument in arguments {
+                    let Some(cursor) = current else {
+                        break;
+                    };
+                    current = match argument {
+                        HirArgument::Copy(value) | HirArgument::Move(value) => {
+                            self.walk_expr(value, cursor, false)?
+                        }
+                        HirArgument::SharedBorrow(_) | HirArgument::MutBorrow(_) => Some(cursor),
+                    };
+                }
+                current
+            }
+            HirExprKind::Partial {
+                function, captures, ..
+            } => {
+                self.builder
+                    .record_pending(PendingCapability::PartialApplicationCapture {
+                        block: cursor.block,
+                        function: function.clone(),
+                    });
+                let mut current = Some(cursor);
+                for capture in captures {
+                    let Some(cursor) = current else {
+                        break;
+                    };
+                    current = match capture {
+                        HirArgument::Copy(value) | HirArgument::Move(value) => {
+                            self.walk_expr(value, cursor, false)?
+                        }
+                        HirArgument::SharedBorrow(_) | HirArgument::MutBorrow(_) => Some(cursor),
+                    };
+                }
+                current
+            }
+            HirExprKind::PartialCapture { binding, .. } => {
+                self.builder
+                    .record_pending(PendingCapability::PartialApplicationCapture {
+                        block: cursor.block,
+                        function: format!("{}::<partial-local-{binding}>", self.function.name),
+                    });
+                Some(cursor)
+            }
+            HirExprKind::LocalClosure(closure) => {
+                self.builder
+                    .record_pending(PendingCapability::LocalClosureCapture {
+                        block: cursor.block,
+                        function: closure.function.clone(),
+                        fn_once: closure.is_fn_once,
+                    });
+                let mut current = Some(cursor);
+                for capture in &closure.captures {
+                    let Some(cursor) = current else {
+                        break;
+                    };
+                    if let Some(value) = &capture.value {
+                        current = self.walk_expr(value, cursor, false)?;
+                    }
+                }
+                current
+            }
+            HirExprKind::ConstructStruct { fields, .. }
+            | HirExprKind::ConstructEnum { fields, .. } => {
+                let mut current = Some(cursor);
+                for (_, field) in fields {
+                    current = match current {
+                        Some(cursor) => self.walk_expr(field, cursor, false)?,
+                        None => None,
+                    };
+                }
+                current
+            }
+            HirExprKind::Field { base, .. } => self.walk_expr(base, cursor, false)?,
+            HirExprKind::Borrow { .. } => Some(cursor),
+            HirExprKind::Block(statements, tail) => {
+                self.walk_block(statements, tail.as_deref(), cursor, result_has_place)?
+            }
+            HirExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => self.walk_if(
+                condition,
+                then_branch,
+                else_branch.as_deref(),
+                cursor,
+                result_has_place,
+            )?,
+            HirExprKind::Return(value) => {
+                let mut current = Some(cursor);
+                if let Some(value) = value {
+                    current = self.walk_expr(value, cursor, true)?;
+                }
+                if let Some(cursor) = current {
+                    if let Some(return_path) = self.return_path {
+                        self.operation(cursor.block, CleanupOp::Init(return_path))?;
+                    }
+                    self.emit_storage_dead_to(cursor.block, cursor.scope, self.root_scope)?;
+                    let exited_scopes = self.exit_chain(cursor.scope, self.root_scope)?;
+                    self.terminate(cursor.block, CleanupTerminator::Return { exited_scopes })?;
+                }
+                None
+            }
+            HirExprKind::While { condition, body } => self.walk_while(condition, body, cursor)?,
+            HirExprKind::Loop { body } => self.walk_loop(body, cursor, result_has_place)?,
+            HirExprKind::Break(value) => {
+                let mut current = Some(cursor);
+                if let Some(value) = value {
+                    current = self.walk_expr(value, cursor, false)?;
+                }
+                let Some(cursor) = current else {
+                    return Ok(None);
+                };
+                let Some(frame) = self.loops.last().copied() else {
+                    return Err(self.diagnostic("HIR break has no cleanup loop frame"));
+                };
+                if let Some(value) = value {
+                    if matches!(
+                        value.ty,
+                        Ty::Array(_, _) | Ty::Struct(_) | Ty::Enum(_) | Ty::Function(_)
+                    ) {
+                        self.builder
+                            .record_pending(PendingCapability::LoopBreakValueTransfer {
+                                source: cursor.block,
+                                target: frame.break_target,
+                                description: format!(
+                                    "loop break value of type `{}` has no cleanup result place",
+                                    value.ty
+                                ),
+                            });
+                    }
+                }
+                self.goto_exiting(cursor, frame.break_target, frame.exit_scope)?;
+                self.loops.last_mut().expect("loop frame exists").saw_break = true;
+                None
+            }
+            HirExprKind::Match { scrutinee, arms } => {
+                self.walk_match(scrutinee, arms, cursor, result_has_place)?
+            }
+        };
+
+        Ok(result)
+    }
+
+    fn walk_block(
+        &mut self,
+        statements: &[HirStmt],
+        tail: Option<&HirExpr>,
+        cursor: CleanupCursor,
+        result_has_place: bool,
+    ) -> Result<Option<CleanupCursor>, Diagnostic> {
+        let scope = self.new_scope(cursor.scope, CleanupScopeKind::Lexical)?;
+        let entry = self.new_block(scope)?;
+        self.terminate(
+            cursor.block,
+            CleanupTerminator::Goto(CleanupEdge::new(entry, Vec::new())),
+        )?;
+        let mut current = Some(CleanupCursor {
+            block: entry,
+            scope,
+        });
+        for statement in statements {
+            let Some(cursor) = current else {
+                break;
+            };
+            current = match statement {
+                HirStmt::Let(binding) => self.walk_binding(binding, cursor)?,
+                HirStmt::Expr(expression) => self.walk_expr(expression, cursor, false)?,
+            };
+        }
+        if let (Some(cursor), Some(tail)) = (current, tail) {
+            current = self.walk_expr(tail, cursor, result_has_place)?;
+        }
+        let Some(cursor) = current else {
+            return Ok(None);
+        };
+        let continuation = self.new_block(
+            self.scope_parents
+                .get(&scope)
+                .copied()
+                .flatten()
+                .expect("lexical scope has a parent"),
+        )?;
+        let parent = self.scope_parents[&scope].expect("lexical parent");
+        self.goto_exiting(cursor, continuation, parent)?;
+        Ok(Some(CleanupCursor {
+            block: continuation,
+            scope: parent,
+        }))
+    }
+
+    fn walk_binding(
+        &mut self,
+        binding: &HirBinding,
+        cursor: CleanupCursor,
+    ) -> Result<Option<CleanupCursor>, Diagnostic> {
+        let ownership = match &binding.value.kind {
+            HirExprKind::Borrow { mutable: true, .. } => CleanupLocalOwnership::MutableBorrow,
+            HirExprKind::Borrow { mutable: false, .. } => CleanupLocalOwnership::SharedBorrow,
+            _ => CleanupLocalOwnership::Owned,
+        };
+        let local = self.declare_source_local(
+            cursor.scope,
+            CleanupLocalKind::User,
+            ownership,
+            binding.mutable,
+            binding.id,
+            &binding.name,
+        )?;
+        self.operation(cursor.block, CleanupOp::StorageLive(local))?;
+        let path = if ownership == CleanupLocalOwnership::Owned {
+            Some(self.root_move_path(local)?)
+        } else {
+            None
+        };
+        let current = self.walk_expr(&binding.value, cursor, true)?;
+        if let (Some(cursor), Some(path)) = (current, path) {
+            self.operation(cursor.block, CleanupOp::Init(path))?;
+        }
+        Ok(current)
+    }
+
+    fn walk_if(
+        &mut self,
+        condition: &HirExpr,
+        then_branch: &HirExpr,
+        else_branch: Option<&HirExpr>,
+        cursor: CleanupCursor,
+        result_has_place: bool,
+    ) -> Result<Option<CleanupCursor>, Diagnostic> {
+        let (condition_local, condition_path) = self.prepare_temporary(cursor)?;
+        let Some(cursor) = self.walk_expr(condition, cursor, true)? else {
+            return Ok(None);
+        };
+        self.operation(cursor.block, CleanupOp::Init(condition_path))?;
+        let then_block = self.new_block(cursor.scope)?;
+        let else_block = self.new_block(cursor.scope)?;
+        let join = self.new_block(cursor.scope)?;
+        self.terminate(
+            cursor.block,
+            CleanupTerminator::Branch {
+                condition: condition_local,
+                then_edge: CleanupEdge::new(then_block, Vec::new()),
+                else_edge: CleanupEdge::new(else_block, Vec::new()),
+            },
+        )?;
+        let then_end = self.walk_expr(
+            then_branch,
+            CleanupCursor {
+                block: then_block,
+                scope: cursor.scope,
+            },
+            result_has_place,
+        )?;
+        if let Some(end) = then_end {
+            self.terminate(
+                end.block,
+                CleanupTerminator::Goto(CleanupEdge::new(join, Vec::new())),
+            )?;
+        }
+        let else_end = if let Some(else_branch) = else_branch {
+            self.walk_expr(
+                else_branch,
+                CleanupCursor {
+                    block: else_block,
+                    scope: cursor.scope,
+                },
+                result_has_place,
+            )?
+        } else {
+            Some(CleanupCursor {
+                block: else_block,
+                scope: cursor.scope,
+            })
+        };
+        if let Some(end) = else_end {
+            self.terminate(
+                end.block,
+                CleanupTerminator::Goto(CleanupEdge::new(join, Vec::new())),
+            )?;
+        }
+        if then_end.is_none() && else_end.is_none() {
+            self.terminate(join, CleanupTerminator::Unreachable)?;
+            Ok(None)
+        } else {
+            Ok(Some(CleanupCursor {
+                block: join,
+                scope: cursor.scope,
+            }))
+        }
+    }
+
+    fn walk_short_circuit(
+        &mut self,
+        left: &HirExpr,
+        operator: BinaryOp,
+        right: &HirExpr,
+        cursor: CleanupCursor,
+    ) -> Result<Option<CleanupCursor>, Diagnostic> {
+        let (condition_local, condition_path) = self.prepare_temporary(cursor)?;
+        let Some(cursor) = self.walk_expr(left, cursor, true)? else {
+            return Ok(None);
+        };
+        self.operation(cursor.block, CleanupOp::Init(condition_path))?;
+        let right_block = self.new_block(cursor.scope)?;
+        let join = self.new_block(cursor.scope)?;
+        let (then_target, else_target) = match operator {
+            BinaryOp::And => (right_block, join),
+            BinaryOp::Or => (join, right_block),
+            _ => unreachable!("only short-circuit operators reach cleanup CFG lowering"),
+        };
+        self.terminate(
+            cursor.block,
+            CleanupTerminator::Branch {
+                condition: condition_local,
+                then_edge: CleanupEdge::new(then_target, Vec::new()),
+                else_edge: CleanupEdge::new(else_target, Vec::new()),
+            },
+        )?;
+        if let Some(end) = self.walk_expr(
+            right,
+            CleanupCursor {
+                block: right_block,
+                scope: cursor.scope,
+            },
+            false,
+        )? {
+            self.terminate(
+                end.block,
+                CleanupTerminator::Goto(CleanupEdge::new(join, Vec::new())),
+            )?;
+        }
+        Ok(Some(CleanupCursor {
+            block: join,
+            scope: cursor.scope,
+        }))
+    }
+
+    fn walk_while(
+        &mut self,
+        condition: &HirExpr,
+        body: &HirExpr,
+        cursor: CleanupCursor,
+    ) -> Result<Option<CleanupCursor>, Diagnostic> {
+        let loop_scope = self.new_scope(cursor.scope, CleanupScopeKind::Loop)?;
+        let condition_block = self.new_block(loop_scope)?;
+        let body_block = self.new_block(loop_scope)?;
+        let false_exit = self.new_block(loop_scope)?;
+        let after = self.new_block(cursor.scope)?;
+        self.terminate(
+            cursor.block,
+            CleanupTerminator::Goto(CleanupEdge::new(condition_block, Vec::new())),
+        )?;
+        self.loops.push(CleanupLoopFrame {
+            break_target: after,
+            exit_scope: cursor.scope,
+            saw_break: false,
+        });
+        let condition_cursor = CleanupCursor {
+            block: condition_block,
+            scope: loop_scope,
+        };
+        let (condition_local, condition_path) = self.prepare_temporary(condition_cursor)?;
+        let condition_end = self.walk_expr(condition, condition_cursor, true)?;
+        if let Some(condition_end) = condition_end {
+            self.operation(condition_end.block, CleanupOp::Init(condition_path))?;
+            self.terminate(
+                condition_end.block,
+                CleanupTerminator::Branch {
+                    condition: condition_local,
+                    then_edge: CleanupEdge::new(body_block, Vec::new()),
+                    else_edge: CleanupEdge::new(false_exit, Vec::new()),
+                },
+            )?;
+            self.goto_exiting(
+                CleanupCursor {
+                    block: false_exit,
+                    scope: loop_scope,
+                },
+                after,
+                cursor.scope,
+            )?;
+            if let Some(body_end) = self.walk_expr(
+                body,
+                CleanupCursor {
+                    block: body_block,
+                    scope: loop_scope,
+                },
+                false,
+            )? {
+                self.terminate(
+                    body_end.block,
+                    CleanupTerminator::Goto(CleanupEdge::new(condition_block, Vec::new())),
+                )?;
+            }
+        } else {
+            self.terminate(body_block, CleanupTerminator::Unreachable)?;
+            self.terminate(false_exit, CleanupTerminator::Unreachable)?;
+            self.terminate(after, CleanupTerminator::Unreachable)?;
+        }
+        self.loops.pop();
+        if condition_end.is_some() {
+            Ok(Some(CleanupCursor {
+                block: after,
+                scope: cursor.scope,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn walk_loop(
+        &mut self,
+        body: &HirExpr,
+        cursor: CleanupCursor,
+        _result_has_place: bool,
+    ) -> Result<Option<CleanupCursor>, Diagnostic> {
+        let loop_scope = self.new_scope(cursor.scope, CleanupScopeKind::Loop)?;
+        let body_block = self.new_block(loop_scope)?;
+        let after = self.new_block(cursor.scope)?;
+        self.terminate(
+            cursor.block,
+            CleanupTerminator::Goto(CleanupEdge::new(body_block, Vec::new())),
+        )?;
+        self.loops.push(CleanupLoopFrame {
+            break_target: after,
+            exit_scope: cursor.scope,
+            saw_break: false,
+        });
+        if let Some(body_end) = self.walk_expr(
+            body,
+            CleanupCursor {
+                block: body_block,
+                scope: loop_scope,
+            },
+            false,
+        )? {
+            self.terminate(
+                body_end.block,
+                CleanupTerminator::Goto(CleanupEdge::new(body_block, Vec::new())),
+            )?;
+        }
+        let frame = self.loops.pop().expect("loop frame exists");
+        if frame.saw_break {
+            Ok(Some(CleanupCursor {
+                block: after,
+                scope: cursor.scope,
+            }))
+        } else {
+            self.terminate(after, CleanupTerminator::Unreachable)?;
+            Ok(None)
+        }
+    }
+
+    fn walk_match(
+        &mut self,
+        scrutinee: &HirExpr,
+        arms: &[HirMatchArm],
+        cursor: CleanupCursor,
+        result_has_place: bool,
+    ) -> Result<Option<CleanupCursor>, Diagnostic> {
+        let (_scrutinee_local, scrutinee_path) = self.prepare_temporary(cursor)?;
+        let Some(cursor) = self.walk_expr(scrutinee, cursor, true)? else {
+            return Ok(None);
+        };
+        self.operation(cursor.block, CleanupOp::Init(scrutinee_path))?;
+        self.builder
+            .record_pending(PendingCapability::MatchDispatch {
+                block: cursor.block,
+                arm_count: arms.len(),
+            });
+        let join = self.new_block(cursor.scope)?;
+        let mut dispatch = cursor;
+        let mut reaches_join = false;
+        for arm in arms {
+            let arm_scope = self.new_scope(cursor.scope, CleanupScopeKind::MatchArm)?;
+            let arm_entry = self.new_block(arm_scope)?;
+            let next_dispatch = self.new_block(cursor.scope)?;
+            let (matcher_local, matcher_path) = self.prepare_temporary(dispatch)?;
+            self.operation(dispatch.block, CleanupOp::Init(matcher_path))?;
+            self.terminate(
+                dispatch.block,
+                CleanupTerminator::Branch {
+                    condition: matcher_local,
+                    then_edge: CleanupEdge::new(arm_entry, Vec::new()),
+                    else_edge: CleanupEdge::new(next_dispatch, Vec::new()),
+                },
+            )?;
+            let arm_cursor = CleanupCursor {
+                block: arm_entry,
+                scope: arm_scope,
+            };
+            for binding in &arm.bindings {
+                let local = self.declare_source_local(
+                    arm_scope,
+                    CleanupLocalKind::Pattern,
+                    CleanupLocalOwnership::Owned,
+                    false,
+                    binding.id,
+                    &binding.name,
+                )?;
+                self.operation(arm_cursor.block, CleanupOp::StorageLive(local))?;
+                let path = self.root_move_path(local)?;
+                self.operation(arm_cursor.block, CleanupOp::Init(path))?;
+                self.builder
+                    .record_pending(PendingCapability::PatternBindingTransfer {
+                        block: arm_cursor.block,
+                        binding: local,
+                        guarded: arm.guard.is_some(),
+                    });
+            }
+            let body_start = if let Some(guard) = &arm.guard {
+                let (guard_local, guard_path) = self.prepare_temporary(arm_cursor)?;
+                match self.walk_expr(guard, arm_cursor, true)? {
+                    Some(guard_end) => {
+                        self.operation(guard_end.block, CleanupOp::Init(guard_path))?;
+                        let body_block = self.new_block(arm_scope)?;
+                        let guard_false = self.new_block(arm_scope)?;
+                        self.terminate(
+                            guard_end.block,
+                            CleanupTerminator::Branch {
+                                condition: guard_local,
+                                then_edge: CleanupEdge::new(body_block, Vec::new()),
+                                else_edge: CleanupEdge::new(guard_false, Vec::new()),
+                            },
+                        )?;
+                        self.goto_exiting(
+                            CleanupCursor {
+                                block: guard_false,
+                                scope: arm_scope,
+                            },
+                            next_dispatch,
+                            cursor.scope,
+                        )?;
+                        Some(CleanupCursor {
+                            block: body_block,
+                            scope: arm_scope,
+                        })
+                    }
+                    None => None,
+                }
+            } else {
+                Some(arm_cursor)
+            };
+            if let Some(body_start) = body_start {
+                if let Some(body_end) = self.walk_expr(&arm.body, body_start, result_has_place)? {
+                    self.goto_exiting(body_end, join, cursor.scope)?;
+                    reaches_join = true;
+                }
+            }
+            dispatch = CleanupCursor {
+                block: next_dispatch,
+                scope: cursor.scope,
+            };
+        }
+        self.terminate(dispatch.block, CleanupTerminator::Unreachable)?;
+        if reaches_join {
+            Ok(Some(CleanupCursor {
+                block: join,
+                scope: cursor.scope,
+            }))
+        } else {
+            self.terminate(join, CleanupTerminator::Unreachable)?;
+            Ok(None)
+        }
     }
 }
 
@@ -11017,7 +12339,7 @@ impl ConstantEvaluator<'_> {
                     Some(ConstValue::Unit)
                 }
             }
-            HirExprKind::Assign(_, _)
+            HirExprKind::Assign { .. }
             | HirExprKind::Borrow { .. }
             | HirExprKind::Call { .. }
             | HirExprKind::Partial { .. }
@@ -11578,7 +12900,14 @@ impl<'a> FunctionEmitter<'a> {
                     value: Some(register),
                 })
             }
-            HirExprKind::Assign(place, value) => {
+            HirExprKind::Assign {
+                place,
+                value,
+                assignment,
+            } => {
+                // Kept in HIR for the cleanup planner; stores are identical
+                // until source-backed `Drop` is introduced.
+                let _ = assignment;
                 let value = self.emit_expr(value)?;
                 if self.terminated {
                     return Ok(Operand::never());
@@ -12831,6 +14160,25 @@ mod tests {
         compile_library(&program)
     }
 
+    fn cleanup_plan_text(source: &str, function_name: &str) -> CleanupPlan {
+        let program = crate::parser::parse(source).expect("cleanup-plan source must parse");
+        let mut analyzer = Analyzer::new(&program);
+        let hir = analyzer
+            .analyze_target(false)
+            .expect("cleanup-plan source must lower");
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        let function = hir
+            .functions
+            .iter()
+            .find(|function| function.name == function_name)
+            .expect("requested HIR function");
+        HirCleanupPlanner::build(function).expect("cleanup plan must build and verify")
+    }
+
     fn compile_with_origins(
         source: &str,
         origins: Vec<ItemOrigin>,
@@ -13593,9 +14941,12 @@ let main(): i32 = {
 "#,
         )
         .unwrap_err();
-        assert!(errors
-            .iter()
-            .any(|diagnostic| diagnostic.message == "use of possibly moved value"));
+        assert!(
+            errors
+                .iter()
+                .any(|diagnostic| diagnostic.message
+                    == "use of possibly moved or uninitialized value")
+        );
     }
 
     #[test]
@@ -14400,6 +15751,297 @@ let main(): i32 = {
     }
 
     #[test]
+    fn reinitializes_a_moved_root_and_preserves_rhs_ordering() {
+        compile_text(
+            r#"
+let Boxed = struct(value: i32)
+let consume(move boxed: Boxed): i32 = boxed.value
+let main(): i32 = {
+  let mut boxed = Boxed(21)
+  let first = consume(boxed)
+  boxed = Boxed(21)
+  first + consume(boxed)
+}
+"#,
+        )
+        .expect("a mutable owned root may be initialized after a move");
+
+        let errors = compile_text(
+            r#"
+let Boxed = struct(value: i32)
+let consume(move boxed: Boxed): i32 = boxed.value
+let main(): i32 = {
+  let mut boxed = Boxed(42)
+  consume(boxed)
+  boxed = boxed
+  boxed.value
+}
+"#,
+        )
+        .expect_err("the assignment RHS must observe the moved state");
+        assert!(errors.iter().any(|error| error.message.contains("moved")));
+    }
+
+    #[test]
+    fn rebuilds_a_moved_struct_field_by_field() {
+        compile_text(
+            r#"
+let Payload = struct(value: i32)
+let Pair = struct(left: Payload, right: Payload)
+let consume(move pair: Pair): i32 = pair.left.value + pair.right.value
+let main(): i32 = {
+  let mut pair = Pair(Payload(1), Payload(2))
+  let old = consume(pair)
+  pair.left = Payload(19)
+  let restored = pair.left.value
+  pair.right = Payload(23)
+  old + restored + consume(pair) - 3 - 19
+}
+"#,
+        )
+        .expect("restoring every normalized leaf must restore its ancestors");
+
+        let errors = compile_text(
+            r#"
+let Payload = struct(value: i32)
+let Pair = struct(left: Payload, right: Payload)
+let consume(move pair: Pair): () = ()
+let main(): i32 = {
+  let mut pair = Pair(Payload(1), Payload(2))
+  consume(pair)
+  pair.left = Payload(42)
+  pair.left.value + pair.right.value
+}
+"#,
+        )
+        .expect_err("an incompletely rebuilt root must remain unavailable");
+        assert!(errors.iter().any(|error| error.message.contains("moved")));
+    }
+
+    #[test]
+    fn joins_reinitialization_across_branches_exactly() {
+        compile_text(
+            r#"
+let Boxed = struct(value: i32)
+let consume(move boxed: Boxed): () = ()
+let choose(flag: bool): i32 = {
+  let mut boxed = Boxed(0)
+  consume(boxed)
+  if flag { boxed = Boxed(19) } else { boxed = Boxed(23) }
+  boxed.value
+}
+let main(): i32 = choose(true) + choose(false)
+"#,
+        )
+        .expect("reinitialization on every reachable branch restores the value");
+
+        let errors = compile_text(
+            r#"
+let Boxed = struct(value: i32)
+let consume(move boxed: Boxed): () = ()
+let choose(flag: bool): i32 = {
+  let mut boxed = Boxed(0)
+  consume(boxed)
+  if flag { boxed = Boxed(42) }
+  boxed.value
+}
+let main(): i32 = choose(true)
+"#,
+        )
+        .expect_err("one restoring branch leaves a possible uninitialized state");
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("possibly moved")));
+
+        let errors = compile_text(
+            r#"
+let Payload = struct(value: i32)
+let Pair = struct(left: Payload, right: Payload)
+let consume_payload(move payload: Payload): () = ()
+let consume_pair(move pair: Pair): () = ()
+let choose(flag: bool): () = {
+  let pair = Pair(Payload(19), Payload(23))
+  if flag { consume_payload(pair.left) } else { consume_payload(pair.right) }
+  consume_pair(pair)
+}
+let main(): i32 = { choose(true); 0 }
+"#,
+        )
+        .expect_err("the root is unavailable on both correlated alternatives");
+        assert!(errors
+            .iter()
+            .any(|error| error.message == "use of moved or uninitialized value"));
+        assert!(!errors
+            .iter()
+            .any(|error| error.message.contains("possibly moved")));
+    }
+
+    #[test]
+    fn bounds_initialization_alternatives_with_a_conservative_widening() {
+        let alternatives = (0..=MAX_INITIALIZATION_ALTERNATIVES).map(|field| {
+            HashSet::from([PlaceKey {
+                local: 0,
+                projections: vec![field],
+            }])
+        });
+        let widened = normalize_uninitialized_alternatives(alternatives);
+        assert_eq!(widened.len(), 2);
+        assert!(widened[0].is_empty());
+        assert_eq!(widened[1].len(), MAX_INITIALIZATION_ALTERNATIVES + 1);
+
+        let mut entry = FlowState {
+            reachable: true,
+            uninitialized: widened,
+            loans: HashMap::new(),
+        };
+        let first = PlaceKey {
+            local: 0,
+            projections: vec![0],
+        };
+        assert_eq!(
+            entry.initialization_status(std::slice::from_ref(&first)),
+            InitializationStatus::MaybeUninitialized
+        );
+
+        let new_leaf = PlaceKey {
+            local: 0,
+            projections: vec![MAX_INITIALIZATION_ALTERNATIVES + 1],
+        };
+        let mut backedge = entry.clone();
+        for alternative in &mut backedge.uninitialized {
+            alternative.insert(new_leaf.clone());
+        }
+        backedge.normalize_uninitialized();
+        assert!(!alternative_sets_equal(
+            &projected_uninitialized_alternatives(&entry, 0),
+            &projected_uninitialized_alternatives(&backedge, 0),
+        ));
+
+        for alternative in &mut backedge.uninitialized {
+            alternative.remove(&new_leaf);
+        }
+        backedge.normalize_uninitialized();
+        assert!(alternative_sets_equal(
+            &projected_uninitialized_alternatives(&entry, 0),
+            &projected_uninitialized_alternatives(&backedge, 0),
+        ));
+
+        for alternative in &mut entry.uninitialized {
+            alternative.clear();
+        }
+        entry.normalize_uninitialized();
+        assert_eq!(entry.uninitialized, vec![HashSet::new()]);
+    }
+
+    #[test]
+    fn records_assignment_initialization_kinds_in_hir() {
+        let program = crate::parser::parse(
+            r#"
+let Boxed = struct(value: i32)
+let consume(move boxed: Boxed): () = ()
+let classify(flag: bool): i32 = {
+  let mut boxed = Boxed(0)
+  boxed = Boxed(1)
+  consume(boxed)
+  boxed = Boxed(2)
+  if flag { consume(boxed) }
+  boxed = Boxed(42)
+  boxed.value
+}
+let main(): i32 = classify(false)
+"#,
+        )
+        .expect("assignment-kind source must parse");
+        let mut analyzer = Analyzer::new(&program);
+        let hir = analyzer.analyze().expect("assignment-kind HIR must lower");
+        let function = hir
+            .functions
+            .iter()
+            .find(|function| function.name == "classify")
+            .expect("classify HIR");
+        let HirExprKind::Block(statements, _) = &function.body.kind else {
+            panic!("classify must lower to a block");
+        };
+        let assignments: Vec<_> = statements
+            .iter()
+            .filter_map(|statement| {
+                let HirStmt::Expr(HirExpr {
+                    kind: HirExprKind::Assign { assignment, .. },
+                    ..
+                }) = statement
+                else {
+                    return None;
+                };
+                Some(*assignment)
+            })
+            .collect();
+        assert_eq!(
+            assignments,
+            vec![
+                AssignmentKind::Overwrite,
+                AssignmentKind::Initialize,
+                AssignmentKind::MaybeOverwrite,
+            ]
+        );
+    }
+
+    #[test]
+    fn accepts_a_move_reinitialize_loop_backedge() {
+        compile_text(
+            r#"
+let Boxed = struct(value: i32)
+let consume(move boxed: Boxed): i32 = boxed.value
+let main(): i32 = {
+  let mut boxed = Boxed(0)
+  let mut iteration = 0
+  while iteration < 2 {
+    let previous = consume(boxed)
+    boxed = Boxed(previous + 21)
+    iteration = iteration + 1
+  }
+  consume(boxed)
+}
+"#,
+        )
+        .expect("a backedge that restores its entry initialization state is sound");
+    }
+
+    #[test]
+    fn match_guards_only_move_copy_pattern_bindings() {
+        let errors = compile_text(
+            r#"
+let Payload = struct(value: i32)
+let Event = enum { Value(Payload), Empty }
+let accept(move payload: Payload): bool = payload.value == 42
+let classify(event: Event): i32 = event match {
+  Event.Value(payload) if accept(payload) => 42,
+  Event.Value(_) => 0,
+  Event.Empty => 0,
+}
+let main(): i32 = classify(Event.Value(Payload(42)))
+"#,
+        )
+        .expect_err("a false guard must not consume a reusable non-Copy payload");
+        assert!(errors
+            .iter()
+            .any(|error| { error.message.contains("guard") && error.message.contains("move") }));
+
+        compile_text(
+            r#"
+let Event = enum { Value(i32), Empty }
+let accept(move value: i32): bool = value == 42
+let classify(event: Event): i32 = event match {
+  Event.Value(value) if accept(value) => 42,
+  Event.Value(value) => value,
+  Event.Empty => 0,
+}
+let main(): i32 = classify(Event.Value(42))
+"#,
+        )
+        .expect("Copy payload bindings may be consumed by a guard attempt");
+    }
+
+    #[test]
     fn copy_validation_is_structural_transitive_and_source_order_independent() {
         compile_text(
             r#"
@@ -14567,7 +16209,7 @@ let main(): i32 = choose(false)
         .unwrap_err();
         assert!(errors
             .iter()
-            .any(|error| error.message == "use of moved value"));
+            .any(|error| error.message == "use of moved or uninitialized value"));
         assert!(!errors
             .iter()
             .any(|error| error.message.contains("possibly moved")));
@@ -15824,5 +17466,343 @@ let main(): i32 = 0
                 "expected `{expected}` in {errors:?}"
             );
         }
+    }
+
+    #[test]
+    fn cleanup_plan_tracks_nested_normal_and_return_scope_exits() {
+        let plan = cleanup_plan_text(
+            r#"
+let choose(flag: bool): i32 = {
+  let outer = 40
+  do {
+    let inner = 2
+    if flag { return outer + inner }
+  }
+  outer
+}
+"#,
+            "choose",
+        );
+        let lexical_scopes = plan
+            .scopes
+            .iter()
+            .filter(|scope| scope.kind == CleanupScopeKind::Lexical)
+            .count();
+        assert!(lexical_scopes >= 3);
+        assert!(plan.blocks.iter().any(|block| {
+            matches!(
+                &block.terminator,
+                Some(CleanupTerminator::Goto(edge)) if !edge.exited_scopes.is_empty()
+            )
+        }));
+        let return_depths: Vec<_> = plan
+            .blocks
+            .iter()
+            .filter_map(|block| match &block.terminator {
+                Some(CleanupTerminator::Return { exited_scopes }) => Some(exited_scopes.len()),
+                _ => None,
+            })
+            .collect();
+        assert!(return_depths.len() >= 2);
+        assert!(return_depths.iter().any(|depth| *depth >= 3));
+    }
+
+    #[test]
+    fn cleanup_plan_builds_if_join_and_loop_break_edges() {
+        let if_plan = cleanup_plan_text(
+            "let choose(flag: bool): i32 = if flag { 1 } else { 2 }\n",
+            "choose",
+        );
+        assert!(if_plan
+            .blocks
+            .iter()
+            .any(|block| { matches!(block.terminator, Some(CleanupTerminator::Branch { .. })) }));
+        let mut incoming_gotos = HashMap::new();
+        for block in &if_plan.blocks {
+            if let Some(CleanupTerminator::Goto(edge)) = &block.terminator {
+                *incoming_gotos.entry(edge.target).or_insert(0_usize) += 1;
+            }
+        }
+        assert!(incoming_gotos.values().any(|incoming| *incoming >= 2));
+
+        let loop_plan = cleanup_plan_text(
+            r#"
+let choose(flag: bool): i32 = loop {
+  if flag { break 7 }
+  break 9
+}
+"#,
+            "choose",
+        );
+        let loop_scope = loop_plan
+            .scopes
+            .iter()
+            .find(|scope| scope.kind == CleanupScopeKind::Loop)
+            .expect("loop scope")
+            .id;
+        assert!(loop_plan.blocks.iter().any(|block| {
+            matches!(
+                &block.terminator,
+                Some(CleanupTerminator::Goto(edge)) if edge.exited_scopes.contains(&loop_scope)
+            )
+        }));
+    }
+
+    #[test]
+    fn cleanup_plan_marks_resource_results_before_their_evaluation_completes() {
+        let plan = cleanup_plan_text(
+            r#"
+let Boxed = struct(value: i32)
+let spin(): i32 = loop {}
+let make(): Boxed = Boxed(spin())
+"#,
+            "make",
+        );
+        assert!(plan.pending_capabilities.iter().any(|pending| {
+            matches!(
+                pending,
+                PendingCapability::UnmaterializedResourceResult {
+                    destination_expected: true,
+                    description,
+                    ..
+                } if description.contains("Boxed")
+            )
+        }));
+    }
+
+    #[test]
+    fn cleanup_plan_marks_resource_loop_break_transfer_between_blocks() {
+        let plan = cleanup_plan_text(
+            r#"
+let Boxed = struct(value: i32)
+let make(): Boxed = loop {
+  let value = Boxed(42)
+  break value
+}
+"#,
+            "make",
+        );
+        let (source, target) = plan
+            .pending_capabilities
+            .iter()
+            .find_map(|pending| match pending {
+                PendingCapability::LoopBreakValueTransfer { source, target, .. } => {
+                    Some((*source, *target))
+                }
+                _ => None,
+            })
+            .expect("resource break transfer must remain an explicit cleanup gap");
+        let source_scope = plan.blocks[source.index()].scope;
+        let target_scope = plan.blocks[target.index()].scope;
+        assert_eq!(
+            plan.scopes[source_scope.index()].kind,
+            CleanupScopeKind::Lexical
+        );
+        assert_ne!(source_scope, target_scope);
+        assert!(plan.pending_capabilities.iter().any(|pending| {
+            matches!(
+                pending,
+                PendingCapability::UnmaterializedResourceResult {
+                    destination_expected: true,
+                    ..
+                }
+            )
+        }));
+    }
+
+    #[test]
+    fn cleanup_plan_marks_discarded_and_global_resource_reads() {
+        let discarded = cleanup_plan_text(
+            r#"
+let Payload = struct(value: i32)
+let discard(move payload: Payload): () = {
+  payload
+  ()
+}
+"#,
+            "discard",
+        );
+        assert!(discarded.pending_capabilities.iter().any(|pending| {
+            matches!(
+                pending,
+                PendingCapability::UnmaterializedResourceResult {
+                    destination_expected: false,
+                    description,
+                    ..
+                } if description.contains("place read") && description.contains("Payload")
+            )
+        }));
+
+        let global = cleanup_plan_text(
+            r#"
+let Payload = struct(value: i32)
+let payload = Payload(42)
+let get(): Payload = payload
+"#,
+            "get",
+        );
+        assert!(global.pending_capabilities.iter().any(|pending| {
+            matches!(
+                pending,
+                PendingCapability::UnmaterializedResourceResult {
+                    destination_expected: true,
+                    description,
+                    ..
+                } if description.contains("global read") && description.contains("Payload")
+            )
+        }));
+    }
+
+    #[test]
+    fn cleanup_plan_marks_mutation_through_a_mutable_borrow() {
+        let plan = cleanup_plan_text(
+            r#"
+let Payload = struct(value: i32)
+let Pair = struct(left: Payload)
+let replace(mut borrow target: Pair, move replacement: Payload): () = {
+  target.left = replacement
+}
+"#,
+            "replace",
+        );
+        let target = plan
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some("target"))
+            .expect("mutable borrow parameter");
+        assert_eq!(target.ownership, CleanupLocalOwnership::MutableBorrow);
+        assert!(plan.pending_capabilities.iter().any(|pending| {
+            matches!(
+                pending,
+                PendingCapability::BorrowedPlaceMutation { alias, .. } if *alias == target.id
+            )
+        }));
+    }
+
+    #[test]
+    fn cleanup_plan_keeps_every_planner_temporary_liveness_pending() {
+        let plan = cleanup_plan_text(
+            "let choose(left: bool, right: bool): i32 = if left { 1 } else if right { 2 } else { 3 }\n",
+            "choose",
+        );
+        let temporaries: Vec<_> = plan
+            .locals
+            .iter()
+            .filter(|local| local.kind == CleanupLocalKind::Temporary)
+            .map(|local| local.id)
+            .collect();
+        assert!(temporaries.len() >= 2);
+        for temporary in temporaries {
+            assert!(plan.pending_capabilities.iter().any(|pending| {
+                matches!(
+                    pending,
+                    PendingCapability::TemporaryStorageLiveness { local, .. }
+                        if *local == temporary
+                )
+            }));
+        }
+    }
+
+    #[test]
+    fn cleanup_plan_try_and_throw_returns_exit_match_arm_scopes() {
+        let plan = cleanup_plan_text(
+            r#"
+let propagate(move value: Result(i32, bool)): Result(i32, bool) = {
+  let item = value.try
+  if item == 0 { throw true }
+  Result(i32, bool).Ok(item)
+}
+"#,
+            "propagate",
+        );
+        let match_arm_scopes: HashSet<_> = plan
+            .scopes
+            .iter()
+            .filter(|scope| scope.kind == CleanupScopeKind::MatchArm)
+            .map(|scope| scope.id)
+            .collect();
+        assert!(!match_arm_scopes.is_empty());
+        assert!(plan.blocks.iter().any(|block| {
+            matches!(
+                &block.terminator,
+                Some(CleanupTerminator::Return { exited_scopes })
+                    if exited_scopes.iter().any(|scope| match_arm_scopes.contains(scope))
+            )
+        }));
+        assert!(plan
+            .pending_capabilities
+            .iter()
+            .any(|pending| matches!(pending, PendingCapability::MatchDispatch { .. })));
+    }
+
+    #[test]
+    fn cleanup_plan_keeps_borrow_aliases_out_of_owned_cleanup() {
+        let plan = cleanup_plan_text(
+            r#"
+let Boxed = struct(value: i32)
+let read(): i32 = {
+  let value = Boxed(42)
+  let alias = borrow value
+  alias.value
+}
+"#,
+            "read",
+        );
+        let alias = plan
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some("alias"))
+            .expect("borrow alias local");
+        assert_eq!(alias.ownership, CleanupLocalOwnership::SharedBorrow);
+        assert!(plan
+            .move_paths
+            .iter()
+            .all(|path| path.place.local != alias.id));
+        assert!(plan
+            .blocks
+            .iter()
+            .any(|block| { block.operations.contains(&CleanupOp::StorageLive(alias.id)) }));
+        assert!(plan
+            .blocks
+            .iter()
+            .all(|block| { !block.operations.contains(&CleanupOp::StorageDead(alias.id)) }));
+    }
+
+    #[test]
+    fn cleanup_plan_records_assignment_kinds_moves_and_pending_overwrite_state() {
+        let plan = cleanup_plan_text(
+            r#"
+let Boxed = struct(value: i32)
+let consume(move boxed: Boxed): () = ()
+let classify(flag: bool): i32 = {
+  let mut boxed = Boxed(0)
+  boxed = Boxed(1)
+  consume(boxed)
+  boxed = Boxed(2)
+  if flag { consume(boxed) }
+  boxed = Boxed(42)
+  boxed.value
+}
+"#,
+            "classify",
+        );
+        let operations: Vec<_> = plan
+            .blocks
+            .iter()
+            .flat_map(|block| block.operations.iter())
+            .collect();
+        assert!(operations
+            .iter()
+            .any(|operation| matches!(operation, CleanupOp::MoveOut(_))));
+        assert!(operations
+            .iter()
+            .any(|operation| matches!(operation, CleanupOp::Init(_))));
+        assert!(operations
+            .iter()
+            .any(|operation| matches!(operation, CleanupOp::Overwrite(_))));
+        assert!(plan
+            .pending_capabilities
+            .iter()
+            .any(|pending| { matches!(pending, PendingCapability::MaybeOverwrite { .. }) }));
     }
 }

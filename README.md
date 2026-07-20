@@ -154,11 +154,28 @@ v0.8.0 把 `Copy` 接入 source-backed core 与所有权检查：
   已用于普通读取、闭包捕获以及函数和 bound method 的部分应用。
 - 当前函数类型和闭包类型自身仍不是 `Copy`，`Drop` 也尚未公开。
 
+v0.9.0 建立可继续演化的初始化与清理中间层：
+
+- 所有权流状态改为规范化的未初始化 move-path 叶子 alternatives，支持移动 root 或字段后通过
+  root 赋值、逐字段赋值恢复初始化，也能在分支 join 与循环回边保留必要的关联信息。
+- 精确 alternatives 上限为 64；超过后保守 widened 为“全初始化”与“所有可能未初始化叶子的并集”，
+  从而限制分析开销，并且只可能额外拒绝程序，不会错误接受不安全使用。
+- `match` guard 不得移动非 `Copy` 的 pattern binding，因为 guard 失败后还可能尝试后续 candidate；
+  `Copy` binding 的显式移动仍可用。
+- 编译和检查现在都会从真实 HIR 为每个函数建立并验证 `CleanupPlan`：记录作用域、local、move path、
+  storage/init/move/overwrite 事件，以及分支、循环、guard、`break` 和 `return` 边。
+- 这仍是析构 lowering 的结构基础，不会发出清理代码。未物化资源结果、move-state dataflow、临时值
+  liveness、`break` 值传递、借用位置写入、maybe-overwrite、match/pattern 传递、部分应用和闭包捕获
+  都以 `PendingCapability` 明确保留。
+- 当前没有 `needs_drop`、runtime drop flags、source-backed `Drop`、drop glue 或 LLVM 析构。顶层值仍是
+  编译期常量，每次使用独立物化且不进入 cleanup；含资源全局与 `Drop` 的关系会在公开 `Drop` 前定案。
+
 标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
 所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
-`Copy`。下一步先建立内部 scope cleanup 与 drop flags，再公开 `Drop`，随后实现 raw pointer 和
-分配器 ABI；到那时才进入 `alloc`。平台 `std` 的 IO、文件、环境与进程则放在 C ABI 和最小运行时
-之后。
+`Copy`，v0.9 建立并验证 cleanup CFG，但还不发出析构。接下来依次物化 cleanup 与 move-state
+dataflow，加入 `needs_drop` 和 runtime drop flags，再提供 source-backed `Drop` 与 drop glue；其后才
+固定 raw pointer 和 allocator ABI 并进入 `alloc`。平台 `std` 的 IO、文件、环境与进程放在 C ABI
+和最小运行时之后。
 
 最小示例：
 
