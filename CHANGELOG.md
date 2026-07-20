@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.23.0 - 2026-07-21
+
+- Lowered definite overwrite through `mut borrow` parameters for values that need drop. Root and
+  projected field assignments now invoke the old referent's exact drop glue before storing the new
+  owned value, without inventing an owned flag for borrowed storage.
+- Preserved evaluation order: the replacement is evaluated first, so an early return leaves the old
+  referent intact; once available, old cleanup precedes the ownership-transferring store. Caller-side
+  cleanup subsequently owns only the replacement.
+- Removed `BorrowedPlaceMutation` from pending capabilities and added native success plus observable
+  root/field trap tests. Conditional initialization remains an owned-storage concern; mutable-borrow
+  assignment is verified as a definite overwrite.
+
 ## 0.22.0 - 2026-07-21
 
 - Allowed local partial applications to capture owning `move` arguments, including values with

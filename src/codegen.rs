@@ -12147,21 +12147,9 @@ impl<'a> HirCleanupPlanner<'a> {
                     })?;
                     if matches!(
                         self.local_ownership.get(&alias),
-                        Some(
-                            CleanupLocalOwnership::SharedBorrow
-                                | CleanupLocalOwnership::MutableBorrow
-                        )
+                        Some(CleanupLocalOwnership::MutableBorrow)
                     ) {
                         self.move_out(cursor, stage.path)?;
-                        self.builder
-                            .record_pending(PendingCapability::BorrowedPlaceMutation {
-                                block: cursor.block,
-                                alias,
-                                source: stage.path,
-                                description: format!(
-                                    "assignment through borrowed place requires referent cleanup ({assignment:?})"
-                                ),
-                            });
                     }
                 }
                 self.initialize_result(cursor, &result_use)?;
@@ -14185,19 +14173,33 @@ impl<'a> FunctionEmitter<'a> {
                         .iter()
                         .rev()
                         .find(|slot| slot.local == Some(place.local))
-                        .ok_or_else(|| {
-                            Diagnostic::new(format!(
-                                "internal error: missing drop slot for local {}",
-                                place.local
-                            ))
-                        })?;
-                    let slot = Self::find_drop_slot(root, &place.projections).ok_or_else(|| {
-                        Diagnostic::new(format!(
-                            "internal error: missing projection drop slot for local {}",
+                        .cloned();
+                    if let Some(root) = root {
+                        let slot =
+                            Self::find_drop_slot(&root, &place.projections).ok_or_else(|| {
+                                Diagnostic::new(format!(
+                                    "internal error: missing projection drop slot for local {}",
+                                    place.local
+                                ))
+                            })?;
+                        self.emit_conditional_drop(&slot)?;
+                    } else if place.capability == LocalCapability::MutParam {
+                        if *assignment != AssignmentKind::Overwrite {
+                            return Err(Diagnostic::new(format!(
+                                "internal error: mutable borrow assignment to `{}` was not a definite overwrite",
+                                place.ty
+                            )));
+                        }
+                        self.instruction(format!(
+                            "call void @{}(ptr {pointer})",
+                            drop_glue_symbol(&place.ty)
+                        ));
+                    } else {
+                        return Err(Diagnostic::new(format!(
+                            "internal error: missing drop slot for owned local {}",
                             place.local
-                        ))
-                    })?;
-                    self.emit_conditional_drop(&slot)?;
+                        )));
+                    }
                 }
                 self.instruction(format!("store {ty} {}, ptr {pointer}", value.value()?));
                 if self.program.needs_drop(&place.root_ty) {
@@ -19528,11 +19530,11 @@ let replace(mut borrow target: Pair, move replacement: Payload): () = {
             .find(|local| local.debug_name.as_deref() == Some("target"))
             .expect("mutable borrow parameter");
         assert_eq!(target.ownership, CleanupLocalOwnership::MutableBorrow);
-        assert!(plan.pending_capabilities.iter().any(|pending| {
-            matches!(
-                pending,
-                PendingCapability::BorrowedPlaceMutation { alias, .. } if *alias == target.id
-            )
+        assert!(plan.blocks.iter().any(|block| {
+            block.operations.iter().any(|operation| {
+                matches!(operation, CleanupOp::MoveOut(path)
+                    if plan.move_paths[path.index()].place.local != target.id)
+            })
         }));
     }
 

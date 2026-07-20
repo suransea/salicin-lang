@@ -112,11 +112,17 @@ The v0.22 emitter permits owning move captures in local partial applications. Su
 early-return staging. Abandoned partials clean their retained captures. The separate
 `PartialApplicationCapture` pending capability has been removed, leaving no callable-capture
 pending marker. Borrowed captures and first-class or escaping callables still require a public ABI.
+
+The v0.23 emitter performs drop-aware overwrite through mutable-borrow parameters. It evaluates the
+replacement first, calls exact glue on the old root or projected field, and then transfers the new
+value into borrowed storage. No owned flag is fabricated for the referent. The
+`BorrowedPlaceMutation` pending capability has been removed; native traps verify both root and field
+cleanup.
 Compile-time globals are independently materialized at each use and are
 outside the cleanup plan; resource-bearing global semantics must be settled before `Drop` is
 allowed on globals.
 
-The adjacent standard-library route is therefore: finish first-class callable layout and borrowed
-mutation details; then define raw pointers and the allocator ABI. Only after those
+The adjacent standard-library route is therefore: finish match-plan alignment and first-class
+callable layout; then define raw pointers and the allocator ABI. Only after those
 boundaries are real will `alloc` be added, followed
 by platform `std` over the C ABI and minimal runtime.

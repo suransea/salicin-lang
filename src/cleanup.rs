@@ -205,12 +205,6 @@ pub(crate) enum PendingCapability {
         block: BasicBlockId,
         path: MovePathId,
     },
-    BorrowedPlaceMutation {
-        block: BasicBlockId,
-        alias: LocalId,
-        source: MovePathId,
-        description: String,
-    },
     PatternBindingTransfer {
         block: BasicBlockId,
         binding: LocalId,
@@ -1788,37 +1782,6 @@ impl CleanupPlan {
                             errors.push(VerifyError::new(format!(
                                 "pending MaybeOverwrite has no matching operation in block {block:?}"
                             )));
-                        }
-                    }
-                }
-                PendingCapability::BorrowedPlaceMutation {
-                    block,
-                    alias,
-                    source,
-                    ..
-                } => {
-                    let block =
-                        self.verify_pending_block(*block, "borrowed place mutation", errors);
-                    let alias = self.locals.get(alias.index());
-                    if alias.is_none() {
-                        errors.push(VerifyError::new(format!(
-                            "pending borrowed place mutation refers to invalid alias {alias:?}"
-                        )));
-                    }
-                    if let (Some(block), Some(alias)) = (block, alias) {
-                        if alias.ownership != LocalOwnership::MutableBorrow
-                            || !self.is_ancestor(alias.scope, block.scope)
-                        {
-                            errors.push(VerifyError::new(
-                                "pending borrowed place mutation must refer to a visible mutable borrow alias",
-                        ));
-                        }
-                        if self.move_paths.get(source.index()).is_none()
-                            || !block.operations.contains(&CleanupOp::MoveOut(*source))
-                        {
-                            errors.push(VerifyError::new(
-                                "pending borrowed place mutation must consume its staged source in that block",
-                            ));
                         }
                     }
                 }
@@ -3496,51 +3459,6 @@ mod tests {
         assert!(messages(&builder.into_unverified())
             .iter()
             .any(|message| message.contains("StorageLive") && message.contains("requires dead")));
-    }
-
-    #[test]
-    fn rejects_borrowed_mutation_pending_with_the_wrong_provenance() {
-        let mut builder = CleanupPlanBuilder::new();
-        let entry = builder.entry_block();
-        let ordinary = builder
-            .new_local(
-                builder.root_scope(),
-                LocalKind::User,
-                LocalOwnership::Owned,
-                false,
-            )
-            .unwrap();
-        let shared = builder
-            .new_local(
-                builder.root_scope(),
-                LocalKind::Argument,
-                LocalOwnership::SharedBorrow,
-                false,
-            )
-            .unwrap();
-        builder
-            .push_operation(entry, CleanupOp::StorageLive(ordinary))
-            .unwrap();
-        let ordinary_path = builder.new_move_path(Place::local(ordinary), None).unwrap();
-        builder.record_pending(PendingCapability::BorrowedPlaceMutation {
-            block: entry,
-            alias: shared,
-            source: ordinary_path,
-            description: "test mutation".into(),
-        });
-        builder
-            .set_terminator(
-                entry,
-                Terminator::Return {
-                    exited_scopes: vec![],
-                },
-            )
-            .unwrap();
-
-        let errors = messages(&builder.into_unverified());
-        assert!(errors
-            .iter()
-            .any(|message| message.contains("mutable borrow alias")));
     }
 
     #[test]

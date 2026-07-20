@@ -595,6 +595,38 @@ fn resource_partial_applications_transfer_and_drop_captures() {
 }
 
 #[test]
+fn mutable_borrow_overwrite_drops_the_replaced_value() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "drop_mut_borrow_overwrite.sali"))
+        .output()
+        .expect("run mutable-borrow overwrite program");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+
+    for (fixture_name, failure) in [
+        (
+            "drop_mut_borrow_root_trap.sali",
+            "root overwrite did not drop the old referent",
+        ),
+        (
+            "drop_mut_borrow_field_trap.sali",
+            "field overwrite did not drop the old referent field",
+        ),
+    ] {
+        let trapped = salic()
+            .arg("run")
+            .arg(fixture("pass", fixture_name))
+            .output()
+            .expect("run mutable-borrow overwrite trap");
+        assert!(
+            !trapped.status.success(),
+            "{failure}:\n{}",
+            output_text(&trapped)
+        );
+    }
+}
+
+#[test]
 fn source_backed_copy_errors_report_their_cause() {
     for (name, expected) in [
         (

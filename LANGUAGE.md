@@ -556,6 +556,11 @@ v0.22 允许本地 partial application 捕获 owning move 参数。只要任一 
 按 capture flag 清理。`PartialApplicationCapture` pending 已删除；borrow capture 与 escaping callable
 仍等待 first-class ABI。
 
+v0.23 对 `mut borrow` 参数指向的 referent 执行 drop-aware overwrite。replacement 先求值；若它提前
+退出，旧值不变。求值成功后，对需要 drop 的旧 root 或字段直接调用其 glue，再 store replacement。
+borrowed storage 不拥有 referent，因此不建立本地 drop flag；caller 保持最终所有权。
+`BorrowedPlaceMutation` pending 已删除。
+
 标准库提供显式拥有容器，而不是语言内建 GC：
 
 - `Box(T)`：唯一拥有的堆值；
@@ -1470,6 +1475,7 @@ v0.15 加入 source-backed `Drop` 与递归 glue；v0.16 开始执行 root stora
 物化 struct projection flag tree；v0.18 接通直接 enum match payload transfer；v0.19 补齐嵌套
 structural payload remainder；v0.20 完成 guarded transfer 的延迟提交；v0.21 补齐本地 `FnOnce`
 resource capture cleanup；v0.22 补齐本地 owning partial captures。
+v0.23 再补齐 mutable-borrow referent overwrite cleanup。
 
 标准库权威路线保持 `core → alloc → std`，并按以下依赖顺序推进：
 
@@ -1482,13 +1488,13 @@ resource capture cleanup；v0.22 补齐本地 owning partial captures。
 5. 在上述基础上加入拥有堆资源的 `alloc`；
 6. 最后通过 C ABI 与最小运行时承载依赖宿主系统的 `std`。
 
-当前 v0.22 已完成第一步中的 CFG、结果 storage、显式 transfer、完整静态 forest、move-state fixed
+当前 v0.23 已完成第一步中的 CFG、结果 storage、显式 transfer、完整静态 forest、move-state fixed
 point 与 temporary storage liveness，并完成第二步的 `needs_drop`、drop obligations 与 flag action
 计划；v0.15 完成第三步的 source-backed `Drop` 与递归 glue，v0.16 将 root storage 的普通块、
 return、break、match、overwrite 和 staging cleanup 降到 LLVM，v0.17 补齐 struct projection
 partial drop 与 conditional field rebuild，v0.18–v0.20 补齐直接、嵌套及 guarded enum payload
 binding，v0.21–v0.22 补齐本地 `FnOnce` closure 与 partial nominal resource environment。
-escaping/first-class callable、borrowed mutation 仍 pending；只有 v0.16–v0.22 明确覆盖的
+escaping/first-class callable 与 match planner 对齐仍 pending；只有 v0.16–v0.23 明确覆盖的
 结构化 edge 已执行析构，不能把其余
 `StorageDead`、drop flag action 或 pending edge 当作已执行。全局编译期常量仍按使用点重复物化且不参加
 cleanup；资源型全局的共享身份和退出清理仍须在支持这类全局前定案。
