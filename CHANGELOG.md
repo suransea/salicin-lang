@@ -6,6 +6,32 @@ subset.
 
 ## Unreleased
 
+## 0.11.0 - 2026-07-20
+
+- Pre-registered a complete static move-path forest for every owned argument, return place, user or
+  pattern binding, and planner temporary. Struct fields, every enum downcast and payload field,
+  every constant array index, `Copy` values, and empty or zero-sized aggregates keep explicit
+  paths; borrow aliases keep none. A checked per-function limit of 65,536 paths prevents oversized
+  aggregate layouts from exhausting the compiler.
+- Made both constant and dynamic array indexing explicit `Copy` extraction. The base (and runtime
+  index when present) is still evaluated and staged exactly once, but indexing initializes the
+  result without consuming an array element or inventing a non-finite dynamic move path.
+- Added a cached control-flow fixed point over all move-path nodes. `may_init` joins by union,
+  `must_init` by intersection, unreachable predecessors are ignored, scope-exit edges and
+  `StorageLive`/`StorageDead` clear local state, and operation-position replay validates each
+  `MoveOut`, `Overwrite`, and atomic `Transfer` against the stable state.
+- Tracked enum discriminants alongside initialization. Active-downcast checks, field-to-root
+  recomposition, overwrite invalidation, compatible transfer forests, initialized branch
+  conditions, and complete return places are now verifier invariants in reachable control flow;
+  malformed enum topology is rejected even in unreachable blocks.
+- Removed `MovePathStateDataflow` from the pending capabilities. `Init` remains an idempotent
+  initialization summary rather than an underlying write, and callable environment forests remain
+  expression-backed because function types do not yet carry capture layouts.
+- Kept destruction deliberately disabled. Temporary-storage liveness, conditional cleanup for
+  maybe-overwrite, mutation through borrowed places, match/pattern transfer, and partial or local
+  closure captures remain pending. There is still no `needs_drop`, runtime drop flag,
+  source-backed `Drop`, drop glue, resource-bearing global cleanup, or LLVM cleanup emission.
+
 ## 0.10.0 - 2026-07-20
 
 - Replaced the cleanup planner's result-presence boolean with concrete `CleanupDestination` places

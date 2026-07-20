@@ -184,12 +184,28 @@ v0.10.0 把资源值的实际落点接入 cleanup CFG：
   “`break` 值尚未传递”两项 pending 已删除。LLVM 析构仍未启用，剩余 move-state dataflow、临时值
   liveness、match/pattern、borrowed mutation 与 capture 细节继续显式 pending。
 
+v0.11.0 完成 cleanup 的静态 move-path forest 与初始化数据流：
+
+- 每个 owned 参数、返回槽、用户/pattern binding 和 planner temporary 都在分析前登记完整 forest；
+  struct 的全部字段、enum 的全部 downcast/payload、array 的全部 constant index、`Copy` 与空/ZST
+  聚合都保留路径，borrow alias 不建立路径。单函数最多 65,536 个 move path，超出会明确诊断。
+- 常量与动态 array index 都按 `Copy` extraction 处理：base 和动态 index 仍各求值一次，但不会消费
+  array element，也不会把运行时 index 伪装成有限静态路径。
+- cleanup verifier 现在缓存 CFG fixed point：所有路径节点分别维护 `may_init`/`must_init`，在 join
+  处取 union/intersection，忽略不可达前驱，并按 operation 位置重放；scope exit、`StorageLive` 和
+  `StorageDead` 会清除对应状态。
+- enum discriminant、active downcast、字段恢复后的 root 重组、overwrite 失效、Transfer forest 兼容、
+  branch condition 和 return place 完整性都进入验证。`MovePathStateDataflow` pending 因此删除。
+- Function 类型尚不携带环境布局，具体 callable capture forest 仍由表达式补登记并保持 pending。
+  `Init` 仍是幂等的初始化摘要，不表示一次真实写入或旧值析构。
+
 标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
 所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
-`Copy`，v0.9 建立并验证 cleanup CFG，v0.10 又补齐资源结果 storage 与跨边转移，但还不发出析构。
-下一步完成完整 move-path forest、cleanup dataflow 与临时值 liveness，再加入 `needs_drop` 和 runtime
-drop flags，随后提供 source-backed `Drop` 与 drop glue；其后才固定 raw pointer 和 allocator ABI
-并进入 `alloc`。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小运行时之后。
+`Copy`，v0.9 建立 cleanup CFG，v0.10 补齐资源 storage/transfer，v0.11 完成完整 move-path forest 与
+初始化 fixed point；这些都属于已经开始的 `core` 阶段，但还不发出析构。下一步先完成 temporary
+liveness、`needs_drop` 与 runtime drop flags，再提供 source-backed `Drop` 和 drop glue；其后才固定
+raw pointer 与 allocator ABI 并进入 `alloc`。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
+运行时之后。
 
 最小示例：
 

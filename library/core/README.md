@@ -40,15 +40,26 @@ atomic transfers consume one move path and initialize or overwrite another. Stru
 partial applications, and closures initialize projected children before their root, so an early
 exit leaves a representable partial value instead of committing an invalid destination.
 
-That plan is still a boundary, not executable destruction. Resource results and loop-break values
-are now materialized, but move-state dataflow, temporary liveness, borrowed mutation,
-maybe-overwrite state, match/pattern transfer, and partial or closure capture details remain
-explicitly pending. There is no `needs_drop`, runtime drop flag, public source-backed `Drop`, drop
-glue, or LLVM cleanup emission yet. Compile-time globals are independently materialized at each use
-and are outside the cleanup plan; resource-bearing global semantics must be settled before `Drop`
-is exposed.
+The v0.11 compiler pre-registers complete static move-path forests for owned storage, including all
+struct fields, enum variants and payloads, constant array indexes, `Copy` values, and empty
+aggregates. Borrow aliases have no owned paths, and a checked 65,536-path per-function limit bounds
+aggregate expansion. Constant and dynamic indexes are modeled as `Copy` extraction rather than
+consuming or runtime-indexed move paths.
 
-The adjacent standard-library route is therefore: finish cleanup materialization and dataflow in
+`CleanupPlan` now caches a control-flow fixed point over `may_init` and `must_init`, clears state on
+storage and scope exits, replays operations at their exact position, and tracks enum discriminants
+for active-downcast, reconstruction, overwrite, transfer-shape, branch, and return validation.
+`MovePathStateDataflow` is no longer pending. Function types still lack an environment layout, so
+concrete callable captures remain expression-backed and explicitly pending.
+
+That plan is still a boundary, not executable destruction. Temporary liveness, borrowed mutation,
+conditional maybe-overwrite cleanup, match/pattern transfer, and partial or closure capture details
+remain pending. There is no `needs_drop`, runtime drop flag, public source-backed `Drop`, drop glue,
+or LLVM cleanup emission yet. Compile-time globals are independently materialized at each use and
+are outside the cleanup plan; resource-bearing global semantics must be settled before `Drop` is
+exposed.
+
+The adjacent standard-library route is therefore: finish temporary/capture/match cleanup details in
 `core`; add `needs_drop` and drop flags; expose source-backed `Drop` and emit glue; then define raw
 pointers and the allocator ABI. Only after those boundaries are real will `alloc` be added, followed
 by platform `std` over the C ABI and minimal runtime.
