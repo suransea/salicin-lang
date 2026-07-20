@@ -283,13 +283,21 @@ v0.19.0 将 transfer 递归到嵌套结构 payload：
   嵌套移动仍被拒绝，因为其 destructor 必须观察完整 `self`。
 - guarded resource move 仍等待 guard 失败时的所有权回滚；closure environment cleanup 随后处理。
 
+v0.20.0 为 guarded payload binding 加入延迟提交：
+
+- guard 求值期间，binding 只是指向暂存位模式的非拥有视图，可读取和借用，但不能移动非 `Copy` 值。
+- guard 成功后在 body 入口一次性关闭 enum root，并启用 moved binding 与 remainder 的 drop flags；
+  guard 失败时不改所有权，后续 candidate 继续从完整 enum 匹配。
+- guard 内提前 `return`/传播错误时也不提交 binding，由原 enum root 执行清理。custom-`Drop` enum 可做
+  guarded 整体 binding，但仍不能拆出 payload。
+
 标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
 所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
 `Copy`，v0.9 建立 cleanup CFG，v0.10 补齐资源 storage/transfer，v0.11 完成完整 move-path forest 与
 初始化 fixed point，v0.12 再完成 temporary storage liveness，v0.14 已加入 `needs_drop` 与控制流敏感
 drop-flag 计划，v0.15 提供 `Drop` 与递归 glue，v0.16 完成第一阶段结构化 scope-exit lowering，
 v0.17 已物化 struct projection flags，v0.18 接通直接 enum payload binding，v0.19 补齐嵌套
-downcast remainder。下一步完成 guard rollback 与 capture cleanup pending，其后才固定
+downcast remainder，v0.20 完成 guard rollback。下一步完成 capture cleanup pending，其后才固定
 raw pointer 与 allocator ABI 并进入 `alloc`。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
 运行时之后。
 

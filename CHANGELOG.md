@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.20.0 - 2026-07-21
+
+- Enabled drop-bearing pattern bindings in guarded match arms through speculative binding storage.
+  Guards may inspect bindings without owning them; ownership flags and active-variant remainder
+  slots are committed only on the successful edge into the arm body.
+- Preserved the intact enum root on guard failure and on early return from guard evaluation, so a
+  later candidate or enclosing cleanup retains exactly one owner. Non-`Copy` bindings remain
+  non-movable while their guard is evaluating.
+- Added native true, false, early-return, and sibling-trap coverage for guarded payload transfer.
+  Whole-value guarded bindings also work for custom-`Drop` enums, while extracting a payload from
+  such an enum remains prohibited.
+
 ## 0.19.0 - 2026-07-21
 
 - Extended enum match ownership transfer through nested structural payload patterns. Recursive

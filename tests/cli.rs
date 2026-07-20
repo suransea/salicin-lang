@@ -510,6 +510,27 @@ fn match_payload_moves_transfer_drop_ownership() {
 }
 
 #[test]
+fn guarded_match_payload_moves_commit_only_after_success() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "drop_match_guarded.sali"))
+        .output()
+        .expect("run guarded match payload program");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+
+    let trapped = salic()
+        .arg("run")
+        .arg(fixture("pass", "drop_match_guarded_trap.sali"))
+        .output()
+        .expect("run guarded match rollback sibling trap");
+    assert!(
+        !trapped.status.success(),
+        "guard rollback lost the unmatched sibling:\n{}",
+        output_text(&trapped)
+    );
+}
+
+#[test]
 fn source_backed_copy_errors_report_their_cause() {
     for (name, expected) in [
         (

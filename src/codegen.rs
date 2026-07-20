@@ -8649,17 +8649,15 @@ impl Analyzer {
         for arm in arms {
             context.push_scope();
             let (matcher, bindings) = self.lower_enum_pattern(&arm.pattern, &layout, context);
-            let moves_payload = bindings.iter().any(|binding| binding.moves);
-            if moves_payload && self.type_has_custom_drop(&scrutinee.ty) {
+            if self.type_has_custom_drop(&scrutinee.ty)
+                && bindings
+                    .iter()
+                    .any(|binding| binding.moves && !binding.path.is_empty())
+            {
                 self.error(format!(
                     "cannot move a pattern binding out of `{}` because it implements `Drop`",
                     scrutinee.ty
                 ));
-            }
-            if arm.guard.is_some() && self.type_needs_drop(&scrutinee.ty) && moves_payload {
-                self.error(
-                    "guarded match arms cannot move pattern bindings out of a value that needs drop yet",
-                );
             }
             let matched_variants: Vec<_> = match matcher {
                 HirMatcher::Variant(index) => vec![index],
@@ -14716,10 +14714,12 @@ impl<'a> FunctionEmitter<'a> {
                 self.start_block(&labels[variant][position]);
                 let arm = &arms[arm_index];
                 let candidate_cleanup_depth = self.drop_slots.len();
-                if let Some(root) = &match_drop_slot {
-                    self.prepare_match_pattern_ownership(root, layout, variant, &arm.bindings)?;
+                if arm.guard.is_none() {
+                    if let Some(root) = &match_drop_slot {
+                        self.prepare_match_pattern_ownership(root, layout, variant, &arm.bindings)?;
+                    }
                 }
-                self.emit_pattern_bindings(&scrutinee, &arm.bindings)?;
+                self.emit_pattern_bindings(&scrutinee, &arm.bindings, arm.guard.is_none())?;
 
                 if let Some(guard) = &arm.guard {
                     let guard = self.emit_expr(guard)?;
@@ -14734,6 +14734,15 @@ impl<'a> FunctionEmitter<'a> {
                             guard.value()?
                         ));
                         self.start_block(&body_label);
+                        if let Some(root) = &match_drop_slot {
+                            self.prepare_match_pattern_ownership(
+                                root,
+                                layout,
+                                variant,
+                                &arm.bindings,
+                            )?;
+                        }
+                        self.activate_pattern_binding_ownership(&arm.bindings)?;
                     }
                 }
 
@@ -14870,6 +14879,7 @@ impl<'a> FunctionEmitter<'a> {
         &mut self,
         scrutinee: &Operand,
         bindings: &[HirPatternBinding],
+        activate_ownership: bool,
     ) -> Result<(), Diagnostic> {
         for binding in bindings {
             if binding.ty == Ty::Unit {
@@ -14896,9 +14906,28 @@ impl<'a> FunctionEmitter<'a> {
             let pointer = self.entry_alloca(&ty, &llvm_comment(&binding.name));
             self.instruction(format!("store {ty} {value}, ptr {pointer}"));
             self.locals.insert(binding.id, pointer.clone());
-            if binding.moves && self.program.needs_drop(&binding.ty) {
+            if activate_ownership && binding.moves && self.program.needs_drop(&binding.ty) {
                 self.register_drop_slot(Some(binding.id), binding.ty.clone(), pointer)?;
             }
+        }
+        Ok(())
+    }
+
+    fn activate_pattern_binding_ownership(
+        &mut self,
+        bindings: &[HirPatternBinding],
+    ) -> Result<(), Diagnostic> {
+        for binding in bindings {
+            if !binding.moves || !self.program.needs_drop(&binding.ty) {
+                continue;
+            }
+            let pointer = self.locals.get(&binding.id).cloned().ok_or_else(|| {
+                Diagnostic::new(format!(
+                    "internal error: missing speculative pattern binding `{}`",
+                    binding.name
+                ))
+            })?;
+            self.register_drop_slot(Some(binding.id), binding.ty.clone(), pointer)?;
         }
         Ok(())
     }
@@ -17316,7 +17345,21 @@ let main(): i32 = Choice.Some(Resource(1)) match {
             .iter()
             .any(|error| error.message.contains("implements `Drop`")));
 
-        let guarded_move = compile_text(
+        compile_text(
+            r#"
+let Choice = enum { Some(i32), None }
+extend Choice: Drop {
+  let drop(mut borrow self)(): () = ()
+}
+let main(): i32 = Choice.Some(1) match {
+  whole if true => 1,
+  _ => 0
+}
+"#,
+        )
+        .expect("a guarded whole-value binding may preserve custom Drop ownership");
+
+        compile_text(
             r#"
 let Resource = struct(value: i32)
 let Choice = enum { Some(Resource), None }
@@ -17324,16 +17367,13 @@ extend Resource: Drop {
   let drop(mut borrow self)(): () = ()
 }
 let main(): i32 = Choice.Some(Resource(1)) match {
-  Some(resource) if true => 1,
+  Some(resource) if false => 1,
   Some(_) => 2,
   None => 0
 }
 "#,
         )
-        .expect_err("a failed guard cannot roll back a moved payload yet");
-        assert!(guarded_move
-            .iter()
-            .any(|error| error.message.contains("guarded match arms")));
+        .expect("a guarded payload move remains speculative until its guard succeeds");
 
         let nested_custom_drop = compile_text(
             r#"

@@ -89,6 +89,12 @@ resource siblings as fallback cleanup slots across normal and early-return exits
 enums remain indivisible; nested payload moves and guarded resource moves await downcast trees and
 guard rollback. Closure-environment projections remain pending.
 
+The v0.20 emitter makes guarded payload bindings speculative. A guard can inspect non-owning
+binding storage; only its successful body edge commits enum decomposition and activates binding and
+remainder flags. Failure and early return retain the intact enum root for the next candidate or
+scope cleanup. Non-`Copy` bindings still cannot be consumed inside the guard itself. Whole-value
+guarded bindings preserve custom-`Drop` values, while their payloads remain indivisible.
+
 The v0.19 emitter recursively partitions nested structural payload patterns. A deep moved binding
 owns its selected subtree, while resource siblings at every enclosing struct and active-variant
 level retain independent cleanup slots on normal and early-return exits. Traversal through a type
@@ -98,7 +104,6 @@ Compile-time globals are independently materialized at each use and are
 outside the cleanup plan; resource-bearing global semantics must be settled before `Drop` is
 allowed on globals.
 
-The adjacent standard-library route is therefore: finish guarded-pattern and closure cleanup
-details; then define raw
+The adjacent standard-library route is therefore: finish closure cleanup details; then define raw
 pointers and the allocator ABI. Only after those boundaries are real will `alloc` be added, followed
 by platform `std` over the C ABI and minimal runtime.
