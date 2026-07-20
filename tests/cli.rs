@@ -1877,7 +1877,7 @@ fn transitive_diamond_dependencies_share_nominal_identity() {
     );
     workspace.write(
         "shared/src/lib.sali",
-        "pub let Token = struct(value: i32)\npub let make(value: i32): Token = Token(value: value)\n",
+        "pub let Token = struct(pub value: i32)\npub let make(value: i32): Token = Token(value: value)\n",
     );
     for side in ["left", "right"] {
         workspace.write(
@@ -2094,7 +2094,7 @@ pub(package) let answer(): i32 = {
     );
     project.write(
         "src/net/http.sali",
-        r#"pub(package) let Reply = struct(value: i32)
+        r#"pub(package) let Reply = struct(pub(package) value: i32)
 pub(package) let Status = enum {
   Ok(i32),
   Err,
@@ -2109,6 +2109,88 @@ pub(package) let reply(): Reply = Reply(value: 0)
         .output()
         .expect("run package with file modules");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
+fn field_visibility_controls_cross_module_and_cross_package_data_access() {
+    let private_project = TestDirectory::new();
+    private_project.write(
+        "salicin.toml",
+        "[package]\nname = \"private-fields\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    );
+    private_project.write(
+        "src/data.sali",
+        r#"pub(package) let Record = struct(secret: i32, pub(package) open: i32)
+pub(package) let Event = enum { Named(secret: i32), Empty }
+pub(package) let record(): Record = Record(secret: 20, open: 22)
+pub(package) let event(): Event = Event.Named(secret: 42)
+"#,
+    );
+    private_project.write(
+        "src/main.sali",
+        r#"let read(): i32 = data.record().secret
+let build(): data.Record = data.Record(secret: 20, open: 22)
+let unpack(): i32 = data.event() match {
+  data.Event.Named(secret: value) => value,
+  data.Event.Empty => 0,
+}
+let main(): i32 = 0
+"#,
+    );
+    let denied = salic()
+        .arg("check")
+        .arg(&private_project.0)
+        .output()
+        .expect("reject private fields outside their defining module");
+    assert_eq!(denied.status.code(), Some(1), "{}", output_text(&denied));
+    let stderr = String::from_utf8_lossy(&denied.stderr);
+    assert!(
+        stderr.contains("Record.secret") && stderr.contains("Event.Named.secret"),
+        "{}",
+        output_text(&denied)
+    );
+
+    let workspace = TestDirectory::new();
+    workspace.write(
+        "dep/salicin.toml",
+        "[package]\nname = \"public-fields-dep\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    );
+    workspace.write(
+        "dep/src/lib.sali",
+        r#"pub let Record = struct(pub value: i32)
+pub let Event = enum { Named(pub value: i32), Empty }
+"#,
+    );
+    workspace.write(
+        "app/salicin.toml",
+        r#"[package]
+name = "public-fields-app"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+dep = { path = "../dep" }
+"#,
+    );
+    workspace.write(
+        "app/src/main.sali",
+        r#"let main(): i32 = {
+  let record = dep.Record(value: 20)
+  let event = dep.Event.Named(value: 22)
+  let extra = event match {
+    dep.Event.Named(value: value) => value,
+    dep.Event.Empty => 0,
+  }
+  record.value + extra
+}
+"#,
+    );
+    let allowed = salic()
+        .arg("run")
+        .arg(workspace.join("app"))
+        .output()
+        .expect("run with public fields across a dependency boundary");
+    assert_eq!(allowed.status.code(), Some(42), "{}", output_text(&allowed));
 }
 
 #[test]
@@ -2246,7 +2328,7 @@ let main(): i32 = nested.deep.answer()
     );
     project.write(
         "src/kit.sali",
-        r#"pub(package) let Number = struct(value: i32)
+        r#"pub(package) let Number = struct(pub(package) value: i32)
 pub(package) let Outcome = enum {
   Ready(i32),
   Empty,

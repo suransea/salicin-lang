@@ -1,6 +1,6 @@
 # Salicin 语法骨架
 
-状态：Draft 0.2  
+状态：Draft 0.3
 源码后缀：`.sali`  
 源码编码：UTF-8
 
@@ -144,6 +144,9 @@ trait_item = { attribute }, [ visibility ], let_decl ;
 
 一个 variant 的字段全部按位置或全部命名；不能混合。`struct(...)` 与 `struct {...}` 只允许作为
 命名 `let` initializer，分别建立运行时名义类型和编译期模块。
+
+struct 字段与命名 variant 字段默认私有，并可写 `pub(package)` / `pub`。字段有效可见性不会宽于
+外层类型；位置 variant payload 没有独立 visibility 语法，继承 enum 声明的可见性。
 
 ### 4.3 `extend`
 

@@ -15,11 +15,6 @@ fn format_codegen_diagnostics(diagnostics: Vec<codegen::Diagnostic>) -> Vec<Stri
 }
 
 fn parse_and_resolve_single_source(source: &str) -> Result<ast::Program, Vec<String>> {
-    let parsed = parser::parse(source).map_err(|error| vec![format!("error: {error}")])?;
-    if parsed.uses.is_empty() {
-        return Ok(parsed);
-    }
-
     modules::resolve_sources(&[modules::SourceUnit {
         path: "<source>".into(),
         module_path: Vec::new(),
@@ -137,5 +132,20 @@ mod tests {
                        let read(): i32 = selected()\n";
         compile_library_source(library).expect("library import should resolve");
         check_library_source(library).expect("library import should type-check");
+    }
+
+    #[test]
+    fn single_source_entry_points_validate_explicit_api_visibility_without_imports() {
+        let source = "let Hidden = struct()\n\
+                      pub let Record = struct(pub value: Hidden)\n";
+        for errors in [
+            compile_library_source(source).unwrap_err(),
+            check_library_source(source).unwrap_err(),
+        ] {
+            assert!(errors.iter().any(|diagnostic| {
+                diagnostic.contains("field `Record.value`")
+                    && diagnostic.contains("private type `Hidden`")
+            }));
+        }
     }
 }

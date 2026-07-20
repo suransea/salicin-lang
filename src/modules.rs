@@ -121,6 +121,7 @@ pub fn resolve_packages(packages: &[SourcePackage]) -> Result<Program, Vec<Strin
     let mut items = Vec::new();
     let mut item_visibilities = Vec::new();
     let mut item_origins = Vec::new();
+    let mut item_source_paths = Vec::new();
 
     for ParsedUnit {
         source,
@@ -151,16 +152,18 @@ pub fn resolve_packages(packages: &[SourcePackage]) -> Result<Program, Vec<Strin
                 package: package_id.0,
                 module_path: source.module_path.clone(),
             });
+            item_source_paths.push(source.path.clone());
         }
     }
 
     if resolver.diagnostics.is_empty() {
-        Ok(Program::with_metadata(
-            items,
-            item_visibilities,
-            item_origins,
-            Vec::new(),
-        ))
+        let program = Program::with_metadata(items, item_visibilities, item_origins, Vec::new());
+        let diagnostics = validate_api_visibility(&program, &item_source_paths);
+        if diagnostics.is_empty() {
+            Ok(program)
+        } else {
+            Err(diagnostics)
+        }
     } else {
         Err(resolver.diagnostics)
     }
@@ -1034,6 +1037,333 @@ fn visibility_description(visibility: Visibility) -> &'static str {
     }
 }
 
+#[derive(Clone, Debug)]
+struct ApiBoundary {
+    visibility: Visibility,
+    origin: ItemOrigin,
+}
+
+fn validate_api_visibility(program: &Program, item_source_paths: &[String]) -> Vec<String> {
+    debug_assert_eq!(program.items.len(), program.item_visibilities.len());
+    debug_assert_eq!(program.items.len(), program.item_origins.len());
+    debug_assert_eq!(program.items.len(), item_source_paths.len());
+
+    let nominal_boundaries = program
+        .items
+        .iter()
+        .zip(&program.item_visibilities)
+        .zip(&program.item_origins)
+        .filter_map(|((item, visibility), origin)| {
+            let name = match item {
+                Item::Struct(definition) => &definition.name,
+                Item::Enum(definition) => &definition.name,
+                Item::Trait(definition) => &definition.name,
+                Item::Function(_) | Item::Global(_) | Item::Extend(_) => return None,
+            };
+            Some((
+                name.as_str(),
+                ApiBoundary {
+                    visibility: *visibility,
+                    origin: origin.clone(),
+                },
+            ))
+        })
+        .collect::<HashMap<_, _>>();
+
+    let mut diagnostics = Vec::new();
+    for (((item, visibility), origin), source_path) in program
+        .items
+        .iter()
+        .zip(&program.item_visibilities)
+        .zip(&program.item_origins)
+        .zip(item_source_paths)
+    {
+        let boundary = ApiBoundary {
+            visibility: *visibility,
+            origin: origin.clone(),
+        };
+        validate_item_api(
+            item,
+            &boundary,
+            source_path,
+            &nominal_boundaries,
+            &mut diagnostics,
+        );
+    }
+
+    diagnostics.sort();
+    diagnostics.dedup();
+    diagnostics
+}
+
+fn validate_item_api(
+    item: &Item,
+    boundary: &ApiBoundary,
+    source_path: &str,
+    nominal_boundaries: &HashMap<&str, ApiBoundary>,
+    diagnostics: &mut Vec<String>,
+) {
+    let no_bound_types = HashSet::new();
+    match item {
+        Item::Function(function) => validate_function_api(
+            function,
+            boundary,
+            source_path,
+            &no_bound_types,
+            &format!("function `{}`", function.name),
+            nominal_boundaries,
+            diagnostics,
+        ),
+        Item::Global(binding) => {
+            if let Some(annotation) = &binding.annotation {
+                validate_exposed_type(
+                    annotation,
+                    boundary,
+                    source_path,
+                    &no_bound_types,
+                    &format!("global `{}` type", binding.name),
+                    nominal_boundaries,
+                    diagnostics,
+                );
+            }
+        }
+        Item::Struct(definition) => {
+            let bound_types = compile_parameter_names(&definition.compile_groups, &no_bound_types);
+            for field in &definition.fields {
+                let field_boundary = effective_api_boundary(boundary, field.visibility);
+                validate_exposed_type(
+                    &field.ty,
+                    &field_boundary,
+                    source_path,
+                    &bound_types,
+                    &format!("field `{}.{}`", definition.name, field.name),
+                    nominal_boundaries,
+                    diagnostics,
+                );
+            }
+        }
+        Item::Enum(definition) => {
+            let bound_types = compile_parameter_names(&definition.compile_groups, &no_bound_types);
+            for variant in &definition.variants {
+                match &variant.fields {
+                    VariantFields::Unit => {}
+                    VariantFields::Positional(types) => {
+                        for (field_index, ty) in types.iter().enumerate() {
+                            validate_exposed_type(
+                                ty,
+                                boundary,
+                                source_path,
+                                &bound_types,
+                                &format!(
+                                    "enum variant `{}.{}` payload {}",
+                                    definition.name, variant.name, field_index
+                                ),
+                                nominal_boundaries,
+                                diagnostics,
+                            );
+                        }
+                    }
+                    VariantFields::Named(fields) => {
+                        for field in fields {
+                            let field_boundary = effective_api_boundary(boundary, field.visibility);
+                            validate_exposed_type(
+                                &field.ty,
+                                &field_boundary,
+                                source_path,
+                                &bound_types,
+                                &format!(
+                                    "enum variant field `{}.{}.{}`",
+                                    definition.name, variant.name, field.name
+                                ),
+                                nominal_boundaries,
+                                diagnostics,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        Item::Trait(definition) => {
+            let mut trait_bound_types =
+                compile_parameter_names(&definition.compile_groups, &no_bound_types);
+            trait_bound_types.insert("Self".to_owned());
+            trait_bound_types.extend(definition.members.iter().filter_map(|member| match member {
+                TraitMember::AssociatedType { name, .. } => Some(name.clone()),
+                TraitMember::Function(_) => None,
+            }));
+
+            for member in &definition.members {
+                match member {
+                    TraitMember::Function(function) => validate_function_api(
+                        function,
+                        boundary,
+                        source_path,
+                        &trait_bound_types,
+                        &format!("trait method `{}.{}`", definition.name, function.name),
+                        nominal_boundaries,
+                        diagnostics,
+                    ),
+                    TraitMember::AssociatedType {
+                        name,
+                        compile_groups,
+                        default: Some(default),
+                    } => {
+                        let bound_types =
+                            compile_parameter_names(compile_groups, &trait_bound_types);
+                        validate_exposed_type(
+                            default,
+                            boundary,
+                            source_path,
+                            &bound_types,
+                            &format!("associated type `{}.{name}` default", definition.name),
+                            nominal_boundaries,
+                            diagnostics,
+                        );
+                    }
+                    TraitMember::AssociatedType { default: None, .. } => {}
+                }
+            }
+        }
+        Item::Extend(_) => {}
+    }
+}
+
+fn validate_function_api(
+    function: &Function,
+    boundary: &ApiBoundary,
+    source_path: &str,
+    outer_bound_types: &HashSet<String>,
+    description: &str,
+    nominal_boundaries: &HashMap<&str, ApiBoundary>,
+    diagnostics: &mut Vec<String>,
+) {
+    let bound_types = compile_parameter_names(&function.compile_groups, outer_bound_types);
+    for parameter in function.groups.iter().flatten() {
+        validate_exposed_type(
+            &parameter.ty,
+            boundary,
+            source_path,
+            &bound_types,
+            &format!("{description} parameter `{}`", parameter.name),
+            nominal_boundaries,
+            diagnostics,
+        );
+    }
+    if let Some(return_type) = &function.return_type {
+        validate_exposed_type(
+            return_type,
+            boundary,
+            source_path,
+            &bound_types,
+            &format!("{description} return type"),
+            nominal_boundaries,
+            diagnostics,
+        );
+    }
+}
+
+fn validate_exposed_type(
+    ty: &Type,
+    exposed: &ApiBoundary,
+    source_path: &str,
+    bound_types: &HashSet<String>,
+    description: &str,
+    nominal_boundaries: &HashMap<&str, ApiBoundary>,
+    diagnostics: &mut Vec<String>,
+) {
+    match ty {
+        Type::Array(element, _) => validate_exposed_type(
+            element,
+            exposed,
+            source_path,
+            bound_types,
+            description,
+            nominal_boundaries,
+            diagnostics,
+        ),
+        Type::Named(name, arguments) => {
+            if !is_bound_api_type(name, bound_types) {
+                if let Some(referenced) = nominal_boundaries.get(name.as_str()) {
+                    if !api_audience_is_contained(exposed, referenced) {
+                        diagnostics.push(format!(
+                            "{source_path}: error: {description} with {} visibility exposes {} type `{name}` beyond its access boundary{}",
+                            visibility_description(exposed.visibility),
+                            visibility_description(referenced.visibility),
+                            boundary_location(referenced),
+                        ));
+                    }
+                }
+            }
+            for argument in arguments {
+                validate_exposed_type(
+                    argument,
+                    exposed,
+                    source_path,
+                    bound_types,
+                    description,
+                    nominal_boundaries,
+                    diagnostics,
+                );
+            }
+        }
+        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit | Type::Infer => {}
+    }
+}
+
+fn effective_api_boundary(owner: &ApiBoundary, member_visibility: Visibility) -> ApiBoundary {
+    let visibility = if visibility_rank(owner.visibility) <= visibility_rank(member_visibility) {
+        owner.visibility
+    } else {
+        member_visibility
+    };
+    ApiBoundary {
+        visibility,
+        origin: owner.origin.clone(),
+    }
+}
+
+fn api_audience_is_contained(exposed: &ApiBoundary, referenced: &ApiBoundary) -> bool {
+    match referenced.visibility {
+        Visibility::Public => true,
+        Visibility::Package => {
+            exposed.visibility != Visibility::Public
+                && exposed.origin.package == referenced.origin.package
+        }
+        Visibility::Private => {
+            (exposed.visibility == Visibility::Private
+                && exposed.origin.package == referenced.origin.package
+                && exposed
+                    .origin
+                    .module_path
+                    .starts_with(&referenced.origin.module_path))
+                || (exposed.visibility == Visibility::Package
+                    && exposed.origin.package == referenced.origin.package
+                    && referenced.origin.module_path.is_empty())
+        }
+    }
+}
+
+fn is_bound_api_type(name: &str, bound_types: &HashSet<String>) -> bool {
+    bound_types.iter().any(|bound| {
+        name == bound
+            || name
+                .strip_prefix(bound)
+                .is_some_and(|suffix| suffix.starts_with('.'))
+    })
+}
+
+fn boundary_location(boundary: &ApiBoundary) -> String {
+    match boundary.visibility {
+        Visibility::Public => String::new(),
+        Visibility::Package => format!(" in package #{}", boundary.origin.package),
+        Visibility::Private => format!(
+            " in module `{}` of package #{}",
+            display_module(&boundary.origin.module_path),
+            boundary.origin.package
+        ),
+    }
+}
+
 fn declaration_name(item: &Item) -> Option<&str> {
     match item {
         Item::Function(function) => Some(&function.name),
@@ -1783,7 +2113,7 @@ mod tests {
             unit(
                 "src/data.sali",
                 &["data"],
-                "pub(package) let Point = struct(x: i32)\n\
+                "pub(package) let Point = struct(pub(package) x: i32)\n\
                  pub(package) let origin = Point(x: 1)\n",
                 false,
             ),
@@ -2691,6 +3021,143 @@ let main(): i32 = Option(_).None ?? 42
                 "package ID {} is reserved for compiler core",
                 PackageId::CORE.0
             ))));
+    }
+
+    #[test]
+    fn rejects_nominal_types_that_are_narrower_than_function_and_global_apis() {
+        let errors = resolve_sources(&[unit(
+            "src/lib.sali",
+            &[],
+            "let Hidden = struct()\n\
+             pub let Wrapper(T: type) = struct()\n\
+             pub let expose(value: Wrapper(Hidden)): Hidden = value\n\
+             pub let shared: Hidden = Hidden()\n",
+            true,
+        )])
+        .unwrap_err();
+
+        assert_eq!(errors.len(), 3, "{errors:?}");
+        assert!(errors.iter().any(|diagnostic| {
+            diagnostic.contains("function `expose` parameter `value`")
+                && diagnostic.contains("exposes private type `Hidden`")
+        }));
+        assert!(errors.iter().any(|diagnostic| {
+            diagnostic.contains("function `expose` return type")
+                && diagnostic.contains("exposes private type `Hidden`")
+        }));
+        assert!(errors.iter().any(|diagnostic| {
+            diagnostic.contains("global `shared` type")
+                && diagnostic.contains("exposes private type `Hidden`")
+        }));
+    }
+
+    #[test]
+    fn compares_package_and_private_api_audiences_by_module_ancestry() {
+        let errors = resolve_sources(&[
+            unit(
+                "src/main.sali",
+                &[],
+                "let RootSecret = struct()\n\
+                 pub(package) let PackageSecret = struct()\n\
+                 let main(): i32 = 0\n",
+                true,
+            ),
+            unit(
+                "src/child.sali",
+                &["child"],
+                "let ChildSecret = struct()\n\
+                 pub(package) let package_ok(value: RootSecret): RootSecret = value\n\
+                 let private_ok(value: RootSecret): RootSecret = value\n\
+                 pub(package) let package_bad(value: ChildSecret): i32 = 0\n\
+                 pub let public_bad(value: PackageSecret): i32 = 0\n",
+                false,
+            ),
+        ])
+        .unwrap_err();
+
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert!(errors.iter().any(|diagnostic| {
+            diagnostic.contains("function `child::package_bad` parameter `value`")
+                && diagnostic.contains("private type `child::ChildSecret`")
+        }));
+        assert!(errors.iter().any(|diagnostic| {
+            diagnostic.contains("function `child::public_bad` parameter `value`")
+                && diagnostic.contains("pub(package) type `PackageSecret`")
+        }));
+    }
+
+    #[test]
+    fn validates_effective_struct_and_enum_field_audiences() {
+        let errors = resolve_sources(&[unit(
+            "src/lib.sali",
+            &[],
+            "let Hidden = struct()\n\
+             pub let Record = struct(pub visible: Hidden, private: Hidden)\n\
+             pub let Choice = enum {\n\
+               Positional(Hidden),\n\
+               Named(pub visible: Hidden, private: Hidden),\n\
+             }\n",
+            true,
+        )])
+        .unwrap_err();
+
+        assert_eq!(errors.len(), 3, "{errors:?}");
+        assert!(errors.iter().any(|diagnostic| {
+            diagnostic.contains("field `Record.visible`")
+                && diagnostic.contains("private type `Hidden`")
+        }));
+        assert!(errors.iter().any(|diagnostic| {
+            diagnostic.contains("enum variant `Choice.Positional` payload 0")
+                && diagnostic.contains("private type `Hidden`")
+        }));
+        assert!(errors.iter().any(|diagnostic| {
+            diagnostic.contains("enum variant field `Choice.Named.visible`")
+                && diagnostic.contains("private type `Hidden`")
+        }));
+        assert!(errors
+            .iter()
+            .all(|diagnostic| !diagnostic.contains("Record.private")
+                && !diagnostic.contains("Choice.Named.private")));
+    }
+
+    #[test]
+    fn validates_trait_signatures_without_treating_bound_types_as_nominals() {
+        let valid = resolve_sources(&[unit(
+            "src/valid.sali",
+            &[],
+            "pub let Convert(T: type) = trait {\n\
+               let Output: type = T\n\
+               let convert(U: type)(borrow self)(value: T): Output\n\
+             }\n",
+            true,
+        )]);
+        assert!(valid.is_ok(), "{valid:?}");
+
+        let errors = resolve_sources(&[unit(
+            "src/invalid.sali",
+            &[],
+            "let Hidden = struct()\n\
+             pub let Expose = trait {\n\
+               let Output: type = Hidden\n\
+               let convert(borrow self)(value: Hidden): Hidden\n\
+             }\n",
+            true,
+        )])
+        .unwrap_err();
+
+        assert_eq!(errors.len(), 3, "{errors:?}");
+        assert!(errors.iter().any(|diagnostic| {
+            diagnostic.contains("associated type `Expose.Output` default")
+                && diagnostic.contains("private type `Hidden`")
+        }));
+        assert!(errors.iter().any(|diagnostic| {
+            diagnostic.contains("trait method `Expose.convert` parameter `value`")
+                && diagnostic.contains("private type `Hidden`")
+        }));
+        assert!(errors.iter().any(|diagnostic| {
+            diagnostic.contains("trait method `Expose.convert` return type")
+                && diagnostic.contains("private type `Hidden`")
+        }));
     }
 
     fn expression_names(expression: Option<&Expr>) -> HashSet<String> {

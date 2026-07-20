@@ -9,8 +9,8 @@ use std::fmt;
 
 use crate::ast::{
     BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EnumDef, Expr, ExtendDef,
-    ExtendMember, Function, Item, ItemOrigin, MatchArm, PassMode, Pattern, PatternFields, Program,
-    Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantFields, Visibility,
+    ExtendMember, Field, Function, Item, ItemOrigin, MatchArm, PassMode, Pattern, PatternFields,
+    Program, Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantFields, Visibility,
 };
 use crate::core::{CoreBundle, LangItemKind, LangItems};
 use crate::manifest::Edition;
@@ -36,14 +36,16 @@ impl fmt::Display for Diagnostic {
 
 /// Type-check `program` and emit portable textual LLVM IR using opaque
 /// pointers.  The returned module deliberately omits a target triple so that
-/// the caller can compile it for the selected LLVM target.
+/// the caller can compile it for the selected LLVM target. The program must
+/// already have passed module resolution; use the crate-level source entry
+/// points when compiling parser input.
 pub fn compile(program: &Program) -> Result<String, Vec<Diagnostic>> {
     compile_target(program, true)
 }
 
 /// Type-check `program` and emit LLVM IR for a library target. Unlike
 /// [`compile`], this does not require `main` or generate the platform entry
-/// wrapper.
+/// wrapper. The program must already have passed module resolution.
 pub fn compile_library(program: &Program) -> Result<String, Vec<Diagnostic>> {
     compile_target(program, false)
 }
@@ -71,7 +73,8 @@ fn compile_target(program: &Program, require_entry_point: bool) -> Result<String
 
 /// Type-check a library target without requiring or emitting a binary entry
 /// point. Global constants are still evaluated so library checks report the
-/// same constant-expression diagnostics as binary compilation.
+/// same constant-expression diagnostics as binary compilation. The program
+/// must already have passed module resolution.
 pub fn check_library(program: &Program) -> Result<(), Vec<Diagnostic>> {
     let mut analyzer =
         Analyzer::try_new(program).map_err(|error| vec![Diagnostic::new(error.to_string())])?;
@@ -256,6 +259,7 @@ type LocalId = usize;
 struct FieldLayout {
     name: String,
     ty: Ty,
+    access: AccessBoundary,
 }
 
 #[derive(Debug, Clone)]
@@ -870,6 +874,7 @@ struct NominalSnapshot {
     enum_defs: HashMap<String, EnumDef>,
     struct_layouts: HashMap<String, StructLayout>,
     enum_layouts: HashMap<String, EnumLayout>,
+    nominal_accesses: HashMap<String, AccessBoundary>,
     struct_order: Vec<String>,
     enum_order: Vec<String>,
     instance_names: HashMap<NominalInstanceKey, String>,
@@ -882,6 +887,7 @@ struct Analyzer {
     lang_items: LangItems,
     functions: HashMap<String, Function>,
     function_origins: HashMap<String, ItemOrigin>,
+    function_accesses: HashMap<String, AccessBoundary>,
     function_templates: HashMap<String, Function>,
     function_template_origins: HashMap<String, ItemOrigin>,
     function_template_order: Vec<String>,
@@ -891,6 +897,7 @@ struct Analyzer {
     abstract_type_parameters: HashMap<String, String>,
     globals: HashMap<String, Binding>,
     global_origins: HashMap<String, ItemOrigin>,
+    global_accesses: HashMap<String, AccessBoundary>,
     struct_defs: HashMap<String, StructDef>,
     enum_defs: HashMap<String, EnumDef>,
     struct_templates: HashMap<String, StructDef>,
@@ -903,6 +910,7 @@ struct Analyzer {
     invalid_recursive_nominals: HashSet<String>,
     struct_layouts: HashMap<String, StructLayout>,
     enum_layouts: HashMap<String, EnumLayout>,
+    nominal_accesses: HashMap<String, AccessBoundary>,
     inherent_members: HashMap<String, InherentMemberSet>,
     traits: HashMap<String, TraitSchema>,
     trait_impl_headers: HashSet<TraitImplKey>,
@@ -930,6 +938,7 @@ impl Analyzer {
             lang_items: core.lang_items().clone(),
             functions: HashMap::new(),
             function_origins: HashMap::new(),
+            function_accesses: HashMap::new(),
             function_templates: HashMap::new(),
             function_template_origins: HashMap::new(),
             function_template_order: Vec::new(),
@@ -939,6 +948,7 @@ impl Analyzer {
             abstract_type_parameters: HashMap::new(),
             globals: HashMap::new(),
             global_origins: HashMap::new(),
+            global_accesses: HashMap::new(),
             struct_defs: HashMap::new(),
             enum_defs: HashMap::new(),
             struct_templates: HashMap::new(),
@@ -951,6 +961,7 @@ impl Analyzer {
             invalid_recursive_nominals: HashSet::new(),
             struct_layouts: HashMap::new(),
             enum_layouts: HashMap::new(),
+            nominal_accesses: HashMap::new(),
             inherent_members: HashMap::new(),
             traits: HashMap::new(),
             trait_impl_headers: HashSet::new(),
@@ -1037,6 +1048,13 @@ impl Analyzer {
             }
             match item {
                 Item::Function(function) => {
+                    self.function_accesses.insert(
+                        function.name.clone(),
+                        AccessBoundary {
+                            visibility,
+                            origin: origin.clone(),
+                        },
+                    );
                     if function.compile_groups.is_empty() {
                         self.function_order.push(function.name.clone());
                         self.functions
@@ -1062,8 +1080,22 @@ impl Analyzer {
                     self.globals.insert(binding.name.clone(), binding.clone());
                     self.global_origins
                         .insert(binding.name.clone(), origin.clone());
+                    self.global_accesses.insert(
+                        binding.name.clone(),
+                        AccessBoundary {
+                            visibility,
+                            origin: origin.clone(),
+                        },
+                    );
                 }
                 Item::Struct(definition) => {
+                    self.nominal_accesses.insert(
+                        definition.name.clone(),
+                        AccessBoundary {
+                            visibility,
+                            origin: origin.clone(),
+                        },
+                    );
                     if definition.compile_groups.is_empty() {
                         let key = NominalInstanceKey {
                             kind: NominalKind::Struct,
@@ -1098,6 +1130,13 @@ impl Analyzer {
                     }
                 }
                 Item::Enum(definition) => {
+                    self.nominal_accesses.insert(
+                        definition.name.clone(),
+                        AccessBoundary {
+                            visibility,
+                            origin: origin.clone(),
+                        },
+                    );
                     if definition.compile_groups.is_empty() {
                         let key = NominalInstanceKey {
                             kind: NominalKind::Enum,
@@ -1815,6 +1854,12 @@ impl Analyzer {
             self_ty: target.clone(),
             trait_ref,
         };
+        let mut implementation_access =
+            self.restrict_access_boundary_to_type(&schema.access, &target, &origin);
+        for argument in &key.trait_ref.arguments {
+            implementation_access =
+                self.restrict_access_boundary_to_type(&implementation_access, argument, &origin);
+        }
         if !self.trait_impl_headers.insert(key.clone()) {
             self.error(format!(
                 "duplicate trait implementation of `{}` for `{target}`",
@@ -1939,6 +1984,28 @@ impl Analyzer {
             return;
         }
 
+        let mut api_diagnostics = Vec::new();
+        for (name, ty) in &associated_types {
+            self.collect_type_api_leaks(
+                ty,
+                &implementation_access,
+                &format!(
+                    "trait implementation `{} for {target}` associated type `{name}`",
+                    key.trait_ref.name
+                ),
+                &mut HashSet::new(),
+                &mut api_diagnostics,
+            );
+        }
+        api_diagnostics.sort();
+        api_diagnostics.dedup();
+        if !api_diagnostics.is_empty() {
+            for diagnostic in api_diagnostics {
+                self.error(diagnostic);
+            }
+            return;
+        }
+
         let mut registered = Vec::new();
         for method_name in &schema.method_order {
             let mut expected = schema.methods[method_name].clone();
@@ -2008,6 +2075,8 @@ impl Analyzer {
             self.functions.insert(canonical.clone(), function);
             self.function_origins
                 .insert(canonical.clone(), origin.clone());
+            self.function_accesses
+                .insert(canonical.clone(), implementation_access.clone());
             self.function_type_substitutions
                 .insert(canonical.clone(), substitutions.clone());
             methods.insert(method_name.clone(), canonical);
@@ -2022,7 +2091,7 @@ impl Analyzer {
                 key,
                 associated_types,
                 methods,
-                access: schema.access,
+                access: implementation_access,
             },
         );
     }
@@ -2056,6 +2125,7 @@ impl Analyzer {
             self.error(format!("unknown extension target `{target}`"));
             return;
         }
+        let member_access = self.nominal_access_or_internal(&target);
 
         for member in extension.members {
             match member {
@@ -2131,6 +2201,8 @@ impl Analyzer {
                     self.functions.insert(canonical.clone(), function);
                     self.function_origins
                         .insert(canonical.clone(), origin.clone());
+                    self.function_accesses
+                        .insert(canonical.clone(), member_access.clone());
                     let members = self.inherent_members.entry(target.clone()).or_default();
                     if is_method {
                         members.methods.insert(short_name, canonical);
@@ -2176,6 +2248,8 @@ impl Analyzer {
                     self.globals.insert(canonical.clone(), binding);
                     self.global_origins
                         .insert(canonical.clone(), origin.clone());
+                    self.global_accesses
+                        .insert(canonical.clone(), member_access.clone());
                     self.inherent_members
                         .entry(target.clone())
                         .or_default()
@@ -2215,6 +2289,7 @@ impl Analyzer {
     }
 
     fn build_struct_layout(&mut self, name: &str, definition: StructDef) {
+        let owner_access = self.nominal_access_or_internal(name);
         let mut seen = HashSet::new();
         let mut fields = Vec::new();
         for field in definition.fields {
@@ -2228,6 +2303,7 @@ impl Analyzer {
             fields.push(FieldLayout {
                 name: field.name,
                 ty: self.lower_source_type(&field.ty),
+                access: Self::effective_member_access(&owner_access, field.visibility),
             });
         }
         self.struct_layouts.insert(
@@ -2244,6 +2320,7 @@ impl Analyzer {
     }
 
     fn build_enum_layout(&mut self, name: &str, definition: EnumDef) {
+        let owner_access = self.nominal_access_or_internal(name);
         let mut seen_variants = HashSet::new();
         let mut variants = Vec::new();
         let mut payload_offset = 0;
@@ -2261,21 +2338,21 @@ impl Analyzer {
                     types
                         .into_iter()
                         .enumerate()
-                        .map(|(index, ty)| (index.to_string(), ty))
+                        .map(|(index, ty)| (index.to_string(), ty, owner_access.visibility))
                         .collect(),
                     false,
                 ),
                 VariantFields::Named(fields) => (
                     fields
                         .into_iter()
-                        .map(|field| (field.name, field.ty))
+                        .map(|field| (field.name, field.ty, field.visibility))
                         .collect(),
                     true,
                 ),
             };
             let mut seen_fields = HashSet::new();
             let mut fields = Vec::new();
-            for (field_name, source_ty) in source_fields {
+            for (field_name, source_ty, visibility) in source_fields {
                 if !seen_fields.insert(field_name.clone()) {
                     self.error(format!(
                         "duplicate field `{field_name}` in variant `{name}.{}`",
@@ -2286,6 +2363,7 @@ impl Analyzer {
                 fields.push(FieldLayout {
                     name: field_name,
                     ty: self.lower_source_type(&source_ty),
+                    access: Self::effective_member_access(&owner_access, visibility),
                 });
             }
             let field_count = fields.len();
@@ -2316,6 +2394,7 @@ impl Analyzer {
             enum_defs: self.enum_defs.clone(),
             struct_layouts: self.struct_layouts.clone(),
             enum_layouts: self.enum_layouts.clone(),
+            nominal_accesses: self.nominal_accesses.clone(),
             struct_order: self.struct_order.clone(),
             enum_order: self.enum_order.clone(),
             instance_names: self.nominal_instance_names.clone(),
@@ -2330,6 +2409,7 @@ impl Analyzer {
         self.enum_defs = snapshot.enum_defs;
         self.struct_layouts = snapshot.struct_layouts;
         self.enum_layouts = snapshot.enum_layouts;
+        self.nominal_accesses = snapshot.nominal_accesses;
         self.struct_order = snapshot.struct_order;
         self.enum_order = snapshot.enum_order;
         self.nominal_instance_names = snapshot.instance_names;
@@ -2635,6 +2715,20 @@ impl Analyzer {
         );
         self.nominal_instance_states
             .insert(key.clone(), NominalInstanceState::Building);
+        let access = self
+            .nominal_accesses
+            .get(template_name)
+            .cloned()
+            .unwrap_or_else(|| {
+                self.error(format!(
+                    "internal error: missing visibility metadata for nominal template `{template_name}`"
+                ));
+                AccessBoundary {
+                    visibility: Visibility::Private,
+                    origin: ItemOrigin::default(),
+                }
+            });
+        self.nominal_accesses.insert(canonical.clone(), access);
 
         match kind {
             NominalKind::Struct => {
@@ -2750,6 +2844,7 @@ impl Analyzer {
             function_index += 1;
         }
         self.validate_nominal_layouts();
+        self.validate_inferred_api_visibility();
         if require_entry_point {
             self.validate_entry_point();
         }
@@ -3571,6 +3666,408 @@ impl Analyzer {
         }
     }
 
+    fn effective_member_access(
+        owner: &AccessBoundary,
+        member_visibility: Visibility,
+    ) -> AccessBoundary {
+        let owner_rank = match owner.visibility {
+            Visibility::Private => 0,
+            Visibility::Package => 1,
+            Visibility::Public => 2,
+        };
+        let member_rank = match member_visibility {
+            Visibility::Private => 0,
+            Visibility::Package => 1,
+            Visibility::Public => 2,
+        };
+        AccessBoundary {
+            visibility: if owner_rank <= member_rank {
+                owner.visibility
+            } else {
+                member_visibility
+            },
+            origin: owner.origin.clone(),
+        }
+    }
+
+    fn nominal_access_or_internal(&mut self, name: &str) -> AccessBoundary {
+        self.nominal_accesses.get(name).cloned().unwrap_or_else(|| {
+            self.error(format!(
+                "internal error: nominal type `{name}` has no visibility metadata"
+            ));
+            AccessBoundary {
+                visibility: Visibility::Private,
+                origin: ItemOrigin::default(),
+            }
+        })
+    }
+
+    fn require_field_access(
+        &mut self,
+        owner: &str,
+        field: &FieldLayout,
+        origin: &ItemOrigin,
+    ) -> bool {
+        let display_owner = self
+            .nominal_instances
+            .get(owner)
+            .map(|instance| instance.key.template.clone())
+            .or_else(|| {
+                self.nominal_instances
+                    .iter()
+                    .find_map(|(canonical, instance)| {
+                        owner.strip_prefix(canonical).and_then(|suffix| {
+                            suffix
+                                .starts_with('.')
+                                .then(|| format!("{}{suffix}", instance.key.template))
+                        })
+                    })
+            })
+            .unwrap_or_else(|| owner.to_owned());
+        self.require_named_field_access(&display_owner, &field.name, &field.access, origin)
+    }
+
+    fn require_named_field_access(
+        &mut self,
+        owner: &str,
+        field: &str,
+        access: &AccessBoundary,
+        origin: &ItemOrigin,
+    ) -> bool {
+        if Self::access_boundary_allows(origin, access) {
+            return true;
+        }
+        let visibility = match access.visibility {
+            Visibility::Private => "private",
+            Visibility::Package => "pub(package)",
+            Visibility::Public => "public",
+        };
+        self.error(format!(
+            "field `{owner}.{field}` is {visibility} and is not accessible from this module"
+        ));
+        false
+    }
+
+    fn require_source_fields_access(
+        &mut self,
+        owner: &str,
+        fields: &[Field],
+        origin: &ItemOrigin,
+    ) -> bool {
+        let owner_access = self.nominal_access_or_internal(owner);
+        let mut accessible = true;
+        for field in fields {
+            let access = Self::effective_member_access(&owner_access, field.visibility);
+            accessible &= self.require_named_field_access(owner, &field.name, &access, origin);
+        }
+        accessible
+    }
+
+    fn require_source_variant_fields_access(
+        &mut self,
+        owner: &str,
+        variant: &str,
+        fields: &VariantFields,
+        origin: &ItemOrigin,
+    ) -> bool {
+        let owner_access = self.nominal_access_or_internal(owner);
+        let display_owner = format!("{owner}.{variant}");
+        match fields {
+            VariantFields::Unit => true,
+            VariantFields::Positional(fields) => {
+                let mut accessible = true;
+                for index in 0..fields.len() {
+                    accessible &= self.require_named_field_access(
+                        &display_owner,
+                        &index.to_string(),
+                        &owner_access,
+                        origin,
+                    );
+                }
+                accessible
+            }
+            VariantFields::Named(fields) => {
+                let mut accessible = true;
+                for field in fields {
+                    let access = Self::effective_member_access(&owner_access, field.visibility);
+                    accessible &= self.require_named_field_access(
+                        &display_owner,
+                        &field.name,
+                        &access,
+                        origin,
+                    );
+                }
+                accessible
+            }
+        }
+    }
+
+    fn source_fields_are_accessible(
+        &self,
+        owner: &str,
+        fields: &[Field],
+        origin: &ItemOrigin,
+    ) -> bool {
+        let Some(owner_access) = self.nominal_accesses.get(owner) else {
+            return false;
+        };
+        fields.iter().all(|field| {
+            Self::access_boundary_allows(
+                origin,
+                &Self::effective_member_access(owner_access, field.visibility),
+            )
+        })
+    }
+
+    fn source_variant_fields_are_accessible(
+        &self,
+        source: &Type,
+        fields: &VariantFields,
+        origin: &ItemOrigin,
+    ) -> bool {
+        let Type::Named(owner, _) = source else {
+            return false;
+        };
+        let Some(owner_access) = self.nominal_accesses.get(owner) else {
+            return false;
+        };
+        match fields {
+            VariantFields::Unit => true,
+            VariantFields::Positional(fields) => {
+                fields.is_empty() || Self::access_boundary_allows(origin, owner_access)
+            }
+            VariantFields::Named(fields) => {
+                self.source_fields_are_accessible(owner, fields, origin)
+            }
+        }
+    }
+
+    fn api_audience_is_contained(exposed: &AccessBoundary, referenced: &AccessBoundary) -> bool {
+        match referenced.visibility {
+            Visibility::Public => true,
+            Visibility::Package => {
+                exposed.visibility != Visibility::Public
+                    && exposed.origin.package == referenced.origin.package
+            }
+            Visibility::Private => {
+                (exposed.visibility == Visibility::Private
+                    && exposed.origin.package == referenced.origin.package
+                    && exposed
+                        .origin
+                        .module_path
+                        .starts_with(&referenced.origin.module_path))
+                    || (exposed.visibility == Visibility::Package
+                        && exposed.origin.package == referenced.origin.package
+                        && referenced.origin.module_path.is_empty())
+            }
+        }
+    }
+
+    fn intersect_access_boundaries(
+        left: &AccessBoundary,
+        right: &AccessBoundary,
+        fallback_origin: &ItemOrigin,
+    ) -> AccessBoundary {
+        if Self::api_audience_is_contained(left, right) {
+            left.clone()
+        } else if Self::api_audience_is_contained(right, left) {
+            right.clone()
+        } else {
+            AccessBoundary {
+                visibility: Visibility::Private,
+                origin: fallback_origin.clone(),
+            }
+        }
+    }
+
+    fn restrict_access_boundary_to_type(
+        &self,
+        access: &AccessBoundary,
+        ty: &Ty,
+        fallback_origin: &ItemOrigin,
+    ) -> AccessBoundary {
+        fn visit(
+            analyzer: &Analyzer,
+            access: AccessBoundary,
+            ty: &Ty,
+            fallback_origin: &ItemOrigin,
+            visited: &mut HashSet<String>,
+        ) -> AccessBoundary {
+            match ty {
+                Ty::Array(element, _) => visit(analyzer, access, element, fallback_origin, visited),
+                Ty::Function(function) => {
+                    let mut restricted = access;
+                    for parameter in function.groups.iter().flatten() {
+                        restricted =
+                            visit(analyzer, restricted, parameter, fallback_origin, visited);
+                    }
+                    visit(
+                        analyzer,
+                        restricted,
+                        &function.result,
+                        fallback_origin,
+                        visited,
+                    )
+                }
+                Ty::Struct(name) | Ty::Enum(name) => {
+                    let mut restricted =
+                        analyzer
+                            .nominal_accesses
+                            .get(name)
+                            .map_or(access.clone(), |nominal| {
+                                Analyzer::intersect_access_boundaries(
+                                    &access,
+                                    nominal,
+                                    fallback_origin,
+                                )
+                            });
+                    if visited.insert(name.clone()) {
+                        if let Some(instance) = analyzer.nominal_instances.get(name) {
+                            for argument in &instance.key.arguments {
+                                restricted =
+                                    visit(analyzer, restricted, argument, fallback_origin, visited);
+                            }
+                        }
+                    }
+                    restricted
+                }
+                Ty::I32
+                | Ty::I64
+                | Ty::U32
+                | Ty::U64
+                | Ty::Bool
+                | Ty::Unit
+                | Ty::Never
+                | Ty::Error => access,
+            }
+        }
+
+        visit(
+            self,
+            access.clone(),
+            ty,
+            fallback_origin,
+            &mut HashSet::new(),
+        )
+    }
+
+    fn collect_type_api_leaks(
+        &self,
+        ty: &Ty,
+        exposed: &AccessBoundary,
+        description: &str,
+        visited: &mut HashSet<String>,
+        diagnostics: &mut Vec<String>,
+    ) {
+        match ty {
+            Ty::Array(element, _) => {
+                self.collect_type_api_leaks(element, exposed, description, visited, diagnostics)
+            }
+            Ty::Function(function) => {
+                for parameter in function.groups.iter().flatten() {
+                    self.collect_type_api_leaks(
+                        parameter,
+                        exposed,
+                        description,
+                        visited,
+                        diagnostics,
+                    );
+                }
+                self.collect_type_api_leaks(
+                    &function.result,
+                    exposed,
+                    description,
+                    visited,
+                    diagnostics,
+                );
+            }
+            Ty::Struct(name) | Ty::Enum(name) => {
+                if self.abstract_type_parameters.contains_key(name) {
+                    return;
+                }
+                let display_name = self
+                    .nominal_instances
+                    .get(name)
+                    .map(|instance| instance.key.template.as_str())
+                    .unwrap_or(name);
+                if let Some(referenced) = self.nominal_accesses.get(name) {
+                    if !Self::api_audience_is_contained(exposed, referenced) {
+                        let exposed_visibility = match exposed.visibility {
+                            Visibility::Private => "private",
+                            Visibility::Package => "pub(package)",
+                            Visibility::Public => "public",
+                        };
+                        let referenced_visibility = match referenced.visibility {
+                            Visibility::Private => "private",
+                            Visibility::Package => "pub(package)",
+                            Visibility::Public => "public",
+                        };
+                        diagnostics.push(format!(
+                            "{description} with {exposed_visibility} visibility exposes {referenced_visibility} type `{display_name}` beyond its access boundary"
+                        ));
+                    }
+                }
+                if visited.insert(name.clone()) {
+                    if let Some(instance) = self.nominal_instances.get(name) {
+                        for argument in &instance.key.arguments {
+                            self.collect_type_api_leaks(
+                                argument,
+                                exposed,
+                                description,
+                                visited,
+                                diagnostics,
+                            );
+                        }
+                    }
+                }
+            }
+            Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool | Ty::Unit | Ty::Never | Ty::Error => {
+            }
+        }
+    }
+
+    fn validate_inferred_api_visibility(&mut self) {
+        let mut diagnostics = Vec::new();
+        for (name, access) in &self.function_accesses {
+            let Some(function) = self.hir_functions.get(name) else {
+                continue;
+            };
+            for parameter in &function.params {
+                self.collect_type_api_leaks(
+                    &parameter.ty,
+                    access,
+                    &format!("function `{name}` parameter `{}`", parameter.name),
+                    &mut HashSet::new(),
+                    &mut diagnostics,
+                );
+            }
+            self.collect_type_api_leaks(
+                &function.result,
+                access,
+                &format!("function `{name}` return type"),
+                &mut HashSet::new(),
+                &mut diagnostics,
+            );
+        }
+        for (name, access) in &self.global_accesses {
+            let Some(global) = self.hir_globals.get(name) else {
+                continue;
+            };
+            self.collect_type_api_leaks(
+                &global.ty,
+                access,
+                &format!("global `{name}` type"),
+                &mut HashSet::new(),
+                &mut diagnostics,
+            );
+        }
+        diagnostics.sort();
+        diagnostics.dedup();
+        for diagnostic in diagnostics {
+            self.error(diagnostic);
+        }
+    }
+
     fn trait_method_candidates(
         &self,
         receiver: &Ty,
@@ -3796,6 +4293,7 @@ impl Analyzer {
                 .fields
                 .iter()
                 .find(|field| field.name == member)
+                .filter(|field| Self::access_boundary_allows(origin, &field.access))
                 .map(|field| field.ty.clone());
         }
 
@@ -4386,6 +4884,9 @@ impl Analyzer {
                         .struct_layouts
                         .get(&name)
                         .and_then(|layout| layout.fields.iter().find(|field| field.name == *member))
+                        .filter(|field| {
+                            Self::access_boundary_allows(&context.origin, &field.access)
+                        })
                         .map(|field| TypeProbe::Known(field.ty.clone()))
                         .unwrap_or(TypeProbe::Unsupported),
                     _ => TypeProbe::Unsupported,
@@ -4462,6 +4963,9 @@ impl Analyzer {
             let Some(fields) = self.probe_enum_variant_fields(&source, variant) else {
                 return TypeProbe::Unsupported;
             };
+            if !self.source_variant_fields_are_accessible(&source, &fields, &context.origin) {
+                return TypeProbe::Unsupported;
+            }
             let valid = match fields {
                 VariantFields::Unit => false,
                 VariantFields::Positional(fields) => {
@@ -4493,7 +4997,9 @@ impl Analyzer {
         }
         if let Some(template) = self.struct_templates.get(name) {
             let compile_group_count = template.compile_groups.len();
-            if groups.len() == compile_group_count + 1 {
+            if groups.len() == compile_group_count + 1
+                && self.source_fields_are_accessible(name, &template.fields, &context.origin)
+            {
                 let value_arguments = groups[compile_group_count];
                 let labeled = value_arguments
                     .iter()
@@ -4621,7 +5127,13 @@ impl Analyzer {
                 result: Box::new(result),
             }));
         }
-        if self.struct_layouts.contains_key(name) && groups.len() == 1 {
+        if self.struct_layouts.get(name).is_some_and(|layout| {
+            layout
+                .fields
+                .iter()
+                .all(|field| Self::access_boundary_allows(&context.origin, &field.access))
+        }) && groups.len() == 1
+        {
             return TypeProbe::Known(Ty::Struct(name.clone()));
         }
         TypeProbe::Unsupported
@@ -5297,7 +5809,7 @@ impl Analyzer {
                     ));
                     error_expr()
                 } else if let Some((enum_name, variant)) =
-                    self.resolve_short_variant(name, expected)
+                    self.resolve_short_variant(name, expected, &context.origin)
                 {
                     if self
                         .enum_layouts
@@ -6411,6 +6923,9 @@ impl Analyzer {
                     ));
                     return None;
                 };
+                if !self.require_field_access(struct_name, field, &context.origin) {
+                    return None;
+                }
                 place.projections.push(index);
                 place.ty = field.ty.clone();
                 Some(place)
@@ -6780,6 +7295,9 @@ impl Analyzer {
                 ));
                 return error_expr();
             };
+            if !self.require_field_access(struct_name, field, &context.origin) {
+                return error_expr();
+            }
             let mut field_place = place;
             field_place.projections.push(index);
             field_place.ty = field.ty.clone();
@@ -6808,6 +7326,9 @@ impl Analyzer {
             ));
             return error_expr();
         };
+        if !self.require_field_access(struct_name, field, &context.origin) {
+            return error_expr();
+        }
         HirExpr {
             ty: field.ty.clone(),
             kind: HirExprKind::Field {
@@ -7044,7 +7565,12 @@ impl Analyzer {
                 ));
                 return None;
             };
-            let Some(field) = layout.fields.iter().find(|field| field.name == member) else {
+            let Some(field) = layout
+                .fields
+                .iter()
+                .find(|field| field.name == member)
+                .cloned()
+            else {
                 if self
                     .inherent_members
                     .get(&target)
@@ -7060,6 +7586,9 @@ impl Analyzer {
                 }
                 return None;
             };
+            if !self.require_field_access(&target, &field, origin) {
+                return None;
+            }
             return Some(field.ty.clone());
         };
 
@@ -7559,6 +8088,8 @@ impl Analyzer {
                     &variant.fields,
                     variant.named,
                     &format!("pattern `{}.{}`", layout.name, variant.name),
+                    &format!("{}.{}", layout.name, variant.name),
+                    &context.origin,
                 );
                 for (field_index, field_pattern) in patterns {
                     let field = &variant.fields[field_index];
@@ -7588,7 +8119,12 @@ impl Analyzer {
         fields: &[FieldLayout],
         named: bool,
         description: &str,
+        owner: &str,
+        origin: &ItemOrigin,
     ) -> Vec<(usize, Pattern)> {
+        for field in fields {
+            self.require_field_access(owner, field, origin);
+        }
         match patterns {
             PatternFields::Unit => {
                 if !fields.is_empty() {
@@ -7690,6 +8226,8 @@ impl Analyzer {
                     &layout.fields,
                     true,
                     &format!("pattern `{struct_name}`"),
+                    struct_name,
+                    &context.origin,
                 );
                 for (index, pattern) in nested {
                     let mut nested_path = path.clone();
@@ -8074,7 +8612,9 @@ impl Analyzer {
             if self.functions.contains_key(name) {
                 return self.lower_named_function_call(name, &groups, context);
             }
-            if let Some((enum_name, variant)) = self.resolve_short_variant(name, expected) {
+            if let Some((enum_name, variant)) =
+                self.resolve_short_variant(name, expected, &context.origin)
+            {
                 return self.lower_enum_constructor(&enum_name, variant, &groups, context);
             }
             self.error(format!("`{name}` is not a function or constructor"));
@@ -8366,6 +8906,14 @@ impl Analyzer {
             ));
             return None;
         };
+        if !self.require_source_variant_fields_access(
+            name,
+            variant_name,
+            &variant.fields,
+            &context.origin,
+        ) {
+            return None;
+        }
         let (fields, named) = match variant.fields {
             VariantFields::Unit => (Vec::new(), false),
             VariantFields::Positional(types) => (
@@ -8501,6 +9049,9 @@ impl Analyzer {
         context: &LowerCtx,
     ) -> Option<String> {
         let template = self.struct_templates[name].clone();
+        if !self.require_source_fields_access(name, &template.fields, &context.origin) {
+            return None;
+        }
         let compile_group_count = template.compile_groups.len();
         let (compile_parameters, mut inferred) = self.seed_type_argument_inference(
             name,
@@ -9485,6 +10036,13 @@ impl Analyzer {
         let Some(layout) = self.struct_layout_or_diagnostic(name) else {
             return error_expr();
         };
+        let mut accessible = true;
+        for field in &layout.fields {
+            accessible &= self.require_field_access(name, field, &context.origin);
+        }
+        if !accessible {
+            return error_expr();
+        }
         let fields = self.lower_constructor_fields(
             groups[0],
             &layout.fields,
@@ -9523,6 +10081,14 @@ impl Analyzer {
                 "unit variant `{enum_name}.{}` is a value and must not be called",
                 variant_layout.name
             ));
+            return error_expr();
+        }
+        let owner = format!("{enum_name}.{}", variant_layout.name);
+        let mut accessible = true;
+        for field in &variant_layout.fields {
+            accessible &= self.require_field_access(&owner, field, &context.origin);
+        }
+        if !accessible {
             return error_expr();
         }
         let fields = self.lower_constructor_fields(
@@ -9622,15 +10188,22 @@ impl Analyzer {
         &mut self,
         name: &str,
         expected: Option<&Ty>,
+        origin: &ItemOrigin,
     ) -> Option<(String, usize)> {
         if let Some(Ty::Enum(enum_name)) = expected {
             let layout = self.enum_layout_or_diagnostic(enum_name)?;
-            if let Some(index) = layout
-                .variants
-                .iter()
-                .position(|variant| variant.name == name)
-            {
-                return Some((enum_name.clone(), index));
+            let enum_is_accessible = self
+                .nominal_accesses
+                .get(enum_name)
+                .is_some_and(|access| Self::access_boundary_allows(origin, access));
+            if enum_is_accessible {
+                if let Some(index) = layout
+                    .variants
+                    .iter()
+                    .position(|variant| variant.name == name)
+                {
+                    return Some((enum_name.clone(), index));
+                }
             }
         }
         let candidates: Vec<_> = self
@@ -9642,6 +10215,13 @@ impl Analyzer {
                     .get(enum_name)
                     .is_some_and(|instance| instance.key.arguments.is_empty());
                 if !is_non_generic {
+                    return None;
+                }
+                if !self
+                    .nominal_accesses
+                    .get(enum_name)
+                    .is_some_and(|access| Self::access_boundary_allows(origin, access))
+                {
                     return None;
                 }
                 layout
@@ -11838,6 +12418,26 @@ mod tests {
         compile_library(&program)
     }
 
+    fn compile_with_origins(
+        source: &str,
+        origins: Vec<ItemOrigin>,
+    ) -> Result<String, Vec<Diagnostic>> {
+        let mut program = crate::parser::parse(source).expect("test source must parse");
+        assert_eq!(program.items.len(), origins.len());
+        program.item_origins = origins;
+        compile(&program)
+    }
+
+    fn origin(package: usize, module_path: &[&str]) -> ItemOrigin {
+        ItemOrigin {
+            package,
+            module_path: module_path
+                .iter()
+                .map(|segment| (*segment).to_owned())
+                .collect(),
+        }
+    }
+
     fn function(name: &str, groups: Vec<Vec<Param>>, result: Type, body: Expr) -> Item {
         Item::Function(Function {
             name: name.to_owned(),
@@ -12944,6 +13544,262 @@ let main(): i32 = read(Choice.Pair(global))
         assert!(ir.contains("%sali.type.43686f696365 = type { i32, %sali.type.50616972 }"));
         assert!(ir.contains("switch i32"));
         assert!(ir.contains("@sali.global.676c6f62616c = internal unnamed_addr constant"));
+    }
+
+    #[test]
+    fn rejects_private_fields_across_module_boundaries_for_read_construct_and_pattern() {
+        let errors = compile_with_origins(
+            r#"
+pub let Record = struct(value: i32)
+pub let make_record(): Record = Record(value: 40)
+pub let Event = enum {
+  Value(value: i32),
+  Empty,
+}
+pub let make_event(): Event = Event.Value(value: 2)
+let read(): i32 = make_record().value
+let build(): Record = Record(value: 0)
+let unpack(): i32 = make_event() match {
+  Event.Value(value: item) => item,
+  Event.Empty => 0,
+}
+let main(): i32 = 0
+"#,
+            vec![
+                origin(1, &["data"]),
+                origin(1, &["data"]),
+                origin(1, &["data"]),
+                origin(1, &["data"]),
+                origin(1, &[]),
+                origin(1, &[]),
+                origin(1, &[]),
+                origin(1, &[]),
+            ],
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("field `Record.value` is private")));
+        assert!(errors.iter().any(|error| error
+            .message
+            .contains("field `Event.Value.value` is private")));
+    }
+
+    #[test]
+    fn permits_package_fields_in_sibling_modules_and_public_fields_across_packages() {
+        compile_with_origins(
+            r#"
+pub let PackageRecord = struct(pub(package) value: i32)
+pub let make_package(): PackageRecord = PackageRecord(value: 40)
+pub let PublicRecord = struct(pub value: i32)
+pub let make_public(): PublicRecord = PublicRecord(value: 2)
+let sibling(): i32 = make_package().value
+let external(): i32 = make_public().value
+let main(): i32 = sibling()
+"#,
+            vec![
+                origin(1, &["data"]),
+                origin(1, &["data"]),
+                origin(1, &["data"]),
+                origin(1, &["data"]),
+                origin(1, &["consumer"]),
+                origin(2, &[]),
+                origin(1, &[]),
+            ],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn rejects_package_fields_from_other_packages_and_keeps_public_positional_payloads_open() {
+        let errors = compile_with_origins(
+            r#"
+pub let PackageRecord = struct(pub(package) value: i32)
+pub let make_package(): PackageRecord = PackageRecord(value: 40)
+pub let Event = enum { Value(i32), Empty }
+pub let make_event(): Event = Event.Value(2)
+let forbidden(): i32 = make_package().value
+let allowed(): i32 = make_event() match {
+  Event.Value(value) => value,
+  Event.Empty => 0,
+}
+let main(): i32 = allowed()
+"#,
+            vec![
+                origin(1, &["data"]),
+                origin(1, &["data"]),
+                origin(1, &["data"]),
+                origin(1, &["data"]),
+                origin(2, &[]),
+                origin(2, &[]),
+                origin(2, &[]),
+            ],
+        )
+        .unwrap_err();
+        assert!(errors.iter().any(|error| error
+            .message
+            .contains("field `PackageRecord.value` is pub(package)")));
+        assert!(!errors
+            .iter()
+            .any(|error| error.message.contains("Event.Value.0")));
+    }
+
+    #[test]
+    fn rejects_inferred_public_function_and_global_types_that_leak_private_nominals() {
+        let errors = compile_with_origins(
+            r#"
+let Hidden = struct()
+pub let expose() = Hidden()
+pub let wrapped() = Option(Hidden).Some(Hidden())
+pub let shared = Hidden()
+let main(): i32 = 0
+"#,
+            vec![
+                origin(1, &[]),
+                origin(1, &[]),
+                origin(1, &[]),
+                origin(1, &[]),
+                origin(1, &[]),
+            ],
+        )
+        .unwrap_err();
+        assert!(errors.iter().any(|error| {
+            error.message.contains("function `expose` return type")
+                && error.message.contains("private type `Hidden`")
+        }));
+        assert!(errors.iter().any(|error| {
+            error.message.contains("function `wrapped` return type")
+                && error.message.contains("private type `Hidden`")
+        }));
+        assert!(errors.iter().any(|error| {
+            error.message.contains("global `shared` type")
+                && error.message.contains("private type `Hidden`")
+        }));
+    }
+
+    #[test]
+    fn permits_package_apis_to_infer_root_private_types() {
+        compile_with_origins(
+            r#"
+let RootSecret = struct()
+pub(package) let make() = RootSecret()
+let main(): i32 = 0
+"#,
+            vec![origin(1, &[]), origin(1, &["child"]), origin(1, &[])],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn rejects_private_generic_fields_before_inference_and_through_optional_chaining() {
+        let errors = compile_with_origins(
+            r#"
+pub let Cell(T: type) = struct(value: T)
+pub let make(): Option(Cell(i32)) = Option(Cell(i32)).Some(Cell(i32)(42))
+let infer(): Cell(i32) = Cell(_)(0)
+let chain(): Option(i32) = make()?.value
+let main(): i32 = 0
+"#,
+            vec![
+                origin(1, &["data"]),
+                origin(1, &["data"]),
+                origin(1, &[]),
+                origin(1, &[]),
+                origin(1, &[]),
+            ],
+        )
+        .unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .filter(|error| error.message.contains("field `Cell.value` is private"))
+                .count()
+                >= 2,
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn short_unit_variants_do_not_bypass_private_enum_visibility() {
+        let errors = compile_with_origins(
+            r#"
+let Secret = enum { Only }
+let forbidden(): i32 = { Only; 0 }
+let main(): i32 = forbidden()
+"#,
+            vec![origin(1, &["hidden"]), origin(1, &[]), origin(1, &[])],
+        )
+        .unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("unknown name `Only`")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn inherent_members_inherit_the_target_api_boundary_for_leak_checks() {
+        let errors = compile_text(
+            r#"
+let Hidden = struct()
+pub let Public = struct()
+extend Public {
+  let reveal(borrow self)() = Hidden()
+  let secret = Hidden()
+}
+let main(): i32 = 0
+"#,
+        )
+        .unwrap_err();
+        assert!(errors.iter().any(|error| {
+            error.message.contains("return type") && error.message.contains("private type `Hidden`")
+        }));
+        assert!(errors.iter().any(|error| {
+            error.message.contains("global") && error.message.contains("private type `Hidden`")
+        }));
+    }
+
+    #[test]
+    fn trait_impl_associated_types_cannot_widen_beyond_trait_and_target_access() {
+        let errors = compile_text(
+            r#"
+let Hidden = struct()
+pub let Public = struct()
+pub let Convert = trait {
+  let Output: type
+  let convert(borrow self)(): Output
+}
+extend Public: Convert {
+  let Output = Hidden
+  let convert(borrow self)(): Hidden = Hidden()
+}
+let main(): i32 = 0
+"#,
+        )
+        .unwrap_err();
+        assert!(errors.iter().any(|error| {
+            error.message.contains("trait implementation")
+                && error.message.contains("associated type `Output`")
+                && error.message.contains("private type `Hidden`")
+        }));
+
+        compile_text(
+            r#"
+let Hidden = struct()
+let Private = struct()
+pub let Convert = trait {
+  let Output: type
+  let convert(borrow self)(): Output
+}
+extend Private: Convert {
+  let Output = Hidden
+  let convert(borrow self)(): Hidden = Hidden()
+}
+let main(): i32 = 0
+"#,
+        )
+        .unwrap();
     }
 
     #[test]

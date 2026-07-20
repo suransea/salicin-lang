@@ -1,9 +1,35 @@
 # Changelog
 
-Salicin follows semantic versioning while the compiler is experimental. Minor releases may extend
-the accepted language, while patch releases preserve source semantics within the implemented subset.
+Salicin follows semantic versioning while the compiler is experimental. During 0.x, minor releases
+may extend or tighten source semantics; patch releases preserve semantics within the implemented
+subset.
 
 ## Unreleased
+
+## 0.6.0 - 2026-07-20
+
+- **Breaking:** struct and named enum payload fields are now private by default. Existing
+  cross-module access must mark fields `pub(package)`, and cross-package access must mark them `pub`.
+- Added private-by-default, `pub(package)`, and `pub` visibility to struct fields and named enum
+  payload fields; effective field visibility is capped by the enclosing nominal declaration, while
+  positional enum payloads inherit their enum's visibility.
+- Enforced field boundaries across reads, writes, borrows, positional and labeled construction,
+  generic inference, optional chaining, and struct/enum pattern destructuring, while preserving
+  public core `Option` and `Result` payload access.
+- Preserved nominal visibility and source provenance through generic instance construction and
+  validation snapshots so monomorphization cannot erase or widen a template's access boundary.
+- Rejected API signatures and exposed fields whose recursively nested nominal types have a narrower
+  audience, covering functions, annotated globals, structs, enums, trait methods, and associated
+  type defaults after module canonicalization.
+- Added post-inference API checks for omitted function result and global annotations, including
+  private types nested in generic containers such as `Option(Hidden)`.
+- Made inherent extension members inherit their target type's API boundary, and prevented public
+  trait implementations from selecting associated types narrower than the effective trait/target
+  audience; private generic trait arguments also narrow method-candidate visibility.
+- Prevented unqualified unit variants from discovering private enums outside their module boundary,
+  and made single-source compiler entry points run the same canonical API validation as projects.
+- Added cross-module and cross-package regression coverage for opaque private fields, package fields,
+  public construction and named payload matching, and source-backed core positional variants.
 
 ## 0.5.0 - 2026-07-20
 

@@ -569,7 +569,7 @@ impl Parser {
             let fields = if self.take(&TokenKind::LParen) {
                 if self.take(&TokenKind::RParen) {
                     VariantFields::Positional(Vec::new())
-                } else if self.ident_followed_by_colon() {
+                } else if self.ident_followed_by_colon() || self.at(&TokenKind::Pub) {
                     VariantFields::Named(self.named_type_fields_after_open()?)
                 } else {
                     let mut types = Vec::new();
@@ -715,12 +715,11 @@ impl Parser {
     fn named_type_fields_after_open(&mut self) -> Result<Vec<Field>, ParseError> {
         let mut fields = Vec::new();
         loop {
-            if self.at(&TokenKind::Pub) {
-                return Err(self.error_here("field visibility is not supported yet"));
-            }
+            let visibility = self.visibility()?;
             let name = self.expect_ident("a field name")?;
             self.expect(&TokenKind::Colon, "`:` after field name")?;
             fields.push(Field {
+                visibility,
                 name,
                 ty: self.type_expr()?,
             });
@@ -1999,9 +1998,6 @@ mod tests {
             .message
             .contains("`extend` declarations cannot have visibility"));
 
-        let field = parse("let Thing = struct(pub value: i32)\n").unwrap_err();
-        assert!(field.message.contains("field visibility"));
-
         let trait_member = parse("let Trait = trait { pub let f(value: i32): i32 }\n").unwrap_err();
         assert!(trait_member.message.contains("trait members"));
 
@@ -2515,9 +2511,9 @@ mod tests {
     #[test]
     fn parses_structs_and_enum_field_shapes() {
         let program = parse(
-            "let Point = struct(x: i32, y: i32)\n\
+            "let Point = struct(x: i32, pub(package) y: i32, pub z: i32)\n\
              let Shape = enum {\n\
-               Circle(radius: i32),\n\
+               Circle(pub radius: i32, pub(package) center: Point, label: i32),\n\
                Pair(i32, i32),\n\
                Unit,\n\
              }\n",
@@ -2528,16 +2524,35 @@ mod tests {
             panic!("expected struct");
         };
         assert_eq!(point.name, "Point");
-        assert_eq!(point.fields.len(), 2);
+        assert_eq!(point.fields.len(), 3);
+        assert_eq!(
+            point
+                .fields
+                .iter()
+                .map(|field| field.visibility)
+                .collect::<Vec<_>>(),
+            vec![Visibility::Private, Visibility::Package, Visibility::Public,]
+        );
 
         let Item::Enum(shape) = &program.items[1] else {
             panic!("expected enum");
         };
         assert_eq!(shape.variants.len(), 3);
-        assert!(matches!(shape.variants[0].fields, VariantFields::Named(_)));
         assert!(matches!(
-            shape.variants[1].fields,
-            VariantFields::Positional(_)
+            &shape.variants[0].fields,
+            VariantFields::Named(fields)
+                if fields
+                    .iter()
+                    .map(|field| field.visibility)
+                    .eq([
+                        Visibility::Public,
+                        Visibility::Package,
+                        Visibility::Private,
+                    ])
+        ));
+        assert!(matches!(
+            &shape.variants[1].fields,
+            VariantFields::Positional(types) if types == &vec![Type::I32, Type::I32]
         ));
         assert_eq!(shape.variants[2].fields, VariantFields::Unit);
     }

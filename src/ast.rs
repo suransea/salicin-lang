@@ -151,6 +151,7 @@ pub enum VariantFields {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Field {
+    pub visibility: Visibility,
     pub name: String,
     pub ty: Type,
 }

@@ -8,5 +8,9 @@ The bootstrap bundle currently defines `Option`, `Result`, `never`, and `Add`. I
 package manifest yet: mounting `core` as an explicitly addressable virtual package, compiling it
 without its own prelude, and selecting per-package edition preludes are later bootstrap steps.
 
+The v0.6 compiler closes field and exported-signature visibility before this source surface grows:
+core types may now expose selected fields without making representation details constructible, and
+public declarations cannot accidentally name narrower implementation types.
+
 `alloc` will be added only after pointer, allocator, and destruction support exists. The platform
 `std` layer will follow raw-pointer, C-ABI, and runtime interfaces.
