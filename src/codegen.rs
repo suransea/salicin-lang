@@ -11592,11 +11592,6 @@ impl<'a> HirCleanupPlanner<'a> {
             ty,
         )?;
         self.operation(cursor.block, CleanupOp::StorageLive(local))?;
-        self.builder
-            .record_pending(PendingCapability::TemporaryStorageLiveness {
-                block: cursor.block,
-                local,
-            });
         let path = self.root_move_path(local)?;
         Ok((
             local,
@@ -12438,8 +12433,10 @@ impl<'a> HirCleanupPlanner<'a> {
         result_use: ResultUse,
     ) -> Result<Option<CleanupCursor>, Diagnostic> {
         let loop_scope = self.new_scope(cursor.scope, CleanupScopeKind::Loop)?;
-        let condition_block = self.new_block(loop_scope)?;
-        let body_block = self.new_block(loop_scope)?;
+        let condition_scope = self.new_scope(loop_scope, CleanupScopeKind::Temporary)?;
+        let body_scope = self.new_scope(loop_scope, CleanupScopeKind::Temporary)?;
+        let condition_block = self.new_block(condition_scope)?;
+        let body_block = self.new_block(body_scope)?;
         let false_exit = self.new_block(loop_scope)?;
         let after = self.new_block(cursor.scope)?;
         self.terminate(
@@ -12457,7 +12454,7 @@ impl<'a> HirCleanupPlanner<'a> {
         });
         let condition_cursor = CleanupCursor {
             block: condition_block,
-            scope: loop_scope,
+            scope: condition_scope,
         };
         let (condition_local, condition_path) =
             self.prepare_temporary(condition_cursor, &condition.ty)?;
@@ -12475,8 +12472,8 @@ impl<'a> HirCleanupPlanner<'a> {
                 condition_end.block,
                 CleanupTerminator::Branch {
                     condition: condition_local,
-                    then_edge: CleanupEdge::new(body_block, Vec::new()),
-                    else_edge: CleanupEdge::new(false_exit, Vec::new()),
+                    then_edge: CleanupEdge::new(body_block, vec![condition_scope]),
+                    else_edge: CleanupEdge::new(false_exit, vec![condition_scope]),
                 },
             )?;
             self.initialize_result(
@@ -12498,14 +12495,11 @@ impl<'a> HirCleanupPlanner<'a> {
                 body,
                 CleanupCursor {
                     block: body_block,
-                    scope: loop_scope,
+                    scope: body_scope,
                 },
                 ResultUse::Discard,
             )? {
-                self.terminate(
-                    body_end.block,
-                    CleanupTerminator::Goto(CleanupEdge::new(condition_block, Vec::new())),
-                )?;
+                self.goto_exiting(body_end, condition_block, loop_scope)?;
             }
         } else {
             self.terminate(body_block, CleanupTerminator::Unreachable)?;
@@ -12530,7 +12524,8 @@ impl<'a> HirCleanupPlanner<'a> {
         result_use: ResultUse,
     ) -> Result<Option<CleanupCursor>, Diagnostic> {
         let loop_scope = self.new_scope(cursor.scope, CleanupScopeKind::Loop)?;
-        let body_block = self.new_block(loop_scope)?;
+        let body_scope = self.new_scope(loop_scope, CleanupScopeKind::Temporary)?;
+        let body_block = self.new_block(body_scope)?;
         let after = self.new_block(cursor.scope)?;
         self.terminate(
             cursor.block,
@@ -12549,14 +12544,11 @@ impl<'a> HirCleanupPlanner<'a> {
             body,
             CleanupCursor {
                 block: body_block,
-                scope: loop_scope,
+                scope: body_scope,
             },
             ResultUse::Discard,
         )? {
-            self.terminate(
-                body_end.block,
-                CleanupTerminator::Goto(CleanupEdge::new(body_block, Vec::new())),
-            )?;
+            self.goto_exiting(body_end, body_block, loop_scope)?;
         }
         let frame = self.loops.pop().expect("loop frame exists");
         if frame.saw_break {
@@ -18361,7 +18353,7 @@ let replace(mut borrow target: Pair, move replacement: Payload): () = {
     }
 
     #[test]
-    fn cleanup_plan_keeps_every_planner_temporary_liveness_pending() {
+    fn cleanup_plan_starts_storage_for_every_planner_temporary() {
         let plan = cleanup_plan_text(
             "let choose(left: bool, right: bool): i32 = if left { 1 } else if right { 2 } else { 3 }\n",
             "choose",
@@ -18374,12 +18366,10 @@ let replace(mut borrow target: Pair, move replacement: Payload): () = {
             .collect();
         assert!(temporaries.len() >= 2);
         for temporary in temporaries {
-            assert!(plan.pending_capabilities.iter().any(|pending| {
-                matches!(
-                    pending,
-                    PendingCapability::TemporaryStorageLiveness { local, .. }
-                        if *local == temporary
-                )
+            assert!(plan.blocks.iter().any(|block| {
+                block
+                    .operations
+                    .contains(&CleanupOp::StorageLive(temporary))
             }));
         }
     }
@@ -19287,6 +19277,79 @@ let assign(): () = {
                     }
                 )
             })
+        }));
+    }
+
+    #[test]
+    fn cleanup_plan_restarts_iteration_temporary_lifetimes() {
+        let while_plan = cleanup_plan_text(
+            r#"
+let cycle(): () = while false { 1; () }
+"#,
+            "cycle",
+        );
+        let while_loop = while_plan
+            .scopes
+            .iter()
+            .find(|scope| scope.kind == CleanupScopeKind::Loop)
+            .expect("while loop scope")
+            .id;
+        let evaluation_scopes: Vec<_> = while_plan
+            .scopes
+            .iter()
+            .filter(|scope| {
+                scope.parent == Some(while_loop) && scope.kind == CleanupScopeKind::Temporary
+            })
+            .map(|scope| scope.id)
+            .collect();
+        assert_eq!(evaluation_scopes.len(), 2);
+        assert!(evaluation_scopes.iter().all(|evaluation_scope| {
+            while_plan
+                .blocks
+                .iter()
+                .any(|block| match &block.terminator {
+                    Some(CleanupTerminator::Goto(edge)) => {
+                        edge.exited_scopes.contains(evaluation_scope)
+                    }
+                    Some(CleanupTerminator::Branch {
+                        then_edge,
+                        else_edge,
+                        ..
+                    }) => {
+                        then_edge.exited_scopes.contains(evaluation_scope)
+                            || else_edge.exited_scopes.contains(evaluation_scope)
+                    }
+                    _ => false,
+                })
+        }));
+
+        let loop_plan = cleanup_plan_text(
+            r#"
+let cycle(): never = loop { 1; () }
+"#,
+            "cycle",
+        );
+        let loop_scope = loop_plan
+            .scopes
+            .iter()
+            .find(|scope| scope.kind == CleanupScopeKind::Loop)
+            .expect("loop scope")
+            .id;
+        let body_scope = loop_plan
+            .scopes
+            .iter()
+            .find(|scope| {
+                scope.parent == Some(loop_scope) && scope.kind == CleanupScopeKind::Temporary
+            })
+            .expect("loop body evaluation scope")
+            .id;
+        assert!(loop_plan.blocks.iter().any(|block| {
+            matches!(
+                &block.terminator,
+                Some(CleanupTerminator::Goto(edge))
+                    if loop_plan.blocks[edge.target.index()].scope == body_scope
+                        && edge.exited_scopes.contains(&body_scope)
+            )
         }));
     }
 

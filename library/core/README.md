@@ -52,14 +52,20 @@ for active-downcast, reconstruction, overwrite, transfer-shape, branch, and retu
 `MovePathStateDataflow` is no longer pending. Function types still lack an environment layout, so
 concrete callable captures remain expression-backed and explicitly pending.
 
-That plan is still a boundary, not executable destruction. Temporary liveness, borrowed mutation,
-conditional maybe-overwrite cleanup, match/pattern transfer, and partial or closure capture details
-remain pending. There is no `needs_drop`, runtime drop flag, public source-backed `Drop`, drop glue,
-or LLVM cleanup emission yet. Compile-time globals are independently materialized at each use and
-are outside the cleanup plan; resource-bearing global semantics must be settled before `Drop` is
+The v0.12 compiler extends that fixed point with `may_live` and `must_live` for every local.
+Operations can only use definitely live storage, `StorageLive` can only start definitely dead
+storage, and idempotent structural `StorageDead` summaries close conditional lifetimes. Per-
+iteration temporary scopes end `while` conditions and loop bodies before their next evaluation, so
+`TemporaryStorageLiveness` is no longer pending.
+
+That plan is still a boundary, not executable destruction. Borrowed mutation, conditional
+maybe-overwrite cleanup, match/pattern transfer, and partial or closure capture details remain
+pending. There is no `needs_drop`, runtime drop flag, public source-backed `Drop`, drop glue, or LLVM
+cleanup emission yet. Compile-time globals are independently materialized at each use and are
+outside the cleanup plan; resource-bearing global semantics must be settled before `Drop` is
 exposed.
 
-The adjacent standard-library route is therefore: finish temporary/capture/match cleanup details in
-`core`; add `needs_drop` and drop flags; expose source-backed `Drop` and emit glue; then define raw
+The adjacent standard-library route is therefore: finish capture/match cleanup details in `core`;
+add `needs_drop` and drop flags; expose source-backed `Drop` and emit glue; then define raw
 pointers and the allocator ABI. Only after those boundaries are real will `alloc` be added, followed
 by platform `std` over the C ABI and minimal runtime.

@@ -199,11 +199,23 @@ v0.11.0 完成 cleanup 的静态 move-path forest 与初始化数据流：
 - Function 类型尚不携带环境布局，具体 callable capture forest 仍由表达式补登记并保持 pending。
   `Init` 仍是幂等的初始化摘要，不表示一次真实写入或旧值析构。
 
+v0.12.0 完成 cleanup 的临时 storage 生命周期数据流：
+
+- 每个 local 现在和 move path 一样在 CFG fixed point 中维护 `may_live` / `must_live`；初始化、移动、
+  覆盖、Transfer、discriminant 写入、branch condition 与 return place 都必须位于确定 live 的 storage。
+- `StorageLive` 只能从确定 dead 开始；结构化 `StorageDead` 是幂等的作用域结束摘要，可将 live、
+  maybe-live 或 dead 统一收束为 dead。它仍不表示已执行析构。
+- `while` condition、`while` body 与 `loop` body 使用每轮求值 scope；condition 分支和 body 回边会先
+  结束本轮临时值，再进入下一轮，避免循环 fixed point 把同一个 temporary 判成重复开始生命周期。
+- `TemporaryStorageLiveness` pending 已删除。下一步是 `needs_drop` 与控制流敏感的 runtime drop
+  flags；完成后才从 core 开放 `Drop` 并生成 drop glue。
+
 标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
 所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
 `Copy`，v0.9 建立 cleanup CFG，v0.10 补齐资源 storage/transfer，v0.11 完成完整 move-path forest 与
-初始化 fixed point；这些都属于已经开始的 `core` 阶段，但还不发出析构。下一步先完成 temporary
-liveness、`needs_drop` 与 runtime drop flags，再提供 source-backed `Drop` 和 drop glue；其后才固定
+初始化 fixed point，v0.12 再完成 temporary storage liveness；这些都属于已经开始的 `core` 阶段，
+但还不发出析构。下一步先完成 `needs_drop` 与 runtime drop flags，再提供 source-backed `Drop` 和
+drop glue；其后才固定
 raw pointer 与 allocator ABI 并进入 `alloc`。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
 运行时之后。
 

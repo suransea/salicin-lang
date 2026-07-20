@@ -6,6 +6,25 @@ subset.
 
 ## Unreleased
 
+## 0.12.0 - 2026-07-20
+
+- Extended the cached cleanup fixed point with `may_live` and `must_live` state for every local.
+  `StorageLive` now requires definitely dead storage, value initialization, movement, overwrite,
+  transfer, discriminant writes, branch conditions, and return places require definitely live
+  storage, and operation-position queries expose dead, maybe-live, or live state.
+- Made structural `StorageDead` idempotent so one scope-exit summary safely closes storage that was
+  entered on all, some, or none of the incoming paths. Scope-exit edges also end storage in the
+  dataflow state, giving conditional temporaries a definite restart point without treating a
+  cleanup marker as an executed destructor.
+- Gave every `while` condition and loop body its own per-iteration temporary scope. Condition edges
+  end the condition lifetime after its branch value is consumed, and normal body backedges end the
+  body lifetime before re-entering it; scope verification now accepts that explicit exit followed
+  by entry into a descendant evaluation scope.
+- Removed `TemporaryStorageLiveness` from pending capabilities and added fixed-point, conditional
+  join, idempotent-end, `while`, and `loop` regression coverage. Destruction remains disabled:
+  `needs_drop`, runtime drop flags, source-backed `Drop`, drop glue, and LLVM cleanup emission are
+  still future work.
+
 ## 0.11.0 - 2026-07-20
 
 - Pre-registered a complete static move-path forest for every owned argument, return place, user or

@@ -201,10 +201,6 @@ pub(crate) enum PendingCapability {
         block: BasicBlockId,
         path: MovePathId,
     },
-    TemporaryStorageLiveness {
-        block: BasicBlockId,
-        local: LocalId,
-    },
     BorrowedPlaceMutation {
         block: BasicBlockId,
         alias: LocalId,
@@ -308,6 +304,8 @@ impl DiscriminantState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct MoveState {
     reachable: bool,
+    may_live: BitSet,
+    must_live: BitSet,
     may_init: BitSet,
     must_init: BitSet,
     discriminants: Vec<DiscriminantState>,
@@ -318,6 +316,13 @@ pub(crate) enum PathInitialization {
     Uninitialized,
     MaybeOrPartial,
     Initialized,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StorageLiveness {
+    Dead,
+    MaybeLive,
+    Live,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -584,6 +589,8 @@ impl MoveState {
         let discriminants = vec![DiscriminantState::unset(); topology.discriminant_count];
         Self {
             reachable,
+            may_live: BitSet::new(topology.roots_by_local.len()),
+            must_live: BitSet::new(topology.roots_by_local.len()),
             may_init: BitSet::new(topology.children.len()),
             must_init: BitSet::new(topology.children.len()),
             discriminants,
@@ -599,6 +606,8 @@ impl MoveState {
             return true;
         }
         let previous = self.clone();
+        self.may_live.union_with(&incoming.may_live);
+        self.must_live.intersect_with(&incoming.must_live);
         self.may_init.union_with(&incoming.may_init);
         self.must_init.intersect_with(&incoming.must_init);
         for (state, other) in self.discriminants.iter_mut().zip(&incoming.discriminants) {
@@ -627,7 +636,7 @@ impl MoveState {
         }
     }
 
-    fn clear_local(&mut self, local: LocalId, topology: &MovePathTopology) {
+    fn clear_local_value(&mut self, local: LocalId, topology: &MovePathTopology) {
         if let Some(root) = topology
             .roots_by_local
             .get(local.index())
@@ -636,6 +645,18 @@ impl MoveState {
         {
             self.clear_subtree_only(root, topology);
         }
+    }
+
+    fn start_storage(&mut self, local: LocalId, topology: &MovePathTopology) {
+        self.clear_local_value(local, topology);
+        self.may_live.insert(local.index());
+        self.must_live.insert(local.index());
+    }
+
+    fn end_storage(&mut self, local: LocalId, topology: &MovePathTopology) {
+        self.clear_local_value(local, topology);
+        self.may_live.remove(local.index());
+        self.must_live.remove(local.index());
     }
 
     fn mark_whole(
@@ -793,9 +814,8 @@ impl MoveState {
         topology: &MovePathTopology,
     ) {
         match *operation {
-            CleanupOp::StorageLive(local) | CleanupOp::StorageDead(local) => {
-                self.clear_local(local, topology);
-            }
+            CleanupOp::StorageLive(local) => self.start_storage(local, topology),
+            CleanupOp::StorageDead(local) => self.end_storage(local, topology),
             CleanupOp::Init(path) => {
                 self.initialize_path(path, plan, topology);
             }
@@ -825,6 +845,16 @@ impl MoveState {
                 destination,
                 variant,
             } => self.set_discriminant(destination, variant, plan, topology),
+        }
+    }
+
+    fn storage_liveness(&self, local: LocalId) -> StorageLiveness {
+        if self.must_live.contains(local.index()) {
+            StorageLiveness::Live
+        } else if self.may_live.contains(local.index()) {
+            StorageLiveness::MaybeLive
+        } else {
+            StorageLiveness::Dead
         }
     }
 
@@ -921,7 +951,7 @@ impl MoveStateAnalysis {
                 let mut edge_state = state.clone();
                 for scope in &edge.exited_scopes {
                     for local in &plan.scopes[scope.index()].locals {
-                        edge_state.clear_local(*local, &topology);
+                        edge_state.end_storage(*local, &topology);
                     }
                 }
                 if block_entry[edge.target.index()].join_from(&edge_state)
@@ -973,6 +1003,20 @@ impl MoveStateAnalysis {
         }
         self.state_before(plan, block, operation_index)
             .map(|state| state.path_initialization(path, &self.topology))
+    }
+
+    pub(crate) fn storage_liveness_before(
+        &self,
+        plan: &CleanupPlan,
+        block: BasicBlockId,
+        operation_index: usize,
+        local: LocalId,
+    ) -> Option<StorageLiveness> {
+        if local.index() >= self.topology.roots_by_local.len() {
+            return None;
+        }
+        self.state_before(plan, block, operation_index)
+            .map(|state| state.storage_liveness(local))
     }
 
     pub(crate) fn possible_variants_before(
@@ -1456,26 +1500,6 @@ impl CleanupPlan {
                 | PendingCapability::LocalClosureCapture { block, .. } => {
                     self.verify_pending_block(*block, "cleanup capability", errors);
                 }
-                PendingCapability::TemporaryStorageLiveness { block, local } => {
-                    let block =
-                        self.verify_pending_block(*block, "temporary storage liveness", errors);
-                    let local = self.locals.get(local.index());
-                    if local.is_none() {
-                        errors.push(VerifyError::new(format!(
-                            "pending temporary storage liveness refers to invalid local {local:?}"
-                        )));
-                    }
-                    if let (Some(block), Some(local)) = (block, local) {
-                        if local.kind != LocalKind::Temporary
-                            || local.scope != block.scope
-                            || !block.operations.contains(&CleanupOp::StorageLive(local.id))
-                        {
-                            errors.push(VerifyError::new(
-                                "pending temporary storage liveness must refer to a temporary declared live in that block",
-                            ));
-                        }
-                    }
-                }
                 PendingCapability::BorrowedPlaceMutation {
                     block,
                     alias,
@@ -1616,24 +1640,6 @@ impl CleanupPlan {
         match *operation {
             CleanupOp::StorageLive(local) => {
                 self.verify_operation_local(block, local, "StorageLive", false, errors);
-                if self
-                    .locals
-                    .get(local.index())
-                    .is_some_and(|decl| decl.kind == LocalKind::Temporary)
-                    && !self.pending_capabilities.iter().any(|pending| {
-                        matches!(
-                            pending,
-                            PendingCapability::TemporaryStorageLiveness {
-                                block: pending_block,
-                                local: pending_local,
-                            } if *pending_block == block && *pending_local == local
-                        )
-                    })
-                {
-                    errors.push(VerifyError::new(format!(
-                        "temporary StorageLive in {block:?} has no matching TemporaryStorageLiveness pending capability"
-                    )));
-                }
             }
             CleanupOp::StorageDead(local) => {
                 self.verify_operation_local(block, local, "StorageDead", true, errors);
@@ -1717,22 +1723,53 @@ impl CleanupPlan {
             }
             for (operation_index, operation) in block.operations.iter().enumerate() {
                 let status = |path| state.path_initialization(path, &analysis.topology);
-                let mut require_active_downcasts = |path, role: &str| {
-                    if let Some((enum_root, required, may_be_unset, possible)) =
-                        state.inactive_downcast(path, self, &analysis.topology)
-                    {
-                        errors.push(VerifyError::new(format!(
-                            "{role} in {:?} at operation {operation_index} projects variant {required} through enum path {enum_root:?}, whose discriminant is unset={may_be_unset} with possible variants {possible:?}",
-                            block.id
-                        )));
-                    }
-                };
+                macro_rules! require_live {
+                    ($local:expr, $role:expr) => {{
+                        let local = $local;
+                        let liveness = state.storage_liveness(local);
+                        if liveness != StorageLiveness::Live {
+                            errors.push(VerifyError::new(format!(
+                                "{} in {:?} at operation {operation_index} requires live storage {local:?}, found {liveness:?}",
+                                $role, block.id
+                            )));
+                        }
+                    }};
+                }
+                macro_rules! require_active_downcasts {
+                    ($path:expr, $role:expr) => {{
+                        let path = $path;
+                        if let Some((enum_root, required, may_be_unset, possible)) =
+                            state.inactive_downcast(path, self, &analysis.topology)
+                        {
+                            errors.push(VerifyError::new(format!(
+                                "{} in {:?} at operation {operation_index} projects variant {required} through enum path {enum_root:?}, whose discriminant is unset={may_be_unset} with possible variants {possible:?}",
+                                $role, block.id
+                            )));
+                        }
+                    }};
+                }
                 match *operation {
+                    CleanupOp::StorageLive(local) => {
+                        let liveness = state.storage_liveness(local);
+                        if liveness != StorageLiveness::Dead {
+                            errors.push(VerifyError::new(format!(
+                                "StorageLive in {:?} at operation {operation_index} requires dead storage {local:?}, found {liveness:?}",
+                                block.id
+                            )));
+                        }
+                    }
+                    // Scope cleanup is emitted structurally, so a local that is
+                    // only live on some incoming paths still receives one
+                    // StorageDead at the merge. Ending storage is deliberately
+                    // idempotent; the transfer always leaves it dead.
+                    CleanupOp::StorageDead(_) => {}
                     CleanupOp::Init(path) => {
-                        require_active_downcasts(path, "Init");
+                        require_live!(self.move_paths[path.index()].place.local, "Init");
+                        require_active_downcasts!(path, "Init");
                     }
                     CleanupOp::MoveOut(path) => {
-                        require_active_downcasts(path, "MoveOut");
+                        require_live!(self.move_paths[path.index()].place.local, "MoveOut");
+                        require_active_downcasts!(path, "MoveOut");
                         if status(path) != PathInitialization::Initialized {
                             errors.push(VerifyError::new(format!(
                                 "MoveOut in {:?} at operation {operation_index} requires an initialized source {path:?}, found {:?}",
@@ -1742,7 +1779,8 @@ impl CleanupPlan {
                         }
                     }
                     CleanupOp::Overwrite(path) => {
-                        require_active_downcasts(path, "Overwrite");
+                        require_live!(self.move_paths[path.index()].place.local, "Overwrite");
+                        require_active_downcasts!(path, "Overwrite");
                         if status(path) != PathInitialization::Initialized {
                             errors.push(VerifyError::new(format!(
                                 "Overwrite in {:?} at operation {operation_index} requires an initialized destination {path:?}, found {:?}",
@@ -1756,8 +1794,16 @@ impl CleanupPlan {
                         destination,
                         kind,
                     } => {
-                        require_active_downcasts(source, "Transfer source");
-                        require_active_downcasts(destination, "Transfer destination");
+                        require_live!(
+                            self.move_paths[source.index()].place.local,
+                            "Transfer source"
+                        );
+                        require_live!(
+                            self.move_paths[destination.index()].place.local,
+                            "Transfer destination"
+                        );
+                        require_active_downcasts!(source, "Transfer source");
+                        require_active_downcasts!(destination, "Transfer destination");
                         if status(source) != PathInitialization::Initialized {
                             errors.push(VerifyError::new(format!(
                                 "Transfer in {:?} at operation {operation_index} requires an initialized source {source:?}, found {:?}",
@@ -1788,7 +1834,11 @@ impl CleanupPlan {
                         destination,
                         variant: _,
                     } => {
-                        require_active_downcasts(destination, "SetDiscriminant");
+                        require_live!(
+                            self.move_paths[destination.index()].place.local,
+                            "SetDiscriminant"
+                        );
+                        require_active_downcasts!(destination, "SetDiscriminant");
                         let destination_state = status(destination);
                         if destination_state != PathInitialization::Uninitialized {
                             errors.push(VerifyError::new(format!(
@@ -1797,9 +1847,16 @@ impl CleanupPlan {
                             )));
                         }
                     }
-                    CleanupOp::StorageLive(_) | CleanupOp::StorageDead(_) => {}
                 }
                 state.apply_operation(operation, self, &analysis.topology);
+                for local in 0..self.locals.len() {
+                    if state.must_live.contains(local) && !state.may_live.contains(local) {
+                        errors.push(VerifyError::new(format!(
+                            "storage-liveness invariant failed after operation {operation_index} in {:?}: {local:?} is must-live but not may-live",
+                            block.id
+                        )));
+                    }
+                }
                 for path in 0..self.move_paths.len() {
                     if state.must_init.contains(path) && !state.may_init.contains(path) {
                         errors.push(VerifyError::new(format!(
@@ -1816,6 +1873,13 @@ impl CleanupPlan {
                 .expect("structurally verified block has a terminator")
             {
                 Terminator::Branch { condition, .. } => {
+                    let liveness = state.storage_liveness(*condition);
+                    if liveness != StorageLiveness::Live {
+                        errors.push(VerifyError::new(format!(
+                            "branch in {:?} requires live condition storage {condition:?}, found {liveness:?}",
+                            block.id
+                        )));
+                    }
                     if let Some(root) = analysis
                         .topology
                         .roots_by_local
@@ -1843,6 +1907,13 @@ impl CleanupPlan {
                         .iter()
                         .filter(|local| local.kind == LocalKind::ReturnPlace)
                     {
+                        let liveness = state.storage_liveness(local.id);
+                        if liveness != StorageLiveness::Live {
+                            errors.push(VerifyError::new(format!(
+                                "return in {:?} requires live return place {:?}, found {liveness:?}",
+                                block.id, local.id
+                            )));
+                        }
                         let Some(root) = analysis.topology.roots_by_local[local.id.index()] else {
                             errors.push(VerifyError::new(format!(
                                 "return place {:?} has no root move path",
@@ -1880,6 +1951,16 @@ impl CleanupPlan {
     ) -> Option<PathInitialization> {
         self.move_state
             .path_initialization_before(self, block, operation_index, path)
+    }
+
+    pub(crate) fn storage_liveness_before(
+        &self,
+        block: BasicBlockId,
+        operation_index: usize,
+        local: LocalId,
+    ) -> Option<StorageLiveness> {
+        self.move_state
+            .storage_liveness_before(self, block, operation_index, local)
     }
 
     pub(crate) fn possible_variants_before(
@@ -2050,7 +2131,7 @@ impl CleanupPlan {
         let reaches_target = if edge.exited_scopes.is_empty() {
             self.is_ancestor(source.scope, target.scope)
         } else {
-            cursor == target.scope
+            self.is_ancestor(cursor, target.scope)
         };
         if !chain_is_valid || !reaches_target {
             errors.push(VerifyError::new(format!(
@@ -2368,10 +2449,6 @@ mod tests {
         ] {
             builder.push_operation(body, operation).unwrap();
         }
-        builder.record_pending(PendingCapability::TemporaryStorageLiveness {
-            block: body,
-            local: borrowed,
-        });
         builder
             .set_terminator(
                 body,
@@ -3081,7 +3158,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_temporary_storage_without_liveness_pending() {
+    fn rejects_starting_a_temporary_lifetime_twice() {
         let mut builder = CleanupPlanBuilder::new();
         let entry = builder.entry_block();
         let temporary = builder
@@ -3091,6 +3168,12 @@ mod tests {
                 LocalOwnership::Owned,
                 false,
             )
+            .unwrap();
+        builder
+            .new_move_path(Place::local(temporary), None)
+            .unwrap();
+        builder
+            .push_operation(entry, CleanupOp::StorageLive(temporary))
             .unwrap();
         builder
             .push_operation(entry, CleanupOp::StorageLive(temporary))
@@ -3103,13 +3186,13 @@ mod tests {
                 },
             )
             .unwrap();
-        assert!(messages(&builder.into_unverified()).iter().any(|message| {
-            message.contains("TemporaryStorageLiveness") && message.contains("no matching")
-        }));
+        assert!(messages(&builder.into_unverified())
+            .iter()
+            .any(|message| message.contains("StorageLive") && message.contains("requires dead")));
     }
 
     #[test]
-    fn rejects_pending_local_capabilities_with_the_wrong_provenance() {
+    fn rejects_borrowed_mutation_pending_with_the_wrong_provenance() {
         let mut builder = CleanupPlanBuilder::new();
         let entry = builder.entry_block();
         let ordinary = builder
@@ -3132,10 +3215,6 @@ mod tests {
             .push_operation(entry, CleanupOp::StorageLive(ordinary))
             .unwrap();
         let ordinary_path = builder.new_move_path(Place::local(ordinary), None).unwrap();
-        builder.record_pending(PendingCapability::TemporaryStorageLiveness {
-            block: entry,
-            local: ordinary,
-        });
         builder.record_pending(PendingCapability::BorrowedPlaceMutation {
             block: entry,
             alias: shared,
@@ -3152,9 +3231,6 @@ mod tests {
             .unwrap();
 
         let errors = messages(&builder.into_unverified());
-        assert!(errors
-            .iter()
-            .any(|message| message.contains("temporary declared live")));
         assert!(errors
             .iter()
             .any(|message| message.contains("mutable borrow alias")));
@@ -3429,6 +3505,9 @@ mod tests {
                 Some(root),
             )
             .unwrap();
+        builder
+            .push_operation(entry, CleanupOp::StorageLive(local))
+            .unwrap();
         for operation in [
             CleanupOp::SetDiscriminant {
                 destination: root,
@@ -3453,7 +3532,7 @@ mod tests {
             .finish()
             .expect("whole enum overwrite must leave a complete value");
         assert_eq!(
-            plan.possible_variants_before(entry, 4, root),
+            plan.possible_variants_before(entry, 5, root),
             Some((false, vec![0, 1]))
         );
     }
@@ -3482,6 +3561,11 @@ mod tests {
             .new_move_path(Place::local(destination), None)
             .unwrap();
         let source_path = builder.new_move_path(Place::local(source), None).unwrap();
+        for local in [condition, destination, source] {
+            builder
+                .push_operation(entry, CleanupOp::StorageLive(local))
+                .unwrap();
+        }
         for path in [condition_path, destination_path, source_path] {
             builder
                 .push_operation(entry, CleanupOp::Init(path))
@@ -3535,6 +3619,84 @@ mod tests {
         assert_eq!(
             plan.path_initialization_before(join, 0, destination_path),
             Some(PathInitialization::MaybeOrPartial)
+        );
+    }
+
+    #[test]
+    fn joins_conditional_storage_and_ends_it_idempotently() {
+        let mut builder = CleanupPlanBuilder::new();
+        let scope = builder.root_scope();
+        let entry = builder.entry_block();
+        let then_block = builder.new_block(scope).unwrap();
+        let else_block = builder.new_block(scope).unwrap();
+        let join = builder.new_block(scope).unwrap();
+        let condition = builder
+            .new_local(scope, LocalKind::User, LocalOwnership::Owned, false)
+            .unwrap();
+        let temporary = builder
+            .new_local(scope, LocalKind::Temporary, LocalOwnership::Owned, false)
+            .unwrap();
+        let condition_path = builder
+            .new_move_path(Place::local(condition), None)
+            .unwrap();
+        builder
+            .new_move_path(Place::local(temporary), None)
+            .unwrap();
+        for operation in [
+            CleanupOp::StorageLive(condition),
+            CleanupOp::Init(condition_path),
+        ] {
+            builder.push_operation(entry, operation).unwrap();
+        }
+        builder
+            .set_terminator(
+                entry,
+                Terminator::Branch {
+                    condition,
+                    then_edge: CleanupEdge::new(then_block, vec![]),
+                    else_edge: CleanupEdge::new(else_block, vec![]),
+                },
+            )
+            .unwrap();
+        builder
+            .push_operation(then_block, CleanupOp::StorageLive(temporary))
+            .unwrap();
+        builder
+            .set_terminator(then_block, Terminator::Goto(CleanupEdge::new(join, vec![])))
+            .unwrap();
+        builder
+            .set_terminator(else_block, Terminator::Goto(CleanupEdge::new(join, vec![])))
+            .unwrap();
+        for operation in [
+            CleanupOp::StorageDead(temporary),
+            CleanupOp::StorageLive(temporary),
+            CleanupOp::StorageDead(temporary),
+        ] {
+            builder.push_operation(join, operation).unwrap();
+        }
+        builder
+            .set_terminator(
+                join,
+                Terminator::Return {
+                    exited_scopes: vec![],
+                },
+            )
+            .unwrap();
+
+        let plan = builder
+            .finish()
+            .expect("conditional storage must have a stable restart point");
+        assert_eq!(
+            plan.storage_liveness_before(join, 0, temporary),
+            Some(StorageLiveness::MaybeLive)
+        );
+        assert_eq!(
+            plan.storage_liveness_before(join, 1, temporary),
+            Some(StorageLiveness::Dead)
+        );
+        assert_eq!(
+            plan.storage_liveness_before(join, 2, temporary),
+            Some(StorageLiveness::Live)
         );
     }
 
@@ -3626,6 +3788,11 @@ mod tests {
         let orphan_path = builder
             .new_move_path(Place::local(orphan_local), None)
             .unwrap();
+        for local in [condition, value] {
+            builder
+                .push_operation(entry, CleanupOp::StorageLive(local))
+                .unwrap();
+        }
         for path in [condition_path, value_path] {
             builder
                 .push_operation(entry, CleanupOp::Init(path))
@@ -3689,6 +3856,9 @@ mod tests {
             .new_local(scope, LocalKind::User, LocalOwnership::Owned, true)
             .unwrap();
         let path = builder.new_move_path(Place::local(value), None).unwrap();
+        builder
+            .push_operation(entry, CleanupOp::StorageLive(value))
+            .unwrap();
         builder
             .push_operation(entry, CleanupOp::Init(path))
             .unwrap();
@@ -3809,6 +3979,11 @@ mod tests {
                 Some(root),
             )
             .unwrap();
+        for local in [condition, value] {
+            builder
+                .push_operation(entry, CleanupOp::StorageLive(local))
+                .unwrap();
+        }
         builder
             .push_operation(entry, CleanupOp::Init(condition_path))
             .unwrap();
@@ -3878,6 +4053,9 @@ mod tests {
         let path = builder.new_move_path(Place::local(local), None).unwrap();
         builder
             .set_terminator(entry, Terminator::Goto(CleanupEdge::new(child, vec![])))
+            .unwrap();
+        builder
+            .push_operation(child, CleanupOp::StorageLive(local))
             .unwrap();
         builder
             .push_operation(child, CleanupOp::Init(path))
