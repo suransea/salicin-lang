@@ -170,12 +170,26 @@ v0.9.0 建立可继续演化的初始化与清理中间层：
 - 当前没有 `needs_drop`、runtime drop flags、source-backed `Drop`、drop glue 或 LLVM 析构。顶层值仍是
   编译期常量，每次使用独立物化且不进入 cleanup；含资源全局与 `Drop` 的关系会在公开 `Drop` 前定案。
 
+v0.10.0 把资源值的实际落点接入 cleanup CFG：
+
+- `CleanupPlan` 不再只记录“表达式是否有落点”，而是携带具体 destination place；资源型 binding、
+  丢弃表达式、赋值、函数尾、显式 `return` 和带值 `break` 都先写入稳定 storage。
+- 新的原子 `Transfer` 同时记录 source、destination 以及 initialize/overwrite/maybe-overwrite 状态。
+  source 与 destination 必须不同且不能互为投影前缀；每次消费和临时 storage 都由 verifier 双向要求
+  对应的 pending dataflow/liveness 标记。
+- struct、array、enum、部分应用和闭包按 field、constant index、downcast 与 capture move path 逐子值
+  构造；enum 先记录 discriminant，只有全部子值成功后才初始化 root。构造途中 `return`、`break` 或
+  发散调用只留下可清理的半成品，不会把 root 或最终返回位置误标为已初始化。
+- 调用的值参数、字段/索引 base 以及赋值/返回/`break` 值都经过 staging；旧的“资源结果未物化”和
+  “`break` 值尚未传递”两项 pending 已删除。LLVM 析构仍未启用，剩余 move-state dataflow、临时值
+  liveness、match/pattern、borrowed mutation 与 capture 细节继续显式 pending。
+
 标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
 所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
-`Copy`，v0.9 建立并验证 cleanup CFG，但还不发出析构。接下来依次物化 cleanup 与 move-state
-dataflow，加入 `needs_drop` 和 runtime drop flags，再提供 source-backed `Drop` 与 drop glue；其后才
-固定 raw pointer 和 allocator ABI 并进入 `alloc`。平台 `std` 的 IO、文件、环境与进程放在 C ABI
-和最小运行时之后。
+`Copy`，v0.9 建立并验证 cleanup CFG，v0.10 又补齐资源结果 storage 与跨边转移，但还不发出析构。
+下一步完成完整 move-path forest、cleanup dataflow 与临时值 liveness，再加入 `needs_drop` 和 runtime
+drop flags，随后提供 source-backed `Drop` 与 drop glue；其后才固定 raw pointer 和 allocator ABI
+并进入 `alloc`。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小运行时之后。
 
 最小示例：
 

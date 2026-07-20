@@ -85,7 +85,10 @@ pub(crate) enum Projection {
     Deref,
     Field(u32),
     TupleIndex(u32),
+    ConstantIndex(u64),
     Index(LocalId),
+    Downcast(u32),
+    Capture(u32),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -121,7 +124,28 @@ pub(crate) enum CleanupOp {
     Init(MovePathId),
     MoveOut(MovePathId),
     Overwrite(MovePathId),
+    /// Atomically consumes a fully initialized source place and installs it
+    /// into a destination. The kind describes the state of the destination
+    /// before the transfer; every transfer leaves the destination initialized.
+    Transfer {
+        source: MovePathId,
+        destination: MovePathId,
+        kind: TransferKind,
+    },
+    /// Records that an enum destination has selected a variant before any of
+    /// that variant's fields become initialized.
+    SetDiscriminant {
+        destination: MovePathId,
+        variant: u32,
+    },
     StorageDead(LocalId),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TransferKind {
+    Initialize,
+    Overwrite,
+    MaybeOverwrite,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -181,16 +205,6 @@ pub(crate) enum PendingCapability {
         block: BasicBlockId,
         path: MovePathId,
     },
-    UnmaterializedResourceResult {
-        block: BasicBlockId,
-        destination_expected: bool,
-        description: String,
-    },
-    LoopBreakValueTransfer {
-        source: BasicBlockId,
-        target: BasicBlockId,
-        description: String,
-    },
     TemporaryStorageLiveness {
         block: BasicBlockId,
         local: LocalId,
@@ -198,6 +212,7 @@ pub(crate) enum PendingCapability {
     BorrowedPlaceMutation {
         block: BasicBlockId,
         alias: LocalId,
+        source: MovePathId,
         description: String,
     },
     PartialApplicationCapture {
@@ -523,53 +538,57 @@ impl CleanupPlan {
         for capability in &self.pending_capabilities {
             match capability {
                 PendingCapability::MaybeOverwrite { block, path } => {
-                    self.verify_pending_path_operation(
-                        *block,
-                        *path,
-                        CleanupOp::Overwrite(*path),
-                        "MaybeOverwrite",
-                        errors,
-                    );
-                }
-                PendingCapability::MovePathStateDataflow { block, path } => {
-                    self.verify_pending_path_operation(
-                        *block,
-                        *path,
-                        CleanupOp::MoveOut(*path),
-                        "MovePathStateDataflow",
-                        errors,
-                    );
-                }
-                PendingCapability::UnmaterializedResourceResult { block, .. }
-                | PendingCapability::PartialApplicationCapture { block, .. }
-                | PendingCapability::LocalClosureCapture { block, .. } => {
-                    self.verify_pending_block(*block, "cleanup capability", errors);
-                }
-                PendingCapability::LoopBreakValueTransfer { source, target, .. } => {
-                    let source_block = self.verify_pending_block(
-                        *source,
-                        "loop break value transfer source",
-                        errors,
-                    );
-                    let target_block = self.verify_pending_block(
-                        *target,
-                        "loop break value transfer target",
-                        errors,
-                    );
-                    if let (Some(source_block), Some(target_block)) = (source_block, target_block) {
-                        let has_matching_edge = matches!(
-                            &source_block.terminator,
-                            Some(Terminator::Goto(edge)) if edge.target == *target
-                        );
-                        if source == target
-                            || !self.is_ancestor(target_block.scope, source_block.scope)
-                            || !has_matching_edge
-                        {
+                    let block_data = self.verify_pending_block(*block, "MaybeOverwrite", errors);
+                    if self.move_paths.get(path.index()).is_none() {
+                        errors.push(VerifyError::new(format!(
+                            "pending MaybeOverwrite refers to invalid move path {path:?}"
+                        )));
+                    }
+                    if let Some(block_data) = block_data {
+                        let has_matching_operation = block_data.operations.iter().any(|operation| {
+                            matches!(operation, CleanupOp::Overwrite(candidate) if candidate == path)
+                                || matches!(
+                                    operation,
+                                    CleanupOp::Transfer {
+                                        destination,
+                                        kind: TransferKind::MaybeOverwrite,
+                                        ..
+                                    } if destination == path
+                                )
+                        });
+                        if !has_matching_operation {
                             errors.push(VerifyError::new(format!(
-                                "pending loop break transfer from {source:?} to {target:?} does not match an exit edge to an ancestor scope"
+                                "pending MaybeOverwrite has no matching operation in block {block:?}"
                             )));
                         }
                     }
+                }
+                PendingCapability::MovePathStateDataflow { block, path } => {
+                    let block_data =
+                        self.verify_pending_block(*block, "MovePathStateDataflow", errors);
+                    if self.move_paths.get(path.index()).is_none() {
+                        errors.push(VerifyError::new(format!(
+                            "pending MovePathStateDataflow refers to invalid move path {path:?}"
+                        )));
+                    }
+                    if let Some(block_data) = block_data {
+                        let has_matching_operation = block_data.operations.iter().any(|operation| {
+                            matches!(operation, CleanupOp::MoveOut(candidate) if candidate == path)
+                                || matches!(
+                                    operation,
+                                    CleanupOp::Transfer { source, .. } if source == path
+                                )
+                        });
+                        if !has_matching_operation {
+                            errors.push(VerifyError::new(format!(
+                                "pending MovePathStateDataflow has no matching operation in block {block:?}"
+                            )));
+                        }
+                    }
+                }
+                PendingCapability::PartialApplicationCapture { block, .. }
+                | PendingCapability::LocalClosureCapture { block, .. } => {
+                    self.verify_pending_block(*block, "cleanup capability", errors);
                 }
                 PendingCapability::TemporaryStorageLiveness { block, local } => {
                     let block =
@@ -591,7 +610,12 @@ impl CleanupPlan {
                         }
                     }
                 }
-                PendingCapability::BorrowedPlaceMutation { block, alias, .. } => {
+                PendingCapability::BorrowedPlaceMutation {
+                    block,
+                    alias,
+                    source,
+                    ..
+                } => {
                     let block =
                         self.verify_pending_block(*block, "borrowed place mutation", errors);
                     let alias = self.locals.get(alias.index());
@@ -606,6 +630,13 @@ impl CleanupPlan {
                         {
                             errors.push(VerifyError::new(
                                 "pending borrowed place mutation must refer to a visible mutable borrow alias",
+                            ));
+                        }
+                        if self.move_paths.get(source.index()).is_none()
+                            || !block.operations.contains(&CleanupOp::MoveOut(*source))
+                        {
+                            errors.push(VerifyError::new(
+                                "pending borrowed place mutation must consume its staged source in that block",
                             ));
                         }
                     }
@@ -719,6 +750,24 @@ impl CleanupPlan {
         match *operation {
             CleanupOp::StorageLive(local) => {
                 self.verify_operation_local(block, local, "StorageLive", false, errors);
+                if self
+                    .locals
+                    .get(local.index())
+                    .is_some_and(|decl| decl.kind == LocalKind::Temporary)
+                    && !self.pending_capabilities.iter().any(|pending| {
+                        matches!(
+                            pending,
+                            PendingCapability::TemporaryStorageLiveness {
+                                block: pending_block,
+                                local: pending_local,
+                            } if *pending_block == block && *pending_local == local
+                        )
+                    })
+                {
+                    errors.push(VerifyError::new(format!(
+                        "temporary StorageLive in {block:?} has no matching TemporaryStorageLiveness pending capability"
+                    )));
+                }
             }
             CleanupOp::StorageDead(local) => {
                 self.verify_operation_local(block, local, "StorageDead", true, errors);
@@ -728,10 +777,90 @@ impl CleanupPlan {
             }
             CleanupOp::MoveOut(path) => {
                 self.verify_operation_path(block, path, "MoveOut", true, errors);
+                self.verify_consumption_has_state_pending(block, path, "MoveOut", errors);
             }
             CleanupOp::Overwrite(path) => {
                 self.verify_operation_path(block, path, "Overwrite", true, errors);
             }
+            CleanupOp::Transfer {
+                source,
+                destination,
+                kind,
+            } => {
+                self.verify_operation_path(block, source, "Transfer source", true, errors);
+                self.verify_consumption_has_state_pending(block, source, "Transfer", errors);
+                self.verify_operation_path(
+                    block,
+                    destination,
+                    "Transfer destination",
+                    true,
+                    errors,
+                );
+                if source == destination {
+                    errors.push(VerifyError::new(format!(
+                        "Transfer in {block:?} must use distinct source and destination paths"
+                    )));
+                } else if let (Some(source_path), Some(destination_path)) = (
+                    self.move_paths.get(source.index()),
+                    self.move_paths.get(destination.index()),
+                ) {
+                    let overlaps = source_path.place.local == destination_path.place.local
+                        && (source_path
+                            .place
+                            .projections
+                            .starts_with(&destination_path.place.projections)
+                            || destination_path
+                                .place
+                                .projections
+                                .starts_with(&source_path.place.projections));
+                    if overlaps {
+                        errors.push(VerifyError::new(format!(
+                            "Transfer in {block:?} has overlapping source and destination paths"
+                        )));
+                    }
+                }
+                if kind == TransferKind::MaybeOverwrite
+                    && !self.pending_capabilities.iter().any(|pending| {
+                        matches!(
+                            pending,
+                            PendingCapability::MaybeOverwrite {
+                                block: pending_block,
+                                path
+                            } if *pending_block == block && *path == destination
+                        )
+                    })
+                {
+                    errors.push(VerifyError::new(format!(
+                        "MaybeOverwrite transfer in {block:?} has no matching pending capability"
+                    )));
+                }
+            }
+            CleanupOp::SetDiscriminant { destination, .. } => {
+                self.verify_operation_path(block, destination, "SetDiscriminant", true, errors);
+            }
+        }
+    }
+
+    fn verify_consumption_has_state_pending(
+        &self,
+        block: BasicBlockId,
+        path: MovePathId,
+        operation: &str,
+        errors: &mut Vec<VerifyError>,
+    ) {
+        let has_pending = self.pending_capabilities.iter().any(|pending| {
+            matches!(
+                pending,
+                PendingCapability::MovePathStateDataflow {
+                    block: pending_block,
+                    path: pending_path,
+                } if *pending_block == block && *pending_path == path
+            )
+        });
+        if !has_pending {
+            errors.push(VerifyError::new(format!(
+                "{operation} in {block:?} has no matching MovePathStateDataflow pending capability"
+            )));
         }
     }
 
@@ -1203,6 +1332,14 @@ mod tests {
         ] {
             builder.push_operation(body, operation).unwrap();
         }
+        builder.record_pending(PendingCapability::MovePathStateDataflow {
+            block: body,
+            path: owned_path,
+        });
+        builder.record_pending(PendingCapability::TemporaryStorageLiveness {
+            block: body,
+            local: borrowed,
+        });
         builder
             .set_terminator(
                 body,
@@ -1425,14 +1562,34 @@ mod tests {
     }
 
     #[test]
-    fn rejects_malformed_loop_break_transfer_blocks() {
+    fn rejects_overlapping_transfer_paths() {
         let mut builder = CleanupPlanBuilder::new();
         let entry = builder.entry_block();
-        builder.record_pending(PendingCapability::LoopBreakValueTransfer {
-            source: entry,
-            target: BasicBlockId(99),
-            description: "test transfer".into(),
-        });
+        let local = builder
+            .new_local(
+                builder.root_scope(),
+                LocalKind::User,
+                LocalOwnership::Owned,
+                true,
+            )
+            .unwrap();
+        let root = builder.new_move_path(Place::local(local), None).unwrap();
+        let field = builder
+            .new_move_path(
+                Place::local(local).project(Projection::Field(0)),
+                Some(root),
+            )
+            .unwrap();
+        builder
+            .push_operation(
+                entry,
+                CleanupOp::Transfer {
+                    source: field,
+                    destination: root,
+                    kind: TransferKind::Initialize,
+                },
+            )
+            .unwrap();
         builder
             .set_terminator(
                 entry,
@@ -1444,8 +1601,7 @@ mod tests {
 
         assert!(messages(&builder.into_unverified())
             .iter()
-            .any(|message| message.contains("loop break value transfer")
-                && message.contains("invalid block")));
+            .any(|message| message.contains("overlapping source and destination")));
     }
 
     #[test]
@@ -1478,6 +1634,89 @@ mod tests {
     }
 
     #[test]
+    fn rejects_consuming_operations_without_move_state_pending() {
+        let mut builder = CleanupPlanBuilder::new();
+        let entry = builder.entry_block();
+        let source = builder
+            .new_local(
+                builder.root_scope(),
+                LocalKind::User,
+                LocalOwnership::Owned,
+                false,
+            )
+            .unwrap();
+        let destination = builder
+            .new_local(
+                builder.root_scope(),
+                LocalKind::User,
+                LocalOwnership::Owned,
+                true,
+            )
+            .unwrap();
+        let source_path = builder.new_move_path(Place::local(source), None).unwrap();
+        let destination_path = builder
+            .new_move_path(Place::local(destination), None)
+            .unwrap();
+        builder
+            .push_operation(entry, CleanupOp::MoveOut(source_path))
+            .unwrap();
+        builder
+            .push_operation(
+                entry,
+                CleanupOp::Transfer {
+                    source: source_path,
+                    destination: destination_path,
+                    kind: TransferKind::Initialize,
+                },
+            )
+            .unwrap();
+        builder
+            .set_terminator(
+                entry,
+                Terminator::Return {
+                    exited_scopes: vec![],
+                },
+            )
+            .unwrap();
+
+        let errors = messages(&builder.into_unverified());
+        assert!(errors
+            .iter()
+            .any(|message| message.contains("MoveOut") && message.contains("no matching")));
+        assert!(errors
+            .iter()
+            .any(|message| message.contains("Transfer") && message.contains("no matching")));
+    }
+
+    #[test]
+    fn rejects_temporary_storage_without_liveness_pending() {
+        let mut builder = CleanupPlanBuilder::new();
+        let entry = builder.entry_block();
+        let temporary = builder
+            .new_local(
+                builder.root_scope(),
+                LocalKind::Temporary,
+                LocalOwnership::Owned,
+                false,
+            )
+            .unwrap();
+        builder
+            .push_operation(entry, CleanupOp::StorageLive(temporary))
+            .unwrap();
+        builder
+            .set_terminator(
+                entry,
+                Terminator::Return {
+                    exited_scopes: vec![],
+                },
+            )
+            .unwrap();
+        assert!(messages(&builder.into_unverified()).iter().any(|message| {
+            message.contains("TemporaryStorageLiveness") && message.contains("no matching")
+        }));
+    }
+
+    #[test]
     fn rejects_pending_local_capabilities_with_the_wrong_provenance() {
         let mut builder = CleanupPlanBuilder::new();
         let entry = builder.entry_block();
@@ -1500,6 +1739,7 @@ mod tests {
         builder
             .push_operation(entry, CleanupOp::StorageLive(ordinary))
             .unwrap();
+        let ordinary_path = builder.new_move_path(Place::local(ordinary), None).unwrap();
         builder.record_pending(PendingCapability::TemporaryStorageLiveness {
             block: entry,
             local: ordinary,
@@ -1507,6 +1747,7 @@ mod tests {
         builder.record_pending(PendingCapability::BorrowedPlaceMutation {
             block: entry,
             alias: shared,
+            source: ordinary_path,
             description: "test mutation".into(),
         });
         builder

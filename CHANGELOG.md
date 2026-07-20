@@ -6,6 +6,32 @@ subset.
 
 ## Unreleased
 
+## 0.10.0 - 2026-07-20
+
+- Replaced the cleanup planner's result-presence boolean with concrete `CleanupDestination` places
+  and explicit store-versus-discard uses. Resource-valued bindings, discarded expressions,
+  assignments, function bodies, explicit returns, and every value-bearing `break` now have stable
+  storage before ownership can cross a control-flow edge.
+- Added atomic `Transfer` operations with initialize, overwrite, and maybe-overwrite destination
+  states. Every transfer names distinct, non-overlapping source and destination move paths and
+  consumes its source; verifier-enforced pending state dataflow keeps that not-yet-executable part
+  visible in both directions.
+- Represented aggregate construction through field, constant-index, enum-downcast, and closure-
+  capture projections. Enum construction records its discriminant first, while a struct, array,
+  enum, partial application, or closure root becomes initialized only after all children complete.
+- Staged call arguments and field or index bases, and made uninhabited parameter entries and
+  expressions terminate the cleanup CFG, including calls whose uninhabited result was hidden by
+  contextual coercion. A later return, `break`, or diverging argument cannot commit an incomplete
+  value to its final destination; nested `break` values abandon partial outer staging while
+  transferring only the successful inner value.
+- Removed the pending capabilities for unmaterialized resource results and loop-break value
+  transfer. Temporary-storage liveness, move-path state dataflow, maybe-overwrite state,
+  borrowed-place mutation, match dispatch and pattern transfer, and partial or closure capture
+  details remain explicit pending capabilities.
+- Kept LLVM emission unchanged: `CleanupPlan` still verifies ownership structure but does not emit
+  destruction. `needs_drop`, runtime drop flags, source-backed `Drop`, drop glue, resource-bearing
+  global semantics, and LLVM cleanup edges remain future work.
+
 ## 0.9.0 - 2026-07-20
 
 - Replaced the single moved-place set with normalized alternatives of uninitialized move-path

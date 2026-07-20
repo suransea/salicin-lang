@@ -17,7 +17,7 @@ use crate::cleanup::{
     LocalId as CleanupLocalId, LocalKind as CleanupLocalKind,
     LocalOwnership as CleanupLocalOwnership, MovePathId as CleanupMovePathId, PendingCapability,
     Place as CleanupPlace, Projection as CleanupProjection, ScopeId as CleanupScopeId,
-    ScopeKind as CleanupScopeKind, Terminator as CleanupTerminator,
+    ScopeKind as CleanupScopeKind, Terminator as CleanupTerminator, TransferKind,
 };
 use crate::core::{
     copy_trait_has_required_shape, operator_trait_has_required_shape, CoreBundle, LangItemKind,
@@ -456,6 +456,9 @@ enum HirExprKind {
     Call {
         function: String,
         arguments: Vec<HirArgument>,
+        /// Preserves an uninhabited callee result even when contextual
+        /// coercion gives the enclosing expression a different type.
+        diverges: bool,
     },
     Partial {
         function: String,
@@ -8866,10 +8869,11 @@ impl Analyzer {
         let right = self.lower_call_argument(right, &rhs_parameter, context, &mut temporary_loans);
         self.release_loans(&temporary_loans, context);
         HirExpr {
-            ty: candidate.output,
+            ty: candidate.output.clone(),
             kind: HirExprKind::Call {
                 function: candidate.method,
                 arguments: vec![left, right],
+                diverges: self.is_uninhabited_type(&candidate.output),
             },
         }
     }
@@ -10123,6 +10127,7 @@ impl Analyzer {
                 kind: HirExprKind::Call {
                     function: canonical,
                     arguments,
+                    diverges: self.is_uninhabited_type(&function_ty.result),
                 },
             }
         } else {
@@ -10242,6 +10247,7 @@ impl Analyzer {
             kind: HirExprKind::Call {
                 function: closure.function.clone(),
                 arguments: lowered_arguments,
+                diverges: self.is_uninhabited_type(&closure.result),
             },
         }
     }
@@ -10310,6 +10316,7 @@ impl Analyzer {
                 kind: HirExprKind::Call {
                     function: name.to_owned(),
                     arguments,
+                    diverges: self.is_uninhabited_type(&function_ty.result),
                 },
             }
         } else {
@@ -10430,6 +10437,7 @@ impl Analyzer {
                 kind: HirExprKind::Call {
                     function: partial.function.clone(),
                     arguments,
+                    diverges: self.is_uninhabited_type(&function_ty.result),
                 },
             }
         } else {
@@ -10984,7 +10992,7 @@ fn build_and_verify_cleanup_plans(
     let mut plans = Vec::with_capacity(program.functions.len());
     let mut diagnostics = Vec::new();
     for function in &program.functions {
-        match HirCleanupPlanner::build(function) {
+        match HirCleanupPlanner::build(program, function) {
             Ok(plan) => plans.push(plan),
             Err(mut errors) => diagnostics.append(&mut errors),
         }
@@ -11009,11 +11017,24 @@ struct CleanupTrackedLocal {
     kind: CleanupLocalKind,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct CleanupLoopFrame {
     break_target: CleanupBlockId,
     exit_scope: CleanupScopeId,
+    result_destination: Option<CleanupDestination>,
     saw_break: bool,
+}
+
+#[derive(Clone, Debug)]
+struct CleanupDestination {
+    place: CleanupPlace,
+    path: CleanupMovePathId,
+}
+
+#[derive(Clone, Debug)]
+enum ResultUse {
+    Store(CleanupDestination),
+    Discard,
 }
 
 /// Builds a type-independent ownership CFG from typed HIR. This is not drop
@@ -11021,6 +11042,7 @@ struct CleanupLoopFrame {
 /// retaining explicit pending capabilities for cases which still need stable
 /// temporary identities or runtime liveness before drop glue can be emitted.
 struct HirCleanupPlanner<'a> {
+    program: &'a HirProgram,
     function: &'a HirFunction,
     builder: CleanupPlanBuilder,
     root_scope: CleanupScopeId,
@@ -11029,12 +11051,15 @@ struct HirCleanupPlanner<'a> {
     hir_locals: HashMap<LocalId, CleanupLocalId>,
     local_ownership: HashMap<CleanupLocalId, CleanupLocalOwnership>,
     move_paths: HashMap<CleanupPlace, CleanupMovePathId>,
-    return_path: Option<CleanupMovePathId>,
+    return_destination: Option<CleanupDestination>,
     loops: Vec<CleanupLoopFrame>,
 }
 
 impl<'a> HirCleanupPlanner<'a> {
-    fn build(function: &'a HirFunction) -> Result<CleanupPlan, Vec<Diagnostic>> {
+    fn build(
+        program: &'a HirProgram,
+        function: &'a HirFunction,
+    ) -> Result<CleanupPlan, Vec<Diagnostic>> {
         let mut builder = CleanupPlanBuilder::new();
         let root_scope = builder.root_scope();
         let function_scope = builder
@@ -11044,6 +11069,7 @@ impl<'a> HirCleanupPlanner<'a> {
         scope_parents.insert(root_scope, None);
         scope_parents.insert(function_scope, Some(root_scope));
         let mut planner = Self {
+            program,
             function,
             builder,
             root_scope,
@@ -11052,7 +11078,7 @@ impl<'a> HirCleanupPlanner<'a> {
             hir_locals: HashMap::new(),
             local_ownership: HashMap::new(),
             move_paths: HashMap::new(),
-            return_path: None,
+            return_destination: None,
             loops: Vec::new(),
         };
         let function_entry = planner
@@ -11068,6 +11094,11 @@ impl<'a> HirCleanupPlanner<'a> {
             block: function_entry,
             scope: function_scope,
         };
+
+        let uninhabited_entry = function
+            .params
+            .iter()
+            .any(|parameter| program.is_uninhabited(&parameter.ty));
 
         for param in &function.params {
             let ownership = match param.mode {
@@ -11087,6 +11118,9 @@ impl<'a> HirCleanupPlanner<'a> {
                     &param.name,
                 )
                 .map_err(|error| vec![error])?;
+            if uninhabited_entry {
+                continue;
+            }
             planner
                 .operation(cursor.block, CleanupOp::StorageLive(local))
                 .map_err(|error| vec![error])?;
@@ -11096,6 +11130,13 @@ impl<'a> HirCleanupPlanner<'a> {
                     .operation(cursor.block, CleanupOp::Init(path))
                     .map_err(|error| vec![error])?;
             }
+        }
+
+        if uninhabited_entry {
+            planner
+                .terminate(cursor.block, CleanupTerminator::Unreachable)
+                .map_err(|error| vec![error])?;
+            return planner.finish();
         }
 
         if !matches!(function.result, Ty::Unit | Ty::Never | Ty::Error) {
@@ -11110,22 +11151,41 @@ impl<'a> HirCleanupPlanner<'a> {
             planner
                 .operation(cursor.block, CleanupOp::StorageLive(return_local))
                 .map_err(|error| vec![error])?;
-            planner.return_path = Some(
-                planner
-                    .root_move_path(return_local)
-                    .map_err(|error| vec![error])?,
-            );
+            let place = CleanupPlace::local(return_local);
+            let path = planner
+                .move_path(place.clone())
+                .map_err(|error| vec![error])?;
+            planner.return_destination = Some(CleanupDestination { place, path });
         }
 
-        let body_has_place = planner.return_path.is_some();
+        let body_use =
+            if planner.return_destination.is_some() && !program.is_uninhabited(&function.body.ty) {
+                let (_, stage) = planner
+                    .prepare_temporary_destination(cursor)
+                    .map_err(|error| vec![error])?;
+                ResultUse::Store(stage)
+            } else {
+                ResultUse::Discard
+            };
+        let body_stage = match &body_use {
+            ResultUse::Store(destination) => Some(destination.clone()),
+            ResultUse::Discard => None,
+        };
         let end = planner
-            .walk_expr(&function.body, cursor, body_has_place)
+            .walk_expr(&function.body, cursor, body_use)
             .map_err(|error| vec![error])?;
         if let Some(end) = end {
             cursor = end;
-            if let Some(return_path) = planner.return_path {
+            if let (Some(source), Some(return_destination)) =
+                (body_stage, planner.return_destination.clone())
+            {
                 planner
-                    .operation(cursor.block, CleanupOp::Init(return_path))
+                    .transfer(
+                        cursor,
+                        &source,
+                        &return_destination,
+                        TransferKind::Initialize,
+                    )
                     .map_err(|error| vec![error])?;
             }
             planner
@@ -11139,13 +11199,18 @@ impl<'a> HirCleanupPlanner<'a> {
                 .map_err(|error| vec![error])?;
         }
 
-        planner.builder.finish().map_err(|errors| {
+        planner.finish()
+    }
+
+    fn finish(self) -> Result<CleanupPlan, Vec<Diagnostic>> {
+        let function_name = self.function.name.clone();
+        self.builder.finish().map_err(|errors| {
             errors
                 .into_iter()
                 .map(|error| {
                     Diagnostic::new(format!(
                         "internal cleanup plan error in function `{}`: {}",
-                        function.name, error
+                        function_name, error
                     ))
                 })
                 .collect()
@@ -11358,6 +11423,14 @@ impl<'a> HirCleanupPlanner<'a> {
         &mut self,
         cursor: CleanupCursor,
     ) -> Result<(CleanupLocalId, CleanupMovePathId), Diagnostic> {
+        let (local, destination) = self.prepare_temporary_destination(cursor)?;
+        Ok((local, destination.path))
+    }
+
+    fn prepare_temporary_destination(
+        &mut self,
+        cursor: CleanupCursor,
+    ) -> Result<(CleanupLocalId, CleanupDestination), Diagnostic> {
         let local = self.declare_generated_local(
             cursor.scope,
             CleanupLocalKind::Temporary,
@@ -11371,157 +11444,264 @@ impl<'a> HirCleanupPlanner<'a> {
                 local,
             });
         let path = self.root_move_path(local)?;
-        Ok((local, path))
+        Ok((
+            local,
+            CleanupDestination {
+                place: CleanupPlace::local(local),
+                path,
+            },
+        ))
     }
 
-    fn record_unmaterialized_resource_result(
+    fn project_destination(
+        &mut self,
+        destination: &CleanupDestination,
+        projection: CleanupProjection,
+    ) -> Result<CleanupDestination, Diagnostic> {
+        let place = destination.place.clone().project(projection);
+        let path = self.move_path(place.clone())?;
+        Ok(CleanupDestination { place, path })
+    }
+
+    fn is_resource_ty(ty: &Ty) -> bool {
+        matches!(
+            ty,
+            Ty::Array(_, _) | Ty::Struct(_) | Ty::Enum(_) | Ty::Function(_)
+        )
+    }
+
+    fn materialize_discarded_resource(
         &mut self,
         expression: &HirExpr,
         cursor: CleanupCursor,
-        destination_expected: bool,
-    ) {
-        let may_hold_resources = matches!(
-            expression.ty,
-            Ty::Array(_, _) | Ty::Struct(_) | Ty::Enum(_) | Ty::Function(_)
-        );
-        let requires_result_materialization = matches!(
-            expression.kind,
-            HirExprKind::Global(_)
-                | HirExprKind::Array(_)
-                | HirExprKind::Index { .. }
-                | HirExprKind::Read { .. }
-                | HirExprKind::Unary(_, _)
-                | HirExprKind::Binary(_, _, _)
-                | HirExprKind::Call { .. }
-                | HirExprKind::Partial { .. }
-                | HirExprKind::PartialCapture { .. }
-                | HirExprKind::LocalClosure(_)
-                | HirExprKind::ConstructStruct { .. }
-                | HirExprKind::ConstructEnum { .. }
-                | HirExprKind::Field { .. }
-                | HirExprKind::Block(_, _)
-                | HirExprKind::If { .. }
-                | HirExprKind::Loop { .. }
-                | HirExprKind::Match { .. }
-        );
-        if may_hold_resources && requires_result_materialization {
-            let expression_kind = match &expression.kind {
-                HirExprKind::Global(_) => "global read",
-                HirExprKind::Array(_) => "array",
-                HirExprKind::Index { .. } => "index",
-                HirExprKind::Read { .. } => "place read",
-                HirExprKind::Unary(_, _) => "unary operator",
-                HirExprKind::Binary(_, _, _) => "binary operator",
-                HirExprKind::Call { .. } => "call",
-                HirExprKind::Partial { .. } | HirExprKind::PartialCapture { .. } => {
-                    "partial application"
-                }
-                HirExprKind::LocalClosure(_) => "closure",
-                HirExprKind::ConstructStruct { .. } => "struct constructor",
-                HirExprKind::ConstructEnum { .. } => "enum constructor",
-                HirExprKind::Field { .. } => "field projection",
-                HirExprKind::Block(_, _) => "block",
-                HirExprKind::If { .. } => "if",
-                HirExprKind::Loop { .. } => "loop",
-                HirExprKind::Match { .. } => "match",
-                _ => unreachable!("materialized cleanup result kind was filtered above"),
-            };
-            self.builder
-                .record_pending(PendingCapability::UnmaterializedResourceResult {
-                    block: cursor.block,
-                    destination_expected,
-                    description: format!(
-                        "{expression_kind} result of type `{}` has no cleanup move path",
-                        expression.ty,
-                    ),
-                });
+        result_use: ResultUse,
+    ) -> Result<ResultUse, Diagnostic> {
+        let produces_owned_resource = Self::is_resource_ty(&expression.ty)
+            && !matches!(
+                expression.kind,
+                HirExprKind::Borrow { .. } | HirExprKind::Function(_)
+            );
+        if matches!(result_use, ResultUse::Discard) && produces_owned_resource {
+            let (_, destination) = self.prepare_temporary_destination(cursor)?;
+            Ok(ResultUse::Store(destination))
+        } else {
+            Ok(result_use)
         }
+    }
+
+    fn initialize_result(
+        &mut self,
+        cursor: CleanupCursor,
+        result_use: &ResultUse,
+    ) -> Result<(), Diagnostic> {
+        if let ResultUse::Store(destination) = result_use {
+            self.operation(cursor.block, CleanupOp::Init(destination.path))?;
+        }
+        Ok(())
+    }
+
+    fn transfer(
+        &mut self,
+        cursor: CleanupCursor,
+        source: &CleanupDestination,
+        destination: &CleanupDestination,
+        kind: TransferKind,
+    ) -> Result<(), Diagnostic> {
+        self.operation(
+            cursor.block,
+            CleanupOp::Transfer {
+                source: source.path,
+                destination: destination.path,
+                kind,
+            },
+        )?;
+        self.builder
+            .record_pending(PendingCapability::MovePathStateDataflow {
+                block: cursor.block,
+                path: source.path,
+            });
+        Ok(())
+    }
+
+    fn move_out(
+        &mut self,
+        cursor: CleanupCursor,
+        path: CleanupMovePathId,
+    ) -> Result<(), Diagnostic> {
+        self.operation(cursor.block, CleanupOp::MoveOut(path))?;
+        self.builder
+            .record_pending(PendingCapability::MovePathStateDataflow {
+                block: cursor.block,
+                path,
+            });
+        Ok(())
     }
 
     fn walk_expr(
         &mut self,
         expression: &HirExpr,
         cursor: CleanupCursor,
-        result_has_place: bool,
+        result_use: ResultUse,
     ) -> Result<Option<CleanupCursor>, Diagnostic> {
-        // Record the missing place before walking operands. An operand may
-        // diverge after partially constructing the result, and that cleanup
-        // obligation must remain explicit even when this expression never
-        // reaches its normal continuation.
-        self.record_unmaterialized_resource_result(expression, cursor, result_has_place);
+        // Mirror `FunctionEmitter::emit_expr`: operands still execute, but an
+        // uninhabited expression can never install a normal result. Passing a
+        // discard use prevents a fabricated Init/Transfer before the block is
+        // made unreachable below.
+        let uninhabited = self.program.is_uninhabited(&expression.ty);
+        let result_use = if uninhabited {
+            ResultUse::Discard
+        } else {
+            self.materialize_discarded_resource(expression, cursor, result_use)?
+        };
         let result = match &expression.kind {
             HirExprKind::Integer(_)
             | HirExprKind::Bool(_)
             | HirExprKind::Unit
             | HirExprKind::Global(_)
-            | HirExprKind::Function(_) => Some(cursor),
+            | HirExprKind::Function(_) => {
+                self.initialize_result(cursor, &result_use)?;
+                Some(cursor)
+            }
             HirExprKind::Array(elements) => {
                 let mut current = Some(cursor);
-                for element in elements {
+                for (index, element) in elements.iter().enumerate() {
+                    let element_use = match &result_use {
+                        ResultUse::Store(destination) => {
+                            ResultUse::Store(self.project_destination(
+                                destination,
+                                CleanupProjection::ConstantIndex(index as u64),
+                            )?)
+                        }
+                        ResultUse::Discard => ResultUse::Discard,
+                    };
                     current = match current {
-                        Some(cursor) => self.walk_expr(element, cursor, false)?,
+                        Some(cursor) => self.walk_expr(element, cursor, element_use)?,
                         None => None,
                     };
+                }
+                if let Some(cursor) = current {
+                    self.initialize_result(cursor, &result_use)?;
                 }
                 current
             }
             HirExprKind::Index { base, index, .. } => {
-                let Some(cursor) = self.walk_expr(base, cursor, false)? else {
+                let (base_local, base_destination) = self.prepare_temporary_destination(cursor)?;
+                let Some(cursor) =
+                    self.walk_expr(base, cursor, ResultUse::Store(base_destination.clone()))?
+                else {
                     return Ok(None);
                 };
-                match index {
-                    HirIndex::Static(_) => Some(cursor),
-                    HirIndex::Dynamic(index) => self.walk_expr(index, cursor, false)?,
-                }
-            }
-            HirExprKind::Read { place, kind } => {
-                if *kind == HirReadKind::Move {
-                    if let Some(path) = self.move_path_for_hir_place(place)? {
-                        self.operation(cursor.block, CleanupOp::MoveOut(path))?;
-                        self.builder
-                            .record_pending(PendingCapability::MovePathStateDataflow {
-                                block: cursor.block,
-                                path,
-                            });
+                let (cursor, projection) = match index {
+                    HirIndex::Static(index) => (cursor, CleanupProjection::ConstantIndex(*index)),
+                    HirIndex::Dynamic(index) => {
+                        let (index_local, index_destination) =
+                            self.prepare_temporary_destination(cursor)?;
+                        let Some(cursor) =
+                            self.walk_expr(index, cursor, ResultUse::Store(index_destination))?
+                        else {
+                            return Ok(None);
+                        };
+                        (cursor, CleanupProjection::Index(index_local))
                     }
+                };
+                let source_place = CleanupPlace::local(base_local).project(projection);
+                let source = CleanupDestination {
+                    path: self.move_path(source_place.clone())?,
+                    place: source_place,
+                };
+                if let ResultUse::Store(destination) = &result_use {
+                    self.transfer(cursor, &source, destination, TransferKind::Initialize)?;
+                } else if uninhabited {
+                    self.move_out(cursor, source.path)?;
                 }
                 Some(cursor)
             }
-            HirExprKind::Unary(_, operand) => self.walk_expr(operand, cursor, false)?,
-            HirExprKind::Binary(left, operator @ (BinaryOp::And | BinaryOp::Or), right) => {
-                self.walk_short_circuit(left, *operator, right, cursor)?
+            HirExprKind::Read { place, kind } => {
+                if let Some(source_path) = self.move_path_for_hir_place(place)? {
+                    if let ResultUse::Store(destination) = &result_use {
+                        if *kind == HirReadKind::Move {
+                            let source = CleanupDestination {
+                                place: self
+                                    .move_paths
+                                    .iter()
+                                    .find_map(|(place, path)| {
+                                        (*path == source_path).then_some(place.clone())
+                                    })
+                                    .expect("HIR place move path is indexed"),
+                                path: source_path,
+                            };
+                            self.transfer(cursor, &source, destination, TransferKind::Initialize)?;
+                        } else {
+                            self.initialize_result(cursor, &result_use)?;
+                        }
+                    } else if *kind == HirReadKind::Move {
+                        self.move_out(cursor, source_path)?;
+                    }
+                } else {
+                    self.initialize_result(cursor, &result_use)?;
+                }
+                Some(cursor)
             }
-            HirExprKind::Binary(left, _, right) => {
-                let Some(cursor) = self.walk_expr(left, cursor, false)? else {
+            HirExprKind::Unary(_, operand) => {
+                let Some(cursor) = self.walk_expr(operand, cursor, ResultUse::Discard)? else {
                     return Ok(None);
                 };
-                self.walk_expr(right, cursor, false)?
+                self.initialize_result(cursor, &result_use)?;
+                Some(cursor)
+            }
+            HirExprKind::Binary(left, operator @ (BinaryOp::And | BinaryOp::Or), right) => {
+                self.walk_short_circuit(left, *operator, right, cursor, result_use)?
+            }
+            HirExprKind::Binary(left, _, right) => {
+                let Some(cursor) = self.walk_expr(left, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                let Some(cursor) = self.walk_expr(right, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                self.initialize_result(cursor, &result_use)?;
+                Some(cursor)
             }
             HirExprKind::Assign {
                 place,
                 value,
                 assignment,
             } => {
-                let Some(cursor) = self.walk_expr(value, cursor, true)? else {
+                let (_, stage) = self.prepare_temporary_destination(cursor)?;
+                let Some(cursor) =
+                    self.walk_expr(value, cursor, ResultUse::Store(stage.clone()))?
+                else {
                     return Ok(None);
                 };
                 if let Some(path) = self.move_path_for_hir_place(place)? {
-                    match assignment {
-                        AssignmentKind::Initialize => {
-                            self.operation(cursor.block, CleanupOp::Init(path))?;
-                        }
-                        AssignmentKind::Overwrite => {
-                            self.operation(cursor.block, CleanupOp::Overwrite(path))?;
-                        }
+                    let kind = match assignment {
+                        AssignmentKind::Initialize => TransferKind::Initialize,
+                        AssignmentKind::Overwrite => TransferKind::Overwrite,
                         AssignmentKind::MaybeOverwrite => {
-                            self.operation(cursor.block, CleanupOp::Overwrite(path))?;
                             self.builder
                                 .record_pending(PendingCapability::MaybeOverwrite {
                                     block: cursor.block,
                                     path,
                                 });
+                            TransferKind::MaybeOverwrite
                         }
-                    }
+                    };
+                    let destination_place = self
+                        .move_paths
+                        .iter()
+                        .find_map(|(place, candidate)| {
+                            (*candidate == path).then_some(place.clone())
+                        })
+                        .expect("assignment move path is indexed");
+                    self.transfer(
+                        cursor,
+                        &stage,
+                        &CleanupDestination {
+                            place: destination_place,
+                            path,
+                        },
+                        kind,
+                    )?;
                 } else {
                     let alias = self.hir_locals.get(&place.local).copied().ok_or_else(|| {
                         self.diagnostic(format!(
@@ -11536,32 +11716,59 @@ impl<'a> HirCleanupPlanner<'a> {
                                 | CleanupLocalOwnership::MutableBorrow
                         )
                     ) {
+                        self.move_out(cursor, stage.path)?;
                         self.builder
                             .record_pending(PendingCapability::BorrowedPlaceMutation {
                                 block: cursor.block,
                                 alias,
+                                source: stage.path,
                                 description: format!(
                                     "assignment through borrowed place requires referent cleanup ({assignment:?})"
                                 ),
                             });
                     }
                 }
+                self.initialize_result(cursor, &result_use)?;
                 Some(cursor)
             }
-            HirExprKind::Call { arguments, .. } => {
+            HirExprKind::Call {
+                arguments,
+                diverges,
+                ..
+            } => {
                 let mut current = Some(cursor);
+                let mut by_value = Vec::new();
                 for argument in arguments {
                     let Some(cursor) = current else {
                         break;
                     };
                     current = match argument {
                         HirArgument::Copy(value) | HirArgument::Move(value) => {
-                            self.walk_expr(value, cursor, false)?
+                            let (_, stage) = self.prepare_temporary_destination(cursor)?;
+                            let result =
+                                self.walk_expr(value, cursor, ResultUse::Store(stage.clone()))?;
+                            if result.is_some() {
+                                by_value.push(stage);
+                            }
+                            result
                         }
                         HirArgument::SharedBorrow(_) | HirArgument::MutBorrow(_) => Some(cursor),
                     };
                 }
-                current
+                if let Some(cursor) = current {
+                    for argument in by_value {
+                        self.move_out(cursor, argument.path)?;
+                    }
+                    if *diverges {
+                        self.terminate(cursor.block, CleanupTerminator::Unreachable)?;
+                        None
+                    } else {
+                        self.initialize_result(cursor, &result_use)?;
+                        Some(cursor)
+                    }
+                } else {
+                    None
+                }
             }
             HirExprKind::Partial {
                 function, captures, ..
@@ -11572,18 +11779,35 @@ impl<'a> HirCleanupPlanner<'a> {
                         function: function.clone(),
                     });
                 let mut current = Some(cursor);
-                for capture in captures {
+                for (index, capture) in captures.iter().enumerate() {
                     let Some(cursor) = current else {
                         break;
                     };
+                    let capture_use = match &result_use {
+                        ResultUse::Store(destination) => {
+                            ResultUse::Store(self.project_destination(
+                                destination,
+                                CleanupProjection::Capture(index as u32),
+                            )?)
+                        }
+                        ResultUse::Discard => ResultUse::Discard,
+                    };
                     current = match capture {
                         HirArgument::Copy(value) | HirArgument::Move(value) => {
-                            self.walk_expr(value, cursor, false)?
+                            self.walk_expr(value, cursor, capture_use)?
                         }
-                        HirArgument::SharedBorrow(_) | HirArgument::MutBorrow(_) => Some(cursor),
+                        HirArgument::SharedBorrow(_) | HirArgument::MutBorrow(_) => {
+                            self.initialize_result(cursor, &capture_use)?;
+                            Some(cursor)
+                        }
                     };
                 }
-                current
+                if let Some(cursor) = current {
+                    self.initialize_result(cursor, &result_use)?;
+                    Some(cursor)
+                } else {
+                    None
+                }
             }
             HirExprKind::PartialCapture { binding, .. } => {
                 self.builder
@@ -11591,6 +11815,7 @@ impl<'a> HirCleanupPlanner<'a> {
                         block: cursor.block,
                         function: format!("{}::<partial-local-{binding}>", self.function.name),
                     });
+                self.initialize_result(cursor, &result_use)?;
                 Some(cursor)
             }
             HirExprKind::LocalClosure(closure) => {
@@ -11601,31 +11826,123 @@ impl<'a> HirCleanupPlanner<'a> {
                         fn_once: closure.is_fn_once,
                     });
                 let mut current = Some(cursor);
-                for capture in &closure.captures {
+                for (index, capture) in closure.captures.iter().enumerate() {
                     let Some(cursor) = current else {
                         break;
                     };
+                    let capture_use = match &result_use {
+                        ResultUse::Store(destination) => {
+                            ResultUse::Store(self.project_destination(
+                                destination,
+                                CleanupProjection::Capture(index as u32),
+                            )?)
+                        }
+                        ResultUse::Discard => ResultUse::Discard,
+                    };
                     if let Some(value) = &capture.value {
-                        current = self.walk_expr(value, cursor, false)?;
+                        current = self.walk_expr(value, cursor, capture_use)?;
+                    } else {
+                        self.initialize_result(cursor, &capture_use)?;
                     }
                 }
-                current
+                if let Some(cursor) = current {
+                    self.initialize_result(cursor, &result_use)?;
+                    Some(cursor)
+                } else {
+                    None
+                }
             }
-            HirExprKind::ConstructStruct { fields, .. }
-            | HirExprKind::ConstructEnum { fields, .. } => {
+            HirExprKind::ConstructStruct { fields, .. } => {
                 let mut current = Some(cursor);
-                for (_, field) in fields {
+                for (field_index, field) in fields {
+                    let field_use = match &result_use {
+                        ResultUse::Store(destination) => {
+                            ResultUse::Store(self.project_destination(
+                                destination,
+                                CleanupProjection::Field(*field_index as u32),
+                            )?)
+                        }
+                        ResultUse::Discard => ResultUse::Discard,
+                    };
                     current = match current {
-                        Some(cursor) => self.walk_expr(field, cursor, false)?,
+                        Some(cursor) => self.walk_expr(field, cursor, field_use)?,
                         None => None,
                     };
                 }
+                if let Some(cursor) = current {
+                    self.initialize_result(cursor, &result_use)?;
+                }
                 current
             }
-            HirExprKind::Field { base, .. } => self.walk_expr(base, cursor, false)?,
-            HirExprKind::Borrow { .. } => Some(cursor),
+            HirExprKind::ConstructEnum {
+                variant, fields, ..
+            } => {
+                let variant = u32::try_from(*variant)
+                    .map_err(|_| self.diagnostic("enum variant does not fit in u32"))?;
+                let variant_destination = match &result_use {
+                    ResultUse::Store(destination) => {
+                        self.operation(
+                            cursor.block,
+                            CleanupOp::SetDiscriminant {
+                                destination: destination.path,
+                                variant,
+                            },
+                        )?;
+                        Some(self.project_destination(
+                            destination,
+                            CleanupProjection::Downcast(variant),
+                        )?)
+                    }
+                    ResultUse::Discard => None,
+                };
+                let mut current = Some(cursor);
+                for (field_index, field) in fields {
+                    let field_use = match &variant_destination {
+                        Some(destination) => ResultUse::Store(self.project_destination(
+                            destination,
+                            CleanupProjection::Field(*field_index as u32),
+                        )?),
+                        None => ResultUse::Discard,
+                    };
+                    current = match current {
+                        Some(cursor) => self.walk_expr(field, cursor, field_use)?,
+                        None => None,
+                    };
+                }
+                if let (Some(cursor), Some(variant_destination)) =
+                    (current, variant_destination.as_ref())
+                {
+                    self.operation(cursor.block, CleanupOp::Init(variant_destination.path))?;
+                    self.initialize_result(cursor, &result_use)?;
+                }
+                current
+            }
+            HirExprKind::Field { base, index } => {
+                let (base_local, base_destination) = self.prepare_temporary_destination(cursor)?;
+                let Some(cursor) =
+                    self.walk_expr(base, cursor, ResultUse::Store(base_destination))?
+                else {
+                    return Ok(None);
+                };
+                let source_place = CleanupPlace::local(base_local)
+                    .project(CleanupProjection::Field(*index as u32));
+                let source = CleanupDestination {
+                    path: self.move_path(source_place.clone())?,
+                    place: source_place,
+                };
+                if let ResultUse::Store(destination) = &result_use {
+                    self.transfer(cursor, &source, destination, TransferKind::Initialize)?;
+                } else if uninhabited {
+                    self.move_out(cursor, source.path)?;
+                }
+                Some(cursor)
+            }
+            HirExprKind::Borrow { .. } => {
+                self.initialize_result(cursor, &result_use)?;
+                Some(cursor)
+            }
             HirExprKind::Block(statements, tail) => {
-                self.walk_block(statements, tail.as_deref(), cursor, result_has_place)?
+                self.walk_block(statements, tail.as_deref(), cursor, result_use)?
             }
             HirExprKind::If {
                 condition,
@@ -11636,16 +11953,21 @@ impl<'a> HirCleanupPlanner<'a> {
                 then_branch,
                 else_branch.as_deref(),
                 cursor,
-                result_has_place,
+                result_use,
             )?,
             HirExprKind::Return(value) => {
                 let mut current = Some(cursor);
+                let mut stage = None;
                 if let Some(value) = value {
-                    current = self.walk_expr(value, cursor, true)?;
+                    let (_, destination) = self.prepare_temporary_destination(cursor)?;
+                    stage = Some(destination.clone());
+                    current = self.walk_expr(value, cursor, ResultUse::Store(destination))?;
                 }
                 if let Some(cursor) = current {
-                    if let Some(return_path) = self.return_path {
-                        self.operation(cursor.block, CleanupOp::Init(return_path))?;
+                    if let (Some(source), Some(destination)) =
+                        (stage.as_ref(), self.return_destination.clone())
+                    {
+                        self.transfer(cursor, source, &destination, TransferKind::Initialize)?;
                     }
                     self.emit_storage_dead_to(cursor.block, cursor.scope, self.root_scope)?;
                     let exited_scopes = self.exit_chain(cursor.scope, self.root_scope)?;
@@ -11653,45 +11975,57 @@ impl<'a> HirCleanupPlanner<'a> {
                 }
                 None
             }
-            HirExprKind::While { condition, body } => self.walk_while(condition, body, cursor)?,
-            HirExprKind::Loop { body } => self.walk_loop(body, cursor, result_has_place)?,
+            HirExprKind::While { condition, body } => {
+                self.walk_while(condition, body, cursor, result_use)?
+            }
+            HirExprKind::Loop { body } => self.walk_loop(body, cursor, result_use)?,
             HirExprKind::Break(value) => {
                 let mut current = Some(cursor);
+                let mut stage = None;
                 if let Some(value) = value {
-                    current = self.walk_expr(value, cursor, false)?;
+                    let (_, destination) = self.prepare_temporary_destination(cursor)?;
+                    stage = Some(destination.clone());
+                    current = self.walk_expr(value, cursor, ResultUse::Store(destination))?;
                 }
                 let Some(cursor) = current else {
                     return Ok(None);
                 };
-                let Some(frame) = self.loops.last().copied() else {
+                let Some(frame) = self.loops.last().cloned() else {
                     return Err(self.diagnostic("HIR break has no cleanup loop frame"));
                 };
-                if let Some(value) = value {
-                    if matches!(
-                        value.ty,
-                        Ty::Array(_, _) | Ty::Struct(_) | Ty::Enum(_) | Ty::Function(_)
-                    ) {
-                        self.builder
-                            .record_pending(PendingCapability::LoopBreakValueTransfer {
-                                source: cursor.block,
-                                target: frame.break_target,
-                                description: format!(
-                                    "loop break value of type `{}` has no cleanup result place",
-                                    value.ty
-                                ),
-                            });
+                if let (Some(source), Some(destination)) =
+                    (stage.as_ref(), frame.result_destination.as_ref())
+                {
+                    self.transfer(cursor, source, destination, TransferKind::Initialize)?;
+                } else if value.is_none() {
+                    if let Some(destination) = frame.result_destination.as_ref() {
+                        self.initialize_result(cursor, &ResultUse::Store(destination.clone()))?;
                     }
+                } else if value
+                    .as_ref()
+                    .is_some_and(|value| Self::is_resource_ty(&value.ty))
+                {
+                    return Err(self.diagnostic(
+                        "resource-valued break has no cleanup loop result destination",
+                    ));
                 }
                 self.goto_exiting(cursor, frame.break_target, frame.exit_scope)?;
                 self.loops.last_mut().expect("loop frame exists").saw_break = true;
                 None
             }
             HirExprKind::Match { scrutinee, arms } => {
-                self.walk_match(scrutinee, arms, cursor, result_has_place)?
+                self.walk_match(scrutinee, arms, cursor, result_use)?
             }
         };
 
-        Ok(result)
+        if uninhabited {
+            if let Some(cursor) = result {
+                self.terminate(cursor.block, CleanupTerminator::Unreachable)?;
+            }
+            Ok(None)
+        } else {
+            Ok(result)
+        }
     }
 
     fn walk_block(
@@ -11699,7 +12033,7 @@ impl<'a> HirCleanupPlanner<'a> {
         statements: &[HirStmt],
         tail: Option<&HirExpr>,
         cursor: CleanupCursor,
-        result_has_place: bool,
+        result_use: ResultUse,
     ) -> Result<Option<CleanupCursor>, Diagnostic> {
         let scope = self.new_scope(cursor.scope, CleanupScopeKind::Lexical)?;
         let entry = self.new_block(scope)?;
@@ -11717,11 +12051,15 @@ impl<'a> HirCleanupPlanner<'a> {
             };
             current = match statement {
                 HirStmt::Let(binding) => self.walk_binding(binding, cursor)?,
-                HirStmt::Expr(expression) => self.walk_expr(expression, cursor, false)?,
+                HirStmt::Expr(expression) => {
+                    self.walk_expr(expression, cursor, ResultUse::Discard)?
+                }
             };
         }
         if let (Some(cursor), Some(tail)) = (current, tail) {
-            current = self.walk_expr(tail, cursor, result_has_place)?;
+            current = self.walk_expr(tail, cursor, result_use.clone())?;
+        } else if let Some(cursor) = current {
+            self.initialize_result(cursor, &result_use)?;
         }
         let Some(cursor) = current else {
             return Ok(None);
@@ -11760,16 +12098,20 @@ impl<'a> HirCleanupPlanner<'a> {
             &binding.name,
         )?;
         self.operation(cursor.block, CleanupOp::StorageLive(local))?;
-        let path = if ownership == CleanupLocalOwnership::Owned {
-            Some(self.root_move_path(local)?)
+        let destination = if ownership == CleanupLocalOwnership::Owned {
+            let place = CleanupPlace::local(local);
+            Some(CleanupDestination {
+                path: self.move_path(place.clone())?,
+                place,
+            })
         } else {
             None
         };
-        let current = self.walk_expr(&binding.value, cursor, true)?;
-        if let (Some(cursor), Some(path)) = (current, path) {
-            self.operation(cursor.block, CleanupOp::Init(path))?;
-        }
-        Ok(current)
+        self.walk_expr(
+            &binding.value,
+            cursor,
+            destination.map_or(ResultUse::Discard, ResultUse::Store),
+        )
     }
 
     fn walk_if(
@@ -11778,13 +12120,18 @@ impl<'a> HirCleanupPlanner<'a> {
         then_branch: &HirExpr,
         else_branch: Option<&HirExpr>,
         cursor: CleanupCursor,
-        result_has_place: bool,
+        result_use: ResultUse,
     ) -> Result<Option<CleanupCursor>, Diagnostic> {
         let (condition_local, condition_path) = self.prepare_temporary(cursor)?;
-        let Some(cursor) = self.walk_expr(condition, cursor, true)? else {
+        let condition_destination = CleanupDestination {
+            place: CleanupPlace::local(condition_local),
+            path: condition_path,
+        };
+        let Some(cursor) =
+            self.walk_expr(condition, cursor, ResultUse::Store(condition_destination))?
+        else {
             return Ok(None);
         };
-        self.operation(cursor.block, CleanupOp::Init(condition_path))?;
         let then_block = self.new_block(cursor.scope)?;
         let else_block = self.new_block(cursor.scope)?;
         let join = self.new_block(cursor.scope)?;
@@ -11802,7 +12149,7 @@ impl<'a> HirCleanupPlanner<'a> {
                 block: then_block,
                 scope: cursor.scope,
             },
-            result_has_place,
+            result_use.clone(),
         )?;
         if let Some(end) = then_end {
             self.terminate(
@@ -11817,9 +12164,16 @@ impl<'a> HirCleanupPlanner<'a> {
                     block: else_block,
                     scope: cursor.scope,
                 },
-                result_has_place,
+                result_use.clone(),
             )?
         } else {
+            self.initialize_result(
+                CleanupCursor {
+                    block: else_block,
+                    scope: cursor.scope,
+                },
+                &result_use,
+            )?;
             Some(CleanupCursor {
                 block: else_block,
                 scope: cursor.scope,
@@ -11848,12 +12202,17 @@ impl<'a> HirCleanupPlanner<'a> {
         operator: BinaryOp,
         right: &HirExpr,
         cursor: CleanupCursor,
+        result_use: ResultUse,
     ) -> Result<Option<CleanupCursor>, Diagnostic> {
         let (condition_local, condition_path) = self.prepare_temporary(cursor)?;
-        let Some(cursor) = self.walk_expr(left, cursor, true)? else {
+        let condition_destination = CleanupDestination {
+            place: CleanupPlace::local(condition_local),
+            path: condition_path,
+        };
+        let Some(cursor) = self.walk_expr(left, cursor, ResultUse::Store(condition_destination))?
+        else {
             return Ok(None);
         };
-        self.operation(cursor.block, CleanupOp::Init(condition_path))?;
         let right_block = self.new_block(cursor.scope)?;
         let join = self.new_block(cursor.scope)?;
         let (then_target, else_target) = match operator {
@@ -11875,17 +12234,19 @@ impl<'a> HirCleanupPlanner<'a> {
                 block: right_block,
                 scope: cursor.scope,
             },
-            false,
+            ResultUse::Discard,
         )? {
             self.terminate(
                 end.block,
                 CleanupTerminator::Goto(CleanupEdge::new(join, Vec::new())),
             )?;
         }
-        Ok(Some(CleanupCursor {
+        let result = CleanupCursor {
             block: join,
             scope: cursor.scope,
-        }))
+        };
+        self.initialize_result(result, &result_use)?;
+        Ok(Some(result))
     }
 
     fn walk_while(
@@ -11893,6 +12254,7 @@ impl<'a> HirCleanupPlanner<'a> {
         condition: &HirExpr,
         body: &HirExpr,
         cursor: CleanupCursor,
+        result_use: ResultUse,
     ) -> Result<Option<CleanupCursor>, Diagnostic> {
         let loop_scope = self.new_scope(cursor.scope, CleanupScopeKind::Loop)?;
         let condition_block = self.new_block(loop_scope)?;
@@ -11906,6 +12268,10 @@ impl<'a> HirCleanupPlanner<'a> {
         self.loops.push(CleanupLoopFrame {
             break_target: after,
             exit_scope: cursor.scope,
+            result_destination: match &result_use {
+                ResultUse::Store(destination) => Some(destination.clone()),
+                ResultUse::Discard => None,
+            },
             saw_break: false,
         });
         let condition_cursor = CleanupCursor {
@@ -11913,9 +12279,16 @@ impl<'a> HirCleanupPlanner<'a> {
             scope: loop_scope,
         };
         let (condition_local, condition_path) = self.prepare_temporary(condition_cursor)?;
-        let condition_end = self.walk_expr(condition, condition_cursor, true)?;
+        let condition_destination = CleanupDestination {
+            place: CleanupPlace::local(condition_local),
+            path: condition_path,
+        };
+        let condition_end = self.walk_expr(
+            condition,
+            condition_cursor,
+            ResultUse::Store(condition_destination),
+        )?;
         if let Some(condition_end) = condition_end {
-            self.operation(condition_end.block, CleanupOp::Init(condition_path))?;
             self.terminate(
                 condition_end.block,
                 CleanupTerminator::Branch {
@@ -11923,6 +12296,13 @@ impl<'a> HirCleanupPlanner<'a> {
                     then_edge: CleanupEdge::new(body_block, Vec::new()),
                     else_edge: CleanupEdge::new(false_exit, Vec::new()),
                 },
+            )?;
+            self.initialize_result(
+                CleanupCursor {
+                    block: false_exit,
+                    scope: loop_scope,
+                },
+                &result_use,
             )?;
             self.goto_exiting(
                 CleanupCursor {
@@ -11938,7 +12318,7 @@ impl<'a> HirCleanupPlanner<'a> {
                     block: body_block,
                     scope: loop_scope,
                 },
-                false,
+                ResultUse::Discard,
             )? {
                 self.terminate(
                     body_end.block,
@@ -11948,15 +12328,15 @@ impl<'a> HirCleanupPlanner<'a> {
         } else {
             self.terminate(body_block, CleanupTerminator::Unreachable)?;
             self.terminate(false_exit, CleanupTerminator::Unreachable)?;
-            self.terminate(after, CleanupTerminator::Unreachable)?;
         }
-        self.loops.pop();
-        if condition_end.is_some() {
+        let frame = self.loops.pop().expect("while loop frame exists");
+        if condition_end.is_some() || frame.saw_break {
             Ok(Some(CleanupCursor {
                 block: after,
                 scope: cursor.scope,
             }))
         } else {
+            self.terminate(after, CleanupTerminator::Unreachable)?;
             Ok(None)
         }
     }
@@ -11965,7 +12345,7 @@ impl<'a> HirCleanupPlanner<'a> {
         &mut self,
         body: &HirExpr,
         cursor: CleanupCursor,
-        _result_has_place: bool,
+        result_use: ResultUse,
     ) -> Result<Option<CleanupCursor>, Diagnostic> {
         let loop_scope = self.new_scope(cursor.scope, CleanupScopeKind::Loop)?;
         let body_block = self.new_block(loop_scope)?;
@@ -11977,6 +12357,10 @@ impl<'a> HirCleanupPlanner<'a> {
         self.loops.push(CleanupLoopFrame {
             break_target: after,
             exit_scope: cursor.scope,
+            result_destination: match result_use {
+                ResultUse::Store(destination) => Some(destination),
+                ResultUse::Discard => None,
+            },
             saw_break: false,
         });
         if let Some(body_end) = self.walk_expr(
@@ -11985,7 +12369,7 @@ impl<'a> HirCleanupPlanner<'a> {
                 block: body_block,
                 scope: loop_scope,
             },
-            false,
+            ResultUse::Discard,
         )? {
             self.terminate(
                 body_end.block,
@@ -12009,13 +12393,18 @@ impl<'a> HirCleanupPlanner<'a> {
         scrutinee: &HirExpr,
         arms: &[HirMatchArm],
         cursor: CleanupCursor,
-        result_has_place: bool,
+        result_use: ResultUse,
     ) -> Result<Option<CleanupCursor>, Diagnostic> {
-        let (_scrutinee_local, scrutinee_path) = self.prepare_temporary(cursor)?;
-        let Some(cursor) = self.walk_expr(scrutinee, cursor, true)? else {
+        let (scrutinee_local, scrutinee_path) = self.prepare_temporary(cursor)?;
+        let scrutinee_destination = CleanupDestination {
+            place: CleanupPlace::local(scrutinee_local),
+            path: scrutinee_path,
+        };
+        let Some(cursor) =
+            self.walk_expr(scrutinee, cursor, ResultUse::Store(scrutinee_destination))?
+        else {
             return Ok(None);
         };
-        self.operation(cursor.block, CleanupOp::Init(scrutinee_path))?;
         self.builder
             .record_pending(PendingCapability::MatchDispatch {
                 block: cursor.block,
@@ -12063,9 +12452,12 @@ impl<'a> HirCleanupPlanner<'a> {
             }
             let body_start = if let Some(guard) = &arm.guard {
                 let (guard_local, guard_path) = self.prepare_temporary(arm_cursor)?;
-                match self.walk_expr(guard, arm_cursor, true)? {
+                let guard_destination = CleanupDestination {
+                    place: CleanupPlace::local(guard_local),
+                    path: guard_path,
+                };
+                match self.walk_expr(guard, arm_cursor, ResultUse::Store(guard_destination))? {
                     Some(guard_end) => {
-                        self.operation(guard_end.block, CleanupOp::Init(guard_path))?;
                         let body_block = self.new_block(arm_scope)?;
                         let guard_false = self.new_block(arm_scope)?;
                         self.terminate(
@@ -12095,7 +12487,7 @@ impl<'a> HirCleanupPlanner<'a> {
                 Some(arm_cursor)
             };
             if let Some(body_start) = body_start {
-                if let Some(body_end) = self.walk_expr(&arm.body, body_start, result_has_place)? {
+                if let Some(body_end) = self.walk_expr(&arm.body, body_start, result_use.clone())? {
                     self.goto_exiting(body_end, join, cursor.scope)?;
                     reaches_join = true;
                 }
@@ -12923,6 +13315,7 @@ impl<'a> FunctionEmitter<'a> {
             HirExprKind::Call {
                 function,
                 arguments,
+                ..
             } => {
                 let mut emitted_arguments = Vec::new();
                 for argument in arguments {
@@ -14163,9 +14556,10 @@ mod tests {
     fn cleanup_plan_text(source: &str, function_name: &str) -> CleanupPlan {
         let program = crate::parser::parse(source).expect("cleanup-plan source must parse");
         let mut analyzer = Analyzer::new(&program);
-        let hir = analyzer
-            .analyze_target(false)
-            .expect("cleanup-plan source must lower");
+        let hir = match analyzer.analyze_target(false) {
+            Some(hir) => hir,
+            None => panic!("cleanup-plan source must lower: {:?}", analyzer.diagnostics),
+        };
         assert!(
             analyzer.diagnostics.is_empty(),
             "unexpected diagnostics: {:?}",
@@ -14176,7 +14570,7 @@ mod tests {
             .iter()
             .find(|function| function.name == function_name)
             .expect("requested HIR function");
-        HirCleanupPlanner::build(function).expect("cleanup plan must build and verify")
+        HirCleanupPlanner::build(&hir, function).expect("cleanup plan must build and verify")
     }
 
     fn compile_with_origins(
@@ -17549,7 +17943,7 @@ let choose(flag: bool): i32 = loop {
     }
 
     #[test]
-    fn cleanup_plan_marks_resource_results_before_their_evaluation_completes() {
+    fn cleanup_plan_materializes_resource_constructor_fields() {
         let plan = cleanup_plan_text(
             r#"
 let Boxed = struct(value: i32)
@@ -17558,60 +17952,161 @@ let make(): Boxed = Boxed(spin())
 "#,
             "make",
         );
-        assert!(plan.pending_capabilities.iter().any(|pending| {
+        assert!(plan.move_paths.iter().any(|path| {
             matches!(
-                pending,
-                PendingCapability::UnmaterializedResourceResult {
-                    destination_expected: true,
-                    description,
-                    ..
-                } if description.contains("Boxed")
+                path.place.projections.as_slice(),
+                [CleanupProjection::Field(0)]
             )
         }));
     }
 
     #[test]
-    fn cleanup_plan_marks_resource_loop_break_transfer_between_blocks() {
+    fn cleanup_plan_transfers_resource_loop_break_between_scopes() {
         let plan = cleanup_plan_text(
             r#"
 let Boxed = struct(value: i32)
-let make(): Boxed = loop {
-  let value = Boxed(42)
-  break value
+let make(flag: bool): Boxed = loop {
+  if flag { break Boxed(41) }
+  break Boxed(42)
 }
 "#,
             "make",
         );
-        let (source, target) = plan
-            .pending_capabilities
+        let loop_scope = plan
+            .scopes
             .iter()
-            .find_map(|pending| match pending {
-                PendingCapability::LoopBreakValueTransfer { source, target, .. } => {
-                    Some((*source, *target))
-                }
+            .find(|scope| scope.kind == CleanupScopeKind::Loop)
+            .expect("loop scope")
+            .id;
+        let break_transfers: Vec<_> = plan
+            .blocks
+            .iter()
+            .filter_map(|block| {
+                let exits_loop = matches!(
+                    &block.terminator,
+                    Some(CleanupTerminator::Goto(edge))
+                        if edge.exited_scopes.contains(&loop_scope)
+                );
+                exits_loop.then(|| {
+                    block
+                        .operations
+                        .iter()
+                        .find_map(|operation| match operation {
+                            CleanupOp::Transfer {
+                                source,
+                                destination,
+                                kind: TransferKind::Initialize,
+                            } => Some((*source, *destination)),
+                            _ => None,
+                        })
+                })?
+            })
+            .collect();
+        assert_eq!(break_transfers.len(), 2);
+        assert!(break_transfers
+            .iter()
+            .all(|(source, destination)| source != destination));
+        assert!(break_transfers
+            .windows(2)
+            .all(|pair| pair[0].1 == pair[1].1));
+    }
+
+    #[test]
+    fn cleanup_plan_nested_break_abandons_the_outer_partial_value() {
+        let plan = cleanup_plan_text(
+            r#"
+let Payload = struct(value: i32)
+let Pair = struct(left: Payload, right: Payload)
+let make(): Pair = loop {
+  break Pair(Payload(1), do { break Pair(Payload(2), Payload(3)) })
+}
+"#,
+            "make",
+        );
+        let loop_scope = plan
+            .scopes
+            .iter()
+            .find(|scope| scope.kind == CleanupScopeKind::Loop)
+            .expect("loop scope")
+            .id;
+        let exiting_blocks: Vec<_> = plan
+            .blocks
+            .iter()
+            .filter(|block| {
+                matches!(
+                    &block.terminator,
+                    Some(CleanupTerminator::Goto(edge))
+                        if edge.exited_scopes.contains(&loop_scope)
+                )
+            })
+            .collect();
+        assert_eq!(exiting_blocks.len(), 1);
+
+        let partial_local =
+            plan.locals
+                .iter()
+                .filter(|local| local.kind == CleanupLocalKind::Temporary)
+                .find(|local| {
+                    let root = plan.move_paths.iter().find(|path| {
+                        path.place.local == local.id && path.place.projections.is_empty()
+                    });
+                    let initialized_first_field = plan.move_paths.iter().any(|path| {
+                        path.place.local == local.id
+                            && path.place.projections.as_slice() == [CleanupProjection::Field(0)]
+                            && plan
+                                .blocks
+                                .iter()
+                                .any(|block| block.operations.contains(&CleanupOp::Init(path.id)))
+                    });
+                    initialized_first_field
+                        && root.is_some_and(|root| {
+                            plan.blocks
+                                .iter()
+                                .all(|block| !block.operations.contains(&CleanupOp::Init(root.id)))
+                        })
+                })
+                .expect("partially constructed outer break value");
+
+        let exit = exiting_blocks[0];
+        assert!(exit
+            .operations
+            .contains(&CleanupOp::StorageDead(partial_local.id)));
+        let break_transfers: Vec<_> = exit
+            .operations
+            .iter()
+            .filter_map(|operation| match operation {
+                CleanupOp::Transfer {
+                    source,
+                    destination,
+                    kind: TransferKind::Initialize,
+                } => Some((*source, *destination)),
                 _ => None,
             })
-            .expect("resource break transfer must remain an explicit cleanup gap");
-        let source_scope = plan.blocks[source.index()].scope;
-        let target_scope = plan.blocks[target.index()].scope;
+            .collect();
+        assert_eq!(break_transfers.len(), 1);
+        let source = &plan.move_paths[break_transfers[0].0.index()];
+        let destination = &plan.move_paths[break_transfers[0].1.index()];
+        assert_ne!(source.place.local, partial_local.id);
         assert_eq!(
-            plan.scopes[source_scope.index()].kind,
-            CleanupScopeKind::Lexical
+            plan.locals[source.place.local.index()].kind,
+            CleanupLocalKind::Temporary
         );
-        assert_ne!(source_scope, target_scope);
-        assert!(plan.pending_capabilities.iter().any(|pending| {
-            matches!(
-                pending,
-                PendingCapability::UnmaterializedResourceResult {
-                    destination_expected: true,
-                    ..
-                }
-            )
+        assert!(source.place.projections.is_empty());
+        assert!(plan
+            .blocks
+            .iter()
+            .any(|block| block.operations.contains(&CleanupOp::Init(source.id))));
+        assert_ne!(source.place.local, destination.place.local);
+        assert!(plan.blocks.iter().all(|block| {
+            block.operations.iter().all(|operation| {
+                !matches!(operation, CleanupOp::Transfer { source, .. }
+                    if plan.move_paths[source.index()].place.local == partial_local.id)
+            })
         }));
     }
 
     #[test]
-    fn cleanup_plan_marks_discarded_and_global_resource_reads() {
+    fn cleanup_plan_materializes_discarded_and_global_resource_reads() {
         let discarded = cleanup_plan_text(
             r#"
 let Payload = struct(value: i32)
@@ -17622,15 +18117,14 @@ let discard(move payload: Payload): () = {
 "#,
             "discard",
         );
-        assert!(discarded.pending_capabilities.iter().any(|pending| {
-            matches!(
-                pending,
-                PendingCapability::UnmaterializedResourceResult {
-                    destination_expected: false,
-                    description,
-                    ..
-                } if description.contains("place read") && description.contains("Payload")
-            )
+        assert!(discarded.locals.iter().any(|local| {
+            local.kind == CleanupLocalKind::Temporary
+                && discarded.blocks.iter().any(|block| {
+                    block.operations.iter().any(|operation| {
+                        matches!(operation, CleanupOp::Transfer { destination, .. }
+                            if discarded.move_paths[destination.index()].place.local == local.id)
+                    })
+                })
         }));
 
         let global = cleanup_plan_text(
@@ -17641,16 +18135,18 @@ let get(): Payload = payload
 "#,
             "get",
         );
-        assert!(global.pending_capabilities.iter().any(|pending| {
-            matches!(
-                pending,
-                PendingCapability::UnmaterializedResourceResult {
-                    destination_expected: true,
-                    description,
-                    ..
-                } if description.contains("global read") && description.contains("Payload")
-            )
-        }));
+        let return_local = global
+            .locals
+            .iter()
+            .find(|local| local.kind == CleanupLocalKind::ReturnPlace)
+            .expect("return place");
+        assert!(global
+            .blocks
+            .iter()
+            .any(|block| block.operations.iter().any(|operation| {
+                matches!(operation, CleanupOp::Transfer { destination, .. }
+                if global.move_paths[destination.index()].place.local == return_local.id)
+            })));
     }
 
     #[test]
@@ -17769,6 +18265,819 @@ let read(): i32 = {
     }
 
     #[test]
+    fn cleanup_plan_does_not_materialize_a_borrow_as_an_owned_resource() {
+        let plan = cleanup_plan_text(
+            r#"
+let Boxed = struct(value: i32)
+let inspect(): () = {
+  let value = Boxed(42)
+  let alias = borrow value
+  ()
+}
+"#,
+            "inspect",
+        );
+        assert!(plan
+            .locals
+            .iter()
+            .all(|local| local.kind != CleanupLocalKind::Temporary));
+        let alias = plan
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some("alias"))
+            .expect("borrow alias");
+        assert_eq!(alias.ownership, CleanupLocalOwnership::SharedBorrow);
+        assert!(plan
+            .move_paths
+            .iter()
+            .all(|path| path.place.local != alias.id));
+    }
+
+    #[test]
+    fn cleanup_plan_uses_struct_array_enum_and_capture_projections() {
+        let enum_plan = cleanup_plan_text(
+            r#"
+let Payload = struct(value: i32)
+let Choice = enum { Value(Payload), Empty }
+let make(): Choice = Choice.Value(Payload(7))
+"#,
+            "make",
+        );
+        assert!(enum_plan.blocks.iter().any(|block| {
+            block
+                .operations
+                .iter()
+                .any(|operation| matches!(operation, CleanupOp::SetDiscriminant { variant: 0, .. }))
+        }));
+        assert!(enum_plan.move_paths.iter().any(|path| {
+            matches!(
+                path.place.projections.as_slice(),
+                [CleanupProjection::Downcast(0), CleanupProjection::Field(0)]
+            )
+        }));
+
+        let array_plan = cleanup_plan_text(
+            r#"
+let Payload = struct(value: i32)
+extend Payload: Copy {}
+let make(): Array(Payload, 2) = [Payload(1), Payload(2)]
+"#,
+            "make",
+        );
+        assert!(array_plan.move_paths.iter().any(|path| {
+            matches!(
+                path.place.projections.as_slice(),
+                [CleanupProjection::ConstantIndex(1)]
+            )
+        }));
+
+        let closure_plan = cleanup_plan_text(
+            r#"
+let run(base: i32): i32 = {
+  let add = { (increment: i32) -> base + increment }
+  add(1)
+}
+"#,
+            "run",
+        );
+        assert!(closure_plan.move_paths.iter().any(|path| {
+            matches!(
+                path.place.projections.as_slice(),
+                [CleanupProjection::Capture(0)]
+            )
+        }));
+    }
+
+    #[test]
+    fn cleanup_plan_stages_field_and_index_bases_before_transfer() {
+        let field_plan = cleanup_plan_text(
+            r#"
+let Payload = struct(value: i32)
+let Pair = struct(left: Payload, right: Payload)
+let take(): Payload = Pair(Payload(1), Payload(2)).left
+"#,
+            "take",
+        );
+        assert!(field_plan.blocks.iter().any(|block| {
+            block.operations.iter().any(|operation| match operation {
+                CleanupOp::Transfer { source, .. } => {
+                    let path = &field_plan.move_paths[source.index()];
+                    field_plan.locals[path.place.local.index()].kind == CleanupLocalKind::Temporary
+                        && matches!(
+                            path.place.projections.as_slice(),
+                            [CleanupProjection::Field(0)]
+                        )
+                }
+                _ => false,
+            })
+        }));
+
+        let index_plan = cleanup_plan_text(
+            r#"
+let Payload = struct(value: i32)
+extend Payload: Copy {}
+let take(): Payload = [Payload(1), Payload(2)][1]
+"#,
+            "take",
+        );
+        assert!(index_plan.blocks.iter().any(|block| {
+            block.operations.iter().any(|operation| match operation {
+                CleanupOp::Transfer { source, .. } => {
+                    let path = &index_plan.move_paths[source.index()];
+                    index_plan.locals[path.place.local.index()].kind == CleanupLocalKind::Temporary
+                        && matches!(
+                            path.place.projections.as_slice(),
+                            [CleanupProjection::ConstantIndex(1)]
+                        )
+                }
+                _ => false,
+            })
+        }));
+    }
+
+    #[test]
+    fn cleanup_plan_keeps_staged_early_call_arguments_when_a_later_call_diverges() {
+        let plan = cleanup_plan_text(
+            r#"
+let Payload = struct(value: i32)
+let stop(): never = loop {}
+let choose(move value: Payload, code: i32): Payload = value
+let make(): Payload = choose(Payload(1), stop())
+"#,
+            "make",
+        );
+        let unreachable = plan
+            .blocks
+            .iter()
+            .find(|block| matches!(block.terminator, Some(CleanupTerminator::Unreachable)))
+            .expect("never call must end its block");
+        let staged_resource = unreachable
+            .operations
+            .iter()
+            .find_map(|operation| match operation {
+                CleanupOp::Init(path)
+                    if plan.locals[plan.move_paths[path.index()].place.local.index()].kind
+                        == CleanupLocalKind::Temporary =>
+                {
+                    Some(*path)
+                }
+                _ => None,
+            });
+        assert!(staged_resource.is_some());
+        assert!(!unreachable
+            .operations
+            .iter()
+            .any(|operation| matches!(operation, CleanupOp::MoveOut(_))));
+    }
+
+    #[test]
+    fn cleanup_plan_does_not_overwrite_assignment_destination_when_rhs_returns() {
+        let plan = cleanup_plan_text(
+            r#"
+let Payload = struct(value: i32)
+let Pair = struct(left: Payload, right: Payload)
+let update(): Pair = {
+  let mut old = Pair(Payload(0), Payload(1))
+  old = Pair(Payload(2), do { return Pair(Payload(3), Payload(4)) })
+  old
+}
+"#,
+            "update",
+        );
+        let old = plan
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some("old"))
+            .expect("assignment destination");
+        assert!(!plan.blocks.iter().any(|block| {
+            block.operations.iter().any(|operation| {
+                matches!(operation, CleanupOp::Transfer { destination, .. }
+                    if plan.move_paths[destination.index()].place.local == old.id)
+            })
+        }));
+        assert!(plan.blocks.iter().any(|block| {
+            matches!(block.terminator, Some(CleanupTerminator::Return { .. }))
+                && block.operations.contains(&CleanupOp::StorageDead(old.id))
+        }));
+    }
+
+    #[test]
+    fn cleanup_plan_keeps_partial_aggregate_state_out_of_the_return_place() {
+        fn assert_partial_child_without_root(plan: &CleanupPlan, child: CleanupProjection) {
+            let function_scope = plan
+                .scopes
+                .iter()
+                .find(|scope| scope.kind == CleanupScopeKind::FunctionBody)
+                .expect("function scope")
+                .id;
+            let body_stage = plan
+                .locals
+                .iter()
+                .find(|local| {
+                    local.kind == CleanupLocalKind::Temporary && local.scope == function_scope
+                })
+                .expect("implicit body stage");
+            let root = plan
+                .move_paths
+                .iter()
+                .find(|path| path.place.local == body_stage.id && path.place.projections.is_empty())
+                .expect("body root");
+            let child = plan
+                .move_paths
+                .iter()
+                .find(|path| {
+                    path.place.local == body_stage.id
+                        && path.place.projections.first() == Some(&child)
+                        && plan
+                            .blocks
+                            .iter()
+                            .any(|block| block.operations.contains(&CleanupOp::Init(path.id)))
+                })
+                .expect("partially initialized child");
+            assert!(plan
+                .blocks
+                .iter()
+                .any(|block| { block.operations.contains(&CleanupOp::Init(child.id)) }));
+            assert!(plan
+                .blocks
+                .iter()
+                .all(|block| { !block.operations.contains(&CleanupOp::Init(root.id)) }));
+            assert!(plan.blocks.iter().any(|block| {
+                matches!(block.terminator, Some(CleanupTerminator::Return { .. }))
+                    && block
+                        .operations
+                        .contains(&CleanupOp::StorageDead(body_stage.id))
+            }));
+        }
+
+        let struct_plan = cleanup_plan_text(
+            r#"
+let Payload = struct(value: i32)
+let Pair = struct(left: Payload, right: Payload)
+let make(): Pair = Pair(Payload(1), do { return Pair(Payload(2), Payload(3)) })
+"#,
+            "make",
+        );
+        assert_partial_child_without_root(&struct_plan, CleanupProjection::Field(0));
+
+        let enum_plan = cleanup_plan_text(
+            r#"
+let Payload = struct(value: i32)
+let Choice = enum { Pair(Payload, Payload) }
+let make(): Choice = Choice.Pair(Payload(1), do { return Choice.Pair(Payload(2), Payload(3)) })
+"#,
+            "make",
+        );
+        assert_partial_child_without_root(&enum_plan, CleanupProjection::Downcast(0));
+        assert!(enum_plan.blocks.iter().any(|block| {
+            block
+                .operations
+                .iter()
+                .any(|operation| matches!(operation, CleanupOp::SetDiscriminant { variant: 0, .. }))
+        }));
+
+        let array_plan = cleanup_plan_text(
+            r#"
+let Payload = struct(value: i32)
+extend Payload: Copy {}
+let make(): Array(Payload, 2) = [Payload(1), do { return [Payload(2), Payload(3)] }]
+"#,
+            "make",
+        );
+        assert_partial_child_without_root(&array_plan, CleanupProjection::ConstantIndex(0));
+    }
+
+    #[test]
+    fn cleanup_plan_stages_implicit_and_explicit_returns_before_return_place() {
+        fn return_transfer(
+            plan: &CleanupPlan,
+        ) -> (&crate::cleanup::MovePath, &crate::cleanup::MovePath) {
+            let return_local = plan
+                .locals
+                .iter()
+                .find(|local| local.kind == CleanupLocalKind::ReturnPlace)
+                .expect("return place");
+            plan.blocks
+                .iter()
+                .find_map(|block| {
+                    block
+                        .operations
+                        .iter()
+                        .find_map(|operation| match operation {
+                            CleanupOp::Transfer {
+                                source,
+                                destination,
+                                kind: TransferKind::Initialize,
+                            } if plan.move_paths[destination.index()].place.local
+                                == return_local.id =>
+                            {
+                                Some((
+                                    &plan.move_paths[source.index()],
+                                    &plan.move_paths[destination.index()],
+                                ))
+                            }
+                            _ => None,
+                        })
+                })
+                .expect("staged return transfer")
+        }
+
+        let implicit = cleanup_plan_text(
+            "let Payload = struct(value: i32)\nlet make(): Payload = Payload(1)\n",
+            "make",
+        );
+        let explicit = cleanup_plan_text(
+            "let Payload = struct(value: i32)\nlet make(): Payload = { return Payload(1) }\n",
+            "make",
+        );
+        for plan in [&implicit, &explicit] {
+            let (source, destination) = return_transfer(plan);
+            assert_ne!(source.place.local, destination.place.local);
+            assert_eq!(
+                plan.locals[source.place.local.index()].kind,
+                CleanupLocalKind::Temporary
+            );
+        }
+        let function_scope = explicit
+            .scopes
+            .iter()
+            .find(|scope| scope.kind == CleanupScopeKind::FunctionBody)
+            .expect("function scope")
+            .id;
+        assert!(explicit.locals.iter().all(|local| {
+            !(local.kind == CleanupLocalKind::Temporary && local.scope == function_scope)
+        }));
+    }
+
+    #[test]
+    fn cleanup_plan_forwards_one_destination_through_block_if_and_match() {
+        fn body_root(plan: &CleanupPlan) -> CleanupMovePathId {
+            let function_scope = plan
+                .scopes
+                .iter()
+                .find(|scope| scope.kind == CleanupScopeKind::FunctionBody)
+                .expect("function scope")
+                .id;
+            let body_stage = plan
+                .locals
+                .iter()
+                .find(|local| {
+                    local.kind == CleanupLocalKind::Temporary && local.scope == function_scope
+                })
+                .expect("body stage");
+            plan.move_paths
+                .iter()
+                .find(|path| path.place.local == body_stage.id && path.place.projections.is_empty())
+                .expect("body root")
+                .id
+        }
+
+        let if_plan = cleanup_plan_text(
+            r#"
+let Payload = struct(value: i32)
+let choose(flag: bool): Payload = {
+  if flag { Payload(1) } else { Payload(2) }
+}
+"#,
+            "choose",
+        );
+        let if_root = body_root(&if_plan);
+        assert_eq!(
+            if_plan
+                .blocks
+                .iter()
+                .filter(|block| block.operations.contains(&CleanupOp::Init(if_root)))
+                .count(),
+            2
+        );
+
+        let match_plan = cleanup_plan_text(
+            r#"
+let Choice = enum { First, Second }
+let Payload = struct(value: i32)
+let choose(choice: Choice): Payload = choice match {
+  Choice.First => Payload(1),
+  Choice.Second => Payload(2),
+}
+"#,
+            "choose",
+        );
+        let match_root = body_root(&match_plan);
+        assert_eq!(
+            match_plan
+                .blocks
+                .iter()
+                .filter(|block| block.operations.contains(&CleanupOp::Init(match_root)))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn cleanup_plan_nested_loops_keep_distinct_shared_break_destinations() {
+        let plan = cleanup_plan_text(
+            r#"
+let Payload = struct(value: i32)
+let choose(flag: bool): Payload = loop {
+  let inner = loop {
+    if flag { break Payload(1) }
+    break Payload(2)
+  }
+  break inner
+}
+"#,
+            "choose",
+        );
+        let loop_scopes: Vec<_> = plan
+            .scopes
+            .iter()
+            .filter(|scope| scope.kind == CleanupScopeKind::Loop)
+            .map(|scope| scope.id)
+            .collect();
+        assert_eq!(loop_scopes.len(), 2);
+        let mut destinations = Vec::new();
+        for loop_scope in loop_scopes {
+            let loop_destinations: HashSet<_> = plan
+                .blocks
+                .iter()
+                .filter(|block| {
+                    matches!(
+                        &block.terminator,
+                        Some(CleanupTerminator::Goto(edge))
+                            if edge.exited_scopes.contains(&loop_scope)
+                    )
+                })
+                .flat_map(|block| block.operations.iter())
+                .filter_map(|operation| match operation {
+                    CleanupOp::Transfer {
+                        source,
+                        destination,
+                        ..
+                    } if plan.locals[plan.move_paths[source.index()].place.local.index()].kind
+                        == CleanupLocalKind::Temporary =>
+                    {
+                        Some(*destination)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(loop_destinations.len(), 1);
+            destinations.push(*loop_destinations.iter().next().expect("break destination"));
+        }
+        assert_ne!(destinations[0], destinations[1]);
+    }
+
+    #[test]
+    fn cleanup_plan_materializes_discarded_calls_and_partial_captures() {
+        let discarded = cleanup_plan_text(
+            r#"
+let Payload = struct(value: i32)
+let make(): Payload = Payload(1)
+let discard(): () = {
+  make()
+  ()
+}
+"#,
+            "discard",
+        );
+        assert!(discarded.blocks.iter().any(|block| {
+            block.operations.iter().any(|operation| match operation {
+                CleanupOp::Init(path) => {
+                    discarded.locals[discarded.move_paths[path.index()].place.local.index()].kind
+                        == CleanupLocalKind::Temporary
+                }
+                _ => false,
+            })
+        }));
+
+        let partial = cleanup_plan_text(
+            r#"
+let add(x: i32)(y: i32): i32 = x + y
+let run(): i32 = {
+  let add_one = add(1)
+  add_one(2)
+}
+"#,
+            "run",
+        );
+        assert!(partial.pending_capabilities.iter().any(|pending| {
+            matches!(pending, PendingCapability::PartialApplicationCapture { .. })
+        }));
+        assert!(partial.move_paths.iter().any(|path| {
+            matches!(
+                path.place.projections.as_slice(),
+                [CleanupProjection::Capture(0)]
+            )
+        }));
+    }
+
+    #[test]
+    fn cleanup_plan_makes_uninhabited_parameter_entries_unreachable() {
+        let plan = cleanup_plan_text("let absurd(move value: never): i32 = value\n", "absurd");
+        let function_entry = plan
+            .blocks
+            .iter()
+            .find(|block| plan.scopes[block.scope.index()].kind == CleanupScopeKind::FunctionBody)
+            .expect("function entry");
+        assert!(matches!(
+            function_entry.terminator,
+            Some(CleanupTerminator::Unreachable)
+        ));
+        assert!(function_entry.operations.is_empty());
+        assert!(plan.blocks.iter().all(|block| {
+            !matches!(block.terminator, Some(CleanupTerminator::Return { .. }))
+                && block.operations.iter().all(|operation| {
+                    !matches!(operation, CleanupOp::Init(_) | CleanupOp::Transfer { .. })
+                })
+        }));
+    }
+
+    #[test]
+    fn cleanup_plan_evaluates_projected_empty_operands_without_a_result_store() {
+        let field_plan = cleanup_plan_text(
+            r#"
+let Empty = enum {}
+let Holder = struct(value: Empty)
+let absurd(move holder: Holder): i32 = holder.value
+"#,
+            "absurd",
+        );
+        let return_local = field_plan
+            .locals
+            .iter()
+            .find(|local| local.kind == CleanupLocalKind::ReturnPlace)
+            .expect("return place");
+        assert!(field_plan
+            .blocks
+            .iter()
+            .any(|block| { matches!(block.terminator, Some(CleanupTerminator::Unreachable)) }));
+        assert!(field_plan
+            .move_paths
+            .iter()
+            .any(|path| { path.place.projections == [CleanupProjection::Field(0)] }));
+        assert!(field_plan.blocks.iter().all(|block| {
+            !matches!(block.terminator, Some(CleanupTerminator::Return { .. }))
+                && block.operations.iter().all(|operation| match operation {
+                    CleanupOp::Init(path) | CleanupOp::Overwrite(path) => {
+                        field_plan.move_paths[path.index()].place.local != return_local.id
+                    }
+                    CleanupOp::Transfer { destination, .. } => {
+                        field_plan.move_paths[destination.index()].place.local != return_local.id
+                    }
+                    _ => true,
+                })
+        }));
+
+        let index_plan = cleanup_plan_text(
+            r#"
+let Empty = enum {}
+extend Empty: Copy {}
+let identity(move values: Array(Empty, 1)): Array(Empty, 1) = values
+let absurd(move values: Array(Empty, 1)): i32 = identity(values)[0]
+"#,
+            "absurd",
+        );
+        assert!(index_plan
+            .blocks
+            .iter()
+            .any(|block| { matches!(block.terminator, Some(CleanupTerminator::Unreachable)) }));
+        assert!(index_plan
+            .move_paths
+            .iter()
+            .any(|path| { path.place.projections == [CleanupProjection::ConstantIndex(0)] }));
+        assert!(index_plan.blocks.iter().any(|block| {
+            block.operations.iter().any(|operation| {
+                matches!(operation, CleanupOp::Transfer { source, .. }
+                    if index_plan.move_paths[source.index()].place.projections.is_empty())
+            })
+        }));
+    }
+
+    #[test]
+    fn cleanup_plan_does_not_move_out_discarded_copy_projections() {
+        let field_plan = cleanup_plan_text(
+            r#"
+let Boxed = struct(value: i32)
+let make(): Boxed = Boxed(42)
+let discard(): () = {
+  make().value
+  ()
+}
+"#,
+            "discard",
+        );
+        let field = field_plan
+            .move_paths
+            .iter()
+            .find(|path| path.place.projections == [CleanupProjection::Field(0)])
+            .expect("discarded field projection");
+        assert!(field_plan
+            .blocks
+            .iter()
+            .all(|block| !block.operations.contains(&CleanupOp::MoveOut(field.id))));
+
+        let index_plan = cleanup_plan_text(
+            r#"
+let discard(): () = {
+  [42][0]
+  ()
+}
+"#,
+            "discard",
+        );
+        let element = index_plan
+            .move_paths
+            .iter()
+            .find(|path| path.place.projections == [CleanupProjection::ConstantIndex(0)])
+            .expect("discarded index projection");
+        assert!(index_plan
+            .blocks
+            .iter()
+            .all(|block| !block.operations.contains(&CleanupOp::MoveOut(element.id))));
+    }
+
+    #[test]
+    fn cleanup_plan_initializes_while_and_empty_break_results() {
+        let while_plan = cleanup_plan_text(
+            r#"
+let bind(): () = {
+  let done = while false {}
+  done
+}
+"#,
+            "bind",
+        );
+        let done = while_plan
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some("done"))
+            .expect("while binding");
+        let done_path = while_plan
+            .move_paths
+            .iter()
+            .find(|path| path.place.local == done.id && path.place.projections.is_empty())
+            .expect("while binding path");
+        assert!(while_plan
+            .blocks
+            .iter()
+            .any(|block| block.operations.contains(&CleanupOp::Init(done_path.id))));
+
+        let loop_plan = cleanup_plan_text(
+            r#"
+let bind(): () = {
+  let done = loop { break }
+  done
+}
+"#,
+            "bind",
+        );
+        let done = loop_plan
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some("done"))
+            .expect("loop binding");
+        let done_path = loop_plan
+            .move_paths
+            .iter()
+            .find(|path| path.place.local == done.id && path.place.projections.is_empty())
+            .expect("loop binding path");
+        assert!(loop_plan
+            .blocks
+            .iter()
+            .any(|block| block.operations.contains(&CleanupOp::Init(done_path.id))));
+
+        let assignment_plan = cleanup_plan_text(
+            r#"
+let assign(): () = {
+  let mut done = ()
+  done = while false {}
+  done
+}
+"#,
+            "assign",
+        );
+        assert!(assignment_plan.blocks.iter().any(|block| {
+            block.operations.iter().any(|operation| {
+                matches!(
+                    operation,
+                    CleanupOp::Transfer {
+                        kind: TransferKind::Overwrite,
+                        ..
+                    }
+                )
+            })
+        }));
+    }
+
+    #[test]
+    fn cleanup_plan_keeps_breaks_from_while_conditions_reachable() {
+        let plan = cleanup_plan_text(
+            r#"
+let bind(): () = {
+  let done = while do { break; true } {}
+  done
+}
+"#,
+            "bind",
+        );
+        let done = plan
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some("done"))
+            .expect("while binding");
+        let done_path = plan
+            .move_paths
+            .iter()
+            .find(|path| path.place.local == done.id && path.place.projections.is_empty())
+            .expect("while binding path");
+        assert!(plan
+            .blocks
+            .iter()
+            .any(|block| block.operations.contains(&CleanupOp::Init(done_path.id))));
+        assert!(plan
+            .blocks
+            .iter()
+            .any(|block| matches!(block.terminator, Some(CleanupTerminator::Return { .. }))));
+
+        let return_plan = cleanup_plan_text(
+            r#"
+let bind(): () = {
+  let done = while do { return; true } {}
+  done
+}
+"#,
+            "bind",
+        );
+        let done = return_plan
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some("done"))
+            .expect("while binding");
+        assert!(return_plan.blocks.iter().all(|block| {
+            block.operations.iter().all(|operation| match operation {
+                CleanupOp::Init(path) => {
+                    return_plan.move_paths[path.index()].place.local != done.id
+                }
+                _ => true,
+            })
+        }));
+    }
+
+    #[test]
+    fn cleanup_plan_does_not_initialize_results_when_loop_inputs_diverge() {
+        let condition_plan = cleanup_plan_text(
+            r#"
+let stop(): never = loop {}
+let bind(): () = {
+  let done = while stop() {}
+  done
+}
+"#,
+            "bind",
+        );
+        let done = condition_plan
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some("done"))
+            .expect("while binding");
+        assert!(condition_plan.blocks.iter().all(|block| {
+            block.operations.iter().all(|operation| match operation {
+                CleanupOp::Init(path) => {
+                    condition_plan.move_paths[path.index()].place.local != done.id
+                }
+                _ => true,
+            })
+        }));
+        assert!(condition_plan
+            .blocks
+            .iter()
+            .any(|block| { matches!(block.terminator, Some(CleanupTerminator::Unreachable)) }));
+
+        let no_break_plan = cleanup_plan_text(
+            r#"
+let bind(): () = {
+  let done = loop {}
+  done
+}
+"#,
+            "bind",
+        );
+        let done = no_break_plan
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some("done"))
+            .expect("loop binding");
+        assert!(no_break_plan.blocks.iter().all(|block| {
+            block.operations.iter().all(|operation| match operation {
+                CleanupOp::Init(path) => {
+                    no_break_plan.move_paths[path.index()].place.local != done.id
+                }
+                _ => true,
+            })
+        }));
+    }
+
+    #[test]
     fn cleanup_plan_records_assignment_kinds_moves_and_pending_overwrite_state() {
         let plan = cleanup_plan_text(
             r#"
@@ -17797,9 +19106,13 @@ let classify(flag: bool): i32 = {
         assert!(operations
             .iter()
             .any(|operation| matches!(operation, CleanupOp::Init(_))));
-        assert!(operations
-            .iter()
-            .any(|operation| matches!(operation, CleanupOp::Overwrite(_))));
+        assert!(operations.iter().any(|operation| matches!(
+            operation,
+            CleanupOp::Transfer {
+                kind: TransferKind::Overwrite,
+                ..
+            }
+        )));
         assert!(plan
             .pending_capabilities
             .iter()
