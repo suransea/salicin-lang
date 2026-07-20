@@ -408,6 +408,16 @@ fn source_backed_copy_programs_run_with_expected_result() {
 }
 
 #[test]
+fn source_backed_drop_glue_links_and_runs() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "drop_glue.sali"))
+        .output()
+        .expect("run source-backed Drop program");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn source_backed_copy_errors_report_their_cause() {
     for (name, expected) in [
         (

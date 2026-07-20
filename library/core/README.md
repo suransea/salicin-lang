@@ -5,8 +5,8 @@ layer. The compiler embeds `src/prelude.sali`, parses it with the ordinary front
 lang-item declaration, and shares the resulting identities across the complete package graph.
 
 The bootstrap bundle currently defines `Option`, `Result`, `never`, the canonical empty marker trait
-`pub let Copy = trait {}`, and the five arithmetic operator traits `Add`, `Sub`, `Mul`, `Div`, and
-`Rem`. Each operator trait takes `Rhs`, defines an `Output` associated type, and moves both `self`
+`pub let Copy = trait {}`, the canonical `Drop` trait, and the five arithmetic operator traits `Add`,
+`Sub`, `Mul`, `Div`, and `Rem`. Each operator trait takes `Rhs`, defines an `Output` associated type, and moves both `self`
 and `rhs`. It deliberately has no package manifest yet:
 mounting `core` as an explicitly addressable virtual package, compiling it without its own prelude,
 and selecting per-package edition preludes are later bootstrap steps.
@@ -64,14 +64,19 @@ flag; conditionally complete values receive stable flags with set/clear actions;
 initialized aggregates fall back to their initialized child obligations without double-destruction.
 The verifier recomputes and checks the cached analysis.
 
-That plan is still a boundary, not executable destruction. Borrowed mutation, conditional
+The v0.15 compiler validates `Drop.drop(mut borrow self)(): ()` from this ordinary core source.
+Implementations are restricted to the nominal's defining package, conflict with `Copy`, and cannot
+be invoked directly. Exact recursive `needs_drop` now emits LLVM glue for custom drops, containing
+structs, and active enum variants; the glue passes native parsing and linking tests.
+
+That plan is still a boundary, not executable scope cleanup. Borrowed mutation, conditional
 maybe-overwrite cleanup, match/pattern transfer, and partial or closure capture details remain
-pending. There is no public source-backed `Drop`, recursive drop glue, LLVM flag allocation, or LLVM
-cleanup emission yet. Compile-time globals are independently materialized at each use and are
+pending. LLVM flag allocation, scope-exit branching, and cleanup calls are not emitted yet.
+Compile-time globals are independently materialized at each use and are
 outside the cleanup plan; resource-bearing global semantics must be settled before `Drop` is
 exposed.
 
-The adjacent standard-library route is therefore: expose source-backed `Drop`, emit recursive glue,
-and lower the existing obligations and flags; then finish remaining cleanup details and define raw
+The adjacent standard-library route is therefore: lower the existing obligations and flags into
+calls to the generated glue; then finish remaining cleanup details and define raw
 pointers and the allocator ABI. Only after those boundaries are real will `alloc` be added, followed
 by platform `std` over the C ABI and minimal runtime.

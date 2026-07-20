@@ -20,8 +20,8 @@ use crate::cleanup::{
     ScopeKind as CleanupScopeKind, Terminator as CleanupTerminator, TransferKind,
 };
 use crate::core::{
-    copy_trait_has_required_shape, operator_trait_has_required_shape, CoreBundle, LangItemKind,
-    LangItems,
+    copy_trait_has_required_shape, drop_trait_has_required_shape,
+    operator_trait_has_required_shape, CoreBundle, LangItemKind, LangItems,
 };
 use crate::manifest::Edition;
 
@@ -300,7 +300,7 @@ struct HirProgram {
     enums: Vec<EnumLayout>,
     globals: Vec<HirGlobal>,
     functions: Vec<HirFunction>,
-    copy_nominals: HashSet<Ty>,
+    drop_methods: HashMap<Ty, String>,
 }
 
 impl HirProgram {
@@ -317,24 +317,26 @@ impl HirProgram {
             || matches!(ty, Ty::Enum(name) if self.enum_layout(name).is_some_and(|layout| layout.variants.is_empty()))
     }
 
-    fn is_copy(&self, ty: &Ty) -> bool {
-        match ty {
-            Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool | Ty::Unit | Ty::Never | Ty::Error => {
-                true
-            }
-            Ty::Array(element, _) => self.is_copy(element),
-            Ty::Struct(_) | Ty::Enum(_) => self.copy_nominals.contains(ty),
-            Ty::Function(_) => false,
-        }
-    }
-
-    /// Conservative until source-backed `Drop` is registered: every owned,
-    /// non-Copy nominal or callable carries a drop obligation. Recursive glue
-    /// can later prove an obligation trivial without weakening flag safety.
     fn needs_drop(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Array(element, _) => self.needs_drop(element),
-            Ty::Struct(_) | Ty::Enum(_) => !self.is_copy(ty),
+            Ty::Struct(name) => {
+                self.drop_methods.contains_key(ty)
+                    || self.struct_layout(name).is_some_and(|layout| {
+                        layout.fields.iter().any(|field| self.needs_drop(&field.ty))
+                    })
+            }
+            Ty::Enum(name) => {
+                self.drop_methods.contains_key(ty)
+                    || self.enum_layout(name).is_some_and(|layout| {
+                        layout.variants.iter().any(|variant| {
+                            variant
+                                .fields
+                                .iter()
+                                .any(|field| self.needs_drop(&field.ty))
+                        })
+                    })
+            }
             Ty::Function(_) => true,
             Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool | Ty::Unit | Ty::Never | Ty::Error => {
                 false
@@ -1555,6 +1557,14 @@ impl Analyzer {
             self.error("`Copy` language trait must have shape `let Copy = trait {}`");
             valid = false;
         }
+        if definition.name == self.lang_item_name(LangItemKind::Drop)
+            && !drop_trait_has_required_shape(&definition)
+        {
+            self.error(
+                "`Drop` language trait must have shape `let Drop = trait { let drop(mut borrow self)(): () }`",
+            );
+            valid = false;
+        }
         let operator_trait = BINARY_OPERATOR_TRAITS
             .iter()
             .copied()
@@ -2102,15 +2112,25 @@ impl Analyzer {
             self_ty: target.clone(),
             trait_ref,
         };
-        if key.trait_ref.name == self.lang_item_name(LangItemKind::Copy)
+        let is_copy = key.trait_ref.name == self.lang_item_name(LangItemKind::Copy);
+        let is_drop = key.trait_ref.name == self.lang_item_name(LangItemKind::Drop);
+        if (is_copy || is_drop)
             && self
                 .nominal_accesses
                 .get(nominal_name(&target).expect("trait targets are nominal"))
                 .is_some_and(|access| access.origin.package != origin.package)
         {
             let target = self.diagnostic_type_name(&target);
+            let trait_name = if is_copy { "Copy" } else { "Drop" };
             self.error(format!(
-                "`Copy` for `{target}` must be implemented in the package that defines the type"
+                "`{trait_name}` for `{target}` must be implemented in the package that defines the type"
+            ));
+            return;
+        }
+        if is_drop && self.copy_nominals.contains(&target) {
+            let target = self.diagnostic_type_name(&target);
+            self.error(format!(
+                "`{target}` cannot implement both `Copy` and `Drop`"
             ));
             return;
         }
@@ -3136,7 +3156,20 @@ impl Analyzer {
                 .map(|name| self.hir_globals[name].clone())
                 .collect(),
             functions,
-            copy_nominals: self.copy_nominals.clone(),
+            drop_methods: self
+                .trait_impls
+                .iter()
+                .filter(|(key, _)| {
+                    key.trait_ref.name == self.lang_item_name(LangItemKind::Drop)
+                        && key.trait_ref.arguments.is_empty()
+                })
+                .filter_map(|(key, implementation)| {
+                    implementation
+                        .methods
+                        .get("drop")
+                        .map(|method| (key.self_ty.clone(), method.clone()))
+                })
+                .collect(),
         })
     }
 
@@ -4389,6 +4422,11 @@ impl Analyzer {
             })
             .cloned()
             .collect()
+    }
+
+    fn is_drop_impl(&self, key: &TraitImplKey) -> bool {
+        key.trait_ref.name == self.lang_item_name(LangItemKind::Drop)
+            && key.trait_ref.arguments.is_empty()
     }
 
     fn has_inaccessible_trait_method(
@@ -8153,6 +8191,10 @@ impl Analyzer {
         } else {
             let candidates = self.trait_method_candidates(payload, member, origin);
             match candidates.as_slice() {
+                [candidate] if self.is_drop_impl(candidate) => {
+                    self.error("`Drop.drop` cannot be called directly; destruction is automatic");
+                    return None;
+                }
                 [candidate] => self.trait_impls[candidate].methods[member].clone(),
                 [] => {
                     if self.struct_layouts.get(&target).is_some_and(|layout| {
@@ -10000,6 +10042,10 @@ impl Analyzer {
             let candidates =
                 self.trait_method_candidates(&receiver_place.ty, member, &context.origin);
             if candidates.len() == 1 {
+                if self.is_drop_impl(&candidates[0]) {
+                    self.error("`Drop.drop` cannot be called directly; destruction is automatic");
+                    return error_expr();
+                }
                 let implementation = &self.trait_impls[&candidates[0]];
                 debug_assert_eq!(implementation.key, candidates[0]);
                 debug_assert!(implementation
@@ -13146,6 +13192,11 @@ impl<'a> Emitter<'a> {
             output.push('\n');
         }
 
+        for ty in self.drop_glue_types() {
+            output.push_str(&self.emit_drop_glue(&ty)?);
+            output.push('\n');
+        }
+
         if !include_entry_point {
             return Ok(output);
         }
@@ -13172,6 +13223,138 @@ impl<'a> Emitter<'a> {
             _ => unreachable!("entry result checked by analyzer"),
         }
         output.push_str("}\n");
+        Ok(output)
+    }
+
+    fn drop_glue_types(&self) -> Vec<Ty> {
+        let mut types = HashSet::new();
+        for layout in &self.program.structs {
+            let ty = Ty::Struct(layout.name.clone());
+            if self.program.needs_drop(&ty) {
+                types.insert(ty);
+            }
+            for field in &layout.fields {
+                self.collect_drop_glue_type(&field.ty, &mut types);
+            }
+        }
+        for layout in &self.program.enums {
+            let ty = Ty::Enum(layout.name.clone());
+            if self.program.needs_drop(&ty) {
+                types.insert(ty);
+            }
+            for field in layout.variants.iter().flat_map(|variant| &variant.fields) {
+                self.collect_drop_glue_type(&field.ty, &mut types);
+            }
+        }
+        let mut types = types.into_iter().collect::<Vec<_>>();
+        types.sort_by_key(canonical_type_encoding);
+        types
+    }
+
+    fn collect_drop_glue_type(&self, ty: &Ty, types: &mut HashSet<Ty>) {
+        if !self.program.needs_drop(ty) || !types.insert(ty.clone()) {
+            return;
+        }
+        match ty {
+            Ty::Array(element, _) => self.collect_drop_glue_type(element, types),
+            Ty::Struct(name) => {
+                if let Some(layout) = self.program.struct_layout(name) {
+                    for field in &layout.fields {
+                        self.collect_drop_glue_type(&field.ty, types);
+                    }
+                }
+            }
+            Ty::Enum(name) => {
+                if let Some(layout) = self.program.enum_layout(name) {
+                    for field in layout.variants.iter().flat_map(|variant| &variant.fields) {
+                        self.collect_drop_glue_type(&field.ty, types);
+                    }
+                }
+            }
+            Ty::I32
+            | Ty::I64
+            | Ty::U32
+            | Ty::U64
+            | Ty::Bool
+            | Ty::Unit
+            | Ty::Never
+            | Ty::Function(_)
+            | Ty::Error => {}
+        }
+    }
+
+    fn emit_drop_glue(&self, ty: &Ty) -> Result<String, Diagnostic> {
+        let mut output = format!(
+            "define internal void @{}(ptr %value) {{\nentry:\n",
+            drop_glue_symbol(ty)
+        );
+        if let Some(method) = self.program.drop_methods.get(ty) {
+            output.push_str(&format!(
+                "  call void @{}(ptr %value)\n",
+                function_symbol(method)
+            ));
+        }
+        match ty {
+            Ty::Struct(name) => {
+                let layout = self.program.struct_layout(name).ok_or_else(|| {
+                    Diagnostic::new(format!("internal error: missing struct layout `{name}`"))
+                })?;
+                let aggregate_ty = llvm_value_type(ty)?;
+                for (index, field) in layout.fields.iter().enumerate() {
+                    if !self.program.needs_drop(&field.ty) {
+                        continue;
+                    }
+                    output.push_str(&format!(
+                        "  %field.{index} = getelementptr inbounds {aggregate_ty}, ptr %value, i32 0, i32 {index}\n  call void @{}(ptr %field.{index})\n",
+                        drop_glue_symbol(&field.ty)
+                    ));
+                }
+                output.push_str("  ret void\n}\n");
+            }
+            Ty::Enum(name) => {
+                let layout = self.program.enum_layout(name).ok_or_else(|| {
+                    Diagnostic::new(format!("internal error: missing enum layout `{name}`"))
+                })?;
+                let aggregate_ty = llvm_value_type(ty)?;
+                output.push_str(&format!(
+                    "  %tag.ptr = getelementptr inbounds {aggregate_ty}, ptr %value, i32 0, i32 0\n  %tag = load i32, ptr %tag.ptr\n  switch i32 %tag, label %done ["
+                ));
+                for (index, _) in layout.variants.iter().enumerate() {
+                    output.push_str(&format!(" i32 {index}, label %variant.{index}"));
+                }
+                output.push_str(" ]\n");
+                for (variant_index, variant) in layout.variants.iter().enumerate() {
+                    output.push_str(&format!("variant.{variant_index}:\n"));
+                    for (field_index, field) in variant.fields.iter().enumerate() {
+                        if !self.program.needs_drop(&field.ty) {
+                            continue;
+                        }
+                        let llvm_index = 1 + variant.payload_offset + field_index;
+                        output.push_str(&format!(
+                            "  %variant.{variant_index}.field.{field_index} = getelementptr inbounds {aggregate_ty}, ptr %value, i32 0, i32 {llvm_index}\n  call void @{}(ptr %variant.{variant_index}.field.{field_index})\n",
+                            drop_glue_symbol(&field.ty)
+                        ));
+                    }
+                    output.push_str("  br label %done\n");
+                }
+                output.push_str("done:\n  ret void\n}\n");
+            }
+            Ty::Array(element, length) => {
+                let aggregate_ty = llvm_value_type(ty)?;
+                for index in 0..*length {
+                    output.push_str(&format!(
+                        "  %element.{index} = getelementptr inbounds {aggregate_ty}, ptr %value, i32 0, i32 {index}\n  call void @{}(ptr %element.{index})\n",
+                        drop_glue_symbol(element)
+                    ));
+                }
+                output.push_str("  ret void\n}\n");
+            }
+            _ => {
+                return Err(Diagnostic::new(format!(
+                    "internal error: cannot emit drop glue for `{ty}`"
+                )));
+            }
+        }
         Ok(output)
     }
 }
@@ -14762,6 +14945,10 @@ fn trait_method_name(key: &TraitImplKey, member: &str) -> String {
 
 fn function_symbol(name: &str) -> String {
     format!("sali.fn.{}", hex_name(name))
+}
+
+fn drop_glue_symbol(ty: &Ty) -> String {
+    format!("sali.drop.{}", hex_name(&canonical_type_encoding(ty)))
 }
 
 fn global_symbol(name: &str) -> String {
@@ -16372,6 +16559,104 @@ let main(): i32 = {
 "#,
         )
         .expect("a validated core Copy implementation must preserve its source place");
+    }
+
+    #[test]
+    fn source_backed_drop_is_exclusive_local_and_not_directly_callable() {
+        let conflict = compile_text(
+            r#"
+let Resource = struct(value: i32)
+extend Resource: Copy {}
+extend Resource: Drop {
+  let drop(mut borrow self)(): () = ()
+}
+let main(): i32 = 0
+"#,
+        )
+        .expect_err("Copy and Drop must be mutually exclusive");
+        assert!(conflict
+            .iter()
+            .any(|error| error.message.contains("both `Copy` and `Drop`")));
+
+        let orphan = compile_with_origins(
+            r#"
+pub let Resource = struct(value: i32)
+extend Resource: Drop {
+  let drop(mut borrow self)(): () = ()
+}
+let main(): i32 = 0
+"#,
+            vec![
+                origin(1, &["owner"]),
+                origin(2, &["consumer"]),
+                origin(2, &["consumer"]),
+            ],
+        )
+        .expect_err("Drop must obey the nominal ownership rule");
+        assert!(orphan.iter().any(|error| error
+            .message
+            .contains("must be implemented in the package that defines the type")));
+
+        let direct = compile_text(
+            r#"
+let Resource = struct(value: i32)
+extend Resource: Drop {
+  let drop(mut borrow self)(): () = ()
+}
+let main(): i32 = {
+  let mut value = Resource(0)
+  value.drop()
+  0
+}
+"#,
+        )
+        .expect_err("Drop.drop must remain compiler-only");
+        assert!(direct
+            .iter()
+            .any(|error| error.message.contains("cannot be called directly")));
+    }
+
+    #[test]
+    fn emits_recursive_drop_glue_from_source_backed_drop() {
+        let source = r#"
+let Resource = struct(value: i32)
+let Wrapper = struct(resource: Resource, plain: i32)
+let Choice = enum { Some(Wrapper), None }
+extend Resource: Drop {
+  let drop(mut borrow self)(): () = { self.value = 0 }
+}
+let main(): i32 = {
+  let value = Choice.Some(Wrapper(Resource(42), 1))
+  0
+}
+"#;
+        let program = crate::parser::parse(source).expect("drop source must parse");
+        let mut analyzer = Analyzer::new(&program);
+        let hir = analyzer.analyze().expect("drop source must lower");
+        assert!(analyzer.diagnostics.is_empty());
+        let resource = Ty::Struct("Resource".to_owned());
+        let wrapper = Ty::Struct("Wrapper".to_owned());
+        let choice = Ty::Enum("Choice".to_owned());
+        assert!(hir.needs_drop(&resource));
+        assert!(hir.needs_drop(&wrapper));
+        assert!(hir.needs_drop(&choice));
+        let drop_method = hir.drop_methods[&resource].clone();
+
+        let ir = compile(&program).expect("recursive drop glue must emit");
+        assert_eq!(ir.matches("define internal void @sali.drop.").count(), 3);
+        assert!(ir.contains(&format!(
+            "define internal void @{}(ptr %value)",
+            drop_glue_symbol(&resource)
+        )));
+        assert!(ir.contains(&format!(
+            "call void @{}(ptr %value)",
+            function_symbol(&drop_method)
+        )));
+        assert!(ir.contains(&format!(
+            "call void @{}(ptr %field.0)",
+            drop_glue_symbol(&resource)
+        )));
+        assert!(ir.contains("switch i32 %tag, label %done"));
     }
 
     #[test]
@@ -19579,6 +19864,9 @@ let classify(flag: bool): i32 = {
         let conditional = cleanup_plan_text(
             r#"
 let Boxed = struct(value: i32)
+extend Boxed: Drop {
+  let drop(mut borrow self)(): () = ()
+}
 let consume(move value: Boxed): () = ()
 let finish(flag: bool): () = {
   let boxed = Boxed(42);

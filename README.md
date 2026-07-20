@@ -229,12 +229,23 @@ v0.14.0 完成析构需求与 drop-flag 规划：
 - 这一版只建立可执行 lowering 所需的准确计划；尚未公开 `Drop`，也未在 LLVM 中分配 flag 或调用
   析构函数。下一步把 source-backed `Drop`、递归 drop glue 与这些 obligations 一起降到 LLVM。
 
+v0.15.0 开放 source-backed `Drop` 并生成递归 glue：
+
+- edition core 的普通 `.sali` 源声明 `Drop.drop(mut borrow self)(): ()`，编译器按 canonical lang-item
+  身份和精确形状登记；同名用户 trait 不会获得析构语义。
+- `Drop` 只能由名义类型所在包实现，不能与 `Copy` 同时实现；源码不能直接调用 `Drop.drop`，避免
+  自动清理前手工析构造成 double-drop。
+- `needs_drop` 现在精确递归：自定义 `Drop` 类型需要 glue，包含它的 struct/enum 只递归清理实际
+  需要的字段；enum glue 按运行期 discriminant 选择 active variant。
+- LLVM 已生成并验证 custom-drop、struct、enum 的递归 glue，且原生链接测试通过；scope-exit 调用、
+  flag storage/branch 和 unwind 仍在下一版接入，因此当前还不能依赖析构副作用发生。
+
 标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
 所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
 `Copy`，v0.9 建立 cleanup CFG，v0.10 补齐资源 storage/transfer，v0.11 完成完整 move-path forest 与
 初始化 fixed point，v0.12 再完成 temporary storage liveness，v0.14 已加入 `needs_drop` 与控制流敏感
 drop-flag 计划；这些都属于已经开始的 `core` 阶段，但还不发出析构。下一步提供 source-backed
-`Drop`、递归 drop glue 和 LLVM cleanup lowering；其后才固定
+`Drop` 与递归 drop glue；下一步把 v0.14 的 obligations/flags 降为真实 scope-exit 调用，其后才固定
 raw pointer 与 allocator ABI 并进入 `alloc`。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
 运行时之后。
 

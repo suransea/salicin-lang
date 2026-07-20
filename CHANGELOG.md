@@ -6,6 +6,21 @@ subset.
 
 ## Unreleased
 
+## 0.15.0 - 2026-07-21
+
+- Added the canonical `Drop` trait to the edition 2026 core source and validated its exact
+  `drop(mut borrow self)(): ()` contract through the normal parser and trait schema pipeline.
+- Restricted `Drop` implementations to the package defining the nominal type, rejected types that
+  also implement `Copy`, and prohibited direct source calls to `Drop.drop` so automatic cleanup
+  cannot be preceded by a manual double-drop.
+- Replaced conservative nominal `needs_drop` with recursive classification based on custom drop and
+  field layouts. Containing structs and active enum variants inherit cleanup only from fields that
+  actually need it.
+- Emitted deterministic recursive LLVM drop glue for custom-drop types, structs, enums, and arrays,
+  including discriminant dispatch for enums, and added native link/run coverage. Scope-exit calls
+  and LLVM materialization of the v0.14 flags remain pending, so destructor side effects are not yet
+  observable.
+
 ## 0.14.0 - 2026-07-21
 
 - Added a semantic `needs_drop` classification to every static cleanup move path. Built-in `Copy`
