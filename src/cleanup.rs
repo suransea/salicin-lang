@@ -142,6 +142,12 @@ pub(crate) enum CleanupOp {
         destination: MovePathId,
         variant: u32,
     },
+    /// Refines a complete enum value to the variant selected by a match edge
+    /// without mutating the value or changing ownership.
+    AssumeDiscriminant {
+        source: MovePathId,
+        variant: u32,
+    },
     StorageDead(LocalId),
 }
 
@@ -192,28 +198,6 @@ pub(crate) struct BasicBlock {
     pub(crate) scope: ScopeId,
     pub(crate) operations: Vec<CleanupOp>,
     pub(crate) terminator: Option<Terminator>,
-}
-
-/// Capabilities which a later drop-aware lowering must add before this plan
-/// can be used to emit destruction. Keeping these in the production plan is
-/// intentional: the ownership CFG is useful now, but it must not accidentally
-/// advertise support for cleanup cases whose values do not yet have stable
-/// places or whose liveness needs a runtime flag.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum PendingCapability {
-    MaybeOverwrite {
-        block: BasicBlockId,
-        path: MovePathId,
-    },
-    PatternBindingTransfer {
-        block: BasicBlockId,
-        binding: LocalId,
-        guarded: bool,
-    },
-    MatchDispatch {
-        block: BasicBlockId,
-        arm_count: usize,
-    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -452,7 +436,6 @@ pub(crate) struct CleanupPlan {
     pub(crate) locals: Vec<LocalDecl>,
     pub(crate) move_paths: Vec<MovePath>,
     pub(crate) blocks: Vec<BasicBlock>,
-    pub(crate) pending_capabilities: Vec<PendingCapability>,
     pub(crate) move_state: MoveStateAnalysis,
     pub(crate) drop_flags: DropFlagAnalysis,
 }
@@ -874,6 +857,26 @@ impl MoveState {
         }
     }
 
+    fn assume_discriminant(
+        &mut self,
+        source: MovePathId,
+        variant: u32,
+        topology: &MovePathTopology,
+    ) {
+        if let Some(index) = topology.discriminant_index[source.index()] {
+            self.discriminants[index].set_known(variant);
+        }
+        if let CompletionRule::EnumRoot(variants) = &topology.completion[source.index()] {
+            for (candidate, child) in variants {
+                if *candidate == variant {
+                    self.mark_whole(*child, InitializationCertainty::Must, topology);
+                } else {
+                    self.clear_subtree_only(*child, topology);
+                }
+            }
+        }
+    }
+
     fn apply_operation(
         &mut self,
         operation: &CleanupOp,
@@ -912,6 +915,9 @@ impl MoveState {
                 destination,
                 variant,
             } => self.set_discriminant(destination, variant, plan, topology),
+            CleanupOp::AssumeDiscriminant { source, variant } => {
+                self.assume_discriminant(source, variant, topology)
+            }
         }
     }
 
@@ -1340,7 +1346,6 @@ impl CleanupPlan {
         self.verify_locals(&mut errors);
         self.verify_move_paths(&mut errors);
         self.verify_blocks(&mut errors);
-        self.verify_pending_capabilities(&mut errors);
 
         if !errors.is_empty() {
             return Err(errors);
@@ -1382,6 +1387,20 @@ impl CleanupPlan {
                         if !valid_variant {
                             errors.push(VerifyError::new(format!(
                                 "SetDiscriminant in {:?} at operation {operation_index} uses variant {variant} on non-enum or incomplete enum path {destination:?}",
+                                block.id
+                            )));
+                        }
+                    }
+                    CleanupOp::AssumeDiscriminant { source, variant } => {
+                        let valid_variant =
+                            topology.enum_variants(source).is_some_and(|variants| {
+                                variants
+                                    .binary_search_by_key(&variant, |(candidate, _)| *candidate)
+                                    .is_ok()
+                            });
+                        if !valid_variant {
+                            errors.push(VerifyError::new(format!(
+                                "AssumeDiscriminant in {:?} at operation {operation_index} uses variant {variant} on non-enum or incomplete enum path {source:?}",
                                 block.id
                             )));
                         }
@@ -1756,135 +1775,6 @@ impl CleanupPlan {
         }
     }
 
-    fn verify_pending_capabilities(&self, errors: &mut Vec<VerifyError>) {
-        for capability in &self.pending_capabilities {
-            match capability {
-                PendingCapability::MaybeOverwrite { block, path } => {
-                    let block_data = self.verify_pending_block(*block, "MaybeOverwrite", errors);
-                    if self.move_paths.get(path.index()).is_none() {
-                        errors.push(VerifyError::new(format!(
-                            "pending MaybeOverwrite refers to invalid move path {path:?}"
-                        )));
-                    }
-                    if let Some(block_data) = block_data {
-                        let has_matching_operation = block_data.operations.iter().any(|operation| {
-                            matches!(operation, CleanupOp::Overwrite(candidate) if candidate == path)
-                                || matches!(
-                                    operation,
-                                    CleanupOp::Transfer {
-                                        destination,
-                                        kind: TransferKind::MaybeOverwrite,
-                                        ..
-                                    } if destination == path
-                                )
-                        });
-                        if !has_matching_operation {
-                            errors.push(VerifyError::new(format!(
-                                "pending MaybeOverwrite has no matching operation in block {block:?}"
-                            )));
-                        }
-                    }
-                }
-                PendingCapability::PatternBindingTransfer { block, binding, .. } => {
-                    let block =
-                        self.verify_pending_block(*block, "pattern binding transfer", errors);
-                    let binding = self.locals.get(binding.index());
-                    if binding.is_none() {
-                        errors.push(VerifyError::new(format!(
-                            "pending pattern binding transfer refers to invalid local {binding:?}"
-                        )));
-                    }
-                    if let (Some(block), Some(binding)) = (block, binding) {
-                        if binding.kind != LocalKind::Pattern
-                            || binding.ownership != LocalOwnership::Owned
-                            || binding.scope != block.scope
-                            || !block
-                                .operations
-                                .contains(&CleanupOp::StorageLive(binding.id))
-                        {
-                            errors.push(VerifyError::new(
-                                "pending pattern binding transfer must refer to an owned pattern declared live in that block",
-                            ));
-                        }
-                        let root_path = self.move_paths.iter().find(|path| {
-                            path.place.local == binding.id && path.place.projections.is_empty()
-                        });
-                        match root_path {
-                            Some(path)
-                                if block.operations.contains(&CleanupOp::Init(path.id)) => {}
-                            _ => errors.push(VerifyError::new(
-                                "pending pattern binding transfer must initialize the binding root path in that block",
-                            )),
-                        }
-                    }
-                }
-                PendingCapability::MatchDispatch { block, .. } => {
-                    let block_data = self.verify_pending_block(*block, "match dispatch", errors);
-                    if let (Some(block_data), PendingCapability::MatchDispatch { arm_count, .. }) =
-                        (block_data, capability)
-                    {
-                        let shape_matches = if *arm_count == 0 {
-                            matches!(block_data.terminator, Some(Terminator::Unreachable))
-                        } else {
-                            matches!(block_data.terminator, Some(Terminator::Branch { .. }))
-                        };
-                        if !shape_matches {
-                            errors.push(VerifyError::new(
-                                "pending match dispatch does not match its arm count and terminator",
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn verify_pending_block(
-        &self,
-        block: BasicBlockId,
-        capability: &str,
-        errors: &mut Vec<VerifyError>,
-    ) -> Option<&BasicBlock> {
-        let result = self.blocks.get(block.index());
-        if result.is_none() {
-            errors.push(VerifyError::new(format!(
-                "pending {capability} refers to invalid block {block:?}"
-            )));
-        }
-        result
-    }
-
-    fn verify_pending_path_operation(
-        &self,
-        block: BasicBlockId,
-        path: MovePathId,
-        expected_operation: CleanupOp,
-        capability: &str,
-        errors: &mut Vec<VerifyError>,
-    ) {
-        let block_data = self.verify_pending_block(block, capability, errors);
-        let path_data = self.move_paths.get(path.index());
-        if path_data.is_none() {
-            errors.push(VerifyError::new(format!(
-                "pending {capability} refers to invalid move path {path:?}"
-            )));
-        }
-        if let (Some(block_data), Some(path_data)) = (block_data, path_data) {
-            if !block_data.operations.contains(&expected_operation) {
-                errors.push(VerifyError::new(format!(
-                    "pending {capability} has no matching operation in block {block:?}"
-                )));
-            }
-            if let Some(local) = self.locals.get(path_data.place.local.index()) {
-                if !self.is_ancestor(local.scope, block_data.scope) {
-                    errors.push(VerifyError::new(format!(
-                        "pending {capability} refers to a move path that is not visible in block {block:?}"
-                    )));
-                }
-            }
-        }
-    }
-
     fn verify_operation(
         &self,
         block: BasicBlockId,
@@ -1910,7 +1800,7 @@ impl CleanupPlan {
             CleanupOp::Transfer {
                 source,
                 destination,
-                kind,
+                kind: _,
             } => {
                 self.verify_operation_path(block, source, "Transfer source", true, errors);
                 self.verify_operation_path(
@@ -1943,24 +1833,12 @@ impl CleanupPlan {
                         )));
                     }
                 }
-                if kind == TransferKind::MaybeOverwrite
-                    && !self.pending_capabilities.iter().any(|pending| {
-                        matches!(
-                            pending,
-                            PendingCapability::MaybeOverwrite {
-                                block: pending_block,
-                                path
-                            } if *pending_block == block && *path == destination
-                        )
-                    })
-                {
-                    errors.push(VerifyError::new(format!(
-                        "MaybeOverwrite transfer in {block:?} has no matching pending capability"
-                    )));
-                }
             }
             CleanupOp::SetDiscriminant { destination, .. } => {
                 self.verify_operation_path(block, destination, "SetDiscriminant", true, errors);
+            }
+            CleanupOp::AssumeDiscriminant { source, .. } => {
+                self.verify_operation_path(block, source, "AssumeDiscriminant", true, errors);
             }
         }
     }
@@ -2097,6 +1975,19 @@ impl CleanupPlan {
                         if destination_state != PathInitialization::Uninitialized {
                             errors.push(VerifyError::new(format!(
                                 "SetDiscriminant in {:?} at operation {operation_index} requires an uninitialized destination {destination:?}, found {destination_state:?}",
+                                block.id
+                            )));
+                        }
+                    }
+                    CleanupOp::AssumeDiscriminant { source, .. } => {
+                        require_live!(
+                            self.move_paths[source.index()].place.local,
+                            "AssumeDiscriminant"
+                        );
+                        let source_state = status(source);
+                        if source_state != PathInitialization::Initialized {
+                            errors.push(VerifyError::new(format!(
+                                "AssumeDiscriminant in {:?} at operation {operation_index} requires an initialized enum source {source:?}, found {source_state:?}",
                                 block.id
                             )));
                         }
@@ -2471,7 +2362,6 @@ impl CleanupPlanBuilder {
                     operations: Vec::new(),
                     terminator: None,
                 }],
-                pending_capabilities: Vec::new(),
                 move_state: MoveStateAnalysis::uncomputed(),
                 drop_flags: DropFlagAnalysis::uncomputed(),
             },
@@ -2566,10 +2456,6 @@ impl CleanupPlanBuilder {
             declaration_order,
         });
         Ok(id)
-    }
-
-    pub(crate) fn record_pending(&mut self, capability: PendingCapability) {
-        self.plan.pending_capabilities.push(capability);
     }
 
     pub(crate) fn new_move_path(
@@ -2977,32 +2863,6 @@ mod tests {
         assert!(errors
             .iter()
             .any(|message| message.contains("has no terminator")));
-    }
-
-    #[test]
-    fn rejects_malformed_pending_capability_references() {
-        let mut builder = CleanupPlanBuilder::new();
-        let entry = builder.entry_block();
-        builder.record_pending(PendingCapability::MaybeOverwrite {
-            block: BasicBlockId(99),
-            path: MovePathId(99),
-        });
-        builder
-            .set_terminator(
-                entry,
-                Terminator::Return {
-                    exited_scopes: vec![],
-                },
-            )
-            .unwrap();
-
-        let errors = messages(&builder.into_unverified());
-        assert!(errors
-            .iter()
-            .any(|message| message.contains("invalid move path")));
-        assert!(errors
-            .iter()
-            .any(|message| message.contains("invalid block")));
     }
 
     #[test]
@@ -3419,11 +3279,70 @@ mod tests {
             )
             .unwrap();
         builder
+            .push_operation(
+                orphan,
+                CleanupOp::AssumeDiscriminant {
+                    source: scalar,
+                    variant: 99,
+                },
+            )
+            .unwrap();
+        builder
             .set_terminator(orphan, Terminator::Unreachable)
             .unwrap();
 
-        assert!(messages(&builder.into_unverified()).iter().any(|message| {
+        let errors = messages(&builder.into_unverified());
+        assert!(errors.iter().any(|message| {
             message.contains("SetDiscriminant") && message.contains("non-enum")
+        }));
+        assert!(errors.iter().any(|message| {
+            message.contains("AssumeDiscriminant") && message.contains("non-enum")
+        }));
+    }
+
+    #[test]
+    fn rejects_assuming_a_discriminant_for_an_uninitialized_enum() {
+        let mut builder = CleanupPlanBuilder::new();
+        let entry = builder.entry_block();
+        let value = builder
+            .new_local(
+                builder.root_scope(),
+                LocalKind::User,
+                LocalOwnership::Owned,
+                false,
+            )
+            .unwrap();
+        let root = builder.new_move_path(Place::local(value), None).unwrap();
+        builder
+            .new_move_path(
+                Place::local(value).project(Projection::Downcast(0)),
+                Some(root),
+            )
+            .unwrap();
+        builder
+            .push_operation(entry, CleanupOp::StorageLive(value))
+            .unwrap();
+        builder
+            .push_operation(
+                entry,
+                CleanupOp::AssumeDiscriminant {
+                    source: root,
+                    variant: 0,
+                },
+            )
+            .unwrap();
+        builder
+            .set_terminator(
+                entry,
+                Terminator::Return {
+                    exited_scopes: vec![],
+                },
+            )
+            .unwrap();
+
+        assert!(messages(&builder.into_unverified()).iter().any(|message| {
+            message.contains("AssumeDiscriminant")
+                && message.contains("requires an initialized enum source")
         }));
     }
 
@@ -3462,52 +3381,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_pattern_transfer_without_declaration_and_initialization_operations() {
-        let mut builder = CleanupPlanBuilder::new();
-        let entry = builder.entry_block();
-        let binding = builder
-            .new_local(
-                builder.root_scope(),
-                LocalKind::Pattern,
-                LocalOwnership::Owned,
-                false,
-            )
-            .unwrap();
-        builder.new_move_path(Place::local(binding), None).unwrap();
-        builder.record_pending(PendingCapability::PatternBindingTransfer {
-            block: entry,
-            binding,
-            guarded: false,
-        });
-        builder
-            .set_terminator(
-                entry,
-                Terminator::Return {
-                    exited_scopes: vec![],
-                },
-            )
-            .unwrap();
-
-        let errors = messages(&builder.into_unverified());
-        assert!(errors
-            .iter()
-            .any(|message| message.contains("declared live")));
-        assert!(errors
-            .iter()
-            .any(|message| message.contains("initialize the binding root path")));
-    }
-
-    #[test]
-    fn rejects_non_root_entry_and_mismatched_match_dispatch_shape() {
+    fn rejects_non_root_entry() {
         let mut builder = CleanupPlanBuilder::new();
         let child = builder
             .new_scope(builder.root_scope(), ScopeKind::FunctionBody)
             .unwrap();
         let entry = builder.entry_block();
-        builder.record_pending(PendingCapability::MatchDispatch {
-            block: entry,
-            arm_count: 1,
-        });
         builder
             .set_terminator(
                 entry,
@@ -3523,9 +3402,6 @@ mod tests {
         assert!(errors
             .iter()
             .any(|message| message.contains("entry block") && message.contains("root scope")));
-        assert!(errors
-            .iter()
-            .any(|message| message.contains("match dispatch") && message.contains("terminator")));
     }
 
     #[test]
@@ -3825,10 +3701,6 @@ mod tests {
                 },
             )
             .unwrap();
-        builder.record_pending(PendingCapability::MaybeOverwrite {
-            block: join,
-            path: destination_path,
-        });
         builder
             .set_terminator(
                 join,
@@ -3959,12 +3831,6 @@ mod tests {
                     },
                 )
                 .unwrap();
-            if kind == TransferKind::MaybeOverwrite {
-                builder.record_pending(PendingCapability::MaybeOverwrite {
-                    block: entry,
-                    path: destination,
-                });
-            }
             builder
                 .set_terminator(
                     entry,

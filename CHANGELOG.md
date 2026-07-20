@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.24.0 - 2026-07-21
+
+- Made enum match refinement explicit in cleanup IR with `AssumeDiscriminant`. The verifier rejects
+  invalid variants, non-enum paths, dead storage, and enum roots that are not fully initialized.
+- Lowered pattern ownership into ordinary atomic `Transfer` operations. Unguarded arms commit at arm
+  entry; guarded resource bindings commit only on the guard-success edge, leaving the scrutinee whole
+  on guard failure and early return.
+- Removed `MatchDispatch`, `PatternBindingTransfer`, `MaybeOverwrite`, and the complete
+  `PendingCapability` infrastructure. Executable cleanup plans are now self-contained inputs to
+  move-state and drop-flag verification rather than carrying parallel promises about later lowering.
+
 ## 0.23.0 - 2026-07-21
 
 - Lowered definite overwrite through `mut borrow` parameters for values that need drop. Root and

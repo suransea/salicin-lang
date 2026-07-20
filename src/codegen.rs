@@ -15,7 +15,7 @@ use crate::ast::{
 use crate::cleanup::{
     BasicBlockId as CleanupBlockId, CleanupEdge, CleanupOp, CleanupPlan, CleanupPlanBuilder,
     LocalId as CleanupLocalId, LocalKind as CleanupLocalKind,
-    LocalOwnership as CleanupLocalOwnership, MovePathId as CleanupMovePathId, PendingCapability,
+    LocalOwnership as CleanupLocalOwnership, MovePathId as CleanupMovePathId,
     Place as CleanupPlace, Projection as CleanupProjection, ScopeId as CleanupScopeId,
     ScopeKind as CleanupScopeKind, Terminator as CleanupTerminator, TransferKind,
 };
@@ -12113,14 +12113,7 @@ impl<'a> HirCleanupPlanner<'a> {
                     let kind = match assignment {
                         AssignmentKind::Initialize => TransferKind::Initialize,
                         AssignmentKind::Overwrite => TransferKind::Overwrite,
-                        AssignmentKind::MaybeOverwrite => {
-                            self.builder
-                                .record_pending(PendingCapability::MaybeOverwrite {
-                                    block: cursor.block,
-                                    path,
-                                });
-                            TransferKind::MaybeOverwrite
-                        }
+                        AssignmentKind::MaybeOverwrite => TransferKind::MaybeOverwrite,
                     };
                     let destination_place = self
                         .move_paths
@@ -12808,6 +12801,67 @@ impl<'a> HirCleanupPlanner<'a> {
         }
     }
 
+    fn commit_pattern_binding(
+        &mut self,
+        cursor: CleanupCursor,
+        scrutinee_local: CleanupLocalId,
+        scrutinee_ty: &Ty,
+        matcher: HirMatcher,
+        binding: &HirPatternBinding,
+        destination: &CleanupDestination,
+    ) -> Result<(), Diagnostic> {
+        if !binding.moves {
+            return self.operation(cursor.block, CleanupOp::Init(destination.path));
+        }
+
+        let mut source_place = CleanupPlace::local(scrutinee_local);
+        if !binding.path.is_empty() {
+            let HirMatcher::Variant(variant) = matcher else {
+                return Err(self.diagnostic(
+                    "moving a projected pattern binding requires a concrete enum variant",
+                ));
+            };
+            let Ty::Enum(enum_name) = scrutinee_ty else {
+                return Err(self.diagnostic("pattern transfer scrutinee is not an enum"));
+            };
+            let layout = self.program.enum_layout(enum_name).ok_or_else(|| {
+                self.diagnostic(format!(
+                    "missing enum layout `{enum_name}` for pattern transfer"
+                ))
+            })?;
+            let variant_layout = layout.variants.get(variant).ok_or_else(|| {
+                self.diagnostic(format!(
+                    "invalid enum variant {variant} for pattern transfer"
+                ))
+            })?;
+            let payload_start = 1 + variant_layout.payload_offset;
+            let physical_field = binding.path[0];
+            let field = physical_field.checked_sub(payload_start).ok_or_else(|| {
+                self.diagnostic("pattern binding path precedes its variant payload")
+            })?;
+            if field >= variant_layout.fields.len() {
+                return Err(self.diagnostic("pattern binding path exceeds its variant payload"));
+            }
+            let variant = u32::try_from(variant)
+                .map_err(|_| self.diagnostic("pattern variant index does not fit in u32"))?;
+            let field = u32::try_from(field)
+                .map_err(|_| self.diagnostic("pattern field index does not fit in u32"))?;
+            source_place = source_place
+                .project(CleanupProjection::Downcast(variant))
+                .project(CleanupProjection::Field(field));
+            for field in &binding.path[1..] {
+                let field = u32::try_from(*field)
+                    .map_err(|_| self.diagnostic("nested pattern field does not fit in u32"))?;
+                source_place = source_place.project(CleanupProjection::Field(field));
+            }
+        }
+        let source = CleanupDestination {
+            path: self.lookup_move_path(&source_place)?,
+            place: source_place,
+        };
+        self.transfer(cursor, &source, destination, TransferKind::Initialize)
+    }
+
     fn walk_match(
         &mut self,
         scrutinee: &HirExpr,
@@ -12825,11 +12879,6 @@ impl<'a> HirCleanupPlanner<'a> {
         else {
             return Ok(None);
         };
-        self.builder
-            .record_pending(PendingCapability::MatchDispatch {
-                block: cursor.block,
-                arm_count: arms.len(),
-            });
         let join = self.new_block(cursor.scope)?;
         let mut dispatch = cursor;
         let mut reaches_join = false;
@@ -12851,6 +12900,18 @@ impl<'a> HirCleanupPlanner<'a> {
                 block: arm_entry,
                 scope: arm_scope,
             };
+            if let HirMatcher::Variant(variant) = arm.matcher {
+                let variant = u32::try_from(variant)
+                    .map_err(|_| self.diagnostic("match variant index does not fit in u32"))?;
+                self.operation(
+                    arm_cursor.block,
+                    CleanupOp::AssumeDiscriminant {
+                        source: scrutinee_path,
+                        variant,
+                    },
+                )?;
+            }
+            let mut declared_bindings = Vec::new();
             for binding in &arm.bindings {
                 let local = self.declare_source_local(
                     arm_scope,
@@ -12865,13 +12926,21 @@ impl<'a> HirCleanupPlanner<'a> {
                 )?;
                 self.operation(arm_cursor.block, CleanupOp::StorageLive(local))?;
                 let path = self.root_move_path(local)?;
-                self.operation(arm_cursor.block, CleanupOp::Init(path))?;
-                self.builder
-                    .record_pending(PendingCapability::PatternBindingTransfer {
-                        block: arm_cursor.block,
-                        binding: local,
-                        guarded: arm.guard.is_some(),
-                    });
+                let destination = CleanupDestination {
+                    place: CleanupPlace::local(local),
+                    path,
+                };
+                if arm.guard.is_none() || !binding.moves {
+                    self.commit_pattern_binding(
+                        arm_cursor,
+                        scrutinee_local,
+                        &scrutinee.ty,
+                        arm.matcher,
+                        binding,
+                        &destination,
+                    )?;
+                }
+                declared_bindings.push((binding, destination));
             }
             let body_start = if let Some(guard) = &arm.guard {
                 let (guard_local, guard_path) = self.prepare_temporary(arm_cursor, &guard.ty)?;
@@ -12891,6 +12960,22 @@ impl<'a> HirCleanupPlanner<'a> {
                                 else_edge: CleanupEdge::new(guard_false, Vec::new()),
                             },
                         )?;
+                        let body_cursor = CleanupCursor {
+                            block: body_block,
+                            scope: arm_scope,
+                        };
+                        for (binding, destination) in &declared_bindings {
+                            if binding.moves {
+                                self.commit_pattern_binding(
+                                    body_cursor,
+                                    scrutinee_local,
+                                    &scrutinee.ty,
+                                    arm.matcher,
+                                    binding,
+                                    destination,
+                                )?;
+                            }
+                        }
                         self.goto_exiting(
                             CleanupCursor {
                                 block: guard_false,
@@ -12899,10 +12984,7 @@ impl<'a> HirCleanupPlanner<'a> {
                             next_dispatch,
                             cursor.scope,
                         )?;
-                        Some(CleanupCursor {
-                            block: body_block,
-                            scope: arm_scope,
-                        })
+                        Some(body_cursor)
                     }
                     None => None,
                 }
@@ -19586,10 +19668,76 @@ let propagate(move value: Result(i32, bool)): Result(i32, bool) = {
                     if exited_scopes.iter().any(|scope| match_arm_scopes.contains(scope))
             )
         }));
-        assert!(plan
-            .pending_capabilities
-            .iter()
-            .any(|pending| matches!(pending, PendingCapability::MatchDispatch { .. })));
+        assert!(plan.blocks.iter().any(|block| {
+            block.operations.iter().any(|operation| {
+                let destination = match operation {
+                    CleanupOp::Init(path) => Some(*path),
+                    CleanupOp::Transfer { destination, .. } => Some(*destination),
+                    _ => None,
+                };
+                destination.is_some_and(|destination| {
+                    plan.locals[plan.move_paths[destination.index()].place.local.index()].kind
+                        == CleanupLocalKind::Pattern
+                })
+            })
+        }));
+    }
+
+    #[test]
+    fn cleanup_plan_commits_guarded_pattern_transfers_after_variant_refinement() {
+        let plan = cleanup_plan_text(
+            r#"
+let Resource = struct(value: i32)
+let Bundle = struct(left: Resource, right: Resource)
+let Choice = enum { Some(Bundle), None }
+extend Resource: Drop {
+  let drop(mut borrow self)(): () = ()
+}
+let consume(move value: Resource): () = ()
+let inspect(move choice: Choice): i32 = choice match {
+  Some(Bundle(left, _)) if left.value == 1 => do {
+    consume(left)
+    1
+  },
+  Some(_) => 2,
+  None => 0
+}
+"#,
+            "inspect",
+        );
+        let mut pattern_transfers = Vec::new();
+        for block in &plan.blocks {
+            for operation in &block.operations {
+                let CleanupOp::Transfer {
+                    source,
+                    destination,
+                    kind: TransferKind::Initialize,
+                } = operation
+                else {
+                    continue;
+                };
+                if plan.locals[plan.move_paths[destination.index()].place.local.index()].kind
+                    == CleanupLocalKind::Pattern
+                {
+                    pattern_transfers.push((block, *source));
+                }
+            }
+        }
+        assert_eq!(pattern_transfers.len(), 1);
+        let (_, source) = pattern_transfers[0];
+        assert!(plan.blocks.iter().any(|block| {
+            block.operations.iter().any(|operation| {
+                matches!(operation, CleanupOp::AssumeDiscriminant { variant: 0, .. })
+            })
+        }));
+        assert_eq!(
+            plan.move_paths[source.index()].place.projections,
+            [
+                CleanupProjection::Downcast(0),
+                CleanupProjection::Field(0),
+                CleanupProjection::Field(0),
+            ]
+        );
     }
 
     #[test]
@@ -20663,7 +20811,7 @@ let bind(): () = {
     }
 
     #[test]
-    fn cleanup_plan_records_assignment_kinds_moves_and_pending_overwrite_state() {
+    fn cleanup_plan_records_assignment_kinds_moves_and_maybe_overwrite_state() {
         let plan = cleanup_plan_text(
             r#"
 let Boxed = struct(value: i32)
@@ -20698,10 +20846,13 @@ let classify(flag: bool): i32 = {
                 ..
             }
         )));
-        assert!(plan
-            .pending_capabilities
-            .iter()
-            .any(|pending| { matches!(pending, PendingCapability::MaybeOverwrite { .. }) }));
+        assert!(operations.iter().any(|operation| matches!(
+            operation,
+            CleanupOp::Transfer {
+                kind: TransferKind::MaybeOverwrite,
+                ..
+            }
+        )));
     }
 
     #[test]

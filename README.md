@@ -315,8 +315,16 @@ v0.23.0 执行 `mut borrow` referent 的覆盖清理：
   再 store 新 owning 值。借用 storage 不创建伪造的 owned drop flag。
 - RHS 提前返回时旧 referent 保持不变；成功覆盖后 caller 最终只清理 replacement。root 与 field 的
   原生 trap 测试证明旧值确实在覆盖点析构。
-- `BorrowedPlaceMutation` pending 已删除。接下来只剩 match planner 标记、first-class callable ABI
-  以及进入 `alloc` 前的 raw pointer/allocator 边界。
+- `BorrowedPlaceMutation` pending 已删除。
+
+v0.24.0 令 match cleanup plan 完全可执行、可验证：
+
+- enum arm 入口以正式 `AssumeDiscriminant` 精化 active variant；verifier 会拒绝非 enum、非法 variant、
+  dead storage 和尚未完整初始化的 enum root。
+- pattern binding 使用普通原子 `Transfer` 接管所有权。无 guard 的 arm 在入口提交；有 guard 的资源
+  binding 仅在 guard-success edge 提交，失败或提前返回仍保留完整 scrutinee。
+- `MatchDispatch`、`PatternBindingTransfer`、`MaybeOverwrite` 及整个 `PendingCapability` 基础设施均已删除。
+  move-state 与 drop-flag 验证现在只依赖正式 cleanup CFG，不再依赖“后续会 lowering”的旁路承诺。
 
 标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
 所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
@@ -325,8 +333,8 @@ v0.23.0 执行 `mut borrow` referent 的覆盖清理：
 drop-flag 计划，v0.15 提供 `Drop` 与递归 glue，v0.16 完成第一阶段结构化 scope-exit lowering，
 v0.17 已物化 struct projection flags，v0.18 接通直接 enum payload binding，v0.19 补齐嵌套
 downcast remainder，v0.20 完成 guard rollback，v0.21 完成本地 `FnOnce` resource captures，v0.22
-开放 owning partial captures，v0.23 完成 borrowed overwrite cleanup。下一步收敛 match planner 与
-first-class callable layout，其后才固定
+开放 owning partial captures，v0.23 完成 borrowed overwrite cleanup，v0.24 完成 match planner 与
+正式 cleanup IR 的对齐。下一步确定 first-class callable layout，其后固定
 raw pointer 与 allocator ABI 并进入 `alloc`。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
 运行时之后。
 

@@ -118,11 +118,19 @@ replacement first, calls exact glue on the old root or projected field, and then
 value into borrowed storage. No owned flag is fabricated for the referent. The
 `BorrowedPlaceMutation` pending capability has been removed; native traps verify both root and field
 cleanup.
+
+The v0.24 cleanup planner makes match refinement and binding ownership executable IR rather than
+side-channel promises. `AssumeDiscriminant` refines a fully initialized enum at arm entry, and
+ordinary atomic transfers commit pattern ownership immediately for unguarded arms or only on the
+success edge for guarded arms. The verifier checks enum topology, liveness, and initialization.
+`MatchDispatch`, `PatternBindingTransfer`, `MaybeOverwrite`, and the entire `PendingCapability`
+infrastructure have been removed.
+
 Compile-time globals are independently materialized at each use and are
 outside the cleanup plan; resource-bearing global semantics must be settled before `Drop` is
 allowed on globals.
 
-The adjacent standard-library route is therefore: finish match-plan alignment and first-class
-callable layout; then define raw pointers and the allocator ABI. Only after those
+The adjacent standard-library route is therefore: define the first-class callable layout, then raw
+pointers and the allocator ABI. Only after those
 boundaries are real will `alloc` be added, followed
 by platform `std` over the C ABI and minimal runtime.
