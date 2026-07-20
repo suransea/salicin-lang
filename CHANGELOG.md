@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.36.0 - 2026-07-21
+
+- Added `where` predicates to blanket generic inherent extensions with the documented multiline
+  syntax.
+- Constrained methods are materialized only for nominal instances whose concrete type arguments
+  satisfy every predicate; unsatisfied instances do not acquire the member at all.
+- Propagated extension predicates onto generic associated-function templates, producing precise
+  call-site constraint errors, and made assumed generic proofs participate in conditional member
+  selection.
+- Restricted extension member API boundaries by predicate traits and associated equality types, and
+  added module-level leak checks for public constrained extensions.
+
 ## 0.35.0 - 2026-07-21
 
 - Added associated-type equality bindings in where trait references, including

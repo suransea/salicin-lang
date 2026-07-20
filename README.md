@@ -422,8 +422,9 @@ v0.27 建立 raw pointer 与最小 `unsafe` 边界，v0.28 固定可替换 alloc
 layout intrinsic，v0.30 以普通 alloc 源实现首个 owning `Box(T)`，v0.31 补齐 `into_inner` 与 replace
 所有权访问，v0.32 落地 blanket generic inherent extension 与 Box 方法表面，v0.33 落地泛型函数
 普通 `where T: Trait` 谓词、`Copy` 抽象证明与具体调用点检查，v0.34 接通不涉及关联类型的 bound
-method 静态分派和泛型间证明转交，v0.35 加入 `Output = T` 关联类型等式与受约束泛型运算符。
-下一步加入 extension where 和生命周期化 Box 借用，再以相同 allocator/drop 基础推进 `Vec(T)`；泛型 callable
+method 静态分派和泛型间证明转交，v0.35 加入 `Output = T` 关联类型等式与受约束泛型运算符，
+v0.36 开放带 where 的 blanket inherent extension 和按实例条件成员。下一步加入泛型 trait impl 与
+生命周期化 Box 借用，再以相同 allocator/drop 基础推进 `Vec(T)`；泛型 callable
 参数将在正式的 `where` / `Fn` 约束语法落地后开放。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
 运行时之后。
 
@@ -444,7 +445,7 @@ method 的部分应用只允许捕获 `Copy` receiver 和实参。名义 `Copy` 
 表达式路径中的 `Self` 与
 `A.method(a)()` 完全限定调用尚未开放。省略编译期组的嵌套推断仍受当前表达式类型探测能力限制；
 无法唯一推断时需用 `T: Concrete` 形式的命名编译期实参。trait 首版
-暂不支持 extension where、泛型 impl、默认方法、泛型关联类型、完全限定调用
+暂不支持泛型 trait impl、默认方法、泛型关联类型、完全限定调用
 和 trait object；无约束的抽象类型
 不能声明为 `copy` 参数。`Add`、`Sub`、`Mul`、`Div` 与 `Rem` 已由 edition core 登记为 lang item，
 但重载路径目前仍要求左操作数能静态探测为具体名义类型；多个 `Rhs` 候选并存时，无法静态探测的

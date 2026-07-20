@@ -284,6 +284,12 @@ impl Parser {
         } else {
             None
         };
+        self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::LBrace]);
+        let where_predicates = self.where_clause()?;
+        if !where_predicates.is_empty() && compile_groups.is_empty() {
+            return Err(self.error_here("extension `where` requires compile-time parameters"));
+        }
+        self.take_newlines_if_followed_by(&[TokenKind::LBrace]);
         self.expect(&TokenKind::LBrace, "`{` after extend target")?;
         self.skip_separators();
 
@@ -304,6 +310,7 @@ impl Parser {
             compile_groups,
             target,
             trait_ref,
+            where_predicates,
             members,
         })
     }
@@ -383,7 +390,7 @@ impl Parser {
                 break;
             }
             while self.take(&TokenKind::Newline) {}
-            if self.at(&TokenKind::Equal) {
+            if self.at(&TokenKind::Equal) || self.at(&TokenKind::LBrace) {
                 break;
             }
         }
@@ -3075,7 +3082,8 @@ mod tests {
     fn parses_compile_parameters_on_extend_headers() {
         let program = parse(
             "let Cell(T: type) = struct(value: T)\n\
-             extend(T: type) Cell(T) {\n\
+             extend(T: type) Cell(T)\n\
+             where T: Copy {\n\
                let get(borrow self)(): T = self.value\n\
              }\n",
         )
@@ -3085,6 +3093,7 @@ mod tests {
             panic!("expected extend declaration");
         };
         assert_eq!(extension.compile_groups.len(), 1);
+        assert_eq!(extension.where_predicates.len(), 1);
         assert_eq!(extension.compile_groups[0][0].name, "T");
         assert_eq!(
             extension.target,

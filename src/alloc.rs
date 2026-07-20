@@ -251,6 +251,7 @@ fn valid_box_extension(extension: &crate::ast::ExtendDef) -> bool {
                 if parameter.name == "T" && parameter.kind == CompileParamKind::Type)
     ) && extension.target == applied("Box", named("T"))
         && extension.trait_ref.is_none()
+        && extension.where_predicates.is_empty()
         && extension.members.len() == 4
         && matches!(&extension.members[0], crate::ast::ExtendMember::Function(function)
             if function.name == "new"

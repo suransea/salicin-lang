@@ -155,7 +155,9 @@ struct NominalInstanceInfo {
 #[derive(Clone)]
 struct GenericInherentExtension {
     target_arguments: Vec<String>,
+    where_predicates: Vec<crate::ast::WherePredicate>,
     members: Vec<ExtendMember>,
+    access: AccessBoundary,
     origin: ItemOrigin,
 }
 
@@ -2709,6 +2711,12 @@ impl Analyzer {
     }
 
     fn collect_generic_inherent_extension(&mut self, extension: ExtendDef, origin: ItemOrigin) {
+        if !self.validate_where_predicate_shapes(
+            "generic inherent extension",
+            &extension.where_predicates,
+        ) {
+            return;
+        }
         let parameters = extension
             .compile_groups
             .iter()
@@ -2792,6 +2800,26 @@ impl Analyzer {
             return;
         }
 
+        let mut extension_access = self.nominal_access_or_internal(target_template);
+        for predicate in &extension.where_predicates {
+            if let Type::Named(trait_name, _) = &predicate.trait_ref {
+                if let Some(schema) = self.traits.get(trait_name) {
+                    extension_access = Self::intersect_access_boundaries(
+                        &extension_access,
+                        &schema.access,
+                        &origin,
+                    );
+                }
+            }
+            for binding in &predicate.associated_types {
+                if self.source_type_is_concrete(&binding.ty) {
+                    let ty = self.lower_source_type(&binding.ty);
+                    extension_access =
+                        self.restrict_access_boundary_to_type(&extension_access, &ty, &origin);
+                }
+            }
+        }
+
         for member in &extension.members {
             let ExtendMember::Function(function) = member else {
                 self.error("generic inherent associated constants are not supported yet");
@@ -2841,7 +2869,9 @@ impl Analyzer {
 
         let template = GenericInherentExtension {
             target_arguments,
+            where_predicates: extension.where_predicates.clone(),
             members: extension.members.clone(),
+            access: extension_access.clone(),
             origin: origin.clone(),
         };
 
@@ -2868,6 +2898,7 @@ impl Analyzer {
             let mut generic = function.clone();
             generic.name = canonical.clone();
             generic.compile_groups = extension.compile_groups.clone();
+            generic.where_predicates = extension.where_predicates.clone();
             let mut self_substitution = HashMap::new();
             self_substitution.insert("Self".to_owned(), extension.target.clone());
             substitute_function_types(&mut generic, &self_substitution);
@@ -2875,8 +2906,8 @@ impl Analyzer {
             self.function_templates.insert(canonical.clone(), generic);
             self.function_template_origins
                 .insert(canonical.clone(), origin.clone());
-            let access = self.nominal_access_or_internal(target_template);
-            self.function_accesses.insert(canonical.clone(), access);
+            self.function_accesses
+                .insert(canonical.clone(), extension_access.clone());
             self.generic_inherent_functions.insert(key, canonical);
         }
 
@@ -2931,7 +2962,34 @@ impl Analyzer {
         for (name, source) in extension.target_arguments.iter().zip(source_arguments) {
             substitutions.insert(name.clone(), source.clone());
         }
+        let mut predicates = extension.where_predicates.clone();
+        for predicate in &mut predicates {
+            substitute_type_parameters(&mut predicate.subject, &substitutions);
+            substitute_type_parameters(&mut predicate.trait_ref, &substitutions);
+            for binding in &mut predicate.associated_types {
+                substitute_type_parameters(&mut binding.ty, &substitutions);
+            }
+        }
+        if predicates
+            .iter()
+            .any(|predicate| !self.concrete_where_predicate_holds(predicate))
+        {
+            return;
+        }
         let mut members = extension.members.clone();
+        let registered_members = members
+            .iter()
+            .filter_map(|member| match member {
+                ExtendMember::Function(function) => Some((
+                    function.name.clone(),
+                    function
+                        .groups
+                        .first()
+                        .is_some_and(|group| group.len() == 1 && group[0].name == "self"),
+                )),
+                ExtendMember::Const(_) => None,
+            })
+            .collect::<Vec<_>>();
         for member in &mut members {
             match member {
                 ExtendMember::Function(function) => {
@@ -2950,10 +3008,28 @@ impl Analyzer {
                 compile_groups: Vec::new(),
                 target: Type::Named(canonical.to_owned(), Vec::new()),
                 trait_ref: None,
+                where_predicates: Vec::new(),
                 members,
             },
             extension.origin.clone(),
         );
+        for (member, is_method) in registered_members {
+            let name = if is_method {
+                inherent_method_name(canonical, &member)
+            } else {
+                associated_function_name(canonical, &member)
+            };
+            if let Some(access) = self.function_accesses.get(&name).cloned() {
+                self.function_accesses.insert(
+                    name,
+                    Self::intersect_access_boundaries(
+                        &access,
+                        &extension.access,
+                        &extension.origin,
+                    ),
+                );
+            }
+        }
     }
 
     fn collect_nominal_layouts(&mut self) {
@@ -3962,6 +4038,54 @@ impl Analyzer {
             }
         }
         valid
+    }
+
+    fn concrete_where_predicate_holds(&mut self, predicate: &crate::ast::WherePredicate) -> bool {
+        let subject = self.lower_source_type(&predicate.subject);
+        let Type::Named(name, source_arguments) = &predicate.trait_ref else {
+            return false;
+        };
+        let arguments = source_arguments
+            .iter()
+            .map(|argument| self.lower_source_type(argument))
+            .collect::<Vec<_>>();
+        let associated_types = predicate
+            .associated_types
+            .iter()
+            .map(|binding| (binding.name.clone(), self.lower_source_type(&binding.ty)))
+            .collect::<HashMap<_, _>>();
+        if subject == Ty::Error
+            || arguments.contains(&Ty::Error)
+            || associated_types.values().any(|ty| *ty == Ty::Error)
+        {
+            return false;
+        }
+        if name == self.lang_item_name(LangItemKind::Copy) && arguments.is_empty() {
+            return self.is_copy_type(&subject);
+        }
+        if BINARY_OPERATOR_TRAITS
+            .iter()
+            .any(|operator| name == self.lang_item_name(operator.lang_item))
+            && subject.is_integer()
+            && arguments.as_slice() == [subject.clone()]
+        {
+            return associated_types
+                .get("Output")
+                .is_none_or(|output| output == &subject);
+        }
+        self.trait_impls
+            .get(&TraitImplKey {
+                self_ty: subject,
+                trait_ref: TraitRefKey {
+                    name: name.clone(),
+                    arguments,
+                },
+            })
+            .is_some_and(|implementation| {
+                associated_types.iter().all(|(name, expected)| {
+                    implementation.associated_types.get(name) == Some(expected)
+                })
+            })
     }
 
     fn lower_source_type(&mut self, source: &Type) -> Ty {

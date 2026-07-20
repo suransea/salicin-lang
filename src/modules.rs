@@ -1232,7 +1232,76 @@ fn validate_item_api(
                 }
             }
         }
-        Item::Extend(_) => {}
+        Item::Extend(extension) => {
+            let extension_boundary = match &extension.target {
+                Type::Named(name, _) => nominal_boundaries.get(name.as_str()).unwrap_or(boundary),
+                _ => boundary,
+            };
+            let mut bound_types =
+                compile_parameter_names(&extension.compile_groups, &no_bound_types);
+            bound_types.insert("Self".to_owned());
+            for (index, predicate) in extension.where_predicates.iter().enumerate() {
+                validate_exposed_type(
+                    &predicate.subject,
+                    extension_boundary,
+                    source_path,
+                    &bound_types,
+                    &format!("extension where predicate {} subject", index + 1),
+                    nominal_boundaries,
+                    diagnostics,
+                );
+                validate_exposed_type(
+                    &predicate.trait_ref,
+                    extension_boundary,
+                    source_path,
+                    &bound_types,
+                    &format!("extension where predicate {} trait", index + 1),
+                    nominal_boundaries,
+                    diagnostics,
+                );
+                for binding in &predicate.associated_types {
+                    validate_exposed_type(
+                        &binding.ty,
+                        extension_boundary,
+                        source_path,
+                        &bound_types,
+                        &format!(
+                            "extension where predicate {} associated type `{}`",
+                            index + 1,
+                            binding.name
+                        ),
+                        nominal_boundaries,
+                        diagnostics,
+                    );
+                }
+            }
+            for member in &extension.members {
+                match member {
+                    ExtendMember::Function(function) => validate_function_api(
+                        function,
+                        extension_boundary,
+                        source_path,
+                        &bound_types,
+                        &format!("extension method `{}`", function.name),
+                        nominal_boundaries,
+                        diagnostics,
+                    ),
+                    ExtendMember::Const(binding) => {
+                        if let Some(annotation) = &binding.annotation {
+                            validate_exposed_type(
+                                annotation,
+                                extension_boundary,
+                                source_path,
+                                &bound_types,
+                                &format!("extension constant `{}`", binding.name),
+                                nominal_boundaries,
+                                diagnostics,
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1533,6 +1602,13 @@ impl Resolver {
         self.rewrite_type(&mut extension.target, context, &header_type_scope);
         if let Some(trait_ref) = &mut extension.trait_ref {
             self.rewrite_type(trait_ref, context, &header_type_scope);
+        }
+        for predicate in &mut extension.where_predicates {
+            self.rewrite_type(&mut predicate.subject, context, &header_type_scope);
+            self.rewrite_type(&mut predicate.trait_ref, context, &header_type_scope);
+            for binding in &mut predicate.associated_types {
+                self.rewrite_type(&mut binding.ty, context, &header_type_scope);
+            }
         }
 
         let mut member_type_scope = header_type_scope;
@@ -3175,6 +3251,29 @@ let main(): i32 = Option()
         assert!(
             errors.iter().any(|diagnostic| {
                 diagnostic.contains("where predicate 1 trait")
+                    && diagnostic.contains("exposes private type `Hidden`")
+            }),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_traits_that_are_narrower_than_constrained_extension_members() {
+        let errors = resolve_sources(&[unit(
+            "src/lib.sali",
+            &[],
+            "let Hidden = trait {}\n\
+             pub let Cell(T: type) = struct(pub value: T)\n\
+             extend(T: type) Cell(T) where T: Hidden {\n\
+               let take(move self)(): T = self.value\n\
+             }\n",
+            true,
+        )])
+        .unwrap_err();
+
+        assert!(
+            errors.iter().any(|diagnostic| {
+                diagnostic.contains("extension where predicate 1 trait")
                     && diagnostic.contains("exposes private type `Hidden`")
             }),
             "{errors:?}"

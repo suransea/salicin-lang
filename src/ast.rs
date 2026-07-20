@@ -114,6 +114,7 @@ pub struct ExtendDef {
     pub compile_groups: Vec<Vec<CompileParam>>,
     pub target: Type,
     pub trait_ref: Option<Type>,
+    pub where_predicates: Vec<WherePredicate>,
     pub members: Vec<ExtendMember>,
 }
 

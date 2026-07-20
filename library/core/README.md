@@ -157,5 +157,6 @@ adds verified move-out/forget primitives used by alloc's safe `box_into_inner` a
 ownership operations. v0.32 adds blanket generic inherent extensions and uses them for Box methods;
 v0.33 adds ordinary generic-function trait predicates and `Copy` proof checking; v0.34 adds static
 bound-method dispatch; v0.35 adds associated-type equality proofs and generic arithmetic dispatch.
-Constrained extensions and lifetime-carrying safe dereference remain next. Platform
+v0.36 applies the same proofs to conditional blanket inherent extensions. Generic trait impls and
+lifetime-carrying safe dereference remain next. Platform
 `std` remains later work over the C ABI and minimal runtime.

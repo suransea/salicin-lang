@@ -852,8 +852,9 @@ where T: Copy, = {
 v0.34 进一步允许泛型体通过普通 trait bound 静态调用 method，并可把同一证明转交给另一个受约束
 泛型函数。v0.35 实现关联类型等式，因此 `where T: Add(T, Output = T)` 可为 `x + y` 同时确定右
 操作数和结果，`Produce(Item = i32)` 也可确定普通 method 签名。模板检查阶段使用会完整回滚的
-假设实现；单态化后重新选择具体 `extend` 实现并核对关联类型。extension 的 where 和泛型 trait
-implementation selection 留给后续版本。
+假设实现；单态化后重新选择具体 `extend` 实现并核对关联类型。v0.36 也允许 blanket generic
+inherent extension 携带 where：满足谓词的实例才物化 method，关联函数则在调用点检查谓词。泛型
+trait implementation selection 留给后续版本。
 
 ## 10. Trait 与实现
 
@@ -935,8 +936,8 @@ let value = cell.take()
 类型参数从 target 的具体实例反向代入方法；关联函数则像普通泛型函数一样从实参、期望结果类型或
 `Cell.new(T: i64)(42)` 这样的命名类型参数推断。多参数 target 可以重排，但首版要求每个声明参数都
 作为裸 target argument 恰好出现一次。generic member、associated constant、具体 specialization、
-generic trait implementation、extension where 与关联类型 selection 尚未开放；它们不会被悄悄当作
-inherent 实现。
+generic trait implementation 尚未开放；它不会被悄悄当作 inherent 实现。v0.36 起 blanket inherent
+extension 可以使用同一套 where predicates 条件选择成员。
 
 实现参数必须能从目标类型、trait 参数或 where 约束唯一决定，防止产生无法选择的自由参数。
 

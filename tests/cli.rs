@@ -380,6 +380,40 @@ fn where_associated_equalities_enable_operator_dispatch() {
 }
 
 #[test]
+fn constrained_generic_extensions_select_members_per_instance() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "constrained_generic_extend.sali"))
+        .output()
+        .expect("run constrained generic extension");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+
+    for (name, expected) in [
+        (
+            "constrained_extend_method_unsatisfied.sali",
+            "unknown method",
+        ),
+        (
+            "constrained_extend_function_unsatisfied.sali",
+            "not satisfied",
+        ),
+        ("constrained_extend_unknown_trait.sali", "unknown trait"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("reject an unsatisfied constrained extension member");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn generic_inherent_extensions_resolve_across_file_modules() {
     let project = TestDirectory::new();
     project.write(
