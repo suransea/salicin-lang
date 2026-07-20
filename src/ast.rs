@@ -1,6 +1,39 @@
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub items: Vec<Item>,
+    /// Visibility is stored alongside top-level items until module lowering
+    /// gives declarations stable module identities.
+    pub item_visibilities: Vec<Visibility>,
+}
+
+impl Program {
+    pub fn new(items: Vec<Item>) -> Self {
+        let item_visibilities = vec![Visibility::Private; items.len()];
+        Self {
+            items,
+            item_visibilities,
+        }
+    }
+
+    pub fn with_visibilities(items: Vec<Item>, item_visibilities: Vec<Visibility>) -> Self {
+        assert_eq!(
+            items.len(),
+            item_visibilities.len(),
+            "every program item must have a visibility"
+        );
+        Self {
+            items,
+            item_visibilities,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Visibility {
+    #[default]
+    Private,
+    Package,
+    Public,
 }
 
 #[derive(Debug, Clone, PartialEq)]

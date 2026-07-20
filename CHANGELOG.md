@@ -5,6 +5,17 @@ the accepted language, while patch releases preserve source semantics within the
 
 ## Unreleased
 
+- Added strict `salicin.toml` package loading, default and explicit library/binary targets, target
+  selection, project discovery, protected inputs, and project-local build outputs.
+- Defined prelude `void` as the ordinary alias of `()` and `never` as an empty enum, including
+  uninhabited control-flow coercion and empty-match elimination.
+- Added automatically discovered file modules with deterministic two-pass package name resolution,
+  nested qualified value/type/constructor paths, and canonical lowering across functions, nominal
+  types, traits and extensions.
+- Added private, `pub(package)` and `pub` top-level visibility, descendant access to private names,
+  lexical shadowing during module resolution, and diagnostics for private, duplicate, conflicting,
+  invalid and unknown qualified module names.
+
 ## 0.3.0 - 2026-07-20
 
 M2 development follows the v0.2 language foundation.

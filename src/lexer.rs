@@ -3,6 +3,8 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     Let,
+    Pub,
+    Package,
     Mut,
     Copy,
     Move,
@@ -90,6 +92,42 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
         delimiter_depth: 0,
     };
     lexer.run()
+}
+
+/// Return whether `text` is reserved as a lexer keyword and therefore cannot
+/// be used as a source-level identifier or file-module path segment.
+pub fn is_keyword(text: &str) -> bool {
+    keyword(text).is_some()
+}
+
+fn keyword(text: &str) -> Option<TokenKind> {
+    Some(match text {
+        "let" => TokenKind::Let,
+        "pub" => TokenKind::Pub,
+        "package" => TokenKind::Package,
+        "mut" => TokenKind::Mut,
+        "copy" => TokenKind::Copy,
+        "move" => TokenKind::Move,
+        "borrow" => TokenKind::Borrow,
+        "type" => TokenKind::Type,
+        "do" => TokenKind::Do,
+        "if" => TokenKind::If,
+        "else" => TokenKind::Else,
+        "return" => TokenKind::Return,
+        "throw" => TokenKind::Throw,
+        "while" => TokenKind::While,
+        "loop" => TokenKind::Loop,
+        "break" => TokenKind::Break,
+        "extend" => TokenKind::Extend,
+        "struct" => TokenKind::Struct,
+        "enum" => TokenKind::Enum,
+        "trait" => TokenKind::Trait,
+        "match" => TokenKind::Match,
+        "try" => TokenKind::Try,
+        "true" => TokenKind::True,
+        "false" => TokenKind::False,
+        _ => return None,
+    })
 }
 
 struct Lexer {
@@ -287,30 +325,9 @@ impl Lexer {
         while self.peek().is_some_and(|c| c == '_' || c.is_alphanumeric()) {
             text.push(self.bump().expect("peeked character exists"));
         }
-        match text.as_str() {
-            "let" => TokenKind::Let,
-            "mut" => TokenKind::Mut,
-            "copy" => TokenKind::Copy,
-            "move" => TokenKind::Move,
-            "borrow" => TokenKind::Borrow,
-            "type" => TokenKind::Type,
-            "do" => TokenKind::Do,
-            "if" => TokenKind::If,
-            "else" => TokenKind::Else,
-            "return" => TokenKind::Return,
-            "throw" => TokenKind::Throw,
-            "while" => TokenKind::While,
-            "loop" => TokenKind::Loop,
-            "break" => TokenKind::Break,
-            "extend" => TokenKind::Extend,
-            "struct" => TokenKind::Struct,
-            "enum" => TokenKind::Enum,
-            "trait" => TokenKind::Trait,
-            "match" => TokenKind::Match,
-            "try" => TokenKind::Try,
-            "true" => TokenKind::True,
-            "false" => TokenKind::False,
-            _ => TokenKind::Ident(text),
+        match keyword(&text) {
+            Some(keyword) => keyword,
+            None => TokenKind::Ident(text),
         }
     }
 
@@ -420,6 +437,32 @@ mod tests {
         let tokens = lex("let Foo = trait { let Item: type }").unwrap();
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Trait));
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Type));
+    }
+
+    #[test]
+    fn recognizes_visibility_keywords() {
+        let tokens = lex("pub let exported = 1\npub(package) let shared = 2").unwrap();
+        assert_eq!(
+            tokens
+                .iter()
+                .filter(|token| token.kind == TokenKind::Pub)
+                .count(),
+            2
+        );
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Package));
+    }
+
+    #[test]
+    fn exposes_the_same_keyword_set_used_by_tokenization() {
+        for text in [
+            "let", "pub", "package", "mut", "copy", "move", "borrow", "type", "do", "if", "else",
+            "return", "throw", "while", "loop", "break", "extend", "struct", "enum", "trait",
+            "match", "try", "true", "false",
+        ] {
+            assert!(is_keyword(text), "`{text}` was not reported as a keyword");
+            assert!(!matches!(lex(text).unwrap()[0].kind, TokenKind::Ident(_)));
+        }
+        assert!(!is_keyword("module_name"));
     }
 
     #[test]

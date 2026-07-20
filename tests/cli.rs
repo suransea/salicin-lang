@@ -1477,3 +1477,177 @@ let main(): i32 = choose(true)
         .expect("run program with never coercion");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 }
+
+#[test]
+fn file_modules_resolve_flat_nested_and_nominal_members() {
+    let project = TestDirectory::new();
+    project.write(
+        "salicin.toml",
+        r#"[package]
+name = "module-app"
+version = "0.1.0"
+edition = "2026"
+"#,
+    );
+    project.write(
+        "src/main.sali",
+        r#"let main(): i32 = {
+  let reply: net.http.Reply = net.http.reply()
+  let status: net.http.Status = net.http.Status.Ok(2)
+  let extra = status match {
+    net.http.Status.Ok(value) => value,
+    net.http.Status.Err => 0
+  }
+  math.answer() + reply.value + extra
+}
+"#,
+    );
+    project.write(
+        "src/math.sali",
+        r#"pub(package) let Number = struct(value: i32)
+let Read = trait {
+  let read(borrow self)(): i32
+}
+extend Number: Read {
+  let read(borrow self)(): i32 = self.value
+}
+pub(package) let answer(): i32 = {
+  let number = Number(value: 40)
+  number.read()
+}
+"#,
+    );
+    project.write(
+        "src/net/http.sali",
+        r#"pub(package) let Reply = struct(value: i32)
+pub(package) let Status = enum {
+  Ok(i32),
+  Err,
+}
+pub(package) let reply(): Reply = Reply(value: 0)
+"#,
+    );
+
+    let output = salic()
+        .arg("run")
+        .arg(&project.0)
+        .output()
+        .expect("run package with file modules");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
+fn file_module_diagnostics_include_visibility_and_qualified_paths() {
+    let private_member = TestDirectory::new();
+    private_member.write(
+        "salicin.toml",
+        r#"[package]
+name = "private-module"
+version = "0.1.0"
+edition = "2026"
+"#,
+    );
+    private_member.write("src/main.sali", "let main(): i32 = sibling.secret()\n");
+    private_member.write("src/sibling.sali", "let secret(): i32 = 42\n");
+
+    let private = salic()
+        .arg("check")
+        .arg(&private_member.0)
+        .output()
+        .expect("check private sibling access");
+    assert!(
+        !private.status.success(),
+        "private member unexpectedly passed"
+    );
+    let stderr = String::from_utf8_lossy(&private.stderr).to_lowercase();
+    assert!(
+        stderr.contains("private") && stderr.contains("sibling") && stderr.contains("secret"),
+        "{}",
+        output_text(&private)
+    );
+
+    let unknown_nested_member = TestDirectory::new();
+    unknown_nested_member.write(
+        "salicin.toml",
+        r#"[package]
+name = "unknown-nested-member"
+version = "0.1.0"
+edition = "2026"
+"#,
+    );
+    unknown_nested_member.write("src/main.sali", "let main(): i32 = net.http.missing()\n");
+    unknown_nested_member.write("src/net/http.sali", "pub(package) let answer(): i32 = 42\n");
+
+    let unknown = salic()
+        .arg("check")
+        .arg(&unknown_nested_member.0)
+        .output()
+        .expect("check unknown nested module member");
+    assert!(
+        !unknown.status.success(),
+        "unknown member unexpectedly passed"
+    );
+    let stderr = String::from_utf8_lossy(&unknown.stderr).to_lowercase();
+    assert!(
+        stderr.contains("net.http") && stderr.contains("missing"),
+        "nested module path was absent from the diagnostic:\n{}",
+        output_text(&unknown)
+    );
+}
+
+#[test]
+fn unselected_binary_targets_are_not_file_modules() {
+    let project = TestDirectory::new();
+    project.write(
+        "salicin.toml",
+        r#"[package]
+name = "separate-targets"
+version = "0.1.0"
+edition = "2026"
+
+[[bin]]
+name = "primary"
+path = "src/main.sali"
+
+[[bin]]
+name = "tool"
+path = "src/tool.sali"
+"#,
+    );
+    project.write("src/main.sali", "let main(): i32 = 42\n");
+    project.write("src/tool.sali", "this is deliberately not Salicin\n");
+
+    let output = salic()
+        .arg("run")
+        .arg(&project.0)
+        .args(["--bin", "primary"])
+        .output()
+        .expect("run one binary without compiling another target");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
+fn file_module_paths_reject_keywords_and_the_inference_placeholder() {
+    for segment in ["let", "_"] {
+        let project = TestDirectory::new();
+        project.write(
+            "salicin.toml",
+            "[package]\nname = \"reserved-module\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+        );
+        project.write("src/main.sali", "let main(): i32 = 42\n");
+        project.write(&format!("src/{segment}.sali"), "let value = 0\n");
+
+        let output = salic()
+            .arg("check")
+            .arg(&project.0)
+            .output()
+            .expect("reject an unspellable file-module path");
+        assert_eq!(output.status.code(), Some(2), "{}", output_text(&output));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(segment) && stderr.contains("reserved"),
+            "{}",
+            output_text(&output)
+        );
+    }
+}

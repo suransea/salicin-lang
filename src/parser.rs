@@ -4,7 +4,7 @@ use crate::ast::{
     BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EnumDef, Expr, ExtendDef,
     ExtendMember, Field, Function, Item, MatchArm, Param, PassMode, Pattern, PatternField,
     PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantDef,
-    VariantFields,
+    VariantFields, Visibility,
 };
 use crate::lexer::{lex, LexError, Token, TokenKind};
 
@@ -58,17 +58,36 @@ type DeclarationGroups = (Vec<Vec<CompileParam>>, Vec<Vec<Param>>);
 impl Parser {
     fn program(mut self) -> Result<Program, ParseError> {
         let mut items = Vec::new();
+        let mut item_visibilities = Vec::new();
         self.skip_separators();
 
         while !self.at(&TokenKind::Eof) {
+            let visibility = self.visibility()?;
+            if visibility != Visibility::Private && self.at(&TokenKind::Extend) {
+                return Err(self.error_here("`extend` declarations cannot have visibility"));
+            }
             items.push(self.item()?);
+            item_visibilities.push(visibility);
             if !self.at(&TokenKind::Eof) && !self.at_separator() {
                 return Err(self.error_here("expected a newline or `;` after declaration"));
             }
             self.skip_separators();
         }
 
-        Ok(Program { items })
+        Ok(Program::with_visibilities(items, item_visibilities))
+    }
+
+    fn visibility(&mut self) -> Result<Visibility, ParseError> {
+        if !self.take(&TokenKind::Pub) {
+            return Ok(Visibility::Private);
+        }
+        if !self.take(&TokenKind::LParen) {
+            return Ok(Visibility::Public);
+        }
+
+        self.expect(&TokenKind::Package, "`package` in visibility")?;
+        self.expect(&TokenKind::RParen, "`)` after package visibility")?;
+        Ok(Visibility::Package)
     }
 
     fn item(&mut self) -> Result<Item, ParseError> {
@@ -179,6 +198,9 @@ impl Parser {
     }
 
     fn extend_member(&mut self) -> Result<ExtendMember, ParseError> {
+        if self.at(&TokenKind::Pub) {
+            return Err(self.error_here("visibility on extend members is not supported yet"));
+        }
         self.expect(&TokenKind::Let, "`let` in extend body")?;
         if self.take(&TokenKind::Mut) {
             let mutable = self.previous().clone();
@@ -530,6 +552,9 @@ impl Parser {
     }
 
     fn trait_member(&mut self) -> Result<TraitMember, ParseError> {
+        if self.at(&TokenKind::Pub) {
+            return Err(self.error_here("visibility on trait members is not supported yet"));
+        }
         self.expect(&TokenKind::Let, "`let` in trait body")?;
         if self.take(&TokenKind::Mut) {
             let mutable = self.previous().clone();
@@ -599,6 +624,9 @@ impl Parser {
     fn named_type_fields_after_open(&mut self) -> Result<Vec<Field>, ParseError> {
         let mut fields = Vec::new();
         loop {
+            if self.at(&TokenKind::Pub) {
+                return Err(self.error_here("field visibility is not supported yet"));
+            }
             let name = self.expect_ident("a field name")?;
             self.expect(&TokenKind::Colon, "`:` after field name")?;
             fields.push(Field {
@@ -659,7 +687,11 @@ impl Parser {
             return Ok(Type::Infer);
         }
 
-        let name = self.expect_ident("a type")?;
+        let mut name = self.expect_ident("a type")?;
+        while self.take(&TokenKind::Dot) {
+            name.push('.');
+            name.push_str(&self.expect_ident("a type path segment after `.`")?);
+        }
         if name == "Array" && self.take(&TokenKind::LParen) {
             let element = self.type_expr()?;
             self.expect(&TokenKind::Comma, "`,` before array length")?;
@@ -1473,6 +1505,8 @@ impl Parser {
 fn describe(kind: &TokenKind) -> &'static str {
     match kind {
         TokenKind::Let => "`let`",
+        TokenKind::Pub => "`pub`",
+        TokenKind::Package => "`package`",
         TokenKind::Mut => "`mut`",
         TokenKind::Copy => "`copy`",
         TokenKind::Move => "`move`",
@@ -1550,6 +1584,61 @@ mod tests {
         assert_eq!(function.groups.len(), 2);
         assert_eq!(function.groups[0][0].mode, PassMode::Copy);
         assert_eq!(function.return_type, Some(Type::I32));
+    }
+
+    #[test]
+    fn preserves_top_level_visibility_alongside_items() {
+        let program = parse(
+            "let private = 0\n\
+             pub let exported = 1\n\
+             pub(package) let shared = 2\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            program.item_visibilities,
+            vec![Visibility::Private, Visibility::Public, Visibility::Package,]
+        );
+        assert_eq!(program.items.len(), program.item_visibilities.len());
+    }
+
+    #[test]
+    fn parses_dotted_type_paths() {
+        let program =
+            parse("let convert(value: net.http.Point): net.http.Result(core.Status) = value\n")
+                .unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+
+        assert_eq!(
+            function.groups[0][0].ty,
+            Type::Named("net.http.Point".into(), Vec::new())
+        );
+        assert_eq!(
+            function.return_type,
+            Some(Type::Named(
+                "net.http.Result".into(),
+                vec![Type::Named("core.Status".into(), Vec::new())],
+            ))
+        );
+    }
+
+    #[test]
+    fn rejects_visibility_where_it_is_not_supported_yet() {
+        let extension = parse("pub extend Thing {}\n").unwrap_err();
+        assert!(extension
+            .message
+            .contains("`extend` declarations cannot have visibility"));
+
+        let field = parse("let Thing = struct(pub value: i32)\n").unwrap_err();
+        assert!(field.message.contains("field visibility"));
+
+        let trait_member = parse("let Trait = trait { pub let f(value: i32): i32 }\n").unwrap_err();
+        assert!(trait_member.message.contains("trait members"));
+
+        let extend_member = parse("extend Thing { pub(package) let answer = 42 }\n").unwrap_err();
+        assert!(extend_member.message.contains("extend members"));
     }
 
     #[test]

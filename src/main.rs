@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -7,7 +8,11 @@ use std::process::{self, Command, ExitStatus};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use salicin_lang::manifest::{load_manifest, Manifest, Target, TargetKind, MANIFEST_FILE_NAME};
-use salicin_lang::{check_library_source, compile_library_source, compile_source};
+use salicin_lang::modules::{is_valid_module_segment, SourceUnit};
+use salicin_lang::{
+    check_library_source, check_library_source_units, check_source_units, compile_library_source,
+    compile_library_source_units, compile_source, compile_source_units,
+};
 
 const HELP: &str = "Salicin compiler
 
@@ -298,7 +303,7 @@ fn execute(action: Action) -> i32 {
                 return 2;
             }
 
-            let ir = match compile_file(&target.source, target.is_library) {
+            let ir = match compile_target(&target) {
                 Ok(ir) => ir,
                 Err(()) => return 1,
             };
@@ -315,7 +320,7 @@ fn execute(action: Action) -> i32 {
                 Ok(target) => target,
                 Err(message) => return report_driver_error(message),
             };
-            match check_file(&target.source, target.is_library) {
+            match check_target(&target) {
                 Ok(()) => 0,
                 Err(()) => 1,
             }
@@ -337,7 +342,7 @@ fn execute(action: Action) -> i32 {
                     }
                 }
             }
-            let ir = match compile_file(&target.source, target.is_library) {
+            let ir = match compile_target(&target) {
                 Ok(ir) => ir,
                 Err(()) => return 1,
             };
@@ -358,7 +363,7 @@ fn execute(action: Action) -> i32 {
                 Ok(target) => target,
                 Err(message) => return report_driver_error(message),
             };
-            let ir = match compile_file(&target.source, false) {
+            let ir = match compile_target(&target) {
                 Ok(ir) => ir,
                 Err(()) => return 1,
             };
@@ -378,11 +383,13 @@ struct ResolvedTarget {
     project: Option<ProjectTarget>,
     is_library: bool,
     protected_inputs: Vec<PathBuf>,
+    module_sources: Vec<(PathBuf, Vec<String>)>,
 }
 
 struct ProjectTarget {
     package_root: PathBuf,
     target_name: String,
+    target_sources: Vec<PathBuf>,
 }
 
 impl ResolvedTarget {
@@ -434,6 +441,7 @@ fn resolve_input(
                 project: None,
                 is_library: false,
                 protected_inputs: vec![path.to_path_buf()],
+                module_sources: Vec::new(),
             });
         }
     }
@@ -454,19 +462,137 @@ fn resolve_input(
     };
 
     let manifest = load_manifest(&manifest_path).map_err(|error| error.to_string())?;
+    let target_sources = manifest
+        .targets()
+        .map(|target| target.path.clone())
+        .collect::<Vec<_>>();
     let protected_inputs = std::iter::once(manifest.manifest_path.clone())
-        .chain(manifest.targets().map(|target| target.path.clone()))
+        .chain(target_sources.iter().cloned())
         .collect();
     let selected = select_manifest_target(&manifest, selection, binary_only)?;
-    Ok(ResolvedTarget {
+    let mut resolved = ResolvedTarget {
         source: selected.path,
         project: Some(ProjectTarget {
             package_root: manifest.package_root,
             target_name: selected.name,
+            target_sources,
         }),
         is_library: selected.kind == TargetKind::Lib,
         protected_inputs,
-    })
+        module_sources: Vec::new(),
+    };
+    resolved.module_sources = discover_module_sources(&resolved)?;
+    resolved
+        .protected_inputs
+        .extend(resolved.module_sources.iter().map(|(path, _)| path.clone()));
+    Ok(resolved)
+}
+
+fn discover_module_sources(target: &ResolvedTarget) -> Result<Vec<(PathBuf, Vec<String>)>, String> {
+    let Some(project) = &target.project else {
+        return Ok(Vec::new());
+    };
+    let source_root = project.package_root.join("src");
+    if !source_root.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut candidates = Vec::new();
+    collect_sali_files(&source_root, &mut candidates)?;
+    candidates.sort();
+
+    let mut modules = Vec::new();
+    let mut seen = HashSet::new();
+    for path in candidates {
+        if paths_refer_to_same_file(&path, &target.source)
+            || project
+                .target_sources
+                .iter()
+                .any(|other| paths_refer_to_same_file(&path, other))
+        {
+            continue;
+        }
+        let relative = path.strip_prefix(&source_root).map_err(|_| {
+            format!(
+                "source module '{}' is outside '{}'",
+                path.display(),
+                source_root.display()
+            )
+        })?;
+        if relative == Path::new("main.sali")
+            || relative == Path::new("lib.sali")
+            || relative
+                .components()
+                .next()
+                .is_some_and(|component| component.as_os_str() == OsStr::new("bin"))
+        {
+            continue;
+        }
+
+        let module_path = module_path_from_relative(relative)?;
+        if !seen.insert(module_path.clone()) {
+            return Err(format!("duplicate file module `{}`", module_path.join(".")));
+        }
+        modules.push((path, module_path));
+    }
+    Ok(modules)
+}
+
+fn collect_sali_files(directory: &Path, output: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = fs::read_dir(directory).map_err(|error| {
+        format!(
+            "could not read source directory '{}': {error}",
+            directory.display()
+        )
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "could not read an entry in source directory '{}': {error}",
+                directory.display()
+            )
+        })?;
+        let file_type = entry.file_type().map_err(|error| {
+            format!(
+                "could not inspect source path '{}': {error}",
+                entry.path().display()
+            )
+        })?;
+        if file_type.is_dir() {
+            collect_sali_files(&entry.path(), output)?;
+        } else if file_type.is_file() && entry.path().extension() == Some(OsStr::new("sali")) {
+            output.push(entry.path());
+        }
+    }
+    Ok(())
+}
+
+fn module_path_from_relative(relative: &Path) -> Result<Vec<String>, String> {
+    let mut path = relative.to_path_buf();
+    path.set_extension("");
+    let mut modules = Vec::new();
+    for component in path.components() {
+        let Some(segment) = component.as_os_str().to_str() else {
+            return Err(format!(
+                "file module path '{}' must be valid UTF-8",
+                relative.display()
+            ));
+        };
+        if !is_valid_module_segment(segment) {
+            return Err(format!(
+                "file module segment `{segment}` in '{}' must be a non-reserved ASCII snake_case identifier",
+                relative.display()
+            ));
+        }
+        modules.push(segment.to_owned());
+    }
+    if modules.is_empty() {
+        return Err(format!(
+            "source file '{}' does not define a module path",
+            relative.display()
+        ));
+    }
+    Ok(modules)
 }
 
 fn find_manifest_from_current_dir() -> Result<PathBuf, String> {
@@ -580,6 +706,20 @@ fn compile_file(source: &Path, library: bool) -> Result<String, ()> {
     report_compilation(source, result)
 }
 
+fn compile_target(target: &ResolvedTarget) -> Result<String, ()> {
+    if target.project.is_none() {
+        return compile_file(&target.source, target.is_library);
+    }
+
+    let units = read_source_units(target)?;
+    let result = if target.is_library {
+        compile_library_source_units(&units)
+    } else {
+        compile_source_units(&units)
+    };
+    report_project_compilation(&target.source, result)
+}
+
 fn check_file(source: &Path, library: bool) -> Result<(), ()> {
     if !library {
         return compile_file(source, false).map(|_| ());
@@ -587,6 +727,39 @@ fn check_file(source: &Path, library: bool) -> Result<(), ()> {
 
     let text = read_source(source)?;
     report_compilation(source, check_library_source(&text))
+}
+
+fn check_target(target: &ResolvedTarget) -> Result<(), ()> {
+    if target.project.is_none() {
+        return check_file(&target.source, target.is_library);
+    }
+
+    let units = read_source_units(target)?;
+    let result = if target.is_library {
+        check_library_source_units(&units)
+    } else {
+        check_source_units(&units)
+    };
+    report_project_compilation(&target.source, result)
+}
+
+fn read_source_units(target: &ResolvedTarget) -> Result<Vec<SourceUnit>, ()> {
+    let mut units = Vec::with_capacity(target.module_sources.len() + 1);
+    units.push(SourceUnit {
+        path: target.source.display().to_string(),
+        module_path: Vec::new(),
+        source: read_source(&target.source)?,
+        is_root: true,
+    });
+    for (path, module_path) in &target.module_sources {
+        units.push(SourceUnit {
+            path: path.display().to_string(),
+            module_path: module_path.clone(),
+            source: read_source(path)?,
+            is_root: false,
+        });
+    }
+    Ok(units)
 }
 
 fn report_compilation<T>(source: &Path, result: Result<T, Vec<String>>) -> Result<T, ()> {
@@ -598,6 +771,29 @@ fn report_compilation<T>(source: &Path, result: Result<T, Vec<String>>) -> Resul
             } else {
                 for diagnostic in diagnostics {
                     eprintln!("{}: {diagnostic}", source.display());
+                }
+            }
+            Err(())
+        }
+    }
+}
+
+fn report_project_compilation<T>(source: &Path, result: Result<T, Vec<String>>) -> Result<T, ()> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(diagnostics) => {
+            if diagnostics.is_empty() {
+                eprintln!("{}: error: compilation failed", source.display());
+            } else {
+                for diagnostic in diagnostics {
+                    if diagnostic.starts_with("error:") {
+                        // The semantic analyzer does not carry per-item source
+                        // maps yet. Avoid attributing a module error to the
+                        // package root merely because it owns the target.
+                        eprintln!("salic: {diagnostic}");
+                    } else {
+                        eprintln!("{diagnostic}");
+                    }
                 }
             }
             Err(())

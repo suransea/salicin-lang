@@ -12082,7 +12082,7 @@ mod tests {
 
     #[test]
     fn registers_fallible_containers_and_never_as_prelude_types() {
-        let analyzer = Analyzer::new(&Program { items: Vec::new() });
+        let analyzer = Analyzer::new(&Program::new(Vec::new()));
         assert!(
             analyzer.diagnostics.is_empty(),
             "unexpected prelude diagnostics: {:?}",
@@ -12649,10 +12649,7 @@ let main(): i32 = {
             vec![arg(Expr::Integer(22))],
         );
         let main = function("main", vec![vec![]], Type::I32, call);
-        let ir = compile(&Program {
-            items: vec![add, main],
-        })
-        .unwrap();
+        let ir = compile(&Program::new(vec![add, main])).unwrap();
         assert!(ir.contains("call i32 @sali.fn.616464(i32 20, i32 22)"));
         assert!(ir.contains("define i32 @main()"));
         assert!(ir.contains("ret i32 %status"));
@@ -12697,10 +12694,7 @@ let main(): i32 = {
             Some(Box::new(Expr::Name("x".into()))),
         );
         let main = function("main", vec![vec![]], Type::I32, body);
-        let ir = compile(&Program {
-            items: vec![global, main],
-        })
-        .unwrap();
+        let ir = compile(&Program::new(vec![global, main])).unwrap();
         assert!(ir.contains("@sali.global.616e73776572 = internal unnamed_addr constant i64 42"));
         assert!(ir.contains("phi i1"));
         assert!(ir.contains("store i32 1"));
@@ -12752,7 +12746,7 @@ let main(): i32 = 0
     #[test]
     fn unit_entry_uses_i32_c_wrapper() {
         let main = function("main", vec![vec![]], Type::Unit, Expr::Unit);
-        let ir = compile(&Program { items: vec![main] }).unwrap();
+        let ir = compile(&Program::new(vec![main])).unwrap();
         assert!(ir.contains("define internal void @sali.fn.6d61696e()"));
         assert!(ir.contains("call void @sali.fn.6d61696e()"));
         assert!(ir.contains("ret i32 0"));
@@ -12776,7 +12770,7 @@ let main(): i32 = 0
             Some(Box::new(Expr::Integer(0))),
         );
         let main = function("main", vec![vec![]], Type::I32, body);
-        let ir = compile(&Program { items: vec![main] }).unwrap();
+        let ir = compile(&Program::new(vec![main])).unwrap();
         assert!(ir.contains("ret i32 1"));
         assert!(ir.contains("ret i32 2"));
         assert!(!ir.contains("phi i1"));
@@ -12799,10 +12793,7 @@ let main(): i32 = 0
             Type::I32,
             Expr::Unary(UnaryOp::Neg, Box::new(Expr::Integer(2_147_483_648))),
         );
-        let ir = compile(&Program {
-            items: vec![minimum_i64, main],
-        })
-        .unwrap();
+        let ir = compile(&Program::new(vec![minimum_i64, main])).unwrap();
         assert!(ir.contains("sub i64 0, 9223372036854775808"));
         assert!(ir.contains("sub i32 0, 2147483648"));
     }
@@ -12826,10 +12817,7 @@ let main(): i32 = 0
             },
         );
         let main = function("main", vec![vec![]], Type::I32, Expr::Integer(0));
-        let ir = compile(&Program {
-            items: vec![choose, main],
-        })
-        .unwrap();
+        let ir = compile(&Program::new(vec![choose, main])).unwrap();
         assert!(ir.contains("phi i64"));
     }
 
@@ -12870,10 +12858,7 @@ let main(): i32 = 0
                 Some(Box::new(Expr::Name("value".into()))),
             ),
         );
-        let errors = compile(&Program {
-            items: vec![consume, main],
-        })
-        .unwrap_err();
+        let errors = compile(&Program::new(vec![consume, main])).unwrap_err();
         assert!(errors.iter().any(|error| error.message.contains("moved")));
     }
 
@@ -13834,10 +13819,7 @@ let main(): i32 = {
                 ))),
             ),
         );
-        let ir = compile(&Program {
-            items: vec![add, main],
-        })
-        .unwrap();
+        let ir = compile(&Program::new(vec![add, main])).unwrap();
         assert!(ir.contains("call i32 @sali.fn.616464(i32"));
     }
 
