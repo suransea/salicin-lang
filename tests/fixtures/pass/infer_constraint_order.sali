@@ -3,7 +3,7 @@ let accept(T: type)(value: T): i32 = 21
 
 let main(): i32 = {
   let wide: i64 = 7
-  let ordered = accept_same(_)(0, wide)
-  let arithmetic = accept(_)(0 + wide)
+  let ordered = accept_same(0, wide)
+  let arithmetic = accept(0 + wide)
   ordered + arithmetic
 }

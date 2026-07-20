@@ -1,6 +1,6 @@
 let identity(T: type)(move value: T): T = value
 
 let main(): i32 = {
-  identity(_)(do { let value = 42; value });
+  identity(do { let value = 42; value });
   42
 }

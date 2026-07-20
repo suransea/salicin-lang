@@ -6,6 +6,23 @@ subset.
 
 ## Unreleased
 
+## 0.13.0 - 2026-07-20
+
+- Removed `_` type and expression inference nodes from the AST and parser. Generic calls now infer
+  omitted compile-time parameter groups from runtime arguments, constructor fields, variant payloads,
+  fallible-container context, and expected result types.
+- Kept ordinary parentheses for both compile-time and runtime application. Positional groups made only
+  of recognizable type expressions remain explicit compile-time application; other groups begin runtime
+  application, so `identity(20)`, `Cell(20)`, and `Option.Some(20)` infer without placeholder syntax.
+- Added named compile-time arguments, including partial groups such as
+  `Result(E: bool).Err(false)`, and named runtime arguments such as `make(value: 10)`.
+  Named runtime arguments must follow declaration order, preserving left-to-right evaluation.
+- Preserved `_` exclusively where it already means an ignored name, including wildcard patterns and
+  anonymous callable signature slots. Type annotations such as `Cell(_)` and expressions such as
+  `identity(_)(20)` now receive targeted parse diagnostics.
+- Migrated the core regression suite and CLI fixtures to omission-based inference, and added coverage
+  for contextual inference combined with named compile-time and runtime arguments.
+
 ## 0.12.0 - 2026-07-20
 
 - Extended the cached cleanup fixed point with `may_live` and `must_live` state for every local.

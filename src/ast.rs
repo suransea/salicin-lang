@@ -204,7 +204,6 @@ pub enum Type {
     U64,
     Bool,
     Unit,
-    Infer,
     Array(Box<Type>, u64),
     Named(String, Vec<Type>),
 }
@@ -267,7 +266,6 @@ pub enum Expr {
     Integer(i128),
     Bool(bool),
     Name(String),
-    Infer,
     Unary(UnaryOp, Box<Expr>),
     Borrow {
         mutable: bool,

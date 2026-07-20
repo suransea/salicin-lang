@@ -1747,12 +1747,6 @@ impl Analyzer {
     ) -> bool {
         match source {
             Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => true,
-            Type::Infer => {
-                self.error(format!(
-                    "trait member `{trait_name}.{member_name}` cannot use inferred type `_`"
-                ));
-                false
-            }
             Type::Array(element, length) => {
                 let mut valid = true;
                 if *length > i32::MAX as u64 {
@@ -1839,7 +1833,6 @@ impl Analyzer {
     fn source_type_is_concrete(&self, source: &Type) -> bool {
         match source {
             Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => true,
-            Type::Infer => false,
             Type::Array(element, _) => self.source_type_is_concrete(element),
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => true,
             Type::Named(name, arguments) if arguments.is_empty() => {
@@ -2040,13 +2033,9 @@ impl Analyzer {
                     })
                     .collect::<Option<Vec<_>>>()?,
             )),
-            Type::I32
-            | Type::I64
-            | Type::U32
-            | Type::U64
-            | Type::Bool
-            | Type::Unit
-            | Type::Infer => Some(source.clone()),
+            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => {
+                Some(source.clone())
+            }
         }
     }
 
@@ -3223,10 +3212,6 @@ impl Analyzer {
             Type::U64 => Ty::U64,
             Type::Bool => Ty::Bool,
             Type::Unit => Ty::Unit,
-            Type::Infer => {
-                self.error("`_` type inference is not supported in the first generic slice");
-                Ty::Error
-            }
             Type::Array(element, length) => {
                 let element = self.lower_source_type(element);
                 if *length > i32::MAX as u64 {
@@ -3363,12 +3348,6 @@ impl Analyzer {
         substitutions: &HashMap<String, Type>,
     ) -> Option<Type> {
         match expression {
-            Expr::Infer => {
-                self.error(
-                    "nested `_` type argument inference is not supported; use `_` as a complete compile-time argument",
-                );
-                None
-            }
             Expr::Unit => Some(Type::Unit),
             Expr::Name(name) => {
                 if let Some(replacement) = substitutions.get(name) {
@@ -3524,7 +3503,6 @@ impl Analyzer {
         substitutions: &HashMap<String, Type>,
     ) -> Option<Type> {
         match expression {
-            Expr::Infer => None,
             Expr::Unit => Some(Type::Unit),
             Expr::Name(name) => substitutions.get(name).cloned().or_else(|| {
                 Some(match name.as_str() {
@@ -3576,7 +3554,6 @@ impl Analyzer {
             Type::U64 => Some(Ty::U64),
             Type::Bool => Some(Ty::Bool),
             Type::Unit => Some(Ty::Unit),
-            Type::Infer => None,
             Type::Array(element, length) => {
                 Some(Ty::Array(Box::new(self.probe_source_ty(element)?), *length))
             }
@@ -3859,9 +3836,6 @@ impl Analyzer {
                     Err(mismatch())
                 }
             }
-            Type::Infer => Err(format!(
-                "nested `_` type inference is not supported in {origin}; use `_` as a complete compile-time argument"
-            )),
         }
     }
 
@@ -3878,7 +3852,6 @@ impl Analyzer {
             Type::U64 => Some(Ty::U64),
             Type::Bool => Some(Ty::Bool),
             Type::Unit => Some(Ty::Unit),
-            Type::Infer => None,
             Type::Array(element, length) => Some(Ty::Array(
                 Box::new(self.resolved_template_ty(element, compile_parameters, inferred)?),
                 *length,
@@ -4760,16 +4733,26 @@ impl Analyzer {
         inferred: &InferredCoalesceLhs<'_>,
         context: &LowerCtx,
     ) -> Option<Ty> {
-        let [arguments] = inferred.type_groups.as_slice() else {
-            return None;
-        };
-        let first = arguments.first()?;
-        if first.label.is_some() {
-            return None;
-        }
-        if !matches!(first.value, Expr::Infer) {
+        let payload_parameter = self.enum_templates[&inferred.name]
+            .compile_groups
+            .iter()
+            .flatten()
+            .next()?;
+        let explicit_payload = inferred.type_groups.first().and_then(|arguments| {
+            if arguments
+                .first()
+                .is_some_and(|argument| argument.label.is_some())
+            {
+                arguments.iter().find(|argument| {
+                    argument.label.as_deref() == Some(payload_parameter.name.as_str())
+                })
+            } else {
+                arguments.first()
+            }
+        });
+        if let Some(argument) = explicit_payload {
             let source =
-                self.probe_type_argument_source(&first.value, &context.type_substitutions)?;
+                self.probe_type_argument_source(&argument.value, &context.type_substitutions)?;
             return self.probe_source_ty(&source);
         }
 
@@ -4961,7 +4944,6 @@ impl Analyzer {
             | Expr::Array(_)
             | Expr::Index { .. } => true,
             Expr::Name(_)
-            | Expr::Infer
             | Expr::Assign(_, _)
             | Expr::Call(_, _)
             | Expr::Member(_, _)
@@ -5010,19 +4992,31 @@ impl Analyzer {
         right: &Expr,
         context: &LowerCtx,
     ) -> TypeProbe {
-        let expected_arguments = match kind {
-            BuiltinFallibleKind::Option => 1,
-            BuiltinFallibleKind::Result => 2,
+        let enum_name = match kind {
+            BuiltinFallibleKind::Option => self.lang_item_name(LangItemKind::Option),
+            BuiltinFallibleKind::Result => self.lang_item_name(LangItemKind::Result),
         };
-        let [arguments] = type_groups else {
-            return TypeProbe::Unsupported;
-        };
-        if arguments.len() != expected_arguments || arguments[0].label.is_some() {
-            return TypeProbe::Unsupported;
-        }
-        if !matches!(arguments[0].value, Expr::Infer) {
+        let payload_parameter = self.enum_templates[enum_name]
+            .compile_groups
+            .iter()
+            .flatten()
+            .next()
+            .expect("fallible built-in has a payload type parameter");
+        let explicit_payload = type_groups.first().and_then(|arguments| {
+            if arguments
+                .first()
+                .is_some_and(|argument| argument.label.is_some())
+            {
+                arguments.iter().find(|argument| {
+                    argument.label.as_deref() == Some(payload_parameter.name.as_str())
+                })
+            } else {
+                arguments.first()
+            }
+        });
+        if let Some(argument) = explicit_payload {
             let Some(source) =
-                self.probe_type_argument_source(&arguments[0].value, &context.type_substitutions)
+                self.probe_type_argument_source(&argument.value, &context.type_substitutions)
             else {
                 return TypeProbe::Unsupported;
             };
@@ -5299,8 +5293,7 @@ impl Analyzer {
                     }
                 }
             }
-            Expr::Infer
-            | Expr::Assign(_, _)
+            Expr::Assign(_, _)
             | Expr::Closure(_, _)
             | Expr::If { .. }
             | Expr::Return(_)
@@ -5511,46 +5504,75 @@ impl Analyzer {
         owner: &str,
         compile_groups: &[Vec<CompileParam>],
         groups: &[&[CallArg]],
-        type_substitutions: &HashMap<String, Type>,
-    ) -> Option<(HashSet<String>, HashMap<String, InferredTypeArgument>)> {
-        if groups.len() < compile_groups.len() {
-            self.error(format!(
-                "generic declaration `{owner}` requires all {} type argument groups",
-                compile_groups.len()
-            ));
-            return None;
-        }
+        context: &LowerCtx,
+    ) -> Option<(
+        HashSet<String>,
+        HashMap<String, InferredTypeArgument>,
+        usize,
+    )> {
         let compile_parameters: HashSet<_> = compile_groups
             .iter()
             .flatten()
             .map(|parameter| parameter.name.clone())
             .collect();
         let mut inferred = HashMap::new();
-        for (group_index, (parameters, arguments)) in compile_groups
-            .iter()
-            .zip(groups.iter().take(compile_groups.len()))
-            .enumerate()
-        {
-            if parameters.len() != arguments.len() {
+        let mut compile_index = 0;
+        let mut source_index = 0;
+        while compile_index < compile_groups.len() && source_index < groups.len() {
+            let arguments = groups[source_index];
+            let labeled = arguments
+                .first()
+                .is_some_and(|argument| argument.label.is_some());
+            let target = if labeled {
+                (compile_index..compile_groups.len()).find(|index| {
+                    arguments.iter().all(|argument| {
+                        argument.label.as_ref().is_some_and(|label| {
+                            compile_groups[*index]
+                                .iter()
+                                .any(|parameter| parameter.name == *label)
+                        })
+                    })
+                })
+            } else if !arguments.is_empty()
+                && arguments.iter().all(|argument| {
+                    self.expression_is_explicit_type_argument(&argument.value, context)
+                })
+            {
+                Some(compile_index)
+            } else {
+                None
+            };
+            let Some(target) = target else {
+                break;
+            };
+            let parameters = &compile_groups[target];
+            if !labeled && arguments.len() != parameters.len() {
                 self.error(format!(
                     "type argument count mismatch in group {} of `{owner}`: expected {}, found {}",
-                    group_index + 1,
+                    target + 1,
                     parameters.len(),
                     arguments.len()
                 ));
                 return None;
             }
-            for (parameter, argument) in parameters.iter().zip(*arguments) {
-                if argument.label.is_some() {
-                    self.error(format!(
-                        "labeled arguments are not allowed in type argument groups of `{owner}`"
-                    ));
-                    return None;
-                }
-                if matches!(argument.value, Expr::Infer) {
-                    continue;
-                }
-                let source = self.type_argument_from_expr(&argument.value, type_substitutions)?;
+            let mut seen = HashSet::new();
+            for (position, argument) in arguments.iter().enumerate() {
+                let parameter = if let Some(label) = argument.label.as_deref() {
+                    if !seen.insert(label) {
+                        self.error(format!(
+                            "duplicate compile-time argument `{label}` in `{owner}`"
+                        ));
+                        return None;
+                    }
+                    parameters
+                        .iter()
+                        .find(|parameter| parameter.name == label)
+                        .expect("target compile group contains every argument label")
+                } else {
+                    &parameters[position]
+                };
+                let source =
+                    self.type_argument_from_expr(&argument.value, &context.type_substitutions)?;
                 let Some(ty) = self.probe_source_ty(&source) else {
                     self.error(format!(
                         "invalid explicit type argument for `{}` in `{owner}`",
@@ -5567,8 +5589,37 @@ impl Analyzer {
                     },
                 );
             }
+            source_index += 1;
+            compile_index = target + 1;
         }
-        Some((compile_parameters, inferred))
+        Some((compile_parameters, inferred, source_index))
+    }
+
+    fn expression_is_explicit_type_argument(&self, expression: &Expr, context: &LowerCtx) -> bool {
+        match expression {
+            Expr::Name(name) => {
+                context.type_substitutions.contains_key(name)
+                    || context.has_type_parameter(name)
+                    || matches!(
+                        name.as_str(),
+                        "i32" | "i64" | "u32" | "u64" | "bool" | "void" | "never"
+                    )
+                    || self.struct_defs.contains_key(name)
+                    || self.enum_defs.contains_key(name)
+                    || self.struct_templates.contains_key(name)
+                    || self.enum_templates.contains_key(name)
+            }
+            Expr::Call(callee, arguments) => {
+                let Expr::Name(name) = callee.as_ref() else {
+                    return false;
+                };
+                (name == "Array"
+                    || self.struct_templates.contains_key(name)
+                    || self.enum_templates.contains_key(name))
+                    && arguments.iter().all(|argument| argument.label.is_none())
+            }
+            _ => false,
+        }
     }
 
     fn finish_type_argument_inference(
@@ -5626,6 +5677,17 @@ impl Analyzer {
             arguments.push(inferred.ty.clone());
         }
         Some((source_arguments, arguments))
+    }
+
+    fn materialize_type_arguments(&mut self, source_arguments: &[Type]) -> Option<Vec<Ty>> {
+        let arguments = source_arguments
+            .iter()
+            .map(|source| self.lower_source_type(source))
+            .collect::<Vec<_>>();
+        arguments
+            .iter()
+            .all(|argument| *argument != Ty::Error)
+            .then_some(arguments)
     }
 
     fn infer_from_expression_constraints(
@@ -6147,10 +6209,6 @@ impl Analyzer {
                 ty: Ty::Unit,
                 kind: HirExprKind::Unit,
             },
-            Expr::Infer => {
-                self.error("`_` may only be used as a generic type argument");
-                error_expr()
-            }
             Expr::Array(elements) => self.lower_array_literal(elements, expected, context),
             Expr::Name(name) => {
                 if let Some(local) = context.lookup(name).cloned() {
@@ -7201,16 +7259,14 @@ impl Analyzer {
         let (signature, runtime_groups) = if let Some(signature) = self.signatures.get(function) {
             (signature.clone(), groups.as_slice())
         } else if self.function_templates.contains_key(function) {
-            let Some((canonical, compile_group_count)) = self.resolve_generic_function_instance(
-                function,
-                &groups,
-                &outer.type_substitutions,
-            ) else {
+            let Some((canonical, runtime_start)) =
+                self.resolve_inferred_generic_function_instance(function, &groups, None, outer)
+            else {
                 return false;
             };
             (
                 self.signatures[&canonical].clone(),
-                &groups[compile_group_count..],
+                &groups[runtime_start..],
             )
         } else {
             self.error(format!(
@@ -9082,28 +9138,14 @@ impl Analyzer {
                 return self.lower_struct_constructor(name, &groups, context);
             }
             if self.struct_templates.contains_key(name) {
-                let compile_group_count = self.struct_templates[name].compile_groups.len();
-                let has_inference = groups
-                    .iter()
-                    .take(compile_group_count)
-                    .flat_map(|group| group.iter())
-                    .any(|argument| matches!(argument.value, Expr::Infer));
-                let resolved = if has_inference {
+                let Some((canonical, runtime_start)) =
                     self.resolve_inferred_generic_struct_instance(name, &groups, expected, context)
-                        .map(|canonical| (canonical, compile_group_count, NominalKind::Struct))
-                } else {
-                    self.resolve_generic_nominal_instance(
-                        name,
-                        &groups,
-                        &context.type_substitutions,
-                    )
-                };
-                let Some((canonical, compile_group_count, NominalKind::Struct)) = resolved else {
+                else {
                     return error_expr();
                 };
                 return self.lower_struct_constructor(
                     &canonical,
-                    &groups[compile_group_count..],
+                    &groups[runtime_start..],
                     context,
                 );
             }
@@ -9301,21 +9343,12 @@ impl Analyzer {
         expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
-        let compile_group_count = self.function_templates[name].compile_groups.len();
-        let has_inference = groups
-            .iter()
-            .take(compile_group_count)
-            .flat_map(|group| group.iter())
-            .any(|argument| matches!(argument.value, Expr::Infer));
-        let resolved = if has_inference {
+        let Some((canonical, runtime_start)) =
             self.resolve_inferred_generic_function_instance(name, groups, expected, context)
-        } else {
-            self.resolve_generic_function_instance(name, groups, &context.type_substitutions)
-        };
-        let Some((canonical, compile_group_count)) = resolved else {
+        else {
             return error_expr();
         };
-        self.lower_named_function_call(&canonical, &groups[compile_group_count..], context)
+        self.lower_named_function_call(&canonical, &groups[runtime_start..], context)
     }
 
     fn inferred_generic_enum_type_head<'a>(
@@ -9332,12 +9365,7 @@ impl Analyzer {
             return None;
         }
         let compile_group_count = self.enum_templates[name].compile_groups.len();
-        if groups.len() > compile_group_count
-            || !groups
-                .iter()
-                .flat_map(|group| group.iter())
-                .any(|argument| matches!(argument.value, Expr::Infer))
-        {
+        if groups.len() > compile_group_count {
             return None;
         }
         Some((name.clone(), groups))
@@ -9353,12 +9381,12 @@ impl Analyzer {
         context: &LowerCtx,
     ) -> Option<String> {
         let template = self.enum_templates[name].clone();
-        let (compile_parameters, mut inferred) = self.seed_type_argument_inference(
-            name,
-            &template.compile_groups,
-            type_groups,
-            &context.type_substitutions,
-        )?;
+        let (compile_parameters, mut inferred, consumed_groups) = self
+            .seed_type_argument_inference(name, &template.compile_groups, type_groups, context)?;
+        if consumed_groups != type_groups.len() {
+            self.error(format!("invalid type argument group in `{name}`"));
+            return None;
+        }
         if let Some(payload_hint) = hints.payload.filter(|hint| hint.ty != Ty::Error) {
             let Some(payload_parameter) = template.compile_groups.iter().flatten().next() else {
                 self.error(format!(
@@ -9543,8 +9571,9 @@ impl Analyzer {
             .flatten()
             .cloned()
             .collect::<Vec<_>>();
-        let (source_arguments, arguments) =
+        let (source_arguments, _) =
             self.finish_type_argument_inference(name, &ordered_parameters, &inferred, unsupported)?;
+        let arguments = self.materialize_type_arguments(&source_arguments)?;
         self.ensure_nominal_instance(NominalKind::Enum, name, source_arguments, arguments)
     }
 
@@ -9554,19 +9583,14 @@ impl Analyzer {
         groups: &[&[CallArg]],
         expected: Option<&Ty>,
         context: &LowerCtx,
-    ) -> Option<String> {
+    ) -> Option<(String, usize)> {
         let template = self.struct_templates[name].clone();
         if !self.require_source_fields_access(name, &template.fields, &context.origin) {
             return None;
         }
-        let compile_group_count = template.compile_groups.len();
-        let (compile_parameters, mut inferred) = self.seed_type_argument_inference(
-            name,
-            &template.compile_groups,
-            groups,
-            &context.type_substitutions,
-        )?;
-        let value_groups = &groups[compile_group_count..];
+        let (compile_parameters, mut inferred, runtime_start) =
+            self.seed_type_argument_inference(name, &template.compile_groups, groups, context)?;
+        let value_groups = &groups[runtime_start..];
         if value_groups.len() != 1 {
             self.error(format!(
                 "struct constructor `{name}` expects exactly one argument group"
@@ -9675,16 +9699,19 @@ impl Analyzer {
             .flatten()
             .cloned()
             .collect::<Vec<_>>();
-        let (source_arguments, arguments) =
+        let (source_arguments, _) =
             self.finish_type_argument_inference(name, &ordered_parameters, &inferred, unsupported)?;
-        self.ensure_nominal_instance(NominalKind::Struct, name, source_arguments, arguments)
+        let arguments = self.materialize_type_arguments(&source_arguments)?;
+        let canonical =
+            self.ensure_nominal_instance(NominalKind::Struct, name, source_arguments, arguments)?;
+        Some((canonical, runtime_start))
     }
 
     fn resolve_generic_nominal_instance(
         &mut self,
         name: &str,
         groups: &[&[CallArg]],
-        substitutions: &HashMap<String, Type>,
+        context: &LowerCtx,
     ) -> Option<(String, usize, NominalKind)> {
         let (kind, compile_groups) = if let Some(template) = self.struct_templates.get(name) {
             (NominalKind::Struct, template.compile_groups.clone())
@@ -9694,48 +9721,21 @@ impl Analyzer {
             self.error(format!("unknown generic nominal type `{name}`"));
             return None;
         };
-        let compile_group_count = compile_groups.len();
-        if groups.len() < compile_group_count {
-            self.error(format!(
-                "generic type `{name}` requires all {compile_group_count} type argument groups"
-            ));
+        let (compile_parameters, inferred, consumed_groups) =
+            self.seed_type_argument_inference(name, &compile_groups, groups, context)?;
+        if consumed_groups != groups.len() {
+            self.error(format!("invalid type argument group in `{name}`"));
             return None;
         }
-
-        let mut source_arguments = Vec::new();
-        let mut arguments = Vec::new();
-        for (group_index, (source_group, argument_group)) in compile_groups
+        let ordered_parameters = compile_groups.into_iter().flatten().collect::<Vec<_>>();
+        let (source_arguments, _) =
+            self.finish_type_argument_inference(name, &ordered_parameters, &inferred, false)?;
+        let arguments = self.materialize_type_arguments(&source_arguments)?;
+        debug_assert!(compile_parameters
             .iter()
-            .zip(groups.iter().take(compile_group_count))
-            .enumerate()
-        {
-            if source_group.len() != argument_group.len() {
-                self.error(format!(
-                    "type argument count mismatch in group {} of `{name}`: expected {}, found {}",
-                    group_index + 1,
-                    source_group.len(),
-                    argument_group.len()
-                ));
-                return None;
-            }
-            for argument in *argument_group {
-                if argument.label.is_some() {
-                    self.error(format!(
-                        "labeled arguments are not allowed in type argument groups of `{name}`"
-                    ));
-                    return None;
-                }
-                let source_ty = self.type_argument_from_expr(&argument.value, substitutions)?;
-                let ty = self.lower_source_type(&source_ty);
-                if ty == Ty::Error {
-                    return None;
-                }
-                source_arguments.push(source_ty);
-                arguments.push(ty);
-            }
-        }
+            .all(|parameter| inferred.contains_key(parameter)));
         let canonical = self.ensure_nominal_instance(kind, name, source_arguments, arguments)?;
-        Some((canonical, compile_group_count, kind))
+        Some((canonical, consumed_groups, kind))
     }
 
     fn resolve_nominal_type_head(
@@ -9788,18 +9788,46 @@ impl Analyzer {
                     return Ok(None);
                 }
                 let expected_groups = if let Some(template) = self.struct_templates.get(name) {
-                    template.compile_groups.len()
+                    template.compile_groups.clone()
                 } else {
-                    self.enum_templates[name].compile_groups.len()
+                    self.enum_templates[name].compile_groups.clone()
                 };
-                if groups.len() > expected_groups {
+                if groups.len() > expected_groups.len() {
                     return Ok(None);
                 }
-                let Some((canonical, consumed, kind)) = self.resolve_generic_nominal_instance(
-                    name,
-                    &groups,
-                    &context.type_substitutions,
-                ) else {
+                let mut next_compile_group = 0;
+                for arguments in &groups {
+                    let labeled = arguments
+                        .first()
+                        .is_some_and(|argument| argument.label.is_some());
+                    let target = if labeled {
+                        (next_compile_group..expected_groups.len()).find(|index| {
+                            arguments.iter().all(|argument| {
+                                argument.label.as_ref().is_some_and(|label| {
+                                    expected_groups[*index]
+                                        .iter()
+                                        .any(|parameter| parameter.name == *label)
+                                })
+                            })
+                        })
+                    } else if next_compile_group < expected_groups.len()
+                        && !arguments.is_empty()
+                        && arguments.iter().all(|argument| {
+                            self.expression_is_explicit_type_argument(&argument.value, context)
+                        })
+                    {
+                        Some(next_compile_group)
+                    } else {
+                        None
+                    };
+                    let Some(target) = target else {
+                        return Ok(None);
+                    };
+                    next_compile_group = target + 1;
+                }
+                let Some((canonical, consumed, kind)) =
+                    self.resolve_generic_nominal_instance(name, &groups, context)
+                else {
                     return Err(());
                 };
                 if consumed != groups.len() {
@@ -9822,14 +9850,9 @@ impl Analyzer {
         context: &LowerCtx,
     ) -> Option<(String, usize)> {
         let template = self.function_templates[name].clone();
-        let compile_group_count = template.compile_groups.len();
-        let (compile_parameters, mut inferred) = self.seed_type_argument_inference(
-            name,
-            &template.compile_groups,
-            groups,
-            &context.type_substitutions,
-        )?;
-        let runtime_groups = &groups[compile_group_count..];
+        let (compile_parameters, mut inferred, runtime_start) =
+            self.seed_type_argument_inference(name, &template.compile_groups, groups, context)?;
+        let runtime_groups = &groups[runtime_start..];
         if runtime_groups.len() > template.groups.len() {
             self.error(format!(
                 "too many parameter groups in call to `{name}`: expected at most {}, found {}",
@@ -9838,18 +9861,20 @@ impl Analyzer {
             ));
             return None;
         }
+        let mut ordered_runtime_groups = Vec::new();
         for (group_index, (arguments, parameters)) in
             runtime_groups.iter().zip(&template.groups).enumerate()
         {
-            if arguments.len() != parameters.len() {
-                self.error(format!(
-                    "argument count mismatch in group {} of `{name}`: expected {}, found {}",
-                    group_index + 1,
-                    parameters.len(),
-                    arguments.len()
-                ));
-                return None;
-            }
+            let parameter_names = parameters
+                .iter()
+                .map(|parameter| parameter.name.clone())
+                .collect::<Vec<_>>();
+            ordered_runtime_groups.push(self.ordered_call_arguments(
+                name,
+                group_index + 1,
+                arguments,
+                &parameter_names,
+            )?);
         }
 
         if runtime_groups.len() == template.groups.len() {
@@ -9870,7 +9895,7 @@ impl Analyzer {
             }
         }
 
-        let constraints: Vec<_> = runtime_groups
+        let constraints: Vec<_> = ordered_runtime_groups
             .iter()
             .zip(&template.groups)
             .enumerate()
@@ -9904,67 +9929,15 @@ impl Analyzer {
             .flatten()
             .cloned()
             .collect::<Vec<_>>();
-        let (source_arguments, arguments) = self.finish_type_argument_inference(
+        let (source_arguments, _) = self.finish_type_argument_inference(
             name,
             &ordered_parameters,
             &inferred,
             unsupported_argument,
         )?;
+        let arguments = self.materialize_type_arguments(&source_arguments)?;
         let canonical = self.ensure_function_instance(name, source_arguments, arguments)?;
-        Some((canonical, compile_group_count))
-    }
-
-    fn resolve_generic_function_instance(
-        &mut self,
-        name: &str,
-        groups: &[&[CallArg]],
-        substitutions: &HashMap<String, Type>,
-    ) -> Option<(String, usize)> {
-        let template = self.function_templates[name].clone();
-        let compile_group_count = template.compile_groups.len();
-        if groups.len() < compile_group_count {
-            self.error(format!(
-                "generic function `{name}` requires all {compile_group_count} type argument groups"
-            ));
-            return None;
-        }
-
-        let mut source_arguments = Vec::new();
-        let mut arguments = Vec::new();
-        for (group_index, (source_group, argument_group)) in template
-            .compile_groups
-            .iter()
-            .zip(groups.iter().take(compile_group_count))
-            .enumerate()
-        {
-            if source_group.len() != argument_group.len() {
-                self.error(format!(
-                    "type argument count mismatch in group {} of `{name}`: expected {}, found {}",
-                    group_index + 1,
-                    source_group.len(),
-                    argument_group.len()
-                ));
-                return None;
-            }
-            for argument in *argument_group {
-                if argument.label.is_some() {
-                    self.error(format!(
-                        "labeled arguments are not allowed in type argument groups of `{name}`"
-                    ));
-                    return None;
-                }
-                let source_ty = self.type_argument_from_expr(&argument.value, substitutions)?;
-                let ty = self.lower_source_type(&source_ty);
-                if ty == Ty::Error {
-                    return None;
-                }
-                source_arguments.push(source_ty);
-                arguments.push(ty);
-            }
-        }
-
-        let canonical = self.ensure_function_instance(name, source_arguments, arguments)?;
-        Some((canonical, compile_group_count))
+        Some((canonical, runtime_start))
     }
 
     fn lower_bound_method_call(
@@ -10087,20 +10060,20 @@ impl Analyzer {
         for (relative_group, arguments_ast) in groups.iter().enumerate() {
             let group_index = relative_group + 1;
             let params = &signature.groups[group_index];
-            if arguments_ast.len() != params.len() {
-                self.error(format!(
-                    "argument count mismatch in group {} of method `{target}.{member}`: expected {}, found {}",
-                    relative_group + 1,
-                    params.len(),
-                    arguments_ast.len()
-                ));
-            }
-            for (argument, parameter) in arguments_ast.iter().zip(params) {
-                if argument.label.is_some() {
-                    self.error(format!(
-                        "named arguments are not allowed in call to method `{target}.{member}`"
-                    ));
-                }
+            let parameter_names = params
+                .iter()
+                .map(|parameter| parameter.name.clone())
+                .collect::<Vec<_>>();
+            let owner = format!("{target}.{member}");
+            let Some(ordered) = self.ordered_call_arguments(
+                &owner,
+                relative_group + 1,
+                arguments_ast,
+                &parameter_names,
+            ) else {
+                return error_expr();
+            };
+            for (argument, parameter) in ordered.into_iter().zip(params) {
                 arguments.push(self.lower_call_argument(
                     &argument.value,
                     parameter,
@@ -10226,13 +10199,22 @@ impl Analyzer {
             })
             .collect();
         let mut temporary_loans = Vec::new();
-        for (argument_group, parameters) in groups.iter().zip(&closure.groups) {
-            for (argument, parameter) in argument_group.iter().zip(parameters) {
-                if argument.label.is_some() {
-                    self.error(format!(
-                        "named arguments are not allowed in call to closure `{local_name}`"
-                    ));
-                }
+        for (group_index, (argument_group, parameters)) in
+            groups.iter().zip(&closure.groups).enumerate()
+        {
+            let parameter_names = parameters
+                .iter()
+                .map(|parameter| parameter.name.clone())
+                .collect::<Vec<_>>();
+            let Some(ordered) = self.ordered_call_arguments(
+                local_name,
+                group_index + 1,
+                argument_group,
+                &parameter_names,
+            ) else {
+                return error_expr();
+            };
+            for (argument, parameter) in ordered.into_iter().zip(parameters) {
                 lowered_arguments.push(self.lower_call_argument(
                     &argument.value,
                     parameter,
@@ -10277,20 +10259,16 @@ impl Analyzer {
         for (group_index, (arguments_ast, params)) in
             groups.iter().zip(&signature.groups).enumerate()
         {
-            if arguments_ast.len() != params.len() {
-                self.error(format!(
-                    "argument count mismatch in group {} of `{name}`: expected {}, found {}",
-                    group_index + 1,
-                    params.len(),
-                    arguments_ast.len()
-                ));
-            }
-            for (argument, parameter) in arguments_ast.iter().zip(params) {
-                if argument.label.is_some() {
-                    self.error(format!(
-                        "named arguments are not allowed in call to `{name}`"
-                    ));
-                }
+            let parameter_names = params
+                .iter()
+                .map(|parameter| parameter.name.clone())
+                .collect::<Vec<_>>();
+            let Some(ordered) =
+                self.ordered_call_arguments(name, group_index + 1, arguments_ast, &parameter_names)
+            else {
+                return error_expr();
+            };
+            for (argument, parameter) in ordered.into_iter().zip(params) {
                 arguments.push(self.lower_call_argument(
                     &argument.value,
                     parameter,
@@ -10333,6 +10311,66 @@ impl Analyzer {
                 },
             }
         }
+    }
+
+    fn ordered_call_arguments<'a>(
+        &mut self,
+        owner: &str,
+        group_number: usize,
+        arguments: &'a [CallArg],
+        parameter_names: &[String],
+    ) -> Option<Vec<&'a CallArg>> {
+        if arguments.len() != parameter_names.len() {
+            self.error(format!(
+                "argument count mismatch in group {group_number} of `{owner}`: expected {}, found {}",
+                parameter_names.len(),
+                arguments.len()
+            ));
+            return None;
+        }
+        if arguments.iter().all(|argument| argument.label.is_none()) {
+            return Some(arguments.iter().collect());
+        }
+        if arguments.iter().any(|argument| argument.label.is_none()) {
+            self.error(format!(
+                "cannot mix named and positional arguments in group {group_number} of `{owner}`"
+            ));
+            return None;
+        }
+
+        let mut ordered = vec![None; parameter_names.len()];
+        for (source_index, argument) in arguments.iter().enumerate() {
+            let label = argument.label.as_deref().expect("all arguments are named");
+            let Some(index) = parameter_names.iter().position(|name| name == label) else {
+                self.error(format!(
+                    "unknown parameter `{label}` in group {group_number} of `{owner}`"
+                ));
+                return None;
+            };
+            if index != source_index {
+                self.error(format!(
+                    "named arguments in group {group_number} of `{owner}` must follow parameter declaration order; expected `{}` before `{label}`",
+                    parameter_names[source_index]
+                ));
+                return None;
+            }
+            if ordered[index].replace(argument).is_some() {
+                self.error(format!(
+                    "duplicate argument for parameter `{label}` in group {group_number} of `{owner}`"
+                ));
+                return None;
+            }
+        }
+        for (index, argument) in ordered.iter().enumerate() {
+            if argument.is_none() {
+                self.error(format!(
+                    "missing argument for parameter `{}` in group {group_number} of `{owner}`",
+                    parameter_names[index]
+                ));
+                return None;
+            }
+        }
+        Some(ordered.into_iter().flatten().collect())
     }
 
     fn lower_local_partial_call(
@@ -10399,20 +10437,19 @@ impl Analyzer {
         for (relative_group, arguments_ast) in groups.iter().enumerate() {
             let group_index = partial.consumed_groups + relative_group;
             let params = &signature.groups[group_index];
-            if arguments_ast.len() != params.len() {
-                self.error(format!(
-                    "argument count mismatch in group {} of `{local_name}`: expected {}, found {}",
-                    relative_group + 1,
-                    params.len(),
-                    arguments_ast.len()
-                ));
-            }
-            for (argument, parameter) in arguments_ast.iter().zip(params) {
-                if argument.label.is_some() {
-                    self.error(format!(
-                        "named arguments are not allowed in call to `{local_name}`"
-                    ));
-                }
+            let parameter_names = params
+                .iter()
+                .map(|parameter| parameter.name.clone())
+                .collect::<Vec<_>>();
+            let Some(ordered) = self.ordered_call_arguments(
+                local_name,
+                relative_group + 1,
+                arguments_ast,
+                &parameter_names,
+            ) else {
+                return error_expr();
+            };
+            for (argument, parameter) in ordered.into_iter().zip(params) {
                 arguments.push(self.lower_call_argument(
                     &argument.value,
                     parameter,
@@ -14411,7 +14448,6 @@ fn collect_nominal_type_dependencies(
         | Type::U64
         | Type::Bool
         | Type::Unit
-        | Type::Infer
         | Type::Named(_, _) => {}
     }
 }
@@ -14456,7 +14492,7 @@ fn substitute_function_types(function: &mut Function, substitutions: &HashMap<St
 
 fn substitute_expr_types(expression: &mut Expr, substitutions: &HashMap<String, Type>) {
     match expression {
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Infer => {}
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => {}
         Expr::Unary(_, operand) | Expr::Try(operand) | Expr::Throw(operand) => {
             substitute_expr_types(operand, substitutions)
         }
@@ -14551,7 +14587,7 @@ fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<String, Typ
                 substitute_type_parameters(argument, substitutions);
             }
         }
-        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit | Type::Infer => {}
+        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => {}
     }
 }
 
@@ -14661,7 +14697,7 @@ fn substitute_self_type(ty: &mut Type, target: &str) {
                 substitute_self_type(argument, target);
             }
         }
-        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit | Type::Infer => {}
+        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => {}
     }
 }
 
@@ -14824,8 +14860,8 @@ mod tests {
              let Cell(T: type) = struct(value: T)\n\
              let main(): i32 = {\n\
                let explicit = Cell(i32)(identity(i32)(20))\n\
-               let inferred_value = identity(_)(22)\n\
-               let inferred = Cell(_)(inferred_value)\n\
+               let inferred_value = identity(22)\n\
+               let inferred = Cell(inferred_value)\n\
                explicit.value + inferred.value\n\
              }\n",
         )
@@ -14863,9 +14899,9 @@ mod tests {
              let unwrap(T: type)(move value: Cell(T)): T = value.value\n\
              let main(): i32 = {\n\
                let inner = Cell(i32)(42)\n\
-               let outer = Cell(_)(inner)\n\
-               let nested = unwrap(_)(outer.value)\n\
-               let direct = unwrap(_)(Cell(i32)(0))\n\
+               let outer = Cell(inner)\n\
+               let nested = unwrap(outer.value)\n\
+               let direct = unwrap(Cell(i32)(0))\n\
                nested + direct\n\
              }\n",
         )
@@ -14907,7 +14943,7 @@ mod tests {
              let accept(T: type)(value: T): i32 = 14\n\
              let main(): i32 = {\n\
                let wide: i64 = 7\n\
-               same(_)(0, wide) + same(_)(wide, 0) + accept(_)(0 + wide)\n\
+               same(0, wide) + same(wide, 0) + accept(0 + wide)\n\
              }\n",
         )
         .expect("ordered inference source must parse");
@@ -14934,8 +14970,8 @@ mod tests {
         let source = "let Maybe(T: type) = enum { Some(T), None }\n\
                       let identity(T: type)(move value: T): T = value\n\
                       let main(): i32 = {\n\
-                        let some = identity(_)(Maybe(i32).Some(42))\n\
-                        let none: Maybe(i32) = identity(_)(Maybe(i32).None)\n\
+                        let some = identity(Maybe(i32).Some(42))\n\
+                        let none: Maybe(i32) = identity(Maybe(i32).None)\n\
                         some match { Some(value) => value, None => 0 }\n\
                       }\n";
         compile_text(source).expect("outer inference over enum constructors must compile");
@@ -14946,7 +14982,7 @@ mod tests {
         let program = crate::parser::parse(
             "let identity(T: type)(move value: T): T = value\n\
              let Cell(T: type) = struct(value: T)\n\
-             let main(): bool = identity(_)(Cell(i32)(42))\n",
+             let main(): bool = identity(Cell(i32)(42))\n",
         )
         .expect("conflicting inference source must parse");
         let mut analyzer = Analyzer::new(&program);
@@ -15024,7 +15060,7 @@ mod tests {
     fn inferred_template_calls_roll_back_abstract_instances() {
         let program = crate::parser::parse(
             "let identity(U: type)(move value: U): U = value\n\
-             let wrap(T: type)(move value: T): T = identity(_)(value)\n\
+             let wrap(T: type)(move value: T): T = identity(value)\n\
              let main(): i32 = wrap(i32)(42)\n",
         )
         .expect("inferred generic composition must parse");
@@ -15131,12 +15167,13 @@ mod tests {
         )
         .expect("nested generic nominal source must parse");
         let mut analyzer = Analyzer::new(&program);
-        let hir = analyzer.analyze().expect("nested generic nominal HIR");
+        let hir = analyzer.analyze();
         assert!(
             analyzer.diagnostics.is_empty(),
             "unexpected diagnostics: {:?}",
             analyzer.diagnostics
         );
+        let hir = hir.expect("nested generic nominal HIR");
 
         let inner_key = NominalInstanceKey {
             kind: NominalKind::Struct,
@@ -15270,10 +15307,10 @@ let unwrap_result(move value: Result(i32, bool)): i32 = value match {
   Err(_) => 0,
 }
 let main(): i32 = {
-  let some = Option(_).Some(19)
-  let none: Option(i32) = Option(_).None
-  let ok: Result(i32, bool) = Result(_, _).Ok(23)
-  let err: Result(i32, bool) = Result(_, _).Err(false)
+  let some = Option.Some(19)
+  let none: Option(i32) = Option.None
+  let ok: Result(i32, bool) = Result.Ok(23)
+  let err: Result(i32, bool) = Result.Err(false)
   unwrap_option(some) + unwrap_option(none) + unwrap_result(ok) + unwrap_result(err)
 }
 "#,
@@ -15432,10 +15469,10 @@ let Boxed(T: type) = struct(value: T)
 let main(): i32 = {
   let first = Option(i32).None
   let second = Option(i32).Some(42)
-  let scalar = identity(_)(Option(_).None ?? 42)
-  let boxed = identity(_)(Option(_).None ?? Boxed(i32)(value: 42))
-  let wide = identity(_)(Result(i64, _).Err(false) ?? 42)
-  identity(_)(first ?? second ?? 0) + scalar + boxed.value - 84
+  let scalar = identity(Option.None ?? 42)
+  let boxed = identity(Option.None ?? Boxed(i32)(value: 42))
+  let wide = identity(Result(T: i64).Err(false) ?? 42)
+  identity(first ?? second ?? 0) + scalar + boxed.value - 84
 }
 "#,
         )
@@ -15447,13 +15484,13 @@ let main(): i32 = {
         compile_text(
             r#"
 let main(): i32 = {
-  let inferred_option = Option(_).None ?? 40
-  let inferred_result = Result(_, bool).Err(false) ?? 2
-  let option = Option(_).None ?? 40
-  let result = Result(_, bool).Err(false) ?? 1
-  let fully_inferred_result = Result(_, _).Err(false) ?? 1
-  let wide = Result(i64, _).Err(false) ?? 42
-  let nested = Option(i32).None ?? Option(_).None ?? 1
+  let inferred_option = Option.None ?? 40
+  let inferred_result = Result(E: bool).Err(false) ?? 2
+  let option = Option.None ?? 40
+  let result = Result(E: bool).Err(false) ?? 1
+  let fully_inferred_result = Result.Err(false) ?? 1
+  let wide = Result(T: i64).Err(false) ?? 42
+  let nested = Option(i32).None ?? Option.None ?? 1
   inferred_option + inferred_result + option + result + fully_inferred_result + nested - 43
 }
 "#,
@@ -15463,7 +15500,7 @@ let main(): i32 = {
 
     #[test]
     fn coalesce_does_not_guess_an_unconstrained_result_error_type() {
-        let errors = compile_text("let main(): i32 = Result(_, _).Ok(40) ?? 2\n").unwrap_err();
+        let errors = compile_text("let main(): i32 = Result.Ok(40) ?? 2\n").unwrap_err();
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.message.contains("cannot infer type argument")
                 && diagnostic.message.contains("`E`")
@@ -15525,10 +15562,10 @@ let main(): i32 = {
         let program = crate::parser::parse(
             r#"
 let main(): i32 = {
-  let number = Option(_).Some(42)
-  let flag = Option(_).Some(true)
-  let first: Result(i32, bool) = Result(_, _).Ok(42)
-  let second: Result(bool, i32) = Result(_, _).Err(0)
+  let number = Option.Some(42)
+  let flag = Option.Some(true)
+  let first: Result(i32, bool) = Result.Ok(42)
+  let second: Result(bool, i32) = Result.Err(0)
   let value = number match { Some(item) => item, None => 0 }
   let enabled = flag match { Some(item) => item, None => false }
   let left = first match { Ok(item) => item, Err(_) => 0 }
@@ -15646,12 +15683,12 @@ let main(): i32 = {
         for (name, source) in [
             (
                 "Option",
-                "let choose(Option: type)(): i32 = Option(_).None ?? 42\n\
+                "let choose(Option: type)(): i32 = Option.None ?? 42\n\
                  let main(): i32 = choose(i32)()\n",
             ),
             (
                 "Result",
-                "let choose(Result: type)(): i32 = Result(_, _).Ok(1) ?? 42\n\
+                "let choose(Result: type)(): i32 = Result.Ok(1) ?? 42\n\
                  let main(): i32 = choose(i32)()\n",
             ),
         ] {
@@ -15736,8 +15773,8 @@ let main(): i32 = {
             ),
             (
                 "let Cell(T: type) = struct(value: T)\n\
-                 let main(): i32 = Cell(Cell(_))(Cell(i32)(42)).value.value\n",
-                "nested `_` type argument inference is not supported",
+                 let main(): i32 = Cell(U: i32)(Cell(i32)(42)).value.value\n",
+                "expects exactly one argument group",
             ),
             (
                 "let Cell(T: type) = struct(value: T)\n\
@@ -16037,7 +16074,7 @@ let main(): i32 = 0
             r#"
 pub let Cell(T: type) = struct(value: T)
 pub let make(): Option(Cell(i32)) = Option(Cell(i32)).Some(Cell(i32)(42))
-let infer(): Cell(i32) = Cell(_)(0)
+let infer(): Cell(i32) = Cell(0)
 let chain(): Option(i32) = make()?.value
 let main(): i32 = 0
 "#,
@@ -17447,7 +17484,7 @@ extend Number: Sub(i32) {
 }
 let identity(T: type)(move value: T): T = value
 let main(): i32 = {
-  let answer = identity(_)(Number(44) - 2)
+  let answer = identity(Number(44) - 2)
   if answer == 42 { 42 } else { 0 }
 }
 "#,
@@ -17470,7 +17507,7 @@ extend Number: Add(i32) {
   let add(move self)(move rhs: i32): i32 = self.value + rhs
 }
 let identity(T: type)(move value: T): T = value
-let main(): i32 = identity(_)(Number(40) + 2)
+let main(): i32 = identity(Number(40) + 2)
 "#,
         )
         .expect("Add Output must be visible to generic inference");
@@ -17985,7 +18022,7 @@ let main(): i32 = {
         compile_text(
             r#"
 let Boxed = struct(value: i32)
-let read(): Result(i32, bool) = Result(_, _).Ok(Boxed(42))?.value
+let read(): Result(i32, bool) = Result.Ok(Boxed(42))?.value
 let main(): i32 = read() ?? 0
 "#,
         )

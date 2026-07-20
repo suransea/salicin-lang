@@ -4,8 +4,8 @@ let Maybe(T: type) = enum {
 }
 
 let main(): i32 = {
-  let some = Maybe(_).Some(42)
-  let none: Maybe(i32) = Maybe(_).None
+  let some = Maybe.Some(42)
+  let none: Maybe(i32) = Maybe.None
   let from_some = some match {
     Some(value) => value,
     None => 0,

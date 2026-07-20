@@ -1,6 +1,6 @@
-let nested_option(): Result(Option(i32), bool) = Option(_).None
+let nested_option(): Result(Option(i32), bool) = Option.None
 
-let nested_result(): Option(Result(i32, bool)) = Result(_, _).Err(false)
+let nested_result(): Option(Result(i32, bool)) = Result.Err(false)
 
 let main(): i32 = {
   let first = nested_option() ?? Option(i32).Some(20)

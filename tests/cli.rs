@@ -880,6 +880,7 @@ fn m2_inferred_type_arguments_run_with_expected_result() {
         "infer_argument_once.sali",
         "infer_constraint_order.sali",
         "infer_fresh_constructor.sali",
+        "infer_named_arguments.sali",
         "infer_nonempty_block.sali",
     ] {
         let output = salic()
@@ -902,8 +903,8 @@ fn m2_inferred_type_argument_errors_report_their_cause() {
         ("infer_conflicting_arguments.sali", "conflicting"),
         ("infer_expected_conflict.sali", "conflicting"),
         ("infer_unconstrained.sali", "cannot infer"),
-        ("infer_incomplete_application.sali", "cannot infer"),
-        ("infer_nested_hole.sali", "nested"),
+        ("infer_incomplete_application.sali", "requires explicit"),
+        ("infer_nested_hole.sali", "not an expression"),
         ("infer_moved_argument.sali", "moved"),
         ("infer_borrow_temporary.sali", "place"),
     ] {
@@ -1108,11 +1109,11 @@ fn m2_option_and_result_prelude_errors_report_their_cause() {
         ("prelude_redefine_result.sali", "Result"),
         ("prelude_option_arity.sali", "argument count"),
         ("prelude_result_arity.sali", "argument count"),
-        ("prelude_option_payload_mismatch.sali", "type mismatch"),
-        ("prelude_result_ok_payload_mismatch.sali", "type mismatch"),
-        ("prelude_result_err_payload_mismatch.sali", "type mismatch"),
-        ("prelude_option_expected_mismatch.sali", "type mismatch"),
-        ("prelude_result_expected_mismatch.sali", "type mismatch"),
+        ("prelude_option_payload_mismatch.sali", "conflicting"),
+        ("prelude_result_ok_payload_mismatch.sali", "conflicting"),
+        ("prelude_result_err_payload_mismatch.sali", "conflicting"),
+        ("prelude_option_expected_mismatch.sali", "conflicting"),
+        ("prelude_result_expected_mismatch.sali", "conflicting"),
     ] {
         let output = salic()
             .arg("check")
@@ -2030,7 +2031,7 @@ pub let make_number(value: i32): Number = Number(value)
 
     workspace.write(
         "app/src/main.sali",
-        "use root.fake as Option\nlet main(): i32 = Option(_).None ?? 42\n",
+        "use root.fake as Option\nlet main(): i32 = Option()\n",
     );
     let module_option = salic()
         .arg("check")
@@ -2653,7 +2654,7 @@ path = "src/tool.sali"
 }
 
 #[test]
-fn file_module_paths_reject_keywords_and_the_inference_placeholder() {
+fn file_module_paths_reject_keywords_and_the_underscore_segment() {
     for segment in ["let", "_"] {
         let project = TestDirectory::new();
         project.write(

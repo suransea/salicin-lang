@@ -1,1 +1,1 @@
-let main(): i32 = Option(_).None ?? 42
+let main(): i32 = Option.None ?? 42

@@ -773,8 +773,9 @@ impl Parser {
         }
 
         if matches!(&self.current().kind, TokenKind::Ident(name) if name == "_") {
-            self.advance();
-            return Ok(Type::Infer);
+            return Err(self.error_here(
+                "`_` type inference has been removed; omit the compile-time argument group or use named arguments",
+            ));
         }
 
         let mut path = vec![self.expect_path_start("a type")?];
@@ -1269,13 +1270,13 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Bool(false))
             }
+            TokenKind::Ident(ref name) if name == "_" => Err(self.error_at(
+                &token,
+                "`_` is not an expression; omit an inferred compile-time argument group or use a named argument",
+            )),
             TokenKind::Ident(name) => {
                 self.advance();
-                if name == "_" {
-                    Ok(Expr::Infer)
-                } else {
-                    Ok(Expr::Name(name))
-                }
+                Ok(Expr::Name(name))
             }
             TokenKind::Root => {
                 self.advance();
@@ -2210,36 +2211,15 @@ mod tests {
     }
 
     #[test]
-    fn parses_inferred_type_and_expression_arguments() {
-        let program = parse("let value: Cell(_) = Cell(_)(20)\n").unwrap();
-        let Item::Global(binding) = &program.items[0] else {
-            panic!("expected global binding");
-        };
-        assert_eq!(
-            binding.annotation,
-            Some(Type::Named("Cell".into(), vec![Type::Infer]))
-        );
-        let Expr::Call(type_application, values) = &binding.value else {
-            panic!("expected value argument group");
-        };
-        assert!(matches!(
-            values.as_slice(),
-            [CallArg {
-                label: None,
-                value: Expr::Integer(20)
-            }]
-        ));
-        assert!(matches!(
-            type_application.as_ref(),
-            Expr::Call(_, arguments)
-                if matches!(
-                    arguments.as_slice(),
-                    [CallArg {
-                        label: None,
-                        value: Expr::Infer
-                    }]
-                )
-        ));
+    fn rejects_removed_underscore_inference_syntax() {
+        for source in [
+            "let value: Cell(_) = Cell(i32)(20)\n",
+            "let value = Cell(_)(20)\n",
+        ] {
+            let error = parse(source).unwrap_err();
+            assert!(error.message.contains("`_`"));
+            assert!(error.message.contains("inference") || error.message.contains("inferred"));
+        }
     }
 
     #[test]

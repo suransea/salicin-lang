@@ -208,8 +208,11 @@ type_atom = path, [ type_arguments ]
           | "mut", "borrow", [ "(", REGION, ")" ], type_atom ;
 
 type_arguments = "(", type_argument, { ",", type_argument }, [ "," ], ")" ;
-type_argument  = type_expr | "_" | INTEGER ;
+type_argument  = type_expr | INTEGER ;
 ```
+
+`_` 不是类型实参。调用中的编译期参数组可整体省略，并由运行时实参和期望类型推断；显式消歧使用
+普通的 `IDENT ":" expression` 命名实参，不增加另一套括号或关键字。
 
 `void` 和 `never` 按普通 prelude 名称解析，分别等价于 `let void = ()` 与
 `let never = enum {}`，不是 lexer 关键字。零 variant enum 合法；其值位置可以用空的

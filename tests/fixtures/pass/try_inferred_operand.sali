@@ -1,11 +1,11 @@
-let option_none(): Option(i32) = Option(_).None.try
+let option_none(): Option(i32) = Option.None.try
 
-let result_err(): Result(i32, bool) = Result(_, _).Err(false).try
+let result_err(): Result(i32, bool) = Result.Err(false).try
 
-let result_ok(): Result(i32, bool) = Result(_, _).Ok(21).try
+let result_ok(): Result(i32, bool) = Result.Ok(21).try
 
 let local_result(): Result(bool, bool) = {
-  let value = Result(_, _).Ok(21).try
+  let value = Result.Ok(21).try
   value == 21
 }
 

@@ -1,8 +1,8 @@
 let main(): i32 = {
-  let some = Option(_).Some(20)
-  let none: Option(i32) = Option(_).None
-  let ok = Result(_, bool).Ok(22)
-  let err: Result(i32, bool) = Result(_, _).Err(false)
+  let some = Option.Some(20)
+  let none: Option(i32) = Option.None
+  let ok = Result(E: bool).Ok(22)
+  let err: Result(i32, bool) = Result.Err(false)
 
   let from_some = some match {
     Some(value) => value,

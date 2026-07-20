@@ -1,1 +1,1 @@
-let main(): i32 = Result(_, _).Ok(1) ?? 2
+let main(): i32 = Result.Ok(1) ?? 2

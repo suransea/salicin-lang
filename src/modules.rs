@@ -1306,7 +1306,7 @@ fn validate_exposed_type(
                 );
             }
         }
-        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit | Type::Infer => {}
+        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => {}
     }
 }
 
@@ -1589,13 +1589,7 @@ impl Resolver {
                     self.reject_bare_module(&segments, context, "a type");
                 }
             }
-            Type::I32
-            | Type::I64
-            | Type::U32
-            | Type::U64
-            | Type::Bool
-            | Type::Unit
-            | Type::Infer => {}
+            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => {}
         }
     }
 
@@ -1704,7 +1698,7 @@ impl Resolver {
                     self.rewrite_match_arm(arm, context, type_scope, value_scope);
                 }
             }
-            Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Infer => {}
+            Expr::Unit | Expr::Integer(_) | Expr::Bool(_) => {}
         }
     }
 
@@ -2426,7 +2420,7 @@ extend Number: Add(Number) {
 }
 
 let stop(): never = loop {}
-let main(): i32 = Option(_).None ?? 42
+let main(): i32 = Option()
 "#,
                 true,
             ),
@@ -3235,7 +3229,7 @@ let main(): i32 = Option(_).None ?? 42
                         visit(&arm.body, names);
                     }
                 }
-                Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Infer => {}
+                Expr::Unit | Expr::Integer(_) | Expr::Bool(_) => {}
             }
         }
 

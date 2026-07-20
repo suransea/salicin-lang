@@ -7,6 +7,6 @@ let tick(mut borrow count: i32): i32 = {
 
 let main(): i32 = {
   let mut count = 0
-  let value = identity(_)(tick(count))
+  let value = identity(tick(count))
   if count == 1 { value } else { 0 }
 }
