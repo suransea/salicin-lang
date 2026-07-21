@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.43.0 - 2026-07-21
+
+- Allowed temporary nominal values to receive inherent and trait methods through
+  `mut borrow self`.
+- Marked compiler-generated receiver bindings mutable only when the selected method requires it,
+  preserving a stable address and running resource destruction exactly once after the call.
+- Continued to reject partial applications that would capture either shared or mutable receiver
+  borrows beyond the complete call.
+
 ## 0.42.0 - 2026-07-21
 
 - Allowed temporary nominal values to receive methods through shared `borrow self`, including both

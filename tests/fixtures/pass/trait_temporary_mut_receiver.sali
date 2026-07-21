@@ -1,0 +1,14 @@
+let Reset = trait {
+  let reset(mut borrow self)(): i32
+}
+
+let Counter = struct(value: i32)
+
+extend Counter: Reset {
+  let reset(mut borrow self)(): i32 = {
+    self.value = 42
+    self.value
+  }
+}
+
+let main(): i32 = Counter(0).reset()

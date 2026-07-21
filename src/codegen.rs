@@ -12473,7 +12473,7 @@ impl Analyzer {
         groups: &[&[CallArg]],
         context: &mut LowerCtx,
     ) -> HirExpr {
-        let (receiver_place, temporary_binding) =
+        let (mut receiver_place, mut temporary_binding) =
             if let Some(place) = self.lower_place_without_diagnostic(receiver, context) {
                 (place, None)
             } else {
@@ -12609,7 +12609,15 @@ impl Analyzer {
                 &receiver_parameter.ty,
                 format!("receiver for method `{target}.{member}`"),
             );
-            match self.effective_pass_mode(receiver_parameter.mode, &receiver_parameter.ty) {
+            let receiver_mode =
+                self.effective_pass_mode(receiver_parameter.mode, &receiver_parameter.ty);
+            if receiver_mode == PassMode::MutBorrow {
+                receiver_place.root_mutable = true;
+                if let Some(binding) = temporary_binding.as_mut() {
+                    binding.mutable = true;
+                }
+            }
+            match receiver_mode {
                 PassMode::Copy => {
                     if !self.is_copy_type(&receiver_parameter.ty) {
                         let ty = self.diagnostic_type_name(&receiver_parameter.ty);
@@ -12637,9 +12645,11 @@ impl Analyzer {
                     HirArgument::SharedBorrow(receiver_place.clone())
                 }
                 PassMode::MutBorrow => {
-                    self.error(format!(
-                        "temporary receiver for method `{target}.{member}` cannot be mutably borrowed; bind it to a mutable local first"
-                    ));
+                    if let Some(loan) =
+                        self.acquire_loan(&receiver_place, LoanKind::Mutable, false, context)
+                    {
+                        temporary_loans.push(loan);
+                    }
                     HirArgument::MutBorrow(receiver_place.clone())
                 }
                 PassMode::Inferred => unreachable!("effective mode is explicit"),
