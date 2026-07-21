@@ -25824,8 +25824,8 @@ let main(): i32 = loop {
     fn unsafe_effects_are_declared_forwarded_and_handled_at_calls() {
         let ir = compile_text(
             r#"
-let read(pointer: Ptr(i32)): i32 ! unsafe = *pointer
-let forward(pointer: Ptr(i32)): i32 ! unsafe = read(pointer)
+let read(pointer: Ptr(i32)): i32(unsafe) = *pointer
+let forward(pointer: Ptr(i32)): i32(unsafe) = read(pointer)
 let main(): i32 = {
   let value = 42
   unsafe { forward(Ptr(borrow value)) }
@@ -25837,7 +25837,7 @@ let main(): i32 = {
 
         let errors = compile_text(
             r#"
-let read(pointer: Ptr(i32)): i32 ! unsafe = *pointer
+let read(pointer: Ptr(i32)): i32(unsafe) = *pointer
 let main(): i32 = {
   let value = 42
   read(Ptr(borrow value))
@@ -25856,7 +25856,7 @@ let main(): i32 = {
     fn unsafe_effect_checks_survive_aliasing_and_partial_application() {
         let errors = compile_text(
             r#"
-let read(pointer: Ptr(i32))(offset: i32): i32 ! unsafe = *pointer + offset
+let read(pointer: Ptr(i32))(offset: i32): i32(unsafe) = *pointer + offset
 let main(): i32 = {
   let value = 40
   let named = read
@@ -25872,7 +25872,7 @@ let main(): i32 = {
 
         compile_text(
             r#"
-let read(pointer: Ptr(i32))(offset: i32): i32 ! unsafe = *pointer + offset
+let read(pointer: Ptr(i32))(offset: i32): i32(unsafe) = *pointer + offset
 let main(): i32 = {
   let value = 40
   let pending = read(Ptr(borrow value))
@@ -25889,10 +25889,10 @@ let main(): i32 = {
             r#"
 let Reader = struct(pointer: Ptr(i32))
 let Read = trait {
-  let read(borrow self)(): i32 ! unsafe
+  let read(borrow self)(): i32(unsafe)
 }
 extend Reader: Read {
-  let read(borrow self)(): i32 ! unsafe = *self.pointer
+  let read(borrow self)(): i32(unsafe) = *self.pointer
 }
 let main(): i32 = {
   let value = 42
@@ -25907,7 +25907,7 @@ let main(): i32 = {
             r#"
 let Reader = struct(pointer: Ptr(i32))
 let Read = trait {
-  let read(borrow self)(): i32 ! unsafe
+  let read(borrow self)(): i32(unsafe)
 }
 extend Reader: Read {
   let read(borrow self)(): i32 = unsafe { *self.pointer }
@@ -25923,12 +25923,57 @@ let main(): i32 = 0
 
     #[test]
     fn entry_point_cannot_export_an_unsafe_effect() {
-        let errors = compile_text("let main(): i32 ! unsafe = 42\n").unwrap_err();
+        let errors = compile_text("let main(): i32(unsafe) = 42\n").unwrap_err();
         assert!(errors.iter().any(|error| {
             error
                 .message
                 .contains("`main` cannot expose an unhandled `unsafe` effect")
         }));
+    }
+
+    #[test]
+    fn return_type_try_effect_groups_lower_to_option_and_result_boundaries() {
+        let ir = compile_text(
+            r#"
+let keep(move value: Option(i32)): i32(try) = value.try
+let fail(flag: bool): i32(try(bool)) = if flag { throw true } else { 40 }
+let main(): i32 = (keep(Option(i32).None) ?? 1) + (fail(false) ?? 0) + 1
+"#,
+        )
+        .expect("try effect groups should reuse the typed Try return boundary");
+        assert!(ir.contains("define internal %sali.type."));
+    }
+
+    #[test]
+    fn try_and_unsafe_share_one_return_type_effect_group() {
+        let ir = compile_text(
+            r#"
+let read(pointer: Ptr(i32), fail: bool): i32(try(bool), unsafe) = {
+  if fail { throw true }
+  *pointer
+}
+let main(): i32 = {
+  let value = 42
+  unsafe { read(Ptr(borrow value), false) ?? 0 }
+}
+"#,
+        )
+        .expect("try should transform the return carrier while unsafe remains a call requirement");
+        assert!(ir.contains("define internal %sali.type."));
+
+        let errors = compile_text(
+            r#"
+let read(pointer: Ptr(i32)): i32(try(bool), unsafe) = *pointer
+let main(): i32 = {
+  let value = 42
+  read(Ptr(borrow value)) ?? 0
+}
+"#,
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("requires an `unsafe` handler")));
     }
 
     #[test]

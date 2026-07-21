@@ -85,12 +85,13 @@ visibility = "pub", [ "(", "package", ")" ] ;
 ```ebnf
 let_decl = "let", [ "mut" ], IDENT,
            { parameter_group },
-           [ ":", type_expr ],
-           [ effect_annotation ],
+           [ ":", return_type ],
            [ where_clause ],
            [ "=", initializer ] ;
 
-effect_annotation = "!", "unsafe" ;
+return_type = type_expr, [ effect_group ] ;
+effect_group = "(", effect, { ",", effect }, [ "," ], ")" ;
+effect = "unsafe" | "try", [ "(", type_expr, ")" ] ;
 
 initializer = expression | struct_decl | enum_decl | trait_decl | module_decl ;
 ```
@@ -99,7 +100,10 @@ initializer = expression | struct_decl | enum_decl | trait_decl | module_decl ;
 
 - 普通值、函数、类型和模块声明必须有 initializer；只有 trait 要求可以省略。
 - `let mut` 不能含参数组，且必须绑定运行时值。
-- effect 标注只能用于函数声明；当前实现的非空 effect 行只有 `! unsafe`。
+- effect 组只能用于函数返回类型；`T(try)` 规范化为 `Option(T)`，`T(try(E))` 规范化为
+  `Result(T, E)`，`T(unsafe)` 保留返回类型并增加调用要求。
+- 当类型参数组首项为 `try` 或 `unsafe` 时，它是 effect 组；否则是普通类型参数组。因此
+  `Result(T, E)(unsafe)` 的第一组属于 `Result`，第二组属于函数返回 effect。
 - `let f(x: T) = body` 是具名函数声明。
 - `let f: (x: T): R = { body }` 是带名签名函数声明：所有槽必须有名字，RHS 是函数体。
 - `let f: (T): R = { (x: T) -> body }` 是普通函数值绑定。

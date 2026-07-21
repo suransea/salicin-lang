@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.86.0 - 2026-07-21
+
+- Replaced the punctuation-separated `T ! unsafe` spelling with return-type compile-time effect
+  groups such as `T(unsafe)` and removed the old spelling before 1.0.
+- Added `T(try)` as the Option-return boundary form and `T(try(E))` as the Result-return boundary
+  form, reusing the existing source-backed `Try`, `FromResidual`, and `FromError` protocols.
+- Allowed deterministic combinations such as `T(try(E), unsafe)`: try selects the returned carrier
+  while unsafe remains a statically checked call requirement discharged by `unsafe { ... }`.
+- Made duplicate effects and effect groups on non-function values parse errors, while preserving
+  exact effect matching for trait methods and final-group-only behavior for curried functions.
+- Added parser, semantic, LLVM, and native execution coverage for Option, Result, throw,
+  propagation, unsafe handling, methods, aliases, and partial applications under the new syntax.
+
 ## 0.85.0 - 2026-07-21
 
 - Changed the only recognized Salicin source extension from `.sali` to `.sc`, with the shorter

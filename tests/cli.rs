@@ -100,6 +100,16 @@ fn source_extension_is_sc_without_a_legacy_alias() {
 }
 
 #[test]
+fn return_type_effect_groups_run_with_expected_result() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "return_type_effects.sc"))
+        .output()
+        .expect("run return-type effect fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn emit_ir_and_check_cover_the_frontend() {
     let emitted = salic()
         .args(["emit-ir"])

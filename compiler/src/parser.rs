@@ -208,12 +208,17 @@ impl Parser {
             return Err(self.error_here("`let mut` cannot declare a function"));
         }
 
-        let annotation = if self.take(&TokenKind::Colon) {
-            Some(self.type_expr()?)
+        let (annotation, effects, has_effect_group) = if self.take(&TokenKind::Colon) {
+            let (return_type, effects, has_effect_group) = self.function_return_type()?;
+            (Some(return_type), effects, has_effect_group)
         } else {
-            None
+            if self.at(&TokenKind::Bang) {
+                return Err(self.error_here(
+                    "`!` effect syntax was removed; attach an effect group to the return type",
+                ));
+            }
+            (None, FunctionEffects::default(), false)
         };
-        let effects = self.function_effects()?;
 
         if !compile_groups.is_empty() || !groups.is_empty() {
             self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::Equal]);
@@ -230,7 +235,7 @@ impl Parser {
         if self.at(&TokenKind::Struct) || self.at(&TokenKind::Enum) || self.at(&TokenKind::Trait) {
             if mutable
                 || annotation.is_some()
-                || effects != FunctionEffects::default()
+                || has_effect_group
                 || !groups.is_empty()
                 || !where_predicates.is_empty()
             {
@@ -249,7 +254,7 @@ impl Parser {
         }
 
         if compile_groups.is_empty() && groups.is_empty() {
-            if effects != FunctionEffects::default() {
+            if has_effect_group {
                 return Err(self.error_here("effect annotations require a function declaration"));
             }
             let value = self.expression(true)?;
@@ -341,12 +346,17 @@ impl Parser {
         let (compile_groups, groups) = self.declaration_groups(true)?;
         self.validate_receiver_groups(&groups)?;
 
-        let annotation = if self.take(&TokenKind::Colon) {
-            Some(self.type_expr()?)
+        let (annotation, effects, has_effect_group) = if self.take(&TokenKind::Colon) {
+            let (return_type, effects, has_effect_group) = self.function_return_type()?;
+            (Some(return_type), effects, has_effect_group)
         } else {
-            None
+            if self.at(&TokenKind::Bang) {
+                return Err(self.error_here(
+                    "`!` effect syntax was removed; attach an effect group to the return type",
+                ));
+            }
+            (None, FunctionEffects::default(), false)
         };
-        let effects = self.function_effects()?;
         if !compile_groups.is_empty() || !groups.is_empty() {
             self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::Equal]);
         }
@@ -362,7 +372,7 @@ impl Parser {
         }
 
         if compile_groups.is_empty() && groups.is_empty() {
-            if effects != FunctionEffects::default() {
+            if has_effect_group {
                 return Err(self.error_here("effect annotations require a function member"));
             }
             Ok(ExtendMember::Const(Binding {
@@ -922,7 +932,7 @@ impl Parser {
         let (compile_groups, groups) = self.declaration_groups(true)?;
         self.validate_receiver_groups(&groups)?;
 
-        let return_type = if self.take(&TokenKind::Colon) {
+        let (return_type, effects) = if self.take(&TokenKind::Colon) {
             if self.take(&TokenKind::Type) {
                 if !groups.is_empty() {
                     return Err(
@@ -941,11 +951,16 @@ impl Parser {
                     default,
                 });
             }
-            Some(self.type_expr()?)
+            let (return_type, effects, _) = self.function_return_type()?;
+            (Some(return_type), effects)
         } else {
-            None
+            if self.at(&TokenKind::Bang) {
+                return Err(self.error_here(
+                    "`!` effect syntax was removed; attach an effect group to the return type",
+                ));
+            }
+            (None, FunctionEffects::default())
         };
-        let effects = self.function_effects()?;
 
         if compile_groups.is_empty() && groups.is_empty() {
             return Err(
@@ -980,18 +995,68 @@ impl Parser {
         }))
     }
 
-    fn function_effects(&mut self) -> Result<FunctionEffects, ParseError> {
-        if !self.take(&TokenKind::Bang) {
-            return Ok(FunctionEffects::default());
+    fn function_return_type(&mut self) -> Result<(Type, FunctionEffects, bool), ParseError> {
+        let output = self.type_expr()?;
+        if !self.effect_group_starts_here() {
+            if self.at(&TokenKind::Bang) {
+                return Err(self.error_here(
+                    "`!` effect syntax was removed; write a return type such as `i32(unsafe)`",
+                ));
+            }
+            return Ok((output, FunctionEffects::default(), false));
         }
-        if !self.take(&TokenKind::Unsafe) {
-            return Err(self.error_here(
-                "expected `unsafe` after `!`; additional effect rows are not implemented yet",
-            ));
+
+        self.expect(&TokenKind::LParen, "`(` before return-type effects")?;
+        let mut unsafe_effect = false;
+        let mut try_effect: Option<Option<Type>> = None;
+        loop {
+            if self.take(&TokenKind::Unsafe) {
+                if unsafe_effect {
+                    return Err(self.error_here("duplicate `unsafe` return-type effect"));
+                }
+                unsafe_effect = true;
+            } else if self.take(&TokenKind::Try) {
+                if try_effect.is_some() {
+                    return Err(self.error_here("duplicate `try` return-type effect"));
+                }
+                let error = if self.take(&TokenKind::LParen) {
+                    let error = self.type_expr()?;
+                    self.expect(&TokenKind::RParen, "`)` after the `try` error type")?;
+                    Some(error)
+                } else {
+                    None
+                };
+                try_effect = Some(error);
+            } else {
+                return Err(self.error_here(
+                    "expected `try`, `try(Error)`, or `unsafe` in a return-type effect group",
+                ));
+            }
+
+            if self.take(&TokenKind::Comma) {
+                if self.take(&TokenKind::RParen) {
+                    break;
+                }
+            } else {
+                self.expect(&TokenKind::RParen, "`)` after return-type effects")?;
+                break;
+            }
         }
-        Ok(FunctionEffects {
-            unsafe_effect: true,
-        })
+
+        let return_type = match try_effect {
+            None => output,
+            Some(None) => Type::Named("Option".to_owned(), vec![output]),
+            Some(Some(error)) => Type::Named("Result".to_owned(), vec![output, error]),
+        };
+        Ok((return_type, FunctionEffects { unsafe_effect }, true))
+    }
+
+    fn effect_group_starts_here(&self) -> bool {
+        self.at(&TokenKind::LParen)
+            && matches!(
+                self.tokens.get(self.index + 1).map(|token| &token.kind),
+                Some(TokenKind::Unsafe | TokenKind::Try)
+            )
     }
 
     fn named_type_fields(&mut self) -> Result<Vec<Field>, ParseError> {
@@ -1117,7 +1182,10 @@ impl Parser {
         }
 
         let mut arguments = Vec::new();
-        if self.take(&TokenKind::LParen) && !self.take(&TokenKind::RParen) {
+        if !self.effect_group_starts_here()
+            && self.take(&TokenKind::LParen)
+            && !self.take(&TokenKind::RParen)
+        {
             loop {
                 arguments.push(self.type_expr()?);
                 if self.take(&TokenKind::Comma) {
@@ -2659,19 +2727,56 @@ mod tests {
 
     #[test]
     fn parses_function_effects_and_rejects_them_on_values() {
-        let program = parse("let read(pointer: Ptr(i32)): i32 ! unsafe = *pointer\n").unwrap();
+        let program = parse("let read(pointer: Ptr(i32)): i32(unsafe) = *pointer\n").unwrap();
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };
         assert!(function.effects.unsafe_effect);
 
-        let error = parse("let answer: i32 ! unsafe = 42\n").unwrap_err();
+        let error = parse("let answer: i32(unsafe) = 42\n").unwrap_err();
         assert!(error
             .message
             .contains("effect annotations require a function declaration"));
 
-        let error = parse("let f(): i32 ! copy = 42\n").unwrap_err();
-        assert!(error.message.contains("expected `unsafe` after `!`"));
+        let error = parse("let answer: i32(try) = 42\n").unwrap_err();
+        assert!(error
+            .message
+            .contains("effect annotations require a function declaration"));
+
+        let error = parse("let f(): i32 ! unsafe = 42\n").unwrap_err();
+        assert!(error.message.contains("`!` effect syntax was removed"));
+
+        let program = parse(
+            "let optional(): i32(try) = 42\n\
+             let fallible(): i32(try(bool), unsafe) = throw true\n",
+        )
+        .unwrap();
+        let Item::Function(optional) = &program.items[0] else {
+            panic!("expected optional function");
+        };
+        assert_eq!(
+            optional.return_type,
+            Some(Type::Named("Option".to_owned(), vec![Type::I32]))
+        );
+        let Item::Function(fallible) = &program.items[1] else {
+            panic!("expected fallible function");
+        };
+        assert_eq!(
+            fallible.return_type,
+            Some(Type::Named(
+                "Result".to_owned(),
+                vec![Type::I32, Type::Bool]
+            ))
+        );
+        assert!(fallible.effects.unsafe_effect);
+
+        for source in [
+            "let f(): i32(unsafe, unsafe) = 0\n",
+            "let f(): i32(try, try) = 0\n",
+        ] {
+            let error = parse(source).unwrap_err();
+            assert!(error.message.contains("duplicate"));
+        }
     }
 
     #[test]
