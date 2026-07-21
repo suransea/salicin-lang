@@ -419,7 +419,11 @@ async color 落地后可在
 保持返回表示明确的前提下扩展 effect 值集合。
 
 函数类型使用同一位置表达 effect，例如 `(i32): i32 with(unsafe)`。因此不同 row 的 callable 是
-不同类型，高阶函数可以用 `with(E)` 约束并从实参 callable 的签名推断 E。
+不同类型，高阶函数可以用 `with(E)` 约束并从实参 callable 的签名推断 E。row 按“调用要求”取
+子类型：实际 callable 的要求集合是期望集合的子集时可以赋值。因此 pure callable 可用于
+`with(UI)` 或 `with(unsafe)` 的槽位，反向转换不成立；拓宽后的间接调用仍按槽位声明的 row 检查。
+`E` 从 callable 实参推断其精确实际 row，不因外层期望类型而静默拓宽。trait requirement 与
+implementation 仍要求签名完全一致，而不是借子类型关系改变协议契约。
 
 `.try` 和 `throw` 在控制流意义上产生参数化的 try effect；最近能够执行
 `FromResidual(R)` / `FromError(E)` 的 Try 返回边界负责处理它。因此 `: T with(try(E))` 函数可以在内部

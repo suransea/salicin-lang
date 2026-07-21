@@ -152,6 +152,16 @@ fn higher_order_effect_rows_infer_pure_and_unsafe_callables() {
 }
 
 #[test]
+fn pure_function_values_fill_wider_effect_slots() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "function_value_effect_subtyping.sc"))
+        .output()
+        .expect("run effect-row subtyping fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn emit_ir_and_check_cover_the_frontend() {
     let emitted = salic()
         .args(["emit-ir"])

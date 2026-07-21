@@ -23,6 +23,10 @@ Function and generic inherent-member `E: effect` parameters represent complete r
 participate in monomorphization, forward through ordinary compile-time calls such as
 `callee(E)(value)`, and infer pure, unsafe, or custom rows from higher-order callable arguments.
 Named non-capturing functions can be passed and invoked through the native function-pointer ABI.
+Callable effect rows support requirement subtyping: a pure function value can fill an unsafe or
+custom-effect slot, while a value requiring additional effects cannot fill a narrower slot. The
+slot's widened requirements remain checked at indirect calls, and generic row inference retains the
+callable's exact source row.
 User-defined handlers/context lowering, capturing closure values, generic trait methods, and async
 color polymorphism remain design work.
 

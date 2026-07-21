@@ -370,6 +370,40 @@ impl Ty {
     }
 }
 
+fn type_is_assignable(actual: &Ty, expected: &Ty) -> bool {
+    if actual == expected {
+        return true;
+    }
+    match (actual, expected) {
+        (Ty::Function(actual), Ty::Function(expected)) => {
+            function_type_is_assignable(actual, expected)
+        }
+        _ => false,
+    }
+}
+
+fn function_type_is_assignable(actual: &FunctionTy, expected: &FunctionTy) -> bool {
+    actual.groups.len() == expected.groups.len()
+        && actual
+            .groups
+            .iter()
+            .zip(&expected.groups)
+            .all(|(actual_group, expected_group)| {
+                actual_group.len() == expected_group.len()
+                    && actual_group.iter().zip(expected_group).all(
+                        |(actual_parameter, expected_parameter)| {
+                            type_is_assignable(expected_parameter, actual_parameter)
+                        },
+                    )
+            })
+        && type_is_assignable(&actual.result, &expected.result)
+        && (!actual.unsafe_effect || expected.unsafe_effect)
+        && actual
+            .custom_effects
+            .iter()
+            .all(|effect| expected.custom_effects.contains(effect))
+}
+
 impl fmt::Display for Ty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -6348,17 +6382,15 @@ impl Analyzer {
                         .iter()
                         .zip(&actual_function.groups)
                         .any(|(left, right)| left.len() != right.len())
-                    || (effects.unsafe_effect && !actual_function.unsafe_effect)
-                    || effects
-                        .custom
-                        .iter()
-                        .any(|effect| !actual_function.custom_effects.contains(effect))
                 {
                     return Err(mismatch());
                 }
                 if effects.parameters.is_empty()
-                    && (effects.unsafe_effect != actual_function.unsafe_effect
-                        || effects.custom != actual_function.custom_effects)
+                    && ((actual_function.unsafe_effect && !effects.unsafe_effect)
+                        || actual_function
+                            .custom_effects
+                            .iter()
+                            .any(|effect| !effects.custom.contains(effect)))
                 {
                     return Err(mismatch());
                 }
@@ -16823,7 +16855,7 @@ impl Analyzer {
     }
 
     fn require_same_type(&mut self, actual: &Ty, expected: &Ty, context: impl fmt::Display) {
-        if actual == expected
+        if type_is_assignable(actual, expected)
             || self.is_uninhabited_type(actual)
             || *actual == Ty::Error
             || *expected == Ty::Error
@@ -26715,6 +26747,48 @@ let main(): i32 with(UI) = 0
         assert!(entry.iter().any(|error| error
             .message
             .contains("cannot expose unhandled custom effects")));
+    }
+
+    #[test]
+    fn callable_effect_requirements_are_covariant_rows() {
+        compile_text(
+            r#"
+let UI = effect
+let pure(): i32 = 42
+let render(): i32 with(UI) = 42
+let accept_ui(action: (): i32 with(UI))(): i32 with(UI) = action()
+let screen(): i32 with(UI) = {
+  let widened: (): i32 with(UI) = pure
+  accept_ui(pure)() + widened()
+}
+let main(): i32 = 0
+"#,
+        )
+        .expect("a callable with fewer requirements may fill a wider effect slot");
+
+        let narrowing = compile_text(
+            r#"
+let UI = effect
+let render(): i32 with(UI) = 42
+let accept_pure(action: (): i32)(): i32 = action()
+let screen(): i32 with(UI) = accept_pure(render)()
+let main(): i32 = 0
+"#,
+        )
+        .expect_err("an effectful callable cannot fill a pure slot");
+        assert!(narrowing.iter().any(|error| {
+            error.message.contains("expected `(): i32`")
+                && error.message.contains("found `(): i32 with(UI)`")
+        }));
+
+        compile_text(
+            r#"
+let pure(): i32 = 42
+let accept_unsafe(action: (): i32 with(unsafe))(): i32 with(unsafe) = action()
+let main(): i32 = unsafe { accept_unsafe(pure)() }
+"#,
+        )
+        .expect("pure named functions use the same pointer ABI in unsafe callable slots");
     }
 
     #[test]

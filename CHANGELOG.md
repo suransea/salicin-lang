@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.90.0 - 2026-07-21
+
+- Added requirement subtyping for callable effect rows: a callable requiring fewer effects can fill
+  a wider pure/unsafe/custom slot, while narrowing an effectful callable to a less demanding slot is
+  rejected.
+- Preserved the widened slot's effect checks through local annotations, higher-order parameters,
+  and native indirect calls without changing the function-pointer ABI.
+- Kept `E: effect` inference exact to the callable argument's actual row and kept trait requirement
+  and implementation signatures exact, separating polymorphic inference and protocol conformance
+  from ordinary callable assignment compatibility.
+- Added native and diagnostic regressions for pure-to-unsafe/custom widening and effectful-to-pure
+  rejection.
+
 ## 0.89.0 - 2026-07-21
 
 - Replaced the pre-result effect group with one contextual post-result spelling for declarations and
