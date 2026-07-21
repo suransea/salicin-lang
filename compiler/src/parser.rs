@@ -629,7 +629,7 @@ impl Parser {
                 }
                 if matches!(
                     name.as_str(),
-                    "_" | "i32" | "i64" | "u32" | "u64" | "bool" | "void" | "never"
+                    "_" | "i32" | "i64" | "u32" | "u64" | "bool" | "never"
                 ) {
                     return Err(self.error_at(
                         &name_token,
@@ -1342,7 +1342,6 @@ impl Parser {
                 "u32" => Type::U32,
                 "u64" => Type::U64,
                 "bool" => Type::Bool,
-                "void" => Type::Unit,
                 _ => Type::Named(name, arguments),
             })
         } else {
@@ -3412,22 +3411,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_void_as_an_alias_of_the_unit_type() {
-        let program = parse(
-            "let canonical(): () = { () }\n\
-             let alias(): void = { () }\n",
-        )
-        .unwrap();
-
-        for item in &program.items {
-            let Item::Function(function) = item else {
-                panic!("expected function");
-            };
-            assert_eq!(function.return_type, Some(Type::Unit));
-        }
-    }
-
-    #[test]
     fn separates_compile_time_and_runtime_parameter_groups() {
         let program = parse(
             "let identity(T: type)(value: T): T = { value }\n\
@@ -3464,6 +3447,18 @@ mod tests {
             vec![1, 1]
         );
         assert_eq!(staged.groups.len(), 1);
+    }
+
+    #[test]
+    fn void_is_not_a_unit_type_alias() {
+        let program = parse("let invalid(value: void): () = { () }\n").unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        assert_eq!(
+            function.groups[0][0].ty,
+            Type::Named("void".to_owned(), Vec::new())
+        );
     }
 
     #[test]
@@ -3763,7 +3758,7 @@ mod tests {
 
     #[test]
     fn rejects_reserved_compile_parameter_names() {
-        for name in ["_", "i32", "i64", "u32", "u64", "bool", "void", "never"] {
+        for name in ["_", "i32", "i64", "u32", "u64", "bool", "never"] {
             let source = format!("let invalid({name}: type)(value: i32): i32 = {{ value }}\n");
             let error = parse(&source).unwrap_err();
             assert_eq!(

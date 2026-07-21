@@ -1758,10 +1758,7 @@ impl Analyzer {
     }
 
     fn collect_items(&mut self, core: &Program, alloc: &Program, program: &Program) {
-        // `void` is implemented as the prelude's alias of `()` rather than as
-        // a distinct nominal item, but still occupies the unified namespace.
         let mut names = HashSet::from([
-            "void".to_owned(),
             "Ptr".to_owned(),
             "MutPtr".to_owned(),
             "raw_alloc".to_owned(),
@@ -6173,7 +6170,6 @@ impl Analyzer {
                     "u32" => Type::U32,
                     "u64" => Type::U64,
                     "bool" => Type::Bool,
-                    "void" => Type::Unit,
                     _ => Type::Named(name.clone(), Vec::new()),
                 })
             }
@@ -6409,7 +6405,6 @@ impl Analyzer {
                     "u32" => Type::U32,
                     "u64" => Type::U64,
                     "bool" => Type::Bool,
-                    "void" => Type::Unit,
                     _ => Type::Named(name.clone(), Vec::new()),
                 })
             }),
@@ -9316,7 +9311,7 @@ impl Analyzer {
                     || context.has_type_parameter(name)
                     || matches!(
                         name.as_str(),
-                        "i32" | "i64" | "u32" | "u64" | "bool" | "void" | "never"
+                        "i32" | "i64" | "u32" | "u64" | "bool" | "never"
                     )
                     || self.struct_defs.contains_key(name)
                     || self.enum_defs.contains_key(name)
@@ -26390,14 +26385,6 @@ let main(): i32 = {
             .any(|diagnostic| { diagnostic.message == "duplicate top-level name `never`" }));
         assert!(analyzer.enum_defs["never"].variants.is_empty());
 
-        let program = crate::parser::parse("let void = ()\nlet main(): i32 = { 42 }\n")
-            .expect("reserved void source must parse");
-        let analyzer = Analyzer::new(&program);
-        assert!(analyzer
-            .diagnostics
-            .iter()
-            .any(|diagnostic| { diagnostic.message == "duplicate top-level name `void`" }));
-
         let program =
             crate::parser::parse("let Add = struct(value: i32)\nlet main(): i32 = { 42 }\n")
                 .expect("unimported Add source must parse");
@@ -26408,6 +26395,13 @@ let main(): i32 = {
             .any(|diagnostic| { diagnostic.message == "duplicate top-level name `Add`" }));
         assert!(analyzer.struct_defs.contains_key("Add"));
         assert!(analyzer.traits["core::ops::Add"].valid);
+
+        let errors =
+            compile_text("let invalid(value: void): () = { () }\nlet main(): i32 = { 42 }\n")
+                .expect_err("`void` must not resolve as a unit alias");
+        assert!(errors
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("unknown type `void`")));
     }
 
     #[test]

@@ -240,7 +240,7 @@ type_argument  = type_expr | INTEGER ;
 默认值为 `pure`。参数名只可出现在函数签名的 `with(...)` 子句和其他 effect 编译期实参位置，
 例如 `with(E)` 与 `forward(E)(value)`；它也可由 callable 实参或期望类型推断。
 
-`void` 和 `never` 按普通 prelude 名称解析，分别等价于 `let void = ()` 与
+无结果类型只写作 `()`；`void` 拼法已删除。`never` 按普通 prelude 名称解析，等价于
 `let never = enum {}`，不是 lexer 关键字。零 variant enum 合法；其值位置可以用空的
 `match {}` 消除。
 

@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.102.0 - 2026-07-22
+
+- Removed the source-level `void` alias completely; the unit type and no-result function type now
+  have the single spelling `()`.
+- Stopped reserving or normalizing `void`, so it is treated as an ordinary unresolved name unless a
+  program declares that name itself.
+- Updated the grammar, language specification, and core-library documentation to use `()` while
+  retaining `void` only where it is the correct LLVM or C ABI spelling.
+
 ## 0.101.0 - 2026-07-22
 
 - Completed label-directed overloads for methods and associated functions declared by blanket

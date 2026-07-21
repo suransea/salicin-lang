@@ -5,6 +5,8 @@ compiler pipeline, project manifests and local dependencies, ownership and borro
 source-backed core traits and containers, cleanup lowering, raw allocation primitives, and a growing
 `Box`/`Vec` allocation library.
 
+The unit type has one source spelling, `()`; the former `void` alias is removed before 1.0.
+
 Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
 `continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs
 all lexical cleanup required when leaving nested scopes before starting the next iteration.

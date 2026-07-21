@@ -66,7 +66,7 @@ member access.
 `Result` are ordinary enum values and require explicit constructors. Language error propagation is
 defined solely by `throws(E)`, `throw`, and `try { ... }`; `do` has no error-specific semantics.
 
-Primitive implementations and the unit spelling `void` remain compiler-defined. A declaration only
+Primitive implementations remain compiler-defined. The unit type has the single spelling `()`. A declaration only
 receives language-item behavior when its validated identity comes from this edition's embedded core;
 same-named user declarations do not gain special semantics.
 
