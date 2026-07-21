@@ -1,6 +1,6 @@
 [package]
 name = "salicin-lang"
-version = "0.76.0"
+version = "0.77.0"
 edition = "2021"
 description = "The compiler and language specification for the Salicin programming language"
 license = "MIT"

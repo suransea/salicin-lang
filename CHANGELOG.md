@@ -6,6 +6,20 @@ subset.
 
 ## Unreleased
 
+## 0.77.0 - 2026-07-21
+
+- Generalized explicit function propagation boundaries from built-in `Option` and `Result` to any
+  nominal return type implementing the edition-validated `core.control.Try` protocol.
+- Wrapped custom-boundary function tails and explicit `return` success values through the
+  implementation's receiver-free `Try.from_output` function while preserving already wrapped
+  container returns.
+- Propagated `.try` residuals through custom `FromResidual` implementations and accepted both
+  built-in and user-defined `Try` operands at custom boundaries.
+- Lowered `throw error` through a custom boundary's matching `FromError(E)` implementation with
+  contextual error inference and deterministic missing-conversion diagnostics.
+- Added a native execution fixture covering successful custom propagation, residual propagation,
+  explicit-return wrapping, and custom `throw`, all through ordinary library traits.
+
 ## 0.76.0 - 2026-07-21
 
 - Allowed user-defined nominal types implementing the validated `core.control.Try` language trait

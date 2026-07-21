@@ -240,9 +240,10 @@ struct BuiltinFallibleInfo {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ReturnBoundary {
-    kind: BuiltinFallibleKind,
+    kind: Option<BuiltinFallibleKind>,
     container: Ty,
     success: Ty,
+    residual: Ty,
     error: Option<Ty>,
 }
 
@@ -6892,12 +6893,14 @@ impl Analyzer {
     }
 
     fn return_boundary_for_ty(&self, ty: &Ty) -> Option<ReturnBoundary> {
-        let info = self.builtin_try_info_for_ty(ty)?;
+        let protocol = self.try_protocol_info_for_ty(ty)?;
+        let builtin = self.builtin_try_info_for_ty(ty);
         Some(ReturnBoundary {
-            kind: info.kind,
+            kind: builtin.as_ref().map(|info| info.kind),
             container: ty.clone(),
-            success: info.payload,
-            error: info.error,
+            success: protocol.output,
+            residual: protocol.residual,
+            error: builtin.and_then(|info| info.error),
         })
     }
 
@@ -6909,7 +6912,7 @@ impl Analyzer {
         context: &LowerCtx,
     ) -> Option<Ty> {
         let inferred = self.inferred_builtin_coalesce_lhs(expression, context)?;
-        if inferred.kind != boundary.kind {
+        if Some(inferred.kind) != boundary.kind {
             return None;
         }
 
@@ -7069,7 +7072,7 @@ impl Analyzer {
             return ReturnValueCandidate::Container;
         }
         if let Some(inferred) = self.inferred_builtin_coalesce_lhs(expression, context) {
-            if inferred.kind == boundary.kind {
+            if Some(inferred.kind) == boundary.kind {
                 return ReturnValueCandidate::Container;
             }
             if self
@@ -7116,8 +7119,9 @@ impl Analyzer {
             return false;
         }
         match boundary.kind {
-            BuiltinFallibleKind::Option => matches!(name.as_str(), "Some" | "None"),
-            BuiltinFallibleKind::Result => matches!(name.as_str(), "Ok" | "Err"),
+            Some(BuiltinFallibleKind::Option) => matches!(name.as_str(), "Some" | "None"),
+            Some(BuiltinFallibleKind::Result) => matches!(name.as_str(), "Ok" | "Err"),
+            None => false,
         }
     }
 
@@ -8320,7 +8324,17 @@ impl Analyzer {
             return value;
         }
         if value.ty == boundary.success {
-            return self.construct_boundary_variant(boundary, true, Some(value));
+            return if boundary.kind.is_some() {
+                self.construct_boundary_variant(boundary, true, Some(value))
+            } else {
+                self.call_boundary_conversion(
+                    boundary,
+                    LangItemKind::Try,
+                    &[],
+                    "from_output",
+                    value,
+                )
+            };
         }
         self.error(format!(
             "return value must be `{}` or its success value `{}`, found `{}`",
@@ -8340,10 +8354,14 @@ impl Analyzer {
             return error_expr();
         };
         let variant_name = match (boundary.kind, success) {
-            (BuiltinFallibleKind::Option, true) => "Some",
-            (BuiltinFallibleKind::Option, false) => "None",
-            (BuiltinFallibleKind::Result, true) => "Ok",
-            (BuiltinFallibleKind::Result, false) => "Err",
+            (Some(BuiltinFallibleKind::Option), true) => "Some",
+            (Some(BuiltinFallibleKind::Option), false) => "None",
+            (Some(BuiltinFallibleKind::Result), true) => "Ok",
+            (Some(BuiltinFallibleKind::Result), false) => "Err",
+            (None, _) => {
+                self.error("internal error: custom return boundary requires protocol conversion");
+                return error_expr();
+            }
         };
         let Some(layout) = self.enum_layout_or_diagnostic(enum_name) else {
             return error_expr();
@@ -8368,6 +8386,45 @@ impl Analyzer {
                 name: enum_name.clone(),
                 variant,
                 fields,
+            },
+        }
+    }
+
+    fn call_boundary_conversion(
+        &mut self,
+        boundary: &ReturnBoundary,
+        trait_kind: LangItemKind,
+        trait_arguments: &[Ty],
+        method: &str,
+        value: HirExpr,
+    ) -> HirExpr {
+        let Some(implementation) = self.trait_implementation(
+            &boundary.container,
+            self.lang_item_name(trait_kind),
+            trait_arguments,
+        ) else {
+            self.error(format!(
+                "`{}` does not implement `{}` for `{}`",
+                boundary.container,
+                trait_kind.source_name(),
+                value.ty
+            ));
+            return error_expr();
+        };
+        let Some(function) = implementation.methods.get(method).cloned() else {
+            self.error(format!(
+                "internal error: `{}` implementation has no `{method}` function",
+                trait_kind.source_name()
+            ));
+            return error_expr();
+        };
+        HirExpr {
+            ty: boundary.container.clone(),
+            kind: HirExprKind::Call {
+                function,
+                arguments: vec![HirArgument::Move(value)],
+                consumed_callable: None,
+                diverges: false,
             },
         }
     }
@@ -11715,7 +11772,7 @@ impl Analyzer {
         let Some(boundary) = boundary else {
             let _ = self.lower_expr(value, operand_expected.as_ref(), context);
             self.error(
-                "postfix `.try` requires a named function with an explicit `Option` or `Result` return type",
+                "postfix `.try` requires a named function with an explicit return type implementing `core.control.Try`",
             );
             return error_expr();
         };
@@ -11729,7 +11786,9 @@ impl Analyzer {
                 self.try_protocol_info_for_ty(&ty)
                     .map(|protocol| (ty, protocol))
             })
-            .filter(|(ty, _)| self.builtin_fallible_info_for_ty(ty).is_none())
+            .filter(|(ty, _)| {
+                boundary.kind.is_none() || self.builtin_fallible_info_for_ty(ty).is_none()
+            })
         {
             return self.lower_protocol_try(
                 value,
@@ -11759,7 +11818,7 @@ impl Analyzer {
             ));
             return error_expr();
         }
-        if info.kind != boundary.kind {
+        if Some(info.kind) != boundary.kind {
             self.error(format!(
                 "postfix `.try` cannot propagate `{}` through `{}`",
                 operand.ty, boundary.container
@@ -11774,8 +11833,8 @@ impl Analyzer {
             return error_expr();
         }
 
-        let Ty::Enum(boundary_name) = &boundary.container else {
-            self.error("internal error: non-enum `.try` return boundary");
+        let Some(boundary_name) = nominal_name(&boundary.container) else {
+            self.error("internal error: non-nominal `.try` return boundary");
             return error_expr();
         };
         const PAYLOAD_BINDING: &str = "$try$payload";
@@ -11792,7 +11851,7 @@ impl Analyzer {
                 },
                 guard: None,
                 body: Expr::Return(Some(Box::new(Expr::Member(
-                    Box::new(Expr::Name(boundary_name.clone())),
+                    Box::new(Expr::Name(boundary_name.to_owned())),
                     "None".to_owned(),
                 )))),
             },
@@ -11806,7 +11865,7 @@ impl Analyzer {
                 guard: None,
                 body: Expr::Return(Some(Box::new(Expr::Call(
                     Box::new(Expr::Member(
-                        Box::new(Expr::Name(boundary_name.clone())),
+                        Box::new(Expr::Name(boundary_name.to_owned())),
                         "Err".to_owned(),
                     )),
                     vec![CallArg {
@@ -11871,8 +11930,8 @@ impl Analyzer {
         if branch.ty == Ty::Error {
             return branch;
         }
-        let Ty::Enum(boundary_name) = &boundary.container else {
-            self.error("internal error: non-enum `.try` return boundary");
+        let Some(boundary_name) = nominal_name(&boundary.container) else {
+            self.error("internal error: non-nominal `.try` return boundary");
             return error_expr();
         };
 
@@ -11880,7 +11939,7 @@ impl Analyzer {
         const RESIDUAL_BINDING: &str = "$try$protocol$residual";
         let convert = Expr::Call(
             Box::new(Expr::Member(
-                Box::new(Expr::Name(boundary_name.clone())),
+                Box::new(Expr::Name(boundary_name.to_owned())),
                 "from_residual".to_owned(),
             )),
             vec![CallArg {
@@ -11917,10 +11976,50 @@ impl Analyzer {
         let boundary = context.return_boundary.clone();
         let Some(boundary) = boundary else {
             let _ = self.lower_expr(value, None, context);
-            self.error("`throw` requires a named function with an explicit `Result` return type");
+            self.error(
+                "`throw` requires a named function with an explicit return type implementing `core.control.FromError(E)`",
+            );
             return error_expr();
         };
-        if boundary.kind != BuiltinFallibleKind::Result {
+        if boundary.kind.is_none() {
+            let probe = self.probe_expr_ty(value, None, context);
+            let error_ty = match probe {
+                TypeProbe::Known(ty)
+                | TypeProbe::KnownSource(ty, _)
+                | TypeProbe::Defaultable(ty) => ty,
+                TypeProbe::Unsupported => {
+                    let _ = self.lower_expr(value, None, context);
+                    self.error("cannot infer the error type passed to `throw`");
+                    return error_expr();
+                }
+            };
+            if !self.has_conversion_impl(&boundary.container, LangItemKind::FromError, &error_ty) {
+                let _ = self.lower_expr(value, Some(&error_ty), context);
+                self.error(format!(
+                    "`throw` requires `{}` to implement `core.control.FromError({error_ty})`",
+                    boundary.container
+                ));
+                return error_expr();
+            }
+            let error = self.lower_expr(value, Some(&error_ty), context);
+            if self.is_uninhabited_type(&error.ty) {
+                return error;
+            }
+            let result = self.call_boundary_conversion(
+                &boundary,
+                LangItemKind::FromError,
+                std::slice::from_ref(&error_ty),
+                "from_error",
+                error,
+            );
+            context.returned_types.push(boundary.container);
+            context.flow.reachable = false;
+            return HirExpr {
+                ty: Ty::Never,
+                kind: HirExprKind::Return(Some(Box::new(result))),
+            };
+        }
+        if boundary.kind != Some(BuiltinFallibleKind::Result) {
             let _ = self.lower_expr(value, None, context);
             self.error("`throw` may only propagate through a `Result` return type");
             return error_expr();
@@ -22801,11 +22900,11 @@ let main(): i32 = answer(true) ?? 42
             ),
             (
                 "let fail(): i32 = throw false\nlet main(): i32 = 0\n",
-                "explicit `Result` return type",
+                "FromError",
             ),
             (
                 "let fail() = throw false\nlet main(): i32 = 0\n",
-                "explicit `Result` return type",
+                "FromError",
             ),
         ] {
             let errors = compile_text(source).expect_err("invalid throw must be rejected");
