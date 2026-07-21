@@ -12,8 +12,9 @@ validates declarations that have language-defined roles.
 - the uninhabited `never` type
 - the `Copy` and `Drop` traits
 
-`core.ops` contains the operator protocols `Add`, `Sub`, `Mul`, `Div`, and `Rem`. Each protocol uses
-an associated `Output` type and a method corresponding to its operator. They are not in the prelude:
+`core.ops` contains the arithmetic protocols `Add`, `Sub`, `Mul`, `Div`, and `Rem`, plus the equality
+protocol `Eq`. They are not in the prelude. Arithmetic protocols consume their operands and use an
+associated `Output` type:
 
 ```sali
 use core.ops.Add
@@ -24,7 +25,18 @@ extend Number: Add(Number) {
 }
 ```
 
-Writing `left + right` does not itself require an import. An import is required when source names the
+`Eq(Rhs)` borrows both operands and returns `bool`; `!=` invokes the same method exactly once and
+negates its result:
+
+```sali
+use core.ops.Eq
+
+extend Number: Eq(Number) {
+  let eq(borrow self)(borrow rhs: Number): bool = self.value == rhs.value
+}
+```
+
+Writing `left + right` or `left == right` does not itself require an import. An import is required when source names the
 protocol in an implementation, bound, type, or direct member access.
 
 `core.control` contains the error-control protocols `ControlFlow`, `Try`, `FromResidual`, and

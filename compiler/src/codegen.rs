@@ -1158,6 +1158,9 @@ struct BinaryOperatorCandidate {
 struct BinaryOperatorTrait {
     operator: BinaryOp,
     lang_item: LangItemKind,
+    parameter_mode: PassMode,
+    returns_bool: bool,
+    negate_result: bool,
 }
 
 impl BinaryOperatorTrait {
@@ -1173,26 +1176,55 @@ enum BinaryOperatorLeft<'a> {
     Lowered(Box<HirExpr>),
 }
 
-const BINARY_OPERATOR_TRAITS: [BinaryOperatorTrait; 5] = [
+const BINARY_OPERATOR_TRAITS: [BinaryOperatorTrait; 7] = [
     BinaryOperatorTrait {
         operator: BinaryOp::Add,
         lang_item: LangItemKind::Add,
+        parameter_mode: PassMode::Move,
+        returns_bool: false,
+        negate_result: false,
     },
     BinaryOperatorTrait {
         operator: BinaryOp::Sub,
         lang_item: LangItemKind::Sub,
+        parameter_mode: PassMode::Move,
+        returns_bool: false,
+        negate_result: false,
     },
     BinaryOperatorTrait {
         operator: BinaryOp::Mul,
         lang_item: LangItemKind::Mul,
+        parameter_mode: PassMode::Move,
+        returns_bool: false,
+        negate_result: false,
     },
     BinaryOperatorTrait {
         operator: BinaryOp::Div,
         lang_item: LangItemKind::Div,
+        parameter_mode: PassMode::Move,
+        returns_bool: false,
+        negate_result: false,
     },
     BinaryOperatorTrait {
         operator: BinaryOp::Rem,
         lang_item: LangItemKind::Rem,
+        parameter_mode: PassMode::Move,
+        returns_bool: false,
+        negate_result: false,
+    },
+    BinaryOperatorTrait {
+        operator: BinaryOp::Eq,
+        lang_item: LangItemKind::Eq,
+        parameter_mode: PassMode::Borrow,
+        returns_bool: true,
+        negate_result: false,
+    },
+    BinaryOperatorTrait {
+        operator: BinaryOp::Ne,
+        lang_item: LangItemKind::Eq,
+        parameter_mode: PassMode::Borrow,
+        returns_bool: true,
+        negate_result: true,
     },
 ];
 
@@ -1964,8 +1996,17 @@ impl Analyzer {
             if !operator_trait_has_required_shape(operator_trait.lang_item, &definition) {
                 let trait_name = operator_trait.lang_item.source_name();
                 let method = operator_trait.method();
+                let shape = if operator_trait.lang_item == LangItemKind::Eq {
+                    format!(
+                        "let Eq(Rhs: type) = trait {{ let {method}(borrow self)(borrow rhs: Rhs): bool }}"
+                    )
+                } else {
+                    format!(
+                        "let {trait_name}(Rhs: type) = trait {{ let Output: type; let {method}(move self)(move rhs: Rhs): Output }}"
+                    )
+                };
                 self.error(format!(
-                    "`{trait_name}` language trait must have shape `let {trait_name}(Rhs: type) = trait {{ let Output: type; let {method}(move self)(move rhs: Rhs): Output }}`"
+                    "`{trait_name}` language trait must have shape `{shape}`"
                 ));
                 valid = false;
             }
@@ -6580,7 +6621,12 @@ impl Analyzer {
                     return None;
                 };
                 let method = implementation.methods.get(operator_trait.method())?;
-                let output = implementation.associated_types.get("Output")?;
+                let fixed_output = Ty::Bool;
+                let output = if operator_trait.returns_bool {
+                    &fixed_output
+                } else {
+                    implementation.associated_types.get("Output")?
+                };
                 if integer_literal_value(right).is_some_and(|value| !integer_fits(value, rhs)) {
                     return None;
                 }
@@ -12643,9 +12689,9 @@ impl Analyzer {
             && signature.groups[0].len() == 1
             && signature.groups[1].len() == 1
             && signature.groups[0][0].ty == *receiver
-            && signature.groups[0][0].mode == PassMode::Move
+            && signature.groups[0][0].mode == operator_trait.parameter_mode
             && signature.groups[1][0].ty == candidate.rhs
-            && signature.groups[1][0].mode == PassMode::Move
+            && signature.groups[1][0].mode == operator_trait.parameter_mode
             && signature.result.as_ref() == Some(&candidate.output);
         if !valid_signature {
             self.error(format!(
@@ -12692,7 +12738,16 @@ impl Analyzer {
                 diverges: self.is_uninhabited_type(&candidate.output),
             },
         };
-        self.wrap_call_argument_temporaries(call, &mut arguments, temporary_bindings, context)
+        let call =
+            self.wrap_call_argument_temporaries(call, &mut arguments, temporary_bindings, context);
+        if operator_trait.negate_result {
+            HirExpr {
+                ty: Ty::Bool,
+                kind: HirExprKind::Unary(UnaryOp::Not, Box::new(call)),
+            }
+        } else {
+            call
+        }
     }
 
     fn lower_binary(
@@ -12716,7 +12771,9 @@ impl Analyzer {
                     context,
                 );
             }
-            if left_probe == TypeProbe::Unsupported {
+            if left_probe == TypeProbe::Unsupported
+                && operator_trait.parameter_mode == PassMode::Move
+            {
                 let lowered_left = self.lower_expr(left, None, context);
                 if matches!(lowered_left.ty, Ty::Struct(_) | Ty::Enum(_)) {
                     let receiver = lowered_left.ty.clone();
@@ -25677,6 +25734,35 @@ let main(): i32 = {
                 "operator must statically call {trait_name}.{method}"
             );
         }
+    }
+
+    #[test]
+    fn lowers_core_eq_and_ne_to_one_borrowing_static_call() {
+        let program = resolve_text(
+            r#"
+use core.ops.Eq
+let Number = struct(value: i32)
+extend Number: Eq(Number) {
+  let eq(borrow self)(borrow rhs: Number): bool = self.value == rhs.value
+}
+let main(): i32 = {
+  let left = Number(21)
+  let right = Number(21)
+  if left == right && !(left != right) { 42 } else { 0 }
+}
+"#,
+        );
+        let key = TraitImplKey {
+            self_ty: Ty::Struct("Number".into()),
+            trait_ref: TraitRefKey {
+                name: "core::ops::Eq".into(),
+                arguments: vec![Ty::Struct("Number".into())],
+            },
+        };
+        let symbol = function_symbol(&trait_method_name(&key, "eq"));
+        let ir = compile(&program).expect("core Eq source must compile");
+        assert_eq!(ir.matches(&format!("call i1 @{symbol}(")).count(), 2);
+        assert!(ir.contains("xor i1"), "`!=` must negate the Eq result");
     }
 
     #[test]

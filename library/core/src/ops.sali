@@ -22,3 +22,7 @@ pub let Rem(Rhs: type) = trait {
   let Output: type
   let rem(move self)(move rhs: Rhs): Output
 }
+
+pub let Eq(Rhs: type) = trait {
+  let eq(borrow self)(borrow rhs: Rhs): bool
+}

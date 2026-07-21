@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.79.0 - 2026-07-21
+
+- Added the edition-validated `core.ops.Eq(Rhs)` language protocol with borrowing `eq` operands and
+  a fixed `bool` result.
+- Lowered `==` on user-defined nominal types to statically selected `Eq.eq` implementations and
+  lowered `!=` to one such call followed by boolean negation, preserving single evaluation.
+- Kept primitive integer and boolean equality as direct LLVM comparisons and required ordinary
+  imports only when source names or implements `Eq`.
+- Added malformed-core rejection, HIR/LLVM dispatch checks, and native execution coverage for both
+  equality operators.
+- Updated the implementation status to reflect the completed generalized `Try` protocol rather
+  than listing it as future work.
+
 ## 0.78.0 - 2026-07-21
 
 - Added prefix `try do { ... }` expressions and explicitly typed `try Container do { ... }`

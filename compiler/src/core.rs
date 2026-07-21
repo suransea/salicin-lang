@@ -35,6 +35,7 @@ pub enum LangItemKind {
     Mul,
     Div,
     Rem,
+    Eq,
     ControlFlow,
     Try,
     FromResidual,
@@ -42,7 +43,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 14] = [
+    const ALL: [Self; 15] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -53,6 +54,7 @@ impl LangItemKind {
         Self::Mul,
         Self::Div,
         Self::Rem,
+        Self::Eq,
         Self::ControlFlow,
         Self::Try,
         Self::FromResidual,
@@ -71,6 +73,7 @@ impl LangItemKind {
             Self::Mul => "Mul",
             Self::Div => "Div",
             Self::Rem => "Rem",
+            Self::Eq => "Eq",
             Self::ControlFlow => "ControlFlow",
             Self::Try => "Try",
             Self::FromResidual => "FromResidual",
@@ -88,6 +91,7 @@ impl LangItemKind {
             | Self::Mul
             | Self::Div
             | Self::Rem
+            | Self::Eq
             | Self::Try
             | Self::FromResidual
             | Self::FromError => "trait",
@@ -101,6 +105,7 @@ impl LangItemKind {
             Self::Mul => Some("mul"),
             Self::Div => Some("div"),
             Self::Rem => Some("rem"),
+            Self::Eq => Some("eq"),
             Self::Option
             | Self::Result
             | Self::Never
@@ -165,6 +170,7 @@ pub struct LangItems {
     mul: LangItem,
     div: LangItem,
     rem: LangItem,
+    eq: LangItem,
     control_flow: LangItem,
     try_trait: LangItem,
     from_residual: LangItem,
@@ -212,6 +218,10 @@ impl LangItems {
         &self.rem
     }
 
+    pub const fn eq(&self) -> &LangItem {
+        &self.eq
+    }
+
     pub const fn control_flow(&self) -> &LangItem {
         &self.control_flow
     }
@@ -240,6 +250,7 @@ impl LangItems {
             LangItemKind::Mul => &self.mul,
             LangItemKind::Div => &self.div,
             LangItemKind::Rem => &self.rem,
+            LangItemKind::Eq => &self.eq,
             LangItemKind::ControlFlow => &self.control_flow,
             LangItemKind::Try => &self.try_trait,
             LangItemKind::FromResidual => &self.from_residual,
@@ -376,6 +387,7 @@ impl CoreBundle {
             &mut lang_items.mul,
             &mut lang_items.div,
             &mut lang_items.rem,
+            &mut lang_items.eq,
             &mut lang_items.control_flow,
             &mut lang_items.try_trait,
             &mut lang_items.from_residual,
@@ -546,6 +558,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         mul: item(LangItemKind::Mul),
         div: item(LangItemKind::Div),
         rem: item(LangItemKind::Rem),
+        eq: item(LangItemKind::Eq),
         control_flow: item(LangItemKind::ControlFlow),
         try_trait: item(LangItemKind::Try),
         from_residual: item(LangItemKind::FromResidual),
@@ -813,11 +826,16 @@ fn validate_operator(kind: LangItemKind, definition: &TraitDef, diagnostics: &mu
         .operator_method()
         .expect("operator lang items have a method name");
     if !operator_trait_has_required_shape(kind, definition) {
-        diagnostics.push(
+        let shape = if kind == LangItemKind::Eq {
             format!(
-                "lang item `{kind}` must have shape `pub let {kind}(Rhs: type) = trait {{ let Output: type; let {method}(move self)(move rhs: Rhs): Output }}`"
-            ),
-        );
+                "pub let Eq(Rhs: type) = trait {{ let {method}(borrow self)(borrow rhs: Rhs): bool }}"
+            )
+        } else {
+            format!(
+                "pub let {kind}(Rhs: type) = trait {{ let Output: type; let {method}(move self)(move rhs: Rhs): Output }}"
+            )
+        };
+        diagnostics.push(format!("lang item `{kind}` must have shape `{shape}`"));
     }
 }
 
@@ -827,20 +845,46 @@ pub(crate) fn operator_trait_has_required_shape(kind: LangItemKind, definition: 
         return false;
     };
     let valid_groups = definition.compile_groups == vec![vec![type_parameter("Rhs")]];
-    let valid_members = match definition.members.as_slice() {
-        [TraitMember::AssociatedType {
-            name,
-            compile_groups,
-            default,
-        }, TraitMember::Function(function)] => {
-            name == "Output"
-                && compile_groups.is_empty()
-                && default.is_none()
-                && valid_operator_method(function, method)
+    let valid_members = if kind == LangItemKind::Eq {
+        match definition.members.as_slice() {
+            [TraitMember::Function(function)] => valid_eq_method(function, method),
+            _ => false,
         }
-        _ => false,
+    } else {
+        match definition.members.as_slice() {
+            [TraitMember::AssociatedType {
+                name,
+                compile_groups,
+                default,
+            }, TraitMember::Function(function)] => {
+                name == "Output"
+                    && compile_groups.is_empty()
+                    && default.is_none()
+                    && valid_operator_method(function, method)
+            }
+            _ => false,
+        }
     };
     valid_groups && valid_members
+}
+
+fn valid_eq_method(function: &Function, method: &str) -> bool {
+    let [receiver_group, rhs_group] = function.groups.as_slice() else {
+        return false;
+    };
+    let ([receiver], [rhs]) = (receiver_group.as_slice(), rhs_group.as_slice()) else {
+        return false;
+    };
+    function.name == method
+        && function.compile_groups.is_empty()
+        && function.return_type == Some(Type::Bool)
+        && function.body.is_none()
+        && receiver.name == "self"
+        && receiver.mode == PassMode::Borrow
+        && receiver.ty == named_type("Self")
+        && rhs.name == "rhs"
+        && rhs.mode == PassMode::Borrow
+        && rhs.ty == named_type("Rhs")
 }
 
 fn valid_operator_method(function: &Function, method: &str) -> bool {
@@ -901,6 +945,9 @@ pub let Rem(Rhs: type) = trait {
   let Output: type
   let rem(move self)(move rhs: Rhs): Output
 }
+pub let Eq(Rhs: type) = trait {
+  let eq(borrow self)(borrow rhs: Rhs): bool
+}
 "#,
         ]
         .concat()
@@ -911,7 +958,7 @@ pub let Rem(Rhs: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), 19);
+        assert_eq!(bundle.program().items.len(), 20);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -925,7 +972,8 @@ pub let Rem(Rhs: type) = trait {
                 | LangItemKind::Sub
                 | LangItemKind::Mul
                 | LangItemKind::Div
-                | LangItemKind::Rem => format!("core::ops::{}", kind.source_name()),
+                | LangItemKind::Rem
+                | LangItemKind::Eq => format!("core::ops::{}", kind.source_name()),
                 LangItemKind::ControlFlow
                 | LangItemKind::Try
                 | LangItemKind::FromResidual
@@ -946,7 +994,8 @@ pub let Rem(Rhs: type) = trait {
                 | LangItemKind::Sub
                 | LangItemKind::Mul
                 | LangItemKind::Div
-                | LangItemKind::Rem => "ops",
+                | LangItemKind::Rem
+                | LangItemKind::Eq => "ops",
                 LangItemKind::ControlFlow
                 | LangItemKind::Try
                 | LangItemKind::FromResidual
@@ -992,6 +1041,9 @@ pub let Mul(Rhs: type) = trait {
   let Output: type
   let mul(move self)(move rhs: Rhs): Output
 }
+pub let Eq(Rhs: type) = trait {
+  let eq(borrow self)(borrow rhs: Rhs): bool
+}
 "#;
         let bundle = CoreBundle::from_source(Edition::Edition2026, source).unwrap();
 
@@ -1005,6 +1057,7 @@ pub let Mul(Rhs: type) = trait {
         assert_eq!(bundle.lang_items().div().item_index(), 7);
         assert_eq!(bundle.lang_items().sub().item_index(), 8);
         assert_eq!(bundle.lang_items().mul().item_index(), 9);
+        assert_eq!(bundle.lang_items().eq().item_index(), 10);
         for kind in LangItemKind::ALL {
             let item = bundle.lang_items().get(kind);
             assert_eq!(
@@ -1040,6 +1093,9 @@ pub let Div(Rhs: type) = trait {
 pub let Rem(Rhs: type) = trait {
   let Output: type
   let rem(move self)(move rhs: Rhs): Output
+}
+pub let Eq(Rhs: type) = trait {
+  let eq(borrow self)(borrow rhs: Rhs): bool
 }
 pub let Drop = trait {
   let drop(borrow(mut) self)(): ()
@@ -1089,6 +1145,9 @@ pub let Div(Rhs: type) = trait {
 pub let Rem(Rhs: type) = trait {
   let Output: type
   let rem(move self)(move rhs: Rhs): Output
+}
+pub let Eq(Rhs: type) = trait {
+  let eq(borrow self)(borrow rhs: Rhs): bool
 }
 "#;
         let error = CoreBundle::from_source(Edition::Edition2026, source).unwrap_err();
@@ -1177,6 +1236,9 @@ pub let Rem(Rhs: type) = trait {
   let Output: type
   let rem(move self)(move rhs: Rhs): Output = rhs
 }
+pub let Eq(Rhs: type) = trait {
+  let eq(move self)(move rhs: Rhs): bool
+}
 "#;
         let error = CoreBundle::from_source(Edition::Edition2026, source).unwrap_err();
 
@@ -1187,6 +1249,7 @@ pub let Rem(Rhs: type) = trait {
                 "lang item `Mul` must have shape `pub let Mul(Rhs: type) = trait { let Output: type; let mul(move self)(move rhs: Rhs): Output }`",
                 "lang item `Div` must have shape `pub let Div(Rhs: type) = trait { let Output: type; let div(move self)(move rhs: Rhs): Output }`",
                 "lang item `Rem` must have shape `pub let Rem(Rhs: type) = trait { let Output: type; let rem(move self)(move rhs: Rhs): Output }`",
+                "lang item `Eq` must have shape `pub let Eq(Rhs: type) = trait { let eq(borrow self)(borrow rhs: Rhs): bool }`",
             ]
         );
     }

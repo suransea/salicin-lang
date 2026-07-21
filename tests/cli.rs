@@ -2376,6 +2376,16 @@ fn m2_try_errors_report_their_cause() {
 }
 
 #[test]
+fn eq_operator_protocol_runs_with_borrowed_operands() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "eq_operator_trait.sali"))
+        .output()
+        .expect("run Eq operator fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn m2_optional_chain_programs_run_with_expected_result() {
     for name in [
         "chain_option_some_field.sali",
@@ -2462,7 +2472,7 @@ fn m2_throw_programs_run_with_expected_result() {
 fn m2_throw_errors_report_their_cause() {
     for (name, expected) in [
         ("throw_in_option_return.sali", "Result"),
-        ("throw_in_plain_return.sali", "Result"),
+        ("throw_in_plain_return.sali", "FromError"),
         ("throw_in_global.sali", "global"),
         ("throw_in_closure.sali", "closure"),
         ("throw_omitted_return_type.sali", "return type"),

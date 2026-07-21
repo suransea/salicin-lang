@@ -36,7 +36,7 @@ The compiler mounts `core` and `alloc` as reserved standard-library namespaces i
 Their non-prelude declarations have qualified internal identities, so an unimported user declaration
 may still be named `Add`, `Box`, or `Vec`. A project dependency or top-level file module cannot claim
 either standard namespace.
-`core.ops` uses the same rule: `Add`, `Sub`, `Mul`, `Div`, and `Rem` require ordinary imports when
+`core.ops` uses the same rule: `Add`, `Sub`, `Mul`, `Div`, `Rem`, and `Eq` require ordinary imports when
 named. Merely writing the corresponding operator token does not require importing its protocol.
 Likewise, `ControlFlow`, `Try`, `FromResidual`, and `FromError` require imports when named; `.try`
 and `throw` do not inject those names into source scope.
