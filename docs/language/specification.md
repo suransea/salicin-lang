@@ -1502,6 +1502,10 @@ let remote = open(url: endpoint)
 类型重载。相同标签形状的声明是重复定义。这样重载选择只依赖调用的稳定表面形状，不与双向类型
 推断、隐式转换、默认传递模式或 effect 子类型形成循环。
 
+inherent 方法与关联函数遵循相同规则。方法的隐式 `self` 接收者组不算消歧证据；候选必须由调用
+处显式参数组中的具名参数选择。实例调用 `value.open(path: p)` 与限定调用
+`Type.open(self: value)(path: p)` 选择同一候选。
+
 核心隐式 coercion 仅包括 `never` 到任意类型、`borrow(mut) T` 到 `borrow T`，以及明确登记的
 unsizing（例如借用固定数组得到 `borrow Slice(T)`）。整数之间不隐式扩宽，容器不隐式包装，
 用户自定义转换也不参与重载搜索。

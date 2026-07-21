@@ -1534,7 +1534,10 @@ struct FunctionShape {
     effects: crate::ast::FunctionEffects,
 }
 
-fn function_parameter_labels(function: &Function) -> Vec<Vec<String>> {
+type ParameterLabelShape = Vec<Vec<String>>;
+type InherentOverloadKey = (String, String, bool);
+
+fn function_parameter_labels(function: &Function) -> ParameterLabelShape {
     function
         .groups
         .iter()
@@ -1547,7 +1550,7 @@ fn function_parameter_labels(function: &Function) -> Vec<Vec<String>> {
         .collect()
 }
 
-fn display_parameter_label_shape(groups: &[Vec<String>]) -> String {
+fn display_parameter_label_shape(groups: &ParameterLabelShape) -> String {
     groups
         .iter()
         .map(|group| format!("({})", group.join(", ")))
@@ -1555,7 +1558,7 @@ fn display_parameter_label_shape(groups: &[Vec<String>]) -> String {
         .join("")
 }
 
-fn overloaded_function_name(base: &str, groups: &[Vec<String>]) -> String {
+fn overloaded_function_name(base: &str, groups: &ParameterLabelShape) -> String {
     let shape = groups
         .iter()
         .map(|group| format!("{}${}", group.len(), group.join("$")))
@@ -1609,6 +1612,9 @@ struct Analyzer {
     enum_layouts: HashMap<String, EnumLayout>,
     nominal_accesses: HashMap<String, AccessBoundary>,
     inherent_members: HashMap<String, InherentMemberSet>,
+    inherent_overload_counts: HashMap<InherentOverloadKey, usize>,
+    inherent_overloads: HashMap<InherentOverloadKey, Vec<String>>,
+    inherent_overload_shapes: HashMap<InherentOverloadKey, HashSet<ParameterLabelShape>>,
     generic_inherent_extensions: HashMap<String, Vec<GenericInherentExtension>>,
     generic_trait_extensions: HashMap<String, Vec<GenericTraitExtension>>,
     instantiating_generic_trait_extension: usize,
@@ -1673,6 +1679,9 @@ impl Analyzer {
             enum_layouts: HashMap::new(),
             nominal_accesses: HashMap::new(),
             inherent_members: HashMap::new(),
+            inherent_overload_counts: HashMap::new(),
+            inherent_overloads: HashMap::new(),
+            inherent_overload_shapes: HashMap::new(),
             generic_inherent_extensions: HashMap::new(),
             generic_trait_extensions: HashMap::new(),
             instantiating_generic_trait_extension: 0,
@@ -1785,7 +1794,7 @@ impl Analyzer {
                 *function_counts.entry(function.name.clone()).or_default() += 1;
             }
         }
-        let mut overload_shapes = HashMap::<String, HashSet<Vec<Vec<String>>>>::new();
+        let mut overload_shapes = HashMap::<String, HashSet<ParameterLabelShape>>::new();
         let mut overload_visibilities = HashMap::<String, Visibility>::new();
         for (item, visibility, origin) in all_items {
             let name = match item {
@@ -1989,6 +1998,27 @@ impl Analyzer {
 
         self.validate_generic_nominal_cycles();
         self.collect_nominal_layouts();
+        for (extension, _) in &extensions {
+            if !extension.compile_groups.is_empty() || extension.trait_ref.is_some() {
+                continue;
+            }
+            let Type::Named(target, arguments) = &extension.target else {
+                continue;
+            };
+            if !arguments.is_empty() {
+                continue;
+            }
+            for member in &extension.members {
+                let ExtendMember::Function(function) = member else {
+                    continue;
+                };
+                let is_method = schema_function_has_receiver(function);
+                *self
+                    .inherent_overload_counts
+                    .entry((target.clone(), function.name.clone(), is_method))
+                    .or_default() += 1;
+            }
+        }
         let mut remaining_extensions = Vec::new();
         for (extension, origin) in extensions {
             if self.is_core_copy_extension(&extension) {
@@ -3536,6 +3566,13 @@ impl Analyzer {
                         .groups
                         .first()
                         .is_some_and(|group| group.len() == 1 && group[0].name == "self");
+                    let overload_key = (target.clone(), short_name.clone(), is_method);
+                    let overloaded = self
+                        .inherent_overload_counts
+                        .get(&overload_key)
+                        .copied()
+                        .unwrap_or_default()
+                        > 1;
                     if is_method
                         && self.struct_layouts.get(&target).is_some_and(|layout| {
                             layout.fields.iter().any(|field| field.name == short_name)
@@ -3569,7 +3606,7 @@ impl Analyzer {
                                 || members.constants.contains_key(&short_name)
                         }
                     };
-                    if duplicate {
+                    if duplicate && !overloaded {
                         self.error(if is_method {
                             format!("duplicate inherent method `{target}.{short_name}`")
                         } else {
@@ -3578,6 +3615,38 @@ impl Analyzer {
                         continue;
                     }
 
+                    let overload_shape = if overloaded {
+                        if generic_member {
+                            self.error(format!(
+                                "generic inherent member `{target}.{short_name}` cannot be overloaded yet"
+                            ));
+                            continue;
+                        }
+                        let shape = function_parameter_labels(&function);
+                        if !self
+                            .inherent_overload_shapes
+                            .entry(overload_key.clone())
+                            .or_default()
+                            .insert(shape.clone())
+                        {
+                            self.error(if is_method {
+                                format!(
+                                    "duplicate inherent method overload `{target}.{short_name}` with parameter labels {}",
+                                    display_parameter_label_shape(&shape)
+                                )
+                            } else {
+                                format!(
+                                    "duplicate associated member overload `{target}.{short_name}` with parameter labels {}",
+                                    display_parameter_label_shape(&shape)
+                                )
+                            });
+                            continue;
+                        }
+                        Some(shape)
+                    } else {
+                        None
+                    };
+
                     let mut self_substitution = HashMap::new();
                     self_substitution
                         .insert("Self".to_owned(), Type::Named(target.clone(), Vec::new()));
@@ -3585,11 +3654,18 @@ impl Analyzer {
                     if let Some(body) = &mut function.body {
                         substitute_self_expression_target(body, &target);
                     }
-                    let canonical = if is_method {
+                    let mut canonical = if is_method {
                         inherent_method_name(&target, &short_name)
                     } else {
                         associated_function_name(&target, &short_name)
                     };
+                    if let Some(shape) = &overload_shape {
+                        canonical = overloaded_function_name(&canonical, shape);
+                        self.inherent_overloads
+                            .entry(overload_key)
+                            .or_default()
+                            .push(canonical.clone());
+                    }
                     function.name = canonical.clone();
                     if generic_member {
                         self.function_template_order.push(canonical.clone());
@@ -3639,9 +3715,9 @@ impl Analyzer {
                         .insert(canonical.clone(), member_access.clone());
                     let members = self.inherent_members.entry(target.clone()).or_default();
                     if is_method {
-                        members.methods.insert(short_name, canonical);
+                        members.methods.entry(short_name).or_insert(canonical);
                     } else {
-                        members.functions.insert(short_name, canonical);
+                        members.functions.entry(short_name).or_insert(canonical);
                     }
                 }
                 ExtendMember::Const(mut binding) => {
@@ -7810,19 +7886,33 @@ impl Analyzer {
                 .filter(|field| Self::access_boundary_allows(origin, &field.access))
                 .map(|field| field.ty.clone());
         }
-
-        let canonical = self
-            .inherent_members
-            .get(target)
-            .and_then(|members| members.methods.get(member))
-            .cloned()
-            .or_else(|| {
-                let candidates = self.trait_method_candidates(payload, member, origin);
-                (candidates.len() == 1)
-                    .then(|| self.trait_impls[&candidates[0]].methods[member].clone())
-            })?;
-        let signature = self.signatures.get(&canonical)?;
         let groups = groups.expect("method chain has call groups");
+        let overload_key = (target.clone(), member.to_owned(), true);
+        let inherent = if let Some(candidates) = self.inherent_overloads.get(&overload_key) {
+            if !groups
+                .iter()
+                .flat_map(|group| group.iter())
+                .any(|argument| argument.label.is_some())
+            {
+                return None;
+            }
+            let matches = self.matching_function_overloads(candidates, groups, 1);
+            let [selected] = matches.as_slice() else {
+                return None;
+            };
+            Some(selected.clone())
+        } else {
+            self.inherent_members
+                .get(target)
+                .and_then(|members| members.methods.get(member))
+                .cloned()
+        };
+        let canonical = inherent.or_else(|| {
+            let candidates = self.trait_method_candidates(payload, member, origin);
+            (candidates.len() == 1)
+                .then(|| self.trait_impls[&candidates[0]].methods[member].clone())
+        })?;
+        let signature = self.signatures.get(&canonical)?;
         if signature.groups.len() != groups.len() + 1
             || signature.groups.first()?.len() != 1
             || signature.groups[0][0].mode == PassMode::MutBorrow
@@ -8459,7 +8549,7 @@ impl Analyzer {
             {
                 return TypeProbe::Unsupported;
             }
-            let matches = self.matching_function_overloads(candidates, &groups);
+            let matches = self.matching_function_overloads(candidates, &groups, 0);
             let [selected] = matches.as_slice() else {
                 return TypeProbe::Unsupported;
             };
@@ -12673,11 +12763,18 @@ impl Analyzer {
             return Some(field.ty.clone());
         };
 
-        let inherent = self
-            .inherent_members
-            .get(&target)
-            .and_then(|members| members.methods.get(member))
-            .cloned();
+        let overload_key = (target.clone(), member.to_owned(), true);
+        let inherent = if self.inherent_overloads.contains_key(&overload_key) {
+            self.resolve_inherent_overload(&target, member, true, groups)
+        } else {
+            self.inherent_members
+                .get(&target)
+                .and_then(|members| members.methods.get(member))
+                .cloned()
+        };
+        if self.inherent_overloads.contains_key(&overload_key) && inherent.is_none() {
+            return None;
+        }
         let canonical = if let Some(canonical) = inherent {
             canonical
         } else {
@@ -12978,7 +13075,7 @@ impl Analyzer {
                 {
                     return None;
                 }
-                let matches = self.matching_function_overloads(candidates, &groups);
+                let matches = self.matching_function_overloads(candidates, &groups, 0);
                 let [selected] = matches.as_slice() else {
                     return None;
                 };
@@ -13000,8 +13097,28 @@ impl Analyzer {
                 Ty::Struct(target) | Ty::Enum(target) => target,
                 _ => return None,
             };
-            let canonical = self.inherent_members.get(&target)?.functions.get(member)?;
-            let signature = self.signatures.get(canonical)?;
+            let overload_key = (target.clone(), member.clone(), false);
+            let canonical = if let Some(candidates) = self.inherent_overloads.get(&overload_key) {
+                if !groups
+                    .iter()
+                    .flat_map(|group| group.iter())
+                    .any(|argument| argument.label.is_some())
+                {
+                    return None;
+                }
+                let matches = self.matching_function_overloads(candidates, &groups, 0);
+                let [selected] = matches.as_slice() else {
+                    return None;
+                };
+                selected.clone()
+            } else {
+                self.inherent_members
+                    .get(&target)?
+                    .functions
+                    .get(member)?
+                    .clone()
+            };
+            let signature = self.signatures.get(&canonical)?;
             return (groups.len() == signature.groups.len())
                 .then(|| self.throws_info_from_signature(signature))
                 .flatten();
@@ -13014,16 +13131,31 @@ impl Analyzer {
             Ty::Struct(target) | Ty::Enum(target) => target,
             _ => return None,
         };
-        let canonical = self
-            .inherent_members
-            .get(target)
-            .and_then(|members| members.methods.get(member))
-            .cloned()
-            .or_else(|| {
-                let candidates = self.trait_method_candidates(&receiver, member, &context.origin);
-                (candidates.len() == 1)
-                    .then(|| self.trait_impls[&candidates[0]].methods[member].clone())
-            })?;
+        let overload_key = (target.clone(), member.clone(), true);
+        let inherent = if let Some(candidates) = self.inherent_overloads.get(&overload_key) {
+            if !groups
+                .iter()
+                .flat_map(|group| group.iter())
+                .any(|argument| argument.label.is_some())
+            {
+                return None;
+            }
+            let matches = self.matching_function_overloads(candidates, &groups, 1);
+            let [selected] = matches.as_slice() else {
+                return None;
+            };
+            Some(selected.clone())
+        } else {
+            self.inherent_members
+                .get(target)
+                .and_then(|members| members.methods.get(member))
+                .cloned()
+        };
+        let canonical = inherent.or_else(|| {
+            let candidates = self.trait_method_candidates(&receiver, member, &context.origin);
+            (candidates.len() == 1)
+                .then(|| self.trait_impls[&candidates[0]].methods[member].clone())
+        })?;
         let signature = self.signatures.get(&canonical)?;
         (groups.len() + 1 == signature.groups.len())
             .then(|| self.throws_info_from_signature(signature))
@@ -15094,6 +15226,14 @@ impl Analyzer {
             |group| matches!(*group, [CallArg { label: Some(label), .. }] if label == "self"),
         );
         if !explicitly_qualified_method {
+            let overload_key = (target.to_owned(), member.to_owned(), false);
+            if self.inherent_overloads.contains_key(&overload_key) {
+                let Some(canonical) = self.resolve_inherent_overload(target, member, false, groups)
+                else {
+                    return error_expr();
+                };
+                return self.lower_named_function_call(&canonical, groups, expected, context);
+            }
             if let Some(canonical) = self
                 .inherent_members
                 .get(target)
@@ -15882,11 +16022,18 @@ impl Analyzer {
                 return error_expr();
             }
         }
-        let inherent = self
-            .inherent_members
-            .get(&target)
-            .and_then(|members| members.methods.get(member))
-            .cloned();
+        let overload_key = (target.clone(), member.to_owned(), true);
+        let inherent = if self.inherent_overloads.contains_key(&overload_key) {
+            self.resolve_inherent_overload(&target, member, true, groups)
+        } else {
+            self.inherent_members
+                .get(&target)
+                .and_then(|members| members.methods.get(member))
+                .cloned()
+        };
+        if self.inherent_overloads.contains_key(&overload_key) && inherent.is_none() {
+            return error_expr();
+        }
         let mut canonical = if let Some(canonical) = inherent {
             canonical
         } else {
@@ -16700,7 +16847,7 @@ impl Analyzer {
             ));
             return None;
         }
-        let matches = self.matching_function_overloads(&candidates, groups);
+        let matches = self.matching_function_overloads(&candidates, groups, 0);
         match matches.as_slice() {
             [selected] => Some(selected.clone()),
             [] => {
@@ -16732,10 +16879,48 @@ impl Analyzer {
         }
     }
 
+    fn resolve_inherent_overload(
+        &mut self,
+        target: &str,
+        member: &str,
+        is_method: bool,
+        groups: &[&[CallArg]],
+    ) -> Option<String> {
+        let key = (target.to_owned(), member.to_owned(), is_method);
+        let candidates = self.inherent_overloads.get(&key)?.clone();
+        if !groups
+            .iter()
+            .flat_map(|group| group.iter())
+            .any(|argument| argument.label.is_some())
+        {
+            self.error(format!(
+                "overloaded call `{target}.{member}` requires named arguments to select an overload"
+            ));
+            return None;
+        }
+        let matches = self.matching_function_overloads(&candidates, groups, usize::from(is_method));
+        match matches.as_slice() {
+            [selected] => Some(selected.clone()),
+            [] => {
+                self.error(format!(
+                    "no overload of `{target}.{member}` matches the supplied named parameter groups"
+                ));
+                None
+            }
+            _ => {
+                self.error(format!(
+                    "overloaded call `{target}.{member}` remains ambiguous; name a parameter from a distinguishing group"
+                ));
+                None
+            }
+        }
+    }
+
     fn matching_function_overloads(
         &self,
         candidates: &[String],
         groups: &[&[CallArg]],
+        parameter_group_offset: usize,
     ) -> Vec<String> {
         candidates
             .iter()
@@ -16743,12 +16928,13 @@ impl Analyzer {
                 let Some(function) = self.functions.get(*candidate) else {
                     return false;
                 };
-                if groups.len() > function.groups.len() {
+                let parameters = &function.groups[parameter_group_offset..];
+                if groups.len() > parameters.len() {
                     return false;
                 }
                 groups
                     .iter()
-                    .zip(&function.groups)
+                    .zip(parameters)
                     .all(|(arguments, parameters)| {
                         if arguments.len() != parameters.len() {
                             return false;
@@ -25290,6 +25476,65 @@ let main(): i32 = {
 "#,
         )
         .expect("a selected overload should preserve throws inference and lowering");
+    }
+
+    #[test]
+    fn named_arguments_select_inherent_member_overloads() {
+        let ir = compile_text(
+            r#"
+let Counter = struct(value: i32)
+extend Counter: Copy {}
+extend Counter {
+  let add(borrow self)(left: i32): i32 = { self.value + left }
+  let add(borrow self)(right: i32): i32 = { self.value + right + 1 }
+  let make(left: i32): Counter = { Counter(left) }
+  let make(right: i32): Counter = { Counter(right + 1) }
+}
+let main(): i32 = {
+  let counter = Counter.make(right: 19)
+  counter.add(right: 21)
+}
+"#,
+        )
+        .expect("named parameters should select method and associated-function overloads");
+        assert!(ir.contains(&function_symbol("Counter::function::make$overload$1$right")));
+        assert!(ir.contains(&function_symbol(
+            "Counter::method::add$overload$1$self$$1$right"
+        )));
+
+        let positional = compile_text(
+            r#"
+let Counter = struct(value: i32)
+extend Counter {
+  let add(borrow self)(left: i32): i32 = { self.value + left }
+  let add(borrow self)(right: i32): i32 = { self.value + right }
+}
+let main(): i32 = { Counter(40).add(2) }
+"#,
+        )
+        .unwrap_err();
+        assert!(positional
+            .iter()
+            .any(|error| error.message.contains("requires named arguments")));
+
+        compile_text(
+            r#"
+let Counter = struct(value: i32)
+extend Counter: Copy {}
+extend Counter {
+  let read(borrow self)(fail: bool): i32 with(throws(bool)) = {
+    if fail { throw true } else { self.value }
+  }
+  let read(borrow self)(fallback: i32): i32 = { fallback }
+}
+let main(): i32 = {
+  let counter = Counter(42)
+  let result = try { counter.read(fail: false) }
+  result ?? 0
+}
+"#,
+        )
+        .expect("a selected method overload should preserve throws inference");
     }
 
     #[test]

@@ -1757,12 +1757,19 @@ fn m1_loops_and_arrays_run_with_expected_result() {
 
 #[test]
 fn named_arguments_select_function_overloads_in_resolved_sources() {
-    let output = salic()
-        .arg("run")
-        .arg(fixture("pass", "function_overload_named.sc"))
-        .output()
-        .expect("run named function overload fixture");
-    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+    for name in ["function_overload_named.sc", "inherent_overload_named.sc"] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run named function overload fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
 }
 
 #[test]

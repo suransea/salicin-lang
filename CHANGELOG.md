@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.97.0 - 2026-07-22
+
+- Extended label-directed overload sets to concrete inherent methods and associated functions,
+  including declarations spread across multiple extension blocks.
+- Excluded the implicit method receiver group from disambiguation evidence: instance and qualified
+  calls must name an explicit parameter that uniquely selects the member overload.
+- Preserved selected member identity through optional-chain probing, throws inference, effect
+  lowering, stable mangling, and native calls.
+- Kept generic inherent members and trait requirements outside this slice so their compile-time
+  parameter and conformance identities can be added without type-directed fallback rules.
+
 ## 0.96.0 - 2026-07-22
 
 - Added label-directed overload sets for concrete top-level functions: overload declarations must
