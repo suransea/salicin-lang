@@ -1756,6 +1756,16 @@ fn m1_loops_and_arrays_run_with_expected_result() {
 }
 
 #[test]
+fn named_arguments_select_function_overloads_in_resolved_sources() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "function_overload_named.sc"))
+        .output()
+        .expect("run named function overload fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn m1_array_errors_report_their_cause() {
     for (name, expected) in [
         ("array_index_type.sc", "index"),

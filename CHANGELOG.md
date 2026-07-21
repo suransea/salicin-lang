@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.96.0 - 2026-07-22
+
+- Added label-directed overload sets for concrete top-level functions: overload declarations must
+  differ in runtime parameter-group labels, and a call must contain a named argument that selects
+  exactly one candidate.
+- Allowed all supplied curried groups to participate in selection, so a later named group can
+  disambiguate candidates while other groups remain positional.
+- Kept argument types, passing modes, effects, and return types out of overload identity; duplicate
+  label shapes, positional-only calls, missing candidates, and incomplete disambiguation receive
+  focused diagnostics.
+- Preserved overload sets through module resolution, imports, type probing, immediate local closure
+  lowering, throws-handler inference, stable internal mangling, and native LLVM calls.
+
 ## 0.95.0 - 2026-07-22
 
 - Made an unannotated `try { ... }` infer `Result(T, E)` when its body has exactly one escaping

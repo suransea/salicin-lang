@@ -589,6 +589,7 @@ fn collect_symbols(
     let mut symbols: SymbolTable = HashMap::new();
     let mut module_paths = HashSet::new();
     let mut diagnostics = Vec::new();
+    let mut function_overloads = HashMap::<Vec<String>, HashSet<Vec<Vec<String>>>>::new();
     let mut module_children: BTreeMap<Vec<String>, BTreeSet<String>> = BTreeMap::new();
 
     for unit in parsed {
@@ -642,13 +643,66 @@ fn collect_symbols(
             };
 
             if let Some(previous) = symbols.get(&logical_path) {
-                diagnostics.push(format!(
-                    "{}: error: duplicate declaration `{name}` in module `{}`; first declared in {}",
-                    unit.source.path,
-                    display_module(&unit.module_path),
-                    previous.source_path
-                ));
+                if let Item::Function(function) = item {
+                    let shape = function
+                        .groups
+                        .iter()
+                        .map(|group| {
+                            group
+                                .iter()
+                                .map(|parameter| parameter.name.clone())
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>();
+                    let Some(overloads) = function_overloads.get_mut(&logical_path) else {
+                        diagnostics.push(format!(
+                            "{}: error: duplicate declaration `{name}` in module `{}`; first declared in {}",
+                            unit.source.path,
+                            display_module(&unit.module_path),
+                            previous.source_path
+                        ));
+                        continue;
+                    };
+                    if *visibility != previous.visibility {
+                        diagnostics.push(format!(
+                            "{}: error: overloads of `{name}` must use the same visibility as the declaration in {}",
+                            unit.source.path, previous.source_path
+                        ));
+                    } else if !function.compile_groups.is_empty() {
+                        diagnostics.push(format!(
+                            "{}: error: generic function `{name}` cannot be overloaded yet",
+                            unit.source.path
+                        ));
+                    } else if !overloads.insert(shape) {
+                        diagnostics.push(format!(
+                            "{}: error: duplicate overload `{name}` has the same parameter labels as the declaration in {}",
+                            unit.source.path, previous.source_path
+                        ));
+                    }
+                } else {
+                    diagnostics.push(format!(
+                        "{}: error: duplicate declaration `{name}` in module `{}`; first declared in {}",
+                        unit.source.path,
+                        display_module(&unit.module_path),
+                        previous.source_path
+                    ));
+                }
             } else {
+                if let Item::Function(function) = item {
+                    function_overloads.insert(
+                        logical_path.clone(),
+                        HashSet::from([function
+                            .groups
+                            .iter()
+                            .map(|group| {
+                                group
+                                    .iter()
+                                    .map(|parameter| parameter.name.clone())
+                                    .collect::<Vec<_>>()
+                            })
+                            .collect::<Vec<_>>()]),
+                    );
+                }
                 symbols.insert(logical_path, symbol);
             }
 

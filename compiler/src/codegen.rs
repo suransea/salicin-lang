@@ -1534,6 +1534,36 @@ struct FunctionShape {
     effects: crate::ast::FunctionEffects,
 }
 
+fn function_parameter_labels(function: &Function) -> Vec<Vec<String>> {
+    function
+        .groups
+        .iter()
+        .map(|group| {
+            group
+                .iter()
+                .map(|parameter| parameter.name.clone())
+                .collect()
+        })
+        .collect()
+}
+
+fn display_parameter_label_shape(groups: &[Vec<String>]) -> String {
+    groups
+        .iter()
+        .map(|group| format!("({})", group.join(", ")))
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn overloaded_function_name(base: &str, groups: &[Vec<String>]) -> String {
+    let shape = groups
+        .iter()
+        .map(|group| format!("{}${}", group.len(), group.join("$")))
+        .collect::<Vec<_>>()
+        .join("$$");
+    format!("{base}$overload${shape}")
+}
+
 #[derive(Clone)]
 struct NominalSnapshot {
     struct_defs: HashMap<String, StructDef>,
@@ -1555,6 +1585,7 @@ struct Analyzer {
     function_origins: HashMap<String, ItemOrigin>,
     function_accesses: HashMap<String, AccessBoundary>,
     function_templates: HashMap<String, Function>,
+    function_overloads: HashMap<String, Vec<String>>,
     function_template_origins: HashMap<String, ItemOrigin>,
     function_template_order: Vec<String>,
     function_instance_names: HashMap<FunctionInstanceKey, String>,
@@ -1618,6 +1649,7 @@ impl Analyzer {
             function_origins: HashMap::new(),
             function_accesses: HashMap::new(),
             function_templates: HashMap::new(),
+            function_overloads: HashMap::new(),
             function_template_origins: HashMap::new(),
             function_template_order: Vec::new(),
             function_instance_names: HashMap::new(),
@@ -1743,7 +1775,19 @@ impl Analyzer {
             .zip(&alloc.item_visibilities)
             .zip(&alloc.item_origins)
             .map(|((item, visibility), origin)| (item, *visibility, origin.clone()));
-        for (item, visibility, origin) in prelude_items.chain(alloc_items).chain(source_items) {
+        let all_items = prelude_items
+            .chain(alloc_items)
+            .chain(source_items)
+            .collect::<Vec<_>>();
+        let mut function_counts = HashMap::<String, usize>::new();
+        for (item, _, _) in &all_items {
+            if let Item::Function(function) = item {
+                *function_counts.entry(function.name.clone()).or_default() += 1;
+            }
+        }
+        let mut overload_shapes = HashMap::<String, HashSet<Vec<Vec<String>>>>::new();
+        let mut overload_visibilities = HashMap::<String, Visibility>::new();
+        for (item, visibility, origin) in all_items {
             let name = match item {
                 Item::Function(function) => &function.name,
                 Item::Global(binding) => &binding.name,
@@ -1756,12 +1800,57 @@ impl Analyzer {
                     continue;
                 }
             };
-            if !names.insert(name.clone()) {
+            let overloaded_function = matches!(item, Item::Function(_))
+                && function_counts.get(name).copied().unwrap_or_default() > 1;
+            if !names.insert(name.clone()) && !overloaded_function {
                 self.error(format!("duplicate top-level name `{name}`"));
                 continue;
             }
             match item {
                 Item::Function(function) => {
+                    let mut function = function.clone();
+                    let source_name = function.name.clone();
+                    if overloaded_function {
+                        if source_name == "main" {
+                            self.error("entry point `main` cannot be overloaded");
+                            continue;
+                        }
+                        if !function.compile_groups.is_empty() {
+                            self.error(format!(
+                                "generic function `{source_name}` cannot be overloaded yet"
+                            ));
+                            continue;
+                        }
+                        if overload_visibilities
+                            .get(&source_name)
+                            .is_some_and(|previous| previous != &visibility)
+                        {
+                            self.error(format!(
+                                "overloads of `{source_name}` must use the same visibility"
+                            ));
+                            continue;
+                        }
+                        overload_visibilities
+                            .entry(source_name.clone())
+                            .or_insert(visibility);
+                        let shape = function_parameter_labels(&function);
+                        if !overload_shapes
+                            .entry(source_name.clone())
+                            .or_default()
+                            .insert(shape.clone())
+                        {
+                            self.error(format!(
+                                "duplicate overload `{source_name}` with parameter labels {}",
+                                display_parameter_label_shape(&shape)
+                            ));
+                            continue;
+                        }
+                        function.name = overloaded_function_name(&source_name, &shape);
+                        self.function_overloads
+                            .entry(source_name)
+                            .or_default()
+                            .push(function.name.clone());
+                    }
                     self.function_accesses.insert(
                         function.name.clone(),
                         AccessBoundary {
@@ -8362,6 +8451,48 @@ impl Analyzer {
                 result: function.result.clone(),
             }));
         }
+        if let Some(candidates) = self.function_overloads.get(name) {
+            if !groups
+                .iter()
+                .flat_map(|group| group.iter())
+                .any(|argument| argument.label.is_some())
+            {
+                return TypeProbe::Unsupported;
+            }
+            let matches = self.matching_function_overloads(candidates, &groups);
+            let [selected] = matches.as_slice() else {
+                return TypeProbe::Unsupported;
+            };
+            let Some(signature) = self.signatures.get(selected) else {
+                return TypeProbe::Unsupported;
+            };
+            if groups.len() == signature.groups.len() {
+                let Some(result) = signature.result.clone() else {
+                    return TypeProbe::Unsupported;
+                };
+                if signature.throws_error.is_some() {
+                    return self
+                        .builtin_fallible_info_for_ty(&result)
+                        .map_or(TypeProbe::Unsupported, |info| {
+                            TypeProbe::Known(info.payload)
+                        });
+                }
+                return TypeProbe::Known(result);
+            }
+            let Some(result) = signature.result.clone() else {
+                return TypeProbe::Unsupported;
+            };
+            return TypeProbe::Known(Ty::Function(FunctionTy {
+                groups: signature.groups[groups.len()..]
+                    .iter()
+                    .map(|group| group.iter().map(|parameter| parameter.ty.clone()).collect())
+                    .collect(),
+                unsafe_effect: signature.unsafe_effect,
+                throws_error: signature.throws_error.clone().map(Box::new),
+                custom_effects: signature.custom_effects.clone(),
+                result: Box::new(result),
+            }));
+        }
         if context.shadows_top_level_name(name) {
             return TypeProbe::Unsupported;
         }
@@ -9711,6 +9842,11 @@ impl Analyzer {
                         ty: self.global_type(name),
                         kind: HirExprKind::Global(name.clone()),
                     }
+                } else if self.function_overloads.contains_key(name) {
+                    self.error(format!(
+                        "overloaded function `{name}` must be selected by a call with named arguments"
+                    ));
+                    error_expr()
                 } else if self.functions.contains_key(name) {
                     HirExpr {
                         ty: self.function_type(name),
@@ -11447,24 +11583,34 @@ impl Analyzer {
             ));
             return false;
         }
-        let (signature, runtime_groups) = if let Some(signature) = self.signatures.get(function) {
-            (signature.clone(), groups.as_slice())
-        } else if self.function_templates.contains_key(function) {
-            let Some((canonical, runtime_start)) =
-                self.resolve_inferred_generic_function_instance(function, &groups, None, outer)
-            else {
+        let selected_overload = if self.function_overloads.contains_key(function) {
+            self.resolve_function_overload(function, &groups)
+        } else {
+            None
+        };
+        if self.function_overloads.contains_key(function) && selected_overload.is_none() {
+            return false;
+        }
+        let resolved_function = selected_overload.as_deref().unwrap_or(function);
+        let (signature, runtime_groups) =
+            if let Some(signature) = self.signatures.get(resolved_function) {
+                (signature.clone(), groups.as_slice())
+            } else if self.function_templates.contains_key(function) {
+                let Some((canonical, runtime_start)) =
+                    self.resolve_inferred_generic_function_instance(function, &groups, None, outer)
+                else {
+                    return false;
+                };
+                (
+                    self.signatures[&canonical].clone(),
+                    &groups[runtime_start..],
+                )
+            } else {
+                self.error(format!(
+                    "closure call `{function}` is not a top-level named function"
+                ));
                 return false;
             };
-            (
-                self.signatures[&canonical].clone(),
-                &groups[runtime_start..],
-            )
-        } else {
-            self.error(format!(
-                "closure call `{function}` is not a top-level named function"
-            ));
-            return false;
-        };
         if runtime_groups.len() != signature.groups.len() {
             self.error(format!(
                 "named function `{function}` must be fully applied inside a closure"
@@ -11473,14 +11619,26 @@ impl Analyzer {
         }
 
         let mut valid = true;
-        for (arguments, parameters) in runtime_groups.iter().zip(&signature.groups) {
+        for (group_index, (arguments, parameters)) in
+            runtime_groups.iter().zip(&signature.groups).enumerate()
+        {
             if arguments.len() != parameters.len() {
                 self.error(format!(
                     "argument count mismatch in closure call to `{function}`"
                 ));
                 valid = false;
             }
-            for (argument, parameter) in arguments.iter().zip(parameters) {
+            let parameter_names = parameters
+                .iter()
+                .map(|parameter| parameter.name.clone())
+                .collect::<Vec<_>>();
+            let Some(ordered) =
+                self.ordered_call_arguments(function, group_index + 1, arguments, &parameter_names)
+            else {
+                valid = false;
+                continue;
+            };
+            for (argument, parameter) in ordered.into_iter().zip(parameters) {
                 match &argument.value {
                     Expr::Name(name) if bound.contains(name) => {}
                     Expr::Name(name) => {
@@ -12810,6 +12968,23 @@ impl Analyzer {
                 };
                 return (groups.len() == function.groups.len())
                     .then(|| self.throws_info_from_function(function))
+                    .flatten();
+            }
+            if let Some(candidates) = self.function_overloads.get(name) {
+                if !groups
+                    .iter()
+                    .flat_map(|group| group.iter())
+                    .any(|argument| argument.label.is_some())
+                {
+                    return None;
+                }
+                let matches = self.matching_function_overloads(candidates, &groups);
+                let [selected] = matches.as_slice() else {
+                    return None;
+                };
+                let signature = self.signatures.get(selected)?;
+                return (groups.len() == signature.groups.len())
+                    .then(|| self.throws_info_from_signature(signature))
                     .flatten();
             }
             let signature = self.signatures.get(name)?;
@@ -14153,6 +14328,12 @@ impl Analyzer {
                     "generic enum type `{name}` is not directly callable; select a variant"
                 ));
                 return error_expr();
+            }
+            if self.function_overloads.contains_key(name) {
+                let Some(selected) = self.resolve_function_overload(name, &groups) else {
+                    return error_expr();
+                };
+                return self.lower_named_function_call(&selected, &groups, expected, context);
             }
             if self.function_templates.contains_key(name) {
                 return self.lower_generic_function_call(name, &groups, expected, context);
@@ -16505,6 +16686,93 @@ impl Analyzer {
                 }
             }
         }
+    }
+
+    fn resolve_function_overload(&mut self, name: &str, groups: &[&[CallArg]]) -> Option<String> {
+        let candidates = self.function_overloads.get(name)?.clone();
+        if !groups
+            .iter()
+            .flat_map(|group| group.iter())
+            .any(|argument| argument.label.is_some())
+        {
+            self.error(format!(
+                "overloaded call `{name}` requires named arguments to select an overload"
+            ));
+            return None;
+        }
+        let matches = self.matching_function_overloads(&candidates, groups);
+        match matches.as_slice() {
+            [selected] => Some(selected.clone()),
+            [] => {
+                let supplied = groups
+                    .iter()
+                    .map(|group| {
+                        format!(
+                            "({})",
+                            group
+                                .iter()
+                                .filter_map(|argument| argument.label.as_deref())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("");
+                self.error(format!(
+                    "no overload of `{name}` matches named parameter groups {supplied}"
+                ));
+                None
+            }
+            _ => {
+                self.error(format!(
+                    "overloaded call `{name}` remains ambiguous; supply a parameter group whose names distinguish one overload"
+                ));
+                None
+            }
+        }
+    }
+
+    fn matching_function_overloads(
+        &self,
+        candidates: &[String],
+        groups: &[&[CallArg]],
+    ) -> Vec<String> {
+        candidates
+            .iter()
+            .filter(|candidate| {
+                let Some(function) = self.functions.get(*candidate) else {
+                    return false;
+                };
+                if groups.len() > function.groups.len() {
+                    return false;
+                }
+                groups
+                    .iter()
+                    .zip(&function.groups)
+                    .all(|(arguments, parameters)| {
+                        if arguments.len() != parameters.len() {
+                            return false;
+                        }
+                        let labeled = arguments
+                            .iter()
+                            .filter(|argument| argument.label.is_some())
+                            .count();
+                        labeled == 0
+                            || labeled == arguments.len()
+                                && parameters.iter().all(|parameter| {
+                                    arguments
+                                        .iter()
+                                        .filter(|argument| {
+                                            argument.label.as_deref()
+                                                == Some(parameter.name.as_str())
+                                        })
+                                        .count()
+                                        == 1
+                                })
+                    })
+            })
+            .cloned()
+            .collect()
     }
 
     fn ordered_call_arguments<'a>(
@@ -24948,6 +25216,80 @@ let main(): i32 = {
         assert!(handled
             .iter()
             .any(|error| { error.message.contains("body has no escaping throws source") }));
+    }
+
+    #[test]
+    fn named_arguments_select_top_level_function_overloads() {
+        let ir = compile_text(
+            r#"
+let choose(left: i32): i32 = { left + 1 }
+let choose(right: i32): i32 = { right + 2 }
+let main(): i32 = { choose(right: 40) }
+"#,
+        )
+        .expect("named parameters should select one overload");
+        assert!(ir.contains(&format!(
+            "call i32 @{}(i32 40)",
+            function_symbol("choose$overload$1$right")
+        )));
+
+        let positional = compile_text(
+            r#"
+let choose(left: i32): i32 = { left }
+let choose(right: i32): i32 = { right }
+let main(): i32 = { choose(42) }
+"#,
+        )
+        .unwrap_err();
+        assert!(positional
+            .iter()
+            .any(|error| error.message.contains("requires named arguments")));
+
+        let duplicate = compile_text(
+            r#"
+let choose(value: i32): i32 = { value }
+let choose(value: bool): i32 = { 0 }
+let main(): i32 = { choose(value: 42) }
+"#,
+        )
+        .unwrap_err();
+        assert!(duplicate
+            .iter()
+            .any(|error| error.message.contains("duplicate overload")));
+
+        let partial = compile_text(
+            r#"
+let choose(value: i32)(left: i32): i32 = { value + left }
+let choose(value: i32)(right: i32): i32 = { value + right }
+let main(): i32 = { choose(value: 40)(right: 2) }
+"#,
+        )
+        .expect("later named parameter groups should disambiguate curried overloads");
+        assert!(partial.contains(&function_symbol("choose$overload$1$value$$1$right")));
+
+        compile_text(
+            r#"
+let choose(left: i32): i32 = { left + 1 }
+let choose(right: i32): i32 = { right + 2 }
+let main(): i32 = {
+  let deferred = { choose(left: 41) }
+  deferred()
+}
+"#,
+        )
+        .expect("a local closure should retain named overload selection");
+
+        compile_text(
+            r#"
+let choose(fail: bool): i32 with(throws(bool)) = { if fail { throw true } else { 42 } }
+let choose(value: i32): i32 = { value }
+let main(): i32 = {
+  let result = try { choose(fail: false) }
+  result ?? 0
+}
+"#,
+        )
+        .expect("a selected overload should preserve throws inference and lowering");
     }
 
     #[test]
