@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.104.0 - 2026-07-22
+
+- Added source-backed, edition-validated `Iterator` and `IntoIterator` lang-item traits in the new
+  non-prelude `core.iter` module.
+- Implemented `for name in value { ... }` and wildcard iteration, evaluating the iterable once and
+  lowering exclusively through the validated iteration traits rather than ordinary same-named
+  method lookup.
+- Reused loop ownership, cleanup, `break`, and `continue` lowering for iteration while fixing `for`
+  to the unit result type and rejecting value-carrying breaks.
+- Added native execution coverage for a user-defined consuming iterable and mutable iterator, plus
+  diagnostics for missing iteration conformance and invalid break values.
+
 ## 0.103.0 - 2026-07-22
 
 - Added validated, edition-pinned `core.control` declarations for the `do`, `try`, `unsafe`, and

@@ -1742,6 +1742,7 @@ fn m1_loops_and_arrays_run_with_expected_result() {
         "empty_array_typed.sc",
         "nested_loop_break.sc",
         "loop_move_then_break.sc",
+        "for_iterator.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -1817,6 +1818,10 @@ fn m1_loop_errors_report_their_cause() {
         ("while_break_value.sc", "while"),
         ("loop_break_type_mismatch.sc", "type mismatch"),
         ("loop_backedge_move.sc", "move"),
+        ("for_missing_into_iterator.sc", "IntoIterator"),
+        ("for_missing_iterator.sc", "Iterator"),
+        ("for_break_value.sc", "type mismatch"),
+        ("for_refutable_pattern.sc", "irrefutable"),
     ] {
         let output = salic()
             .arg("check")

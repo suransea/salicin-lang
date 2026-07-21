@@ -80,6 +80,26 @@ pub let loop(E: effect, T: type)(move body: (): () with(E)): T with(E)
 Here `try` removes only `throws(E)`, `unsafe` removes only the unsafe requirement, and both forward
 the remainder row. `do` and `loop` forward the whole row.
 
+`core.iter` owns iteration rather than the prelude:
+
+```sali
+pub let Iterator = trait {
+  let Item: type
+  let next(borrow(mut) self)(): Option(Item)
+}
+
+pub let IntoIterator = trait {
+  let IntoIter: type
+  let into_iter(move self)(): IntoIter
+}
+```
+
+Implementing or naming either trait requires `use core.iter.{Iterator, IntoIterator}`. The `for`
+syntax itself needs no import and dispatches only through these validated identities. It evaluates
+the iterable once, moves it into `IntoIterator.into_iter`, repeatedly mutably borrows the resulting
+iterator for `Iterator.next`, and stops on `None`. An inherent or unrelated trait method named
+`into_iter` or `next` cannot intercept this lowering.
+
 The lowercase syntax spellings bind to these validated identities without an import. An ordinary
 same-named declaration cannot acquire their lowering behavior. Future control features follow the
 same rule: for example, async lowering must add its effect, `Future`, `async`, and `await` contracts

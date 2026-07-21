@@ -16,6 +16,11 @@ land with the implementation.
 Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
 `continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs
 all lexical cleanup required when leaving nested scopes before starting the next iteration.
+`for name in value { ... }` and `for _ in value { ... }` lower through validated, source-backed
+`core.iter.IntoIterator` and `core.iter.Iterator` identities. The iterable is evaluated once,
+`into_iter` consumes it, and each iteration mutably borrows the iterator for `next`; unrelated
+same-named methods cannot intercept the lowering. Break, continue, ownership flow, and cleanup reuse
+the ordinary loop machinery.
 
 Access keyword generics are implemented for functions and generic inherent members: `A: access` accepts `shared` or `mut`,
 defaults to shared when omitted, participates in monomorphization, and can drive parameter modes,
@@ -70,9 +75,10 @@ declarations; operator syntax continues to dispatch through validated lang items
 
 The implementation is broad but not stable. Important incomplete boundaries include:
 
-- `core` provides the initial prelude and arithmetic, bitwise, unary, equality, and partial-ordering
-  protocols; language error propagation is the built-in `throws(E)` effect. Slices, iteration,
-  indexing, and `Future` remain to be implemented;
+- `core` provides the initial prelude plus arithmetic, bitwise, unary, equality, partial-ordering,
+  control, and iteration protocols. Language error propagation is the built-in `throws(E)` effect.
+  Slices, trait-based indexing, standard array/container iterator implementations, and `Future`
+  remain to be implemented;
 - `std` host APIs have not been started;
 - registry dependencies, workspaces, stable ABI guarantees, and a package distribution format are
   not defined;

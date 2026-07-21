@@ -22,6 +22,8 @@ pub enum TokenKind {
     Return,
     Throw,
     While,
+    For,
+    In,
     Loop,
     Break,
     Continue,
@@ -136,6 +138,8 @@ fn keyword(text: &str) -> Option<TokenKind> {
         "return" => TokenKind::Return,
         "throw" => TokenKind::Throw,
         "while" => TokenKind::While,
+        "for" => TokenKind::For,
+        "in" => TokenKind::In,
         "loop" => TokenKind::Loop,
         "break" => TokenKind::Break,
         "continue" => TokenKind::Continue,
@@ -566,8 +570,8 @@ mod tests {
     fn exposes_the_same_keyword_set_used_by_tokenization() {
         for text in [
             "let", "pub", "package", "use", "as", "root", "super", "mut", "copy", "move", "borrow",
-            "type", "do", "if", "else", "return", "throw", "while", "loop", "break", "extend",
-            "struct", "enum", "trait", "match", "try", "true", "false",
+            "type", "do", "if", "else", "return", "throw", "while", "for", "in", "loop", "break",
+            "extend", "struct", "enum", "trait", "match", "try", "true", "false",
         ] {
             assert!(is_keyword(text), "`{text}` was not reported as a keyword");
             assert!(!matches!(lex(text).unwrap()[0].kind, TokenKind::Ident(_)));

@@ -45,6 +45,7 @@ pub fn parse_tokens(tokens: Vec<Token>) -> Result<Program, ParseError> {
         tokens,
         index: 0,
         effect_parameters_in_scope: HashSet::new(),
+        next_for_binding: 0,
     }
     .program()
 }
@@ -53,6 +54,7 @@ struct Parser {
     tokens: Vec<Token>,
     index: usize,
     effect_parameters_in_scope: HashSet<String>,
+    next_for_binding: usize,
 }
 
 enum HeaderGroup {
@@ -2025,6 +2027,7 @@ impl Parser {
             TokenKind::Return => self.return_expression(allow_trailing_closure),
             TokenKind::Throw => self.throw_expression(allow_trailing_closure),
             TokenKind::While => self.while_expression(),
+            TokenKind::For => self.for_expression(),
             TokenKind::Loop => self.loop_expression(),
             TokenKind::Break => self.break_expression(allow_trailing_closure),
             TokenKind::Continue => {
@@ -2122,6 +2125,82 @@ impl Parser {
             condition: Box::new(condition),
             body: Box::new(body),
         })
+    }
+
+    fn for_expression(&mut self) -> Result<Expr, ParseError> {
+        self.expect(&TokenKind::For, "`for`")?;
+        let pattern = self.pattern()?;
+        if !matches!(pattern, Pattern::Binding(_) | Pattern::Wildcard) {
+            return Err(
+                self.error_here("`for` currently requires an irrefutable name or `_` pattern")
+            );
+        }
+        self.expect(&TokenKind::In, "`in` after the for pattern")?;
+        let iterable = self.expression(false)?;
+        if !self.at(&TokenKind::LBrace) {
+            return Err(self.error_here("expected `{` after `for` iterable"));
+        }
+        let body = self.block()?;
+
+        let id = self.next_for_binding;
+        self.next_for_binding += 1;
+        let iterator = format!("$for$iterator${id}");
+        let loop_result = format!("$for$result${id}");
+        let into_iter = Expr::Call(
+            Box::new(Expr::Member(
+                Box::new(iterable),
+                "$lang$into_iter".to_owned(),
+            )),
+            Vec::new(),
+        );
+        let next = Expr::Call(
+            Box::new(Expr::Member(
+                Box::new(Expr::Name(iterator.clone())),
+                "$lang$next".to_owned(),
+            )),
+            Vec::new(),
+        );
+        let loop_body = Expr::Match {
+            scrutinee: Box::new(next),
+            arms: vec![
+                MatchArm {
+                    pattern: Pattern::Constructor {
+                        path: vec!["Some".to_owned()],
+                        fields: PatternFields::Positional(vec![pattern]),
+                    },
+                    guard: None,
+                    body,
+                },
+                MatchArm {
+                    pattern: Pattern::Constructor {
+                        path: vec!["None".to_owned()],
+                        fields: PatternFields::Unit,
+                    },
+                    guard: None,
+                    body: Expr::Break(None),
+                },
+            ],
+        };
+
+        Ok(Expr::Block(
+            vec![
+                Stmt::Let(Binding {
+                    mutable: true,
+                    name: iterator,
+                    annotation: None,
+                    value: into_iter,
+                }),
+                Stmt::Let(Binding {
+                    mutable: false,
+                    name: loop_result,
+                    annotation: Some(Type::Unit),
+                    value: Expr::Loop {
+                        body: Box::new(loop_body),
+                    },
+                }),
+            ],
+            None,
+        ))
     }
 
     fn loop_expression(&mut self) -> Result<Expr, ParseError> {
@@ -3075,6 +3154,8 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::Return => "`return`",
         TokenKind::Throw => "`throw`",
         TokenKind::While => "`while`",
+        TokenKind::For => "`for`",
+        TokenKind::In => "`in`",
         TokenKind::Loop => "`loop`",
         TokenKind::Break => "`break`",
         TokenKind::Continue => "`continue`",
@@ -4610,6 +4691,34 @@ mod tests {
                     Expr::Break(Some(value))
                         if matches!(value.as_ref(), Expr::Binary(_, BinaryOp::Add, _))
                 )
+        ));
+    }
+
+    #[test]
+    fn desugars_for_to_iteration_lang_item_calls() {
+        let program =
+            parse("let main(): () = { for value in values() { consume(value) } }\n").unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        let Expr::Block(_, Some(for_loop)) = function.body.as_ref().unwrap() else {
+            panic!("expected function block");
+        };
+        let Expr::Block(statements, None) = for_loop.as_ref() else {
+            panic!("expected desugared for block");
+        };
+        assert!(matches!(
+            &statements[0],
+            Stmt::Let(Binding { mutable: true, value: Expr::Call(callee, _), .. })
+                if matches!(callee.as_ref(), Expr::Member(_, member) if member == "$lang$into_iter")
+        ));
+        assert!(matches!(
+            &statements[1],
+            Stmt::Let(Binding {
+                annotation: Some(Type::Unit),
+                value: Expr::Loop { .. },
+                ..
+            })
         ));
     }
 

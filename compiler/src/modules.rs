@@ -315,6 +315,7 @@ const CORE_CONTROL_EXPORTS: &[&str] = &[
     "Unsafe", "Throws", "Shared", "Mutable", "do", "try", "unsafe", "loop",
 ];
 const CORE_CONTROL_IMPORTS: &[&str] = &["Unsafe", "Throws", "Shared", "Mutable"];
+const CORE_ITER_EXPORTS: &[&str] = &["Iterator", "IntoIterator"];
 
 fn validate_package_layout(
     packages: &[SourcePackage],
@@ -741,6 +742,9 @@ fn install_standard_namespaces(
     for name in CORE_CONTROL_IMPORTS {
         required_imports.insert((*name).to_owned(), format!("core.control.{name}"));
     }
+    for name in CORE_ITER_EXPORTS {
+        required_imports.insert((*name).to_owned(), format!("core.iter.{name}"));
+    }
 
     for package_root in package_roots {
         let mut core_root = package_root.clone();
@@ -757,7 +761,7 @@ fn install_standard_namespaces(
             ));
         } else {
             module_paths.insert(core_root.clone());
-            for module in ["prelude", "ops", "control"] {
+            for module in ["prelude", "ops", "control", "iter"] {
                 let mut module_path = core_root.clone();
                 module_path.push(module.to_owned());
                 module_paths.insert(module_path);
@@ -803,6 +807,22 @@ fn install_standard_namespaces(
                     logical_path,
                     Symbol {
                         canonical: format!("core::control::{name}"),
+                        module_path,
+                        package_root: package_root.clone(),
+                        visibility: Visibility::Public,
+                        source_path: "<core>".to_owned(),
+                    },
+                );
+            }
+            for name in CORE_ITER_EXPORTS {
+                let mut module_path = core_root.clone();
+                module_path.push("iter".to_owned());
+                let mut logical_path = module_path.clone();
+                logical_path.push((*name).to_owned());
+                symbols.insert(
+                    logical_path,
+                    Symbol {
+                        canonical: format!("core::iter::{name}"),
                         module_path,
                         package_root: package_root.clone(),
                         visibility: Visibility::Public,
@@ -3995,6 +4015,7 @@ let main(): i32 = { Option() }
             .map(|name| ("prelude", *name))
             .chain(CORE_OPS_EXPORTS.iter().map(|name| ("ops", *name)))
             .chain(CORE_CONTROL_EXPORTS.iter().map(|name| ("control", *name)))
+            .chain(CORE_ITER_EXPORTS.iter().map(|name| ("iter", *name)))
             .collect::<BTreeSet<_>>();
         assert_eq!(core_exports, expected_core);
 

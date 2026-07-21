@@ -20,6 +20,7 @@ use crate::parser;
 const EDITION_2026_PRELUDE: &str = include_str!("../../library/core/src/prelude.sc");
 const EDITION_2026_OPS: &str = include_str!("../../library/core/src/ops.sc");
 const EDITION_2026_CONTROL: &str = include_str!("../../library/core/src/control.sc");
+const EDITION_2026_ITER: &str = include_str!("../../library/core/src/iter.sc");
 
 /// A stable logical role fulfilled by one declaration in the edition's
 /// `core` bundle.
@@ -53,10 +54,12 @@ pub enum LangItemKind {
     Try,
     Unsafe,
     Loop,
+    Iterator,
+    IntoIterator,
 }
 
 impl LangItemKind {
-    const ALL: [Self; 28] = [
+    const ALL: [Self; 30] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -85,6 +88,8 @@ impl LangItemKind {
         Self::Try,
         Self::Unsafe,
         Self::Loop,
+        Self::Iterator,
+        Self::IntoIterator,
     ];
 
     pub const fn source_name(self) -> &'static str {
@@ -117,6 +122,8 @@ impl LangItemKind {
             Self::Try => "try",
             Self::Unsafe => "unsafe",
             Self::Loop => "loop",
+            Self::Iterator => "Iterator",
+            Self::IntoIterator => "IntoIterator",
         }
     }
 
@@ -141,7 +148,9 @@ impl LangItemKind {
             | Self::BitOr
             | Self::BitXor
             | Self::Shl
-            | Self::Shr => "trait",
+            | Self::Shr
+            | Self::Iterator
+            | Self::IntoIterator => "trait",
         }
     }
 
@@ -175,6 +184,7 @@ impl LangItemKind {
             | Self::Try
             | Self::Unsafe
             | Self::Loop => None,
+            Self::Iterator | Self::IntoIterator => None,
         }
     }
 }
@@ -248,6 +258,8 @@ pub struct LangItems {
     try_function: LangItem,
     unsafe_function: LangItem,
     loop_function: LangItem,
+    iterator: LangItem,
+    into_iterator: LangItem,
 }
 
 impl LangItems {
@@ -355,6 +367,12 @@ impl LangItems {
     pub const fn loop_function(&self) -> &LangItem {
         &self.loop_function
     }
+    pub const fn iterator(&self) -> &LangItem {
+        &self.iterator
+    }
+    pub const fn into_iterator(&self) -> &LangItem {
+        &self.into_iterator
+    }
 
     pub const fn get(&self, kind: LangItemKind) -> &LangItem {
         match kind {
@@ -386,6 +404,8 @@ impl LangItems {
             LangItemKind::Try => &self.try_function,
             LangItemKind::Unsafe => &self.unsafe_function,
             LangItemKind::Loop => &self.loop_function,
+            LangItemKind::Iterator => &self.iterator,
+            LangItemKind::IntoIterator => &self.into_iterator,
         }
     }
 }
@@ -408,6 +428,7 @@ impl CoreBundle {
                     ("prelude", EDITION_2026_PRELUDE),
                     ("ops", EDITION_2026_OPS),
                     ("control", EDITION_2026_CONTROL),
+                    ("iter", EDITION_2026_ITER),
                 ],
             ),
         }
@@ -429,7 +450,7 @@ impl CoreBundle {
     fn from_source(edition: Edition, source: &str) -> Result<Self, CoreBundleError> {
         // Most contract tests isolate one prelude/operator declaration. Keep
         // the independently tested control module present in those fixtures.
-        let source = format!("{source}\n{EDITION_2026_CONTROL}");
+        let source = format!("{source}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}");
         let mut program = parser::parse(&source).map_err(|error| {
             CoreBundleError::new(
                 edition,
@@ -536,6 +557,8 @@ impl CoreBundle {
             &mut lang_items.try_function,
             &mut lang_items.unsafe_function,
             &mut lang_items.loop_function,
+            &mut lang_items.iterator,
+            &mut lang_items.into_iterator,
         ] {
             lang_item.canonical_name = item_name(&program.items[lang_item.item_index])
                 .expect("resolved core lang item remains named")
@@ -608,6 +631,13 @@ pub const fn embedded_ops_source(edition: Edition) -> &'static str {
 pub const fn embedded_control_source(edition: Edition) -> &'static str {
     match edition {
         Edition::Edition2026 => EDITION_2026_CONTROL,
+    }
+}
+
+/// Return the iteration protocol source compiled into this compiler.
+pub const fn embedded_iter_source(edition: Edition) -> &'static str {
+    match edition {
+        Edition::Edition2026 => EDITION_2026_ITER,
     }
 }
 
@@ -720,6 +750,8 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         try_function: item(LangItemKind::Try),
         unsafe_function: item(LangItemKind::Unsafe),
         loop_function: item(LangItemKind::Loop),
+        iterator: item(LangItemKind::Iterator),
+        into_iterator: item(LangItemKind::IntoIterator),
     })
 }
 
@@ -775,6 +807,12 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
             LangItemKind::Do | LangItemKind::Try | LangItemKind::Unsafe | LangItemKind::Loop,
             Item::Function(function),
         ) => validate_control_function(kind, function, diagnostics),
+        (LangItemKind::Iterator, Item::Trait(definition)) => {
+            validate_iterator(definition, diagnostics)
+        }
+        (LangItemKind::IntoIterator, Item::Trait(definition)) => {
+            validate_into_iterator(definition, diagnostics)
+        }
         (kind @ (LangItemKind::Neg | LangItemKind::Not), Item::Trait(definition)) => {
             validate_unary_operator(kind, definition, diagnostics)
         }
@@ -787,6 +825,73 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
             item_kind(item)
         )),
     }
+}
+
+fn validate_iterator(definition: &TraitDef, diagnostics: &mut Vec<String>) {
+    let valid = definition.compile_groups.is_empty()
+        && matches!(
+            definition.members.as_slice(),
+            [
+                TraitMember::AssociatedType { name, compile_groups, default: None },
+                TraitMember::Function(function),
+            ] if name == "Item"
+                && compile_groups.is_empty()
+                && valid_iteration_method(
+                    function,
+                    "next",
+                    PassMode::MutBorrow,
+                    Type::Named("Option".to_owned(), vec![named_type("Item")]),
+                )
+        );
+    if !valid {
+        diagnostics.push(
+            "lang item `Iterator` must declare `Item` and `next(borrow(mut) self)(): Option(Item)`"
+                .to_owned(),
+        );
+    }
+}
+
+fn validate_into_iterator(definition: &TraitDef, diagnostics: &mut Vec<String>) {
+    let valid = definition.compile_groups.is_empty()
+        && matches!(
+            definition.members.as_slice(),
+            [
+                TraitMember::AssociatedType { name: into_iter, compile_groups: iter_groups, default: None },
+                TraitMember::Function(function),
+            ] if into_iter == "IntoIter"
+                && iter_groups.is_empty()
+                && valid_iteration_method(
+                    function,
+                    "into_iter",
+                    PassMode::Move,
+                    named_type("IntoIter"),
+                )
+        );
+    if !valid {
+        diagnostics.push(
+            "lang item `IntoIterator` must declare `IntoIter` and `into_iter(move self)(): IntoIter`"
+                .to_owned(),
+        );
+    }
+}
+
+fn valid_iteration_method(function: &Function, name: &str, mode: PassMode, result: Type) -> bool {
+    let [receiver_group, empty_group] = function.groups.as_slice() else {
+        return false;
+    };
+    let [receiver] = receiver_group.as_slice() else {
+        return false;
+    };
+    function.name == name
+        && function.compile_groups.is_empty()
+        && function.return_type == Some(result)
+        && function.effects == crate::ast::FunctionEffects::default()
+        && function.where_predicates.is_empty()
+        && function.body.is_none()
+        && receiver.name == "self"
+        && receiver.mode == mode
+        && receiver.ty == named_type("Self")
+        && empty_group.is_empty()
 }
 
 fn validate_effect(
@@ -1294,7 +1399,7 @@ pub let Shr(Rhs: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), 28);
+        assert_eq!(bundle.program().items.len(), 30);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -1327,6 +1432,9 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::Try
                 | LangItemKind::Unsafe
                 | LangItemKind::Loop => format!("core::control::{}", kind.source_name()),
+                LangItemKind::Iterator | LangItemKind::IntoIterator => {
+                    format!("core::iter::{}", kind.source_name())
+                }
             };
             assert_eq!(
                 item_name(&bundle.program().items[lang_item.item_index()]),
@@ -1362,6 +1470,7 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::Try
                 | LangItemKind::Unsafe
                 | LangItemKind::Loop => "control",
+                LangItemKind::Iterator | LangItemKind::IntoIterator => "iter",
             };
             assert_eq!(
                 bundle.program().item_origins[lang_item.item_index()],
@@ -1385,6 +1494,7 @@ pub let Shr(Rhs: type) = trait {
                 ("prelude", EDITION_2026_PRELUDE),
                 ("ops", EDITION_2026_OPS),
                 ("control", &malformed),
+                ("iter", EDITION_2026_ITER),
             ],
         )
         .unwrap_err();
@@ -1392,6 +1502,28 @@ pub let Shr(Rhs: type) = trait {
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.contains("lang item `unsafe`")));
+    }
+
+    #[test]
+    fn rejects_malformed_iteration_contracts() {
+        let malformed = EDITION_2026_ITER.replace(
+            "let next(borrow(mut) self)(): Option(Item)",
+            "let next(borrow self)(): Option(Item)",
+        );
+        let error = CoreBundle::from_modules(
+            Edition::Edition2026,
+            &[
+                ("prelude", EDITION_2026_PRELUDE),
+                ("ops", EDITION_2026_OPS),
+                ("control", EDITION_2026_CONTROL),
+                ("iter", &malformed),
+            ],
+        )
+        .unwrap_err();
+        assert!(error
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.contains("lang item `Iterator`")));
     }
 
     #[test]

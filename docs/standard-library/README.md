@@ -14,6 +14,7 @@ library/
     prelude.sc
     ops.sc
     control.sc
+    iter.sc
   alloc/src/
     boxed.sc
     vec.sc
@@ -23,7 +24,8 @@ library/
 
 The edition prelude must stay small. It is intended for universally useful language-level names,
 currently `Option`, `Result`, `never`, `Copy`, and `Drop`. Operator traits belong to `core.ops`,
-compiler-lowered control contracts belong to `core.control`, and
+compiler-lowered control contracts belong to `core.control`, iteration protocols belong to
+`core.iter`, and
 owning containers belong to `alloc.boxed` and `alloc.vec`. Alloc declarations must be named through
 their module or imported explicitly with ordinary `use`; for example:
 
@@ -42,6 +44,9 @@ named. Merely writing the corresponding operator token does not require importin
 The syntax spellings for `throws(E)`, `do`, `try`, `unsafe`, and `loop` bind directly to validated
 lang-item declarations in `core.control`; they do not inject those module exports as ordinary
 unqualified names. The former control-container protocols have been removed.
+`Iterator` and `IntoIterator` require an ordinary `use core.iter...` when named in an implementation
+or bound. Writing `for pattern in value { ... }` binds to their validated lang-item identities
+without importing them and cannot be redirected by same-named inherent methods or traits.
 
 The compiler, library sources, and edition form one toolchain unit. Compiler-matched language items
 must come from the matching `core`, while user declarations with the same spelling remain ordinary

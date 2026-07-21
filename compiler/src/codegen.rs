@@ -1309,6 +1309,13 @@ struct BinaryOperatorCandidate {
     output: Ty,
 }
 
+#[derive(Clone, Copy)]
+enum BoundMethodConstraint<'a> {
+    None,
+    Nominal(&'a str),
+    LangItem(LangItemKind),
+}
+
 #[derive(Debug, Clone, Copy)]
 struct BinaryOperatorTrait {
     operator: BinaryOp,
@@ -14815,6 +14822,20 @@ impl Analyzer {
             return error_expr();
         }
         if let Expr::Member(base, variant_name) = root {
+            if let Some((member, lang_item)) = match variant_name.as_str() {
+                "$lang$into_iter" => Some(("into_iter", LangItemKind::IntoIterator)),
+                "$lang$next" => Some(("next", LangItemKind::Iterator)),
+                _ => None,
+            } {
+                return self.lower_bound_method_call(
+                    base,
+                    member,
+                    &groups,
+                    BoundMethodConstraint::LangItem(lang_item),
+                    expected,
+                    context,
+                );
+            }
             if let Some((name, type_groups)) = self.inferred_generic_enum_type_head(base, context) {
                 let is_variant = self.enum_templates[&name]
                     .variants
@@ -15018,7 +15039,7 @@ impl Analyzer {
                 base,
                 variant_name,
                 &groups,
-                None,
+                BoundMethodConstraint::None,
                 expected,
                 context,
             );
@@ -15696,7 +15717,7 @@ impl Analyzer {
                 &receiver.value,
                 member,
                 remaining_groups,
-                Some(target),
+                BoundMethodConstraint::Nominal(target),
                 expected,
                 context,
             )
@@ -16352,10 +16373,18 @@ impl Analyzer {
         receiver: &Expr,
         member: &str,
         groups: &[&[CallArg]],
-        qualified_target: Option<&str>,
+        constraint: BoundMethodConstraint<'_>,
         expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
+        let qualified_target = match constraint {
+            BoundMethodConstraint::Nominal(target) => Some(target),
+            BoundMethodConstraint::None | BoundMethodConstraint::LangItem(_) => None,
+        };
+        let forced_trait = match constraint {
+            BoundMethodConstraint::LangItem(kind) => Some(kind),
+            BoundMethodConstraint::None | BoundMethodConstraint::Nominal(_) => None,
+        };
         let (mut receiver_place, mut temporary_binding) =
             if let Some(place) = self.lower_place_without_diagnostic(receiver, context) {
                 (place, None)
@@ -16401,7 +16430,9 @@ impl Analyzer {
             }
         }
         let overload_key = (target.clone(), member.to_owned(), true);
-        let inherent = if self.inherent_overloads.contains_key(&overload_key) {
+        let inherent = if forced_trait.is_some() {
+            None
+        } else if self.inherent_overloads.contains_key(&overload_key) {
             self.resolve_inherent_overload(&target, member, true, groups)
         } else {
             self.inherent_members
@@ -16409,14 +16440,21 @@ impl Analyzer {
                 .and_then(|members| members.methods.get(member))
                 .cloned()
         };
-        if self.inherent_overloads.contains_key(&overload_key) && inherent.is_none() {
+        if forced_trait.is_none()
+            && self.inherent_overloads.contains_key(&overload_key)
+            && inherent.is_none()
+        {
             return error_expr();
         }
         let mut canonical = if let Some(canonical) = inherent {
             canonical
         } else {
-            let candidates =
+            let mut candidates =
                 self.trait_method_function_candidates(&receiver_place.ty, member, &context.origin);
+            if let Some(kind) = forced_trait {
+                let trait_name = self.lang_item_name(kind);
+                candidates.retain(|(key, _)| key.trait_ref.name == trait_name);
+            }
             if candidates.len() == 1 {
                 if self.is_drop_impl(&candidates[0].0) {
                     self.error("`Drop.drop` cannot be called directly; destruction is automatic");
@@ -16461,6 +16499,14 @@ impl Analyzer {
                     }
                 }
             } else {
+                if let Some(kind) = forced_trait {
+                    self.error(format!(
+                        "type `{}` does not implement `{}` required by `for`",
+                        self.diagnostic_type_name(&receiver_place.ty),
+                        kind.source_name(),
+                    ));
+                    return error_expr();
+                }
                 if self
                     .inherent_members
                     .get(&target)
@@ -30245,6 +30291,7 @@ let main(): i32 = {
     loop {
       break
     }
+
     answer = answer + 2
     break answer
   }
@@ -30254,6 +30301,55 @@ let main(): i32 = {
         .unwrap();
         assert_eq!(ir.matches("loop.body").count(), 4);
         assert_eq!(ir.matches("loop.end").count(), 4);
+    }
+
+    #[test]
+    fn lowers_for_through_validated_iteration_lang_items() {
+        let ir = compile_resolved_text(
+            "use core.iter.{Iterator, IntoIterator}\n\
+             let Counter = struct(current: i32, end: i32)\n\
+             extend Counter {\n\
+               let into_iter(borrow self)(): i32 = { self.current }\n\
+               let next(borrow self)(): bool = { false }\n\
+             }\n\
+             extend Counter: Iterator {\n\
+               let Item = i32\n\
+               let next(borrow(mut) self)(): Option(i32) = {\n\
+                 if self.current < self.end {\n\
+                   let value = self.current\n\
+                   self.current = self.current + 1\n\
+                   Some(value)\n\
+                 } else { None }\n\
+               }\n\
+             }\n\
+             extend Counter: IntoIterator {\n\
+               let IntoIter = Counter\n\
+               let into_iter(move self)(): Counter = { self }\n\
+             }\n\
+             let main(): i32 = {\n\
+               let mut sum = 0\n\
+               for value in Counter(current: 0, end: 4) {\n\
+                 sum = sum + value\n\
+               }\n\
+               sum\n\
+             }\n",
+        )
+        .expect("for loop must lower through IntoIterator and Iterator");
+        assert!(ir.contains("define internal i32 @sali.fn.6d61696e"));
+        for (trait_name, method) in [
+            ("core::iter::Iterator", "next"),
+            ("core::iter::IntoIterator", "into_iter"),
+        ] {
+            let key = TraitImplKey {
+                self_ty: Ty::Struct("Counter".to_owned()),
+                trait_ref: TraitRefKey {
+                    name: trait_name.to_owned(),
+                    arguments: Vec::new(),
+                },
+            };
+            let symbol = function_symbol(&trait_method_name(&key, method));
+            assert!(ir.contains(&symbol));
+        }
     }
 
     #[test]

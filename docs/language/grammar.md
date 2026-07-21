@@ -414,6 +414,9 @@ continue_expr = "continue" ;
 
 ```
 
+`for` 的 pattern 必须不可失败；当前实现接受单一名称绑定和 `_`。它通过 `core.iter` 中经验证的
+`IntoIterator` 与 `Iterator` lang item 展开，而不是按普通成员查找选择同名方法。
+
 `do { ... }`、`try { ... }`、`unsafe { ... }` 和未来的 `async { ... }` 在语义上都是接受尾闭包的内建函数调用，
 不是三种互不相关的块节点。parser 保留专用产生式以消除关键字后大括号的歧义。`do` 立即调用闭包
 并原样转发其 effect/color；`try` 把 `throws(E)` 处理为 `Result(T, E)`；`unsafe` 处理闭包要求的
