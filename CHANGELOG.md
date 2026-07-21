@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.64.0 - 2026-07-21
+
+- Added ownership-aware ordered `Vec.insert(index)(value)` and `Vec.remove(index): T`, shifting
+  elements with moves so resource vectors preserve order without requiring `Copy`.
+- Added `Vec.append(other)` through two mutable borrows; every source element transfers to the
+  destination and the source remains allocated but logically empty.
+- Added `Vec.shrink_to_fit()`, moving initialized elements into an exact-length allocation without
+  running their destructors.
+- Added native coverage for Copy ordering, resource transfer and exact destruction, insertion and
+  removal bounds, post-append source reuse invariants, and rejection of self-append aliasing.
+
 ## 0.63.0 - 2026-07-21
 
 - Added checked `Vec.reserve(additional)` and made `push` reuse it as the single capacity-growth

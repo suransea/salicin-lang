@@ -281,7 +281,13 @@ fn alloc_box_owns_copy_and_resource_payloads() {
 
 #[test]
 fn alloc_vec_owns_copy_and_resource_elements() {
-    for name in ["vec_copy.sali", "vec_unit.sali", "vec_resource.sali"] {
+    for name in [
+        "vec_copy.sali",
+        "vec_unit.sali",
+        "vec_resource.sali",
+        "vec_ordered_copy.sali",
+        "vec_ordered_resource.sali",
+    ] {
         let output = salic()
             .arg("run")
             .arg(fixture("pass", name))
@@ -300,6 +306,8 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         "vec_write_out_of_bounds.sali",
         "vec_replace_out_of_bounds.sali",
         "vec_swap_remove_out_of_bounds.sali",
+        "vec_insert_out_of_bounds.sali",
+        "vec_remove_out_of_bounds.sali",
         "vec_capacity_overflow.sali",
         "vec_reserve_overflow.sali",
         "vec_zst_resource_drop_trap.sali",
@@ -327,6 +335,21 @@ fn alloc_vec_owns_copy_and_resource_elements() {
     );
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("moved"),
+        "{}",
+        output_text(&output)
+    );
+
+    let output = salic()
+        .arg("check")
+        .arg(fixture("fail", "vec_append_self_borrow.sali"))
+        .output()
+        .expect("check self append borrow conflict");
+    assert!(
+        !output.status.success(),
+        "self append unexpectedly compiled"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("already borrowed"),
         "{}",
         output_text(&output)
     );

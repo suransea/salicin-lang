@@ -416,6 +416,14 @@ v0.63.0 补齐常用容量与收缩操作：
 - `truncate(new_length)` 和 `clear()` 会立即且恰好一次析构被移除元素，同时保留 allocation；
   `is_empty()` 提供零长度查询。
 
+v0.64.0 增加有序编辑和跨容器转移：
+
+- `insert(index)(value)` 与 `remove(index)` 通过逐元素 move 保持顺序，支持资源元素；insert 允许
+  `index == len`，其他越界会 trap。
+- `append(other)` 同时可变借用两个 Vec，把 source 的全部 owner 转移到 destination，source 变为空但
+  保留容量；借用规则禁止 self-append。
+- `shrink_to_fit()` 把元素移动到容量恰为 len 的新 allocation，不会提前析构资源。
+
 v0.30.0 进入普通 Salicin `alloc` 源并提供首个 owning `Box(T)`：
 
 - `library/alloc/src/prelude.sali` 随 compiler 按 edition 嵌入，仍经过普通 parser、模块 provenance、

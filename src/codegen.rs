@@ -21826,6 +21826,12 @@ mod tests {
         assert!(analyzer.function_templates.contains_key("vec_clear"));
         assert!(analyzer.function_templates.contains_key("vec_is_empty"));
         assert!(analyzer.function_templates.contains_key("vec_swap_remove"));
+        assert!(analyzer.function_templates.contains_key("vec_insert"));
+        assert!(analyzer.function_templates.contains_key("vec_remove"));
+        assert!(analyzer.function_templates.contains_key("vec_append"));
+        assert!(analyzer
+            .function_templates
+            .contains_key("vec_shrink_to_fit"));
         assert!(analyzer.function_templates.contains_key("vec_read"));
         assert!(analyzer.function_templates.contains_key("vec_write"));
         assert!(analyzer

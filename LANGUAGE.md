@@ -1638,6 +1638,12 @@ v0.63 增加 `reserve(additional)`、`truncate(new_length)`、`clear()`、`is_em
 不变；大于当前长度的 truncate 是 no-op。`swap_remove` 返回指定 owner，并在需要时把末元素移动到
 该槽位，因此不要求 `T: Copy`，但不保持元素顺序。
 
+v0.64 增加 `insert(index)(value)`、`remove(index)`、`append(other)` 与 `shrink_to_fit()`。
+insert/remove 逐元素移动后缀并保持顺序，remove 把指定元素的所有权返回调用者；insert 接受
+`index == len`，remove 只接受 `index < len`。append 通过两个可变借用转移 source 的全部元素，
+完成后 source 的 len 为零、原容量仍可复用；普通借用冲突规则禁止同一 Vec 作为两端。
+shrink_to_fit 将 allocation 收缩至 len，并在重分配过程中移动而非析构元素。
+
 首版 C ABI 只允许标量、原始指针、C ABI 函数指针和 `@repr(C)` 聚合。C 函数只有一个参数组，
 不允许柯里化、泛型、闭包环境、trait、Future 或 Salicin 私有容器；`borrow` 不跨 ABI，必须转换为
 显式指针。普通 `bool`、`String`、slice、`Option`、`Result` 默认都不是 C ABI 类型。

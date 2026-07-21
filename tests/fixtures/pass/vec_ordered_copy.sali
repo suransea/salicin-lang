@@ -1,0 +1,23 @@
+let main(): i32 = {
+  let mut values: Vec(i32) = Vec(i32).with_capacity(8)
+  values.push(10)
+  values.push(30)
+  values.insert(1)(20)
+  values.insert(0)(5)
+  let end = values.len()
+  values.insert(end)(40)
+  let first = values.remove(0)
+  let middle = values.remove(1)
+
+  let mut other: Vec(i32) = Vec(i32).new()
+  other.push(1)
+  other.push(2)
+  values.append(other)
+  values.shrink_to_fit()
+
+  if first == 5 && middle == 20 && values.len() == 5 && values.capacity() == 5 && other.is_empty() && values.read(0) == 10 && values.read(1) == 30 && values.read(2) == 40 && values.read(3) == 1 && values.read(4) == 2 {
+    42
+  } else {
+    0
+  }
+}

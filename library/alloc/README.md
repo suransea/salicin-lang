@@ -45,3 +45,9 @@ drop removed elements immediately while retaining storage, `is_empty` reports lo
 and `swap_remove` returns the selected owner while moving the last element into its slot. These
 operations support resource elements without a `Copy` bound; capacity addition, layout size, and
 indices are checked before entering raw storage operations.
+
+Since v0.64 ordered `insert` and `remove` shift initialized suffix elements using ownership moves.
+`append` mutably borrows two vectors, transfers every source owner, and leaves the source empty with
+its allocation intact; ordinary alias checking rejects self-append. `shrink_to_fit` similarly moves
+elements into exact-length storage. None of these APIs require `Copy` or destroy elements merely
+because their storage location changes.
