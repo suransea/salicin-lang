@@ -441,6 +441,10 @@ v0.66.0 将同一机制用于 Box：
 - compiler-embedded core、alloc 与用户源码现在统一在收集前擦除纯编译期 region 参数，因此标准库中的
   显式 `'a` 不会被误当成需要用户填写或推断的类型参数。
 
+v0.67.0 增加资源安全的 Vec 原地重排：`swap(left, right)` 检查两个索引，并以 move 交换不同槽位；
+相同索引不做任何 raw move。`reverse()` 复用同一实现，从两端向中间交换。两者都不要求 `Copy`，
+不会因存储位置变化而析构元素，空 Vec 反转也是安全 no-op。
+
 v0.30.0 进入普通 Salicin `alloc` 源并提供首个 owning `Box(T)`：
 
 - `library/alloc/src/prelude.sali` 随 compiler 按 edition 嵌入，仍经过普通 parser、模块 provenance、

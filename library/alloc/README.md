@@ -62,3 +62,8 @@ references for Copy and resource types. Their inferred regions are tied to the r
 live references prevent vector mutation or conflicting access. Small internal unsafe regions use
 `raw_borrow`/`raw_mut_borrow` with the Vec receiver as the explicit lifetime anchor; users never
 receive an unanchored raw storage reference through the safe API.
+
+Since v0.67 `swap(left, right)` and `reverse()` reorder Copy or resource elements in place. Distinct
+slots exchange owners through `raw_take`/`raw_init`; an identical-index swap is a no-op. Both index
+checks and empty-vector reversal stay inside the safe source-backed API, and relocation never runs
+an element destructor.

@@ -318,6 +318,7 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         "vec_borrow.sali",
         "vec_ordered_copy.sali",
         "vec_ordered_resource.sali",
+        "vec_reorder_resource.sali",
     ] {
         let output = salic()
             .arg("run")
@@ -341,6 +342,8 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         "vec_remove_out_of_bounds.sali",
         "vec_at_out_of_bounds.sali",
         "vec_at_mut_out_of_bounds.sali",
+        "vec_swap_left_out_of_bounds.sali",
+        "vec_swap_right_out_of_bounds.sali",
         "vec_capacity_overflow.sali",
         "vec_reserve_overflow.sali",
         "vec_zst_resource_drop_trap.sali",

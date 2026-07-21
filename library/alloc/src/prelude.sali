@@ -246,6 +246,35 @@ pub let vec_swap_remove(T: type)(mut borrow values: Vec(T))(index: u64): T = {
   removed
 }
 
+pub let vec_swap(T: type)(mut borrow values: Vec(T))(left: u64, right: u64): () = {
+  if left >= values.length || right >= values.length {
+    unsafe do {
+      raw_trap()
+    }
+  }
+  if left != right {
+    let left_value = unsafe do {
+      raw_take(raw_offset(values.pointer, left))
+    }
+    let right_value = unsafe do {
+      raw_take(raw_offset(values.pointer, right))
+    }
+    unsafe do {
+      raw_init(raw_offset(values.pointer, left), right_value)
+      raw_init(raw_offset(values.pointer, right), left_value)
+    }
+  }
+}
+
+pub let vec_reverse(T: type)(mut borrow values: Vec(T)): () = {
+  let mut left: u64 = 0
+  while left < values.length / 2 {
+    let right = values.length - 1 - left
+    vec_swap(values)(left, right)
+    left = left + 1
+  }
+}
+
 pub let vec_insert(T: type)(mut borrow values: Vec(T))(index: u64)(value: T): () = {
   if index > values.length {
     unsafe do {
@@ -388,6 +417,8 @@ extend(T: type) Vec(T) {
   let clear(mut borrow self)(): () = vec_clear(self)
   let is_empty(borrow self)(): bool = vec_is_empty(self)
   let swap_remove(mut borrow self)(index: u64): T = vec_swap_remove(self)(index)
+  let swap(mut borrow self)(left: u64, right: u64): () = vec_swap(self)(left: left, right: right)
+  let reverse(mut borrow self)(): () = vec_reverse(self)
   let insert(mut borrow self)(index: u64)(value: T): () = vec_insert(self)(index)(value)
   let remove(mut borrow self)(index: u64): T = vec_remove(self)(index)
   let append(mut borrow self)(mut borrow other: Vec(T)): () = vec_append(self)(other)

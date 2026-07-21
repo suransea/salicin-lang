@@ -1658,6 +1658,10 @@ v0.65 增加 `at(index): borrow T` 与 `at_mut(index): mut borrow T`。方法只
 region 可按普通规则省略并唯一推断；对应自由函数 `vec_at`/`vec_at_mut` 保留显式 `'a`。两者检查
 `index < len`，引用可以访问非 Copy 资源，且引用存活时 Vec 的增长、收缩和冲突借用都会被拒绝。
 
+v0.67 增加 `swap(left, right)` 与 `reverse()`。swap 检查两个索引，用 `raw_take`/`raw_init` move
+交换资源；索引相同直接返回。reverse 仅遍历前半段并复用 swap，因此空、奇数和偶数长度都不会发生
+无符号下溢或额外析构。
+
 首版 C ABI 只允许标量、原始指针、C ABI 函数指针和 `@repr(C)` 聚合。C 函数只有一个参数组，
 不允许柯里化、泛型、闭包环境、trait、Future 或 Salicin 私有容器；`borrow` 不跨 ABI，必须转换为
 显式指针。普通 `bool`、`String`、slice、`Option`、`Result` 默认都不是 C ABI 类型。

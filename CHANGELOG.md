@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.67.0 - 2026-07-21
+
+- Added checked `Vec.swap(left, right)` for all element types, exchanging distinct initialized
+  slots through ownership moves and treating identical indices as a no-op.
+- Added in-place `Vec.reverse()` over the same resource-safe swap path, including empty and
+  single-element vectors without unsigned underflow.
+- Added native coverage for resource ordering, zero premature destructor calls, exact final
+  destruction, identical-index swaps, empty reversal, and independent left/right bounds traps.
+
 ## 0.66.0 - 2026-07-21
 
 - Added `box_as_ref`/`Box.as_ref(): borrow T` and `box_as_mut`/`Box.as_mut(): mut borrow T`, giving

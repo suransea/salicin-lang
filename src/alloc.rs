@@ -80,9 +80,9 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
     if !program.uses.is_empty() {
         diagnostics.push("embedded alloc must not contain `use` declarations".to_owned());
     }
-    if program.items.len() != 38
-        || program.item_visibilities.len() != 38
-        || program.item_origins.len() != 38
+    if program.items.len() != 40
+        || program.item_visibilities.len() != 40
+        || program.item_origins.len() != 40
     {
         diagnostics
             .push("embedded alloc must contain the fixed Box and Vec bootstrap schema".to_owned());
@@ -93,7 +93,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
                 .iter()
                 .enumerate()
                 .all(|(index, visibility)| {
-                    let expected = if matches!(index, 0..=8 | 11 | 15..=34) {
+                    let expected = if matches!(index, 0..=8 | 11 | 15..=36) {
                         Visibility::Public
                     } else {
                         Visibility::Private
@@ -245,38 +245,46 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
             _ => diagnostics.push("alloc vec_swap_remove has an invalid signature".to_owned()),
         }
         match &program.items[29] {
+            Item::Function(function) if valid_vec_swap(function) => {}
+            _ => diagnostics.push("alloc vec_swap has an invalid signature".to_owned()),
+        }
+        match &program.items[30] {
+            Item::Function(function) if valid_vec_reverse(function) => {}
+            _ => diagnostics.push("alloc vec_reverse has an invalid signature".to_owned()),
+        }
+        match &program.items[31] {
             Item::Function(function) if valid_vec_insert(function) => {}
             _ => diagnostics.push("alloc vec_insert has an invalid signature".to_owned()),
         }
-        match &program.items[30] {
+        match &program.items[32] {
             Item::Function(function) if valid_vec_remove(function) => {}
             _ => diagnostics.push("alloc vec_remove has an invalid signature".to_owned()),
         }
-        match &program.items[31] {
+        match &program.items[33] {
             Item::Function(function) if valid_vec_append(function) => {}
             _ => diagnostics.push("alloc vec_append has an invalid signature".to_owned()),
         }
-        match &program.items[32] {
+        match &program.items[34] {
             Item::Function(function) if valid_vec_shrink_to_fit(function) => {}
             _ => diagnostics.push("alloc vec_shrink_to_fit has an invalid signature".to_owned()),
         }
-        match &program.items[33] {
+        match &program.items[35] {
             Item::Function(function) if valid_vec_read(function) => {}
             _ => diagnostics.push("alloc vec_read has an invalid signature".to_owned()),
         }
-        match &program.items[34] {
+        match &program.items[36] {
             Item::Function(function) if valid_vec_write(function) => {}
             _ => diagnostics.push("alloc vec_write has an invalid signature".to_owned()),
         }
-        match &program.items[35] {
+        match &program.items[37] {
             Item::Extend(extension) if valid_vec_extension(extension) => {}
             _ => diagnostics.push("alloc Vec extension has an invalid shape".to_owned()),
         }
-        match &program.items[36] {
+        match &program.items[38] {
             Item::Extend(extension) if valid_copy_vec_extension(extension) => {}
             _ => diagnostics.push("alloc Copy Vec extension has an invalid shape".to_owned()),
         }
-        match &program.items[37] {
+        match &program.items[39] {
             Item::Extend(extension) if valid_vec_drop_extension(extension) => {}
             _ => diagnostics.push("alloc Vec Drop extension has an invalid shape".to_owned()),
         }
@@ -741,6 +749,33 @@ fn valid_vec_swap_remove(function: &Function) -> bool {
         && function.body.is_some()
 }
 
+fn valid_vec_swap(function: &Function) -> bool {
+    function.name == "vec_swap"
+        && generic_t(function)
+        && matches!(function.groups.as_slice(), [receiver, indices]
+            if has_parameter(receiver, "values", PassMode::MutBorrow, applied("Vec", named("T")))
+                && matches!(indices.as_slice(), [left, right]
+                    if left.name == "left"
+                        && left.mode == PassMode::Inferred
+                        && left.ty == Type::U64
+                        && right.name == "right"
+                        && right.mode == PassMode::Inferred
+                        && right.ty == Type::U64))
+        && function.return_type == Some(Type::Unit)
+        && function.where_predicates.is_empty()
+        && function.body.is_some()
+}
+
+fn valid_vec_reverse(function: &Function) -> bool {
+    function.name == "vec_reverse"
+        && generic_t(function)
+        && matches!(function.groups.as_slice(), [receiver]
+            if has_parameter(receiver, "values", PassMode::MutBorrow, applied("Vec", named("T"))))
+        && function.return_type == Some(Type::Unit)
+        && function.where_predicates.is_empty()
+        && function.body.is_some()
+}
+
 fn valid_vec_insert(function: &Function) -> bool {
     function.name == "vec_insert"
         && generic_t(function)
@@ -832,6 +867,23 @@ fn valid_vec_receiver_method(
         && function.body.is_some()
 }
 
+fn valid_vec_swap_method(function: &Function) -> bool {
+    function.name == "swap"
+        && function.compile_groups.is_empty()
+        && matches!(function.groups.as_slice(), [receiver, indices]
+            if has_parameter(receiver, "self", PassMode::MutBorrow, named("Self"))
+                && matches!(indices.as_slice(), [left, right]
+                    if left.name == "left"
+                        && left.mode == PassMode::Inferred
+                        && left.ty == Type::U64
+                        && right.name == "right"
+                        && right.mode == PassMode::Inferred
+                        && right.ty == Type::U64))
+        && function.return_type == Some(Type::Unit)
+        && function.where_predicates.is_empty()
+        && function.body.is_some()
+}
+
 fn valid_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
     matches!(extension.compile_groups.as_slice(), [group]
         if matches!(group.as_slice(), [parameter]
@@ -854,6 +906,8 @@ fn valid_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
             crate::ast::ExtendMember::Function(clear),
             crate::ast::ExtendMember::Function(is_empty),
             crate::ast::ExtendMember::Function(swap_remove),
+            crate::ast::ExtendMember::Function(swap),
+            crate::ast::ExtendMember::Function(reverse),
             crate::ast::ExtendMember::Function(insert),
             crate::ast::ExtendMember::Function(remove),
             crate::ast::ExtendMember::Function(append),
@@ -881,6 +935,8 @@ fn valid_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
             && valid_vec_receiver_method(clear, "clear", PassMode::MutBorrow, &[], Type::Unit)
             && valid_vec_receiver_method(is_empty, "is_empty", PassMode::Borrow, &[], Type::Bool)
             && valid_vec_receiver_method(swap_remove, "swap_remove", PassMode::MutBorrow, &[("index", PassMode::Inferred, Type::U64)], named("T"))
+            && valid_vec_swap_method(swap)
+            && valid_vec_receiver_method(reverse, "reverse", PassMode::MutBorrow, &[], Type::Unit)
             && valid_vec_receiver_method(insert, "insert", PassMode::MutBorrow, &[("index", PassMode::Inferred, Type::U64), ("value", PassMode::Inferred, named("T"))], Type::Unit)
             && valid_vec_receiver_method(remove, "remove", PassMode::MutBorrow, &[("index", PassMode::Inferred, Type::U64)], named("T"))
             && valid_vec_receiver_method(append, "append", PassMode::MutBorrow, &[("other", PassMode::MutBorrow, applied("Vec", named("T")))], Type::Unit)
@@ -931,7 +987,7 @@ mod tests {
     #[test]
     fn edition_2026_alloc_bundle_parses_and_validates() {
         let bundle = AllocBundle::for_edition(Edition::Edition2026).unwrap();
-        assert_eq!(bundle.program.items.len(), 38);
+        assert_eq!(bundle.program.items.len(), 40);
         assert!(bundle
             .program
             .item_origins
