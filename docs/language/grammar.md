@@ -86,7 +86,7 @@ visibility = "pub", [ "(", "package", ")" ] ;
 ```ebnf
 let_decl = "let", [ "mut" ], IDENT,
            { parameter_group },
-           [ ":", type_expr ],
+           [ ":", ( type_expr | "type" | type_constructor_kind ) ],
            [ with_clause ],
            [ where_clause ],
            [ "=", initializer ] ;
@@ -95,6 +95,9 @@ with_clause = IDENT("with"), "(", effect, { ",", effect }, [ "," ], ")" ;
 effect = "unsafe" | "async" | IDENT("throws"), "(", type_expr, ")" | IDENT ;
 
 initializer = expression | "effect" | "access" | struct_decl | enum_decl | trait_decl | module_decl ;
+
+type_constructor_kind = compile_parameter_group,
+                        { compile_parameter_group }, ":", "type" ;
 ```
 
 语义限制：
@@ -111,6 +114,9 @@ initializer = expression | "effect" | "access" | struct_decl | enum_decl | trait
 - `let f(x: T) = { body }` 是把参数提升到名称旁边的具名闭包声明；RHS 必须有花括号。
 - `let f: (x: T): R = { body }` 是带名签名的具名闭包声明：所有槽必须有名字。
 - `let f: (T): R = { (x: T) -> body }` 是普通函数值绑定。
+- `let Alias(T: type): type = Target(T)` 定义透明类型族；`let Constructor:
+  (T: type): type = Target` 直接绑定类型构造子。前者的 RHS 必须是已应用的具体类型，不进行隐式
+  eta 应用。
 - 具名函数的参数类型必须显式；首版 `let` 名称位置不接受解构 pattern。
 - trait 声明体中的无 initializer `let` 是 requirement。
 

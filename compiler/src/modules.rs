@@ -1393,7 +1393,9 @@ fn validate_api_visibility(program: &Program, item_source_paths: &[String]) -> V
                 Item::Trait(definition) => &definition.name,
                 Item::Effect(definition) => &definition.name,
                 Item::Access(definition) => &definition.name,
-                Item::Function(_) | Item::Global(_) | Item::Extend(_) => return None,
+                Item::Function(_) | Item::Global(_) | Item::TypeAlias(_) | Item::Extend(_) => {
+                    return None
+                }
             };
             Some((
                 name.as_str(),
@@ -1461,6 +1463,18 @@ fn validate_item_api(
                     diagnostics,
                 );
             }
+        }
+        Item::TypeAlias(definition) => {
+            let bound_types = compile_parameter_names(&definition.compile_groups, &no_bound_types);
+            validate_exposed_type(
+                &definition.target,
+                boundary,
+                source_path,
+                &bound_types,
+                &format!("type alias `{}` target", definition.name),
+                nominal_boundaries,
+                diagnostics,
+            );
         }
         Item::Effect(_) | Item::Access(_) => {}
         Item::Struct(definition) => {
@@ -1889,6 +1903,7 @@ fn declaration_name(item: &Item) -> Option<&str> {
         Item::Trait(definition) => Some(&definition.name),
         Item::Effect(definition) => Some(&definition.name),
         Item::Access(definition) => Some(&definition.name),
+        Item::TypeAlias(definition) => Some(&definition.name),
         Item::Extend(_) => None,
     }
 }
@@ -1941,6 +1956,12 @@ impl Resolver {
             Item::Global(binding) => {
                 binding.name = canonical_name(context.module_path, &binding.name);
                 self.rewrite_binding(binding, context, &HashSet::new(), &HashSet::new());
+            }
+            Item::TypeAlias(definition) => {
+                definition.name = canonical_name(context.module_path, &definition.name);
+                let type_scope =
+                    compile_parameter_names(&definition.compile_groups, &HashSet::new());
+                self.rewrite_type(&mut definition.target, context, &type_scope);
             }
             Item::Struct(definition) => self.rewrite_struct(definition, context),
             Item::Enum(definition) => self.rewrite_enum(definition, context),

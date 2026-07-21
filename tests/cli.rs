@@ -905,6 +905,65 @@ fn m1_struct_programs_run_with_expected_result() {
 }
 
 #[test]
+fn type_constructor_aliases_run_and_report_kind_errors() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "type_constructor_alias.sc"))
+        .output()
+        .expect("run type-constructor alias fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+
+    for (name, expected) in [
+        ("type_alias_cycle.sc", "cyclic type alias"),
+        ("type_alias_arity.sc", "argument count mismatch"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid type alias fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn type_constructor_aliases_cross_module_boundaries() {
+    let project = TestDirectory::new();
+    project.write(
+        "salicin.toml",
+        "[package]\nname = \"alias-modules\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    );
+    project.write(
+        "src/types.sc",
+        "pub(package) let Cell(T: type) = struct(pub(package) value: T)\n\
+         pub(package) let Family(T: type): type = Cell(T)\n\
+         pub(package) let Constructor: (T: type): type = Cell\n\
+         pub(package) let Scalar = i32\n",
+    );
+    project.write(
+        "src/main.sc",
+        "use types.{Family, Constructor, Scalar}\n\n\
+         let main(): Scalar = {\n\
+           let left: Family(i32) = Family(i32)(40)\n\
+           let right = Constructor(2)\n\
+           left.value + right.value\n\
+         }\n",
+    );
+
+    let output = salic()
+        .arg("run")
+        .arg(&project.0)
+        .output()
+        .expect("run project with imported type-constructor aliases");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn m1_struct_errors_report_their_cause() {
     for (name, expected) in [
         ("unknown_field.sc", "unknown field"),

@@ -914,6 +914,7 @@ fn item_name(item: &Item) -> Option<&str> {
         Item::Enum(definition) => Some(&definition.name),
         Item::Effect(definition) => Some(&definition.name),
         Item::Access(definition) => Some(&definition.name),
+        Item::TypeAlias(definition) => Some(&definition.name),
         Item::Trait(definition) => Some(&definition.name),
         Item::Extend(_) => None,
     }
@@ -927,6 +928,7 @@ fn item_kind(item: &Item) -> &'static str {
         Item::Enum(_) => "enum",
         Item::Effect(_) => "effect",
         Item::Access(_) => "access",
+        Item::TypeAlias(_) => "type alias",
         Item::Trait(_) => "trait",
         Item::Extend(_) => "extension",
     }

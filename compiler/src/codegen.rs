@@ -1759,6 +1759,12 @@ impl Analyzer {
         erase_region_parameters(&mut core_program);
         erase_region_parameters(&mut alloc_program);
         erase_region_parameters(&mut source_program);
+        promote_inferred_type_aliases([&mut core_program, &mut alloc_program, &mut source_program]);
+        for diagnostic in
+            expand_type_aliases([&mut core_program, &mut alloc_program, &mut source_program])
+        {
+            analyzer.error(diagnostic);
+        }
         analyzer.collect_items(&core_program, &alloc_program, &source_program);
         Ok(analyzer)
     }
@@ -1840,6 +1846,7 @@ impl Analyzer {
                 Item::Enum(definition) => &definition.name,
                 Item::Effect(definition) => &definition.name,
                 Item::Access(definition) => &definition.name,
+                Item::TypeAlias(definition) => &definition.name,
                 Item::Trait(definition) => &definition.name,
                 Item::Extend(extension) => {
                     extensions.push((extension.clone(), origin));
@@ -2046,6 +2053,9 @@ impl Analyzer {
                         ));
                     }
                 }
+                Item::TypeAlias(_) => {
+                    unreachable!("type aliases are expanded before item collection")
+                }
                 Item::Trait(definition) => {
                     self.collect_trait_schema(definition.clone(), visibility, origin)
                 }
@@ -2176,6 +2186,7 @@ impl Analyzer {
                 | Item::Enum(_)
                 | Item::Effect(_)
                 | Item::Access(_) => Vec::new(),
+                Item::TypeAlias(_) => Vec::new(),
             }
         }
 
@@ -23970,6 +23981,464 @@ fn collect_nominal_type_dependencies(
     }
 }
 
+fn expand_type_aliases<const N: usize>(mut programs: [&mut Program; N]) -> Vec<String> {
+    let aliases = programs
+        .iter()
+        .flat_map(|program| program.items.iter())
+        .filter_map(|item| match item {
+            Item::TypeAlias(definition) => Some((definition.name.clone(), definition.clone())),
+            _ => None,
+        })
+        .collect::<HashMap<_, _>>();
+    let mut diagnostics = Vec::new();
+
+    for program in &mut programs {
+        let items = std::mem::take(&mut program.items);
+        let visibilities = std::mem::take(&mut program.item_visibilities);
+        let origins = std::mem::take(&mut program.item_origins);
+        for ((mut item, visibility), origin) in items.into_iter().zip(visibilities).zip(origins) {
+            if matches!(item, Item::TypeAlias(_)) {
+                continue;
+            }
+            expand_item_aliases(&mut item, &aliases, &mut diagnostics);
+            program.items.push(item);
+            program.item_visibilities.push(visibility);
+            program.item_origins.push(origin);
+        }
+    }
+    diagnostics.sort();
+    diagnostics.dedup();
+    diagnostics
+}
+
+fn promote_inferred_type_aliases<const N: usize>(programs: [&mut Program; N]) {
+    let mut known_types = HashMap::from([
+        ("i32".to_owned(), 0_usize),
+        ("i64".to_owned(), 0),
+        ("u32".to_owned(), 0),
+        ("u64".to_owned(), 0),
+        ("bool".to_owned(), 0),
+    ]);
+    for item in programs.iter().flat_map(|program| program.items.iter()) {
+        match item {
+            Item::Struct(definition) => {
+                known_types.insert(
+                    definition.name.clone(),
+                    definition.compile_groups.iter().flatten().count(),
+                );
+            }
+            Item::Enum(definition) => {
+                known_types.insert(
+                    definition.name.clone(),
+                    definition.compile_groups.iter().flatten().count(),
+                );
+            }
+            Item::TypeAlias(definition) => {
+                known_types.insert(
+                    definition.name.clone(),
+                    definition.compile_groups.iter().flatten().count(),
+                );
+            }
+            _ => {}
+        }
+    }
+
+    loop {
+        let mut promoted = Vec::new();
+        for (program_index, program) in programs.iter().enumerate() {
+            for (item_index, item) in program.items.iter().enumerate() {
+                let Item::Global(binding) = item else {
+                    continue;
+                };
+                if binding.mutable || binding.annotation.is_some() {
+                    continue;
+                }
+                let Some(target) = expression_type_source(&binding.value) else {
+                    continue;
+                };
+                let head = match &target {
+                    Type::I32 => "i32",
+                    Type::I64 => "i64",
+                    Type::U32 => "u32",
+                    Type::U64 => "u64",
+                    Type::Bool => "bool",
+                    Type::Named(name, _) => name,
+                    _ => continue,
+                };
+                let Some(arity) = known_types.get(head).copied() else {
+                    continue;
+                };
+                let source_arity = match &target {
+                    Type::Named(_, arguments) => arguments.len(),
+                    _ => 0,
+                };
+                let is_type_binding = match &binding.value {
+                    Expr::Name(_) => arity == 0,
+                    Expr::Call(_, _) => arity > 0 && source_arity == arity,
+                    _ => false,
+                };
+                if is_type_binding {
+                    promoted.push((program_index, item_index, binding.name.clone(), target));
+                }
+            }
+        }
+        if promoted.is_empty() {
+            break;
+        }
+        for (program_index, item_index, name, target) in promoted {
+            known_types.insert(name.clone(), 0);
+            programs[program_index].items[item_index] = Item::TypeAlias(crate::ast::TypeAliasDef {
+                name,
+                compile_groups: Vec::new(),
+                target,
+            });
+        }
+    }
+}
+
+fn expand_item_aliases(
+    item: &mut Item,
+    aliases: &HashMap<String, crate::ast::TypeAliasDef>,
+    diagnostics: &mut Vec<String>,
+) {
+    match item {
+        Item::Function(function) => expand_function_aliases(function, aliases, diagnostics),
+        Item::Global(binding) => expand_binding_aliases(binding, aliases, diagnostics),
+        Item::Struct(definition) => {
+            for field in &mut definition.fields {
+                expand_alias_type(&mut field.ty, aliases, &mut Vec::new(), diagnostics);
+            }
+        }
+        Item::Enum(definition) => {
+            for variant in &mut definition.variants {
+                match &mut variant.fields {
+                    VariantFields::Unit => {}
+                    VariantFields::Positional(types) => {
+                        for ty in types {
+                            expand_alias_type(ty, aliases, &mut Vec::new(), diagnostics);
+                        }
+                    }
+                    VariantFields::Named(fields) => {
+                        for field in fields {
+                            expand_alias_type(&mut field.ty, aliases, &mut Vec::new(), diagnostics);
+                        }
+                    }
+                }
+            }
+        }
+        Item::Trait(definition) => {
+            for member in &mut definition.members {
+                match member {
+                    TraitMember::Function(function) => {
+                        expand_function_aliases(function, aliases, diagnostics)
+                    }
+                    TraitMember::AssociatedType { default, .. } => {
+                        if let Some(default) = default {
+                            expand_alias_type(default, aliases, &mut Vec::new(), diagnostics);
+                        }
+                    }
+                }
+            }
+        }
+        Item::Extend(extension) => {
+            expand_alias_type(&mut extension.target, aliases, &mut Vec::new(), diagnostics);
+            if let Some(trait_ref) = &mut extension.trait_ref {
+                expand_alias_type(trait_ref, aliases, &mut Vec::new(), diagnostics);
+            }
+            for predicate in &mut extension.where_predicates {
+                expand_alias_type(
+                    &mut predicate.subject,
+                    aliases,
+                    &mut Vec::new(),
+                    diagnostics,
+                );
+                expand_alias_type(
+                    &mut predicate.trait_ref,
+                    aliases,
+                    &mut Vec::new(),
+                    diagnostics,
+                );
+                for binding in &mut predicate.associated_types {
+                    expand_alias_type(&mut binding.ty, aliases, &mut Vec::new(), diagnostics);
+                }
+            }
+            for member in &mut extension.members {
+                match member {
+                    ExtendMember::Function(function) => {
+                        expand_function_aliases(function, aliases, diagnostics)
+                    }
+                    ExtendMember::Const(binding) => {
+                        expand_binding_aliases(binding, aliases, diagnostics)
+                    }
+                }
+            }
+        }
+        Item::Effect(_) | Item::Access(_) => {}
+        Item::TypeAlias(_) => unreachable!("aliases are removed before item expansion"),
+    }
+}
+
+fn expand_function_aliases(
+    function: &mut Function,
+    aliases: &HashMap<String, crate::ast::TypeAliasDef>,
+    diagnostics: &mut Vec<String>,
+) {
+    for parameter in function.groups.iter_mut().flatten() {
+        expand_alias_type(&mut parameter.ty, aliases, &mut Vec::new(), diagnostics);
+    }
+    if let Some(result) = &mut function.return_type {
+        expand_alias_type(result, aliases, &mut Vec::new(), diagnostics);
+    }
+    if let Some(error) = &mut function.effects.throws {
+        expand_alias_type(error, aliases, &mut Vec::new(), diagnostics);
+    }
+    for predicate in &mut function.where_predicates {
+        expand_alias_type(
+            &mut predicate.subject,
+            aliases,
+            &mut Vec::new(),
+            diagnostics,
+        );
+        expand_alias_type(
+            &mut predicate.trait_ref,
+            aliases,
+            &mut Vec::new(),
+            diagnostics,
+        );
+        for binding in &mut predicate.associated_types {
+            expand_alias_type(&mut binding.ty, aliases, &mut Vec::new(), diagnostics);
+        }
+    }
+    if let Some(body) = &mut function.body {
+        expand_expr_aliases(body, aliases, diagnostics);
+    }
+}
+
+fn expand_binding_aliases(
+    binding: &mut Binding,
+    aliases: &HashMap<String, crate::ast::TypeAliasDef>,
+    diagnostics: &mut Vec<String>,
+) {
+    if let Some(annotation) = &mut binding.annotation {
+        expand_alias_type(annotation, aliases, &mut Vec::new(), diagnostics);
+    }
+    expand_expr_aliases(&mut binding.value, aliases, diagnostics);
+}
+
+fn expand_alias_type(
+    source: &mut Type,
+    aliases: &HashMap<String, crate::ast::TypeAliasDef>,
+    stack: &mut Vec<String>,
+    diagnostics: &mut Vec<String>,
+) {
+    match source {
+        Type::Borrow { pointee, .. } => expand_alias_type(pointee, aliases, stack, diagnostics),
+        Type::Array(element, _) => expand_alias_type(element, aliases, stack, diagnostics),
+        Type::Function { groups, result, .. } => {
+            for ty in groups.iter_mut().flatten() {
+                expand_alias_type(ty, aliases, stack, diagnostics);
+            }
+            expand_alias_type(result, aliases, stack, diagnostics);
+        }
+        Type::Named(name, arguments) => {
+            for argument in &mut *arguments {
+                expand_alias_type(argument, aliases, stack, diagnostics);
+            }
+            let Some(alias) = aliases.get(name) else {
+                return;
+            };
+            let parameters = alias.compile_groups.iter().flatten().collect::<Vec<_>>();
+            if arguments.len() != parameters.len() {
+                diagnostics.push(format!(
+                    "type-constructor argument count mismatch for alias `{name}`: expected {}, found {}",
+                    parameters.len(),
+                    arguments.len()
+                ));
+                return;
+            }
+            if let Some(start) = stack.iter().position(|candidate| candidate == name) {
+                let mut cycle = stack[start..].to_vec();
+                cycle.push(name.clone());
+                diagnostics.push(format!("cyclic type alias: {}", cycle.join(" -> ")));
+                return;
+            }
+            let substitutions = parameters
+                .iter()
+                .zip(arguments.iter())
+                .map(|(parameter, argument)| (parameter.name.clone(), argument.clone()))
+                .collect::<HashMap<_, _>>();
+            let mut target = alias.target.clone();
+            substitute_type_parameters(&mut target, &substitutions);
+            stack.push(name.clone());
+            expand_alias_type(&mut target, aliases, stack, diagnostics);
+            stack.pop();
+            *source = target;
+        }
+        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => {}
+    }
+}
+
+fn expression_type_source(expression: &Expr) -> Option<Type> {
+    match expression {
+        Expr::Unit => Some(Type::Unit),
+        Expr::Name(name) => Some(match name.as_str() {
+            "i32" => Type::I32,
+            "i64" => Type::I64,
+            "u32" => Type::U32,
+            "u64" => Type::U64,
+            "bool" => Type::Bool,
+            _ => Type::Named(name.clone(), Vec::new()),
+        }),
+        Expr::Call(callee, arguments)
+            if arguments.iter().all(|argument| argument.label.is_none()) =>
+        {
+            let Expr::Name(name) = callee.as_ref() else {
+                return None;
+            };
+            Some(Type::Named(
+                name.clone(),
+                arguments
+                    .iter()
+                    .map(|argument| expression_type_source(&argument.value))
+                    .collect::<Option<Vec<_>>>()?,
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn transparent_alias_constructor(alias: &crate::ast::TypeAliasDef) -> Option<&str> {
+    let Type::Named(target, arguments) = &alias.target else {
+        return None;
+    };
+    let parameters = alias.compile_groups.iter().flatten().collect::<Vec<_>>();
+    (arguments.len() == parameters.len()
+        && arguments
+            .iter()
+            .zip(parameters)
+            .all(|(argument, parameter)| {
+                matches!(argument, Type::Named(name, values)
+                if values.is_empty() && name == &parameter.name)
+            }))
+    .then_some(target.as_str())
+}
+
+fn expand_expr_aliases(
+    expression: &mut Expr,
+    aliases: &HashMap<String, crate::ast::TypeAliasDef>,
+    diagnostics: &mut Vec<String>,
+) {
+    if let Expr::Call(callee, arguments) = expression {
+        if let Expr::Name(name) = callee.as_ref() {
+            if let Some(alias) = aliases.get(name) {
+                let expected = alias.compile_groups.iter().flatten().count();
+                if arguments.len() == expected
+                    && arguments.iter().all(|argument| argument.label.is_none())
+                {
+                    if let Some(source_arguments) = arguments
+                        .iter()
+                        .map(|argument| expression_type_source(&argument.value))
+                        .collect::<Option<Vec<_>>>()
+                    {
+                        let mut source = Type::Named(name.clone(), source_arguments);
+                        expand_alias_type(&mut source, aliases, &mut Vec::new(), diagnostics);
+                        *expression = source_type_expression(&source);
+                    }
+                }
+            }
+        }
+    }
+
+    match expression {
+        Expr::Name(name) => {
+            if let Some(alias) = aliases.get(name) {
+                if let Some(target) = transparent_alias_constructor(alias) {
+                    *name = target.to_owned();
+                }
+            }
+        }
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
+        Expr::Unary(_, operand)
+        | Expr::Try(operand)
+        | Expr::Throw(operand)
+        | Expr::Unsafe(operand) => expand_expr_aliases(operand, aliases, diagnostics),
+        Expr::DoBlock { body } => expand_expr_aliases(body, aliases, diagnostics),
+        Expr::Borrow { value, .. } => expand_expr_aliases(value, aliases, diagnostics),
+        Expr::Binary(left, _, right)
+        | Expr::Coalesce(left, right)
+        | Expr::Assign(left, right)
+        | Expr::CompoundAssign(left, _, right) => {
+            expand_expr_aliases(left, aliases, diagnostics);
+            expand_expr_aliases(right, aliases, diagnostics);
+        }
+        Expr::Call(callee, arguments) => {
+            expand_expr_aliases(callee, aliases, diagnostics);
+            for argument in arguments {
+                expand_expr_aliases(&mut argument.value, aliases, diagnostics);
+            }
+        }
+        Expr::Member(base, _) | Expr::ChainMember(base, _) => {
+            expand_expr_aliases(base, aliases, diagnostics)
+        }
+        Expr::Array(elements) => {
+            for element in elements {
+                expand_expr_aliases(element, aliases, diagnostics);
+            }
+        }
+        Expr::Index { base, index } => {
+            expand_expr_aliases(base, aliases, diagnostics);
+            expand_expr_aliases(index, aliases, diagnostics);
+        }
+        Expr::Block(statements, tail) => {
+            for statement in statements {
+                match statement {
+                    Stmt::Let(binding) => expand_binding_aliases(binding, aliases, diagnostics),
+                    Stmt::Expr(expression) => expand_expr_aliases(expression, aliases, diagnostics),
+                }
+            }
+            if let Some(tail) = tail {
+                expand_expr_aliases(tail, aliases, diagnostics);
+            }
+        }
+        Expr::Closure(parameters, body) => {
+            for parameter in parameters {
+                expand_alias_type(&mut parameter.ty, aliases, &mut Vec::new(), diagnostics);
+            }
+            expand_expr_aliases(body, aliases, diagnostics);
+        }
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            expand_expr_aliases(condition, aliases, diagnostics);
+            expand_expr_aliases(then_branch, aliases, diagnostics);
+            if let Some(else_branch) = else_branch {
+                expand_expr_aliases(else_branch, aliases, diagnostics);
+            }
+        }
+        Expr::Return(value) | Expr::Break(value) => {
+            if let Some(value) = value {
+                expand_expr_aliases(value, aliases, diagnostics);
+            }
+        }
+        Expr::While { condition, body } => {
+            expand_expr_aliases(condition, aliases, diagnostics);
+            expand_expr_aliases(body, aliases, diagnostics);
+        }
+        Expr::Loop { body } => expand_expr_aliases(body, aliases, diagnostics),
+        Expr::Match { scrutinee, arms } => {
+            expand_expr_aliases(scrutinee, aliases, diagnostics);
+            for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    expand_expr_aliases(guard, aliases, diagnostics);
+                }
+                expand_expr_aliases(&mut arm.body, aliases, diagnostics);
+            }
+        }
+    }
+}
+
 fn substitute_struct_types(definition: &mut StructDef, substitutions: &HashMap<String, Type>) {
     for field in &mut definition.fields {
         substitute_type_parameters(&mut field.ty, substitutions);
@@ -23992,6 +24461,7 @@ fn erase_region_parameters(program: &mut Program) {
         match item {
             Item::Function(function) => erase_function(function),
             Item::Global(_) => {}
+            Item::TypeAlias(definition) => erase_groups(&mut definition.compile_groups),
             Item::Effect(definition) => erase_groups(&mut definition.compile_groups),
             Item::Access(_) => {}
             Item::Struct(definition) => erase_groups(&mut definition.compile_groups),

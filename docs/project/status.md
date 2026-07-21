@@ -7,6 +7,11 @@ source-backed core traits and containers, cleanup lowering, raw allocation primi
 
 The unit type has one source spelling, `()`; the former `void` alias is removed before 1.0.
 
+Transparent type aliases and type-constructor aliases are implemented. `let Scalar = i32`,
+`let Family(T: type): type = Box(T)`, and `let Constructor: (T: type): type = Box` all expand before
+runtime lowering, preserve the target nominal identity, support forward references and constructor
+inference, and reject alias cycles and arity mismatches.
+
 Compiler-lowered control is now source-backed by validated declarations in `core.control`:
 `Unsafe`, `Throws(E)`, `Shared`, `Mutable`, and the bodyless intrinsic signatures for `do`, `try`,
 `unsafe`, and `loop`. These exports remain outside the prelude. `await` is intentionally absent until

@@ -90,8 +90,16 @@ pub enum Item {
     Enum(EnumDef),
     Effect(EffectDef),
     Access(AccessDef),
+    TypeAlias(TypeAliasDef),
     Trait(TraitDef),
     Extend(ExtendDef),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeAliasDef {
+    pub name: String,
+    pub compile_groups: Vec<Vec<CompileParam>>,
+    pub target: Type,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

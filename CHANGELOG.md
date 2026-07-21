@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.109.0 - 2026-07-22
+
+- Added transparent concrete aliases and parameterized type-family aliases.
+- Added first-class type-constructor binding syntax such as
+  `let Constructor: (T: type): type = Box` without a runtime representation.
+- Expanded aliases across signatures, bodies, constructors, traits, extensions, and modules before
+  semantic lowering while preserving nominal identity and constructor inference.
+- Added deterministic diagnostics for recursive aliases and constructor-arity mismatches.
+
 ## 0.108.0 - 2026-07-22
 
 - Added source-backed `BitAndAssign`, `BitOrAssign`, `BitXorAssign`, `ShlAssign`, and `ShrAssign`

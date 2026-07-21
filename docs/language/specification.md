@@ -804,6 +804,30 @@ let b = Box(20)
 `Box(i32)` 是类型，随后一组括号才调用其构造器。`Box(20)` 省略编译期参数组，`T` 由构造实参
 推断为 `i32`。类型构造器只在编译期求值，并对实际使用的类型组合单态化。
 
+#### 8.3.1 类型别名与类型构造子
+
+类型别名是透明的编译期绑定，不产生新的 nominal identity：
+
+```sali
+let Scalar = i32
+let Family(T: type): type = Box(T)
+let Constructor: (T: type): type = Box
+```
+
+`Family(i32)`、`Constructor(i32)` 与 `Box(i32)` 是同一个类型。最后一种写法把 `Box` 这个
+`(type): type` 构造子绑定给 `Constructor`；签名中的参数名也是显式类型应用时可使用的标签。
+类型构造子值只存在于编译期，在进入运行时 IR 前完全展开，不能存入运行时变量或转换成函数指针。
+
+带名称旁参数的形式定义类型族，右侧必须产生具体的 `type`：
+
+```sali
+let Wrapped(T: type): type = Box(T)
+```
+
+因此 `let Wrapped(T: type): type = Box` 不会隐式补成 `Box(T)`；要直接转发构造子，应写
+`let Wrapped: (T: type): type = Box`。别名依赖可以前向引用，但递归别名环是错误。透明转发到
+nominal 构造子的别名也能省略编译期参数组，由普通构造实参和期望类型推断。
+
 ### 8.4 枚举与封闭和类型
 
 枚举使用与其他类型一致的 `let` 声明：

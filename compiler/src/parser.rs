@@ -4,8 +4,8 @@ use crate::ast::{
     AccessDef, AssociatedTypeBinding, BinaryOp, Binding, CallArg, CompileParam, CompileParamKind,
     EffectDef, EnumDef, Expr, ExtendDef, ExtendMember, Field, Function, FunctionEffects, Item,
     MatchArm, Param, PassMode, Pattern, PatternField, PatternFields, Program, Stmt, StructDef,
-    TraitDef, TraitMember, Type, UnaryOp, UseDecl, VariantDef, VariantFields, Visibility,
-    WherePredicate,
+    TraitDef, TraitMember, Type, TypeAliasDef, UnaryOp, UseDecl, VariantDef, VariantFields,
+    Visibility, WherePredicate,
 };
 use crate::lexer::{lex, LexError, Token, TokenKind};
 
@@ -217,6 +217,24 @@ impl Parser {
             return Err(self.error_here("`let mut` cannot declare a function"));
         }
 
+        if groups.is_empty() && self.at(&TokenKind::Colon) {
+            if self.at_offset(1, &TokenKind::Type) {
+                self.advance();
+                self.advance();
+                return self.type_alias(name, compile_groups, mutable);
+            }
+            if self.type_constructor_signature_follows() {
+                self.advance();
+                let mut alias_groups = Vec::new();
+                while self.group_starts_with_compile_parameter() {
+                    alias_groups.push(self.compile_parameter_group()?);
+                }
+                self.expect(&TokenKind::Colon, "`:` before type-constructor result kind")?;
+                self.expect(&TokenKind::Type, "`type` as type-constructor result kind")?;
+                return self.type_constructor_alias(name, alias_groups, mutable);
+            }
+        }
+
         if self.effect_group_starts_here() {
             return Err(self.error_here(
                 "bare function effect groups were removed; write the result type followed by `with(...)`",
@@ -349,6 +367,80 @@ impl Parser {
                 body: Some(body),
             }))
         }
+    }
+
+    fn type_constructor_signature_follows(&self) -> bool {
+        self.at(&TokenKind::Colon)
+            && self.at_offset(1, &TokenKind::LParen)
+            && matches!(
+                self.tokens.get(self.index + 2).map(|token| &token.kind),
+                Some(TokenKind::Ident(_))
+            )
+            && self.at_offset(3, &TokenKind::Colon)
+            && self.at_offset(4, &TokenKind::Type)
+    }
+
+    fn type_alias(
+        &mut self,
+        name: String,
+        compile_groups: Vec<Vec<CompileParam>>,
+        mutable: bool,
+    ) -> Result<Item, ParseError> {
+        if mutable {
+            return Err(self.error_here("type aliases cannot be declared with `let mut`"));
+        }
+        if compile_groups
+            .iter()
+            .flatten()
+            .any(|parameter| parameter.kind != CompileParamKind::Type)
+        {
+            return Err(self
+                .error_here("type aliases currently accept only `type` compile-time parameters"));
+        }
+        self.take_newlines_if_followed_by(&[TokenKind::Equal]);
+        self.expect(&TokenKind::Equal, "`=` in type alias")?;
+        let target = self.type_expr()?;
+        Ok(Item::TypeAlias(TypeAliasDef {
+            name,
+            compile_groups,
+            target,
+        }))
+    }
+
+    fn type_constructor_alias(
+        &mut self,
+        name: String,
+        compile_groups: Vec<Vec<CompileParam>>,
+        mutable: bool,
+    ) -> Result<Item, ParseError> {
+        if mutable {
+            return Err(
+                self.error_here("type-constructor aliases cannot be declared with `let mut`")
+            );
+        }
+        self.take_newlines_if_followed_by(&[TokenKind::Equal]);
+        self.expect(&TokenKind::Equal, "`=` in type-constructor alias")?;
+        let target = self.type_expr()?;
+        let Type::Named(target_name, target_arguments) = target else {
+            return Err(
+                self.error_here("a type-constructor alias must name another type constructor")
+            );
+        };
+        if !target_arguments.is_empty() {
+            return Err(self.error_here(
+                "a type-constructor alias target must be unapplied; use a parameterized type alias for an applied result",
+            ));
+        }
+        let arguments = compile_groups
+            .iter()
+            .flatten()
+            .map(|parameter| Type::Named(parameter.name.clone(), Vec::new()))
+            .collect();
+        Ok(Item::TypeAlias(TypeAliasDef {
+            name,
+            compile_groups,
+            target: Type::Named(target_name, arguments),
+        }))
     }
 
     fn declaration_name(&mut self) -> Result<String, ParseError> {
@@ -2655,6 +2747,21 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
         match item {
             Item::Function(function) => validate_function_scopes(function, &empty, &empty)?,
             Item::Global(binding) => validate_binding_scopes(binding, &empty, &empty)?,
+            Item::TypeAlias(definition) => {
+                let mut names = HashSet::new();
+                for parameter in definition.compile_groups.iter().flatten() {
+                    if !names.insert(parameter.name.clone()) {
+                        return Err(format!(
+                            "duplicate compile-time parameter `{}`",
+                            parameter.name
+                        ));
+                    }
+                }
+                let regions = declared_regions(&definition.compile_groups, &empty)?;
+                let accesses = declared_accesses(&definition.compile_groups, &empty)?;
+                validate_type_regions(&definition.target, &regions)?;
+                validate_type_accesses(&definition.target, &accesses)?;
+            }
             Item::Effect(_) | Item::Access(_) => {}
             Item::Struct(definition) => {
                 reject_passing_parameters(
@@ -5183,6 +5290,42 @@ mod tests {
         let error = parse("let main(): i32 = {\n  let x =\n}\n").unwrap_err();
         assert_eq!((error.line, error.column), (3, 1));
         assert!(error.message.contains("expression"));
+    }
+
+    #[test]
+    fn parses_type_families_and_type_constructor_aliases() {
+        let program = parse(
+            "let Family(T: type): type = Box(T)\n\
+             let Constructor: (Element: type): type = Box\n\
+             let Scalar: type = i32\n",
+        )
+        .unwrap();
+
+        let Item::TypeAlias(family) = &program.items[0] else {
+            panic!("expected type-family alias");
+        };
+        assert_eq!(family.compile_groups[0][0].name, "T");
+        assert_eq!(
+            family.target,
+            Type::Named("Box".into(), vec![Type::Named("T".into(), Vec::new())])
+        );
+
+        let Item::TypeAlias(constructor) = &program.items[1] else {
+            panic!("expected type-constructor alias");
+        };
+        assert_eq!(constructor.compile_groups[0][0].name, "Element");
+        assert_eq!(
+            constructor.target,
+            Type::Named(
+                "Box".into(),
+                vec![Type::Named("Element".into(), Vec::new())]
+            )
+        );
+
+        assert!(matches!(
+            &program.items[2],
+            Item::TypeAlias(alias) if alias.compile_groups.is_empty() && alias.target == Type::I32
+        ));
     }
 
     #[test]
