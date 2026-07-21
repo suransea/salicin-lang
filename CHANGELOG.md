@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.128.0 - 2026-07-22
+
+- Extended selective CPS into arguments of effect-propagating named calls before constructing the
+  callee's resumable frame.
+- Preserved grouped-call reconstruction and left-to-right traversal across multiple suspending
+  arguments.
+- Added native order-sensitive coverage for two operation calls used as one effectful call's
+  arguments.
+
 ## 0.127.0 - 2026-07-22
 
 - Propagated statically known effectful function identity through inferred immutable local aliases

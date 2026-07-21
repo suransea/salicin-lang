@@ -153,7 +153,9 @@ functions by hygienically specializing their source bodies. Inferred immutable l
 statically known effectful function retain that identity through alias chains and enter the same
 specialization path; the alias itself has no runtime callable ABI or escaping identity.
 Operation and ordinary call arguments are traversed in source order, `done:` may change the answer
-type, and nested handlers of the same identity select the nearest matching boundary.
+type, and nested handlers of the same identity select the nearest matching boundary. Arguments of
+an effect-propagating named call enter CPS before its callee frame is built, so multiple suspended
+arguments resume left to right and the eventual call receives their produced values.
 Each named-call specialization is a real local closure frame, so shared and mutable borrow
 parameters retain their capabilities, explicit returns target the callee frame, and its locals are
 cleaned before the caller continuation resumes. Named frames now complete through typed one-shot

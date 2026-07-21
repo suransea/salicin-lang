@@ -17589,6 +17589,50 @@ impl Analyzer {
             ));
             return Some(Err(()));
         }
+        if groups
+            .iter()
+            .flat_map(|group| group.iter())
+            .any(|argument| self.handler_expression_may_suspend(&argument.value, &handler.identity))
+        {
+            let group_lengths = groups.iter().map(|group| group.len()).collect::<Vec<_>>();
+            let arguments = groups
+                .iter()
+                .flat_map(|group| group.iter().cloned())
+                .collect::<Vec<_>>();
+            let callee = source_name.clone();
+            let next_handler = handler.clone();
+            let next_resume = resume.clone();
+            let next_continuation = continuation.clone();
+            let completed: SourceArgumentsContinuation = Rc::new(move |analyzer, arguments| {
+                let mut offset = 0;
+                let mut call = Expr::Name(callee.clone());
+                for length in &group_lengths {
+                    let end = offset + length;
+                    call = Expr::Call(Box::new(call), arguments[offset..end].to_vec());
+                    offset = end;
+                }
+                analyzer
+                    .transform_effectful_named_call(
+                        &call,
+                        next_handler.clone(),
+                        next_resume.clone(),
+                        next_continuation.clone(),
+                    )
+                    .unwrap_or_else(|| {
+                        analyzer.error(
+                            "internal handler call lost its effectful target after argument lowering",
+                        );
+                        Err(())
+                    })
+            });
+            return Some(self.transform_handler_arguments(
+                arguments,
+                Vec::new(),
+                handler,
+                resume,
+                completed,
+            ));
+        }
         if let Some(frame) = handler.inlining.borrow().get(name).cloned() {
             let specialization = self.next_closure;
             self.next_closure += 1;

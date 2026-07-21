@@ -75,7 +75,8 @@ whereas resumption transfers and disarms it; native resource regressions cover e
 on both paths. CPS traversal
 currently covers ordinary arguments, arrays, indexes, members, match bodies, immediate effect
 wrappers, lazy boolean branches, lazy `Option`/`Result` coalescing, and match guards over `Copy`
-inputs. Fully applied optional method calls preserve receiver-before-argument order and skip
+inputs. Arguments of an effect-propagating named call are transformed before its resumable callee
+frame, including multiple left-to-right suspensions. Fully applied optional method calls preserve receiver-before-argument order and skip
 effectful arguments on residual paths for both builtin fallible families. Suspended guards over
 non-Copy match inputs are rejected until candidate continuations can
 retain speculative payload ownership directly.
