@@ -16065,6 +16065,14 @@ impl Analyzer {
         }
 
         if matches!(&expression, Expr::Call(_, _)) {
+            if let Some(result) = self.transform_nested_effect_handler(
+                &expression,
+                handler.clone(),
+                resume.clone(),
+                continuation.clone(),
+            ) {
+                return result;
+            }
             if let Some(result) = self.transform_effectful_named_call(
                 &expression,
                 handler.clone(),
@@ -16371,6 +16379,85 @@ impl Analyzer {
             }
             other => continuation(self, other),
         }
+    }
+
+    fn transform_nested_effect_handler(
+        &mut self,
+        expression: &Expr,
+        handler: Rc<AlgebraicHandler>,
+        resume: Option<SourceResume>,
+        continuation: SourceContinuation,
+    ) -> Option<Result<Expr, ()>> {
+        let Expr::Call(inner_callee, action_arguments) = expression else {
+            return None;
+        };
+        let [CallArg {
+            label: None,
+            value: Expr::Closure(action_parameters, action_body),
+        }] = action_arguments.as_slice()
+        else {
+            return None;
+        };
+        if !action_parameters.is_empty() {
+            return None;
+        }
+        let mut groups = Vec::new();
+        let Expr::Member(effect, member) = flatten_call(inner_callee, &mut groups) else {
+            return None;
+        };
+        if member != "handle" || groups.len() != 1 {
+            return None;
+        }
+        let effect_name = source_type_expression_name(effect)?;
+        let root_name = effect_name.split('(').next().unwrap_or(&effect_name);
+        if !self.effect_defs.contains_key(root_name) || effect_name == handler.identity {
+            return None;
+        }
+
+        let Expr::Call(handler_head, clause_arguments) = inner_callee.as_ref() else {
+            return None;
+        };
+        let mut transformed_clauses = Vec::with_capacity(clause_arguments.len());
+        for argument in clause_arguments {
+            let value = if let Expr::Closure(parameters, body) = &argument.value {
+                let identity: SourceContinuation = Rc::new(|_, value| Ok(value));
+                let transformed = match self.transform_handler_expr(
+                    (**body).clone(),
+                    handler.clone(),
+                    None,
+                    identity,
+                ) {
+                    Ok(transformed) => transformed,
+                    Err(()) => return Some(Err(())),
+                };
+                Expr::Closure(parameters.clone(), Box::new(transformed))
+            } else {
+                argument.value.clone()
+            };
+            transformed_clauses.push(CallArg {
+                label: argument.label.clone(),
+                value,
+            });
+        }
+        let transformed_inner_callee =
+            Expr::Call(Box::new((**handler_head).clone()), transformed_clauses);
+
+        let identity: SourceContinuation = Rc::new(|_, value| Ok(value));
+        let transformed_action =
+            match self.transform_handler_expr((**action_body).clone(), handler, resume, identity) {
+                Ok(transformed) => transformed,
+                Err(()) => return Some(Err(())),
+            };
+        Some(continuation(
+            self,
+            Expr::Call(
+                Box::new(transformed_inner_callee),
+                vec![CallArg {
+                    label: None,
+                    value: Expr::Closure(Vec::new(), Box::new(transformed_action)),
+                }],
+            ),
+        ))
     }
 
     fn transform_handler_arguments(
@@ -16828,7 +16915,22 @@ impl Analyzer {
         }
         let first = statements.remove(0);
         match first {
-            Stmt::Let(binding) => {
+            Stmt::Let(mut binding) => {
+                if binding.name.starts_with("$handler$frame$")
+                    || binding.name.starts_with("$handler$continuation$")
+                    || binding.name.starts_with("$handler$call$continuation$")
+                {
+                    if let Expr::Closure(parameters, body) = binding.value {
+                        let identity: SourceContinuation = Rc::new(|_, value| Ok(value));
+                        let transformed = self.transform_handler_expr(
+                            *body,
+                            handler.clone(),
+                            resume.clone(),
+                            identity,
+                        )?;
+                        binding.value = Expr::Closure(parameters, Box::new(transformed));
+                    }
+                }
                 let name = binding.name.clone();
                 let annotation = binding.annotation.clone();
                 let mutable = binding.mutable;

@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.119.0 - 2026-07-22
+
+- Composed lexically nested handlers of different user-defined effects by carrying the outer
+  selective-CPS transformation through the inner handler's action boundary.
+- Transformed outer-effect operations in inner operation and `done` clauses while respecting the
+  inner clause's own `resume` binding.
+- Traversed compiler-generated frame and continuation closures when a nested handler handles a
+  second effect, preserving both effects across specialized named calls.
+- Added native composition coverage with one outer operation in the action and another in the inner
+  handler clause.
+
 ## 0.118.0 - 2026-07-22
 
 - Extended selective algebraic-effect CPS traversal through arrays, indexes, ordinary and optional

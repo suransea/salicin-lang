@@ -436,6 +436,11 @@ operation 按源顺序进入 selective CPS，`&&` 与 `||` 保持短路。带 ef
 [代数效应设计](algebraic-effects.md)继续实现；尚未覆盖的路径会被拒绝，不能让带 operation 的
 effect 逃逸原生入口。
 
+不同 identity 的词法嵌套 handler 按源代码顺序组合。外层 handler 会穿过内层 handler 的 action、
+operation clause、`done` clause 以及编译器生成的 named-call frame/continuation closure，处理其中属于
+自己的 operation；内层 clause 的 `resume` 参数遮蔽外层同名 continuation。相同 identity 的嵌套仍由
+最近边界处理，不会合并。
+
 `effect` kind 的实参是完整 row，包括 `pure`、`unsafe`、`throws(E)`、异步挂起、名义 marker 及其
 组合。row 本身不作为运行时值，但其中的控制 effect 可以影响 lowering 和 ABI；`pure` 是省略且
 没有其他约束时的默认值。effect 参数只能声明在函数或泛型 inherent member 上，只能用于

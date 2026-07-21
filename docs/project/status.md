@@ -66,6 +66,8 @@ computation after `resume` use explicit CPS continuation closures. Capturing ind
 uniform continuation ABI for mutually recursive frames remain implementation work. CPS traversal
 currently covers ordinary arguments, arrays, indexes, members, match bodies, immediate effect
 wrappers, and lazy boolean branches; effectful coalescing fallbacks and match guards remain reserved.
+Different user-defined handlers compose lexically through action, clause, and generated-frame
+closure boundaries; nested handlers of the same identity retain nearest-boundary selection.
 Function and generic inherent-member `E: effect` parameters represent complete rows, default to pure,
 participate in monomorphization, forward through ordinary compile-time calls such as
 `callee(E)(value)`, and infer pure, unsafe, custom, or `throws(Error)` rows from higher-order callable

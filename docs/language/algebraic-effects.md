@@ -151,3 +151,9 @@ bodies, and immediate `do`, `unsafe`, and `try` wrappers. Effectful `&&` and `||
 their lazy branch semantics. Effectful coalescing fallbacks, optional-call arguments, match guards,
 capturing indirect calls, and the final general continuation ABI remain implementation work;
 unsupported cases are rejected rather than compiled with callback-only semantics.
+
+Lexically nested handlers of different effect identities compose in source order. The outer
+selective-CPS pass traverses the inner handler's action and clause closures, including generated
+named-call frame and continuation closures, while the inner clause's `resume` parameter shadows any
+same-spelled outer continuation. Nested handlers of the same identity continue to select the nearest
+boundary instead of being fused.

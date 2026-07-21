@@ -145,6 +145,7 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
         "algebraic_effect_expression_traversal.sc",
         "algebraic_effect_short_circuit.sc",
         "algebraic_effect_cross_function_answer.sc",
+        "algebraic_effect_composition.sc",
         "algebraic_effect_recursion.sc",
         "algebraic_effect_mutual_recursion.sc",
         "algebraic_effect_loops.sc",
