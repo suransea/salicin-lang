@@ -446,7 +446,8 @@ path_head = IDENT | "root" | "self" | "super" | "Self" ;
 
 完全限定 trait 成员 `<T as Trait>.member` 作为独立的 `qualified_path` 产生，加入 `path` 可出现的
 位置。类型应用 `A(T)` 与运行时调用 `f(x)` 具有相同 token 外形，由名称的 kind 和上下文在语义
-分析阶段区分。
+分析阶段区分。表达式或 pattern 路径头 `Self` 只在 `extend` 成员内有效，并由语义分析替换为当前
+具体或泛型扩展目标。
 
 ## 10. 必须锁定的 parser 测试
 

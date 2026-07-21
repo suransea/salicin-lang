@@ -1428,6 +1428,8 @@ fn m1_inherent_members_run_with_expected_result() {
         "inherent_disjoint_forward_extend.sali",
         "qualified_inherent_method.sali",
         "qualified_trait_generic_method.sali",
+        "self_expression_members.sali",
+        "self_expression_generic.sali",
     ] {
         let output = salic()
             .arg("run")
@@ -1484,6 +1486,10 @@ fn m1_inherent_member_errors_report_their_cause() {
         (
             "qualified_method_borrowed_partial.sali",
             "partial application",
+        ),
+        (
+            "self_expression_outside_extend.sali",
+            "only available inside",
         ),
     ] {
         let output = salic()

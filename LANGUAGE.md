@@ -732,6 +732,11 @@ A.reset(a)()
 调用处不重复写传递模式；编译器依据方法签名对 `a` 建立借用、复制或移动。不允许仅靠重载使
 该选择产生歧义。
 
+`Self` 在 `extend` 成员的类型和表达式位置都表示当前扩展目标，因此构造器、关联成员、限定方法
+调用和 enum pattern 可分别写成 `Self(value)`、`Self.member`、`Self.method(self: value)()` 与
+`Self.Some(value)`。它也适用于泛型扩展、trait 实现和默认 trait 方法；在 `extend` 外使用表达式级
+`Self` 是错误。
+
 ### 8.3 泛型结构体
 
 ```sali

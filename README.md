@@ -448,7 +448,9 @@ v0.48 随后解除数组元素的 `Copy` 限制，并补齐资源数组逐元素
 其候选回退、显式 guard 和资源 binding 提交共用同一条受验证的 guard 控制流；v0.51 又让 `match`
 直接接受布尔和整数 scrutinee，并保证带副作用的 scrutinee 只求值一次。v0.52 开放 `A.method(a)()`
 类型限定方法调用；同名关联函数存在时可用 `A.method(self: a)()` 明确选择方法，泛型类型实参还可由
-具体 receiver 推断。
+具体 receiver 推断。v0.53 又在具体、泛型及 trait `extend` 成员中开放表达式级 `Self`：可写
+`Self(value)`、`Self.CONSTANT`、`Self.method(self: value)()` 和 `Self.Some(payload)` 模式；默认 trait
+方法中的限定调用也会在具体实现上静态分派。
 下一步推进显式引用与生命周期基础，再以相同
 allocator/drop 基础推进
 `Vec(T)`；泛型 callable
@@ -479,7 +481,7 @@ let main(): i32 = add(1)(41)
 标量 `match` 支持字面量、binding、`_` 与 guard；无 guard 的 `true` 和 `false` 可共同覆盖 `bool`，
 整数匹配或带 guard 的布尔覆盖仍需无 guard 的 `_` / binding 回退。
 函数类型和闭包类型也不实现 `Copy`。
-表达式路径中的 `Self` 尚未开放。省略编译期组的嵌套推断仍受当前表达式类型探测能力限制；
+表达式级 `Self` 只在 `extend` 成员内部有效，并表示当前扩展目标。省略编译期组的嵌套推断仍受当前表达式类型探测能力限制；
 无法唯一推断时需用 `T: Concrete` 形式的命名编译期实参。普通泛型 trait impl 已按具体实例静态
 选择；默认方法已静态单态化，暂不支持泛型关联类型、带显式 trait 名的完全限定调用
 和 trait object；无约束的抽象类型

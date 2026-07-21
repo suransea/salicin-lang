@@ -2097,6 +2097,9 @@ impl Analyzer {
             template.compile_groups = vec![compile_parameters.clone()];
             template.where_predicates = vec![predicate.clone()];
             substitute_function_types(&mut template, &self_substitution);
+            if let Some(body) = &mut template.body {
+                rewrite_abstract_self_qualified_methods(body);
+            }
             self.function_template_order.push(canonical.clone());
             self.function_templates.insert(canonical.clone(), template);
             self.function_template_origins
@@ -2713,6 +2716,11 @@ impl Analyzer {
                 continue;
             }
             substitute_function_types(&mut function, &substitutions);
+            if let Some(body) = &mut function.body {
+                let target_name =
+                    nominal_name(&target).expect("concrete trait implementation target is nominal");
+                substitute_self_expression_target(body, target_name);
+            }
             let Some(actual_shape) = self.function_shape(&function) else {
                 self.error(format!(
                     "trait method `{}.{method_name}` signature mismatch",
@@ -2902,6 +2910,9 @@ impl Analyzer {
                     self_substitution
                         .insert("Self".to_owned(), Type::Named(target.clone(), Vec::new()));
                     substitute_function_types(&mut function, &self_substitution);
+                    if let Some(body) = &mut function.body {
+                        substitute_self_expression_target(body, &target);
+                    }
                     let canonical = if is_method {
                         inherent_method_name(&target, &short_name)
                     } else {
@@ -2973,6 +2984,7 @@ impl Analyzer {
                     if let Some(annotation) = &mut binding.annotation {
                         substitute_self_type(annotation, &target);
                     }
+                    substitute_self_expression_target(&mut binding.value, &target);
                     let canonical = associated_constant_name(&target, &short_name);
                     binding.name = canonical.clone();
                     self.global_order.push(canonical.clone());
@@ -3465,6 +3477,9 @@ impl Analyzer {
             template.compile_groups = extension.compile_groups.clone();
             template.where_predicates = extension.where_predicates.clone();
             substitute_function_types(&mut template, &self_substitution);
+            if let Some(body) = &mut template.body {
+                substitute_self_expression_target(body, target_template);
+            }
             self.function_template_order.push(canonical.clone());
             self.function_templates.insert(canonical.clone(), template);
             self.function_template_origins
@@ -3729,6 +3744,9 @@ impl Analyzer {
             let mut self_substitution = HashMap::new();
             self_substitution.insert("Self".to_owned(), extension.target.clone());
             substitute_function_types(&mut generic, &self_substitution);
+            if let Some(body) = &mut generic.body {
+                substitute_self_expression_target(body, target_template);
+            }
             self.function_template_order.push(canonical.clone());
             self.function_templates.insert(canonical.clone(), generic);
             self.function_template_origins
@@ -8164,6 +8182,9 @@ impl Analyzer {
                 } else if context.has_type_parameter(name) {
                     self.error(format!("type parameter `{name}` cannot be used as a value"));
                     error_expr()
+                } else if name == "Self" {
+                    self.error("expression `Self` is only available inside an extend member");
+                    error_expr()
                 } else if self.globals.contains_key(name) {
                     HirExpr {
                         ty: self.global_type(name),
@@ -11493,6 +11514,10 @@ impl Analyzer {
                 self.error(format!("type parameter `{name}` is not callable"));
                 return error_expr();
             }
+            if name == "Self" {
+                self.error("expression `Self` is only available inside an extend member");
+                return error_expr();
+            }
             if self.struct_layouts.contains_key(name) {
                 return self.lower_struct_constructor(name, &groups, context);
             }
@@ -13603,6 +13628,11 @@ impl Analyzer {
             let moves = matches!(&*argument, HirArgument::Move(_));
             match argument {
                 HirArgument::Copy(value) | HirArgument::Move(value) => {
+                    if let HirExprKind::Read { place, .. } = &value.kind {
+                        if let Some(binding) = borrowed_temporaries.remove(&place.local) {
+                            statements.push(HirStmt::Let(binding));
+                        }
+                    }
                     let id = context.fresh_local();
                     let ty = value.ty.clone();
                     statements.push(HirStmt::Let(HirBinding {
@@ -19226,6 +19256,201 @@ fn substitute_function_types(function: &mut Function, substitutions: &HashMap<St
     }
     if let Some(body) = &mut function.body {
         substitute_expr_types(body, substitutions);
+    }
+}
+
+fn substitute_self_expression_target(expression: &mut Expr, target: &str) {
+    match expression {
+        Expr::Name(name) if name == "Self" => *name = target.to_owned(),
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => {}
+        Expr::Unary(_, operand)
+        | Expr::Try(operand)
+        | Expr::Throw(operand)
+        | Expr::Unsafe(operand) => substitute_self_expression_target(operand, target),
+        Expr::Borrow { value, .. } => substitute_self_expression_target(value, target),
+        Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
+            substitute_self_expression_target(left, target);
+            substitute_self_expression_target(right, target);
+        }
+        Expr::Call(callee, arguments) => {
+            substitute_self_expression_target(callee, target);
+            for argument in arguments {
+                substitute_self_expression_target(&mut argument.value, target);
+            }
+        }
+        Expr::Member(base, _) | Expr::ChainMember(base, _) => {
+            substitute_self_expression_target(base, target)
+        }
+        Expr::Array(elements) => {
+            for element in elements {
+                substitute_self_expression_target(element, target);
+            }
+        }
+        Expr::Index { base, index } => {
+            substitute_self_expression_target(base, target);
+            substitute_self_expression_target(index, target);
+        }
+        Expr::Block(statements, tail) => {
+            for statement in statements {
+                match statement {
+                    Stmt::Let(binding) => {
+                        substitute_self_expression_target(&mut binding.value, target)
+                    }
+                    Stmt::Expr(expression) => substitute_self_expression_target(expression, target),
+                }
+            }
+            if let Some(tail) = tail {
+                substitute_self_expression_target(tail, target);
+            }
+        }
+        Expr::Closure(_, body) => substitute_self_expression_target(body, target),
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            substitute_self_expression_target(condition, target);
+            substitute_self_expression_target(then_branch, target);
+            if let Some(else_branch) = else_branch {
+                substitute_self_expression_target(else_branch, target);
+            }
+        }
+        Expr::Return(value) | Expr::Break(value) => {
+            if let Some(value) = value {
+                substitute_self_expression_target(value, target);
+            }
+        }
+        Expr::While { condition, body } => {
+            substitute_self_expression_target(condition, target);
+            substitute_self_expression_target(body, target);
+        }
+        Expr::Loop { body } => substitute_self_expression_target(body, target),
+        Expr::Match { scrutinee, arms } => {
+            substitute_self_expression_target(scrutinee, target);
+            for arm in arms {
+                substitute_self_pattern_target(&mut arm.pattern, target);
+                if let Some(guard) = &mut arm.guard {
+                    substitute_self_expression_target(guard, target);
+                }
+                substitute_self_expression_target(&mut arm.body, target);
+            }
+        }
+    }
+}
+
+fn substitute_self_pattern_target(pattern: &mut Pattern, target: &str) {
+    let Pattern::Constructor { path, fields } = pattern else {
+        return;
+    };
+    if path.first().is_some_and(|segment| segment == "Self") {
+        path[0] = target.to_owned();
+    }
+    match fields {
+        PatternFields::Unit => {}
+        PatternFields::Positional(patterns) => {
+            for pattern in patterns {
+                substitute_self_pattern_target(pattern, target);
+            }
+        }
+        PatternFields::Named(fields) => {
+            for field in fields {
+                substitute_self_pattern_target(&mut field.pattern, target);
+            }
+        }
+    }
+}
+
+fn rewrite_abstract_self_qualified_methods(expression: &mut Expr) {
+    match expression {
+        Expr::Call(callee, arguments) => {
+            rewrite_abstract_self_qualified_methods(callee);
+            for argument in &mut *arguments {
+                rewrite_abstract_self_qualified_methods(&mut argument.value);
+            }
+            let replacement = match (callee.as_ref(), arguments.as_slice()) {
+                (
+                    Expr::Member(base, member),
+                    [CallArg {
+                        label: Some(label),
+                        value,
+                    }],
+                ) if matches!(base.as_ref(), Expr::Name(name) if name == "Self")
+                    && label == "self" =>
+                {
+                    Some(Expr::Member(Box::new(value.clone()), member.clone()))
+                }
+                _ => None,
+            };
+            if let Some(replacement) = replacement {
+                *expression = replacement;
+            }
+        }
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => {}
+        Expr::Unary(_, operand)
+        | Expr::Try(operand)
+        | Expr::Throw(operand)
+        | Expr::Unsafe(operand) => rewrite_abstract_self_qualified_methods(operand),
+        Expr::Borrow { value, .. } => rewrite_abstract_self_qualified_methods(value),
+        Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
+            rewrite_abstract_self_qualified_methods(left);
+            rewrite_abstract_self_qualified_methods(right);
+        }
+        Expr::Member(base, _) | Expr::ChainMember(base, _) => {
+            rewrite_abstract_self_qualified_methods(base)
+        }
+        Expr::Array(elements) => {
+            for element in elements {
+                rewrite_abstract_self_qualified_methods(element);
+            }
+        }
+        Expr::Index { base, index } => {
+            rewrite_abstract_self_qualified_methods(base);
+            rewrite_abstract_self_qualified_methods(index);
+        }
+        Expr::Block(statements, tail) => {
+            for statement in statements {
+                match statement {
+                    Stmt::Let(binding) => {
+                        rewrite_abstract_self_qualified_methods(&mut binding.value)
+                    }
+                    Stmt::Expr(expression) => rewrite_abstract_self_qualified_methods(expression),
+                }
+            }
+            if let Some(tail) = tail {
+                rewrite_abstract_self_qualified_methods(tail);
+            }
+        }
+        Expr::Closure(_, body) => rewrite_abstract_self_qualified_methods(body),
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            rewrite_abstract_self_qualified_methods(condition);
+            rewrite_abstract_self_qualified_methods(then_branch);
+            if let Some(else_branch) = else_branch {
+                rewrite_abstract_self_qualified_methods(else_branch);
+            }
+        }
+        Expr::Return(value) | Expr::Break(value) => {
+            if let Some(value) = value {
+                rewrite_abstract_self_qualified_methods(value);
+            }
+        }
+        Expr::While { condition, body } => {
+            rewrite_abstract_self_qualified_methods(condition);
+            rewrite_abstract_self_qualified_methods(body);
+        }
+        Expr::Loop { body } => rewrite_abstract_self_qualified_methods(body),
+        Expr::Match { scrutinee, arms } => {
+            rewrite_abstract_self_qualified_methods(scrutinee);
+            for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    rewrite_abstract_self_qualified_methods(guard);
+                }
+                rewrite_abstract_self_qualified_methods(&mut arm.body);
+            }
+        }
     }
 }
 

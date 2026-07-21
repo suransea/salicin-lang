@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.53.0 - 2026-07-21
+
+- Added expression-level `Self` inside concrete and generic inherent or trait extensions, including
+  constructors, associated members, type-qualified method calls, and enum constructor patterns.
+- Allowed default trait methods to use `Self.method(self: value)(...)`; abstract validation rewrites
+  the qualified receiver while concrete implementations retain static type-qualified dispatch.
+- Added a contextual diagnostic for expression-level `Self` outside extension members and fixed
+  move/copy temporary receiver staging for chained calls.
+
 ## 0.52.0 - 2026-07-21
 
 - Added type-qualified inherent and trait method calls such as `Number.read(number)()` while
