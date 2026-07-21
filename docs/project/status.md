@@ -7,6 +7,12 @@ source-backed core traits and containers, cleanup lowering, raw allocation primi
 
 The unit type has one source spelling, `()`; the former `void` alias is removed before 1.0.
 
+Compiler-lowered control is now source-backed by validated declarations in `core.control`:
+`Unsafe`, `Throws(E)`, `Shared`, `Mutable`, and the bodyless intrinsic signatures for `do`, `try`,
+`unsafe`, and `loop`. These exports remain outside the prelude. `await` is intentionally absent until
+the async/Future lowering slice is implemented, at which point its standard-library contract must
+land with the implementation.
+
 Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
 `continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs
 all lexical cleanup required when leaving nested scopes before starting the next iteration.

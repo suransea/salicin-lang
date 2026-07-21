@@ -23,7 +23,7 @@ library/
 
 The edition prelude must stay small. It is intended for universally useful language-level names,
 currently `Option`, `Result`, `never`, `Copy`, and `Drop`. Operator traits belong to `core.ops`,
-error-control traits belong to `core.control`, and
+compiler-lowered control contracts belong to `core.control`, and
 owning containers belong to `alloc.boxed` and `alloc.vec`. Alloc declarations must be named through
 their module or imported explicitly with ordinary `use`; for example:
 
@@ -39,8 +39,9 @@ either standard namespace.
 `core.ops` uses the same rule: `Add`, `Sub`, `Mul`, `Div`, `Rem`, `Eq`, `PartialOrdering`,
 `PartialOrd`, `Neg`, `Not`, `BitAnd`, `BitOr`, `BitXor`, `Shl`, and `Shr` require ordinary imports when
 named. Merely writing the corresponding operator token does not require importing its protocol.
-The language-level `throws(E)`, `throw`, and `try { ... }` effect semantics do not inject library
-protocol names into source scope; the former control-container protocols have been removed.
+The syntax spellings for `throws(E)`, `do`, `try`, `unsafe`, and `loop` bind directly to validated
+lang-item declarations in `core.control`; they do not inject those module exports as ordinary
+unqualified names. The former control-container protocols have been removed.
 
 The compiler, library sources, and edition form one toolchain unit. Compiler-matched language items
 must come from the matching `core`, while user declarations with the same spelling remain ordinary

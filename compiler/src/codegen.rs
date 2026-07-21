@@ -1816,6 +1816,7 @@ impl Analyzer {
                 Item::Struct(definition) => &definition.name,
                 Item::Enum(definition) => &definition.name,
                 Item::Effect(definition) => &definition.name,
+                Item::Access(definition) => &definition.name,
                 Item::Trait(definition) => &definition.name,
                 Item::Extend(extension) => {
                     extensions.push((extension.clone(), origin));
@@ -1832,6 +1833,18 @@ impl Analyzer {
                 Item::Function(function) => {
                     let mut function = function.clone();
                     let source_name = function.name.clone();
+                    if origin.package != PackageId::CORE.0
+                        && matches!(
+                            source_name.rsplit("::").next(),
+                            Some("do" | "try" | "unsafe" | "loop")
+                        )
+                    {
+                        self.error(format!(
+                            "control lang-item name `{}` is reserved for `core.control`",
+                            source_name.rsplit("::").next().unwrap()
+                        ));
+                        continue;
+                    }
                     if overloaded_function {
                         if source_name == "main" {
                             self.error("entry point `main` cannot be overloaded");
@@ -1990,7 +2003,25 @@ impl Analyzer {
                     }
                 }
                 Item::Effect(definition) => {
+                    if !definition.compile_groups.is_empty()
+                        && definition.name != self.lang_item_name(LangItemKind::ThrowsEffect)
+                    {
+                        self.error(format!(
+                            "generic effect `{}` is not supported; parameterized built-in effects are declared by `core.control`",
+                            definition.name
+                        ));
+                    }
                     self.effects.insert(definition.name.clone());
+                }
+                Item::Access(definition) => {
+                    if definition.name != self.lang_item_name(LangItemKind::SharedAccess)
+                        && definition.name != self.lang_item_name(LangItemKind::MutableAccess)
+                    {
+                        self.error(format!(
+                            "access value `{}` can only be declared by `core.control`",
+                            definition.name
+                        ));
+                    }
                 }
                 Item::Trait(definition) => {
                     self.collect_trait_schema(definition.clone(), visibility, origin)
@@ -2117,7 +2148,11 @@ impl Analyzer {
                         ExtendMember::Const(_) => None,
                     })
                     .collect(),
-                Item::Global(_) | Item::Struct(_) | Item::Enum(_) | Item::Effect(_) => Vec::new(),
+                Item::Global(_)
+                | Item::Struct(_)
+                | Item::Enum(_)
+                | Item::Effect(_)
+                | Item::Access(_) => Vec::new(),
             }
         }
 
@@ -5477,6 +5512,18 @@ impl Analyzer {
     fn validate_function_templates(&mut self) {
         for template_name in self.function_template_order.clone() {
             let template = self.function_templates[&template_name].clone();
+            if template.body.is_none()
+                && [
+                    LangItemKind::Do,
+                    LangItemKind::Try,
+                    LangItemKind::Unsafe,
+                    LangItemKind::Loop,
+                ]
+                .into_iter()
+                .any(|kind| self.lang_item_name(kind) == template_name)
+            {
+                continue;
+            }
             if template.return_type.is_none() {
                 self.error(format!(
                     "generic function `{template_name}` requires an explicit return type"
@@ -23785,7 +23832,8 @@ fn erase_region_parameters(program: &mut Program) {
         match item {
             Item::Function(function) => erase_function(function),
             Item::Global(_) => {}
-            Item::Effect(_) => {}
+            Item::Effect(definition) => erase_groups(&mut definition.compile_groups),
+            Item::Access(_) => {}
             Item::Struct(definition) => erase_groups(&mut definition.compile_groups),
             Item::Enum(definition) => erase_groups(&mut definition.compile_groups),
             Item::Trait(definition) => {
@@ -26402,6 +26450,36 @@ let main(): i32 = {
         assert!(errors
             .iter()
             .any(|diagnostic| diagnostic.message.contains("unknown type `void`")));
+    }
+
+    #[test]
+    fn reserves_compiler_provided_control_contracts_for_core() {
+        let errors = compile_text(
+            "let do(T: type)(move action: (): T): T = { action() }\n\
+             let main(): i32 = { 0 }\n",
+        )
+        .unwrap_err();
+        assert!(errors.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("control lang-item name `do` is reserved")));
+
+        let errors = compile_text(
+            "let Local = access\n\
+             let main(): i32 = { 0 }\n",
+        )
+        .unwrap_err();
+        assert!(errors.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("access value `Local` can only be declared")));
+
+        let errors = compile_text(
+            "let external(value: i32): i32\n\
+             let main(): i32 = { 0 }\n",
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("has no body")));
     }
 
     #[test]

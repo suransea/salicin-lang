@@ -94,17 +94,20 @@ let_decl = "let", [ "mut" ], IDENT,
 with_clause = IDENT("with"), "(", effect, { ",", effect }, [ "," ], ")" ;
 effect = "unsafe" | "async" | IDENT("throws"), "(", type_expr, ")" | IDENT ;
 
-initializer = expression | "effect" | struct_decl | enum_decl | trait_decl | module_decl ;
+initializer = expression | "effect" | "access" | struct_decl | enum_decl | trait_decl | module_decl ;
 ```
 
 语义限制：
 
-- 普通值、函数、类型和模块声明必须有 initializer；只有 trait 要求可以省略。
+- 普通值、函数、类型和模块声明必须有 initializer；只有 trait 要求，以及编译器内嵌并验证的
+  `core.control` 函数契约可以省略。普通包中的无函数体声明是语义错误。
 - `let mut` 不能含参数组，且必须绑定运行时值。
 - `with(...)` 属于函数签名，位于返回类型之后；`with(throws(E))` 声明可传播错误 `E`，
   `with(unsafe)` 增加调用要求。
 - `with` 和 marker 声明右侧的 `effect` 是上下文词，不是全局关键字。`let UI = effect` 声明名义
   effect；旧的 `(effect): T`、`T(effect)` 与 `T ! effect` 都不属于语法。
+- 声明右侧的 `access` 同样是上下文词，仅用于 core bundle 声明内建 access 身份。控制 lang item
+  可在声明名位置使用 `do`、`try`、`unsafe`、`loop`；普通源码不能重新声明这些名字。
 - `let f(x: T) = { body }` 是把参数提升到名称旁边的具名闭包声明；RHS 必须有花括号。
 - `let f: (x: T): R = { body }` 是带名签名的具名闭包声明：所有槽必须有名字。
 - `let f: (T): R = { (x: T) -> body }` 是普通函数值绑定。

@@ -45,10 +45,18 @@ pub enum LangItemKind {
     BitXor,
     Shl,
     Shr,
+    UnsafeEffect,
+    ThrowsEffect,
+    SharedAccess,
+    MutableAccess,
+    Do,
+    Try,
+    Unsafe,
+    Loop,
 }
 
 impl LangItemKind {
-    const ALL: [Self; 20] = [
+    const ALL: [Self; 28] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -69,6 +77,14 @@ impl LangItemKind {
         Self::BitXor,
         Self::Shl,
         Self::Shr,
+        Self::UnsafeEffect,
+        Self::ThrowsEffect,
+        Self::SharedAccess,
+        Self::MutableAccess,
+        Self::Do,
+        Self::Try,
+        Self::Unsafe,
+        Self::Loop,
     ];
 
     pub const fn source_name(self) -> &'static str {
@@ -93,12 +109,23 @@ impl LangItemKind {
             Self::BitXor => "BitXor",
             Self::Shl => "Shl",
             Self::Shr => "Shr",
+            Self::UnsafeEffect => "Unsafe",
+            Self::ThrowsEffect => "Throws",
+            Self::SharedAccess => "Shared",
+            Self::MutableAccess => "Mutable",
+            Self::Do => "do",
+            Self::Try => "try",
+            Self::Unsafe => "unsafe",
+            Self::Loop => "loop",
         }
     }
 
     const fn expected_kind(self) -> &'static str {
         match self {
             Self::Option | Self::Result | Self::Never | Self::PartialOrdering => "enum",
+            Self::UnsafeEffect | Self::ThrowsEffect => "effect",
+            Self::SharedAccess | Self::MutableAccess => "access",
+            Self::Do | Self::Try | Self::Unsafe | Self::Loop => "function",
             Self::Copy
             | Self::Drop
             | Self::Add
@@ -139,7 +166,15 @@ impl LangItemKind {
             | Self::Never
             | Self::Copy
             | Self::Drop
-            | Self::PartialOrdering => None,
+            | Self::PartialOrdering
+            | Self::UnsafeEffect
+            | Self::ThrowsEffect
+            | Self::SharedAccess
+            | Self::MutableAccess
+            | Self::Do
+            | Self::Try
+            | Self::Unsafe
+            | Self::Loop => None,
         }
     }
 }
@@ -205,6 +240,14 @@ pub struct LangItems {
     bit_xor: LangItem,
     shl: LangItem,
     shr: LangItem,
+    unsafe_effect: LangItem,
+    throws_effect: LangItem,
+    shared_access: LangItem,
+    mutable_access: LangItem,
+    do_function: LangItem,
+    try_function: LangItem,
+    unsafe_function: LangItem,
+    loop_function: LangItem,
 }
 
 impl LangItems {
@@ -288,6 +331,31 @@ impl LangItems {
         &self.shr
     }
 
+    pub const fn unsafe_effect(&self) -> &LangItem {
+        &self.unsafe_effect
+    }
+    pub const fn throws_effect(&self) -> &LangItem {
+        &self.throws_effect
+    }
+    pub const fn shared_access(&self) -> &LangItem {
+        &self.shared_access
+    }
+    pub const fn mutable_access(&self) -> &LangItem {
+        &self.mutable_access
+    }
+    pub const fn do_function(&self) -> &LangItem {
+        &self.do_function
+    }
+    pub const fn try_function(&self) -> &LangItem {
+        &self.try_function
+    }
+    pub const fn unsafe_function(&self) -> &LangItem {
+        &self.unsafe_function
+    }
+    pub const fn loop_function(&self) -> &LangItem {
+        &self.loop_function
+    }
+
     pub const fn get(&self, kind: LangItemKind) -> &LangItem {
         match kind {
             LangItemKind::Option => &self.option,
@@ -310,6 +378,14 @@ impl LangItems {
             LangItemKind::BitXor => &self.bit_xor,
             LangItemKind::Shl => &self.shl,
             LangItemKind::Shr => &self.shr,
+            LangItemKind::UnsafeEffect => &self.unsafe_effect,
+            LangItemKind::ThrowsEffect => &self.throws_effect,
+            LangItemKind::SharedAccess => &self.shared_access,
+            LangItemKind::MutableAccess => &self.mutable_access,
+            LangItemKind::Do => &self.do_function,
+            LangItemKind::Try => &self.try_function,
+            LangItemKind::Unsafe => &self.unsafe_function,
+            LangItemKind::Loop => &self.loop_function,
         }
     }
 }
@@ -452,6 +528,14 @@ impl CoreBundle {
             &mut lang_items.bit_xor,
             &mut lang_items.shl,
             &mut lang_items.shr,
+            &mut lang_items.unsafe_effect,
+            &mut lang_items.throws_effect,
+            &mut lang_items.shared_access,
+            &mut lang_items.mutable_access,
+            &mut lang_items.do_function,
+            &mut lang_items.try_function,
+            &mut lang_items.unsafe_function,
+            &mut lang_items.loop_function,
         ] {
             lang_item.canonical_name = item_name(&program.items[lang_item.item_index])
                 .expect("resolved core lang item remains named")
@@ -628,6 +712,14 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         bit_xor: item(LangItemKind::BitXor),
         shl: item(LangItemKind::Shl),
         shr: item(LangItemKind::Shr),
+        unsafe_effect: item(LangItemKind::UnsafeEffect),
+        throws_effect: item(LangItemKind::ThrowsEffect),
+        shared_access: item(LangItemKind::SharedAccess),
+        mutable_access: item(LangItemKind::MutableAccess),
+        do_function: item(LangItemKind::Do),
+        try_function: item(LangItemKind::Try),
+        unsafe_function: item(LangItemKind::Unsafe),
+        loop_function: item(LangItemKind::Loop),
     })
 }
 
@@ -638,6 +730,7 @@ fn item_name(item: &Item) -> Option<&str> {
         Item::Struct(definition) => Some(&definition.name),
         Item::Enum(definition) => Some(&definition.name),
         Item::Effect(definition) => Some(&definition.name),
+        Item::Access(definition) => Some(&definition.name),
         Item::Trait(definition) => Some(&definition.name),
         Item::Extend(_) => None,
     }
@@ -650,6 +743,7 @@ fn item_kind(item: &Item) -> &'static str {
         Item::Struct(_) => "struct",
         Item::Enum(_) => "enum",
         Item::Effect(_) => "effect",
+        Item::Access(_) => "access",
         Item::Trait(_) => "trait",
         Item::Extend(_) => "extension",
     }
@@ -673,6 +767,14 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         }
         (LangItemKind::Copy, Item::Trait(definition)) => validate_copy(definition, diagnostics),
         (LangItemKind::Drop, Item::Trait(definition)) => validate_drop(definition, diagnostics),
+        (LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect, Item::Effect(definition)) => {
+            validate_effect(kind, definition, diagnostics)
+        }
+        (LangItemKind::SharedAccess | LangItemKind::MutableAccess, Item::Access(_)) => {}
+        (
+            LangItemKind::Do | LangItemKind::Try | LangItemKind::Unsafe | LangItemKind::Loop,
+            Item::Function(function),
+        ) => validate_control_function(kind, function, diagnostics),
         (kind @ (LangItemKind::Neg | LangItemKind::Not), Item::Trait(definition)) => {
             validate_unary_operator(kind, definition, diagnostics)
         }
@@ -685,6 +787,156 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
             item_kind(item)
         )),
     }
+}
+
+fn validate_effect(
+    kind: LangItemKind,
+    definition: &crate::ast::EffectDef,
+    diagnostics: &mut Vec<String>,
+) {
+    let valid = match kind {
+        LangItemKind::UnsafeEffect => definition.compile_groups.is_empty(),
+        LangItemKind::ThrowsEffect => definition.compile_groups == vec![vec![type_parameter("E")]],
+        _ => false,
+    };
+    if !valid {
+        let shape = match kind {
+            LangItemKind::UnsafeEffect => "pub let Unsafe = effect",
+            LangItemKind::ThrowsEffect => "pub let Throws(E: type) = effect",
+            _ => unreachable!(),
+        };
+        diagnostics.push(format!("lang item `{kind}` must have shape `{shape}`"));
+    }
+}
+
+fn validate_control_function(
+    kind: LangItemKind,
+    function: &Function,
+    diagnostics: &mut Vec<String>,
+) {
+    let valid = function.body.is_none()
+        && function.where_predicates.is_empty()
+        && match kind {
+            LangItemKind::Do => valid_do(function),
+            LangItemKind::Try => valid_try(function),
+            LangItemKind::Unsafe => valid_unsafe(function),
+            LangItemKind::Loop => valid_loop(function),
+            _ => false,
+        };
+    if !valid {
+        diagnostics.push(format!(
+            "lang item `{kind}` has an invalid compiler-provided control signature"
+        ));
+    }
+}
+
+fn valid_do(function: &Function) -> bool {
+    function.compile_groups
+        == vec![vec![
+            CompileParam {
+                name: "E".to_owned(),
+                kind: CompileParamKind::Effect,
+            },
+            type_parameter("T"),
+        ]]
+        && single_moved_callable(function, "action", named_type("T"), effect_parameter("E"))
+        && function.return_type == Some(named_type("T"))
+        && function.effects.parameters == vec!["E"]
+        && !function.effects.unsafe_effect
+        && function.effects.throws.is_none()
+        && function.effects.custom.is_empty()
+}
+
+fn valid_try(function: &Function) -> bool {
+    let result = Type::Named("Result".to_owned(), vec![named_type("T"), named_type("E")]);
+    let effects = crate::ast::FunctionEffects {
+        throws: Some(Box::new(named_type("E"))),
+        parameters: vec!["F".to_owned()],
+        ..crate::ast::FunctionEffects::default()
+    };
+    function.compile_groups
+        == vec![vec![
+            CompileParam {
+                name: "F".to_owned(),
+                kind: CompileParamKind::Effect,
+            },
+            type_parameter("T"),
+            type_parameter("E"),
+        ]]
+        && single_moved_callable(function, "action", result.clone(), effects)
+        && function.return_type == Some(result)
+        && function.effects.parameters == vec!["F"]
+        && !function.effects.unsafe_effect
+        && function.effects.throws.is_none()
+        && function.effects.custom.is_empty()
+}
+
+fn valid_unsafe(function: &Function) -> bool {
+    let effects = crate::ast::FunctionEffects {
+        unsafe_effect: true,
+        parameters: vec!["E".to_owned()],
+        ..crate::ast::FunctionEffects::default()
+    };
+    function.compile_groups
+        == vec![vec![
+            CompileParam {
+                name: "E".to_owned(),
+                kind: CompileParamKind::Effect,
+            },
+            type_parameter("T"),
+        ]]
+        && single_moved_callable(function, "action", named_type("T"), effects)
+        && function.return_type == Some(named_type("T"))
+        && function.effects.parameters == vec!["E"]
+        && !function.effects.unsafe_effect
+        && function.effects.throws.is_none()
+        && function.effects.custom.is_empty()
+}
+
+fn valid_loop(function: &Function) -> bool {
+    function.compile_groups
+        == vec![vec![
+            CompileParam {
+                name: "E".to_owned(),
+                kind: CompileParamKind::Effect,
+            },
+            type_parameter("T"),
+        ]]
+        && single_moved_callable(function, "body", Type::Unit, effect_parameter("E"))
+        && function.return_type == Some(named_type("T"))
+        && function.effects.parameters == vec!["E"]
+        && !function.effects.unsafe_effect
+        && function.effects.throws.is_none()
+        && function.effects.custom.is_empty()
+}
+
+fn effect_parameter(name: &str) -> crate::ast::FunctionEffects {
+    crate::ast::FunctionEffects {
+        parameters: vec![name.to_owned()],
+        ..crate::ast::FunctionEffects::default()
+    }
+}
+
+fn single_moved_callable(
+    function: &Function,
+    name: &str,
+    result: Type,
+    effects: crate::ast::FunctionEffects,
+) -> bool {
+    let [group] = function.groups.as_slice() else {
+        return false;
+    };
+    let [parameter] = group.as_slice() else {
+        return false;
+    };
+    parameter.name == name
+        && parameter.mode == PassMode::Move
+        && parameter.ty
+            == Type::Function {
+                groups: vec![Vec::new()],
+                effects,
+                result: Box::new(result),
+            }
 }
 
 fn type_parameter(name: &str) -> CompileParam {
@@ -1042,7 +1294,7 @@ pub let Shr(Rhs: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), 20);
+        assert_eq!(bundle.program().items.len(), 28);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -1067,6 +1319,14 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::BitXor
                 | LangItemKind::Shl
                 | LangItemKind::Shr => format!("core::ops::{}", kind.source_name()),
+                LangItemKind::UnsafeEffect
+                | LangItemKind::ThrowsEffect
+                | LangItemKind::SharedAccess
+                | LangItemKind::MutableAccess
+                | LangItemKind::Do
+                | LangItemKind::Try
+                | LangItemKind::Unsafe
+                | LangItemKind::Loop => format!("core::control::{}", kind.source_name()),
             };
             assert_eq!(
                 item_name(&bundle.program().items[lang_item.item_index()]),
@@ -1094,6 +1354,14 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::BitXor
                 | LangItemKind::Shl
                 | LangItemKind::Shr => "ops",
+                LangItemKind::UnsafeEffect
+                | LangItemKind::ThrowsEffect
+                | LangItemKind::SharedAccess
+                | LangItemKind::MutableAccess
+                | LangItemKind::Do
+                | LangItemKind::Try
+                | LangItemKind::Unsafe
+                | LangItemKind::Loop => "control",
             };
             assert_eq!(
                 bundle.program().item_origins[lang_item.item_index()],
@@ -1103,6 +1371,27 @@ pub let Shr(Rhs: type) = trait {
                 }
             );
         }
+    }
+
+    #[test]
+    fn rejects_malformed_control_contracts() {
+        let malformed = EDITION_2026_CONTROL.replace(
+            "pub let unsafe(E: effect, T: type)(move action: (): T with(unsafe, E)): T with(E)",
+            "pub let unsafe(E: effect, T: type)(move action: (): T with(E)): T with(E)",
+        );
+        let error = CoreBundle::from_modules(
+            Edition::Edition2026,
+            &[
+                ("prelude", EDITION_2026_PRELUDE),
+                ("ops", EDITION_2026_OPS),
+                ("control", &malformed),
+            ],
+        )
+        .unwrap_err();
+        assert!(error
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.contains("lang item `unsafe`")));
     }
 
     #[test]

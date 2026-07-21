@@ -89,12 +89,19 @@ pub enum Item {
     Struct(StructDef),
     Enum(EnumDef),
     Effect(EffectDef),
+    Access(AccessDef),
     Trait(TraitDef),
     Extend(ExtendDef),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectDef {
+    pub name: String,
+    pub compile_groups: Vec<Vec<CompileParam>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessDef {
     pub name: String,
 }
 

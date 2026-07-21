@@ -6,6 +6,20 @@ subset.
 
 ## Unreleased
 
+## 0.103.0 - 2026-07-22
+
+- Added validated, edition-pinned `core.control` declarations for the `do`, `try`, `unsafe`, and
+  `loop` trailing-closure control functions instead of leaving their contracts solely in compiler
+  implementation code.
+- Added source-backed `Unsafe` and parameterized `Throws(E)` effect identities plus `Shared` and
+  `Mutable` access identities, all outside the prelude.
+- Allowed bodyless top-level function signatures and `access` declarations only as the parsed form
+  of validated compiler-provided core contracts; ordinary packages cannot define control intrinsics
+  or bodyless functions.
+- Established that future compiler-lowered features must land their function, type, effect, and
+  capability contracts in the matching standard-library release. Async/`await` declarations remain
+  absent until their lowering is implemented.
+
 ## 0.102.0 - 2026-07-22
 
 - Removed the source-level `void` alias completely; the unit type and no-result function type now

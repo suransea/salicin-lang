@@ -1,10 +1,11 @@
 use std::{collections::HashSet, fmt};
 
 use crate::ast::{
-    AssociatedTypeBinding, BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EffectDef,
-    EnumDef, Expr, ExtendDef, ExtendMember, Field, Function, FunctionEffects, Item, MatchArm,
-    Param, PassMode, Pattern, PatternField, PatternFields, Program, Stmt, StructDef, TraitDef,
-    TraitMember, Type, UnaryOp, UseDecl, VariantDef, VariantFields, Visibility, WherePredicate,
+    AccessDef, AssociatedTypeBinding, BinaryOp, Binding, CallArg, CompileParam, CompileParamKind,
+    EffectDef, EnumDef, Expr, ExtendDef, ExtendMember, Field, Function, FunctionEffects, Item,
+    MatchArm, Param, PassMode, Pattern, PatternField, PatternFields, Program, Stmt, StructDef,
+    TraitDef, TraitMember, Type, UnaryOp, UseDecl, VariantDef, VariantFields, Visibility,
+    WherePredicate,
 };
 use crate::lexer::{lex, LexError, Token, TokenKind};
 
@@ -206,7 +207,7 @@ impl Parser {
     fn let_item(&mut self) -> Result<Item, ParseError> {
         self.expect(&TokenKind::Let, "`let`")?;
         let mutable = self.take(&TokenKind::Mut);
-        let name = self.expect_ident("a declaration name")?;
+        let name = self.declaration_name()?;
 
         let (compile_groups, groups) = self.declaration_groups(false)?;
 
@@ -249,9 +250,39 @@ impl Parser {
         }
         self.take_newlines_if_followed_by(&[TokenKind::Equal]);
 
+        if !self.at(&TokenKind::Equal) && (!compile_groups.is_empty() || !groups.is_empty()) {
+            return Ok(Item::Function(Function {
+                name,
+                compile_groups,
+                groups,
+                return_type: annotation,
+                effects,
+                where_predicates,
+                body: None,
+            }));
+        }
+
         self.expect(&TokenKind::Equal, "`=`")?;
 
         if self.at_context_ident("effect") {
+            if mutable
+                || annotation.is_some()
+                || has_effect_group
+                || !groups.is_empty()
+                || !where_predicates.is_empty()
+            {
+                return Err(self.error_here(
+                    "effect declarations cannot be mutable, annotated, have runtime parameters, or use where clauses",
+                ));
+            }
+            self.advance();
+            return Ok(Item::Effect(EffectDef {
+                name,
+                compile_groups,
+            }));
+        }
+
+        if self.at_context_ident("access") {
             if mutable
                 || annotation.is_some()
                 || has_effect_group
@@ -260,11 +291,11 @@ impl Parser {
                 || !where_predicates.is_empty()
             {
                 return Err(self.error_here(
-                    "marker effect declarations cannot be mutable, generic, annotated, or have parameters",
+                    "access declarations cannot be mutable, generic, annotated, or have parameters",
                 ));
             }
             self.advance();
-            return Ok(Item::Effect(EffectDef { name }));
+            return Ok(Item::Access(AccessDef { name }));
         }
 
         if self.at(&TokenKind::Struct) || self.at(&TokenKind::Enum) || self.at(&TokenKind::Trait) {
@@ -316,6 +347,24 @@ impl Parser {
                 body: Some(body),
             }))
         }
+    }
+
+    fn declaration_name(&mut self) -> Result<String, ParseError> {
+        let name = match &self.current().kind {
+            TokenKind::Ident(name) => name.clone(),
+            TokenKind::Do => "do".to_owned(),
+            TokenKind::Try => "try".to_owned(),
+            TokenKind::Unsafe => "unsafe".to_owned(),
+            TokenKind::Loop => "loop".to_owned(),
+            _ => {
+                return Err(self.error_here(format!(
+                    "expected a declaration name, found {}",
+                    describe(&self.current().kind)
+                )))
+            }
+        };
+        self.advance();
+        Ok(name)
     }
 
     fn extend_definition(&mut self) -> Result<ExtendDef, ParseError> {
@@ -2432,7 +2481,7 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
         match item {
             Item::Function(function) => validate_function_scopes(function, &empty, &empty)?,
             Item::Global(binding) => validate_binding_scopes(binding, &empty, &empty)?,
-            Item::Effect(_) => {}
+            Item::Effect(_) | Item::Access(_) => {}
             Item::Struct(definition) => {
                 reject_passing_parameters(
                     &definition.compile_groups,
@@ -4429,6 +4478,30 @@ mod tests {
 
         let error = parse("let old(E: effect)(value: i32): i32(E) = { value }\n").unwrap_err();
         assert!(error.message.contains("bare effect groups were removed"));
+    }
+
+    #[test]
+    fn parses_compiler_provided_control_contract_declarations() {
+        let program = parse(
+            "pub let Unsafe = effect\n\
+             pub let Throws(E: type) = effect\n\
+             pub let Shared = access\n\
+             pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E)\n",
+        )
+        .unwrap();
+        assert!(matches!(
+            &program.items[0],
+            Item::Effect(effect) if effect.compile_groups.is_empty()
+        ));
+        assert!(matches!(
+            &program.items[1],
+            Item::Effect(effect) if effect.compile_groups.len() == 1
+        ));
+        assert!(matches!(&program.items[2], Item::Access(_)));
+        assert!(matches!(
+            &program.items[3],
+            Item::Function(function) if function.name == "do" && function.body.is_none()
+        ));
     }
 
     #[test]

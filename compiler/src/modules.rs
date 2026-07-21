@@ -311,7 +311,10 @@ const CORE_OPS_EXPORTS: &[&str] = &[
     "Shl",
     "Shr",
 ];
-const CORE_CONTROL_EXPORTS: &[&str] = &[];
+const CORE_CONTROL_EXPORTS: &[&str] = &[
+    "Unsafe", "Throws", "Shared", "Mutable", "do", "try", "unsafe", "loop",
+];
+const CORE_CONTROL_IMPORTS: &[&str] = &["Unsafe", "Throws", "Shared", "Mutable"];
 
 fn validate_package_layout(
     packages: &[SourcePackage],
@@ -735,7 +738,7 @@ fn install_standard_namespaces(
     for name in CORE_OPS_EXPORTS {
         required_imports.insert((*name).to_owned(), format!("core.ops.{name}"));
     }
-    for name in CORE_CONTROL_EXPORTS {
+    for name in CORE_CONTROL_IMPORTS {
         required_imports.insert((*name).to_owned(), format!("core.control.{name}"));
     }
 
@@ -1359,6 +1362,7 @@ fn validate_api_visibility(program: &Program, item_source_paths: &[String]) -> V
                 Item::Enum(definition) => &definition.name,
                 Item::Trait(definition) => &definition.name,
                 Item::Effect(definition) => &definition.name,
+                Item::Access(definition) => &definition.name,
                 Item::Function(_) | Item::Global(_) | Item::Extend(_) => return None,
             };
             Some((
@@ -1428,7 +1432,7 @@ fn validate_item_api(
                 );
             }
         }
-        Item::Effect(_) => {}
+        Item::Effect(_) | Item::Access(_) => {}
         Item::Struct(definition) => {
             let bound_types = compile_parameter_names(&definition.compile_groups, &no_bound_types);
             for field in &definition.fields {
@@ -1854,6 +1858,7 @@ fn declaration_name(item: &Item) -> Option<&str> {
         Item::Enum(definition) => Some(&definition.name),
         Item::Trait(definition) => Some(&definition.name),
         Item::Effect(definition) => Some(&definition.name),
+        Item::Access(definition) => Some(&definition.name),
         Item::Extend(_) => None,
     }
 }
@@ -1911,6 +1916,9 @@ impl Resolver {
             Item::Enum(definition) => self.rewrite_enum(definition, context),
             Item::Trait(definition) => self.rewrite_trait(definition, context),
             Item::Effect(definition) => {
+                definition.name = canonical_name(context.module_path, &definition.name);
+            }
+            Item::Access(definition) => {
                 definition.name = canonical_name(context.module_path, &definition.name);
             }
             Item::Extend(extension) => self.rewrite_extend(extension, context),

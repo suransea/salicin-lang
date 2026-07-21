@@ -62,7 +62,31 @@ Writing `left + right`, `left & right`, `left == right`, or `left < right` does 
 import is required when source names the protocol in an implementation, bound, type, or direct
 member access.
 
-`ControlFlow`, `Try`, `FromResidual`, and `FromError` were removed together with postfix `.try`. `Option` and
+`core.control` owns the edition-pinned contracts for compiler-lowered control constructs. It is not
+part of the prelude. The module declares the `Unsafe` and parameterized `Throws(E)` effect identities,
+the `Shared` and `Mutable` access identities, and the compiler-provided `do`, `try`, `unsafe`, and
+`loop` trailing-closure functions. Their bodyless signatures are permitted only for validated core
+lang items; ordinary package functions still require `= { ... }` bodies.
+
+```sali
+pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E)
+pub let try(F: effect, T: type, E: type)
+  (move action: (): T with(throws(E), F)): Result(T, E) with(F)
+pub let unsafe(E: effect, T: type)
+  (move action: (): T with(unsafe, E)): T with(E)
+pub let loop(E: effect, T: type)(move body: (): () with(E)): T with(E)
+```
+
+Here `try` removes only `throws(E)`, `unsafe` removes only the unsafe requirement, and both forward
+the remainder row. `do` and `loop` forward the whole row.
+
+The lowercase syntax spellings bind to these validated identities without an import. An ordinary
+same-named declaration cannot acquire their lowering behavior. Future control features follow the
+same rule: for example, async lowering must add its effect, `Future`, `async`, and `await` contracts
+to the matching core release when it becomes executable, rather than reserving undocumented compiler
+magic in advance.
+
+`ControlFlow`, the old propagation `Try`, `FromResidual`, and `FromError` were removed together with postfix `.try`. `Option` and
 `Result` are ordinary enum values and require explicit constructors. Language error propagation is
 defined solely by `throws(E)`, `throw`, and `try { ... }`; `do` has no error-specific semantics.
 
