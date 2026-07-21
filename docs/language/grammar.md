@@ -326,7 +326,8 @@ trailing_closure = closure_literal ;
 同一作用域中的具名函数可以形成重载集，但每个候选的运行时参数标签组必须不同。调用重载名时，
 至少一个实参必须写成 `label: expression`，所有已提供参数组共同筛选唯一候选；其他参数组仍可使用
 位置实参。类型、返回类型、传递模式和 effect 不属于重载身份。inherent 方法也适用，但隐式
-`self` 接收者组不算具名消歧证据。
+`self` 接收者组不算具名消歧证据。trait requirement 及其实现使用相同的标签形状身份，调用时
+也按同一规则选择。
 
 primary：
 

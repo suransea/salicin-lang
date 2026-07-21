@@ -1506,6 +1506,11 @@ inherent 方法与关联函数遵循相同规则。方法的隐式 `self` 接收
 处显式参数组中的具名参数选择。实例调用 `value.open(path: p)` 与限定调用
 `Type.open(self: value)(path: p)` 选择同一候选。
 
+trait 可以声明同名 requirement，只要完整运行时参数标签形状不同。实现必须为每个 requirement
+提供相同标签形状的成员；默认实现也属于对应形状。trait 方法和 trait 关联函数的调用仍由显式
+具名参数选择，且可以用标签消除多个可见 trait 提供同名成员时的歧义。实现匹配与调用选择都不
+读取参数类型、返回类型或 effect。
+
 核心隐式 coercion 仅包括 `never` 到任意类型、`borrow(mut) T` 到 `borrow T`，以及明确登记的
 unsizing（例如借用固定数组得到 `borrow Slice(T)`）。整数之间不隐式扩宽，容器不隐式包装，
 用户自定义转换也不参与重载搜索。

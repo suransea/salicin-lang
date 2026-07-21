@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.98.0 - 2026-07-22
+
+- Extended label-directed overloads to trait requirements, concrete implementations, default
+  implementations, blanket implementations, and assumed where-bound dispatch.
+- Used each requirement's complete runtime parameter-label shape as its conformance identity, so
+  implementations are checked against the exact overload without consulting argument types.
+- Added named-argument selection for trait instance methods and associated functions, including
+  optional-chain probing and automatic `throws` propagation.
+- Allowed named arguments to disambiguate otherwise competing same-named methods from multiple
+  visible traits while retaining a focused ambiguity diagnostic for positional calls.
+
 ## 0.97.0 - 2026-07-22
 
 - Extended label-directed overload sets to concrete inherent methods and associated functions,

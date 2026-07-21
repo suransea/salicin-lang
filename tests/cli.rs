@@ -1757,7 +1757,11 @@ fn m1_loops_and_arrays_run_with_expected_result() {
 
 #[test]
 fn named_arguments_select_function_overloads_in_resolved_sources() {
-    for name in ["function_overload_named.sc", "inherent_overload_named.sc"] {
+    for name in [
+        "function_overload_named.sc",
+        "inherent_overload_named.sc",
+        "trait_overload_named.sc",
+    ] {
         let output = salic()
             .arg("run")
             .arg(fixture("pass", name))

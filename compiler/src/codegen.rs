@@ -1515,6 +1515,7 @@ struct TraitSchema {
     compile_parameters: Vec<CompileParam>,
     associated_types: Vec<String>,
     methods: HashMap<String, Function>,
+    method_overloads: HashMap<String, Vec<String>>,
     method_order: Vec<String>,
     access: AccessBoundary,
     valid: bool,
@@ -1565,6 +1566,19 @@ fn overloaded_function_name(base: &str, groups: &ParameterLabelShape) -> String 
         .collect::<Vec<_>>()
         .join("$$");
     format!("{base}$overload${shape}")
+}
+
+fn trait_method_identity(schema: &TraitSchema, function: &Function) -> Option<String> {
+    if let Some(overloads) = schema.method_overloads.get(&function.name) {
+        let identity =
+            overloaded_function_name(&function.name, &function_parameter_labels(function));
+        overloads.contains(&identity).then_some(identity)
+    } else {
+        schema
+            .methods
+            .contains_key(&function.name)
+            .then(|| function.name.clone())
+    }
 }
 
 #[derive(Clone)]
@@ -2514,9 +2528,30 @@ impl Analyzer {
                 valid = false;
             }
         }
+        let function_counts = definition
+            .members
+            .iter()
+            .filter_map(|member| match member {
+                TraitMember::Function(function) => Some(function.name.clone()),
+                TraitMember::AssociatedType { .. } => None,
+            })
+            .fold(HashMap::<_, usize>::new(), |mut counts, name| {
+                *counts.entry(name).or_default() += 1;
+                counts
+            });
+        let associated_names = definition
+            .members
+            .iter()
+            .filter_map(|member| match member {
+                TraitMember::AssociatedType { name, .. } => Some(name.clone()),
+                TraitMember::Function(_) => None,
+            })
+            .collect::<HashSet<_>>();
         let mut member_names = HashSet::new();
         let mut associated_types = Vec::new();
         let mut methods = HashMap::new();
+        let mut method_overloads = HashMap::<String, Vec<String>>::new();
+        let mut overload_shapes = HashMap::<String, HashSet<ParameterLabelShape>>::new();
         let mut method_order = Vec::new();
         for member in definition.members {
             match member {
@@ -2558,7 +2593,7 @@ impl Analyzer {
                 }
                 TraitMember::Function(function) => {
                     let name = function.name.clone();
-                    if !member_names.insert(name.clone()) {
+                    if associated_names.contains(&name) {
                         self.error(format!(
                             "duplicate trait member `{}.{name}`",
                             definition.name
@@ -2566,6 +2601,31 @@ impl Analyzer {
                         valid = false;
                         continue;
                     }
+                    let overloaded = function_counts[&name] > 1;
+                    let method_id = if overloaded {
+                        let shape = function_parameter_labels(&function);
+                        if !overload_shapes
+                            .entry(name.clone())
+                            .or_default()
+                            .insert(shape.clone())
+                        {
+                            self.error(format!(
+                                "duplicate trait method overload `{}.{name}` with parameter labels {}",
+                                definition.name,
+                                display_parameter_label_shape(&shape)
+                            ));
+                            valid = false;
+                            continue;
+                        }
+                        let id = overloaded_function_name(&name, &shape);
+                        method_overloads
+                            .entry(name.clone())
+                            .or_default()
+                            .push(id.clone());
+                        id
+                    } else {
+                        name.clone()
+                    };
                     if !function.compile_groups.is_empty() {
                         self.error(format!(
                             "generic trait method `{}.{name}` is not supported",
@@ -2580,8 +2640,8 @@ impl Analyzer {
                         ));
                         valid = false;
                     }
-                    method_order.push(name.clone());
-                    methods.insert(name, function);
+                    method_order.push(method_id.clone());
+                    methods.insert(method_id, function);
                 }
             }
         }
@@ -2591,6 +2651,7 @@ impl Analyzer {
                 compile_parameters,
                 associated_types,
                 methods,
+                method_overloads,
                 method_order,
                 access: AccessBoundary { visibility, origin },
                 valid,
@@ -3263,21 +3324,24 @@ impl Analyzer {
                     }
                 }
                 ExtendMember::Function(function) => {
-                    if !schema.methods.contains_key(&function.name) {
+                    let method_name = function.name.clone();
+                    let method_id = trait_method_identity(&schema, &function);
+                    if method_id.is_none() {
                         self.error(format!(
                             "unknown trait member `{}.{}`",
-                            key.trait_ref.name, function.name
+                            key.trait_ref.name, method_name
                         ));
                         valid = false;
                         continue;
                     }
+                    let method_id = method_id.expect("checked trait method identity");
                     if supplied_methods
-                        .insert(function.name.clone(), function.clone())
+                        .insert(method_id, function.clone())
                         .is_some()
                     {
                         self.error(format!(
                             "duplicate trait method `{}.{}`",
-                            key.trait_ref.name, function.name
+                            key.trait_ref.name, method_name
                         ));
                         valid = false;
                     }
@@ -3294,11 +3358,12 @@ impl Analyzer {
                 valid = false;
             }
         }
-        for method in &schema.method_order {
-            if !supplied_methods.contains_key(method) && schema.methods[method].body.is_none() {
+        for method_id in &schema.method_order {
+            let method = &schema.methods[method_id];
+            if !supplied_methods.contains_key(method_id) && method.body.is_none() {
                 self.error(format!(
-                    "missing trait method `{}.{method}` in implementation for `{target}`",
-                    key.trait_ref.name
+                    "missing trait method `{}.{}` in implementation for `{target}`",
+                    key.trait_ref.name, method.name
                 ));
                 valid = false;
             }
@@ -3363,8 +3428,10 @@ impl Analyzer {
         }
 
         let mut registered = Vec::new();
-        for method_name in &schema.method_order {
-            let mut expected = schema.methods[method_name].clone();
+        for method_id in &schema.method_order {
+            let declaration = &schema.methods[method_id];
+            let method_name = declaration.name.clone();
+            let mut expected = declaration.clone();
             substitute_function_types(&mut expected, &substitutions);
             let Some(expected_shape) = self.function_shape(&expected) else {
                 valid = false;
@@ -3372,15 +3439,10 @@ impl Analyzer {
             };
 
             let (mut function, function_origin) = supplied_methods
-                .get(method_name)
+                .get(method_id)
                 .cloned()
                 .map(|function| (function, origin.clone()))
-                .unwrap_or_else(|| {
-                    (
-                        schema.methods[method_name].clone(),
-                        schema.access.origin.clone(),
-                    )
-                });
+                .unwrap_or_else(|| (declaration.clone(), schema.access.origin.clone()));
             if !function.compile_groups.is_empty() {
                 self.error(format!(
                     "generic trait implementation method `{}.{method_name}` is not supported",
@@ -3397,8 +3459,7 @@ impl Analyzer {
                 valid = false;
                 continue;
             }
-            if schema_function_has_receiver(&schema.methods[method_name])
-                != schema_function_has_receiver(&function)
+            if schema_function_has_receiver(declaration) != schema_function_has_receiver(&function)
             {
                 self.error(format!(
                     "trait method `{}.{method_name}` signature mismatch: contextual `self` receiver does not match the trait declaration",
@@ -3429,16 +3490,16 @@ impl Analyzer {
                 valid = false;
                 continue;
             }
-            let canonical = trait_method_name(&key, method_name);
+            let canonical = trait_method_name(&key, method_id);
             function.name = canonical.clone();
-            registered.push((method_name.clone(), canonical, function, function_origin));
+            registered.push((method_id.clone(), canonical, function, function_origin));
         }
         if !valid {
             return;
         }
 
         let mut methods = HashMap::new();
-        for (method_name, canonical, function, function_origin) in registered {
+        for (method_id, canonical, function, function_origin) in registered {
             let groups = function
                 .groups
                 .iter()
@@ -3480,12 +3541,16 @@ impl Analyzer {
                 .insert(canonical.clone(), implementation_access.clone());
             self.function_type_substitutions
                 .insert(canonical.clone(), substitutions.clone());
-            methods.insert(method_name.clone(), canonical);
-            if schema_function_has_receiver(&schema.methods[&method_name]) {
-                self.trait_methods_by_receiver
-                    .entry((target.clone(), method_name))
-                    .or_default()
-                    .push(key.clone());
+            methods.insert(method_id.clone(), canonical);
+            let declaration = &schema.methods[&method_id];
+            if schema_function_has_receiver(declaration) {
+                let candidates = self
+                    .trait_methods_by_receiver
+                    .entry((target.clone(), declaration.name.clone()))
+                    .or_default();
+                if !candidates.contains(&key) {
+                    candidates.push(key.clone());
+                }
             }
         }
         self.trait_impls.insert(
@@ -4094,13 +4159,15 @@ impl Analyzer {
                     }
                 }
                 ExtendMember::Function(function) => {
-                    if !schema.methods.contains_key(&function.name) {
+                    let Some(method_id) = trait_method_identity(schema, function) else {
                         self.error(format!(
                             "unknown trait member `{trait_name}.{}`",
                             function.name
                         ));
                         valid = false;
-                    } else if !methods.insert(function.name.clone()) {
+                        continue;
+                    };
+                    if !methods.insert(method_id) {
                         self.error(format!(
                             "duplicate trait method `{trait_name}.{}`",
                             function.name
@@ -4132,10 +4199,12 @@ impl Analyzer {
                 valid = false;
             }
         }
-        for name in &schema.method_order {
-            if !methods.contains(name) && schema.methods[name].body.is_none() {
+        for method_id in &schema.method_order {
+            let declaration = &schema.methods[method_id];
+            if !methods.contains(method_id) && declaration.body.is_none() {
                 self.error(format!(
-                    "missing trait method `{trait_name}.{name}` in generic trait implementation"
+                    "missing trait method `{trait_name}.{}` in generic trait implementation",
+                    declaration.name
                 ));
                 valid = false;
             }
@@ -4188,13 +4257,16 @@ impl Analyzer {
         }
         let mut actual_self = HashMap::new();
         actual_self.insert("Self".to_owned(), extension.target.clone());
-        for method_name in &schema.method_order {
+        for method_id in &schema.method_order {
             let Some(ExtendMember::Function(actual)) = extension.members.iter().find(|member| {
-                matches!(member, ExtendMember::Function(function) if function.name == *method_name)
+                matches!(member, ExtendMember::Function(function)
+                    if trait_method_identity(schema, function).as_ref() == Some(method_id))
             }) else {
                 continue;
             };
-            let mut expected = schema.methods[method_name].clone();
+            let declaration = &schema.methods[method_id];
+            let method_name = &declaration.name;
+            let mut expected = declaration.clone();
             substitute_function_types(&mut expected, &expected_substitutions);
             let mut actual = actual.clone();
             if schema_function_has_receiver(&expected) != schema_function_has_receiver(&actual) {
@@ -5557,14 +5629,15 @@ impl Analyzer {
                 .associated_types
                 .iter()
                 .all(|name| associated_types.contains_key(name));
-            for method_name in schema
+            for method_id in schema
                 .method_order
                 .iter()
                 .filter(|_| associated_types_complete)
             {
-                let mut method = schema.methods[method_name].clone();
+                let declaration = &schema.methods[method_id];
+                let mut method = declaration.clone();
                 substitute_function_types(&mut method, &substitutions);
-                let canonical = assumed_trait_method_name(function, &key, method_name);
+                let canonical = assumed_trait_method_name(function, &key, method_id);
                 let groups = method
                     .groups
                     .iter()
@@ -5598,12 +5671,15 @@ impl Analyzer {
                         result,
                     },
                 );
-                methods.insert(method_name.clone(), canonical);
-                if schema_function_has_receiver(&schema.methods[method_name]) {
-                    self.trait_methods_by_receiver
-                        .entry((key.self_ty.clone(), method_name.clone()))
-                        .or_default()
-                        .push(key.clone());
+                methods.insert(method_id.clone(), canonical);
+                if schema_function_has_receiver(declaration) {
+                    let candidates = self
+                        .trait_methods_by_receiver
+                        .entry((key.self_ty.clone(), declaration.name.clone()))
+                        .or_default();
+                    if !candidates.contains(&key) {
+                        candidates.push(key.clone());
+                    }
                 }
             }
             self.trait_impls.insert(
@@ -7575,15 +7651,58 @@ impl Analyzer {
                     return None;
                 }
                 let schema = self.traits.get(&implementation.key.trait_ref.name)?;
-                let function = schema.methods.get(member)?;
-                if schema_function_has_receiver(function) {
-                    return None;
-                }
-                implementation.methods.get(member).cloned()
+                let method_ids = schema
+                    .method_overloads
+                    .get(member)
+                    .cloned()
+                    .unwrap_or_else(|| vec![member.to_owned()]);
+                Some(
+                    method_ids
+                        .into_iter()
+                        .filter(|method_id| {
+                            schema
+                                .methods
+                                .get(method_id)
+                                .is_some_and(|function| !schema_function_has_receiver(function))
+                        })
+                        .filter_map(|method_id| implementation.methods.get(&method_id).cloned())
+                        .collect::<Vec<_>>(),
+                )
             })
+            .flatten()
             .collect::<Vec<_>>();
         candidates.sort();
         candidates
+    }
+
+    fn trait_method_function_candidates(
+        &self,
+        receiver: &Ty,
+        member: &str,
+        origin: &ItemOrigin,
+    ) -> Vec<(TraitImplKey, String)> {
+        self.trait_method_candidates(receiver, member, origin)
+            .into_iter()
+            .flat_map(|key| {
+                let implementation = &self.trait_impls[&key];
+                let schema = &self.traits[&key.trait_ref.name];
+                let method_ids = schema
+                    .method_overloads
+                    .get(member)
+                    .cloned()
+                    .unwrap_or_else(|| vec![member.to_owned()]);
+                method_ids
+                    .into_iter()
+                    .filter_map(|method_id| {
+                        implementation
+                            .methods
+                            .get(&method_id)
+                            .cloned()
+                            .map(|canonical| (key.clone(), canonical))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
     }
 
     fn is_drop_impl(&self, key: &TraitImplKey) -> bool {
@@ -7907,11 +8026,33 @@ impl Analyzer {
                 .and_then(|members| members.methods.get(member))
                 .cloned()
         };
-        let canonical = inherent.or_else(|| {
-            let candidates = self.trait_method_candidates(payload, member, origin);
-            (candidates.len() == 1)
-                .then(|| self.trait_impls[&candidates[0]].methods[member].clone())
-        })?;
+        let canonical = if let Some(canonical) = inherent {
+            canonical
+        } else {
+            let candidates = self.trait_method_function_candidates(payload, member, origin);
+            match candidates.as_slice() {
+                [(_, canonical)] => canonical.clone(),
+                [_, _, ..] => {
+                    if !groups
+                        .iter()
+                        .flat_map(|group| group.iter())
+                        .any(|argument| argument.label.is_some())
+                    {
+                        return None;
+                    }
+                    let canonicals = candidates
+                        .iter()
+                        .map(|(_, canonical)| canonical.clone())
+                        .collect::<Vec<_>>();
+                    let matches = self.matching_function_overloads(&canonicals, groups, 1);
+                    let [selected] = matches.as_slice() else {
+                        return None;
+                    };
+                    selected.clone()
+                }
+                [] => return None,
+            }
+        };
         let signature = self.signatures.get(&canonical)?;
         if signature.groups.len() != groups.len() + 1
             || signature.groups.first()?.len() != 1
@@ -12778,13 +12919,13 @@ impl Analyzer {
         let canonical = if let Some(canonical) = inherent {
             canonical
         } else {
-            let candidates = self.trait_method_candidates(payload, member, origin);
+            let candidates = self.trait_method_function_candidates(payload, member, origin);
             match candidates.as_slice() {
-                [candidate] if self.is_drop_impl(candidate) => {
+                [(candidate, _)] if self.is_drop_impl(candidate) => {
                     self.error("`Drop.drop` cannot be called directly; destruction is automatic");
                     return None;
                 }
-                [candidate] => self.trait_impls[candidate].methods[member].clone(),
+                [(_, canonical)] => canonical.clone(),
                 [] => {
                     if self.struct_layouts.get(&target).is_some_and(|layout| {
                         layout.fields.iter().any(|field| field.name == member)
@@ -12804,10 +12945,28 @@ impl Analyzer {
                     return None;
                 }
                 [_, _, ..] => {
-                    self.error(format!(
-                        "ambiguous trait method `{member}` on optional payload `{target}`"
-                    ));
-                    return None;
+                    if !groups
+                        .iter()
+                        .flat_map(|group| group.iter())
+                        .any(|argument| argument.label.is_some())
+                    {
+                        self.error(format!(
+                            "ambiguous trait method `{member}` on optional payload `{target}`; named arguments are required to select an overload"
+                        ));
+                        return None;
+                    }
+                    let canonicals = candidates
+                        .iter()
+                        .map(|(_, canonical)| canonical.clone())
+                        .collect::<Vec<_>>();
+                    let matches = self.matching_function_overloads(&canonicals, groups, 1);
+                    let [selected] = matches.as_slice() else {
+                        self.error(format!(
+                            "trait method overload `{member}` on optional payload `{target}` is not uniquely selected"
+                        ));
+                        return None;
+                    };
+                    selected.clone()
                 }
             }
         };
@@ -13093,8 +13252,8 @@ impl Analyzer {
             return None;
         };
         if let Some((_, ty, _)) = self.probe_nominal_type_head(base, context) {
-            let target = match ty {
-                Ty::Struct(target) | Ty::Enum(target) => target,
+            let target = match &ty {
+                Ty::Struct(target) | Ty::Enum(target) => target.clone(),
                 _ => return None,
             };
             let overload_key = (target.clone(), member.clone(), false);
@@ -13111,12 +13270,31 @@ impl Analyzer {
                     return None;
                 };
                 selected.clone()
+            } else if let Some(canonical) = self
+                .inherent_members
+                .get(&target)
+                .and_then(|members| members.functions.get(member))
+            {
+                canonical.clone()
             } else {
-                self.inherent_members
-                    .get(&target)?
-                    .functions
-                    .get(member)?
-                    .clone()
+                let candidates =
+                    self.trait_associated_function_candidates(&ty, member, &context.origin);
+                match candidates.as_slice() {
+                    [canonical] => canonical.clone(),
+                    [_, _, ..]
+                        if groups
+                            .iter()
+                            .flat_map(|group| group.iter())
+                            .any(|argument| argument.label.is_some()) =>
+                    {
+                        let matches = self.matching_function_overloads(&candidates, &groups, 0);
+                        let [selected] = matches.as_slice() else {
+                            return None;
+                        };
+                        selected.clone()
+                    }
+                    _ => return None,
+                }
             };
             let signature = self.signatures.get(&canonical)?;
             return (groups.len() == signature.groups.len())
@@ -13151,11 +13329,32 @@ impl Analyzer {
                 .and_then(|members| members.methods.get(member))
                 .cloned()
         };
-        let canonical = inherent.or_else(|| {
-            let candidates = self.trait_method_candidates(&receiver, member, &context.origin);
-            (candidates.len() == 1)
-                .then(|| self.trait_impls[&candidates[0]].methods[member].clone())
-        })?;
+        let canonical = if let Some(canonical) = inherent {
+            canonical
+        } else {
+            let candidates =
+                self.trait_method_function_candidates(&receiver, member, &context.origin);
+            match candidates.as_slice() {
+                [(_, canonical)] => canonical.clone(),
+                [_, _, ..]
+                    if groups
+                        .iter()
+                        .flat_map(|group| group.iter())
+                        .any(|argument| argument.label.is_some()) =>
+                {
+                    let canonicals = candidates
+                        .iter()
+                        .map(|(_, canonical)| canonical.clone())
+                        .collect::<Vec<_>>();
+                    let matches = self.matching_function_overloads(&canonicals, &groups, 1);
+                    let [selected] = matches.as_slice() else {
+                        return None;
+                    };
+                    selected.clone()
+                }
+                _ => return None,
+            }
+        };
         let signature = self.signatures.get(&canonical)?;
         (groups.len() + 1 == signature.groups.len())
             .then(|| self.throws_info_from_signature(signature))
@@ -15253,9 +15452,30 @@ impl Analyzer {
                     return self.lower_named_function_call(canonical, groups, expected, context);
                 }
                 [_, _, ..] => {
-                    self.error(format!(
-                        "ambiguous trait associated function `{target}.{member}`"
-                    ));
+                    if !groups
+                        .iter()
+                        .flat_map(|group| group.iter())
+                        .any(|argument| argument.label.is_some())
+                    {
+                        self.error(format!(
+                            "ambiguous trait associated function `{target}.{member}`; named arguments are required to select an overload"
+                        ));
+                        return error_expr();
+                    }
+                    let matches = self.matching_function_overloads(&associated, groups, 0);
+                    match matches.as_slice() {
+                        [canonical] => {
+                            return self.lower_named_function_call(
+                                canonical, groups, expected, context,
+                            );
+                        }
+                        [] => self.error(format!(
+                            "no trait associated function overload `{target}.{member}` matches the supplied named parameter groups"
+                        )),
+                        _ => self.error(format!(
+                            "trait associated function overload `{target}.{member}` remains ambiguous"
+                        )),
+                    }
                     return error_expr();
                 }
                 [] => {}
@@ -16038,35 +16258,50 @@ impl Analyzer {
             canonical
         } else {
             let candidates =
-                self.trait_method_candidates(&receiver_place.ty, member, &context.origin);
+                self.trait_method_function_candidates(&receiver_place.ty, member, &context.origin);
             if candidates.len() == 1 {
-                if self.is_drop_impl(&candidates[0]) {
+                if self.is_drop_impl(&candidates[0].0) {
                     self.error("`Drop.drop` cannot be called directly; destruction is automatic");
                     return error_expr();
                 }
-                let implementation = &self.trait_impls[&candidates[0]];
-                debug_assert_eq!(implementation.key, candidates[0]);
+                let implementation = &self.trait_impls[&candidates[0].0];
+                debug_assert_eq!(implementation.key, candidates[0].0);
                 debug_assert!(implementation
                     .associated_types
                     .values()
                     .all(|ty| *ty != Ty::Error));
-                implementation.methods[member].clone()
+                candidates[0].1.clone()
             } else if candidates.len() > 1 {
-                let mut traits = candidates
+                let canonicals = candidates
                     .iter()
-                    .map(|candidate| candidate.trait_ref.name.clone())
+                    .map(|(_, canonical)| canonical.clone())
                     .collect::<Vec<_>>();
-                traits.sort();
-                traits.dedup();
-                self.error(format!(
-                    "ambiguous trait method `{member}` on `{target}`; candidates: {}",
-                    traits
-                        .iter()
-                        .map(|name| format!("`{name}`"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-                return error_expr();
+                if !groups
+                    .iter()
+                    .flat_map(|group| group.iter())
+                    .any(|argument| argument.label.is_some())
+                {
+                    self.error(format!(
+                        "ambiguous trait method `{member}` on `{target}` requires named arguments to select an overload"
+                    ));
+                    return error_expr();
+                }
+                let matches = self.matching_function_overloads(&canonicals, groups, 1);
+                match matches.as_slice() {
+                    [selected] => selected.clone(),
+                    [] => {
+                        self.error(format!(
+                            "no trait method overload `{member}` on `{target}` matches the supplied named parameter groups"
+                        ));
+                        return error_expr();
+                    }
+                    _ => {
+                        self.error(format!(
+                            "trait method overload `{member}` on `{target}` remains ambiguous"
+                        ));
+                        return error_expr();
+                    }
+                }
             } else {
                 if self
                     .inherent_members
@@ -16925,10 +17160,10 @@ impl Analyzer {
         candidates
             .iter()
             .filter(|candidate| {
-                let Some(function) = self.functions.get(*candidate) else {
+                let Some(signature) = self.signatures.get(*candidate) else {
                     return false;
                 };
-                let parameters = &function.groups[parameter_group_offset..];
+                let parameters = &signature.groups[parameter_group_offset..];
                 if groups.len() > parameters.len() {
                     return false;
                 }
@@ -25535,6 +25770,113 @@ let main(): i32 = {
 "#,
         )
         .expect("a selected method overload should preserve throws inference");
+    }
+
+    #[test]
+    fn named_arguments_select_trait_member_overloads() {
+        compile_text(
+            r#"
+let Select = trait {
+  let pick(borrow self)(left: i32): i32
+  let pick(borrow self)(right: i32): i32
+  let make(left: i32): i32
+  let make(right: i32): i32
+}
+let Counter = struct(value: i32)
+extend Counter: Select {
+  let pick(borrow self)(left: i32): i32 = { self.value + left }
+  let pick(borrow self)(right: i32): i32 = { self.value + right + 1 }
+  let make(left: i32): i32 = { left }
+  let make(right: i32): i32 = { right + 1 }
+}
+let main(): i32 = { Counter(0).pick(right: 20) + Counter.make(right: 20) }
+"#,
+        )
+        .expect("named parameters should select trait method and associated-function overloads");
+
+        let positional = compile_text(
+            r#"
+let Select = trait {
+  let pick(borrow self)(left: i32): i32
+  let pick(borrow self)(right: i32): i32
+}
+let Counter = struct(value: i32)
+extend Counter: Select {
+  let pick(borrow self)(left: i32): i32 = { self.value + left }
+  let pick(borrow self)(right: i32): i32 = { self.value + right }
+}
+let main(): i32 = { Counter(40).pick(2) }
+"#,
+        )
+        .unwrap_err();
+        assert!(
+            positional
+                .iter()
+                .any(|error| error.message.contains("requires named arguments")),
+            "{positional:?}"
+        );
+
+        compile_text(
+            r#"
+let Select = trait {
+  let pick(borrow self)(left: i32): i32 = { left }
+  let pick(borrow self)(right: i32): i32 = { right + 1 }
+}
+let Counter = struct(value: i32)
+extend Counter: Select {}
+let select(T: type)(borrow value: T): i32 where T: Select = {
+  value.pick(right: 41)
+}
+let main(): i32 = { select(Counter(0)) }
+"#,
+        )
+        .expect("default overloads should dispatch through an assumed where-bound implementation");
+
+        compile_text(
+            r#"
+let Select = trait {
+  let pick(borrow self)(left: i32): i32
+  let pick(borrow self)(right: i32): i32
+}
+let Cell(T: type) = struct(value: T)
+extend(T: type) Cell(T): Select {
+  let pick(borrow self)(left: i32): i32 = { left }
+  let pick(borrow self)(right: i32): i32 = { right + 1 }
+}
+let main(): i32 = { Cell(i32)(0).pick(right: 41) }
+"#,
+        )
+        .expect("blanket trait implementations should preserve overload identities");
+
+        compile_text(
+            r#"
+let Left = trait { let pick(borrow self)(left: i32): i32 }
+let Right = trait { let pick(borrow self)(right: i32): i32 }
+let Counter = struct(value: i32)
+extend Counter: Left {
+  let pick(borrow self)(left: i32): i32 = { self.value + left }
+}
+extend Counter: Right {
+  let pick(borrow self)(right: i32): i32 = { self.value + right + 1 }
+}
+let main(): i32 = { Counter(20).pick(right: 21) }
+"#,
+        )
+        .expect("named arguments should disambiguate same-named methods from distinct traits");
+
+        let duplicate = compile_text(
+            r#"
+let Select = trait {
+  let pick(borrow self)(value: i32): i32
+  let pick(borrow self)(value: bool): i32
+}
+let main(): i32 = { 0 }
+"#,
+        )
+        .unwrap_err();
+        assert!(duplicate
+            .iter()
+            .any(|error| error.message.contains("duplicate trait method overload")));
     }
 
     #[test]
