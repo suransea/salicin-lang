@@ -15,7 +15,10 @@ Passing keyword generics are also implemented for functions and generic inherent
 position. Functions and trait methods place a contextual `with(...)` clause after the result type:
 `: T with(unsafe)` adds the checked unsafe call requirement, while `: T with(throws(E))` declares an
 automatically propagated error effect and uses `Result(T, E)` as its current ABI carrier. `try { ... }`
-handles that effect and produces an explicit `Result`; postfix `.try` and `with(try...)` are removed.
+handles that effect and produces an explicit `Result`. Without a contextual result type, a handler
+infers `Result(T, E)` from one unique escaping `throws(E)` source across direct, method, and
+non-capturing indirect calls; nested handlers do not leak handled errors. Postfix `.try` and
+`with(try...)` are removed.
 Callable source types use the same shape, such as
 `(i32): i32 with(unsafe)`; the clause is not a runtime or currying group. Complete direct, method,
 aliased, and partially applied unsafe calls require an
@@ -36,9 +39,8 @@ non-capturing indirect calls. Ordinary `Option` and `Result` functions require e
 construction; the removed `Try`, `FromResidual`, `FromError`, and `ControlFlow` language protocols no
 longer participate in return completion or propagation. `do` transparently forwards the complete
 active row through its immediate closure boundary, including `throws` carrier lowering, `unsafe`,
-and nominal marker effects. Inferring a handler without a contextual `Result`, user-defined
-handlers, capturing closure values, generic trait methods, and async color lowering remain design
-or implementation work.
+and nominal marker effects. User-defined handlers, capturing closure values, generic trait methods,
+and async color lowering remain design or implementation work.
 
 `core` and `alloc` are mounted in ordinary module resolution. `core.ops` traits and alloc containers
 are not part of the prelude. `Box`, `Vec`, and their free functions require

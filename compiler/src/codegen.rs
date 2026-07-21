@@ -8327,6 +8327,41 @@ impl Analyzer {
         let Expr::Name(name) = root else {
             return TypeProbe::Unsupported;
         };
+        if let Some(local) = context.lookup(name) {
+            let function = match &local.ty {
+                Ty::Function(function) => function,
+                Ty::Callable(callable) => &callable.signature,
+                _ => return TypeProbe::Unsupported,
+            };
+            if groups.len() > function.groups.len()
+                || groups
+                    .iter()
+                    .zip(&function.groups)
+                    .any(|(arguments, parameters)| {
+                        arguments.len() != parameters.len()
+                            || arguments.iter().any(|argument| argument.label.is_some())
+                    })
+            {
+                return TypeProbe::Unsupported;
+            }
+            if groups.len() == function.groups.len() {
+                if function.throws_error.is_some() {
+                    return self
+                        .builtin_fallible_info_for_ty(&function.result)
+                        .map_or(TypeProbe::Unsupported, |info| {
+                            TypeProbe::Known(info.payload)
+                        });
+                }
+                return TypeProbe::Known((*function.result).clone());
+            }
+            return TypeProbe::Known(Ty::Function(FunctionTy {
+                groups: function.groups[groups.len()..].to_vec(),
+                unsafe_effect: function.unsafe_effect,
+                throws_error: function.throws_error.clone(),
+                custom_effects: function.custom_effects.clone(),
+                result: function.result.clone(),
+            }));
+        }
         if context.shadows_top_level_name(name) {
             return TypeProbe::Unsupported;
         }
@@ -11006,7 +11041,32 @@ impl Analyzer {
                 .lookup(&name)
                 .cloned()
                 .expect("capture scanner only records outer locals");
-            if local.partial.is_some() || local.closure.is_some() {
+            if matches!(local.ty, Ty::Function(_))
+                && local.partial.as_ref().is_some_and(|partial| {
+                    partial.consumed_groups == 0 && partial.capture_count == 0
+                })
+            {
+                let id = context.fresh_local();
+                context.scopes[0].locals.push(id);
+                context.scopes[0].names.insert(
+                    name,
+                    LocalInfo {
+                        id,
+                        ty: local.ty,
+                        mutable: false,
+                        capability: LocalCapability::Owned,
+                        alias: None,
+                        partial: local.partial,
+                        closure: None,
+                    },
+                );
+                continue;
+            }
+            let is_captured_partial = local
+                .partial
+                .as_ref()
+                .is_some_and(|partial| partial.consumed_groups != 0 || partial.capture_count != 0);
+            if is_captured_partial || local.closure.is_some() {
                 self.error(format!("closure cannot capture local callable `{name}`"));
                 continue;
             }
@@ -11269,7 +11329,32 @@ impl Analyzer {
             }
             Expr::Call(_, _) => {
                 let mut groups = Vec::new();
-                if let Expr::ChainMember(base, _) = flatten_call(expression, &mut groups) {
+                let root = flatten_call(expression, &mut groups);
+                let captured_function = match root {
+                    Expr::Name(function)
+                        if !bound.contains(function)
+                            && outer
+                                .lookup(function)
+                                .is_some_and(|local| matches!(local.ty, Ty::Function(_))) =>
+                    {
+                        Some(function.as_str())
+                    }
+                    _ => None,
+                };
+                if let Some(function) = captured_function {
+                    record_closure_capture(captures, function, ClosureCaptureMode::Shared);
+                    groups
+                        .iter()
+                        .flat_map(|group| group.iter())
+                        .fold(true, |valid, argument| {
+                            self.scan_simple_closure_captures(
+                                &argument.value,
+                                bound,
+                                outer,
+                                captures,
+                            ) & valid
+                        })
+                } else if let Expr::Member(base, _) | Expr::ChainMember(base, _) = root {
                     let mut valid = self.scan_simple_closure_captures(base, bound, outer, captures);
                     for argument in groups.iter().flat_map(|group| group.iter()) {
                         valid &= self.scan_simple_closure_captures(
@@ -12637,11 +12722,286 @@ impl Analyzer {
         self.lower_match_with_scrutinee(scrutinee, &arms, Some(&Ty::Enum(canonical)), context)
     }
 
+    fn infer_try_result_type(&mut self, body: &Expr, context: &LowerCtx) -> Option<Ty> {
+        let payload = match self.probe_expr_ty(body, None, context) {
+            TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) | TypeProbe::Defaultable(ty) => ty,
+            TypeProbe::Unsupported => match body {
+                Expr::Block(statements, Some(tail)) if statements.is_empty() => {
+                    match self.call_throws_info(tail, context) {
+                        Some((payload, _)) => payload,
+                        None => {
+                            self.error(
+                                "cannot infer the success type of `try { ... }`; add a contextual `Result(T, E)` type",
+                            );
+                            return None;
+                        }
+                    }
+                }
+                Expr::Call(_, _) => match self.call_throws_info(body, context) {
+                    Some((payload, _)) => payload,
+                    None => {
+                        self.error(
+                            "cannot infer the success type of `try { ... }`; add a contextual `Result(T, E)` type",
+                        );
+                        return None;
+                    }
+                },
+                Expr::Throw(_) => Ty::Never,
+                _ => {
+                    self.error(
+                        "cannot infer the success type of `try { ... }`; add a contextual `Result(T, E)` type",
+                    );
+                    return None;
+                }
+            },
+        };
+        let mut errors = HashSet::new();
+        self.collect_escaping_throws(body, context, &mut errors);
+        let error = match errors.len() {
+            0 => {
+                self.error(
+                    "cannot infer `try { ... }` because its body has no escaping throws source; add a contextual `Result(T, E)` type",
+                );
+                return None;
+            }
+            1 => errors.into_iter().next().expect("one inferred error type"),
+            _ => {
+                let mut names = errors
+                    .iter()
+                    .map(|error| self.diagnostic_type_name(error))
+                    .collect::<Vec<_>>();
+                names.sort();
+                self.error(format!(
+                    "cannot infer `try {{ ... }}` from multiple escaping error types: {}; convert them to one type or add a contextual `Result(T, E)` type",
+                    names
+                        .iter()
+                        .map(|name| format!("`{name}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+                return None;
+            }
+        };
+        self.ensure_throws_result_type(payload, error)
+    }
+
+    fn throws_info_from_function(&self, function: &FunctionTy) -> Option<(Ty, Ty)> {
+        let error = function.throws_error.as_deref()?.clone();
+        let payload = self.builtin_fallible_info_for_ty(&function.result)?.payload;
+        Some((payload, error))
+    }
+
+    fn throws_info_from_signature(&self, signature: &FunctionSig) -> Option<(Ty, Ty)> {
+        let error = signature.throws_error.clone()?;
+        let result = signature.result.as_ref()?;
+        let payload = self.builtin_fallible_info_for_ty(result)?.payload;
+        Some((payload, error))
+    }
+
+    fn call_throws_info(&self, expression: &Expr, context: &LowerCtx) -> Option<(Ty, Ty)> {
+        let mut groups = Vec::new();
+        let root = flatten_call(expression, &mut groups);
+        if let Expr::Name(name) = root {
+            if let Some(local) = context.lookup(name) {
+                let function = match &local.ty {
+                    Ty::Function(function) => function,
+                    Ty::Callable(callable) => &callable.signature,
+                    _ => return None,
+                };
+                return (groups.len() == function.groups.len())
+                    .then(|| self.throws_info_from_function(function))
+                    .flatten();
+            }
+            let signature = self.signatures.get(name)?;
+            return (groups.len() == signature.groups.len())
+                .then(|| self.throws_info_from_signature(signature))
+                .flatten();
+        }
+        let Expr::Member(base, member) = root else {
+            return None;
+        };
+        if let Some((_, ty, _)) = self.probe_nominal_type_head(base, context) {
+            let target = match ty {
+                Ty::Struct(target) | Ty::Enum(target) => target,
+                _ => return None,
+            };
+            let canonical = self.inherent_members.get(&target)?.functions.get(member)?;
+            let signature = self.signatures.get(canonical)?;
+            return (groups.len() == signature.groups.len())
+                .then(|| self.throws_info_from_signature(signature))
+                .flatten();
+        }
+        let receiver = match self.probe_expr_ty(base, None, context) {
+            TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) => ty,
+            TypeProbe::Defaultable(_) | TypeProbe::Unsupported => return None,
+        };
+        let target = match &receiver {
+            Ty::Struct(target) | Ty::Enum(target) => target,
+            _ => return None,
+        };
+        let canonical = self
+            .inherent_members
+            .get(target)
+            .and_then(|members| members.methods.get(member))
+            .cloned()
+            .or_else(|| {
+                let candidates = self.trait_method_candidates(&receiver, member, &context.origin);
+                (candidates.len() == 1)
+                    .then(|| self.trait_impls[&candidates[0]].methods[member].clone())
+            })?;
+        let signature = self.signatures.get(&canonical)?;
+        (groups.len() + 1 == signature.groups.len())
+            .then(|| self.throws_info_from_signature(signature))
+            .flatten()
+    }
+
+    fn collect_escaping_throws(
+        &self,
+        expression: &Expr,
+        context: &LowerCtx,
+        errors: &mut HashSet<Ty>,
+    ) {
+        match expression {
+            Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Closure(_, _) => {
+            }
+            Expr::Try(_) => {}
+            Expr::Throw(value) => {
+                match self.probe_expr_ty(value, None, context) {
+                    TypeProbe::Known(ty)
+                    | TypeProbe::KnownSource(ty, _)
+                    | TypeProbe::Defaultable(ty) => {
+                        errors.insert(ty);
+                    }
+                    TypeProbe::Unsupported => {}
+                }
+                self.collect_escaping_throws(value, context, errors);
+            }
+            Expr::Unary(_, value)
+            | Expr::Borrow { value, .. }
+            | Expr::DoBlock { body: value }
+            | Expr::Unsafe(value)
+            | Expr::Return(Some(value))
+            | Expr::Break(Some(value)) => self.collect_escaping_throws(value, context, errors),
+            Expr::Return(None) | Expr::Break(None) => {}
+            Expr::Binary(left, _, right)
+            | Expr::Coalesce(left, right)
+            | Expr::Assign(left, right) => {
+                self.collect_escaping_throws(left, context, errors);
+                self.collect_escaping_throws(right, context, errors);
+            }
+            Expr::Call(_, _) => {
+                if let Some((_, error)) = self.call_throws_info(expression, context) {
+                    errors.insert(error);
+                }
+                let mut groups = Vec::new();
+                let root = flatten_call(expression, &mut groups);
+                match root {
+                    Expr::Member(base, _) | Expr::ChainMember(base, _) => {
+                        self.collect_escaping_throws(base, context, errors)
+                    }
+                    Expr::Name(_) => {}
+                    root => self.collect_escaping_throws(root, context, errors),
+                }
+                for argument in groups.iter().flat_map(|group| group.iter()) {
+                    self.collect_escaping_throws(&argument.value, context, errors);
+                }
+            }
+            Expr::Member(base, _) | Expr::ChainMember(base, _) => {
+                self.collect_escaping_throws(base, context, errors)
+            }
+            Expr::Array(elements) => {
+                for element in elements {
+                    self.collect_escaping_throws(element, context, errors);
+                }
+            }
+            Expr::Index { base, index } => {
+                self.collect_escaping_throws(base, context, errors);
+                self.collect_escaping_throws(index, context, errors);
+            }
+            Expr::Block(statements, tail) => {
+                let mut block_context = context.clone();
+                block_context.push_scope();
+                for statement in statements {
+                    let value = match statement {
+                        Stmt::Let(binding) => &binding.value,
+                        Stmt::Expr(value) => value,
+                    };
+                    self.collect_escaping_throws(value, &block_context, errors);
+                    let Stmt::Let(binding) = statement else {
+                        continue;
+                    };
+                    let annotation = binding
+                        .annotation
+                        .as_ref()
+                        .and_then(|source| self.probe_source_ty(source));
+                    let inferred = match self.probe_expr_ty(
+                        &binding.value,
+                        annotation.as_ref(),
+                        &block_context,
+                    ) {
+                        TypeProbe::Known(ty)
+                        | TypeProbe::KnownSource(ty, _)
+                        | TypeProbe::Defaultable(ty) => Some(ty),
+                        TypeProbe::Unsupported => None,
+                    };
+                    if let Some(ty) = annotation.or(inferred) {
+                        let id = block_context.fresh_local();
+                        block_context.insert_local(
+                            binding.name.clone(),
+                            LocalInfo {
+                                id,
+                                ty,
+                                mutable: binding.mutable,
+                                capability: LocalCapability::Owned,
+                                alias: None,
+                                partial: None,
+                                closure: None,
+                            },
+                        );
+                    }
+                }
+                if let Some(tail) = tail {
+                    self.collect_escaping_throws(tail, &block_context, errors);
+                }
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.collect_escaping_throws(condition, context, errors);
+                self.collect_escaping_throws(then_branch, context, errors);
+                if let Some(else_branch) = else_branch {
+                    self.collect_escaping_throws(else_branch, context, errors);
+                }
+            }
+            Expr::While { condition, body } => {
+                self.collect_escaping_throws(condition, context, errors);
+                self.collect_escaping_throws(body, context, errors);
+            }
+            Expr::Loop { body } => self.collect_escaping_throws(body, context, errors),
+            Expr::Match { scrutinee, arms } => {
+                self.collect_escaping_throws(scrutinee, context, errors);
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        self.collect_escaping_throws(guard, context, errors);
+                    }
+                    self.collect_escaping_throws(&arm.body, context, errors);
+                }
+            }
+        }
+    }
+
     fn lower_try(&mut self, body: &Expr, expected: Option<&Ty>, context: &mut LowerCtx) -> HirExpr {
-        let Some(expected) = expected.cloned() else {
-            let _ = self.lower_expr(body, None, context);
-            self.error("`try { ... }` requires an expected `Result(T, E)` type");
-            return error_expr();
+        let expected = match expected.cloned() {
+            Some(expected) => expected,
+            None => match self.infer_try_result_type(body, context) {
+                Some(inferred) => inferred,
+                None => {
+                    let _ = self.lower_expr(body, None, context);
+                    return error_expr();
+                }
+            },
         };
         let Some(info) = self.builtin_fallible_info_for_ty(&expected) else {
             let _ = self.lower_expr(body, None, context);
@@ -24523,6 +24883,71 @@ let main(): i32 = { read() }
         assert!(unhandled
             .iter()
             .any(|error| error.message.contains("handle it with `try { ... }`")));
+    }
+
+    #[test]
+    fn try_infers_a_unique_escaping_throws_source_without_context() {
+        let ir = compile_text(
+            r#"
+let fail(flag: bool): i32 with(throws(bool)) = { if flag { throw true } else { 41 } }
+let main(): i32 = {
+  let action = fail
+  let direct = try { fail(false) }
+  let indirect = try { action(false) }
+  (direct ?? 0) + (indirect ?? 0) - 40
+}
+"#,
+        )
+        .expect("try should infer Result from a unique direct or indirect throws source");
+        assert!(ir.contains("switch"));
+
+        compile_text(
+            r#"
+let Failure = struct(code: i32)
+extend Failure: Copy {}
+extend Failure {
+  let raise(borrow self)(): i32 with(throws(bool)) = { throw true }
+}
+let main(): i32 = {
+  let failure = Failure(1)
+  let result = try { failure.raise() }
+  result ?? 42
+}
+"#,
+        )
+        .expect("try inference should see a complete throwing method call");
+
+        let ambiguous = compile_text(
+            r#"
+let left(): i32 with(throws(bool)) = { throw true }
+let right(): i32 with(throws(i64)) = { throw 1 }
+let main(): i32 = {
+  let result = try { if true { left() } else { right() } }
+  result ?? 0
+}
+"#,
+        )
+        .unwrap_err();
+        assert!(ambiguous.iter().any(|error| {
+            error
+                .message
+                .contains("multiple escaping error types: `bool`, `i64`")
+        }));
+
+        let handled = compile_text(
+            r#"
+let fail(): i32 with(throws(bool)) = { throw true }
+let main(): i32 = {
+  let inner = try { fail() }
+  let outer = try { inner }
+  outer match { Ok(_) => 0, Err(_) => 1 }
+}
+"#,
+        )
+        .unwrap_err();
+        assert!(handled
+            .iter()
+            .any(|error| { error.message.contains("body has no escaping throws source") }));
     }
 
     #[test]

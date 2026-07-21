@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.95.0 - 2026-07-22
+
+- Made an unannotated `try { ... }` infer `Result(T, E)` when its body has exactly one escaping
+  `throws(E)` error type; contextual `Result` annotations remain available to select or convert an
+  otherwise ambiguous boundary.
+- Included complete direct, method, and non-capturing indirect calls plus explicit `throw` sites in
+  handler inference, while nested `try` handlers do not leak their already-handled errors outward.
+- Added focused diagnostics for bodies with no escaping error source, multiple error types, or an
+  unprobeable success type.
+- Generalized type probing for local function and callable values and preserved zero-capture named
+  function aliases across immediate handler closure lowering.
+
 ## 0.94.0 - 2026-07-22
 
 - Defined named functions as closure-declaration sugar: their parameter groups are lifted beside

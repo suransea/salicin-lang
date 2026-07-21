@@ -387,7 +387,10 @@ implementation 必须具有相同的 effect。
 细节，不是调用点显式解包的普通返回类型。
 
 `try { body }` 是 handler：它移除 `body` 的 `throws(E)` 要求并产生 `Result(T, E)`。handler 内的
-正常尾值成为 `Ok`，传播出的错误成为 `Err`。普通 `Option` 和 `Result` 仍是普通数据类型；`?.`、
+正常尾值成为 `Ok`，传播出的错误成为 `Err`。当上下文没有给出结果类型时，只要 body 有且仅有一种
+逃逸的 `throws(E)`，编译器就推断 `Result(T, E)`；内层 `try` 已处理的错误不参与外层推断。没有逃逸
+错误、存在多种错误，或成功类型无法探测时，需要用 `let result: Result(T, E) = try { ... }` 提供
+上下文，或先把错误显式转换为同一种类型。普通 `Option` 和 `Result` 仍是普通数据类型；`?.`、
 `??` 与显式 `match` 用来操作它们，不会凭返回类型隐式获得 throws 语义。
 
 `unsafe { ... }` 处理并移除 `unsafe`，`do { ... }` 不处理 effect，只原样转发。调用要求可以用
