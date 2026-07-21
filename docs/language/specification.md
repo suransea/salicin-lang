@@ -876,6 +876,7 @@ trait object 及动态分派留作独立设计，不让 `Foo` 默认同时表示
 ```sali
 a + b   // Add.add(a, b)
 a == b  // Eq.eq(borrow a, borrow b)
+a < b   // 根据 PartialOrd.partial_cmp(borrow a, borrow b) 的四态结果判断
 ```
 
 使用运算符语法本身不要求导入协议；实现协议、在 `where` 中引用协议或直接调用协议成员时，必须
@@ -903,6 +904,20 @@ a == b  // Eq.eq(borrow a, borrow b)
 
 `!=`、`<=` 等可以由核心 trait 的基本结果组合，但每个操作数仍只求值一次。用户不能声明新的
 运算符 token 或改变优先级。
+
+顺序比较采用显式四态结果，避免用整数约定编码比较结果，也不会把无序错误地当成大于或小于：
+
+```sali
+let PartialOrdering = enum { Less, Equal, Greater, Unordered }
+
+let PartialOrd(Rhs: type) = trait {
+  let partial_cmp(borrow self)(borrow rhs: Rhs): PartialOrdering
+}
+```
+
+`<`、`<=`、`>`、`>=` 分别接受 `Less`、`Less | Equal`、`Greater`、
+`Equal | Greater`；`Unordered` 对四种运算都得到 `false`。每个表达式只调用一次
+`partial_cmp`，并只求值一次左右操作数。
 
 ## 11. 模块
 

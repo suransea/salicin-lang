@@ -294,7 +294,16 @@ const ALLOC_EXPORTS: &[(&str, &str)] = &[
 ];
 
 const CORE_PRELUDE_EXPORTS: &[&str] = &["Option", "Result", "never", "Copy", "Drop"];
-const CORE_OPS_EXPORTS: &[&str] = &["Add", "Sub", "Mul", "Div", "Rem", "Eq"];
+const CORE_OPS_EXPORTS: &[&str] = &[
+    "Add",
+    "Sub",
+    "Mul",
+    "Div",
+    "Rem",
+    "Eq",
+    "PartialOrdering",
+    "PartialOrd",
+];
 const CORE_CONTROL_EXPORTS: &[&str] = &["ControlFlow", "Try", "FromResidual", "FromError"];
 
 fn validate_package_layout(

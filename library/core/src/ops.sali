@@ -26,3 +26,14 @@ pub let Rem(Rhs: type) = trait {
 pub let Eq(Rhs: type) = trait {
   let eq(borrow self)(borrow rhs: Rhs): bool
 }
+
+pub let PartialOrdering = enum {
+  Less,
+  Equal,
+  Greater,
+  Unordered,
+}
+
+pub let PartialOrd(Rhs: type) = trait {
+  let partial_cmp(borrow self)(borrow rhs: Rhs): PartialOrdering
+}

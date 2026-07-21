@@ -36,6 +36,8 @@ pub enum LangItemKind {
     Div,
     Rem,
     Eq,
+    PartialOrdering,
+    PartialOrd,
     ControlFlow,
     Try,
     FromResidual,
@@ -43,7 +45,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 15] = [
+    const ALL: [Self; 17] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -55,6 +57,8 @@ impl LangItemKind {
         Self::Div,
         Self::Rem,
         Self::Eq,
+        Self::PartialOrdering,
+        Self::PartialOrd,
         Self::ControlFlow,
         Self::Try,
         Self::FromResidual,
@@ -74,6 +78,8 @@ impl LangItemKind {
             Self::Div => "Div",
             Self::Rem => "Rem",
             Self::Eq => "Eq",
+            Self::PartialOrdering => "PartialOrdering",
+            Self::PartialOrd => "PartialOrd",
             Self::ControlFlow => "ControlFlow",
             Self::Try => "Try",
             Self::FromResidual => "FromResidual",
@@ -83,7 +89,11 @@ impl LangItemKind {
 
     const fn expected_kind(self) -> &'static str {
         match self {
-            Self::Option | Self::Result | Self::Never | Self::ControlFlow => "enum",
+            Self::Option
+            | Self::Result
+            | Self::Never
+            | Self::PartialOrdering
+            | Self::ControlFlow => "enum",
             Self::Copy
             | Self::Drop
             | Self::Add
@@ -92,6 +102,7 @@ impl LangItemKind {
             | Self::Div
             | Self::Rem
             | Self::Eq
+            | Self::PartialOrd
             | Self::Try
             | Self::FromResidual
             | Self::FromError => "trait",
@@ -106,11 +117,13 @@ impl LangItemKind {
             Self::Div => Some("div"),
             Self::Rem => Some("rem"),
             Self::Eq => Some("eq"),
+            Self::PartialOrd => Some("partial_cmp"),
             Self::Option
             | Self::Result
             | Self::Never
             | Self::Copy
             | Self::Drop
+            | Self::PartialOrdering
             | Self::ControlFlow
             | Self::Try
             | Self::FromResidual
@@ -171,6 +184,8 @@ pub struct LangItems {
     div: LangItem,
     rem: LangItem,
     eq: LangItem,
+    partial_ordering: LangItem,
+    partial_ord: LangItem,
     control_flow: LangItem,
     try_trait: LangItem,
     from_residual: LangItem,
@@ -222,6 +237,14 @@ impl LangItems {
         &self.eq
     }
 
+    pub const fn partial_ordering(&self) -> &LangItem {
+        &self.partial_ordering
+    }
+
+    pub const fn partial_ord(&self) -> &LangItem {
+        &self.partial_ord
+    }
+
     pub const fn control_flow(&self) -> &LangItem {
         &self.control_flow
     }
@@ -251,6 +274,8 @@ impl LangItems {
             LangItemKind::Div => &self.div,
             LangItemKind::Rem => &self.rem,
             LangItemKind::Eq => &self.eq,
+            LangItemKind::PartialOrdering => &self.partial_ordering,
+            LangItemKind::PartialOrd => &self.partial_ord,
             LangItemKind::ControlFlow => &self.control_flow,
             LangItemKind::Try => &self.try_trait,
             LangItemKind::FromResidual => &self.from_residual,
@@ -388,6 +413,8 @@ impl CoreBundle {
             &mut lang_items.div,
             &mut lang_items.rem,
             &mut lang_items.eq,
+            &mut lang_items.partial_ordering,
+            &mut lang_items.partial_ord,
             &mut lang_items.control_flow,
             &mut lang_items.try_trait,
             &mut lang_items.from_residual,
@@ -559,6 +586,8 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         div: item(LangItemKind::Div),
         rem: item(LangItemKind::Rem),
         eq: item(LangItemKind::Eq),
+        partial_ordering: item(LangItemKind::PartialOrdering),
+        partial_ord: item(LangItemKind::PartialOrd),
         control_flow: item(LangItemKind::ControlFlow),
         try_trait: item(LangItemKind::Try),
         from_residual: item(LangItemKind::FromResidual),
@@ -601,6 +630,9 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         (LangItemKind::Option, Item::Enum(definition)) => validate_option(definition, diagnostics),
         (LangItemKind::Result, Item::Enum(definition)) => validate_result(definition, diagnostics),
         (LangItemKind::Never, Item::Enum(definition)) => validate_never(definition, diagnostics),
+        (LangItemKind::PartialOrdering, Item::Enum(definition)) => {
+            validate_partial_ordering(definition, diagnostics)
+        }
         (LangItemKind::ControlFlow, Item::Enum(definition)) => {
             validate_control_flow(definition, diagnostics)
         }
@@ -680,6 +712,21 @@ fn validate_result(definition: &EnumDef, diagnostics: &mut Vec<String>) {
 fn validate_never(definition: &EnumDef, diagnostics: &mut Vec<String>) {
     if !definition.compile_groups.is_empty() || !definition.variants.is_empty() {
         diagnostics.push("lang item `never` must have shape `pub let never = enum {}`".to_owned());
+    }
+}
+
+fn validate_partial_ordering(definition: &EnumDef, diagnostics: &mut Vec<String>) {
+    let expected_variants = vec![
+        unit_variant("Less"),
+        unit_variant("Equal"),
+        unit_variant("Greater"),
+        unit_variant("Unordered"),
+    ];
+    if !definition.compile_groups.is_empty() || definition.variants != expected_variants {
+        diagnostics.push(
+            "lang item `PartialOrdering` must have shape `pub let PartialOrdering = enum { Less, Equal, Greater, Unordered }`"
+                .to_owned(),
+        );
     }
 }
 
@@ -826,14 +873,16 @@ fn validate_operator(kind: LangItemKind, definition: &TraitDef, diagnostics: &mu
         .operator_method()
         .expect("operator lang items have a method name");
     if !operator_trait_has_required_shape(kind, definition) {
-        let shape = if kind == LangItemKind::Eq {
-            format!(
+        let shape = match kind {
+            LangItemKind::Eq => format!(
                 "pub let Eq(Rhs: type) = trait {{ let {method}(borrow self)(borrow rhs: Rhs): bool }}"
-            )
-        } else {
-            format!(
+            ),
+            LangItemKind::PartialOrd => format!(
+                "pub let PartialOrd(Rhs: type) = trait {{ let {method}(borrow self)(borrow rhs: Rhs): PartialOrdering }}"
+            ),
+            _ => format!(
                 "pub let {kind}(Rhs: type) = trait {{ let Output: type; let {method}(move self)(move rhs: Rhs): Output }}"
-            )
+            ),
         };
         diagnostics.push(format!("lang item `{kind}` must have shape `{shape}`"));
     }
@@ -845,9 +894,9 @@ pub(crate) fn operator_trait_has_required_shape(kind: LangItemKind, definition: 
         return false;
     };
     let valid_groups = definition.compile_groups == vec![vec![type_parameter("Rhs")]];
-    let valid_members = if kind == LangItemKind::Eq {
+    let valid_members = if matches!(kind, LangItemKind::Eq | LangItemKind::PartialOrd) {
         match definition.members.as_slice() {
-            [TraitMember::Function(function)] => valid_eq_method(function, method),
+            [TraitMember::Function(function)] => valid_borrowing_comparison_method(function, kind),
             _ => false,
         }
     } else {
@@ -868,16 +917,29 @@ pub(crate) fn operator_trait_has_required_shape(kind: LangItemKind, definition: 
     valid_groups && valid_members
 }
 
-fn valid_eq_method(function: &Function, method: &str) -> bool {
+fn valid_borrowing_comparison_method(function: &Function, kind: LangItemKind) -> bool {
     let [receiver_group, rhs_group] = function.groups.as_slice() else {
         return false;
     };
     let ([receiver], [rhs]) = (receiver_group.as_slice(), rhs_group.as_slice()) else {
         return false;
     };
+    let (method, result_is_valid) = match kind {
+        LangItemKind::Eq => ("eq", function.return_type == Some(Type::Bool)),
+        LangItemKind::PartialOrd => (
+            "partial_cmp",
+            matches!(
+                function.return_type.as_ref(),
+                Some(Type::Named(name, arguments))
+                    if arguments.is_empty()
+                        && matches!(name.as_str(), "PartialOrdering" | "core::ops::PartialOrdering")
+            ),
+        ),
+        _ => return false,
+    };
     function.name == method
         && function.compile_groups.is_empty()
-        && function.return_type == Some(Type::Bool)
+        && result_is_valid
         && function.body.is_none()
         && receiver.name == "self"
         && receiver.mode == PassMode::Borrow
@@ -948,6 +1010,10 @@ pub let Rem(Rhs: type) = trait {
 pub let Eq(Rhs: type) = trait {
   let eq(borrow self)(borrow rhs: Rhs): bool
 }
+pub let PartialOrdering = enum { Less, Equal, Greater, Unordered }
+pub let PartialOrd(Rhs: type) = trait {
+  let partial_cmp(borrow self)(borrow rhs: Rhs): PartialOrdering
+}
 "#,
         ]
         .concat()
@@ -958,7 +1024,7 @@ pub let Eq(Rhs: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), 20);
+        assert_eq!(bundle.program().items.len(), 22);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -973,7 +1039,9 @@ pub let Eq(Rhs: type) = trait {
                 | LangItemKind::Mul
                 | LangItemKind::Div
                 | LangItemKind::Rem
-                | LangItemKind::Eq => format!("core::ops::{}", kind.source_name()),
+                | LangItemKind::Eq
+                | LangItemKind::PartialOrdering
+                | LangItemKind::PartialOrd => format!("core::ops::{}", kind.source_name()),
                 LangItemKind::ControlFlow
                 | LangItemKind::Try
                 | LangItemKind::FromResidual
@@ -995,7 +1063,9 @@ pub let Eq(Rhs: type) = trait {
                 | LangItemKind::Mul
                 | LangItemKind::Div
                 | LangItemKind::Rem
-                | LangItemKind::Eq => "ops",
+                | LangItemKind::Eq
+                | LangItemKind::PartialOrdering
+                | LangItemKind::PartialOrd => "ops",
                 LangItemKind::ControlFlow
                 | LangItemKind::Try
                 | LangItemKind::FromResidual
@@ -1044,6 +1114,10 @@ pub let Mul(Rhs: type) = trait {
 pub let Eq(Rhs: type) = trait {
   let eq(borrow self)(borrow rhs: Rhs): bool
 }
+pub let PartialOrdering = enum { Less, Equal, Greater, Unordered }
+pub let PartialOrd(Rhs: type) = trait {
+  let partial_cmp(borrow self)(borrow rhs: Rhs): PartialOrdering
+}
 "#;
         let bundle = CoreBundle::from_source(Edition::Edition2026, source).unwrap();
 
@@ -1058,6 +1132,8 @@ pub let Eq(Rhs: type) = trait {
         assert_eq!(bundle.lang_items().sub().item_index(), 8);
         assert_eq!(bundle.lang_items().mul().item_index(), 9);
         assert_eq!(bundle.lang_items().eq().item_index(), 10);
+        assert_eq!(bundle.lang_items().partial_ordering().item_index(), 11);
+        assert_eq!(bundle.lang_items().partial_ord().item_index(), 12);
         for kind in LangItemKind::ALL {
             let item = bundle.lang_items().get(kind);
             assert_eq!(
@@ -1096,6 +1172,10 @@ pub let Rem(Rhs: type) = trait {
 }
 pub let Eq(Rhs: type) = trait {
   let eq(borrow self)(borrow rhs: Rhs): bool
+}
+pub let PartialOrdering = enum { Less, Equal, Greater, Unordered }
+pub let PartialOrd(Rhs: type) = trait {
+  let partial_cmp(borrow self)(borrow rhs: Rhs): PartialOrdering
 }
 pub let Drop = trait {
   let drop(borrow(mut) self)(): ()
@@ -1148,6 +1228,10 @@ pub let Rem(Rhs: type) = trait {
 }
 pub let Eq(Rhs: type) = trait {
   let eq(borrow self)(borrow rhs: Rhs): bool
+}
+pub let PartialOrdering = enum { Less, Equal, Greater, Unordered }
+pub let PartialOrd(Rhs: type) = trait {
+  let partial_cmp(borrow self)(borrow rhs: Rhs): PartialOrdering
 }
 "#;
         let error = CoreBundle::from_source(Edition::Edition2026, source).unwrap_err();
@@ -1239,6 +1323,10 @@ pub let Rem(Rhs: type) = trait {
 pub let Eq(Rhs: type) = trait {
   let eq(move self)(move rhs: Rhs): bool
 }
+pub let PartialOrdering = enum { Less, Equal, Greater, Unordered }
+pub let PartialOrd(Rhs: type) = trait {
+  let partial_cmp(move self)(move rhs: Rhs): PartialOrdering
+}
 "#;
         let error = CoreBundle::from_source(Edition::Edition2026, source).unwrap_err();
 
@@ -1250,8 +1338,30 @@ pub let Eq(Rhs: type) = trait {
                 "lang item `Div` must have shape `pub let Div(Rhs: type) = trait { let Output: type; let div(move self)(move rhs: Rhs): Output }`",
                 "lang item `Rem` must have shape `pub let Rem(Rhs: type) = trait { let Output: type; let rem(move self)(move rhs: Rhs): Output }`",
                 "lang item `Eq` must have shape `pub let Eq(Rhs: type) = trait { let eq(borrow self)(borrow rhs: Rhs): bool }`",
+                "lang item `PartialOrd` must have shape `pub let PartialOrd(Rhs: type) = trait { let partial_cmp(borrow self)(borrow rhs: Rhs): PartialOrdering }`",
             ]
         );
+    }
+
+    #[test]
+    fn rejects_malformed_partial_ordering() {
+        for declaration in [
+            "pub let PartialOrdering(T: type) = enum { Less, Equal, Greater, Unordered }",
+            "pub let PartialOrdering = enum { Less, Equal, Greater }",
+            "pub let PartialOrdering = enum { Less, Equal, Greater, Unknown }",
+        ] {
+            let source = core_source_with_copy("pub let Copy = trait {}").replacen(
+                "pub let PartialOrdering = enum { Less, Equal, Greater, Unordered }",
+                declaration,
+                1,
+            );
+            let error = CoreBundle::from_source(Edition::Edition2026, &source).unwrap_err();
+            assert_eq!(
+                error.diagnostics(),
+                ["lang item `PartialOrdering` must have shape `pub let PartialOrdering = enum { Less, Equal, Greater, Unordered }`"],
+                "unexpected diagnostic for `{declaration}`"
+            );
+        }
     }
 
     #[test]

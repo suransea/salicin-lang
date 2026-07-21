@@ -1159,8 +1159,22 @@ struct BinaryOperatorTrait {
     operator: BinaryOp,
     lang_item: LangItemKind,
     parameter_mode: PassMode,
-    returns_bool: bool,
-    negate_result: bool,
+    method_output: OperatorMethodOutput,
+    result_transform: OperatorResultTransform,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OperatorMethodOutput {
+    Associated,
+    Bool,
+    PartialOrdering,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OperatorResultTransform {
+    Direct,
+    NegateBool,
+    PartialOrdering(u8),
 }
 
 impl BinaryOperatorTrait {
@@ -1169,6 +1183,15 @@ impl BinaryOperatorTrait {
             .operator_method()
             .expect("binary operator lang items have a method")
     }
+
+    fn expression_output(self, method_output: &Ty) -> Ty {
+        match self.result_transform {
+            OperatorResultTransform::Direct => method_output.clone(),
+            OperatorResultTransform::NegateBool | OperatorResultTransform::PartialOrdering(_) => {
+                Ty::Bool
+            }
+        }
+    }
 }
 
 enum BinaryOperatorLeft<'a> {
@@ -1176,55 +1199,87 @@ enum BinaryOperatorLeft<'a> {
     Lowered(Box<HirExpr>),
 }
 
-const BINARY_OPERATOR_TRAITS: [BinaryOperatorTrait; 7] = [
+const ORDER_LESS: u8 = 1 << 0;
+const ORDER_EQUAL: u8 = 1 << 1;
+const ORDER_GREATER: u8 = 1 << 2;
+
+const BINARY_OPERATOR_TRAITS: [BinaryOperatorTrait; 11] = [
     BinaryOperatorTrait {
         operator: BinaryOp::Add,
         lang_item: LangItemKind::Add,
         parameter_mode: PassMode::Move,
-        returns_bool: false,
-        negate_result: false,
+        method_output: OperatorMethodOutput::Associated,
+        result_transform: OperatorResultTransform::Direct,
     },
     BinaryOperatorTrait {
         operator: BinaryOp::Sub,
         lang_item: LangItemKind::Sub,
         parameter_mode: PassMode::Move,
-        returns_bool: false,
-        negate_result: false,
+        method_output: OperatorMethodOutput::Associated,
+        result_transform: OperatorResultTransform::Direct,
     },
     BinaryOperatorTrait {
         operator: BinaryOp::Mul,
         lang_item: LangItemKind::Mul,
         parameter_mode: PassMode::Move,
-        returns_bool: false,
-        negate_result: false,
+        method_output: OperatorMethodOutput::Associated,
+        result_transform: OperatorResultTransform::Direct,
     },
     BinaryOperatorTrait {
         operator: BinaryOp::Div,
         lang_item: LangItemKind::Div,
         parameter_mode: PassMode::Move,
-        returns_bool: false,
-        negate_result: false,
+        method_output: OperatorMethodOutput::Associated,
+        result_transform: OperatorResultTransform::Direct,
     },
     BinaryOperatorTrait {
         operator: BinaryOp::Rem,
         lang_item: LangItemKind::Rem,
         parameter_mode: PassMode::Move,
-        returns_bool: false,
-        negate_result: false,
+        method_output: OperatorMethodOutput::Associated,
+        result_transform: OperatorResultTransform::Direct,
     },
     BinaryOperatorTrait {
         operator: BinaryOp::Eq,
         lang_item: LangItemKind::Eq,
         parameter_mode: PassMode::Borrow,
-        returns_bool: true,
-        negate_result: false,
+        method_output: OperatorMethodOutput::Bool,
+        result_transform: OperatorResultTransform::Direct,
     },
     BinaryOperatorTrait {
         operator: BinaryOp::Ne,
         lang_item: LangItemKind::Eq,
         parameter_mode: PassMode::Borrow,
-        returns_bool: true,
-        negate_result: true,
+        method_output: OperatorMethodOutput::Bool,
+        result_transform: OperatorResultTransform::NegateBool,
+    },
+    BinaryOperatorTrait {
+        operator: BinaryOp::Lt,
+        lang_item: LangItemKind::PartialOrd,
+        parameter_mode: PassMode::Borrow,
+        method_output: OperatorMethodOutput::PartialOrdering,
+        result_transform: OperatorResultTransform::PartialOrdering(ORDER_LESS),
+    },
+    BinaryOperatorTrait {
+        operator: BinaryOp::Le,
+        lang_item: LangItemKind::PartialOrd,
+        parameter_mode: PassMode::Borrow,
+        method_output: OperatorMethodOutput::PartialOrdering,
+        result_transform: OperatorResultTransform::PartialOrdering(ORDER_LESS | ORDER_EQUAL),
+    },
+    BinaryOperatorTrait {
+        operator: BinaryOp::Gt,
+        lang_item: LangItemKind::PartialOrd,
+        parameter_mode: PassMode::Borrow,
+        method_output: OperatorMethodOutput::PartialOrdering,
+        result_transform: OperatorResultTransform::PartialOrdering(ORDER_GREATER),
+    },
+    BinaryOperatorTrait {
+        operator: BinaryOp::Ge,
+        lang_item: LangItemKind::PartialOrd,
+        parameter_mode: PassMode::Borrow,
+        method_output: OperatorMethodOutput::PartialOrdering,
+        result_transform: OperatorResultTransform::PartialOrdering(ORDER_EQUAL | ORDER_GREATER),
     },
 ];
 
@@ -1996,14 +2051,16 @@ impl Analyzer {
             if !operator_trait_has_required_shape(operator_trait.lang_item, &definition) {
                 let trait_name = operator_trait.lang_item.source_name();
                 let method = operator_trait.method();
-                let shape = if operator_trait.lang_item == LangItemKind::Eq {
-                    format!(
+                let shape = match operator_trait.lang_item {
+                    LangItemKind::Eq => format!(
                         "let Eq(Rhs: type) = trait {{ let {method}(borrow self)(borrow rhs: Rhs): bool }}"
-                    )
-                } else {
-                    format!(
+                    ),
+                    LangItemKind::PartialOrd => format!(
+                        "let PartialOrd(Rhs: type) = trait {{ let {method}(borrow self)(borrow rhs: Rhs): PartialOrdering }}"
+                    ),
+                    _ => format!(
                         "let {trait_name}(Rhs: type) = trait {{ let Output: type; let {method}(move self)(move rhs: Rhs): Output }}"
-                    )
+                    ),
                 };
                 self.error(format!(
                     "`{trait_name}` language trait must have shape `{shape}`"
@@ -6621,11 +6678,22 @@ impl Analyzer {
                     return None;
                 };
                 let method = implementation.methods.get(operator_trait.method())?;
-                let fixed_output = Ty::Bool;
-                let output = if operator_trait.returns_bool {
-                    &fixed_output
-                } else {
-                    implementation.associated_types.get("Output")?
+                let fixed_output;
+                let output = match operator_trait.method_output {
+                    OperatorMethodOutput::Associated => {
+                        implementation.associated_types.get("Output")?
+                    }
+                    OperatorMethodOutput::Bool => {
+                        fixed_output = Ty::Bool;
+                        &fixed_output
+                    }
+                    OperatorMethodOutput::PartialOrdering => {
+                        fixed_output = Ty::Enum(
+                            self.lang_item_name(LangItemKind::PartialOrdering)
+                                .to_owned(),
+                        );
+                        &fixed_output
+                    }
                 };
                 if integer_literal_value(right).is_some_and(|value| !integer_fits(value, rhs)) {
                     return None;
@@ -6651,11 +6719,16 @@ impl Analyzer {
         if let Some(expected) = expected.filter(|ty| **ty != Ty::Error) {
             let has_exact_output = candidates
                 .iter()
-                .any(|candidate| candidate.output == *expected);
+                .any(|candidate| operator_trait.expression_output(&candidate.output) == *expected);
             if has_exact_output {
-                candidates.retain(|candidate| candidate.output == *expected);
+                candidates.retain(|candidate| {
+                    operator_trait.expression_output(&candidate.output) == *expected
+                });
             } else {
-                candidates.retain(|candidate| self.is_uninhabited_type(&candidate.output));
+                candidates.retain(|candidate| {
+                    operator_trait.result_transform == OperatorResultTransform::Direct
+                        && self.is_uninhabited_type(&candidate.output)
+                });
             }
         }
         candidates
@@ -12665,10 +12738,14 @@ impl Analyzer {
                 let descriptions = candidates
                     .iter()
                     .map(|candidate| {
-                        format!(
-                            "`{trait_display_name}({}, Output = {})`",
-                            candidate.rhs, candidate.output
-                        )
+                        if operator_trait.method_output == OperatorMethodOutput::Associated {
+                            format!(
+                                "`{trait_display_name}({}, Output = {})`",
+                                candidate.rhs, candidate.output
+                            )
+                        } else {
+                            format!("`{trait_display_name}({})`", candidate.rhs)
+                        }
                     })
                     .collect::<Vec<_>>()
                     .join(", ");
@@ -12740,13 +12817,29 @@ impl Analyzer {
         };
         let call =
             self.wrap_call_argument_temporaries(call, &mut arguments, temporary_bindings, context);
-        if operator_trait.negate_result {
-            HirExpr {
+        match operator_trait.result_transform {
+            OperatorResultTransform::Direct => call,
+            OperatorResultTransform::NegateBool => HirExpr {
                 ty: Ty::Bool,
                 kind: HirExprKind::Unary(UnaryOp::Not, Box::new(call)),
-            }
-        } else {
-            call
+            },
+            OperatorResultTransform::PartialOrdering(mask) => HirExpr {
+                ty: Ty::Bool,
+                kind: HirExprKind::Match {
+                    scrutinee: Box::new(call),
+                    arms: (0..4)
+                        .map(|variant| HirMatchArm {
+                            matcher: HirMatcher::Variant(variant),
+                            bindings: Vec::new(),
+                            guard: None,
+                            body: HirExpr {
+                                ty: Ty::Bool,
+                                kind: HirExprKind::Bool(variant < 3 && mask & (1 << variant) != 0),
+                            },
+                        })
+                        .collect(),
+                },
+            },
         }
     }
 
@@ -22626,14 +22719,18 @@ mod tests {
         }));
         assert!(analyzer.function_instances.is_empty());
         assert!(analyzer.function_instance_names.is_empty());
+        let baseline_nominals = [
+            analyzer.lang_item_name(LangItemKind::Never),
+            analyzer.lang_item_name(LangItemKind::PartialOrdering),
+        ];
         assert!(analyzer
             .nominal_instances
             .values()
-            .all(|instance| instance.key.template == "never"));
+            .all(|instance| baseline_nominals.contains(&instance.key.template.as_str())));
         assert!(analyzer
             .nominal_instance_names
             .keys()
-            .all(|key| key.template == "never"));
+            .all(|key| baseline_nominals.contains(&key.template.as_str())));
     }
 
     #[test]
@@ -22919,8 +23016,15 @@ mod tests {
                     .canonical_name()
             );
         }
-        assert_eq!(analyzer.nominal_instances.len(), 1);
-        assert_eq!(analyzer.nominal_instance_names.len(), 1);
+        assert_eq!(analyzer.nominal_instances.len(), 2);
+        assert_eq!(analyzer.nominal_instance_names.len(), 2);
+        let partial_ordering = analyzer.lang_item_name(LangItemKind::PartialOrdering);
+        assert!(analyzer
+            .nominal_instances
+            .values()
+            .any(|instance| instance.key.kind == NominalKind::Enum
+                && instance.key.template == partial_ordering
+                && instance.key.arguments.is_empty()));
         assert!(analyzer.functions.is_empty());
         let boxed = |name: &str| format!("alloc::boxed::{name}");
         let vec = |name: &str| format!("alloc::vec::{name}");
@@ -23422,14 +23526,18 @@ let main(): i32 = {
             "unexpected validation diagnostics: {:?}",
             analyzer.diagnostics
         );
+        let baseline_nominals = [
+            analyzer.lang_item_name(LangItemKind::Never),
+            analyzer.lang_item_name(LangItemKind::PartialOrdering),
+        ];
         assert!(analyzer
             .nominal_instances
             .values()
-            .all(|instance| instance.key.template == "never"));
+            .all(|instance| baseline_nominals.contains(&instance.key.template.as_str())));
         assert!(analyzer
             .nominal_instance_names
             .keys()
-            .all(|key| key.template == "never"));
+            .all(|key| baseline_nominals.contains(&key.template.as_str())));
         assert!(analyzer.struct_layouts.is_empty());
         assert!(analyzer.struct_order.is_empty());
 
@@ -25763,6 +25871,48 @@ let main(): i32 = {
         let ir = compile(&program).expect("core Eq source must compile");
         assert_eq!(ir.matches(&format!("call i1 @{symbol}(")).count(), 2);
         assert!(ir.contains("xor i1"), "`!=` must negate the Eq result");
+    }
+
+    #[test]
+    fn lowers_partial_ord_operators_through_four_state_results() {
+        let program = resolve_text(
+            r#"
+use core.ops.{PartialOrd, PartialOrdering}
+let Number = struct(value: i32, unordered: bool)
+extend Number: PartialOrd(Number) {
+  let partial_cmp(borrow self)(borrow rhs: Number): PartialOrdering =
+    if self.unordered || rhs.unordered { Unordered }
+    else if self.value < rhs.value { Less }
+    else if self.value > rhs.value { Greater }
+    else { Equal }
+}
+let main(): i32 = {
+  let low = Number(1, false)
+  let high = Number(2, false)
+  let none = Number(0, true)
+  if low < high && low <= high && high > low && high >= low &&
+    !(none < low) && !(none <= low) && !(none > low) && !(none >= low) {
+    42
+  } else { 0 }
+}
+"#,
+        );
+        let key = TraitImplKey {
+            self_ty: Ty::Struct("Number".into()),
+            trait_ref: TraitRefKey {
+                name: "core::ops::PartialOrd".into(),
+                arguments: vec![Ty::Struct("Number".into())],
+            },
+        };
+        let symbol = function_symbol(&trait_method_name(&key, "partial_cmp"));
+        let ir = compile(&program).expect("core PartialOrd source must compile");
+        assert_eq!(
+            ir.lines()
+                .filter(|line| line.contains(" call ") && line.contains(&format!("@{symbol}(")))
+                .count(),
+            8
+        );
+        assert!(ir.contains("switch i32"));
     }
 
     #[test]

@@ -232,6 +232,28 @@ mod tests {
         compile_source("let main(): i32 = 20 + 22\n")
             .expect("built-in operator syntax should not require importing its protocol");
 
+        let missing_order = "let Number = struct(value: i32)\n\
+                             extend Number: PartialOrd(Number) {\n\
+                               let partial_cmp(borrow self)(borrow rhs: Number): core.ops.PartialOrdering =\n\
+                                 core.ops.PartialOrdering.Equal\n\
+                             }\n\
+                             let main(): i32 = 0\n";
+        let errors = compile_source(missing_order).unwrap_err();
+        assert!(errors.iter().any(|diagnostic| {
+            diagnostic.contains("standard-library item `PartialOrd` is not in the prelude")
+                && diagnostic.contains("use core.ops.PartialOrd")
+        }));
+
+        let imported_order =
+            format!("use core.ops.{{PartialOrd, PartialOrdering}}\n{missing_order}")
+                .replace("core.ops.PartialOrdering", "PartialOrdering")
+                .replace(
+                    "let main(): i32 = 0",
+                    "let main(): i32 = if Number(1) <= Number(2) { 42 } else { 0 }",
+                );
+        compile_source(&imported_order)
+            .expect("imported PartialOrd should define ordering operators");
+
         let local = "let Add = struct(value: i32)\n\
                      let main(): i32 = Add(value: 42).value\n";
         compile_source(local).expect("unimported operator names should remain available to users");

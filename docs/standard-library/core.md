@@ -12,9 +12,9 @@ validates declarations that have language-defined roles.
 - the uninhabited `never` type
 - the `Copy` and `Drop` traits
 
-`core.ops` contains the arithmetic protocols `Add`, `Sub`, `Mul`, `Div`, and `Rem`, plus the equality
-protocol `Eq`. They are not in the prelude. Arithmetic protocols consume their operands and use an
-associated `Output` type:
+`core.ops` contains the arithmetic protocols `Add`, `Sub`, `Mul`, `Div`, and `Rem`, the equality
+protocol `Eq`, and the ordering protocol `PartialOrd`. They are not in the prelude. Arithmetic
+protocols consume their operands and use an associated `Output` type:
 
 ```sali
 use core.ops.Add
@@ -36,7 +36,19 @@ extend Number: Eq(Number) {
 }
 ```
 
-Writing `left + right` or `left == right` does not itself require an import. An import is required when source names the
+`PartialOrd(Rhs)` also borrows both operands. Its `partial_cmp` method returns `PartialOrdering`,
+whose variants are `Less`, `Equal`, `Greater`, and `Unordered`. All four ordering operators invoke
+the method once; an `Unordered` result makes each operator false:
+
+```sali
+use core.ops.{PartialOrd, PartialOrdering}
+
+extend Number: PartialOrd(Number) {
+  let partial_cmp(borrow self)(borrow rhs: Number): PartialOrdering = ...
+}
+```
+
+Writing `left + right`, `left == right`, or `left < right` does not itself require an import. An import is required when source names the
 protocol in an implementation, bound, type, or direct member access.
 
 `core.control` contains the error-control protocols `ControlFlow`, `Try`, `FromResidual`, and

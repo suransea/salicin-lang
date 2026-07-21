@@ -2386,6 +2386,16 @@ fn eq_operator_protocol_runs_with_borrowed_operands() {
 }
 
 #[test]
+fn partial_ord_protocol_preserves_unordered_comparisons() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "partial_ord_operator_trait.sali"))
+        .output()
+        .expect("run PartialOrd operator fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn m2_optional_chain_programs_run_with_expected_result() {
     for name in [
         "chain_option_some_field.sali",

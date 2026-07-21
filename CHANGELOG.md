@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.80.0 - 2026-07-21
+
+- Added the edition-validated `PartialOrdering` four-state enum and borrowing
+  `core.ops.PartialOrd(Rhs)` protocol.
+- Lowered `<`, `<=`, `>`, and `>=` on user-defined nominal types through one statically selected
+  `partial_cmp` call, while preserving direct LLVM comparisons for primitive integers.
+- Defined `Unordered` to make all four relational operators false and preserved single evaluation
+  of both operands and the protocol method.
+- Added exact core-shape validation, explicit-import diagnostics, LLVM dispatch assertions, and
+  native execution coverage for ordered and unordered values.
+
 ## 0.79.0 - 2026-07-21
 
 - Added the edition-validated `core.ops.Eq(Rhs)` language protocol with borrowing `eq` operands and

@@ -23,8 +23,8 @@ declarations; operator syntax continues to dispatch through validated lang items
 
 The implementation is broad but not stable. Important incomplete boundaries include:
 
-- `core` provides the initial prelude, arithmetic and equality protocols, and generalized error
-  propagation through `Try`, `FromResidual`, and `FromError`; slices, iteration, ordering, indexing,
+- `core` provides the initial prelude, arithmetic, equality, and partial-ordering protocols, and generalized error
+  propagation through `Try`, `FromResidual`, and `FromError`; slices, iteration, indexing,
   and `Future` remain to be implemented;
 - `std` host APIs have not been started;
 - registry dependencies, workspaces, stable ABI guarantees, and a package distribution format are
