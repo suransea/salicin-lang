@@ -445,7 +445,8 @@ receiver，v0.44-v0.45 则先为 `T: Copy` 落地类型安全的 `Box.read` / `B
 v0.48 随后解除数组元素的 `Copy` 限制，并补齐资源数组逐元素的 drop glue、运行时 drop slot、移动、
 重初始化和覆盖语义；v0.49 再允许用常量索引直接从数组字面量或函数返回的临时数组中移动资源元素，
 并只析构未被选中的其余元素。v0.50 将整数和布尔字面量模式接入 enum 载荷及嵌套 struct pattern，
-其候选回退、显式 guard 和资源 binding 提交共用同一条受验证的 guard 控制流。
+其候选回退、显式 guard 和资源 binding 提交共用同一条受验证的 guard 控制流；v0.51 又让 `match`
+直接接受布尔和整数 scrutinee，并保证带副作用的 scrutinee 只求值一次。
 下一步推进显式引用与生命周期基础，再以相同
 allocator/drop 基础推进
 `Vec(T)`；泛型 callable
@@ -473,6 +474,8 @@ let main(): i32 = add(1)(41)
 `where T: Copy` 消费该证明。
 载荷字面量模式支持整数和布尔值，并会校验字段类型与整数范围；穷尽性当前仍按 enum variant 保守
 计算，因此仅由字面量模式列举的 variant 还需要一个 `_` 载荷回退 arm。
+标量 `match` 支持字面量、binding、`_` 与 guard；无 guard 的 `true` 和 `false` 可共同覆盖 `bool`，
+整数匹配或带 guard 的布尔覆盖仍需无 guard 的 `_` / binding 回退。
 函数类型和闭包类型也不实现 `Copy`。
 表达式路径中的 `Self` 与
 `A.method(a)()` 完全限定调用尚未开放。省略编译期组的嵌套推断仍受当前表达式类型探测能力限制；

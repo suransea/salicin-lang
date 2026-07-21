@@ -612,6 +612,8 @@ fn m1_match_and_partial_programs_run_with_expected_result() {
         "match_guard.sali",
         "match_literal_payload.sali",
         "match_literal_resource_guard.sali",
+        "match_scalar.sali",
+        "match_scalar_single_evaluation.sali",
         "partial_application.sali",
     ] {
         let output = salic()
@@ -638,6 +640,9 @@ fn m1_match_and_partial_errors_report_their_cause() {
             "pattern type mismatch",
         ),
         ("pattern_literal_payload_range.sali", "range"),
+        ("match_scalar_constructor.sali", "cannot match scalar"),
+        ("match_scalar_non_exhaustive.sali", "not exhaustive"),
+        ("match_scalar_literal_range.sali", "range"),
         ("temporary_borrow_partial.sali", "partial application"),
     ] {
         let output = salic()

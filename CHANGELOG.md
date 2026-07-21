@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.51.0 - 2026-07-21
+
+- Extended `match` to boolean and integer scrutinees with literal, binding, wildcard, and guarded
+  arms.
+- Staged each scalar scrutinee exactly once and gave every guard and arm body an independent
+  lexical scope while preserving source-order candidate fallback.
+- Recognized unguarded `true` plus `false` as an exhaustive boolean match; integer matches and
+  guarded boolean coverage still require an unguarded wildcard or binding fallback.
+
 ## 0.50.0 - 2026-07-21
 
 - Added integer and boolean literal patterns inside enum payloads and nested struct patterns.

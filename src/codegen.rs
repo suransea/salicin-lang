@@ -10100,8 +10100,131 @@ impl Analyzer {
         expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
+        let scalar_ty = match self.probe_expr_ty(scrutinee, None, context) {
+            TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _)
+                if ty == Ty::Bool || ty.is_integer() =>
+            {
+                Some(ty)
+            }
+            TypeProbe::Defaultable(ty) if ty.is_integer() => Some(ty),
+            _ => None,
+        };
+        if let Some(scalar_ty) = scalar_ty {
+            return self.lower_scalar_match(scrutinee, arms, expected, context, &scalar_ty);
+        }
         let scrutinee = self.lower_expr(scrutinee, None, context);
         self.lower_match_with_scrutinee(scrutinee, arms, expected, context)
+    }
+
+    fn lower_scalar_match(
+        &mut self,
+        scrutinee: &Expr,
+        arms: &[MatchArm],
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+        scalar_ty: &Ty,
+    ) -> HirExpr {
+        let hidden = format!("$match$scalar${}", context.next_local);
+        let mut covers_all = false;
+        let mut covers_true = false;
+        let mut covers_false = false;
+        let mut fallback = Expr::Loop {
+            body: Box::new(Expr::Block(Vec::new(), None)),
+        };
+
+        if arms.is_empty() {
+            self.error("match must contain at least one arm");
+        }
+
+        for arm in arms.iter().rev() {
+            let (pattern_condition, binding) = match &arm.pattern {
+                Pattern::Wildcard => (Expr::Bool(true), None),
+                Pattern::Binding(name) => (Expr::Bool(true), Some(name.clone())),
+                Pattern::Integer(value) if scalar_ty.is_integer() => (
+                    Expr::Binary(
+                        Box::new(Expr::Name(hidden.clone())),
+                        BinaryOp::Eq,
+                        Box::new(Expr::Integer(*value)),
+                    ),
+                    None,
+                ),
+                Pattern::Bool(value) if *scalar_ty == Ty::Bool => (
+                    Expr::Binary(
+                        Box::new(Expr::Name(hidden.clone())),
+                        BinaryOp::Eq,
+                        Box::new(Expr::Bool(*value)),
+                    ),
+                    None,
+                ),
+                Pattern::Constructor { path, .. } => {
+                    self.error(format!(
+                        "constructor pattern `{}` cannot match scalar type `{scalar_ty}`",
+                        path.join(".")
+                    ));
+                    (Expr::Bool(true), None)
+                }
+                Pattern::Integer(_) | Pattern::Bool(_) => {
+                    self.error(format!(
+                        "pattern type mismatch: literal pattern cannot match `{scalar_ty}`"
+                    ));
+                    (Expr::Bool(true), None)
+                }
+            };
+
+            if arm.guard.is_none() {
+                match &arm.pattern {
+                    Pattern::Wildcard | Pattern::Binding(_) => covers_all = true,
+                    Pattern::Bool(true) if *scalar_ty == Ty::Bool => covers_true = true,
+                    Pattern::Bool(false) if *scalar_ty == Ty::Bool => covers_false = true,
+                    _ => {}
+                }
+            }
+
+            let scoped = |value: Expr, binding: Option<&String>| {
+                let statements = binding.map_or_else(Vec::new, |name| {
+                    vec![Stmt::Let(Binding {
+                        mutable: false,
+                        name: name.clone(),
+                        annotation: None,
+                        value: Expr::Name(hidden.clone()),
+                    })]
+                });
+                Expr::Block(statements, Some(Box::new(value)))
+            };
+            let condition = if let Some(guard) = &arm.guard {
+                Expr::Binary(
+                    Box::new(pattern_condition),
+                    BinaryOp::And,
+                    Box::new(scoped(guard.clone(), binding.as_ref())),
+                )
+            } else {
+                pattern_condition
+            };
+            let body = scoped(arm.body.clone(), binding.as_ref());
+            fallback = Expr::If {
+                condition: Box::new(condition),
+                then_branch: Box::new(body),
+                else_branch: Some(Box::new(fallback)),
+            };
+        }
+
+        let exhaustive = covers_all || (*scalar_ty == Ty::Bool && covers_true && covers_false);
+        if !exhaustive {
+            self.error(format!(
+                "match on `{scalar_ty}` is not exhaustive; add a wildcard or binding arm"
+            ));
+        }
+
+        let lowered = Expr::Block(
+            vec![Stmt::Let(Binding {
+                mutable: false,
+                name: hidden,
+                annotation: self.source_type_for_ty(scalar_ty),
+                value: scrutinee.clone(),
+            })],
+            Some(Box::new(fallback)),
+        );
+        self.lower_expr(&lowered, expected, context)
     }
 
     fn lower_coalesce(
