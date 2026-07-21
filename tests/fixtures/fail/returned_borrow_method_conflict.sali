@@ -5,6 +5,8 @@ extend Cell {
 }
 
 let main(): i32 = {
-  let reference = Cell(42).get()
+  let mut cell = Cell(42)
+  let reference = cell.get()
+  cell.value = 0
   reference
 }

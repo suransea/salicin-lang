@@ -1,4 +1,9 @@
 let Pair = struct(left: i32, right: i32)
+let Holder(T: type) = struct(value: T)
+
+let RightView = trait {
+  let view('a: region)(borrow('a) self)(): borrow('a) i32
+}
 
 let left('a: region)(borrow('a) pair: Pair): borrow('a) i32 = borrow pair.left
 
@@ -9,20 +14,42 @@ let forward('a: region)(borrow('a) pair: Pair): borrow('a) i32 = left(pair)
 
 let same('a: region, T: type)(borrow('a) value: T): borrow('a) T = borrow value
 
+let forwarded_method('a: region)(borrow('a) pair: Pair): borrow('a) i32 = pair.right_method()
+
 extend Pair {
   let right_ref('a: region)(borrow('a) pair: Pair): borrow('a) i32 = borrow pair.right
+
+  let right_method('a: region)(borrow('a) self)(): borrow('a) i32 = borrow self.right
+
+  let left_mut_method('a: region)
+    (mut borrow('a) self)(): mut borrow('a) i32 = mut borrow self.left
+}
+
+extend(T: type) Holder(T) {
+  let get('a: region)(borrow('a) self)(): borrow('a) T = borrow self.value
+}
+
+extend Pair: RightView {
+  let view('a: region)(borrow('a) self)(): borrow('a) i32 = borrow self.right
 }
 
 let main(): i32 = {
   let mut pair = Pair(20, 0)
+  let holder = Holder(0)
   let before = do {
     let reference = forward(pair)
     let generic = same(value: pair)
     let associated = Pair.right_ref(pair)
-    reference + generic.right + associated
+    let method = pair.right_method()
+    let qualified = Pair.right_method(self: pair)()
+    let forwarded = forwarded_method(pair)
+    let generic_method = holder.get()
+    let trait_method = pair.view()
+    reference + generic.right + associated + method + qualified + forwarded + generic_method +
+      trait_method
   }
   do {
-    let reference = left_mut(pair)
+    let reference = pair.left_mut_method()
     reference = 22
   }
   before + pair.left

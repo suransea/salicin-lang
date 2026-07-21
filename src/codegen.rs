@@ -7967,17 +7967,6 @@ impl Analyzer {
             .insert(name.to_owned(), ResolutionState::Resolving);
         let function = self.functions[name].clone();
         let signature = self.signatures[name].clone();
-        if matches!(signature.result, Some(Ty::Reference { .. }))
-            && function
-                .groups
-                .first()
-                .and_then(|group| group.first())
-                .is_some_and(|parameter| parameter.name == "self")
-        {
-            self.error(format!(
-                "reference-returning method `{name}` is not supported yet; use a free or associated function"
-            ));
-        }
         let mut context = LowerCtx::for_function(
             name,
             signature.result.clone(),
@@ -12034,7 +12023,14 @@ impl Analyzer {
                     }
                 }
             }
-            return self.lower_bound_method_call(base, variant_name, &groups, None, context);
+            return self.lower_bound_method_call(
+                base,
+                variant_name,
+                &groups,
+                None,
+                expected,
+                context,
+            );
         }
         self.error("calls require a named function, constructor, associated function, or method");
         error_expr()
@@ -12475,6 +12471,7 @@ impl Analyzer {
                 member,
                 remaining_groups,
                 Some(target),
+                expected,
                 context,
             )
         } else if kind == NominalKind::Enum {
@@ -13100,6 +13097,7 @@ impl Analyzer {
         member: &str,
         groups: &[&[CallArg]],
         qualified_target: Option<&str>,
+        expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
         let (mut receiver_place, mut temporary_binding) =
@@ -13285,6 +13283,7 @@ impl Analyzer {
                     if let Some(loan) =
                         self.acquire_loan(&receiver_place, LoanKind::Shared, false, context)
                     {
+                        receiver_place.loan = Some(loan);
                         temporary_loans.push(loan);
                     }
                     HirArgument::SharedBorrow(receiver_place.clone())
@@ -13293,6 +13292,7 @@ impl Analyzer {
                     if let Some(loan) =
                         self.acquire_loan(&receiver_place, LoanKind::Mutable, false, context)
                     {
+                        receiver_place.loan = Some(loan);
                         temporary_loans.push(loan);
                     }
                     HirArgument::MutBorrow(receiver_place.clone())
@@ -13341,6 +13341,19 @@ impl Analyzer {
                 "partial application of bound method `{target}.{member}` cannot capture borrowed arguments"
             ));
         }
+        let mut temporary_bindings = temporary_binding.into_iter().collect::<Vec<_>>();
+        temporary_bindings.extend(argument_temporary_bindings);
+        if complete {
+            self.promote_returned_reference_loans(
+                &canonical,
+                &function_ty.result,
+                &arguments,
+                &temporary_bindings,
+                &mut temporary_loans,
+                expected,
+                context,
+            );
+        }
         self.release_loans(&temporary_loans, context);
         let call = if complete {
             HirExpr {
@@ -13371,8 +13384,6 @@ impl Analyzer {
                 },
             }
         };
-        let mut temporary_bindings = temporary_binding.into_iter().collect::<Vec<_>>();
-        temporary_bindings.extend(argument_temporary_bindings);
         self.wrap_call_argument_temporaries(call, &mut arguments, temporary_bindings, context)
     }
 

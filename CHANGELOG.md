@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.57.0 - 2026-07-21
+
+- Added returned borrows from inherent and trait methods, including instance syntax,
+  type-qualified receiver calls, generic methods, and forwarding through another returned-borrow
+  function.
+- Promoted the receiver and any other result-region argument loans into the caller's lexical scope
+  for complete bound-method calls, preserving shared and mutable access conflicts.
+- Rejected references returned from temporary receivers and method results that would let a local
+  receiver escape its function.
+
 ## 0.56.0 - 2026-07-21
 
 - Added reference-returning free and associated functions whose result is tied to an explicit

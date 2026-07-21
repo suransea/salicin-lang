@@ -813,7 +813,15 @@ fn returned_borrow_errors_report_their_cause() {
             "cannot use a borrow value type yet",
         ),
         ("returned_borrow_field.sali", "borrow-typed field"),
-        ("returned_borrow_method.sali", "reference-returning method"),
+        (
+            "returned_borrow_method.sali",
+            "cannot originate from a temporary",
+        ),
+        ("returned_borrow_method_conflict.sali", "already borrowed"),
+        (
+            "returned_borrow_method_local.sali",
+            "borrowing a local value",
+        ),
     ] {
         let output = salic()
             .arg("check")
