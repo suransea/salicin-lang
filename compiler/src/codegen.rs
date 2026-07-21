@@ -11980,9 +11980,15 @@ impl Analyzer {
                 ClosureCaptureMode::Shared | ClosureCaptureMode::Mutable
                     if !self.is_copy_type(&local.ty) =>
                 {
-                    self.error(format!(
-                        "closure capture `{name}` must implement Copy for this capture mode"
-                    ));
+                    if name.starts_with("$handler$match$input$") {
+                        self.error(
+                            "an effectful match guard currently requires its match input to implement Copy",
+                        );
+                    } else {
+                        self.error(format!(
+                            "closure capture `{name}` must implement Copy for this capture mode"
+                        ));
+                    }
                     continue;
                 }
                 ClosureCaptureMode::Move
@@ -16716,6 +16722,42 @@ impl Analyzer {
                 )
             }
             Expr::Match { scrutinee, arms } => {
+                let has_effectful_guard = arms.iter().any(|arm| {
+                    arm.guard.as_ref().is_some_and(|guard| {
+                        self.handler_expression_may_suspend(guard, &handler.identity)
+                    })
+                });
+                if has_effectful_guard {
+                    let handler_for_arms = handler.clone();
+                    let resume_for_arms = resume.clone();
+                    let next = continuation.clone();
+                    return self.transform_handler_expr(
+                        *scrutinee,
+                        handler,
+                        resume,
+                        Rc::new(move |analyzer, scrutinee| {
+                            let match_id = analyzer.next_closure;
+                            analyzer.next_closure += 1;
+                            let input = format!("$handler$match$input${match_id}");
+                            let candidates = analyzer.transform_handler_match_candidates(
+                                &input,
+                                &arms,
+                                handler_for_arms.clone(),
+                                resume_for_arms.clone(),
+                                next.clone(),
+                            )?;
+                            Ok(Expr::Block(
+                                vec![Stmt::Let(Binding {
+                                    mutable: false,
+                                    name: input,
+                                    annotation: None,
+                                    value: scrutinee,
+                                })],
+                                Some(Box::new(candidates)),
+                            ))
+                        }),
+                    );
+                }
                 let handler_for_arms = handler.clone();
                 let resume_for_arms = resume.clone();
                 let next = continuation.clone();
@@ -16758,6 +16800,112 @@ impl Analyzer {
             }
             other => continuation(self, other),
         }
+    }
+
+    fn transform_handler_match_candidates(
+        &mut self,
+        scrutinee: &str,
+        arms: &[MatchArm],
+        handler: Rc<AlgebraicHandler>,
+        resume: Option<SourceResume>,
+        continuation: SourceContinuation,
+    ) -> Result<Expr, ()> {
+        let Some((arm, remaining)) = arms.split_first() else {
+            return Ok(Expr::Loop {
+                body: Box::new(Expr::Unit),
+            });
+        };
+        let body = self.transform_handler_expr(
+            arm.body.clone(),
+            handler.clone(),
+            resume.clone(),
+            continuation.clone(),
+        )?;
+        let covers_all = matches!(arm.pattern, Pattern::Wildcard | Pattern::Binding(_));
+        let guard_is_effectful = arm
+            .guard
+            .as_ref()
+            .is_some_and(|guard| self.handler_expression_may_suspend(guard, &handler.identity));
+
+        let candidate = if let Some(guard) = &arm.guard {
+            if guard_is_effectful {
+                let false_branch = self.transform_handler_match_candidates(
+                    scrutinee,
+                    remaining,
+                    handler.clone(),
+                    resume.clone(),
+                    continuation.clone(),
+                )?;
+                let true_branch = body.clone();
+                self.transform_handler_expr(
+                    guard.clone(),
+                    handler.clone(),
+                    resume.clone(),
+                    Rc::new(move |_, condition| {
+                        Ok(Expr::If {
+                            condition: Box::new(condition),
+                            then_branch: Box::new(true_branch.clone()),
+                            else_branch: Some(Box::new(false_branch.clone())),
+                        })
+                    }),
+                )?
+            } else {
+                body
+            }
+        } else {
+            body
+        };
+
+        let mut candidates = vec![MatchArm {
+            pattern: arm.pattern.clone(),
+            guard: if guard_is_effectful {
+                None
+            } else {
+                arm.guard.clone()
+            },
+            body: candidate,
+        }];
+        if !covers_all || arm.guard.is_some() {
+            let fallback = self.transform_handler_match_candidates(
+                scrutinee,
+                remaining,
+                handler,
+                resume,
+                continuation,
+            )?;
+            candidates.push(MatchArm {
+                pattern: Pattern::Wildcard,
+                guard: None,
+                body: fallback,
+            });
+        }
+        Ok(Expr::Match {
+            scrutinee: Box::new(Expr::Name(scrutinee.to_owned())),
+            arms: candidates,
+        })
+    }
+
+    fn handler_expression_may_suspend(&self, expression: &Expr, identity: &str) -> bool {
+        if handled_operation_call(expression, identity).is_some() {
+            return true;
+        }
+        if matches!(expression, Expr::Call(_, _)) {
+            let mut groups = Vec::new();
+            if let Expr::Name(name) = flatten_call(expression, &mut groups) {
+                if self.functions.get(name).is_some_and(|function| {
+                    function
+                        .effects
+                        .custom
+                        .iter()
+                        .any(|effect| source_effect_identity(effect) == identity)
+                }) {
+                    return true;
+                }
+            }
+        }
+        handler_expression_children(expression)
+            .into_iter()
+            .any(|child| self.handler_expression_may_suspend(child, identity))
     }
 
     fn transform_nested_effect_handler(
@@ -21183,6 +21331,76 @@ fn handled_operation_call(expression: &Expr, identity: &str) -> Option<(String, 
             .flat_map(|group| group.iter().cloned())
             .collect(),
     ))
+}
+
+fn handler_expression_children(expression: &Expr) -> Vec<&Expr> {
+    match expression {
+        Expr::Unary(_, value)
+        | Expr::Try(value)
+        | Expr::DoBlock { body: value }
+        | Expr::Throw(value)
+        | Expr::Unsafe(value)
+        | Expr::Borrow { value, .. }
+        | Expr::Member(value, _)
+        | Expr::ChainMember(value, _)
+        | Expr::Loop { body: value } => vec![value],
+        Expr::Binary(left, _, right)
+        | Expr::Coalesce(left, right)
+        | Expr::Assign(left, right)
+        | Expr::CompoundAssign(left, _, right) => vec![left, right],
+        Expr::HandlerCoalesce {
+            scrutinee,
+            success,
+            fallback,
+            ..
+        } => vec![scrutinee, success, fallback],
+        Expr::Call(callee, arguments) => {
+            let mut children = Vec::with_capacity(arguments.len() + 1);
+            children.push(callee.as_ref());
+            children.extend(arguments.iter().map(|argument| &argument.value));
+            children
+        }
+        Expr::Array(elements) => elements.iter().collect(),
+        Expr::Index { base, index } => vec![base, index],
+        Expr::Block(statements, tail) => {
+            let mut children = statements
+                .iter()
+                .map(|statement| match statement {
+                    Stmt::Let(binding) => &binding.value,
+                    Stmt::Expr(expression) => expression,
+                })
+                .collect::<Vec<_>>();
+            children.extend(tail.iter().map(|tail| tail.as_ref()));
+            children
+        }
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            let mut children = vec![condition.as_ref(), then_branch.as_ref()];
+            children.extend(else_branch.iter().map(|branch| branch.as_ref()));
+            children
+        }
+        Expr::Return(value) | Expr::Break(value) => {
+            value.iter().map(|value| value.as_ref()).collect()
+        }
+        Expr::While { condition, body } => vec![condition, body],
+        Expr::Match { scrutinee, arms } => {
+            let mut children = vec![scrutinee.as_ref()];
+            for arm in arms {
+                children.extend(arm.guard.iter());
+                children.push(&arm.body);
+            }
+            children
+        }
+        Expr::Unit
+        | Expr::Integer(_)
+        | Expr::Bool(_)
+        | Expr::Name(_)
+        | Expr::Closure(_, _)
+        | Expr::Continue => Vec::new(),
+    }
 }
 
 fn handled_action_result_source(

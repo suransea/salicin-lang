@@ -153,8 +153,10 @@ value exactly once. Selective CPS preserves source order through operation and o
 arguments, arrays, indexes, members, `match` scrutinees and arm
 bodies, and immediate `do`, `unsafe`, and `try` wrappers. Effectful `&&` and `||` operands retain
 their lazy branch semantics. Effectful `??` evaluates its fallback only on `None` or `Err`, and both
-the scrutinee and fallback may suspend independently. Optional-call arguments, match guards, and
-capturing indirect calls remain implementation work;
+the scrutinee and fallback may suspend independently. Match guards may suspend when the complete
+match input implements `Copy`; false guards continue with the next candidate. Retaining a non-Copy
+scrutinee across suspended candidate selection, optional-call arguments, and capturing indirect
+calls remain implementation work;
 unsupported cases are rejected rather than compiled with callback-only semantics.
 
 Lexically nested handlers of different effect identities compose in source order. The outer

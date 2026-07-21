@@ -145,6 +145,7 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
         "algebraic_effect_expression_traversal.sc",
         "algebraic_effect_short_circuit.sc",
         "algebraic_effect_coalesce.sc",
+        "algebraic_effect_match_guard.sc",
         "algebraic_effect_cross_function_answer.sc",
         "algebraic_effect_composition.sc",
         "algebraic_effect_recursion.sc",
@@ -171,6 +172,19 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
     assert!(!output.status.success(), "{}", output_text(&output));
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("one-shot"),
+        "{}",
+        output_text(&output)
+    );
+
+    let output = salic()
+        .arg("check")
+        .arg(fixture("fail", "algebraic_effect_match_guard_noncopy.sc"))
+        .output()
+        .expect("reject a non-Copy effectful match guard input");
+    assert!(!output.status.success(), "{}", output_text(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("effectful match guard currently requires its match input to implement Copy"),
         "{}",
         output_text(&output)
     );

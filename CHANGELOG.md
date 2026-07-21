@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.123.0 - 2026-07-22
+
+- Extended selective algebraic-effect CPS through match guards, preserving both successful arm
+  selection and false-guard fallthrough to later candidates.
+- Detected suspension through direct operations and effectful named calls in guards, while leaving
+  ordinary pure guards on the existing ownership-aware lowering path.
+- Required `Copy` match inputs for the initial effectful-guard slice and added a focused diagnostic;
+  retaining non-Copy payload ownership across suspended candidate selection remains future work.
+- Added native true/false guard coverage and a compile-fail ownership regression.
+
 ## 0.122.0 - 2026-07-22
 
 - Extended selective algebraic-effect CPS through `??` while preserving its lazy fallback and
