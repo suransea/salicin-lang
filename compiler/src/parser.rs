@@ -2065,34 +2065,64 @@ impl Parser {
 
     fn if_expression(&mut self) -> Result<Expr, ParseError> {
         self.expect(&TokenKind::If, "`if`")?;
+        if self.take(&TokenKind::Let) {
+            let pattern = self.pattern()?;
+            self.expect(&TokenKind::Equal, "`=` after the if-let pattern")?;
+            let scrutinee = self.expression(false)?;
+            if !self.at(&TokenKind::LBrace) {
+                return Err(self.error_here("expected `{` after `if let` scrutinee"));
+            }
+            let then_branch = self.block()?;
+            let else_branch = self
+                .optional_else_branch()?
+                .map_or_else(|| Expr::Block(Vec::new(), None), |branch| *branch);
+            return Ok(Expr::Match {
+                scrutinee: Box::new(scrutinee),
+                arms: vec![
+                    MatchArm {
+                        pattern,
+                        guard: None,
+                        body: then_branch,
+                    },
+                    MatchArm {
+                        pattern: Pattern::Wildcard,
+                        guard: None,
+                        body: else_branch,
+                    },
+                ],
+            });
+        }
         let condition = self.expression(false)?;
         if !self.at(&TokenKind::LBrace) {
             return Err(self.error_here("expected `{` after `if` condition"));
         }
         let then_branch = self.block()?;
-
-        // `else` may begin on the next logical line. If it is absent, restore
-        // the newlines so the containing block can still see its separator.
-        let after_then = self.index;
-        while self.take(&TokenKind::Newline) {}
-        let else_branch = if self.take(&TokenKind::Else) {
-            if self.at(&TokenKind::If) {
-                Some(Box::new(self.if_expression()?))
-            } else if self.at(&TokenKind::LBrace) {
-                Some(Box::new(self.block()?))
-            } else {
-                return Err(self.error_here("expected `if` or `{` after `else`"));
-            }
-        } else {
-            self.index = after_then;
-            None
-        };
+        let else_branch = self.optional_else_branch()?;
 
         Ok(Expr::If {
             condition: Box::new(condition),
             then_branch: Box::new(then_branch),
             else_branch,
         })
+    }
+
+    fn optional_else_branch(&mut self) -> Result<Option<Box<Expr>>, ParseError> {
+        // `else` may begin on the next logical line. If it is absent, restore
+        // the newlines so the containing block can still see its separator.
+        let before_newlines = self.index;
+        while self.take(&TokenKind::Newline) {}
+        if self.take(&TokenKind::Else) {
+            if self.at(&TokenKind::If) {
+                Ok(Some(Box::new(self.if_expression()?)))
+            } else if self.at(&TokenKind::LBrace) {
+                Ok(Some(Box::new(self.block()?)))
+            } else {
+                Err(self.error_here("expected `if` or `{` after `else`"))
+            }
+        } else {
+            self.index = before_newlines;
+            Ok(None)
+        }
     }
 
     fn return_expression(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
@@ -4026,6 +4056,27 @@ mod tests {
             panic!("expected function");
         };
         assert!(matches!(function_tail(function), Expr::DoBlock { .. }));
+    }
+
+    #[test]
+    fn desugars_if_let_to_a_match_with_fallback() {
+        let program = parse(
+            "let choose(value: Option(i32)): i32 = {\n\
+               if let Some(found) = value { found } else { 0 }\n\
+             }\n",
+        )
+        .unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        let Expr::Match { arms, .. } = function_tail(function) else {
+            panic!("expected if-let to desugar to match");
+        };
+        assert!(matches!(
+            &arms[0].pattern,
+            Pattern::Constructor { path, .. } if path == &["Some"]
+        ));
+        assert_eq!(arms[1].pattern, Pattern::Wildcard);
     }
 
     #[test]

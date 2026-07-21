@@ -21,6 +21,9 @@ all lexical cleanup required when leaving nested scopes before starting the next
 `into_iter` consumes it, and each iteration mutably borrows the iterator for `next`; unrelated
 same-named methods cannot intercept the lowering. Break, continue, ownership flow, and cleanup reuse
 the ordinary loop machinery.
+`if let pattern = value { ... }` supports conditional enum destructuring with optional `else` or
+`else if`. It evaluates the scrutinee once and lowers through ordinary `match`, so successful-arm
+bindings stay scoped to that arm and share the same ownership and cleanup analysis.
 
 Access keyword generics are implemented for functions and generic inherent members: `A: access` accepts `shared` or `mut`,
 defaults to shared when omitted, participates in monomorphization, and can drive parameter modes,

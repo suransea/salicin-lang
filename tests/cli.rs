@@ -939,6 +939,7 @@ fn m1_match_and_partial_programs_run_with_expected_result() {
         "match_literal_resource_guard.sc",
         "match_scalar.sc",
         "match_scalar_single_evaluation.sc",
+        "if_let.sc",
         "partial_application.sc",
     ] {
         let output = salic()
@@ -968,6 +969,7 @@ fn m1_match_and_partial_errors_report_their_cause() {
         ("match_scalar_constructor.sc", "cannot match scalar"),
         ("match_scalar_non_exhaustive.sc", "not exhaustive"),
         ("match_scalar_literal_range.sc", "range"),
+        ("if_let_binding_scope.sc", "unknown"),
         ("temporary_borrow_partial.sc", "partial application"),
     ] {
         let output = salic()

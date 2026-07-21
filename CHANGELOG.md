@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.105.0 - 2026-07-22
+
+- Implemented `if let pattern = value { ... }` with optional `else` and `else if` branches.
+- Lowered conditional destructuring through the existing `match` machinery so the scrutinee is
+  evaluated once and pattern bindings, moves, borrows, branch joins, and cleanup use one semantic
+  path.
+- Kept pattern bindings scoped to the successful branch and made a missing `else` produce `()`.
+- Added native enum-destructuring coverage and a diagnostic fixture for bindings escaping their
+  successful branch.
+
 ## 0.104.0 - 2026-07-22
 
 - Added source-backed, edition-validated `Iterator` and `IntoIterator` lang-item traits in the new
