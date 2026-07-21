@@ -837,6 +837,7 @@ enum HirExprKind {
         body: Box<HirExpr>,
     },
     Break(Option<Box<HirExpr>>),
+    Continue,
     Match {
         scrutinee: Box<HirExpr>,
         arms: Vec<HirMatchArm>,
@@ -1096,6 +1097,7 @@ struct LoopFrame {
     unit_only: bool,
     scope_depth: usize,
     break_flows: Vec<FlowState>,
+    continue_flows: Vec<FlowState>,
 }
 
 #[derive(Clone)]
@@ -8583,6 +8585,7 @@ impl Analyzer {
             | Expr::While { .. }
             | Expr::Loop { .. }
             | Expr::Break(_)
+            | Expr::Continue
             | Expr::Match { .. } => TypeProbe::Unsupported,
         }
     }
@@ -10718,6 +10721,7 @@ impl Analyzer {
             Expr::While { condition, body } => self.lower_while(condition, body, context),
             Expr::Loop { body } => self.lower_loop(body, expected, context),
             Expr::Break(value) => self.lower_break(value.as_deref(), context),
+            Expr::Continue => self.lower_continue(context),
             Expr::Match { scrutinee, arms } => self.lower_match(scrutinee, arms, expected, context),
         };
 
@@ -11080,7 +11084,8 @@ impl Analyzer {
             | HirExprKind::RawTrap
             | HirExprKind::LayoutQuery { .. }
             | HirExprKind::Return(None)
-            | HirExprKind::Break(None) => {}
+            | HirExprKind::Break(None)
+            | HirExprKind::Continue => {}
         }
     }
 
@@ -11214,6 +11219,7 @@ impl Analyzer {
             unit_only: true,
             scope_depth: context.scopes.len(),
             break_flows: Vec::new(),
+            continue_flows: Vec::new(),
         });
 
         let condition = self.lower_expr(condition, Some(&Ty::Bool), context);
@@ -11222,14 +11228,16 @@ impl Analyzer {
         let backedge_flow = context.flow.clone();
         let frame = context.loops.pop().expect("while frame");
 
+        let mut backedge_flows = frame.continue_flows;
         if backedge_flow.reachable {
-            self.reject_loop_carried_moves(&entry_flow, &backedge_flow, &outer_locals);
+            backedge_flows.push(backedge_flow);
+        }
+        for backedge in &backedge_flows {
+            self.reject_loop_carried_moves(&entry_flow, backedge, &outer_locals);
         }
         let mut exit_flows = frame.break_flows;
         exit_flows.push(condition_flow);
-        if backedge_flow.reachable {
-            exit_flows.push(backedge_flow);
-        }
+        exit_flows.extend(backedge_flows);
         context.flow = FlowState::join(&exit_flows);
         HirExpr {
             ty: Ty::Unit,
@@ -11253,13 +11261,18 @@ impl Analyzer {
             unit_only: false,
             scope_depth: context.scopes.len(),
             break_flows: Vec::new(),
+            continue_flows: Vec::new(),
         });
         let body = self.lower_expr(body, Some(&Ty::Unit), context);
         let backedge_flow = context.flow.clone();
         let frame = context.loops.pop().expect("loop frame");
 
+        let mut backedge_flows = frame.continue_flows;
         if backedge_flow.reachable {
-            self.reject_loop_carried_moves(&entry_flow, &backedge_flow, &outer_locals);
+            backedge_flows.push(backedge_flow);
+        }
+        for backedge in &backedge_flows {
+            self.reject_loop_carried_moves(&entry_flow, backedge, &outer_locals);
         }
         let has_reachable_break = !frame.break_flows.is_empty();
         context.flow = FlowState::join(&frame.break_flows);
@@ -11320,6 +11333,28 @@ impl Analyzer {
         HirExpr {
             ty: Ty::Never,
             kind: HirExprKind::Break(value),
+        }
+    }
+
+    fn lower_continue(&mut self, context: &mut LowerCtx) -> HirExpr {
+        let Some(frame) = context.loops.last() else {
+            self.error("`continue` cannot be used outside a `while` or `loop`");
+            return error_expr();
+        };
+        let scope_depth = frame.scope_depth;
+        if context.flow.reachable {
+            let continue_flow = context.flow_without_scopes_from(scope_depth, context.flow.clone());
+            context
+                .loops
+                .last_mut()
+                .expect("continue frame")
+                .continue_flows
+                .push(continue_flow);
+        }
+        context.flow.reachable = false;
+        HirExpr {
+            ty: Ty::Never,
+            kind: HirExprKind::Continue,
         }
     }
 
@@ -13380,7 +13415,7 @@ impl Analyzer {
             | Expr::Unsafe(value)
             | Expr::Return(Some(value))
             | Expr::Break(Some(value)) => self.collect_escaping_throws(value, context, errors),
-            Expr::Return(None) | Expr::Break(None) => {}
+            Expr::Return(None) | Expr::Break(None) | Expr::Continue => {}
             Expr::Binary(left, _, right)
             | Expr::Coalesce(left, right)
             | Expr::Assign(left, right) => {
@@ -18056,7 +18091,7 @@ fn do_block_requires_function_boundary(expression: &Expr) -> bool {
             do_block_requires_function_boundary(condition)
                 || do_block_requires_function_boundary(body)
         }
-        Expr::Break(_) => true,
+        Expr::Break(_) | Expr::Continue => true,
         Expr::Match { scrutinee, arms } => {
             do_block_requires_function_boundary(scrutinee)
                 || arms.iter().any(|arm| {
@@ -18477,7 +18512,9 @@ struct CleanupSourceLocal<'a> {
 #[derive(Clone)]
 struct CleanupLoopFrame {
     break_target: CleanupBlockId,
+    continue_target: CleanupBlockId,
     exit_scope: CleanupScopeId,
+    continue_scope: CleanupScopeId,
     result_destination: Option<CleanupDestination>,
     saw_break: bool,
 }
@@ -19834,6 +19871,13 @@ impl<'a> HirCleanupPlanner<'a> {
                 self.loops.last_mut().expect("loop frame exists").saw_break = true;
                 None
             }
+            HirExprKind::Continue => {
+                let Some(frame) = self.loops.last().cloned() else {
+                    return Err(self.diagnostic("HIR continue has no cleanup loop frame"));
+                };
+                self.goto_exiting(cursor, frame.continue_target, frame.continue_scope)?;
+                None
+            }
             HirExprKind::Match { scrutinee, arms } => {
                 self.walk_match(scrutinee, arms, cursor, result_use)?
             }
@@ -20099,7 +20143,9 @@ impl<'a> HirCleanupPlanner<'a> {
         )?;
         self.loops.push(CleanupLoopFrame {
             break_target: after,
+            continue_target: condition_block,
             exit_scope: cursor.scope,
+            continue_scope: loop_scope,
             result_destination: match &result_use {
                 ResultUse::Store(destination) => Some(destination.clone()),
                 ResultUse::Discard => None,
@@ -20187,7 +20233,9 @@ impl<'a> HirCleanupPlanner<'a> {
         )?;
         self.loops.push(CleanupLoopFrame {
             break_target: after,
+            continue_target: body_block,
             exit_scope: cursor.scope,
+            continue_scope: loop_scope,
             result_destination: match result_use {
                 ResultUse::Store(destination) => Some(destination),
                 ResultUse::Discard => None,
@@ -20678,6 +20726,7 @@ impl ConstantEvaluator<'_> {
             | HirExprKind::While { .. }
             | HirExprKind::Loop { .. }
             | HirExprKind::Break(_)
+            | HirExprKind::Continue
             | HirExprKind::Match { .. } => {
                 self.error("global initializer is not a compile-time constant");
                 None
@@ -21218,6 +21267,7 @@ impl Operand {
 #[derive(Clone)]
 struct EmitLoopTarget {
     break_label: String,
+    continue_label: String,
     result: Option<(Ty, String)>,
     cleanup_depth: usize,
 }
@@ -22534,6 +22584,7 @@ impl<'a> FunctionEmitter<'a> {
             HirExprKind::While { condition, body } => self.emit_while(condition, body),
             HirExprKind::Loop { body } => self.emit_loop(expression, body),
             HirExprKind::Break(value) => self.emit_break(value.as_deref()),
+            HirExprKind::Continue => self.emit_continue(),
             HirExprKind::Match { scrutinee, arms } => self.emit_match(expression, scrutinee, arms),
         }
     }
@@ -22700,6 +22751,7 @@ impl<'a> FunctionEmitter<'a> {
         self.terminate(format!("br label %{condition_label}"));
         self.loops.push(EmitLoopTarget {
             break_label: end_label.clone(),
+            continue_label: condition_label.clone(),
             result: None,
             cleanup_depth: self.drop_slots.len(),
         });
@@ -22735,6 +22787,7 @@ impl<'a> FunctionEmitter<'a> {
         self.terminate(format!("br label %{body_label}"));
         self.loops.push(EmitLoopTarget {
             break_label: end_label.clone(),
+            continue_label: body_label.clone(),
             result: result.clone(),
             cleanup_depth: self.drop_slots.len(),
         });
@@ -22791,6 +22844,15 @@ impl<'a> FunctionEmitter<'a> {
         }
         self.emit_cleanup_range(target.cleanup_depth)?;
         self.terminate(format!("br label %{}", target.break_label));
+        Ok(Operand::never())
+    }
+
+    fn emit_continue(&mut self) -> Result<Operand, Diagnostic> {
+        let target = self.loops.last().cloned().ok_or_else(|| {
+            Diagnostic::new("internal error: continue reached emission outside a loop")
+        })?;
+        self.emit_cleanup_range(target.cleanup_depth)?;
+        self.terminate(format!("br label %{}", target.continue_label));
         Ok(Operand::never())
     }
 
@@ -23772,7 +23834,7 @@ fn substitute_parameter_types(parameter: &mut Param, substitutions: &HashMap<Str
 fn substitute_self_expression_target(expression: &mut Expr, target: &str) {
     match expression {
         Expr::Name(name) if name == "Self" => *name = target.to_owned(),
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => {}
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => {}
         Expr::Unary(_, operand)
         | Expr::Try(operand)
         | Expr::Throw(operand)
@@ -23896,7 +23958,7 @@ fn rewrite_abstract_self_qualified_methods(expression: &mut Expr) {
                 *expression = replacement;
             }
         }
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => {}
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => {}
         Expr::Unary(_, operand)
         | Expr::Try(operand)
         | Expr::Throw(operand)
@@ -23990,7 +24052,7 @@ fn substitute_expr_types(expression: &mut Expr, substitutions: &HashMap<String, 
                 }
             }
         }
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) => {}
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
         Expr::Unary(_, operand)
         | Expr::Try(operand)
         | Expr::Throw(operand)

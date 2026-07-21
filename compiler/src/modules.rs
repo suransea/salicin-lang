@@ -2240,7 +2240,7 @@ impl Resolver {
                     self.rewrite_match_arm(arm, context, type_scope, value_scope);
                 }
             }
-            Expr::Unit | Expr::Integer(_) | Expr::Bool(_) => {}
+            Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
         }
     }
 
@@ -4095,7 +4095,7 @@ let main(): i32 = { Option() }
                         visit(&arm.body, names);
                     }
                 }
-                Expr::Unit | Expr::Integer(_) | Expr::Bool(_) => {}
+                Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
             }
         }
 

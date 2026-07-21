@@ -5,6 +5,10 @@ compiler pipeline, project manifests and local dependencies, ownership and borro
 source-backed core traits and containers, cleanup lowering, raw allocation primitives, and a growing
 `Box`/`Vec` allocation library.
 
+Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
+`continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs
+all lexical cleanup required when leaving nested scopes before starting the next iteration.
+
 Access keyword generics are implemented for functions and generic inherent members: `A: access` accepts `shared` or `mut`,
 defaults to shared when omitted, participates in monomorphization, and can drive parameter modes,
 borrow types, borrow expressions, and raw pointer borrows. The alloc free functions and methods use

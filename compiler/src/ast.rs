@@ -361,6 +361,7 @@ pub enum Expr {
         body: Box<Expr>,
     },
     Break(Option<Box<Expr>>),
+    Continue,
     Match {
         scrutinee: Box<Expr>,
         arms: Vec<MatchArm>,

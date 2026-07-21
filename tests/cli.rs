@@ -1724,6 +1724,8 @@ fn every_pass_fixture_checks_successfully() {
 fn m1_loops_and_arrays_run_with_expected_result() {
     for name in [
         "while_mutation.sc",
+        "continue.sc",
+        "continue_cleanup.sc",
         "loop_break_value.sc",
         "fixed_array_index.sc",
         "array_index_assignment.sc",
@@ -1811,6 +1813,7 @@ fn m1_array_errors_report_their_cause() {
 fn m1_loop_errors_report_their_cause() {
     for (name, expected) in [
         ("break_outside_loop.sc", "outside"),
+        ("continue_outside_loop.sc", "outside"),
         ("while_break_value.sc", "while"),
         ("loop_break_type_mismatch.sc", "type mismatch"),
         ("loop_backedge_move.sc", "move"),

@@ -6,6 +6,14 @@ subset.
 
 ## Unreleased
 
+## 0.100.0 - 2026-07-22
+
+- Implemented `continue` for `while` and value-producing `loop`, targeting the nearest enclosing
+  loop and rejecting use outside a loop or across an immediate closure boundary.
+- Added continue edges to ownership-flow joins and loop-carried move validation.
+- Routed continue edges through lexical cleanup planning and LLVM cleanup emission before branching
+  to the while condition or loop body.
+
 ## 0.99.0 - 2026-07-22
 
 - Allowed generic and concrete top-level functions to coexist in one label-directed overload set.

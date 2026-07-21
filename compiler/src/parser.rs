@@ -1979,6 +1979,10 @@ impl Parser {
             TokenKind::While => self.while_expression(),
             TokenKind::Loop => self.loop_expression(),
             TokenKind::Break => self.break_expression(allow_trailing_closure),
+            TokenKind::Continue => {
+                self.advance();
+                Ok(Expr::Continue)
+            }
             TokenKind::LBrace => self.closure(),
             _ => Err(self.error_at(
                 &token,
@@ -2849,7 +2853,7 @@ fn validate_expr_accesses(expression: &Expr, accesses: &HashSet<String>) -> Resu
             }
             Ok(())
         }
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => Ok(()),
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => Ok(()),
     }
 }
 
@@ -2910,7 +2914,7 @@ fn validate_region_name(region: &str, regions: &HashSet<String>) -> Result<(), S
 
 fn validate_expr_regions(expression: &Expr, regions: &HashSet<String>) -> Result<(), String> {
     match expression {
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => Ok(()),
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => Ok(()),
         Expr::Unary(_, value)
         | Expr::Try(value)
         | Expr::Throw(value)
@@ -3025,6 +3029,7 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::While => "`while`",
         TokenKind::Loop => "`loop`",
         TokenKind::Break => "`break`",
+        TokenKind::Continue => "`continue`",
         TokenKind::Extend => "`extend`",
         TokenKind::Struct => "`struct`",
         TokenKind::Enum => "`enum`",
