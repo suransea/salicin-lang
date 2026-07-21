@@ -154,8 +154,18 @@ statically known effectful function retain that identity through alias chains an
 specialization path. A statically known named function or such an alias may also fill an effectful
 callable parameter: the higher-order frame specializes that parameter to the source target, removes
 it from the runtime frame, and transforms the resulting direct call normally. A conditionally
-selected target, capturing closure, or other genuinely dynamic callable still requires the general
+selected target, escaping closure, or other genuinely dynamic callable still requires the general
 handler-aware runtime ABI and is rejected explicitly.
+
+An explicitly typed local closure whose row contains the handled effect is lowered to a resumable
+closure while it remains lexically visible to that handler. Its ordinary result becomes the input
+of a hidden `Continuation(Input, HandlerAnswer)` parameter appended to the final runtime group, and
+its body tail-invokes that continuation. The normal closure environment remains intact: shared
+captures retain `Fn` behavior, mutable captures retain `FnMut` state across resumptions and later
+calls, and move captures retain `FnOnce` ownership. Abandoning an operation inside the closure drops
+the moved capture through the erased continuation exactly once. Such a closure may also specialize
+an effectful higher-order callable parameter; conditionally selected or escaping closure values
+remain dynamic-ABI work.
 Operation and ordinary call arguments are traversed in source order, `done:` may change the answer
 type, and nested handlers of the same identity select the nearest matching boundary. Arguments of
 an effect-propagating named call enter CPS before its callee frame is built, so multiple suspended

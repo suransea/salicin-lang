@@ -390,11 +390,19 @@ struct AlgebraicHandler {
     clauses: HashMap<String, AlgebraicHandlerClause>,
     operations: HashMap<String, Vec<AlgebraicHandlerOperation>>,
     function_aliases: Rc<RefCell<HashMap<String, String>>>,
+    resumable_closures: Rc<RefCell<HashMap<String, SourceResumableClosure>>>,
     done: Option<AlgebraicHandlerClause>,
     inlining: Rc<RefCell<HashMap<String, SourceInlineFrame>>>,
     loop_breaks: Rc<RefCell<HashMap<String, SourceContinuation>>>,
     result_source: Option<Type>,
     return_continuations: Rc<RefCell<HashMap<String, SourceContinuation>>>,
+}
+
+#[derive(Clone)]
+struct SourceResumableClosure {
+    input: Type,
+    answer: Type,
+    group_lengths: Vec<usize>,
 }
 
 #[derive(Clone)]
@@ -11916,6 +11924,9 @@ impl Analyzer {
                 || parameter
                     .name
                     .starts_with("$handler$call$continuation$value$")
+                || parameter
+                    .name
+                    .starts_with("$handler$closure$continuation$value$")
         });
 
         let mut bound: HashSet<String> = source_groups
@@ -11925,6 +11936,23 @@ impl Analyzer {
         let mut capture_uses = Vec::new();
         if !self.scan_simple_closure_captures(body, &mut bound, outer, &mut capture_uses) {
             return error_expr();
+        }
+        if deferred_handler_continuation {
+            for capture in &mut capture_uses {
+                let Some(closure) = outer
+                    .lookup(&capture.name)
+                    .and_then(|local| local.closure.as_ref())
+                else {
+                    continue;
+                };
+                capture.mode = if closure.is_fn_once {
+                    ClosureCaptureMode::Move
+                } else if closure.is_fn_mut {
+                    ClosureCaptureMode::Mutable
+                } else {
+                    ClosureCaptureMode::Shared
+                };
+            }
         }
 
         let function = format!("__closure.{}", self.next_closure);
@@ -11985,7 +12013,9 @@ impl Analyzer {
                 .is_some_and(|partial| partial.consumed_groups != 0 || partial.capture_count != 0);
             let captures_callable =
                 local.closure.is_some() && capture.mode == ClosureCaptureMode::Move;
-            if is_captured_partial || (local.closure.is_some() && !captures_callable) {
+            if is_captured_partial
+                || (local.closure.is_some() && !captures_callable && !deferred_handler_continuation)
+            {
                 self.error(format!("closure cannot capture local callable `{name}`"));
                 continue;
             }
@@ -12005,7 +12035,8 @@ impl Analyzer {
             }
             match capture.mode {
                 ClosureCaptureMode::Shared | ClosureCaptureMode::Mutable
-                    if !self.is_copy_type(&local.ty) =>
+                    if !(self.is_copy_type(&local.ty)
+                        || deferred_handler_continuation && local.closure.is_some()) =>
                 {
                     if name.starts_with("$handler$match$input$") {
                         self.error(
@@ -16459,6 +16490,7 @@ impl Analyzer {
             clauses,
             operations: handler_operations,
             function_aliases: Rc::new(RefCell::new(HashMap::new())),
+            resumable_closures: Rc::new(RefCell::new(HashMap::new())),
             done,
             inlining: Rc::new(RefCell::new(HashMap::new())),
             loop_breaks: Rc::new(RefCell::new(HashMap::new())),
@@ -16699,6 +16731,14 @@ impl Analyzer {
                 return result;
             }
             if let Some(result) = self.transform_nested_effect_handler(
+                &expression,
+                handler.clone(),
+                resume.clone(),
+                continuation.clone(),
+            ) {
+                return result;
+            }
+            if let Some(result) = self.transform_resumable_closure_call(
                 &expression,
                 handler.clone(),
                 resume.clone(),
@@ -17555,6 +17595,245 @@ impl Analyzer {
         ))
     }
 
+    fn transform_resumable_closure_call(
+        &mut self,
+        expression: &Expr,
+        handler: Rc<AlgebraicHandler>,
+        resume: Option<SourceResume>,
+        continuation: SourceContinuation,
+    ) -> Option<Result<Expr, ()>> {
+        let mut groups = Vec::new();
+        let Expr::Name(name) = flatten_call(expression, &mut groups) else {
+            return None;
+        };
+        let closure = handler.resumable_closures.borrow().get(name).cloned()?;
+        if groups.len() != closure.group_lengths.len()
+            || groups
+                .iter()
+                .zip(&closure.group_lengths)
+                .any(|(arguments, expected)| arguments.len() != *expected)
+        {
+            self.error(format!(
+                "resumable closure `{name}` must be fully applied before it can run under a handler"
+            ));
+            return Some(Err(()));
+        }
+        if groups
+            .iter()
+            .flat_map(|group| group.iter())
+            .any(|argument| self.handler_expression_may_suspend(&argument.value, &handler.identity))
+        {
+            let group_lengths = closure.group_lengths.clone();
+            let arguments = groups
+                .iter()
+                .flat_map(|group| group.iter().cloned())
+                .collect::<Vec<_>>();
+            let callee = name.clone();
+            let next_handler = handler.clone();
+            let next_resume = resume.clone();
+            let next_continuation = continuation.clone();
+            let completed: SourceArgumentsContinuation = Rc::new(move |analyzer, arguments| {
+                let mut offset = 0;
+                let mut call = Expr::Name(callee.clone());
+                for length in &group_lengths {
+                    let end = offset + length;
+                    call = Expr::Call(Box::new(call), arguments[offset..end].to_vec());
+                    offset = end;
+                }
+                analyzer
+                    .transform_resumable_closure_call(
+                        &call,
+                        next_handler.clone(),
+                        next_resume.clone(),
+                        next_continuation.clone(),
+                    )
+                    .unwrap_or_else(|| {
+                        analyzer.error(
+                            "internal handler lost its resumable closure after argument lowering",
+                        );
+                        Err(())
+                    })
+            });
+            return Some(self.transform_handler_arguments(
+                arguments,
+                Vec::new(),
+                handler,
+                resume,
+                completed,
+            ));
+        }
+
+        let specialization = self.next_closure;
+        self.next_closure += 1;
+        let value_name = format!("$handler$closure$continuation$value${specialization}");
+        let continuation_name = format!("$handler$closure$continuation${specialization}");
+        let continuation_body = match continuation(self, Expr::Name(value_name.clone())) {
+            Ok(body) => body,
+            Err(()) => return Some(Err(())),
+        };
+        let continuation_binding = Binding {
+            mutable: true,
+            name: continuation_name.clone(),
+            annotation: Some(Type::Function {
+                groups: vec![vec![closure.input.clone()]],
+                effects: FunctionEffects::default(),
+                result: Box::new(closure.answer.clone()),
+            }),
+            value: Expr::Closure(
+                vec![Param {
+                    mode: PassMode::Inferred,
+                    access: None,
+                    passing: None,
+                    region: None,
+                    name: value_name,
+                    ty: closure.input.clone(),
+                }],
+                Box::new(continuation_body),
+            ),
+        };
+        let erased_name = format!("$handler$erased$closure$continuation${specialization}");
+        let erased_binding = Binding {
+            mutable: true,
+            name: erased_name.clone(),
+            annotation: Some(Type::Named(
+                self.lang_item_name(LangItemKind::Continuation).to_owned(),
+                vec![closure.input, closure.answer],
+            )),
+            value: Expr::Call(
+                Box::new(Expr::Name("$handler$erase$continuation".to_owned())),
+                vec![CallArg {
+                    label: None,
+                    value: Expr::Name(continuation_name),
+                }],
+            ),
+        };
+        let mut call = Expr::Name(name.clone());
+        for (index, group) in groups.iter().enumerate() {
+            let mut arguments = group.to_vec();
+            if index + 1 == groups.len() {
+                arguments.push(CallArg {
+                    label: None,
+                    value: Expr::Name(erased_name.clone()),
+                });
+            }
+            call = Expr::Call(Box::new(call), arguments);
+        }
+        Some(Ok(Expr::Block(
+            vec![Stmt::Let(continuation_binding), Stmt::Let(erased_binding)],
+            Some(Box::new(call)),
+        )))
+    }
+
+    fn transform_resumable_closure_binding(
+        &mut self,
+        binding: &Binding,
+        handler: Rc<AlgebraicHandler>,
+    ) -> Option<Result<(Binding, SourceResumableClosure), ()>> {
+        let Some(Type::Function {
+            groups,
+            effects,
+            result,
+        }) = binding.annotation.as_ref()
+        else {
+            return None;
+        };
+        if !effects
+            .custom
+            .iter()
+            .any(|effect| source_effect_identity(effect) == handler.identity)
+        {
+            return None;
+        }
+        if !matches!(binding.value, Expr::Closure(_, _)) {
+            return None;
+        }
+        let Some(answer) = handler.result_source.clone() else {
+            self.error("a resumable closure requires a contextual handler answer type");
+            return Some(Err(()));
+        };
+        let input = (**result).clone();
+        let specialization = self.next_closure;
+        self.next_closure += 1;
+        let continuation_name = format!("$handler$closure$frame$continuation${specialization}");
+        let continuation_ty = Type::Named(
+            self.lang_item_name(LangItemKind::Continuation).to_owned(),
+            vec![input.clone(), answer.clone()],
+        );
+        let mut value = binding.value.clone();
+        let Some(body) = append_innermost_closure_parameter(
+            &mut value,
+            Param {
+                mode: PassMode::Move,
+                access: None,
+                passing: None,
+                region: None,
+                name: continuation_name.clone(),
+                ty: continuation_ty.clone(),
+            },
+        ) else {
+            self.error("internal resumable closure binding lost its closure value");
+            return Some(Err(()));
+        };
+        let tail_continuation_name = continuation_name.clone();
+        let tail: SourceContinuation = Rc::new(move |_, value| {
+            Ok(Expr::Call(
+                Box::new(Expr::Name("$handler$invoke$continuation".to_owned())),
+                vec![
+                    CallArg {
+                        label: None,
+                        value: Expr::Name(tail_continuation_name.clone()),
+                    },
+                    CallArg { label: None, value },
+                ],
+            ))
+        });
+        let return_name = format!("$handler$closure$return${specialization}");
+        rewrite_handler_returns(body, &return_name);
+        handler
+            .return_continuations
+            .borrow_mut()
+            .insert(return_name.clone(), tail.clone());
+        let transformed = self.transform_handler_expr(body.clone(), handler.clone(), None, tail);
+        handler
+            .return_continuations
+            .borrow_mut()
+            .remove(&return_name);
+        let transformed = match transformed {
+            Ok(transformed) => transformed,
+            Err(()) => return Some(Err(())),
+        };
+        *body = transformed;
+
+        let mut rewritten_groups = groups.clone();
+        let Some(last_group) = rewritten_groups.last_mut() else {
+            self.error("a resumable closure type requires a runtime parameter group");
+            return Some(Err(()));
+        };
+        last_group.push(continuation_ty);
+        let mut rewritten_effects = effects.clone();
+        rewritten_effects
+            .custom
+            .retain(|effect| source_effect_identity(effect) != handler.identity);
+        let rewritten = Binding {
+            mutable: binding.mutable,
+            name: binding.name.clone(),
+            annotation: Some(Type::Function {
+                groups: rewritten_groups,
+                effects: rewritten_effects,
+                result: Box::new(answer.clone()),
+            }),
+            value,
+        };
+        Some(Ok((
+            rewritten,
+            SourceResumableClosure {
+                input,
+                answer,
+                group_lengths: groups.iter().map(Vec::len).collect(),
+            },
+        )))
+    }
+
     fn transform_effectful_named_call(
         &mut self,
         expression: &Expr,
@@ -17749,7 +18028,9 @@ impl Analyzer {
                 .get(argument_name)
                 .cloned()
                 .unwrap_or_else(|| argument_name.clone());
-            if self.functions.contains_key(&target) {
+            if self.functions.contains_key(&target)
+                || handler.resumable_closures.borrow().contains_key(&target)
+            {
                 omitted_parameters.insert(index);
                 static_function_values.insert(parameter.name.clone(), target);
             }
@@ -17998,6 +18279,32 @@ impl Analyzer {
         let first = statements.remove(0);
         match first {
             Stmt::Let(mut binding) => {
+                if let Some(transformed) =
+                    self.transform_resumable_closure_binding(&binding, handler.clone())
+                {
+                    let (binding, closure) = transformed?;
+                    let name = binding.name.clone();
+                    let previous = handler
+                        .resumable_closures
+                        .borrow_mut()
+                        .insert(name.clone(), closure);
+                    let rest = self.transform_handler_block(
+                        statements,
+                        tail,
+                        handler.clone(),
+                        resume,
+                        continuation,
+                    );
+                    let mut closures = handler.resumable_closures.borrow_mut();
+                    if let Some(previous) = previous {
+                        closures.insert(name, previous);
+                    } else {
+                        closures.remove(&name);
+                    }
+                    drop(closures);
+                    return rest
+                        .map(|rest| Expr::Block(vec![Stmt::Let(binding)], Some(Box::new(rest))));
+                }
                 if let Expr::Name(target) = &binding.value {
                     let resolved_target = handler
                         .function_aliases
@@ -22659,6 +22966,20 @@ fn rewrite_static_function_values(expression: &mut Expr, replacements: &HashMap<
         }
         Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
     }
+}
+
+fn append_innermost_closure_parameter(
+    expression: &mut Expr,
+    parameter: Param,
+) -> Option<&mut Expr> {
+    let Expr::Closure(parameters, body) = expression else {
+        return None;
+    };
+    if matches!(body.as_ref(), Expr::Closure(_, _)) {
+        return append_innermost_closure_parameter(body, parameter);
+    }
+    parameters.push(parameter);
+    Some(body)
 }
 
 fn hygienic_inline_function(function: &Function, prefix: &str) -> (Vec<Vec<Param>>, Expr) {
@@ -27525,7 +27846,32 @@ impl<'a> FunctionEmitter<'a> {
                                 let mut stored = Vec::new();
                                 for capture in &closure.captures {
                                     if capture.mode != ClosureCaptureMode::Move {
-                                        let address = self.emit_place_address(&capture.place)?;
+                                        let address = if matches!(capture.place.ty, Ty::Callable(_))
+                                            && self
+                                                .partial_captures
+                                                .contains_key(&capture.place.local)
+                                        {
+                                            let callable = self.emit_stored_callable_read(
+                                                &HirExpr {
+                                                    ty: capture.place.ty.clone(),
+                                                    kind: HirExprKind::Unit,
+                                                },
+                                                capture.place.local,
+                                                HirReadKind::Copy,
+                                            )?;
+                                            let callable_ty = llvm_value_type(&callable.ty)?;
+                                            let environment = self.entry_alloca(
+                                                &callable_ty,
+                                                "borrowed callable environment",
+                                            );
+                                            self.instruction(format!(
+                                                "store {callable_ty} {}, ptr {environment}",
+                                                callable.value()?
+                                            ));
+                                            environment
+                                        } else {
+                                            self.emit_place_address(&capture.place)?
+                                        };
                                         let pointer =
                                             self.entry_alloca("ptr", "borrowed closure capture");
                                         self.instruction(format!(
@@ -28406,7 +28752,10 @@ impl<'a> FunctionEmitter<'a> {
 
     fn emit_place_address(&mut self, place: &HirPlace) -> Result<String, Diagnostic> {
         let mut root_pointer = self.locals.get(&place.local).cloned().ok_or_else(|| {
-            Diagnostic::new(format!("internal error: unknown local id {}", place.local))
+            Diagnostic::new(format!(
+                "internal error: unknown local id {} in function `{}`",
+                place.local, self.function.name
+            ))
         })?;
         if place.indirect {
             let loaded = self.fresh_register();

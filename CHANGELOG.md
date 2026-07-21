@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.130.0 - 2026-07-22
+
+- Lowered explicitly typed local effectful closures to handler-answer CPS with a hidden erased
+  continuation parameter appended to their final runtime group.
+- Preserved ordinary capture environments across that ABI, including repeated `FnMut` state and
+  `FnOnce` move-capture cleanup when a clause abandons the suspended computation.
+- Allowed statically known capturing closures to specialize higher-order effectful frames and added
+  native shared-capture, mutable-repeat, and exactly-once Drop coverage.
+- Materialized borrowed callable environments when deferred continuations forward `Fn` or `FnMut`
+  closures through another closure boundary.
+
 ## 0.129.0 - 2026-07-22
 
 - Specialized higher-order effectful frames when callable arguments resolve to named functions or

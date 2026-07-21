@@ -69,8 +69,12 @@ frames share an erased call/drop-entry plus environment ABI with a runtime one-s
 immutable local aliases of statically known effectful functions are resolved through the same CPS
 path, including chained aliases. Statically known function arguments also specialize higher-order
 effectful frames and are erased from those frames' runtime parameter lists. Capturing and genuinely
-dynamic indirect calls remain implementation work and receive a dedicated handler-aware ABI
-diagnostic. Recursive-frame visibility is limited to callee-body
+typed local closures now use a hidden erased continuation argument while lexically enclosed by the
+handler. Their ordinary capture environments preserve `Fn`, `FnMut`, and `FnOnce` behavior,
+including repeated mutable calls and exactly-once abandonment cleanup, and they may specialize a
+higher-order frame. Conditionally selected, escaping, and otherwise genuinely dynamic indirect
+calls remain implementation work and receive a dedicated handler-aware ABI diagnostic.
+Recursive-frame visibility is limited to callee-body
 transformation, so sequential calls to the same effectful named function remain independent.
 Abandonment invokes the armed environment's drop entry,
 whereas resumption transfers and disarms it; native resource regressions cover exactly-once cleanup
