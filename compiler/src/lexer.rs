@@ -64,6 +64,11 @@ pub enum TokenKind {
     GreaterEqual,
     AndAnd,
     OrOr,
+    Amp,
+    Pipe,
+    Caret,
+    Shl,
+    Shr,
     QuestionDot,
     QuestionQuestion,
     Eof,
@@ -219,12 +224,17 @@ impl Lexer {
                     '=' => TokenKind::Equal,
                     '!' if self.take('=') => TokenKind::BangEqual,
                     '!' => TokenKind::Bang,
+                    '<' if self.take('<') => TokenKind::Shl,
                     '<' if self.take('=') => TokenKind::LessEqual,
                     '<' => TokenKind::Less,
+                    '>' if self.take('>') => TokenKind::Shr,
                     '>' if self.take('=') => TokenKind::GreaterEqual,
                     '>' => TokenKind::Greater,
                     '&' if self.take('&') => TokenKind::AndAnd,
+                    '&' => TokenKind::Amp,
                     '|' if self.take('|') => TokenKind::OrOr,
+                    '|' => TokenKind::Pipe,
+                    '^' => TokenKind::Caret,
                     '?' if self.take('.') => TokenKind::QuestionDot,
                     '?' if self.take('?') => TokenKind::QuestionQuestion,
                     '/' => TokenKind::Slash,
@@ -275,6 +285,11 @@ impl Lexer {
                     | TokenKind::GreaterEqual
                     | TokenKind::AndAnd
                     | TokenKind::OrOr
+                    | TokenKind::Amp
+                    | TokenKind::Pipe
+                    | TokenKind::Caret
+                    | TokenKind::Shl
+                    | TokenKind::Shr
                     | TokenKind::QuestionDot
                     | TokenKind::QuestionQuestion
             )
@@ -416,6 +431,36 @@ mod tests {
         assert!(tokens.iter().any(|t| t.kind == TokenKind::Else));
         assert!(tokens.iter().any(|t| t.kind == TokenKind::Throw));
         assert!(tokens.iter().any(|t| t.kind == TokenKind::Newline));
+    }
+
+    #[test]
+    fn recognizes_bitwise_and_shift_operators_without_confusing_logical_ones() {
+        let kinds = lex("a & b | c ^ d << e >> f && g || h")
+            .unwrap()
+            .into_iter()
+            .map(|token| token.kind)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Ident("a".into()),
+                TokenKind::Amp,
+                TokenKind::Ident("b".into()),
+                TokenKind::Pipe,
+                TokenKind::Ident("c".into()),
+                TokenKind::Caret,
+                TokenKind::Ident("d".into()),
+                TokenKind::Shl,
+                TokenKind::Ident("e".into()),
+                TokenKind::Shr,
+                TokenKind::Ident("f".into()),
+                TokenKind::AndAnd,
+                TokenKind::Ident("g".into()),
+                TokenKind::OrOr,
+                TokenKind::Ident("h".into()),
+                TokenKind::Eof,
+            ]
+        );
     }
 
     #[test]

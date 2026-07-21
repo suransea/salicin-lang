@@ -1236,7 +1236,7 @@ const ORDER_LESS: u8 = 1 << 0;
 const ORDER_EQUAL: u8 = 1 << 1;
 const ORDER_GREATER: u8 = 1 << 2;
 
-const BINARY_OPERATOR_TRAITS: [BinaryOperatorTrait; 11] = [
+const BINARY_OPERATOR_TRAITS: [BinaryOperatorTrait; 16] = [
     BinaryOperatorTrait {
         operator: BinaryOp::Add,
         lang_item: LangItemKind::Add,
@@ -1268,6 +1268,41 @@ const BINARY_OPERATOR_TRAITS: [BinaryOperatorTrait; 11] = [
     BinaryOperatorTrait {
         operator: BinaryOp::Rem,
         lang_item: LangItemKind::Rem,
+        parameter_mode: PassMode::Move,
+        method_output: OperatorMethodOutput::Associated,
+        result_transform: OperatorResultTransform::Direct,
+    },
+    BinaryOperatorTrait {
+        operator: BinaryOp::BitAnd,
+        lang_item: LangItemKind::BitAnd,
+        parameter_mode: PassMode::Move,
+        method_output: OperatorMethodOutput::Associated,
+        result_transform: OperatorResultTransform::Direct,
+    },
+    BinaryOperatorTrait {
+        operator: BinaryOp::BitOr,
+        lang_item: LangItemKind::BitOr,
+        parameter_mode: PassMode::Move,
+        method_output: OperatorMethodOutput::Associated,
+        result_transform: OperatorResultTransform::Direct,
+    },
+    BinaryOperatorTrait {
+        operator: BinaryOp::BitXor,
+        lang_item: LangItemKind::BitXor,
+        parameter_mode: PassMode::Move,
+        method_output: OperatorMethodOutput::Associated,
+        result_transform: OperatorResultTransform::Direct,
+    },
+    BinaryOperatorTrait {
+        operator: BinaryOp::Shl,
+        lang_item: LangItemKind::Shl,
+        parameter_mode: PassMode::Move,
+        method_output: OperatorMethodOutput::Associated,
+        result_transform: OperatorResultTransform::Direct,
+    },
+    BinaryOperatorTrait {
+        operator: BinaryOp::Shr,
+        lang_item: LangItemKind::Shr,
         parameter_mode: PassMode::Move,
         method_output: OperatorMethodOutput::Associated,
         result_transform: OperatorResultTransform::Direct,
@@ -7595,9 +7630,16 @@ impl Analyzer {
                 | BinaryOp::Le
                 | BinaryOp::Gt
                 | BinaryOp::Ge => TypeProbe::Known(Ty::Bool),
-                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
-                    self.probe_arithmetic_ty(*operator, left, right, hint, context)
-                }
+                BinaryOp::Add
+                | BinaryOp::Sub
+                | BinaryOp::Mul
+                | BinaryOp::Div
+                | BinaryOp::Rem
+                | BinaryOp::BitAnd
+                | BinaryOp::BitOr
+                | BinaryOp::BitXor
+                | BinaryOp::Shl
+                | BinaryOp::Shr => self.probe_arithmetic_ty(*operator, left, right, hint, context),
             },
             Expr::Coalesce(left, right) => self.probe_coalesce_ty(left, right, hint, context),
             Expr::Try(value) => {
@@ -13113,7 +13155,8 @@ impl Analyzer {
                 context.flow = FlowState::join(&[skip_flow, right_flow]);
                 (left, right, Ty::Bool)
             }
-            Add | Sub | Mul | Div | Rem | Lt | Le | Gt | Ge => {
+            Add | Sub | Mul | Div | Rem | BitAnd | BitOr | BitXor | Shl | Shr | Lt | Le | Gt
+            | Ge => {
                 let numeric_hint = expected.filter(|ty| ty.is_integer());
                 let (left, right) = self.lower_numeric_pair(left, right, numeric_hint, context);
                 if !left.ty.is_integer() {
@@ -16555,6 +16598,14 @@ fn integer_fits(value: i128, ty: &Ty) -> bool {
     }
 }
 
+fn integer_bit_width(ty: &Ty) -> u32 {
+    match ty {
+        Ty::I32 | Ty::U32 => 32,
+        Ty::I64 | Ty::U64 => 64,
+        _ => 0,
+    }
+}
+
 fn signed_integer_min(ty: &Ty) -> Option<i128> {
     match ty {
         Ty::I32 => Some(i128::from(i32::MIN)),
@@ -16601,6 +16652,11 @@ fn binary_spelling(operator: BinaryOp) -> &'static str {
         BinaryOp::Mul => "*",
         BinaryOp::Div => "/",
         BinaryOp::Rem => "%",
+        BinaryOp::BitAnd => "&",
+        BinaryOp::BitOr => "|",
+        BinaryOp::BitXor => "^",
+        BinaryOp::Shl => "<<",
+        BinaryOp::Shr => ">>",
         BinaryOp::Eq => "==",
         BinaryOp::Ne => "!=",
         BinaryOp::Lt => "<",
@@ -18881,6 +18937,16 @@ impl ConstantEvaluator<'_> {
                     self.error(format!("constant arithmetic overflows `{operand_ty}`"));
                     return None;
                 }
+                if matches!(operator, Shl | Shr)
+                    && u32::try_from(right)
+                        .ok()
+                        .is_none_or(|shift| shift >= integer_bit_width(operand_ty))
+                {
+                    self.error(format!(
+                        "shift count `{right}` is out of range for `{operand_ty}`"
+                    ));
+                    return None;
+                }
                 let arithmetic = match operator {
                     Add => left.checked_add(right),
                     Sub => left.checked_sub(right),
@@ -18895,6 +18961,17 @@ impl ConstantEvaluator<'_> {
                         return None;
                     }
                     Rem => left.checked_rem(right),
+                    BitAnd => Some(left & right),
+                    BitOr => Some(left | right),
+                    BitXor => Some(left ^ right),
+                    Shl => u32::try_from(right)
+                        .ok()
+                        .filter(|shift| *shift < integer_bit_width(operand_ty))
+                        .and_then(|shift| left.checked_shl(shift)),
+                    Shr => u32::try_from(right)
+                        .ok()
+                        .filter(|shift| *shift < integer_bit_width(operand_ty))
+                        .and_then(|shift| left.checked_shr(shift)),
                     Eq => return Some(ConstValue::Bool(left == right)),
                     Ne => return Some(ConstValue::Bool(left != right)),
                     Lt => return Some(ConstValue::Bool(left < right)),
@@ -20160,6 +20237,9 @@ impl<'a> FunctionEmitter<'a> {
                 if matches!(operator, BinaryOp::Div | BinaryOp::Rem) {
                     self.emit_integer_division_guard(&left, &right)?;
                 }
+                if matches!(operator, BinaryOp::Shl | BinaryOp::Shr) {
+                    self.emit_shift_guard(&right)?;
+                }
                 let register = self.fresh_register();
                 let ty = llvm_value_type(&left.ty)?;
                 let instruction = match operator {
@@ -20170,6 +20250,12 @@ impl<'a> FunctionEmitter<'a> {
                     BinaryOp::Div => "udiv",
                     BinaryOp::Rem if left.ty.is_signed() => "srem",
                     BinaryOp::Rem => "urem",
+                    BinaryOp::BitAnd => "and",
+                    BinaryOp::BitOr => "or",
+                    BinaryOp::BitXor => "xor",
+                    BinaryOp::Shl => "shl",
+                    BinaryOp::Shr if left.ty.is_signed() => "ashr",
+                    BinaryOp::Shr => "lshr",
                     BinaryOp::Eq => "icmp eq",
                     BinaryOp::Ne => "icmp ne",
                     BinaryOp::Lt if left.ty.is_signed() => "icmp slt",
@@ -20719,6 +20805,26 @@ impl<'a> FunctionEmitter<'a> {
             "br i1 {invalid}, label %{trap_label}, label %{ok_label}"
         ));
 
+        self.start_block(&trap_label);
+        self.instruction("call void @llvm.trap()");
+        self.terminate("unreachable");
+        self.start_block(&ok_label);
+        Ok(())
+    }
+
+    fn emit_shift_guard(&mut self, right: &Operand) -> Result<(), Diagnostic> {
+        let ty = llvm_value_type(&right.ty)?;
+        let invalid = self.fresh_register();
+        self.instruction(format!(
+            "{invalid} = icmp uge {ty} {}, {}",
+            right.value()?,
+            integer_bit_width(&right.ty)
+        ));
+        let ok_label = self.fresh_label("shift.ok");
+        let trap_label = self.fresh_label("shift.trap");
+        self.terminate(format!(
+            "br i1 {invalid}, label %{trap_label}, label %{ok_label}"
+        ));
         self.start_block(&trap_label);
         self.instruction("call void @llvm.trap()");
         self.terminate("unreachable");
@@ -23971,6 +24077,30 @@ let main(): i32 = {
     }
 
     #[test]
+    fn evaluates_constant_bitwise_operations_and_rejects_invalid_shifts() {
+        let ir = compile_text(
+            "let mask: i32 = (6 & 3) | (8 ^ 1)\n\
+             let shifted: i32 = 8 >> 2\n\
+             let main(): i32 = mask + shifted\n",
+        )
+        .expect("constant bitwise operations must compile");
+        assert!(ir.contains("constant i32 11"));
+        assert!(ir.contains("constant i32 2"));
+
+        for count in ["-1", "32"] {
+            let errors = compile_text(&format!(
+                "let invalid: i32 = 1 << {count}\nlet main(): i32 = 0\n"
+            ))
+            .unwrap_err();
+            assert!(errors.iter().any(|error| {
+                error
+                    .message
+                    .contains(&format!("shift count `{count}` is out of range for `i32`"))
+            }));
+        }
+    }
+
+    #[test]
     fn emits_nominal_aggregates_and_tag_switches() {
         let ir = compile_text(
             r#"
@@ -26167,6 +26297,69 @@ let main(): i32 = if invert(false) {
             let symbol = function_symbol(&trait_method_name(&key, method));
             assert_eq!(ir.matches(&format!("call i32 @{symbol}(")).count(), 1);
         }
+    }
+
+    #[test]
+    fn lowers_bitwise_operator_traits_and_builtin_integer_ops() {
+        let program = resolve_text(
+            r#"
+use core.ops.{BitAnd, BitOr, BitXor, Shl, Shr}
+let Bits = struct(value: i32)
+extend Bits: BitAnd(Bits) {
+  let Output = Bits
+  let bit_and(move self)(move rhs: Bits): Bits = Bits(self.value & rhs.value)
+}
+extend Bits: BitOr(Bits) {
+  let Output = Bits
+  let bit_or(move self)(move rhs: Bits): Bits = Bits(self.value | rhs.value)
+}
+extend Bits: BitXor(Bits) {
+  let Output = Bits
+  let bit_xor(move self)(move rhs: Bits): Bits = Bits(self.value ^ rhs.value)
+}
+extend Bits: Shl(Bits) {
+  let Output = Bits
+  let shl(move self)(move rhs: Bits): Bits = Bits(self.value << rhs.value)
+}
+extend Bits: Shr(Bits) {
+  let Output = Bits
+  let shr(move self)(move rhs: Bits): Bits = Bits(self.value >> rhs.value)
+}
+let mask(T: type)(move left: T)(move right: T): T
+where T: BitAnd(T, Output = T) = left & right
+let unsigned_shift(value: u32): u32 = value >> 2
+let main(): i32 = {
+  let value = ((((mask(Bits(6))(Bits(3)) | Bits(8)) ^ Bits(3)) << Bits(1)) >> Bits(1)).value
+  let builtins = (6 & 3) == 2 && (2 | 8) == 10 && (10 ^ 3) == 9 &&
+    (9 << 1) == 18 && (-8 >> 2) == -2 && unsigned_shift(8) == 2
+  if value == 9 && builtins { 42 } else { 0 }
+}
+"#,
+        );
+        let ir = compile(&program).expect("bitwise operator source must compile");
+        for (trait_name, method) in [
+            ("BitAnd", "bit_and"),
+            ("BitOr", "bit_or"),
+            ("BitXor", "bit_xor"),
+            ("Shl", "shl"),
+            ("Shr", "shr"),
+        ] {
+            let key = TraitImplKey {
+                self_ty: Ty::Struct("Bits".into()),
+                trait_ref: TraitRefKey {
+                    name: format!("core::ops::{trait_name}"),
+                    arguments: vec![Ty::Struct("Bits".into())],
+                },
+            };
+            let symbol = function_symbol(&trait_method_name(&key, method));
+            assert!(ir.contains(&format!("@{symbol}(")));
+        }
+        for instruction in [
+            "and i32", "or i32", "xor i32", "shl i32", "ashr i32", "lshr i32",
+        ] {
+            assert!(ir.contains(instruction), "missing `{instruction}`");
+        }
+        assert!(ir.contains("shift.trap"));
     }
 
     #[test]

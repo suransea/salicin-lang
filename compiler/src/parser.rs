@@ -1314,10 +1314,37 @@ impl Parser {
     }
 
     fn logical_and(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
-        let mut expression = self.equality(allow_trailing_closure)?;
+        let mut expression = self.bitwise_or(allow_trailing_closure)?;
         while self.take(&TokenKind::AndAnd) {
-            let right = self.equality(allow_trailing_closure)?;
+            let right = self.bitwise_or(allow_trailing_closure)?;
             expression = Expr::Binary(Box::new(expression), BinaryOp::And, Box::new(right));
+        }
+        Ok(expression)
+    }
+
+    fn bitwise_or(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
+        let mut expression = self.bitwise_xor(allow_trailing_closure)?;
+        while self.take(&TokenKind::Pipe) {
+            let right = self.bitwise_xor(allow_trailing_closure)?;
+            expression = Expr::Binary(Box::new(expression), BinaryOp::BitOr, Box::new(right));
+        }
+        Ok(expression)
+    }
+
+    fn bitwise_xor(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
+        let mut expression = self.bitwise_and(allow_trailing_closure)?;
+        while self.take(&TokenKind::Caret) {
+            let right = self.bitwise_and(allow_trailing_closure)?;
+            expression = Expr::Binary(Box::new(expression), BinaryOp::BitXor, Box::new(right));
+        }
+        Ok(expression)
+    }
+
+    fn bitwise_and(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
+        let mut expression = self.equality(allow_trailing_closure)?;
+        while self.take(&TokenKind::Amp) {
+            let right = self.equality(allow_trailing_closure)?;
+            expression = Expr::Binary(Box::new(expression), BinaryOp::BitAnd, Box::new(right));
         }
         Ok(expression)
     }
@@ -1343,7 +1370,7 @@ impl Parser {
     }
 
     fn relation(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
-        let left = self.additive(allow_trailing_closure)?;
+        let left = self.shift(allow_trailing_closure)?;
         let operator = if self.take(&TokenKind::Less) {
             Some(BinaryOp::Lt)
         } else if self.take(&TokenKind::LessEqual) {
@@ -1359,7 +1386,7 @@ impl Parser {
         let Some(operator) = operator else {
             return Ok(left);
         };
-        let right = self.additive(allow_trailing_closure)?;
+        let right = self.shift(allow_trailing_closure)?;
         if matches!(
             self.current().kind,
             TokenKind::Less | TokenKind::LessEqual | TokenKind::Greater | TokenKind::GreaterEqual
@@ -1367,6 +1394,25 @@ impl Parser {
             return Err(self.error_here("comparison operators cannot be chained"));
         }
         Ok(Expr::Binary(Box::new(left), operator, Box::new(right)))
+    }
+
+    fn shift(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
+        let mut expression = self.additive(allow_trailing_closure)?;
+        loop {
+            let operator = if self.take(&TokenKind::Shl) {
+                Some(BinaryOp::Shl)
+            } else if self.take(&TokenKind::Shr) {
+                Some(BinaryOp::Shr)
+            } else {
+                None
+            };
+            let Some(operator) = operator else {
+                break;
+            };
+            let right = self.additive(allow_trailing_closure)?;
+            expression = Expr::Binary(Box::new(expression), operator, Box::new(right));
+        }
+        Ok(expression)
     }
 
     fn additive(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
@@ -2557,6 +2603,11 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::GreaterEqual => "`>=`",
         TokenKind::AndAnd => "`&&`",
         TokenKind::OrOr => "`||`",
+        TokenKind::Amp => "`&`",
+        TokenKind::Pipe => "`|`",
+        TokenKind::Caret => "`^`",
+        TokenKind::Shl => "`<<`",
+        TokenKind::Shr => "`>>`",
         TokenKind::QuestionQuestion => "`??`",
         TokenKind::QuestionDot => "`?.`",
         TokenKind::Eof => "end of file",
@@ -2583,6 +2634,40 @@ mod tests {
         assert_eq!(function.groups.len(), 2);
         assert_eq!(function.groups[0][0].mode, PassMode::Copy);
         assert_eq!(function.return_type, Some(Type::I32));
+    }
+
+    #[test]
+    fn bitwise_and_shift_precedence_is_fixed_by_the_language() {
+        let program = parse(
+            "let shifts = 1 + 2 << 3 + 4\n\
+             let bits = 1 | 2 ^ 3 & 4\n",
+        )
+        .unwrap();
+
+        let Item::Global(shifts) = &program.items[0] else {
+            panic!("expected shifts global");
+        };
+        assert!(matches!(
+            &shifts.value,
+            Expr::Binary(left, BinaryOp::Shl, right)
+                if matches!(left.as_ref(), Expr::Binary(_, BinaryOp::Add, _))
+                    && matches!(right.as_ref(), Expr::Binary(_, BinaryOp::Add, _))
+        ));
+
+        let Item::Global(bits) = &program.items[1] else {
+            panic!("expected bits global");
+        };
+        assert!(matches!(
+            &bits.value,
+            Expr::Binary(one, BinaryOp::BitOr, xor)
+                if matches!(one.as_ref(), Expr::Integer(1))
+                    && matches!(
+                        xor.as_ref(),
+                        Expr::Binary(two, BinaryOp::BitXor, and)
+                            if matches!(two.as_ref(), Expr::Integer(2))
+                                && matches!(and.as_ref(), Expr::Binary(_, BinaryOp::BitAnd, _))
+                    )
+        ));
     }
 
     #[test]

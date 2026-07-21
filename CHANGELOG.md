@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.82.0 - 2026-07-21
+
+- Added fixed lexical tokens and conventional precedence for `&`, `|`, `^`, `<<`, and `>>`.
+- Added edition-validated `BitAnd`, `BitOr`, `BitXor`, `Shl`, and `Shr` protocols with consuming
+  operands and associated output types, including generic where-bound dispatch.
+- Kept primitive integer bitwise operations on direct LLVM instructions, using arithmetic signed
+  right shifts and logical unsigned right shifts.
+- Defined negative and out-of-width shift counts to fail deterministically: compile-time constants
+  are rejected and runtime values trap before reaching an LLVM poison-producing shift.
+- Added malformed-core, import, parser, LLVM, ownership, and native execution coverage.
+
 ## 0.81.0 - 2026-07-21
 
 - Added edition-validated `core.ops.Neg` and `core.ops.Not` protocols with consuming operands and

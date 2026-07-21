@@ -47,3 +47,28 @@ pub let Not = trait {
   let Output: type
   let not(move self)(): Output
 }
+
+pub let BitAnd(Rhs: type) = trait {
+  let Output: type
+  let bit_and(move self)(move rhs: Rhs): Output
+}
+
+pub let BitOr(Rhs: type) = trait {
+  let Output: type
+  let bit_or(move self)(move rhs: Rhs): Output
+}
+
+pub let BitXor(Rhs: type) = trait {
+  let Output: type
+  let bit_xor(move self)(move rhs: Rhs): Output
+}
+
+pub let Shl(Rhs: type) = trait {
+  let Output: type
+  let shl(move self)(move rhs: Rhs): Output
+}
+
+pub let Shr(Rhs: type) = trait {
+  let Output: type
+  let shr(move self)(move rhs: Rhs): Output
+}

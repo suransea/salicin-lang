@@ -305,6 +305,11 @@ const CORE_OPS_EXPORTS: &[&str] = &[
     "PartialOrd",
     "Neg",
     "Not",
+    "BitAnd",
+    "BitOr",
+    "BitXor",
+    "Shl",
+    "Shr",
 ];
 const CORE_CONTROL_EXPORTS: &[&str] = &["ControlFlow", "Try", "FromResidual", "FromError"];
 

@@ -272,6 +272,26 @@ mod tests {
         );
         compile_source(&imported_unary).expect("imported Neg should define unary `-`");
 
+        let missing_bitwise = "let Bits = struct(value: i32)\n\
+                               extend Bits: BitAnd(Bits) {\n\
+                                 let Output = Bits\n\
+                                 let bit_and(move self)(move rhs: Bits): Bits = Bits(self.value & rhs.value)\n\
+                               }\n\
+                               let main(): i32 = 0\n";
+        let errors = compile_source(missing_bitwise).unwrap_err();
+        assert!(errors.iter().any(|diagnostic| {
+            diagnostic.contains("standard-library item `BitAnd` is not in the prelude")
+                && diagnostic.contains("use core.ops.BitAnd")
+        }));
+
+        let imported_bitwise = format!("use core.ops.BitAnd\n{missing_bitwise}").replace(
+            "let main(): i32 = 0",
+            "let main(): i32 = (Bits(6) & Bits(3)).value",
+        );
+        compile_source(&imported_bitwise).expect("imported BitAnd should define binary `&`");
+        compile_source("let main(): i32 = 6 & 3\n")
+            .expect("built-in bitwise syntax should not require importing its protocol");
+
         let local = "let Add = struct(value: i32)\n\
                      let main(): i32 = Add(value: 42).value\n";
         compile_source(local).expect("unimported operator names should remain available to users");

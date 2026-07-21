@@ -13,8 +13,9 @@ validates declarations that have language-defined roles.
 - the `Copy` and `Drop` traits
 
 `core.ops` contains the arithmetic protocols `Add`, `Sub`, `Mul`, `Div`, and `Rem`, the equality
-protocol `Eq`, the ordering protocol `PartialOrd`, and the unary protocols `Neg` and `Not`. They are
-not in the prelude. Arithmetic protocols consume their operands and use an associated `Output` type:
+protocol `Eq`, the ordering protocol `PartialOrd`, the unary protocols `Neg` and `Not`, and the
+bitwise protocols `BitAnd`, `BitOr`, `BitXor`, `Shl`, and `Shr`. They are not in the prelude.
+Arithmetic and bitwise protocols consume their operands and use an associated `Output` type:
 
 ```sali
 use core.ops.Add
@@ -52,7 +53,12 @@ extend Number: PartialOrd(Number) {
 overloaded `!` may return a non-boolean result; only the built-in boolean operation is fixed to
 `bool`. Generic code can state the same output relationship in a normal where predicate.
 
-Writing `left + right`, `left == right`, or `left < right` does not itself require an import. An
+`BitAnd(Rhs)`, `BitOr(Rhs)`, `BitXor(Rhs)`, `Shl(Rhs)`, and `Shr(Rhs)` have the same two consuming
+parameter groups and associated `Output` shape as arithmetic protocols. Built-in integer shifts use
+arithmetic right shift for signed integers and logical right shift for unsigned integers. Negative
+or out-of-width shift counts trap instead of exposing backend undefined behavior.
+
+Writing `left + right`, `left & right`, `left == right`, or `left < right` does not itself require an import. An
 import is required when source names the protocol in an implementation, bound, type, or direct
 member access.
 

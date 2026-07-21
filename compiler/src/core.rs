@@ -40,6 +40,11 @@ pub enum LangItemKind {
     PartialOrd,
     Neg,
     Not,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
     ControlFlow,
     Try,
     FromResidual,
@@ -47,7 +52,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 19] = [
+    const ALL: [Self; 24] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -63,6 +68,11 @@ impl LangItemKind {
         Self::PartialOrd,
         Self::Neg,
         Self::Not,
+        Self::BitAnd,
+        Self::BitOr,
+        Self::BitXor,
+        Self::Shl,
+        Self::Shr,
         Self::ControlFlow,
         Self::Try,
         Self::FromResidual,
@@ -86,6 +96,11 @@ impl LangItemKind {
             Self::PartialOrd => "PartialOrd",
             Self::Neg => "Neg",
             Self::Not => "Not",
+            Self::BitAnd => "BitAnd",
+            Self::BitOr => "BitOr",
+            Self::BitXor => "BitXor",
+            Self::Shl => "Shl",
+            Self::Shr => "Shr",
             Self::ControlFlow => "ControlFlow",
             Self::Try => "Try",
             Self::FromResidual => "FromResidual",
@@ -111,6 +126,11 @@ impl LangItemKind {
             | Self::PartialOrd
             | Self::Neg
             | Self::Not
+            | Self::BitAnd
+            | Self::BitOr
+            | Self::BitXor
+            | Self::Shl
+            | Self::Shr
             | Self::Try
             | Self::FromResidual
             | Self::FromError => "trait",
@@ -128,6 +148,11 @@ impl LangItemKind {
             Self::PartialOrd => Some("partial_cmp"),
             Self::Neg => Some("neg"),
             Self::Not => Some("not"),
+            Self::BitAnd => Some("bit_and"),
+            Self::BitOr => Some("bit_or"),
+            Self::BitXor => Some("bit_xor"),
+            Self::Shl => Some("shl"),
+            Self::Shr => Some("shr"),
             Self::Option
             | Self::Result
             | Self::Never
@@ -198,6 +223,11 @@ pub struct LangItems {
     partial_ord: LangItem,
     neg: LangItem,
     not: LangItem,
+    bit_and: LangItem,
+    bit_or: LangItem,
+    bit_xor: LangItem,
+    shl: LangItem,
+    shr: LangItem,
     control_flow: LangItem,
     try_trait: LangItem,
     from_residual: LangItem,
@@ -265,6 +295,26 @@ impl LangItems {
         &self.not
     }
 
+    pub const fn bit_and(&self) -> &LangItem {
+        &self.bit_and
+    }
+
+    pub const fn bit_or(&self) -> &LangItem {
+        &self.bit_or
+    }
+
+    pub const fn bit_xor(&self) -> &LangItem {
+        &self.bit_xor
+    }
+
+    pub const fn shl(&self) -> &LangItem {
+        &self.shl
+    }
+
+    pub const fn shr(&self) -> &LangItem {
+        &self.shr
+    }
+
     pub const fn control_flow(&self) -> &LangItem {
         &self.control_flow
     }
@@ -298,6 +348,11 @@ impl LangItems {
             LangItemKind::PartialOrd => &self.partial_ord,
             LangItemKind::Neg => &self.neg,
             LangItemKind::Not => &self.not,
+            LangItemKind::BitAnd => &self.bit_and,
+            LangItemKind::BitOr => &self.bit_or,
+            LangItemKind::BitXor => &self.bit_xor,
+            LangItemKind::Shl => &self.shl,
+            LangItemKind::Shr => &self.shr,
             LangItemKind::ControlFlow => &self.control_flow,
             LangItemKind::Try => &self.try_trait,
             LangItemKind::FromResidual => &self.from_residual,
@@ -439,6 +494,11 @@ impl CoreBundle {
             &mut lang_items.partial_ord,
             &mut lang_items.neg,
             &mut lang_items.not,
+            &mut lang_items.bit_and,
+            &mut lang_items.bit_or,
+            &mut lang_items.bit_xor,
+            &mut lang_items.shl,
+            &mut lang_items.shr,
             &mut lang_items.control_flow,
             &mut lang_items.try_trait,
             &mut lang_items.from_residual,
@@ -614,6 +674,11 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         partial_ord: item(LangItemKind::PartialOrd),
         neg: item(LangItemKind::Neg),
         not: item(LangItemKind::Not),
+        bit_and: item(LangItemKind::BitAnd),
+        bit_or: item(LangItemKind::BitOr),
+        bit_xor: item(LangItemKind::BitXor),
+        shl: item(LangItemKind::Shl),
+        shr: item(LangItemKind::Shr),
         control_flow: item(LangItemKind::ControlFlow),
         try_trait: item(LangItemKind::Try),
         from_residual: item(LangItemKind::FromResidual),
@@ -1106,6 +1171,26 @@ pub let Not = trait {
   let Output: type
   let not(move self)(): Output
 }
+pub let BitAnd(Rhs: type) = trait {
+  let Output: type
+  let bit_and(move self)(move rhs: Rhs): Output
+}
+pub let BitOr(Rhs: type) = trait {
+  let Output: type
+  let bit_or(move self)(move rhs: Rhs): Output
+}
+pub let BitXor(Rhs: type) = trait {
+  let Output: type
+  let bit_xor(move self)(move rhs: Rhs): Output
+}
+pub let Shl(Rhs: type) = trait {
+  let Output: type
+  let shl(move self)(move rhs: Rhs): Output
+}
+pub let Shr(Rhs: type) = trait {
+  let Output: type
+  let shr(move self)(move rhs: Rhs): Output
+}
 "#,
         ]
         .concat()
@@ -1116,7 +1201,7 @@ pub let Not = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), 24);
+        assert_eq!(bundle.program().items.len(), 29);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -1135,7 +1220,12 @@ pub let Not = trait {
                 | LangItemKind::PartialOrdering
                 | LangItemKind::PartialOrd
                 | LangItemKind::Neg
-                | LangItemKind::Not => format!("core::ops::{}", kind.source_name()),
+                | LangItemKind::Not
+                | LangItemKind::BitAnd
+                | LangItemKind::BitOr
+                | LangItemKind::BitXor
+                | LangItemKind::Shl
+                | LangItemKind::Shr => format!("core::ops::{}", kind.source_name()),
                 LangItemKind::ControlFlow
                 | LangItemKind::Try
                 | LangItemKind::FromResidual
@@ -1161,7 +1251,12 @@ pub let Not = trait {
                 | LangItemKind::PartialOrdering
                 | LangItemKind::PartialOrd
                 | LangItemKind::Neg
-                | LangItemKind::Not => "ops",
+                | LangItemKind::Not
+                | LangItemKind::BitAnd
+                | LangItemKind::BitOr
+                | LangItemKind::BitXor
+                | LangItemKind::Shl
+                | LangItemKind::Shr => "ops",
                 LangItemKind::ControlFlow
                 | LangItemKind::Try
                 | LangItemKind::FromResidual
@@ -1222,6 +1317,26 @@ pub let Not = trait {
   let Output: type
   let not(move self)(): Output
 }
+pub let BitAnd(Rhs: type) = trait {
+  let Output: type
+  let bit_and(move self)(move rhs: Rhs): Output
+}
+pub let BitOr(Rhs: type) = trait {
+  let Output: type
+  let bit_or(move self)(move rhs: Rhs): Output
+}
+pub let BitXor(Rhs: type) = trait {
+  let Output: type
+  let bit_xor(move self)(move rhs: Rhs): Output
+}
+pub let Shl(Rhs: type) = trait {
+  let Output: type
+  let shl(move self)(move rhs: Rhs): Output
+}
+pub let Shr(Rhs: type) = trait {
+  let Output: type
+  let shr(move self)(move rhs: Rhs): Output
+}
 "#;
         let bundle = CoreBundle::from_source(Edition::Edition2026, source).unwrap();
 
@@ -1240,6 +1355,11 @@ pub let Not = trait {
         assert_eq!(bundle.lang_items().partial_ord().item_index(), 12);
         assert_eq!(bundle.lang_items().neg().item_index(), 13);
         assert_eq!(bundle.lang_items().not().item_index(), 14);
+        assert_eq!(bundle.lang_items().bit_and().item_index(), 15);
+        assert_eq!(bundle.lang_items().bit_or().item_index(), 16);
+        assert_eq!(bundle.lang_items().bit_xor().item_index(), 17);
+        assert_eq!(bundle.lang_items().shl().item_index(), 18);
+        assert_eq!(bundle.lang_items().shr().item_index(), 19);
         for kind in LangItemKind::ALL {
             let item = bundle.lang_items().get(kind);
             assert_eq!(
@@ -1290,6 +1410,26 @@ pub let Neg = trait {
 pub let Not = trait {
   let Output: type
   let not(move self)(): Output
+}
+pub let BitAnd(Rhs: type) = trait {
+  let Output: type
+  let bit_and(move self)(move rhs: Rhs): Output
+}
+pub let BitOr(Rhs: type) = trait {
+  let Output: type
+  let bit_or(move self)(move rhs: Rhs): Output
+}
+pub let BitXor(Rhs: type) = trait {
+  let Output: type
+  let bit_xor(move self)(move rhs: Rhs): Output
+}
+pub let Shl(Rhs: type) = trait {
+  let Output: type
+  let shl(move self)(move rhs: Rhs): Output
+}
+pub let Shr(Rhs: type) = trait {
+  let Output: type
+  let shr(move self)(move rhs: Rhs): Output
 }
 pub let Drop = trait {
   let drop(borrow(mut) self)(): ()
@@ -1354,6 +1494,26 @@ pub let Neg = trait {
 pub let Not = trait {
   let Output: type
   let not(move self)(): Output
+}
+pub let BitAnd(Rhs: type) = trait {
+  let Output: type
+  let bit_and(move self)(move rhs: Rhs): Output
+}
+pub let BitOr(Rhs: type) = trait {
+  let Output: type
+  let bit_or(move self)(move rhs: Rhs): Output
+}
+pub let BitXor(Rhs: type) = trait {
+  let Output: type
+  let bit_xor(move self)(move rhs: Rhs): Output
+}
+pub let Shl(Rhs: type) = trait {
+  let Output: type
+  let shl(move self)(move rhs: Rhs): Output
+}
+pub let Shr(Rhs: type) = trait {
+  let Output: type
+  let shr(move self)(move rhs: Rhs): Output
 }
 "#;
         let error = CoreBundle::from_source(Edition::Edition2026, source).unwrap_err();
@@ -1457,6 +1617,26 @@ pub let Not = trait {
   let Output: type
   let not(move self)(): Output
 }
+pub let BitAnd(Rhs: type) = trait {
+  let Output: type
+  let bit_and(move self)(move rhs: Rhs): Output
+}
+pub let BitOr(Rhs: type) = trait {
+  let Output: type
+  let bit_or(move self)(move rhs: Rhs): Output
+}
+pub let BitXor(Rhs: type) = trait {
+  let Output: type
+  let bit_xor(move self)(move rhs: Rhs): Output
+}
+pub let Shl(Rhs: type) = trait {
+  let Output: type
+  let shl(move self)(move rhs: Rhs): Output
+}
+pub let Shr(Rhs: type) = trait {
+  let Output: type
+  let shr(move self)(move rhs: Rhs): Output
+}
 "#;
         let error = CoreBundle::from_source(Edition::Edition2026, source).unwrap_err();
 
@@ -1506,6 +1686,30 @@ pub let Not = trait {
                 "pub let Not = trait {\n  let Output: type\n  let not(move self)(): Output\n}",
                 "pub let Not = trait { let Output: type; let not(borrow self)(): Output }",
                 "lang item `Not` must have shape `pub let Not = trait { let Output: type; let not(move self)(): Output }`",
+            ),
+        ] {
+            let source = core_source_with_copy("pub let Copy = trait {}").replacen(
+                original,
+                malformed,
+                1,
+            );
+            let error = CoreBundle::from_source(Edition::Edition2026, &source).unwrap_err();
+            assert_eq!(error.diagnostics(), [expected]);
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_bitwise_operator_traits() {
+        for (original, malformed, expected) in [
+            (
+                "pub let BitAnd(Rhs: type) = trait {\n  let Output: type\n  let bit_and(move self)(move rhs: Rhs): Output\n}",
+                "pub let BitAnd = trait { let bit_and(borrow self)(move rhs: i32): i32 }",
+                "lang item `BitAnd` must have shape `pub let BitAnd(Rhs: type) = trait { let Output: type; let bit_and(move self)(move rhs: Rhs): Output }`",
+            ),
+            (
+                "pub let Shr(Rhs: type) = trait {\n  let Output: type\n  let shr(move self)(move rhs: Rhs): Output\n}",
+                "pub let Shr(Rhs: type) = trait { let Output: type; let shift(move self)(move rhs: Rhs): Output }",
+                "lang item `Shr` must have shape `pub let Shr(Rhs: type) = trait { let Output: type; let shr(move self)(move rhs: Rhs): Output }`",
             ),
         ] {
             let source = core_source_with_copy("pub let Copy = trait {}").replacen(

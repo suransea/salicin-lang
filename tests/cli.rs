@@ -2406,6 +2406,28 @@ fn unary_operator_protocols_run_with_associated_outputs() {
 }
 
 #[test]
+fn bitwise_protocols_run_and_invalid_shifts_trap() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "bitwise_operator_traits.sali"))
+        .output()
+        .expect("run bitwise operator fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+
+    for name in ["shift_out_of_range.sali", "shift_negative.sali"] {
+        let invalid = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run invalid shift fixture");
+        assert!(
+            !invalid.status.success(),
+            "invalid shift in {name} unexpectedly succeeded"
+        );
+    }
+}
+
+#[test]
 fn m2_optional_chain_programs_run_with_expected_result() {
     for name in [
         "chain_option_some_field.sali",

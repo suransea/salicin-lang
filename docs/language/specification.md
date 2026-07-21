@@ -933,6 +933,20 @@ let Not = trait {
 }
 ```
 
+按位与移位协议同样消费两个操作数，并通过关联类型决定结果；五个协议分别使用
+`bit_and`、`bit_or`、`bit_xor`、`shl` 和 `shr` 方法：
+
+```sali
+let BitAnd(Rhs: type) = trait {
+  let Output: type
+  let bit_and(move self)(move rhs: Rhs): Output
+}
+```
+
+内建整数要求左右操作数类型相同。`>>` 对有符号整数执行算术右移，对无符号整数执行逻辑右移。
+移位量为负数或不小于左操作数位宽时，常量表达式产生编译错误，运行时值则确定地 trap；不会把
+LLVM 的 poison 行为暴露为语言语义。
+
 因此用户类型的 `!value` 不被限制为返回 `bool`。内建 `!bool` 仍返回 `bool`，内建负号只接受
 有符号整数。泛型代码可使用 `T: Neg(Output = T)` 或 `T: Not(Output = U)` 约束。
 

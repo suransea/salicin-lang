@@ -262,14 +262,16 @@ trait_argument = type_expr | IDENT, "=", type_expr ;
 | 3 | `??` | 右结合 |
 | 4 | `||` | 左结合 |
 | 5 | `&&` | 左结合 |
-| 6 | `==`、`!=`、`<`、`<=`、`>`、`>=` | 不结合 |
-| 7 | `..`、`..=` | 不结合 |
-| 8 | `+`、`-`、按位运算 | 左结合 |
-| 9 | `*`、`/`、`%`、shift | 左结合 |
-| 10 | `-`、`!`、`borrow`、`borrow(mut)`、`move` | 前缀 |
-| 11 | 调用、索引、成员、`?.`、`.try`、`.await`、尾随闭包 | 左到右后缀 |
-
-精确的按位/shift 相对层级在实现相应运算符前补入，不能由 parser generator 默认决定。
+| 6 | `\|` | 左结合 |
+| 7 | `^` | 左结合 |
+| 8 | `&` | 左结合 |
+| 9 | `==`、`!=` | 不结合 |
+| 10 | `<`、`<=`、`>`、`>=` | 不结合 |
+| 11 | `<<`、`>>` | 左结合 |
+| 12 | `+`、`-` | 左结合 |
+| 13 | `*`、`/`、`%` | 左结合 |
+| 14 | `-`、`!`、`borrow`、`borrow(mut)`、`move` | 前缀 |
+| 15 | 调用、索引、成员、`?.`、`.try`、`.await`、尾随闭包 | 左到右后缀 |
 
 ```ebnf
 expression       = assignment_expr ;
@@ -277,10 +279,13 @@ assignment_expr  = match_expr, [ assign_op, assignment_expr ] ;
 match_expr       = coalesce_expr, [ "match", match_body ] ;
 coalesce_expr    = logical_or_expr, [ "??", coalesce_expr ] ;
 logical_or_expr  = logical_and_expr, { "||", logical_and_expr } ;
-logical_and_expr = equality_expr, { "&&", equality_expr } ;
+logical_and_expr = bitwise_or_expr, { "&&", bitwise_or_expr } ;
+bitwise_or_expr  = bitwise_xor_expr, { "|", bitwise_xor_expr } ;
+bitwise_xor_expr = bitwise_and_expr, { "^", bitwise_and_expr } ;
+bitwise_and_expr = equality_expr, { "&", equality_expr } ;
 equality_expr    = relation_expr, [ equality_op, relation_expr ] ;
-relation_expr    = range_expr, [ relation_op, range_expr ] ;
-range_expr       = additive_expr, [ range_op, additive_expr ] ;
+relation_expr    = shift_expr, [ relation_op, shift_expr ] ;
+shift_expr       = additive_expr, { ( "<<" | ">>" ), additive_expr } ;
 additive_expr    = multiply_expr, { additive_op, multiply_expr } ;
 multiply_expr    = unary_expr, { multiply_op, unary_expr } ;
 unary_expr       = { prefix_op }, postfix_expr ;
