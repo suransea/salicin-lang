@@ -377,6 +377,7 @@ struct AlgebraicHandlerClause {
     parameters: Vec<Param>,
     resume: Option<String>,
     body: Expr,
+    resume_input: Option<Type>,
 }
 
 #[derive(Clone)]
@@ -387,12 +388,13 @@ struct AlgebraicHandler {
     inlining: Rc<RefCell<HashMap<String, String>>>,
     loop_breaks: Rc<RefCell<HashMap<String, SourceContinuation>>>,
     result_source: Option<Type>,
+    return_continuations: Rc<RefCell<HashMap<String, SourceContinuation>>>,
 }
 
 #[derive(Clone)]
 struct SourceResume {
     name: String,
-    continuation: SourceContinuation,
+    runtime_name: String,
     uses: Rc<Cell<usize>>,
 }
 
@@ -750,6 +752,13 @@ enum HirArgument {
     Move(HirExpr),
     SharedBorrow(HirPlace),
     MutBorrow(HirPlace),
+    CallableCaptureBorrow {
+        binding: LocalId,
+        index: usize,
+        callable_ty: Ty,
+        capture_ty: Ty,
+        mutable: bool,
+    },
 }
 
 enum ReferenceCallSource<'a> {
@@ -824,6 +833,12 @@ enum HirExprKind {
         callee: Box<HirExpr>,
         arguments: Vec<HirArgument>,
         diverges: bool,
+    },
+    TailCall {
+        function: String,
+        arguments: Vec<HirArgument>,
+        consumed_callable: Option<LocalId>,
+        result: Ty,
     },
     Partial {
         function: String,
@@ -1151,6 +1166,14 @@ struct ClosureCapture {
     place: HirPlace,
     mode: ClosureCaptureMode,
     value: Option<Box<HirExpr>>,
+    forwarded: Option<ForwardedClosureCapture>,
+}
+
+#[derive(Debug, Clone)]
+struct ForwardedClosureCapture {
+    binding: LocalId,
+    index: usize,
+    callable_ty: Ty,
 }
 
 #[derive(Debug, Clone)]
@@ -1757,6 +1780,7 @@ struct Analyzer {
     hir_functions: HashMap<String, HirFunction>,
     lifted_functions: Vec<HirFunction>,
     next_closure: usize,
+    handler_frame_parameter_modes: HashMap<String, Vec<PassMode>>,
     hir_globals: HashMap<String, HirGlobal>,
     array_types: HashSet<Ty>,
     diagnostics: Vec<Diagnostic>,
@@ -1825,6 +1849,7 @@ impl Analyzer {
             hir_functions: HashMap::new(),
             lifted_functions: Vec::new(),
             next_closure: 0,
+            handler_frame_parameter_modes: HashMap::new(),
             hir_globals: HashMap::new(),
             array_types: HashSet::new(),
             diagnostics: Vec::new(),
@@ -11113,6 +11138,7 @@ impl Analyzer {
                 HirArgument::Copy(value) | HirArgument::Move(value) => {
                     ReferenceCallSource::Expression(value)
                 }
+                HirArgument::CallableCaptureBorrow { .. } => return None,
             });
         }
         Some(sources)
@@ -11256,6 +11282,13 @@ impl Analyzer {
                 captures: arguments,
                 ..
             } => {
+                for argument in arguments {
+                    if let HirArgument::Copy(value) | HirArgument::Move(value) = argument {
+                        self.validate_explicit_reference_returns(value, expected, context);
+                    }
+                }
+            }
+            HirExprKind::TailCall { arguments, .. } => {
                 for argument in arguments {
                     if let HirArgument::Copy(value) | HirArgument::Move(value) = argument {
                         self.validate_explicit_reference_returns(value, expected, context);
@@ -11744,6 +11777,12 @@ impl Analyzer {
             source_groups.push(params);
             body = nested_body;
         }
+        let deferred_handler_continuation = source_params.first().is_some_and(|parameter| {
+            parameter.name.starts_with("$handler$resume$value$")
+                || parameter
+                    .name
+                    .starts_with("$handler$call$continuation$value$")
+        });
 
         let mut bound: HashSet<String> = source_groups
             .iter()
@@ -11810,7 +11849,9 @@ impl Analyzer {
                 .partial
                 .as_ref()
                 .is_some_and(|partial| partial.consumed_groups != 0 || partial.capture_count != 0);
-            if is_captured_partial || local.closure.is_some() {
+            let captures_callable =
+                local.closure.is_some() && capture.mode == ClosureCaptureMode::Move;
+            if is_captured_partial || (local.closure.is_some() && !captures_callable) {
                 self.error(format!("closure cannot capture local callable `{name}`"));
                 continue;
             }
@@ -11837,7 +11878,9 @@ impl Analyzer {
                     ));
                     continue;
                 }
-                ClosureCaptureMode::Move if !matches!(local.ty, Ty::Struct(_) | Ty::Enum(_)) => {
+                ClosureCaptureMode::Move
+                    if !matches!(local.ty, Ty::Struct(_) | Ty::Enum(_) | Ty::Callable(_)) =>
+                {
                     self.error(format!(
                         "FnOnce move capture `{name}` must be a nominal root local for now"
                     ));
@@ -11858,12 +11901,16 @@ impl Analyzer {
             };
             let (parameter_mode, capability, mutable, value) = match capture.mode {
                 ClosureCaptureMode::Shared => {
-                    place.loan = self.acquire_loan(&place, LoanKind::Shared, true, outer);
+                    if !deferred_handler_continuation {
+                        place.loan = self.acquire_loan(&place, LoanKind::Shared, true, outer);
+                    }
                     (PassMode::Borrow, LocalCapability::SharedParam, false, None)
                 }
                 ClosureCaptureMode::Mutable => {
                     self.ensure_writable(&place);
-                    place.loan = self.acquire_loan(&place, LoanKind::Mutable, true, outer);
+                    if !deferred_handler_continuation {
+                        place.loan = self.acquire_loan(&place, LoanKind::Mutable, true, outer);
+                    }
                     (PassMode::MutBorrow, LocalCapability::MutParam, true, None)
                 }
                 ClosureCaptureMode::Move => {
@@ -11880,9 +11927,20 @@ impl Analyzer {
                 place,
                 mode: capture.mode,
                 value,
+                forwarded: None,
             });
 
             let id = context.fresh_local();
+            let captured_closure = local.closure.clone().map(|mut closure| {
+                for (index, capture) in closure.captures.iter_mut().enumerate() {
+                    capture.forwarded = Some(ForwardedClosureCapture {
+                        binding: id,
+                        index,
+                        callable_ty: local.ty.clone(),
+                    });
+                }
+                closure
+            });
             context.scopes[0].locals.push(id);
             context.scopes[0].names.insert(
                 name.clone(),
@@ -11893,7 +11951,7 @@ impl Analyzer {
                     capability,
                     alias: None,
                     partial: None,
-                    closure: None,
+                    closure: captured_closure,
                 },
             );
             hir_params.push(HirParam {
@@ -12125,6 +12183,19 @@ impl Analyzer {
             Expr::Call(_, _) => {
                 let mut groups = Vec::new();
                 let root = flatten_call(expression, &mut groups);
+                if matches!(root, Expr::Name(name) if name.starts_with("$handler$tail$")) {
+                    return groups.iter().flat_map(|group| group.iter()).fold(
+                        true,
+                        |valid, argument| {
+                            self.scan_simple_closure_captures(
+                                &argument.value,
+                                bound,
+                                outer,
+                                captures,
+                            ) & valid
+                        },
+                    );
+                }
                 if matches!(root, Expr::Name(name) if name.starts_with("$handler$recursive$")) {
                     if let Expr::Name(name) = root {
                         if let Some(frame) = outer.recursive_frame_calls.get(name) {
@@ -12157,18 +12228,82 @@ impl Analyzer {
                         },
                     );
                 }
+                if let Expr::Name(name) = root {
+                    if !bound.contains(name)
+                        && outer
+                            .lookup(name)
+                            .is_some_and(|local| local.closure.is_some())
+                    {
+                        record_closure_capture(captures, name, ClosureCaptureMode::Move);
+                        return groups.iter().flat_map(|group| group.iter()).fold(
+                            true,
+                            |valid, argument| {
+                                self.scan_simple_closure_captures(
+                                    &argument.value,
+                                    bound,
+                                    outer,
+                                    captures,
+                                ) & valid
+                            },
+                        );
+                    }
+                }
                 if matches!(root, Expr::Name(name) if bound.contains(name)) {
-                    return groups.iter().flat_map(|group| group.iter()).fold(
-                        true,
-                        |valid, argument| {
-                            self.scan_simple_closure_captures(
-                                &argument.value,
-                                bound,
-                                outer,
-                                captures,
-                            ) & valid
-                        },
-                    );
+                    let modes = match root {
+                        Expr::Name(name) => self.handler_frame_parameter_modes.get(name).cloned(),
+                        _ => None,
+                    };
+                    let mut valid = true;
+                    for (index, argument) in
+                        groups.iter().flat_map(|group| group.iter()).enumerate()
+                    {
+                        if let Expr::Name(name) = &argument.value {
+                            if !bound.contains(name) && outer.lookup(name).is_some() {
+                                let mode = modes
+                                    .as_ref()
+                                    .and_then(|modes| modes.get(index))
+                                    .copied()
+                                    .unwrap_or(PassMode::Inferred);
+                                let capture = match mode {
+                                    PassMode::Borrow => ClosureCaptureMode::Shared,
+                                    PassMode::MutBorrow => ClosureCaptureMode::Mutable,
+                                    PassMode::Move => ClosureCaptureMode::Move,
+                                    PassMode::Inferred | PassMode::Copy => {
+                                        ClosureCaptureMode::Shared
+                                    }
+                                };
+                                record_closure_capture(captures, name, capture);
+                                continue;
+                            }
+                        }
+                        valid &= self.scan_simple_closure_captures(
+                            &argument.value,
+                            bound,
+                            outer,
+                            captures,
+                        );
+                    }
+                    return valid;
+                }
+                if let Expr::Name(name) = root {
+                    if !bound.contains(name)
+                        && outer
+                            .lookup(name)
+                            .is_some_and(|local| local.closure.is_some())
+                    {
+                        record_closure_capture(captures, name, ClosureCaptureMode::Move);
+                        return groups.iter().flat_map(|group| group.iter()).fold(
+                            true,
+                            |valid, argument| {
+                                self.scan_simple_closure_captures(
+                                    &argument.value,
+                                    bound,
+                                    outer,
+                                    captures,
+                                ) & valid
+                            },
+                        );
+                    }
                 }
                 let captured_function = match root {
                     Expr::Name(function)
@@ -12418,10 +12553,6 @@ impl Analyzer {
                     }
                     return None;
                 };
-                if local.partial.is_some() || local.closure.is_some() {
-                    self.error(format!("local callable `{name}` is not a data place"));
-                    return None;
-                }
                 if let Some(alias) = local.alias {
                     return Some(alias);
                 }
@@ -15082,6 +15213,41 @@ impl Analyzer {
         let mut groups = Vec::new();
         let root = flatten_call(expression, &mut groups);
         if let Expr::Name(name) = root {
+            if name.starts_with("$handler$tail$") {
+                if groups.len() != 1 || groups[0].len() != 1 {
+                    self.error("internal handler tail continuation has invalid arguments");
+                    return error_expr();
+                }
+                let declared_result = context.declared_result.clone();
+                let call = self.lower_expr(&groups[0][0].value, declared_result.as_ref(), context);
+                let result = call.ty.clone();
+                let HirExprKind::Call {
+                    function,
+                    arguments,
+                    consumed_callable,
+                    ..
+                } = call.kind
+                else {
+                    self.error(
+                        "handler tail continuation must resolve to a direct local-closure call",
+                    );
+                    return error_expr();
+                };
+                if let Some(expected) = context.declared_result.clone() {
+                    self.require_same_type(&result, &expected, "handler tail continuation result");
+                }
+                context.returned_types.push(result.clone());
+                context.flow.reachable = false;
+                return HirExpr {
+                    ty: Ty::Never,
+                    kind: HirExprKind::TailCall {
+                        function,
+                        arguments,
+                        consumed_callable,
+                        result,
+                    },
+                };
+            }
             if let Some(frame) = context.recursive_frame_calls.get(name).cloned() {
                 return self.lower_recursive_frame_call(&frame, &groups, context);
             }
@@ -15602,6 +15768,7 @@ impl Analyzer {
                     parameters: parameters.clone(),
                     resume: None,
                     body: (**body).clone(),
+                    resume_input: None,
                 });
                 continue;
             }
@@ -15639,6 +15806,7 @@ impl Analyzer {
                     parameters,
                     resume: Some(resume),
                     body: (**body).clone(),
+                    resume_input: operation.return_type.clone(),
                 },
             );
         }
@@ -15655,13 +15823,51 @@ impl Analyzer {
             return error_expr();
         }
 
+        let inferred_handler_result = expected
+            .cloned()
+            .or_else(|| {
+                if done.is_some() {
+                    return None;
+                }
+                match self.probe_expr_ty(action_body, None, context) {
+                    TypeProbe::Known(ty)
+                    | TypeProbe::KnownSource(ty, _)
+                    | TypeProbe::Defaultable(ty) => Some(ty),
+                    TypeProbe::Unsupported => None,
+                }
+            })
+            .or_else(|| {
+                handled_action_result_source(
+                    action_body,
+                    &source_effect_identity(instance),
+                    &operations,
+                )
+                .map(|source| self.lower_source_type(&source))
+            })
+            .or_else(|| {
+                let bodies = clauses
+                    .values()
+                    .map(|clause| clause.body.clone())
+                    .collect::<Vec<_>>();
+                bodies
+                    .into_iter()
+                    .find_map(|body| match self.probe_expr_ty(&body, None, context) {
+                        TypeProbe::Known(ty)
+                        | TypeProbe::KnownSource(ty, _)
+                        | TypeProbe::Defaultable(ty) => Some(ty),
+                        TypeProbe::Unsupported => None,
+                    })
+            });
         let handler = Rc::new(AlgebraicHandler {
             identity: source_effect_identity(instance),
             clauses,
             done,
             inlining: Rc::new(RefCell::new(HashMap::new())),
             loop_breaks: Rc::new(RefCell::new(HashMap::new())),
-            result_source: expected.and_then(|ty| self.source_type_for_ty(ty)),
+            result_source: inferred_handler_result
+                .as_ref()
+                .and_then(|ty| self.source_type_for_ty(ty)),
+            return_continuations: Rc::new(RefCell::new(HashMap::new())),
         });
         let final_continuation: SourceContinuation = if let Some(done) = handler.done.clone() {
             let handler = handler.clone();
@@ -15703,9 +15909,13 @@ impl Analyzer {
         resume: Option<SourceResume>,
         continuation: SourceContinuation,
     ) -> Result<Expr, ()> {
-        if let Some(argument) = internal_handler_return_argument(&expression) {
-            let returned: SourceContinuation =
-                Rc::new(|_, value| Ok(Expr::Return(Some(Box::new(value)))));
+        if let Some((name, argument)) = internal_handler_return_argument(&expression) {
+            let returned = handler
+                .return_continuations
+                .borrow()
+                .get(&name)
+                .cloned()
+                .unwrap_or_else(|| Rc::new(|_, value| Ok(Expr::Return(Some(Box::new(value))))));
             return self.transform_handler_expr(argument, handler, resume, returned);
         }
         if let Some((name, argument)) = internal_handler_loop_break_argument(&expression) {
@@ -15738,7 +15948,7 @@ impl Analyzer {
             let handler_for_clause = handler.clone();
             let resume_for_arguments = resume.clone();
             let completed: SourceArgumentsContinuation = Rc::new(move |analyzer, arguments| {
-                let bindings = clause
+                let mut bindings = clause
                     .parameters
                     .iter()
                     .zip(arguments)
@@ -15751,12 +15961,47 @@ impl Analyzer {
                         })
                     })
                     .collect::<Vec<_>>();
+                let Some(input) = clause.resume_input.clone() else {
+                    analyzer.error("effect operation is missing its continuation input type");
+                    return Err(());
+                };
+                let Some(answer) = handler_for_clause.result_source.clone() else {
+                    analyzer.error(
+                        "an algebraic continuation requires a contextual handler answer type",
+                    );
+                    return Err(());
+                };
+                let continuation_id = analyzer.next_closure;
+                analyzer.next_closure += 1;
+                let runtime_name = format!("$handler$continuation${continuation_id}");
+                let input_name = format!("$handler$resume$value${continuation_id}");
+                let continuation_body = continuation(analyzer, Expr::Name(input_name.clone()))?;
+                bindings.push(Stmt::Let(Binding {
+                    mutable: true,
+                    name: runtime_name.clone(),
+                    annotation: Some(Type::Function {
+                        groups: vec![vec![input.clone()]],
+                        effects: FunctionEffects::default(),
+                        result: Box::new(answer),
+                    }),
+                    value: Expr::Closure(
+                        vec![Param {
+                            mode: PassMode::Inferred,
+                            access: None,
+                            passing: None,
+                            region: None,
+                            name: input_name,
+                            ty: input,
+                        }],
+                        Box::new(continuation_body),
+                    ),
+                }));
                 let source_resume = SourceResume {
                     name: clause
                         .resume
                         .clone()
                         .expect("operation clauses have resume"),
-                    continuation: continuation.clone(),
+                    runtime_name,
                     uses: Rc::new(Cell::new(0)),
                 };
                 let identity: SourceContinuation = Rc::new(|_, value| Ok(value));
@@ -15788,13 +16033,18 @@ impl Analyzer {
                     ));
                     return Err(());
                 }
-                let suspended = source_resume.continuation.clone();
+                let runtime_name = source_resume.runtime_name.clone();
                 let current = continuation.clone();
-                let chained: SourceContinuation = Rc::new(move |analyzer, value| {
-                    let resumed = suspended(analyzer, value)?;
-                    current(analyzer, resumed)
+                let invoked: SourceContinuation = Rc::new(move |analyzer, value| {
+                    current(
+                        analyzer,
+                        Expr::Call(
+                            Box::new(Expr::Name(runtime_name.clone())),
+                            vec![CallArg { label: None, value }],
+                        ),
+                    )
                 });
-                return self.transform_handler_expr(argument, handler, resume, chained);
+                return self.transform_handler_expr(argument, handler, resume, invoked);
             }
             if matches!(&expression, Expr::Name(name) if name == &source_resume.name) {
                 self.error(format!(
@@ -16093,6 +16343,16 @@ impl Analyzer {
             ));
             return Some(Err(()));
         }
+        if self.effect_function_is_in_mutual_cycle(name, &handler.identity) {
+            return Some(self.transform_legacy_effectful_named_call(
+                name,
+                &function,
+                &groups,
+                handler,
+                resume,
+                continuation,
+            ));
+        }
         let specialization = self.next_closure;
         let recursive_name = format!("$handler$recursive${specialization}");
         handler
@@ -16102,17 +16362,88 @@ impl Analyzer {
         let prefix = format!("$handler$frame${specialization}${name}$");
         self.next_closure += 1;
         let (parameters, mut body) = hygienic_inline_function(&function, &prefix);
-        let return_name = format!("$handler$return${specialization}");
-        rewrite_handler_returns(&mut body, &return_name);
-        let identity: SourceContinuation = Rc::new(|_, value| Ok(value));
-        let transformed_body =
-            match self.transform_handler_expr(body, handler.clone(), resume.clone(), identity) {
+        let Some(input) = function.return_type.clone() else {
+            self.error(format!(
+                "resumable function `{name}` requires an explicit return type"
+            ));
+            handler.inlining.borrow_mut().remove(name);
+            return Some(Err(()));
+        };
+        let Some(answer) = handler.result_source.clone() else {
+            self.error("a resumable named call requires a contextual handler answer type");
+            handler.inlining.borrow_mut().remove(name);
+            return Some(Err(()));
+        };
+        let continuation_name = format!("$handler$call$continuation${specialization}");
+        let continuation_value_name = format!("$handler$call$continuation$value${specialization}");
+        let continuation_body =
+            match continuation(self, Expr::Name(continuation_value_name.clone())) {
                 Ok(body) => body,
                 Err(()) => {
                     handler.inlining.borrow_mut().remove(name);
                     return Some(Err(()));
                 }
             };
+        let continuation_binding = Binding {
+            mutable: true,
+            name: continuation_name.clone(),
+            annotation: Some(Type::Function {
+                groups: vec![vec![input.clone()]],
+                effects: FunctionEffects::default(),
+                result: Box::new(answer.clone()),
+            }),
+            value: Expr::Closure(
+                vec![Param {
+                    mode: PassMode::Inferred,
+                    access: None,
+                    passing: None,
+                    region: None,
+                    name: continuation_value_name,
+                    ty: input.clone(),
+                }],
+                Box::new(continuation_body),
+            ),
+        };
+        let tail_name = format!("$handler$tail${specialization}");
+        let continuation_for_return = continuation_name.clone();
+        let tail_continuation: SourceContinuation = Rc::new(move |_, value| {
+            Ok(Expr::Call(
+                Box::new(Expr::Name(tail_name.clone())),
+                vec![CallArg {
+                    label: None,
+                    value: Expr::Call(
+                        Box::new(Expr::Name(continuation_for_return.clone())),
+                        vec![CallArg { label: None, value }],
+                    ),
+                }],
+            ))
+        });
+        let return_name = format!("$handler$return${specialization}");
+        rewrite_handler_returns(&mut body, &return_name);
+        handler
+            .return_continuations
+            .borrow_mut()
+            .insert(return_name.clone(), tail_continuation.clone());
+        let transformed_body = match self.transform_handler_expr(
+            body,
+            handler.clone(),
+            resume.clone(),
+            tail_continuation,
+        ) {
+            Ok(body) => body,
+            Err(()) => {
+                handler
+                    .return_continuations
+                    .borrow_mut()
+                    .remove(&return_name);
+                handler.inlining.borrow_mut().remove(name);
+                return Some(Err(()));
+            }
+        };
+        handler
+            .return_continuations
+            .borrow_mut()
+            .remove(&return_name);
 
         let flattened_parameters = parameters.iter().flatten().cloned().collect::<Vec<_>>();
         let mut flattened_arguments = Vec::new();
@@ -16137,25 +16468,170 @@ impl Analyzer {
             }
         }
         let frame_name = format!("$handler$frame${specialization}");
-        let frame_annotation = function.return_type.clone().map(|result| Type::Function {
+        self.handler_frame_parameter_modes.insert(
+            frame_name.clone(),
+            flattened_parameters
+                .iter()
+                .map(|parameter| parameter.mode)
+                .collect(),
+        );
+        let frame_annotation = Some(Type::Function {
             groups: vec![flattened_parameters
                 .iter()
                 .map(|parameter| parameter.ty.clone())
                 .collect()],
             effects: FunctionEffects::default(),
-            result: Box::new(result),
+            result: Box::new(answer),
         });
         let frame = Binding {
-            mutable: false,
+            mutable: true,
             name: frame_name.clone(),
             annotation: frame_annotation,
             value: Expr::Closure(flattened_parameters, Box::new(transformed_body)),
         };
         let call = Expr::Call(Box::new(Expr::Name(frame_name)), flattened_arguments);
-        let specialized = Expr::Block(vec![Stmt::Let(frame)], Some(Box::new(call)));
-        let result = continuation(self, specialized);
+        let result = Ok(Expr::Block(
+            vec![Stmt::Let(continuation_binding), Stmt::Let(frame)],
+            Some(Box::new(call)),
+        ));
         handler.inlining.borrow_mut().remove(name);
         Some(result)
+    }
+
+    fn effect_function_is_in_mutual_cycle(&self, start: &str, effect: &str) -> bool {
+        fn reaches(
+            analyzer: &Analyzer,
+            current: &str,
+            start: &str,
+            effect: &str,
+            depth: usize,
+            visited: &mut HashSet<String>,
+        ) -> bool {
+            if !visited.insert(current.to_owned()) {
+                return false;
+            }
+            let Some(body) = analyzer
+                .functions
+                .get(current)
+                .and_then(|function| function.body.as_ref())
+            else {
+                return false;
+            };
+            let mut calls = HashSet::new();
+            collect_named_source_calls(body, &mut calls);
+            calls.into_iter().any(|called| {
+                let Some(function) = analyzer.functions.get(&called) else {
+                    return false;
+                };
+                if !function
+                    .effects
+                    .custom
+                    .iter()
+                    .any(|candidate| source_effect_identity(candidate) == effect)
+                {
+                    return false;
+                }
+                (depth > 0 && called == start)
+                    || reaches(analyzer, &called, start, effect, depth + 1, visited)
+            })
+        }
+
+        let mut visited = HashSet::new();
+        reaches(self, start, start, effect, 0, &mut visited)
+            && self
+                .functions
+                .get(start)
+                .and_then(|function| function.body.as_ref())
+                .is_some_and(|body| {
+                    let mut calls = HashSet::new();
+                    collect_named_source_calls(body, &mut calls);
+                    calls.iter().any(|called| called != start)
+                })
+    }
+
+    fn transform_legacy_effectful_named_call(
+        &mut self,
+        name: &str,
+        function: &Function,
+        groups: &[&[CallArg]],
+        handler: Rc<AlgebraicHandler>,
+        resume: Option<SourceResume>,
+        continuation: SourceContinuation,
+    ) -> Result<Expr, ()> {
+        let specialization = self.next_closure;
+        let recursive_name = format!("$handler$recursive${specialization}");
+        handler
+            .inlining
+            .borrow_mut()
+            .insert(name.to_owned(), recursive_name);
+        let prefix = format!("$handler$frame${specialization}${name}$");
+        self.next_closure += 1;
+        let (parameters, mut body) = hygienic_inline_function(function, &prefix);
+        let return_name = format!("$handler$return${specialization}");
+        rewrite_handler_returns(&mut body, &return_name);
+        let identity: SourceContinuation = Rc::new(|_, value| Ok(value));
+        let transformed_body =
+            match self.transform_handler_expr(body, handler.clone(), resume, identity) {
+                Ok(body) => body,
+                Err(()) => {
+                    handler.inlining.borrow_mut().remove(name);
+                    return Err(());
+                }
+            };
+
+        let flattened_parameters = parameters.iter().flatten().cloned().collect::<Vec<_>>();
+        let mut flattened_arguments = Vec::new();
+        for (arguments, declared) in groups.iter().zip(&function.groups) {
+            for (argument, declared) in arguments.iter().zip(declared) {
+                if argument
+                    .label
+                    .as_deref()
+                    .is_some_and(|label| label != declared.name)
+                {
+                    self.error(format!(
+                        "unknown argument label on effectful call `{name}`: expected `{}`",
+                        declared.name
+                    ));
+                    handler.inlining.borrow_mut().remove(name);
+                    return Err(());
+                }
+                flattened_arguments.push(CallArg {
+                    label: None,
+                    value: argument.value.clone(),
+                });
+            }
+        }
+        let frame_name = format!("$handler$frame${specialization}");
+        self.handler_frame_parameter_modes.insert(
+            frame_name.clone(),
+            flattened_parameters
+                .iter()
+                .map(|parameter| parameter.mode)
+                .collect(),
+        );
+        let frame = Binding {
+            mutable: false,
+            name: frame_name.clone(),
+            annotation: function.return_type.clone().map(|result| Type::Function {
+                groups: vec![flattened_parameters
+                    .iter()
+                    .map(|parameter| parameter.ty.clone())
+                    .collect()],
+                effects: FunctionEffects::default(),
+                result: Box::new(result),
+            }),
+            value: Expr::Closure(flattened_parameters, Box::new(transformed_body)),
+        };
+        let specialized = Expr::Block(
+            vec![Stmt::Let(frame)],
+            Some(Box::new(Expr::Call(
+                Box::new(Expr::Name(frame_name)),
+                flattened_arguments,
+            ))),
+        );
+        let result = continuation(self, specialized);
+        handler.inlining.borrow_mut().remove(name);
+        result
     }
 
     fn transform_handler_block(
@@ -18119,6 +18595,18 @@ impl Analyzer {
             .cloned()
             .enumerate()
             .map(|(index, capture)| match capture.mode {
+                ClosureCaptureMode::Shared | ClosureCaptureMode::Mutable
+                    if capture.forwarded.is_some() =>
+                {
+                    let forwarded = capture.forwarded.expect("checked forwarded capture");
+                    HirArgument::CallableCaptureBorrow {
+                        binding: forwarded.binding,
+                        index: forwarded.index,
+                        callable_ty: forwarded.callable_ty,
+                        capture_ty: capture.place.ty,
+                        mutable: capture.mode == ClosureCaptureMode::Mutable,
+                    }
+                }
                 ClosureCaptureMode::Shared => HirArgument::SharedBorrow(capture.place),
                 ClosureCaptureMode::Mutable => HirArgument::MutBorrow(capture.place),
                 ClosureCaptureMode::Move => HirArgument::Move(HirExpr {
@@ -18480,6 +18968,7 @@ impl Analyzer {
                     };
                     (place, self.reference_origin_for_hir_expr(value, context))
                 }
+                HirArgument::CallableCaptureBorrow { .. } => (None, None),
             };
             if let Some(place) = place {
                 if temporary_ids.contains(&place.local) {
@@ -19134,6 +19623,7 @@ impl Analyzer {
                         statements.push(HirStmt::Let(binding));
                     }
                 }
+                HirArgument::CallableCaptureBorrow { .. } => {}
             }
         }
         debug_assert!(borrowed_temporaries.is_empty());
@@ -19577,6 +20067,18 @@ fn partial_callable_ty(
                 ty: place.ty.clone(),
                 mode: PassMode::MutBorrow,
             },
+            HirArgument::CallableCaptureBorrow {
+                capture_ty,
+                mutable,
+                ..
+            } => CallableCaptureTy {
+                ty: capture_ty.clone(),
+                mode: if *mutable {
+                    PassMode::MutBorrow
+                } else {
+                    PassMode::Borrow
+                },
+            },
         })
         .collect::<Vec<_>>();
     let is_fn_once = captures
@@ -19645,6 +20147,7 @@ fn closure_info_for_callable(ty: &Ty) -> Option<ClosureInfo> {
                 PassMode::Move | PassMode::Copy | PassMode::Inferred => ClosureCaptureMode::Move,
             },
             value: None,
+            forwarded: None,
         })
         .collect();
     let groups = callable
@@ -19757,17 +20260,20 @@ fn resume_call_argument(expression: &Expr, resume: &str) -> Option<Expr> {
     Some(groups[0][0].value.clone())
 }
 
-fn internal_handler_return_argument(expression: &Expr) -> Option<Expr> {
+fn internal_handler_return_argument(expression: &Expr) -> Option<(String, Expr)> {
     let mut groups = Vec::new();
     let root = flatten_call(expression, &mut groups);
-    if !matches!(root, Expr::Name(name) if name.starts_with("$handler$return$"))
+    let Expr::Name(name) = root else {
+        return None;
+    };
+    if !name.starts_with("$handler$return$")
         || groups.len() != 1
         || groups[0].len() != 1
         || groups[0][0].label.is_some()
     {
         return None;
     }
-    Some(groups[0][0].value.clone())
+    Some((name.clone(), groups[0][0].value.clone()))
 }
 
 fn internal_handler_loop_break_argument(expression: &Expr) -> Option<(String, Expr)> {
@@ -19985,7 +20491,7 @@ fn collect_internal_recursion_tokens(expression: &Expr, tokens: &mut HashSet<Str
                 collect_internal_recursion_tokens(tail, tokens);
             }
         }
-        Expr::Closure(_, _) => {}
+        Expr::Closure(_, body) => collect_internal_recursion_tokens(body, tokens),
         Expr::If {
             condition,
             then_branch,
@@ -20020,6 +20526,89 @@ fn collect_internal_recursion_tokens(expression: &Expr, tokens: &mut HashSet<Str
     }
 }
 
+fn collect_named_source_calls(expression: &Expr, calls: &mut HashSet<String>) {
+    match expression {
+        Expr::Call(_, arguments) => {
+            let mut groups = Vec::new();
+            let root = flatten_call(expression, &mut groups);
+            if let Expr::Name(name) = root {
+                calls.insert(name.clone());
+            }
+            for argument in arguments {
+                collect_named_source_calls(&argument.value, calls);
+            }
+        }
+        Expr::Unary(_, value)
+        | Expr::Try(value)
+        | Expr::DoBlock { body: value }
+        | Expr::Throw(value)
+        | Expr::Unsafe(value)
+        | Expr::Borrow { value, .. } => collect_named_source_calls(value, calls),
+        Expr::Binary(left, _, right)
+        | Expr::Coalesce(left, right)
+        | Expr::Assign(left, right)
+        | Expr::CompoundAssign(left, _, right) => {
+            collect_named_source_calls(left, calls);
+            collect_named_source_calls(right, calls);
+        }
+        Expr::Member(base, _) | Expr::ChainMember(base, _) => {
+            collect_named_source_calls(base, calls)
+        }
+        Expr::Array(elements) => {
+            for element in elements {
+                collect_named_source_calls(element, calls);
+            }
+        }
+        Expr::Index { base, index } => {
+            collect_named_source_calls(base, calls);
+            collect_named_source_calls(index, calls);
+        }
+        Expr::Block(statements, tail) => {
+            for statement in statements {
+                match statement {
+                    Stmt::Let(binding) => collect_named_source_calls(&binding.value, calls),
+                    Stmt::Expr(expression) => collect_named_source_calls(expression, calls),
+                }
+            }
+            if let Some(tail) = tail {
+                collect_named_source_calls(tail, calls);
+            }
+        }
+        Expr::Closure(_, body) => collect_named_source_calls(body, calls),
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_named_source_calls(condition, calls);
+            collect_named_source_calls(then_branch, calls);
+            if let Some(branch) = else_branch {
+                collect_named_source_calls(branch, calls);
+            }
+        }
+        Expr::Return(value) | Expr::Break(value) => {
+            if let Some(value) = value {
+                collect_named_source_calls(value, calls);
+            }
+        }
+        Expr::While { condition, body } => {
+            collect_named_source_calls(condition, calls);
+            collect_named_source_calls(body, calls);
+        }
+        Expr::Loop { body } => collect_named_source_calls(body, calls),
+        Expr::Match { scrutinee, arms } => {
+            collect_named_source_calls(scrutinee, calls);
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    collect_named_source_calls(guard, calls);
+                }
+                collect_named_source_calls(&arm.body, calls);
+            }
+        }
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => {}
+    }
+}
+
 fn handled_operation_call(expression: &Expr, identity: &str) -> Option<(String, Vec<CallArg>)> {
     let mut groups = Vec::new();
     let root = flatten_call(expression, &mut groups);
@@ -20036,6 +20625,33 @@ fn handled_operation_call(expression: &Expr, identity: &str) -> Option<(String, 
             .flat_map(|group| group.iter().cloned())
             .collect(),
     ))
+}
+
+fn handled_action_result_source(
+    expression: &Expr,
+    identity: &str,
+    operations: &[Function],
+) -> Option<Type> {
+    if let Some((operation, _)) = handled_operation_call(expression, identity) {
+        return operations
+            .iter()
+            .find(|candidate| candidate.name == operation)?
+            .return_type
+            .clone();
+    }
+    match expression {
+        Expr::Block(_, Some(tail)) => handled_action_result_source(tail, identity, operations),
+        Expr::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => {
+            let then_type = handled_action_result_source(then_branch, identity, operations)?;
+            let else_type = handled_action_result_source(else_branch, identity, operations)?;
+            (then_type == else_type).then_some(then_type)
+        }
+        _ => None,
+    }
 }
 
 fn source_effect_expression_identity(expression: &Expr) -> Option<String> {
@@ -21610,7 +22226,9 @@ impl<'a> HirCleanupPlanner<'a> {
                             }
                             result
                         }
-                        HirArgument::SharedBorrow(_) | HirArgument::MutBorrow(_) => Some(cursor),
+                        HirArgument::SharedBorrow(_)
+                        | HirArgument::MutBorrow(_)
+                        | HirArgument::CallableCaptureBorrow { .. } => Some(cursor),
                     };
                 }
                 if let Some(cursor) = current {
@@ -21637,6 +22255,55 @@ impl<'a> HirCleanupPlanner<'a> {
                     None
                 }
             }
+            HirExprKind::TailCall {
+                arguments,
+                consumed_callable,
+                ..
+            } => {
+                let mut current = Some(cursor);
+                let mut by_value = Vec::new();
+                for argument in arguments {
+                    let Some(cursor) = current else {
+                        break;
+                    };
+                    current = match argument {
+                        HirArgument::Copy(value) | HirArgument::Move(value) => {
+                            let (_, stage) =
+                                self.prepare_temporary_destination(cursor, &value.ty)?;
+                            let result =
+                                self.walk_expr(value, cursor, ResultUse::Store(stage.clone()))?;
+                            if result.is_some() {
+                                by_value.push(stage);
+                            }
+                            result
+                        }
+                        HirArgument::SharedBorrow(_)
+                        | HirArgument::MutBorrow(_)
+                        | HirArgument::CallableCaptureBorrow { .. } => Some(cursor),
+                    };
+                }
+                if let Some(cursor) = current {
+                    if let Some(source_local) = consumed_callable {
+                        let cleanup_local =
+                            self.hir_locals.get(source_local).copied().ok_or_else(|| {
+                                self.diagnostic(format!(
+                                    "tail continuation refers to unmapped callable local {source_local}"
+                                ))
+                            })?;
+                        self.move_out(cursor, self.root_move_path(cleanup_local)?)?;
+                    }
+                    for argument in by_value {
+                        self.move_out(cursor, argument.path)?;
+                    }
+                    if let Some(destination) = self.return_destination.clone() {
+                        self.operation(cursor.block, CleanupOp::Init(destination.path))?;
+                    }
+                    self.emit_storage_dead_to(cursor.block, cursor.scope, self.root_scope)?;
+                    let exited_scopes = self.exit_chain(cursor.scope, self.root_scope)?;
+                    self.terminate(cursor.block, CleanupTerminator::Return { exited_scopes })?;
+                }
+                None
+            }
             HirExprKind::IndirectCall {
                 callee,
                 arguments,
@@ -21659,7 +22326,9 @@ impl<'a> HirCleanupPlanner<'a> {
                             cursor = next;
                             by_value.push(stage);
                         }
-                        HirArgument::SharedBorrow(_) | HirArgument::MutBorrow(_) => {}
+                        HirArgument::SharedBorrow(_)
+                        | HirArgument::MutBorrow(_)
+                        | HirArgument::CallableCaptureBorrow { .. } => {}
                     }
                 }
                 for argument in by_value {
@@ -21690,7 +22359,9 @@ impl<'a> HirCleanupPlanner<'a> {
                         )?),
                         (
                             ResultUse::Store(destination),
-                            HirArgument::SharedBorrow(_) | HirArgument::MutBorrow(_),
+                            HirArgument::SharedBorrow(_)
+                            | HirArgument::MutBorrow(_)
+                            | HirArgument::CallableCaptureBorrow { .. },
                         ) => ResultUse::Store(self.register_callable_capture_destination(
                             destination,
                             index,
@@ -21702,7 +22373,9 @@ impl<'a> HirCleanupPlanner<'a> {
                         HirArgument::Copy(value) | HirArgument::Move(value) => {
                             self.walk_expr(value, cursor, capture_use)?
                         }
-                        HirArgument::SharedBorrow(_) | HirArgument::MutBorrow(_) => {
+                        HirArgument::SharedBorrow(_)
+                        | HirArgument::MutBorrow(_)
+                        | HirArgument::CallableCaptureBorrow { .. } => {
                             self.initialize_result(cursor, &capture_use)?;
                             Some(cursor)
                         }
@@ -22756,6 +23429,7 @@ impl ConstantEvaluator<'_> {
             | HirExprKind::RawAlloc { .. }
             | HirExprKind::RawDealloc { .. }
             | HirExprKind::Call { .. }
+            | HirExprKind::TailCall { .. }
             | HirExprKind::IndirectCall { .. }
             | HirExprKind::Partial { .. }
             | HirExprKind::PartialCapture { .. }
@@ -24266,6 +24940,22 @@ impl<'a> FunctionEmitter<'a> {
                             let pointer = self.emit_place_address(place)?;
                             emitted_arguments.push(format!("ptr {pointer}"));
                         }
+                        HirArgument::CallableCaptureBorrow {
+                            binding,
+                            index,
+                            callable_ty,
+                            capture_ty,
+                            ..
+                        } => {
+                            if *capture_ty != Ty::Unit {
+                                let pointer = self.emit_callable_capture_borrow(
+                                    *binding,
+                                    *index,
+                                    callable_ty,
+                                )?;
+                                emitted_arguments.push(format!("ptr {pointer}"));
+                            }
+                        }
                     }
                 }
                 self.release_drop_slots(cleanup_depth);
@@ -24290,6 +24980,74 @@ impl<'a> FunctionEmitter<'a> {
                         value: Some(register),
                     })
                 }
+            }
+            HirExprKind::TailCall {
+                function,
+                arguments,
+                result,
+                ..
+            } => {
+                let cleanup_depth = self.drop_slots.len();
+                let mut emitted_arguments = Vec::new();
+                for argument in arguments {
+                    match argument {
+                        HirArgument::Copy(argument) | HirArgument::Move(argument) => {
+                            let argument = self.emit_expr(argument)?;
+                            if self.terminated {
+                                self.drop_slots.truncate(cleanup_depth);
+                                return Ok(Operand::never());
+                            }
+                            if argument.ty == Ty::Unit {
+                                continue;
+                            }
+                            emitted_arguments.push(format!(
+                                "{} {}",
+                                llvm_value_type(&argument.ty)?,
+                                argument.value()?
+                            ));
+                            self.hold_operand_for_early_exit(&argument)?;
+                        }
+                        HirArgument::SharedBorrow(place) | HirArgument::MutBorrow(place) => {
+                            if place.ty != Ty::Unit {
+                                emitted_arguments
+                                    .push(format!("ptr {}", self.emit_place_address(place)?));
+                            }
+                        }
+                        HirArgument::CallableCaptureBorrow {
+                            binding,
+                            index,
+                            callable_ty,
+                            capture_ty,
+                            ..
+                        } => {
+                            if *capture_ty != Ty::Unit {
+                                let pointer = self.emit_callable_capture_borrow(
+                                    *binding,
+                                    *index,
+                                    callable_ty,
+                                )?;
+                                emitted_arguments.push(format!("ptr {pointer}"));
+                            }
+                        }
+                    }
+                }
+                self.release_drop_slots(cleanup_depth);
+                self.emit_cleanup_range(0)?;
+                let call = format!(
+                    "call {} @{}({})",
+                    llvm_return_type(result)?,
+                    function_symbol(function),
+                    emitted_arguments.join(", ")
+                );
+                if *result == Ty::Unit {
+                    self.instruction(call);
+                    self.terminate("ret void");
+                } else {
+                    let register = self.fresh_register();
+                    self.instruction(format!("{register} = {call}"));
+                    self.terminate(format!("ret {} {register}", llvm_value_type(result)?));
+                }
+                Ok(Operand::never())
             }
             HirExprKind::IndirectCall {
                 callee, arguments, ..
@@ -24324,6 +25082,22 @@ impl<'a> FunctionEmitter<'a> {
                             }
                             let pointer = self.emit_place_address(place)?;
                             emitted_arguments.push(format!("ptr {pointer}"));
+                        }
+                        HirArgument::CallableCaptureBorrow {
+                            binding,
+                            index,
+                            callable_ty,
+                            capture_ty,
+                            ..
+                        } => {
+                            if *capture_ty != Ty::Unit {
+                                let pointer = self.emit_callable_capture_borrow(
+                                    *binding,
+                                    *index,
+                                    callable_ty,
+                                )?;
+                                emitted_arguments.push(format!("ptr {pointer}"));
+                            }
                         }
                     }
                 }
@@ -24446,7 +25220,17 @@ impl<'a> FunctionEmitter<'a> {
                                 let mut stored = Vec::new();
                                 for capture in &closure.captures {
                                     if capture.mode != ClosureCaptureMode::Move {
-                                        stored.push(None);
+                                        let address = self.emit_place_address(&capture.place)?;
+                                        let pointer =
+                                            self.entry_alloca("ptr", "borrowed closure capture");
+                                        self.instruction(format!(
+                                            "store ptr {address}, ptr {pointer}"
+                                        ));
+                                        stored.push(Some(StoredCapture {
+                                            ty: capture.place.ty.clone(),
+                                            pointer,
+                                            drop_flag: None,
+                                        }));
                                         continue;
                                     }
                                     let value = self.emit_expr(
@@ -24503,6 +25287,11 @@ impl<'a> FunctionEmitter<'a> {
                                         | HirArgument::MutBorrow(_) => {
                                             return Err(Diagnostic::new(
                                                 "borrowed argument reached partial application emission",
+                                            ));
+                                        }
+                                        HirArgument::CallableCaptureBorrow { .. } => {
+                                            return Err(Diagnostic::new(
+                                                "forwarded borrowed argument reached partial application emission",
                                             ));
                                         }
                                     };
@@ -25362,6 +26151,15 @@ impl<'a> FunctionEmitter<'a> {
                 HirArgument::SharedBorrow(place) | HirArgument::MutBorrow(place) => {
                     ("ptr".to_owned(), self.emit_place_address(place)?)
                 }
+                HirArgument::CallableCaptureBorrow {
+                    binding,
+                    index,
+                    callable_ty,
+                    ..
+                } => (
+                    "ptr".to_owned(),
+                    self.emit_callable_capture_borrow(*binding, *index, callable_ty)?,
+                ),
             };
             let register = self.fresh_register();
             self.instruction(format!(
@@ -25400,9 +26198,19 @@ impl<'a> FunctionEmitter<'a> {
         let mut environment = "zeroinitializer".to_owned();
         for (index, (capture, stored)) in callable.captures.iter().zip(stored).enumerate() {
             if matches!(capture.mode, PassMode::Borrow | PassMode::MutBorrow) {
-                return Err(Diagnostic::new(
-                    "borrowed callable environment escaped local lowering",
+                let stored = stored.ok_or_else(|| {
+                    Diagnostic::new(format!(
+                        "internal error: borrowed callable capture {index} has no storage"
+                    ))
+                })?;
+                let value = self.fresh_register();
+                self.instruction(format!("{value} = load ptr, ptr {}", stored.pointer));
+                let next = self.fresh_register();
+                self.instruction(format!(
+                    "{next} = insertvalue {environment_ty} {environment}, ptr {value}, {index}"
                 ));
+                environment = next;
+                continue;
             }
             let (field_ty, value) = if capture.ty == Ty::Unit {
                 ("[0 x i8]".to_owned(), "zeroinitializer".to_owned())
@@ -25435,6 +26243,43 @@ impl<'a> FunctionEmitter<'a> {
             ty: expression.ty.clone(),
             value: Some(environment),
         })
+    }
+
+    fn emit_callable_capture_borrow(
+        &mut self,
+        binding: LocalId,
+        index: usize,
+        callable_ty: &Ty,
+    ) -> Result<String, Diagnostic> {
+        if let Some(stored) = self
+            .partial_captures
+            .get(&binding)
+            .and_then(|captures| captures.get(index))
+            .cloned()
+        {
+            let stored = stored.ok_or_else(|| {
+                Diagnostic::new(format!(
+                    "internal error: borrowed callable capture {index} has no storage"
+                ))
+            })?;
+            let pointer = self.fresh_register();
+            self.instruction(format!("{pointer} = load ptr, ptr {}", stored.pointer));
+            return Ok(pointer);
+        }
+
+        let environment = self.locals.get(&binding).cloned().ok_or_else(|| {
+            Diagnostic::new(format!(
+                "internal error: unknown callable environment local {binding}"
+            ))
+        })?;
+        let environment_ty = llvm_value_type(callable_ty)?;
+        let field = self.fresh_register();
+        self.instruction(format!(
+            "{field} = getelementptr inbounds {environment_ty}, ptr {environment}, i32 0, i32 {index}"
+        ));
+        let pointer = self.fresh_register();
+        self.instruction(format!("{pointer} = load ptr, ptr {field}"));
+        Ok(pointer)
     }
 
     fn relocate_callable_captures(

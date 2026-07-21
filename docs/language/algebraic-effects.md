@@ -138,9 +138,13 @@ Operation and ordinary call arguments are traversed in source order, `done:` may
 type, and nested handlers of the same identity select the nearest matching boundary.
 Each named-call specialization is a real local closure frame, so shared and mutable borrow
 parameters retain their capabilities, explicit returns target the callee frame, and its locals are
-cleaned before the caller continuation resumes. Direct and mutually recursive named calls become
-direct calls between lifted frame functions with explicit environment forwarding. Indirect calls
-and the final general continuation ABI remain implementation work. Resumable `while` conditions,
-loop bodies, `continue`, and value-carrying `break` lower through recursive lifted iteration frames
-whose result is the complete handler answer; unsupported cases are rejected rather than compiled
-with callback-only semantics.
+cleaned before the caller continuation resumes. Named frames now complete through typed one-shot
+continuation closures and an explicit tail-continuation terminator. Consequently, omitting
+`resume` abandons the complete suspended cross-function computation, while a clause may continue
+computing after `resume` returns. Shared and mutable captures forwarded through a moved continuation
+are rebased to pointers in its new callable environment. Direct recursion and resumable loop
+backedges use these CPS frames. Mutually recursive SCCs temporarily retain the previous
+same-answer-type direct-frame lowering; an erased environment-plus-entry continuation ABI is needed
+to make their varying static continuation layouts uniform. Capturing indirect calls and that final
+general continuation ABI remain implementation work; unsupported cases are rejected rather than
+compiled with callback-only semantics.

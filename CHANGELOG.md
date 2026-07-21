@@ -6,6 +6,20 @@ subset.
 
 ## Unreleased
 
+## 0.117.0 - 2026-07-22
+
+- Replaced callback-style named-call completion with typed one-shot continuation closures and an
+  explicit tail-continuation HIR terminator, so abandoning an operation clause now aborts the full
+  suspended cross-function computation.
+- Preserved clause computation after resumption, including answer-producing forms such as
+  `resume(value) + adjustment`, while retaining callee cleanup before the caller continuation.
+- Forwarded shared and mutable captures through moved callable environments by loading their
+  rebased environment pointers instead of retaining stale lexical places.
+- Extended recursive-token discovery through compiler-generated continuation closures; direct
+  recursion and resumable loop backedges use the CPS frames, while mutually recursive SCCs retain
+  the previous same-answer frame lowering until the erased continuation ABI lands.
+- Added native regression coverage for cross-function abandonment and post-resume computation.
+
 ## 0.116.0 - 2026-07-22
 
 - Lowered resumable `while` and value-producing `loop` backedges as recursive lifted iteration

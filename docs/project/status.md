@@ -60,8 +60,10 @@ into nested immediate calls. `let UI = effect` declares a nominal, module-visibl
 Parameterized user effects may declare typed operation requirements. Operation calls use an exact
 instantiated identity such as `State(i32)`, propagate through the existing row machinery, and are
 checked for parameter modes, result types, arity, visibility, and missing row requirements. Derived
-handlers and one-shot continuation CPS lowering are the active next implementation slice;
-operation declarations alone are not reported as completed algebraic handlers.
+handlers support typed one-shot resumption, abandonment, `done:` answer conversion, named-call
+propagation, direct recursion, and resumable loop backedges. Cross-function abandonment and
+computation after `resume` use explicit CPS continuation closures. Capturing indirect calls and the
+uniform continuation ABI for mutually recursive frames remain implementation work.
 Function and generic inherent-member `E: effect` parameters represent complete rows, default to pure,
 participate in monomorphization, forward through ordinary compile-time calls such as
 `callee(E)(value)`, and infer pure, unsafe, custom, or `throws(Error)` rows from higher-order callable
@@ -85,8 +87,8 @@ non-capturing indirect calls. Ordinary `Option` and `Result` functions require e
 construction; the removed `Try`, `FromResidual`, `FromError`, and `ControlFlow` language protocols no
 longer participate in return completion or propagation. `do` transparently forwards the complete
 active row through its immediate closure boundary, including `throws` carrier lowering, `unsafe`,
-and nominal marker effects. User-defined handlers, capturing closure values, generic trait methods,
-and async color lowering remain design or implementation work.
+and nominal marker effects. Capturing closure values, generic trait methods, the remaining general
+algebraic-continuation ABI, and async color lowering remain design or implementation work.
 
 `core` and `alloc` are mounted in ordinary module resolution. `core.ops` traits and alloc containers
 are not part of the prelude. `Box`, `Vec`, and their free functions require

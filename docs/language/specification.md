@@ -424,11 +424,13 @@ operation 没有函数体，完整调用产生所属的已实例化 effect。`St
 `with(...)` 要求按普通函数签名检查；部分应用本身仍是 pure。当前实现阶段已经提供声明、名义
 identity、传播和类型检查。派生的 `State(i32).handle(get: { (resume) -> ... }, ...) { action }`
 可处理 action 中词法可见的 operation；`resume` 是一次性 continuation，也可以不调用以中止剩余
-计算。普通具名、完整调用且非递归的函数会在 handler 下特化成真实的局部 closure frame；参数保留
-原本的 copy、move 或 borrow mode，显式 `return` 以该 frame 为边界，callee 局部值也会在调用者
-continuation 恢复前清理。直接递归和互递归会降低成 lifted frame 函数之间的直接调用，并显式转发
-捕获环境。effectful `while` 条件、循环体、`continue` 和带值 `break` 会降低为返回完整 handler
-答案的递归 iteration frame。间接调用和最终通用 continuation ABI 按
+计算。普通具名完整调用会在 handler 下特化成真实的局部 closure frame；参数保留原本的 copy、move
+或 borrow mode，显式 `return` 以该 frame 为边界，callee 局部值也会在调用者 continuation 恢复前
+清理。frame 通过带显式 tail terminator 的一次性 CPS continuation 完成，因此 clause 不调用
+`resume` 会中止完整的跨函数剩余计算，调用 `resume` 后也可以继续组成 handler 答案。直接递归和
+effectful `while`、`loop` backedge 使用 CPS lifted frame。互递归 SCC 暂时保留相同 answer type 的
+直接 frame lowering；统一不同静态 continuation 环境仍需擦除后的 environment + entry ABI。捕获型
+间接调用和最终通用 continuation ABI 按
 [代数效应设计](algebraic-effects.md)继续实现；尚未覆盖的路径会被拒绝，不能让带 operation 的
 effect 逃逸原生入口。
 
