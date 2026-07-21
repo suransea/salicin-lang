@@ -40,12 +40,18 @@ pub fn parse(source: &str) -> Result<Program, ParseError> {
 
 /// Parses a token stream produced by [`crate::lexer::lex`].
 pub fn parse_tokens(tokens: Vec<Token>) -> Result<Program, ParseError> {
-    Parser { tokens, index: 0 }.program()
+    Parser {
+        tokens,
+        index: 0,
+        return_effect_parameters: HashSet::new(),
+    }
+    .program()
 }
 
 struct Parser {
     tokens: Vec<Token>,
     index: usize,
+    return_effect_parameters: HashSet<String>,
 }
 
 enum HeaderGroup {
@@ -209,7 +215,8 @@ impl Parser {
         }
 
         let (annotation, effects, has_effect_group) = if self.take(&TokenKind::Colon) {
-            let (return_type, effects, has_effect_group) = self.function_return_type()?;
+            let (return_type, effects, has_effect_group) =
+                self.function_return_type(&compile_groups)?;
             (Some(return_type), effects, has_effect_group)
         } else {
             if self.at(&TokenKind::Bang) {
@@ -347,7 +354,8 @@ impl Parser {
         self.validate_receiver_groups(&groups)?;
 
         let (annotation, effects, has_effect_group) = if self.take(&TokenKind::Colon) {
-            let (return_type, effects, has_effect_group) = self.function_return_type()?;
+            let (return_type, effects, has_effect_group) =
+                self.function_return_type(&compile_groups)?;
             (Some(return_type), effects, has_effect_group)
         } else {
             if self.at(&TokenKind::Bang) {
@@ -523,7 +531,7 @@ impl Parser {
                 || self.at_offset(3, &TokenKind::Region)
                 || matches!(
                     self.tokens.get(self.index + 3).map(|token| &token.kind),
-                    Some(TokenKind::Ident(name)) if matches!(name.as_str(), "access" | "passing")
+                    Some(TokenKind::Ident(name)) if matches!(name.as_str(), "access" | "passing" | "effect")
                 ))
     }
 
@@ -536,7 +544,7 @@ impl Parser {
                 || self.at_offset(2, &TokenKind::Region)
                 || matches!(
                     self.tokens.get(self.index + 2).map(|token| &token.kind),
-                    Some(TokenKind::Ident(name)) if matches!(name.as_str(), "access" | "passing")
+                    Some(TokenKind::Ident(name)) if matches!(name.as_str(), "access" | "passing" | "effect")
                 ))
     }
 
@@ -600,10 +608,19 @@ impl Parser {
                 }
                 self.advance();
                 CompileParamKind::Passing
+            } else if matches!(&self.current().kind, TokenKind::Ident(name) if name == "effect") {
+                if region_name {
+                    return Err(self.error_at(
+                        &name_token,
+                        "effect parameter names must be ordinary identifiers",
+                    ));
+                }
+                self.advance();
+                CompileParamKind::Effect
             } else {
                 self.expect(
                     &TokenKind::Region,
-                    "`type`, `access`, `passing`, or `region`",
+                    "`type`, `access`, `passing`, `effect`, or `region`",
                 )?;
                 if !region_name {
                     return Err(self.error_at(
@@ -951,7 +968,7 @@ impl Parser {
                     default,
                 });
             }
-            let (return_type, effects, _) = self.function_return_type()?;
+            let (return_type, effects, _) = self.function_return_type(&compile_groups)?;
             (Some(return_type), effects)
         } else {
             if self.at(&TokenKind::Bang) {
@@ -995,9 +1012,19 @@ impl Parser {
         }))
     }
 
-    fn function_return_type(&mut self) -> Result<(Type, FunctionEffects, bool), ParseError> {
+    fn function_return_type(
+        &mut self,
+        compile_groups: &[Vec<CompileParam>],
+    ) -> Result<(Type, FunctionEffects, bool), ParseError> {
+        self.return_effect_parameters = compile_groups
+            .iter()
+            .flatten()
+            .filter(|parameter| parameter.kind == CompileParamKind::Effect)
+            .map(|parameter| parameter.name.clone())
+            .collect();
         let output = self.type_expr()?;
         if !self.effect_group_starts_here() {
+            self.return_effect_parameters.clear();
             if self.at(&TokenKind::Bang) {
                 return Err(self.error_here(
                     "`!` effect syntax was removed; write a return type such as `i32(unsafe)`",
@@ -1009,6 +1036,7 @@ impl Parser {
         self.expect(&TokenKind::LParen, "`(` before return-type effects")?;
         let mut unsafe_effect = false;
         let mut try_effect: Option<Option<Type>> = None;
+        let mut effect_parameters = Vec::new();
         loop {
             if self.take(&TokenKind::Unsafe) {
                 if unsafe_effect {
@@ -1027,9 +1055,23 @@ impl Parser {
                     None
                 };
                 try_effect = Some(error);
+            } else if let TokenKind::Ident(name) = &self.current().kind {
+                let name = name.clone();
+                if !self.return_effect_parameters.contains(&name) {
+                    return Err(self.error_here(format!(
+                        "undeclared effect parameter `{name}` in return-type effect group"
+                    )));
+                }
+                self.advance();
+                if effect_parameters.contains(&name) {
+                    return Err(self.error_here(format!(
+                        "duplicate effect parameter `{name}` in return-type effect group"
+                    )));
+                }
+                effect_parameters.push(name);
             } else {
                 return Err(self.error_here(
-                    "expected `try`, `try(Error)`, or `unsafe` in a return-type effect group",
+                    "expected `try`, `try(Error)`, `unsafe`, or a declared effect parameter in a return-type effect group",
                 ));
             }
 
@@ -1048,7 +1090,15 @@ impl Parser {
             Some(None) => Type::Named("Option".to_owned(), vec![output]),
             Some(Some(error)) => Type::Named("Result".to_owned(), vec![output, error]),
         };
-        Ok((return_type, FunctionEffects { unsafe_effect }, true))
+        self.return_effect_parameters.clear();
+        Ok((
+            return_type,
+            FunctionEffects {
+                unsafe_effect,
+                parameters: effect_parameters,
+            },
+            true,
+        ))
     }
 
     fn effect_group_starts_here(&self) -> bool {
@@ -1057,6 +1107,11 @@ impl Parser {
                 self.tokens.get(self.index + 1).map(|token| &token.kind),
                 Some(TokenKind::Unsafe | TokenKind::Try)
             )
+            || self.at(&TokenKind::LParen)
+                && matches!(
+                    self.tokens.get(self.index + 1).map(|token| &token.kind),
+                    Some(TokenKind::Ident(name)) if self.return_effect_parameters.contains(name)
+                )
     }
 
     fn named_type_fields(&mut self) -> Result<Vec<Field>, ParseError> {
@@ -1748,6 +1803,9 @@ impl Parser {
             TokenKind::Unsafe => {
                 self.advance();
                 if !self.at(&TokenKind::LBrace) {
+                    if self.at(&TokenKind::Comma) || self.at(&TokenKind::RParen) {
+                        return Ok(Expr::Name("unsafe".to_owned()));
+                    }
                     return Err(self.error_here(
                         "expected a trailing closure after `unsafe`; write `unsafe { ... }`",
                     ));
@@ -2167,6 +2225,10 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
                     &definition.compile_groups,
                     &format!("struct `{}`", definition.name),
                 )?;
+                reject_effect_parameters(
+                    &definition.compile_groups,
+                    &format!("struct `{}`", definition.name),
+                )?;
                 let regions = declared_regions(&definition.compile_groups, &empty)?;
                 let accesses = declared_accesses(&definition.compile_groups, &empty)?;
                 for field in &definition.fields {
@@ -2176,6 +2238,10 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
             }
             Item::Enum(definition) => {
                 reject_passing_parameters(
+                    &definition.compile_groups,
+                    &format!("enum `{}`", definition.name),
+                )?;
+                reject_effect_parameters(
                     &definition.compile_groups,
                     &format!("enum `{}`", definition.name),
                 )?;
@@ -2204,6 +2270,10 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
                     &definition.compile_groups,
                     &format!("trait `{}`", definition.name),
                 )?;
+                reject_effect_parameters(
+                    &definition.compile_groups,
+                    &format!("trait `{}`", definition.name),
+                )?;
                 let regions = declared_regions(&definition.compile_groups, &empty)?;
                 let accesses = declared_accesses(&definition.compile_groups, &empty)?;
                 for member in &definition.members {
@@ -2220,6 +2290,10 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
                                 compile_groups,
                                 &format!("associated type `{}`", name),
                             )?;
+                            reject_effect_parameters(
+                                compile_groups,
+                                &format!("associated type `{}`", name),
+                            )?;
                             let member_regions = declared_regions(compile_groups, &regions)?;
                             let member_accesses = declared_accesses(compile_groups, &accesses)?;
                             if let Some(default) = default {
@@ -2232,6 +2306,7 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
             }
             Item::Extend(extension) => {
                 reject_passing_parameters(&extension.compile_groups, "extend header")?;
+                reject_effect_parameters(&extension.compile_groups, "extend header")?;
                 let regions = declared_regions(&extension.compile_groups, &empty)?;
                 let accesses = declared_accesses(&extension.compile_groups, &empty)?;
                 validate_type_regions(&extension.target, &regions)?;
@@ -2271,6 +2346,20 @@ fn reject_passing_parameters(groups: &[Vec<CompileParam>], owner: &str) -> Resul
     {
         Err(format!(
             "{owner} cannot declare a `passing` parameter; passing parameters belong to functions"
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn reject_effect_parameters(groups: &[Vec<CompileParam>], owner: &str) -> Result<(), String> {
+    if groups
+        .iter()
+        .flatten()
+        .any(|parameter| parameter.kind == CompileParamKind::Effect)
+    {
+        Err(format!(
+            "{owner} cannot declare an `effect` parameter; effect parameters belong to functions"
         ))
     } else {
         Ok(())
@@ -2323,6 +2412,13 @@ fn validate_function_scopes(
         .filter(|parameter| parameter.kind == CompileParamKind::Passing)
         .map(|parameter| parameter.name.clone())
         .collect::<HashSet<_>>();
+    let effects = function
+        .compile_groups
+        .iter()
+        .flatten()
+        .filter(|parameter| parameter.kind == CompileParamKind::Effect)
+        .map(|parameter| parameter.name.clone())
+        .collect::<HashSet<_>>();
     let mut compile_names = HashSet::new();
     for parameter in function.compile_groups.iter().flatten() {
         if !compile_names.insert(parameter.name.clone()) {
@@ -2346,16 +2442,21 @@ fn validate_function_scopes(
         }
         validate_type_regions(&parameter.ty, &regions)?;
         validate_type_accesses(&parameter.ty, &accesses)?;
+        validate_type_effects(&parameter.ty, &effects)?;
     }
     if let Some(return_type) = &function.return_type {
         validate_type_regions(return_type, &regions)?;
         validate_type_accesses(return_type, &accesses)?;
+        validate_type_effects(return_type, &effects)?;
     }
     for predicate in &function.where_predicates {
         validate_type_regions(&predicate.subject, &regions)?;
         validate_type_regions(&predicate.trait_ref, &regions)?;
+        validate_type_effects(&predicate.subject, &effects)?;
+        validate_type_effects(&predicate.trait_ref, &effects)?;
         for binding in &predicate.associated_types {
             validate_type_regions(&binding.ty, &regions)?;
+            validate_type_effects(&binding.ty, &effects)?;
         }
     }
     if let Some(body) = &function.body {
@@ -2363,6 +2464,24 @@ fn validate_function_scopes(
         validate_expr_accesses(body, &accesses)?;
     }
     Ok(())
+}
+
+fn validate_type_effects(ty: &Type, effects: &HashSet<String>) -> Result<(), String> {
+    match ty {
+        Type::Named(name, _) if effects.contains(name) => Err(format!(
+            "effect parameter `{name}` cannot be used as a runtime type"
+        )),
+        Type::Borrow { pointee, .. } | Type::Array(pointee, _) => {
+            validate_type_effects(pointee, effects)
+        }
+        Type::Named(_, arguments) => {
+            for argument in arguments {
+                validate_type_effects(argument, effects)?;
+            }
+            Ok(())
+        }
+        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => Ok(()),
+    }
 }
 
 fn validate_access_name(access: &str, accesses: &HashSet<String>) -> Result<(), String> {
@@ -3972,6 +4091,33 @@ mod tests {
         );
         assert_eq!(function.groups[0][0].mode, PassMode::Inferred);
         assert_eq!(function.groups[0][0].passing.as_deref(), Some("P"));
+    }
+
+    #[test]
+    fn parses_effect_parameters_in_return_effect_groups() {
+        let program = parse(
+            "let tagged(E: effect)(value: i32): i32(E) = value\n\
+             let combined(E: effect)(value: i32): i32(unsafe, E) = value\n",
+        )
+        .unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        assert_eq!(function.compile_groups[0][0].kind, CompileParamKind::Effect);
+        assert_eq!(function.effects.parameters, vec!["E"]);
+        let Item::Function(combined) = &program.items[1] else {
+            panic!("expected function");
+        };
+        assert!(combined.effects.unsafe_effect);
+        assert_eq!(combined.effects.parameters, vec!["E"]);
+
+        let error = parse("let Box(E: effect) = struct(value: i32)\n").unwrap_err();
+        assert!(error
+            .message
+            .contains("effect parameters belong to functions"));
+
+        let error = parse("let bad(E: effect)(value: E): i32(E) = 0\n").unwrap_err();
+        assert!(error.message.contains("cannot be used as a runtime type"));
     }
 
     #[test]

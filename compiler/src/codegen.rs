@@ -148,6 +148,8 @@ const ACCESS_MUT_MARKER: &str = "$access$mut";
 const PASSING_AUTO_MARKER: &str = "$passing$auto";
 const PASSING_COPY_MARKER: &str = "$passing$copy";
 const PASSING_MOVE_MARKER: &str = "$passing$move";
+const EFFECT_PURE_MARKER: &str = "$effect$pure";
+const EFFECT_UNSAFE_MARKER: &str = "$effect$unsafe";
 
 fn is_compile_value_marker(name: &str) -> bool {
     matches!(
@@ -157,6 +159,8 @@ fn is_compile_value_marker(name: &str) -> bool {
             | PASSING_AUTO_MARKER
             | PASSING_COPY_MARKER
             | PASSING_MOVE_MARKER
+            | EFFECT_PURE_MARKER
+            | EFFECT_UNSAFE_MARKER
     )
 }
 
@@ -2753,7 +2757,7 @@ impl Analyzer {
         (result != Ty::Error).then_some(FunctionShape {
             groups,
             result,
-            effects: function.effects,
+            effects: function.effects.clone(),
         })
     }
 
@@ -4916,6 +4920,9 @@ impl Analyzer {
                     }
                     CompileParamKind::Access => ACCESS_SHARED_MARKER.to_owned(),
                     CompileParamKind::Passing => PASSING_AUTO_MARKER.to_owned(),
+                    // Abstract validation uses the maximal currently supported row. Every
+                    // concrete instance is lowered again after substituting its selected row.
+                    CompileParamKind::Effect => EFFECT_UNSAFE_MARKER.to_owned(),
                     CompileParamKind::Region => continue,
                 };
                 if substitutions
@@ -8146,6 +8153,21 @@ impl Analyzer {
                             return None;
                         }
                     },
+                    CompileParamKind::Effect => match &argument.value {
+                        Expr::Name(name) if name == "pure" => {
+                            Type::Named(EFFECT_PURE_MARKER.to_owned(), Vec::new())
+                        }
+                        Expr::Name(name) if name == "unsafe" => {
+                            Type::Named(EFFECT_UNSAFE_MARKER.to_owned(), Vec::new())
+                        }
+                        _ => {
+                            self.error(format!(
+                                "invalid effect argument for `{}` in `{owner}`; expected `pure` or `unsafe`",
+                                parameter.name
+                            ));
+                            return None;
+                        }
+                    },
                     CompileParamKind::Region => {
                         self.error("region arguments are erased before semantic analysis");
                         return None;
@@ -8187,6 +8209,14 @@ impl Analyzer {
                         source: Some(Type::Named(PASSING_AUTO_MARKER.to_owned(), Vec::new())),
                         origin: "default automatic passing".to_owned(),
                     });
+            } else if parameter.kind == CompileParamKind::Effect {
+                inferred
+                    .entry(parameter.name.clone())
+                    .or_insert_with(|| InferredTypeArgument {
+                        ty: Ty::Struct(EFFECT_PURE_MARKER.to_owned()),
+                        source: Some(Type::Named(EFFECT_PURE_MARKER.to_owned(), Vec::new())),
+                        origin: "default pure effect".to_owned(),
+                    });
             }
         }
         Some((compile_parameters, inferred, source_index))
@@ -8223,6 +8253,15 @@ impl Analyzer {
             return arguments.iter().all(|argument| {
                 matches!(&argument.value, Expr::Name(name)
                     if matches!(name.as_str(), "auto" | "copy" | "move"))
+            });
+        }
+        if parameters
+            .iter()
+            .all(|parameter| parameter.kind == CompileParamKind::Effect)
+        {
+            return arguments.iter().all(|argument| {
+                matches!(&argument.value, Expr::Name(name)
+                    if matches!(name.as_str(), "pure" | "unsafe"))
             });
         }
         parameters.len() == arguments.len()
@@ -8301,6 +8340,10 @@ impl Analyzer {
             CompileParamKind::Passing => {
                 matches!(expression, Expr::Name(name)
                     if matches!(name.as_str(), "auto" | "copy" | "move"))
+            }
+            CompileParamKind::Effect => {
+                matches!(expression, Expr::Name(name)
+                    if matches!(name.as_str(), "pure" | "unsafe"))
             }
             CompileParamKind::Region => false,
         }
@@ -21860,6 +21903,14 @@ fn substitute_function_types(function: &mut Function, substitutions: &HashMap<St
     if let Some(result) = &mut function.return_type {
         substitute_type_parameters(result, substitutions);
     }
+    let mut remaining_effect_parameters = Vec::new();
+    for parameter in function.effects.parameters.drain(..) {
+        match substituted_unsafe_effect(&parameter, substitutions) {
+            Some(selected) => function.effects.unsafe_effect |= selected,
+            None => remaining_effect_parameters.push(parameter),
+        }
+    }
+    function.effects.parameters = remaining_effect_parameters;
     for predicate in &mut function.where_predicates {
         substitute_type_parameters(&mut predicate.subject, substitutions);
         substitute_type_parameters(&mut predicate.trait_ref, substitutions);
@@ -22100,6 +22151,8 @@ fn substitute_expr_types(expression: &mut Expr, substitutions: &HashMap<String, 
                         PASSING_AUTO_MARKER => *name = "auto".to_owned(),
                         PASSING_COPY_MARKER => *name = "copy".to_owned(),
                         PASSING_MOVE_MARKER => *name = "move".to_owned(),
+                        EFFECT_PURE_MARKER => *name = "pure".to_owned(),
+                        EFFECT_UNSAFE_MARKER => *name = "unsafe".to_owned(),
                         _ => {}
                     }
                 }
@@ -22317,6 +22370,20 @@ fn substituted_passing_mode(name: &str, substitutions: &HashMap<String, Type>) -
         PASSING_AUTO_MARKER => Some(PassMode::Inferred),
         PASSING_COPY_MARKER => Some(PassMode::Copy),
         PASSING_MOVE_MARKER => Some(PassMode::Move),
+        _ => None,
+    }
+}
+
+fn substituted_unsafe_effect(name: &str, substitutions: &HashMap<String, Type>) -> Option<bool> {
+    let Type::Named(marker, arguments) = substitutions.get(name)? else {
+        return None;
+    };
+    if !arguments.is_empty() {
+        return None;
+    }
+    match marker.as_str() {
+        EFFECT_PURE_MARKER => Some(false),
+        EFFECT_UNSAFE_MARKER => Some(true),
         _ => None,
     }
 }
@@ -25929,6 +25996,108 @@ let main(): i32 = 0
                 .message
                 .contains("`main` cannot expose an unhandled `unsafe` effect")
         }));
+    }
+
+    #[test]
+    fn effect_compile_parameters_select_pure_or_unsafe_instances() {
+        compile_text(
+            r#"
+let tagged(E: effect)(value: i32): i32(E) = value
+let forward(E: effect)(value: i32): i32(E) = tagged(E)(value)
+let main(): i32 = forward(20) + forward(pure)(20) + unsafe { forward(E: unsafe)(2) }
+"#,
+        )
+        .expect("effect arguments should specialize the function call requirement");
+
+        compile_text(
+            r#"
+let identity(E: effect, T: type)(value: T): T(E) = value
+let main(): i32 = identity(20) + unsafe { identity(E: unsafe, T: i32)(22) }
+"#,
+        )
+        .expect("effect and type parameters should coexist in one inferred compile group");
+
+        let errors = compile_text(
+            r#"
+let tagged(E: effect)(value: i32): i32(E) = value
+let forward(E: effect)(value: i32): i32(E) = tagged(E)(value)
+let main(): i32 = forward(unsafe)(42)
+"#,
+        )
+        .unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("requires an `unsafe` handler")),
+            "{errors:?}"
+        );
+
+        compile_text(
+            r#"
+let read(E: effect)(pointer: Ptr(i32)): i32(E) = *pointer
+let main(): i32 = {
+  let value = 42
+  unsafe { read(unsafe)(Ptr(borrow value)) }
+}
+"#,
+        )
+        .expect("the selected unsafe row should authorize the generic body");
+
+        let errors = compile_text(
+            r#"
+let read(E: effect)(pointer: Ptr(i32)): i32(E) = *pointer
+let main(): i32 = {
+  let value = 42
+  read(Ptr(borrow value))
+}
+"#,
+        )
+        .unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("requires an `unsafe`")),
+            "{errors:?}"
+        );
+
+        let errors = compile_text(
+            r#"
+let tagged(E: effect)(value: i32): i32(E) = value
+let main(): i32 = tagged(E: copy)(42)
+"#,
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("invalid effect argument")));
+
+        let errors = compile_text(
+            r#"
+let always(E: effect)(value: i32): i32(unsafe, E) = value
+let main(): i32 = always(pure)(42)
+"#,
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("requires an `unsafe` handler")));
+    }
+
+    #[test]
+    fn effect_parameters_specialize_inherent_methods() {
+        compile_text(
+            r#"
+let Value = struct(value: i32)
+extend Value {
+  let tagged(E: effect)(borrow self)(): i32(E) = self.value
+}
+let main(): i32 = {
+  let value = Value(42)
+  unsafe { value.tagged(unsafe)() }
+}
+"#,
+        )
+        .expect("inherent methods should retain generic effect rows");
     }
 
     #[test]

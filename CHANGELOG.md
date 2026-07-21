@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.87.0 - 2026-07-21
+
+- Added the contextual `effect` compile-time kind for functions and generic inherent members, with
+  concrete `pure` and `unsafe` values and pure-by-default group omission.
+- Allowed declared effect parameters in return groups (`T(E)` and `T(unsafe, E)`) and in ordinary
+  positional or named compile-time forwarding calls such as `callee(E)(value)`.
+- Specialized effect-generic functions per selected row so direct, forwarded, method, and native
+  calls enforce the resulting unsafe requirement without adding a runtime argument.
+- Rejected effect parameters on data, trait, associated-type, and extend headers, as well as their
+  misuse in runtime type positions.
+- Kept `try` and `try(Error)` as explicit carrier-selecting return effects rather than hiding an ABI
+  change behind the current call-requirement generic.
+
 ## 0.86.0 - 2026-07-21
 
 - Replaced the punctuation-separated `T ! unsafe` spelling with return-type compile-time effect

@@ -16,8 +16,10 @@ position. Functions and trait methods attach effects to the logical return type:
 the checked unsafe call requirement, `T(try)` normalizes to `Option(T)`, and `T(try(E))` normalizes
 to `Result(T, E)`. Complete direct, method, aliased, and partially applied unsafe calls require an
 enclosing unsafe function or `unsafe { ... }` handler. `do` forwards the implemented unsafe effect
-into nested immediate calls. General `E: effect` rows and async color polymorphism remain design
-work.
+into nested immediate calls. Function and generic inherent-member `E: effect` parameters accept
+`pure` or `unsafe`, default to pure, participate in monomorphization, and forward through ordinary
+compile-time calls such as `callee(E)(value)`. Higher-order callable effect inference, generic trait
+methods, and async color polymorphism remain design work.
 
 `core` and `alloc` are mounted in ordinary module resolution. `core.ops` traits and alloc containers
 are not part of the prelude. `Box`, `Vec`, and their free functions require

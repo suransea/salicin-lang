@@ -1892,6 +1892,13 @@ impl Resolver {
     ) {
         let type_scope = compile_parameter_names(&function.compile_groups, outer_types);
         let mut value_scope = type_scope.clone();
+        value_scope.extend(
+            function
+                .compile_groups
+                .iter()
+                .flatten()
+                .map(|parameter| parameter.name.clone()),
+        );
         for group in &mut function.groups {
             for parameter in group {
                 self.rewrite_parameter(parameter, context, &type_scope);

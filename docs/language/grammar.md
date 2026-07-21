@@ -91,7 +91,7 @@ let_decl = "let", [ "mut" ], IDENT,
 
 return_type = type_expr, [ effect_group ] ;
 effect_group = "(", effect, { ",", effect }, [ "," ], ")" ;
-effect = "unsafe" | "try", [ "(", type_expr, ")" ] ;
+effect = "unsafe" | "try", [ "(", type_expr, ")" ] | IDENT ;
 
 initializer = expression | struct_decl | enum_decl | trait_decl | module_decl ;
 ```
@@ -102,8 +102,9 @@ initializer = expression | struct_decl | enum_decl | trait_decl | module_decl ;
 - `let mut` 不能含参数组，且必须绑定运行时值。
 - effect 组只能用于函数返回类型；`T(try)` 规范化为 `Option(T)`，`T(try(E))` 规范化为
   `Result(T, E)`，`T(unsafe)` 保留返回类型并增加调用要求。
-- 当类型参数组首项为 `try` 或 `unsafe` 时，它是 effect 组；否则是普通类型参数组。因此
-  `Result(T, E)(unsafe)` 的第一组属于 `Result`，第二组属于函数返回 effect。
+- 当类型参数组首项为 `try`、`unsafe` 或当前函数声明的 `E: effect` 参数时，它是 effect 组；
+  否则是普通类型参数组。因此 `Result(T, E)(unsafe)` 的第一组属于 `Result`，第二组属于函数
+  返回 effect。
 - `let f(x: T) = body` 是具名函数声明。
 - `let f: (x: T): R = { body }` 是带名签名函数声明：所有槽必须有名字，RHS 是函数体。
 - `let f: (T): R = { (x: T) -> body }` 是普通函数值绑定。
@@ -172,7 +173,7 @@ extend_decl = "extend", [ compile_parameter_group ], type_expr,
 
 compile_parameter_group = "(", compile_parameter,
                           { ",", compile_parameter }, [ "," ], ")" ;
-compile_parameter = IDENT, ":", ( "type" | "access" | "passing" )
+compile_parameter = IDENT, ":", ( "type" | "access" | "passing" | "effect" )
                   | REGION, ":", "region" ;
 ```
 
@@ -235,6 +236,8 @@ type_argument  = type_expr | INTEGER ;
 `borrow(A, 'a)` 分别携带 access 参数以及 access/region 参数组合。
 `passing` 是函数编译期 kind；其内建实参为 `auto`、`copy` 与 `move`，并在参数模式位置以
 已声明的参数名引用，例如 `(P value: T)`。
+`effect` 是函数编译期 kind；当前实参为 `pure` 与 `unsafe`，默认 `pure`。参数名只可出现在
+返回 effect 组和其他 effect 编译期实参位置，例如 `T(E)` 与 `forward(E)(value)`。
 
 `void` 和 `never` 按普通 prelude 名称解析，分别等价于 `let void = ()` 与
 `let never = enum {}`，不是 lexer 关键字。零 variant enum 合法；其值位置可以用空的

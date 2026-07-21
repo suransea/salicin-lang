@@ -173,9 +173,11 @@ pub struct Function {
     pub body: Option<Expr>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct FunctionEffects {
     pub unsafe_effect: bool,
+    /// Compile-time effect-row parameters awaiting generic instantiation.
+    pub parameters: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,6 +205,7 @@ pub enum CompileParamKind {
     Region,
     Access,
     Passing,
+    Effect,
 }
 
 #[derive(Debug, Clone, PartialEq)]

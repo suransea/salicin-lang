@@ -110,6 +110,28 @@ fn return_type_effect_groups_run_with_expected_result() {
 }
 
 #[test]
+fn effect_generics_select_pure_and_unsafe_instances() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "effect_generic.sc"))
+        .output()
+        .expect("run effect-generic fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+
+    let output = salic()
+        .arg("check")
+        .arg(fixture("fail", "effect_generic_unhandled.sc"))
+        .output()
+        .expect("reject an unhandled selected unsafe effect");
+    assert!(!output.status.success(), "{}", output_text(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("requires an `unsafe` handler"),
+        "{}",
+        output_text(&output)
+    );
+}
+
+#[test]
 fn emit_ir_and_check_cover_the_frontend() {
     let emitted = salic()
         .args(["emit-ir"])
