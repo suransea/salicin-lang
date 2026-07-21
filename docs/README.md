@@ -8,6 +8,7 @@ top-level [changelog](../CHANGELOG.md).
 
 - [Language specification](language/specification.md): syntax and semantic rules.
 - [Grammar](language/grammar.md): lexer and parser grammar.
+- [Algebraic effects design](language/algebraic-effects.md): resumable operation and handler model.
 
 ## Implementation
 

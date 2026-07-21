@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.110.0 - 2026-07-22
+
+- Added parameterized user effect declarations with typed operation requirements.
+- Added exact nominal effect applications such as `State(i32)` to callable rows, generic
+  substitution, module resolution, visibility checking, inference, and mangling.
+- Added qualified operation calls with ordinary parameter groups, passing modes, result checking,
+  partial application, and automatic row propagation.
+- Documented the function-shaped derived handler and one-shot continuation design that the next
+  implementation slice will lower; this release does not claim handler support.
+
 ## 0.109.0 - 2026-07-22
 
 - Added transparent concrete aliases and parameterized type-family aliases.

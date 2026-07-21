@@ -102,10 +102,11 @@ pub struct TypeAliasDef {
     pub target: Type,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EffectDef {
     pub name: String,
     pub compile_groups: Vec<Vec<CompileParam>>,
+    pub operations: Vec<Function>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -200,7 +201,7 @@ pub struct FunctionEffects {
     /// Error type propagated automatically by calls and handled by `try { ... }`.
     pub throws: Option<Box<Type>>,
     /// Nominal user-defined marker effects, canonicalized by module lowering.
-    pub custom: Vec<String>,
+    pub custom: Vec<Type>,
     /// Compile-time effect-row parameters awaiting generic instantiation.
     pub parameters: Vec<String>,
 }

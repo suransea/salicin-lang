@@ -407,10 +407,23 @@ let colored = unsafe { forward(unsafe)(2) }
 let named = unsafe { forward(E: unsafe)(2) }
 ```
 
-`let UI = effect` 声明名义 marker；其身份遵循普通模块路径和可见性，公开 API 不得泄露私有
-effect。marker 当前只表达静态调用要求，不携带运行时 payload，也不会自动生成 handler。适合先表达
-UI/composable、事务或宿主线程等库定义约束；需要上下文传递或控制流变换的 effect 将在后续 handler
-协议中定义。
+`let UI = effect` 声明无 operation 的名义 marker；其身份遵循普通模块路径和可见性，公开 API
+不得泄露私有 effect。effect 也可以接受类型参数并声明 operation requirements：
+
+```sali
+let State(S: type) = effect {
+  let get(): S
+  let put(move value: S): ()
+}
+
+let read(): i32 with(State(i32)) = { State(i32).get() }
+```
+
+operation 没有函数体，完整调用产生所属的已实例化 effect。`State(i32)`、`State(i64)`以及其他
+模块中同名的 `State(i32)`都是不同的 row 成员。operation 的参数组、传递模式、返回类型和附加
+`with(...)` 要求按普通函数签名检查；部分应用本身仍是 pure。当前实现阶段已经提供声明、名义
+identity、传播和类型检查；可恢复 handler 与 continuation lowering 按
+[代数效应设计](algebraic-effects.md)继续实现，在完成前不能让带 operation 的 effect 逃逸原生入口。
 
 `effect` kind 的实参是完整 row，包括 `pure`、`unsafe`、`throws(E)`、异步挂起、名义 marker 及其
 组合。row 本身不作为运行时值，但其中的控制 effect 可以影响 lowering 和 ABI；`pure` 是省略且

@@ -1476,7 +1476,21 @@ fn validate_item_api(
                 diagnostics,
             );
         }
-        Item::Effect(_) | Item::Access(_) => {}
+        Item::Effect(definition) => {
+            let bound_types = compile_parameter_names(&definition.compile_groups, &no_bound_types);
+            for operation in &definition.operations {
+                validate_function_api(
+                    operation,
+                    boundary,
+                    source_path,
+                    &bound_types,
+                    &format!("effect operation `{}.{}`", definition.name, operation.name),
+                    nominal_boundaries,
+                    diagnostics,
+                );
+            }
+        }
+        Item::Access(_) => {}
         Item::Struct(definition) => {
             let bound_types = compile_parameter_names(&definition.compile_groups, &no_bound_types);
             for field in &definition.fields {
@@ -1684,6 +1698,7 @@ fn validate_function_api(
             effect,
             boundary,
             source_path,
+            &bound_types,
             description,
             nominal_boundaries,
             diagnostics,
@@ -1784,6 +1799,7 @@ fn validate_exposed_type(
                     effect,
                     exposed,
                     source_path,
+                    bound_types,
                     description,
                     nominal_boundaries,
                     diagnostics,
@@ -1820,23 +1836,37 @@ fn validate_exposed_type(
 }
 
 fn validate_exposed_effect(
-    effect: &str,
+    effect: &Type,
     exposed: &ApiBoundary,
     source_path: &str,
+    bound_types: &HashSet<String>,
     description: &str,
     nominal_boundaries: &HashMap<&str, ApiBoundary>,
     diagnostics: &mut Vec<String>,
 ) {
-    let Some(referenced) = nominal_boundaries.get(effect) else {
+    let Type::Named(name, arguments) = effect else {
         return;
     };
-    if !api_audience_is_contained(exposed, referenced) {
-        diagnostics.push(format!(
-            "{source_path}: error: {description} with {} visibility exposes {} effect `{effect}` beyond its access boundary{}",
-            visibility_description(exposed.visibility),
-            visibility_description(referenced.visibility),
-            boundary_location(referenced),
-        ));
+    if let Some(referenced) = nominal_boundaries.get(name.as_str()) {
+        if !api_audience_is_contained(exposed, referenced) {
+            diagnostics.push(format!(
+                "{source_path}: error: {description} with {} visibility exposes {} effect `{name}` beyond its access boundary{}",
+                visibility_description(exposed.visibility),
+                visibility_description(referenced.visibility),
+                boundary_location(referenced),
+            ));
+        }
+    }
+    for argument in arguments {
+        validate_exposed_type(
+            argument,
+            exposed,
+            source_path,
+            bound_types,
+            description,
+            nominal_boundaries,
+            diagnostics,
+        );
     }
 }
 
@@ -1968,6 +1998,11 @@ impl Resolver {
             Item::Trait(definition) => self.rewrite_trait(definition, context),
             Item::Effect(definition) => {
                 definition.name = canonical_name(context.module_path, &definition.name);
+                let type_scope =
+                    compile_parameter_names(&definition.compile_groups, &HashSet::new());
+                for operation in &mut definition.operations {
+                    self.rewrite_function(operation, context, &type_scope);
+                }
             }
             Item::Access(definition) => {
                 definition.name = canonical_name(context.module_path, &definition.name);
@@ -2093,12 +2128,7 @@ impl Resolver {
             self.rewrite_type(error, context, &type_scope);
         }
         for effect in &mut function.effects.custom {
-            let segments = effect.split('.').map(str::to_owned).collect::<Vec<_>>();
-            if let Some(canonical) = self.resolve_logical_path(&segments, context) {
-                *effect = canonical;
-            } else {
-                self.reject_bare_module(&segments, context, "an effect");
-            }
+            self.rewrite_type(effect, context, &type_scope);
         }
         for predicate in &mut function.where_predicates {
             self.rewrite_type(&mut predicate.subject, context, &type_scope);
@@ -3745,7 +3775,10 @@ let main(): i32 = { Option() }
         ])
         .unwrap();
 
-        assert_eq!(function(&program, "screen").effects.custom, ["ui::UI"]);
+        assert_eq!(
+            function(&program, "screen").effects.custom,
+            [Type::Named("ui::UI".into(), Vec::new())]
+        );
     }
 
     #[test]

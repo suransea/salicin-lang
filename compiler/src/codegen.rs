@@ -9,10 +9,10 @@ use std::fmt;
 
 use crate::alloc::AllocBundle;
 use crate::ast::{
-    BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EnumDef, Expr, ExtendDef,
-    ExtendMember, Field, Function, FunctionEffects, Item, ItemOrigin, MatchArm, Param, PassMode,
-    Pattern, PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp,
-    VariantFields, Visibility,
+    BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EffectDef, EnumDef, Expr,
+    ExtendDef, ExtendMember, Field, Function, FunctionEffects, Item, ItemOrigin, MatchArm, Param,
+    PassMode, Pattern, PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember, Type,
+    UnaryOp, VariantFields, Visibility,
 };
 use crate::cleanup::{
     BasicBlockId as CleanupBlockId, CleanupEdge, CleanupOp, CleanupPlan, CleanupPlanBuilder,
@@ -225,6 +225,46 @@ fn is_compile_value_marker(name: &str) -> bool {
                 | EFFECT_PURE_MARKER
                 | EFFECT_UNSAFE_MARKER
         )
+}
+
+fn source_effect_identity(effect: &Type) -> String {
+    match effect {
+        Type::I32 => "i32".to_owned(),
+        Type::I64 => "i64".to_owned(),
+        Type::U32 => "u32".to_owned(),
+        Type::U64 => "u64".to_owned(),
+        Type::Bool => "bool".to_owned(),
+        Type::Unit => "()".to_owned(),
+        Type::Named(name, arguments) if arguments.is_empty() => name.clone(),
+        Type::Named(name, arguments) => format!(
+            "{name}({})",
+            arguments
+                .iter()
+                .map(source_effect_identity)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Type::Borrow { .. } | Type::Array(_, _) | Type::Function { .. } => {
+            format!("{effect:?}")
+        }
+    }
+}
+
+fn source_effect_identities(effects: &[Type]) -> Vec<String> {
+    let mut identities = effects
+        .iter()
+        .map(source_effect_identity)
+        .collect::<Vec<_>>();
+    identities.sort();
+    identities.dedup();
+    identities
+}
+
+fn effect_identity_sources(effects: &[String]) -> Vec<Type> {
+    effects
+        .iter()
+        .map(|effect| Type::Named(effect.clone(), Vec::new()))
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1661,6 +1701,7 @@ struct Analyzer {
     suppress_generic_inherent_instantiation: usize,
     traits: HashMap<String, TraitSchema>,
     effects: HashSet<String>,
+    effect_defs: HashMap<String, EffectDef>,
     trait_impl_headers: HashSet<TraitImplKey>,
     trait_impls: HashMap<TraitImplKey, TraitImplInfo>,
     trait_methods_by_receiver: HashMap<(Ty, String), Vec<TraitImplKey>>,
@@ -1728,6 +1769,7 @@ impl Analyzer {
             suppress_generic_inherent_instantiation: 0,
             traits: HashMap::new(),
             effects: HashSet::new(),
+            effect_defs: HashMap::new(),
             trait_impl_headers: HashSet::new(),
             trait_impls: HashMap::new(),
             trait_methods_by_receiver: HashMap::new(),
@@ -2033,15 +2075,21 @@ impl Analyzer {
                     }
                 }
                 Item::Effect(definition) => {
-                    if !definition.compile_groups.is_empty()
-                        && definition.name != self.lang_item_name(LangItemKind::ThrowsEffect)
+                    if definition.compile_groups.len() > 1
+                        || definition
+                            .compile_groups
+                            .iter()
+                            .flatten()
+                            .any(|parameter| parameter.kind != CompileParamKind::Type)
                     {
                         self.error(format!(
-                            "generic effect `{}` is not supported; parameterized built-in effects are declared by `core.control`",
+                            "effect `{}` currently accepts one compile-time group containing only `type` parameters",
                             definition.name
                         ));
                     }
                     self.effects.insert(definition.name.clone());
+                    self.effect_defs
+                        .insert(definition.name.clone(), definition.clone());
                 }
                 Item::Access(definition) => {
                     if definition.name != self.lang_item_name(LangItemKind::SharedAccess)
@@ -2143,7 +2191,7 @@ impl Analyzer {
                     groups,
                     unsafe_effect: function.effects.unsafe_effect,
                     throws_error,
-                    custom_effects: function.effects.custom.clone(),
+                    custom_effects: source_effect_identities(&function.effects.custom),
                     result,
                 },
             );
@@ -2181,22 +2229,36 @@ impl Analyzer {
                         ExtendMember::Const(_) => None,
                     })
                     .collect(),
-                Item::Global(_)
-                | Item::Struct(_)
-                | Item::Enum(_)
-                | Item::Effect(_)
-                | Item::Access(_) => Vec::new(),
+                Item::Global(_) | Item::Struct(_) | Item::Enum(_) | Item::Access(_) => Vec::new(),
+                Item::Effect(definition) => definition.operations.iter().collect(),
                 Item::TypeAlias(_) => Vec::new(),
             }
         }
 
         for function in program.items.iter().flat_map(functions) {
             for effect in &function.effects.custom {
-                if !self.effects.contains(effect) {
+                let Type::Named(name, arguments) = effect else {
                     self.error(format!(
-                        "unknown custom effect `{effect}` in function `{}`",
+                        "custom effect in function `{}` must be a nominal effect application",
                         function.name
                     ));
+                    continue;
+                };
+                if !self.effects.contains(name) {
+                    self.error(format!(
+                        "unknown custom effect `{}` in function `{}`",
+                        source_effect_identity(effect),
+                        function.name
+                    ));
+                } else if let Some(definition) = self.effect_defs.get(name) {
+                    let expected = definition.compile_groups.iter().flatten().count();
+                    if arguments.len() != expected {
+                        self.error(format!(
+                            "effect argument count mismatch for `{name}` in function `{}`: expected {expected}, found {}",
+                            function.name,
+                            arguments.len()
+                        ));
+                    }
                 }
             }
         }
@@ -3591,7 +3653,7 @@ impl Analyzer {
                     groups,
                     unsafe_effect: function.effects.unsafe_effect,
                     throws_error,
-                    custom_effects: function.effects.custom.clone(),
+                    custom_effects: source_effect_identities(&function.effects.custom),
                     result,
                 },
             );
@@ -3823,7 +3885,7 @@ impl Analyzer {
                                 groups,
                                 unsafe_effect: function.effects.unsafe_effect,
                                 throws_error,
-                                custom_effects: function.effects.custom.clone(),
+                                custom_effects: source_effect_identities(&function.effects.custom),
                                 result,
                             },
                         );
@@ -5664,7 +5726,7 @@ impl Analyzer {
                 .throws
                 .as_deref()
                 .map(|error| self.lower_source_type(error));
-            let custom_effects = function.effects.custom.clone();
+            let custom_effects = source_effect_identities(&function.effects.custom);
             self.functions.insert(validation_name.clone(), function);
             self.function_origins.insert(
                 validation_name.clone(),
@@ -5797,7 +5859,7 @@ impl Analyzer {
                         groups,
                         unsafe_effect: method.effects.unsafe_effect,
                         throws_error,
-                        custom_effects: method.effects.custom.clone(),
+                        custom_effects: source_effect_identities(&method.effects.custom),
                         result,
                     },
                 );
@@ -6063,7 +6125,7 @@ impl Analyzer {
                         .throws
                         .as_deref()
                         .map(|error| Box::new(self.lower_source_type(error))),
-                    custom_effects: effects.custom.clone(),
+                    custom_effects: source_effect_identities(&effects.custom),
                     result: Box::new(self.lower_source_type(result)),
                 })
             }
@@ -6363,7 +6425,7 @@ impl Analyzer {
                         .as_deref()
                         .and_then(|error| self.source_type_for_ty(error))
                         .map(Box::new),
-                    custom: function.custom_effects.clone(),
+                    custom: effect_identity_sources(&function.custom_effects),
                     parameters: Vec::new(),
                 },
                 result: Box::new(self.source_type_for_ty(&function.result)?),
@@ -6551,7 +6613,7 @@ impl Analyzer {
                         Some(error) => Some(Box::new(self.probe_source_ty(error)?)),
                         None => None,
                     },
-                    custom_effects: effects.custom.clone(),
+                    custom_effects: source_effect_identities(&effects.custom),
                     result: Box::new(self.probe_source_ty(result)?),
                 }))
             }
@@ -6913,12 +6975,13 @@ impl Analyzer {
                     ),
                     _ => return Err(mismatch()),
                 };
+                let fixed_custom = source_effect_identities(&effects.custom);
                 if effects.parameters.is_empty()
                     && ((actual_function.unsafe_effect && !effects.unsafe_effect)
                         || actual_function
                             .custom_effects
                             .iter()
-                            .any(|effect| !effects.custom.contains(effect)))
+                            .any(|effect| !fixed_custom.contains(effect)))
                 {
                     return Err(mismatch());
                 }
@@ -6927,7 +6990,7 @@ impl Analyzer {
                 let selected_custom = actual_function
                     .custom_effects
                     .iter()
-                    .filter(|effect| !effects.custom.contains(*effect))
+                    .filter(|effect| !fixed_custom.contains(*effect))
                     .cloned()
                     .collect::<Vec<_>>();
                 for parameter in &effects.parameters {
@@ -7146,7 +7209,7 @@ impl Analyzer {
                     )?)),
                     None => None,
                 };
-                let mut custom_effects = effects.custom.clone();
+                let mut custom_effects = source_effect_identities(&effects.custom);
                 for parameter in &effects.parameters {
                     let Ty::EffectRow {
                         unsafe_effect: selected_unsafe,
@@ -8974,7 +9037,7 @@ impl Analyzer {
                             groups,
                             unsafe_effect: template.effects.unsafe_effect,
                             throws_error,
-                            custom_effects: template.effects.custom.clone(),
+                            custom_effects: source_effect_identities(&template.effects.custom),
                             result: Box::new(result),
                         }));
                     }
@@ -9669,7 +9732,7 @@ impl Analyzer {
                 groups,
                 unsafe_effect: function.effects.unsafe_effect,
                 throws_error,
-                custom_effects: function.effects.custom.clone(),
+                custom_effects: source_effect_identities(&function.effects.custom),
                 result,
             },
         );
@@ -9781,7 +9844,9 @@ impl Analyzer {
         );
         context.unsafe_depth = usize::from(function.effects.unsafe_effect);
         context.active_throws_error = signature.throws_error.clone();
-        context.active_custom_effects = function.effects.custom.iter().cloned().collect();
+        context.active_custom_effects = source_effect_identities(&function.effects.custom)
+            .into_iter()
+            .collect();
         if function.return_type.is_some() {
             context.return_boundary = signature.throws_error.as_ref().and_then(|error| {
                 signature
@@ -14927,6 +14992,27 @@ impl Analyzer {
             return error_expr();
         }
         if let Expr::Member(base, variant_name) = root {
+            match self.resolve_effect_application(base, context) {
+                Ok(Some((definition, instance))) => {
+                    if variant_name == "handle" {
+                        self.error(format!(
+                            "handler lowering for `{}` is not implemented yet",
+                            source_effect_identity(&instance)
+                        ));
+                        return error_expr();
+                    }
+                    return self.lower_effect_operation_call(
+                        &definition,
+                        &instance,
+                        variant_name,
+                        &groups,
+                        expected,
+                        context,
+                    );
+                }
+                Err(()) => return error_expr(),
+                Ok(None) => {}
+            }
             if let Some((member, lang_item)) = match variant_name.as_str() {
                 "$lang$into_iter" => Some(("into_iter", LangItemKind::IntoIterator)),
                 "$lang$next" => Some(("next", LangItemKind::Iterator)),
@@ -15151,6 +15237,136 @@ impl Analyzer {
         }
         self.error("calls require a named function, constructor, associated function, or method");
         error_expr()
+    }
+
+    fn resolve_effect_application(
+        &mut self,
+        expression: &Expr,
+        context: &LowerCtx,
+    ) -> Result<Option<(EffectDef, Type)>, ()> {
+        let (name, arguments) = match expression {
+            Expr::Name(name)
+                if !context.shadows_top_level_name(name) && self.effect_defs.contains_key(name) =>
+            {
+                (name.clone(), Vec::new())
+            }
+            Expr::Call(callee, arguments) => {
+                let Expr::Name(name) = callee.as_ref() else {
+                    return Ok(None);
+                };
+                if context.shadows_top_level_name(name) || !self.effect_defs.contains_key(name) {
+                    return Ok(None);
+                }
+                if arguments.iter().any(|argument| argument.label.is_some()) {
+                    self.error(format!(
+                        "effect application `{name}` currently requires positional type arguments"
+                    ));
+                    return Err(());
+                }
+                let mut sources = Vec::new();
+                for argument in arguments {
+                    let Some(source) =
+                        self.type_argument_from_expr(&argument.value, &context.type_substitutions)
+                    else {
+                        return Err(());
+                    };
+                    sources.push(source);
+                }
+                (name.clone(), sources)
+            }
+            _ => return Ok(None),
+        };
+        let definition = self.effect_defs[&name].clone();
+        let parameters = definition
+            .compile_groups
+            .iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        if arguments.len() != parameters.len() {
+            self.error(format!(
+                "effect argument count mismatch for `{name}`: expected {}, found {}",
+                parameters.len(),
+                arguments.len()
+            ));
+            return Err(());
+        }
+        Ok(Some((definition, Type::Named(name, arguments))))
+    }
+
+    fn lower_effect_operation_call(
+        &mut self,
+        definition: &EffectDef,
+        instance: &Type,
+        operation: &str,
+        groups: &[&[CallArg]],
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let Some(mut function) = definition
+            .operations
+            .iter()
+            .find(|candidate| candidate.name == operation)
+            .cloned()
+        else {
+            self.error(format!(
+                "unknown operation `{operation}` on effect `{}`",
+                definition.name
+            ));
+            return error_expr();
+        };
+        let Type::Named(_, arguments) = instance else {
+            unreachable!("resolved effect instances are nominal applications")
+        };
+        let parameters = definition
+            .compile_groups
+            .iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        let substitutions = parameters
+            .iter()
+            .zip(arguments)
+            .map(|(parameter, argument)| (parameter.name.clone(), argument.clone()))
+            .collect::<HashMap<_, _>>();
+        substitute_function_types(&mut function, &substitutions);
+        function.compile_groups.clear();
+        if !function.effects.custom.contains(instance) {
+            function.effects.custom.push(instance.clone());
+        }
+        let identity = source_effect_identity(instance);
+        let canonical = format!("$effect$operation${identity}${operation}");
+        if !self.functions.contains_key(&canonical) {
+            function.name = canonical.clone();
+            let signature = FunctionSig {
+                groups: function
+                    .groups
+                    .iter()
+                    .map(|group| {
+                        group
+                            .iter()
+                            .map(|parameter| ParamSig {
+                                name: parameter.name.clone(),
+                                ty: self.lower_source_type(&parameter.ty),
+                                mode: parameter.mode,
+                            })
+                            .collect()
+                    })
+                    .collect(),
+                unsafe_effect: function.effects.unsafe_effect,
+                throws_error: function
+                    .effects
+                    .throws
+                    .as_deref()
+                    .map(|error| self.lower_source_type(error)),
+                custom_effects: source_effect_identities(&function.effects.custom),
+                result: function
+                    .return_type
+                    .as_ref()
+                    .map(|result| self.lower_source_type(result)),
+            };
+            self.functions.insert(canonical.clone(), function);
+            self.signatures.insert(canonical.clone(), signature);
+        }
+        self.lower_named_function_call(&canonical, groups, expected, context)
     }
 
     fn lower_layout_query(
@@ -18263,8 +18479,8 @@ impl Analyzer {
                 "call to unsafe function `{name}` requires an `unsafe` handler"
             ));
         }
-        let missing = effects
-            .custom
+        let required = source_effect_identities(&effects.custom);
+        let missing = required
             .iter()
             .filter(|effect| !context.active_custom_effects.contains(*effect))
             .cloned()
@@ -24173,7 +24389,12 @@ fn expand_item_aliases(
                 }
             }
         }
-        Item::Effect(_) | Item::Access(_) => {}
+        Item::Effect(definition) => {
+            for operation in &mut definition.operations {
+                expand_function_aliases(operation, aliases, diagnostics);
+            }
+        }
+        Item::Access(_) => {}
         Item::TypeAlias(_) => unreachable!("aliases are removed before item expansion"),
     }
 }
@@ -24191,6 +24412,9 @@ fn expand_function_aliases(
     }
     if let Some(error) = &mut function.effects.throws {
         expand_alias_type(error, aliases, &mut Vec::new(), diagnostics);
+    }
+    for effect in &mut function.effects.custom {
+        expand_alias_type(effect, aliases, &mut Vec::new(), diagnostics);
     }
     for predicate in &mut function.where_predicates {
         expand_alias_type(
@@ -24462,7 +24686,12 @@ fn erase_region_parameters(program: &mut Program) {
             Item::Function(function) => erase_function(function),
             Item::Global(_) => {}
             Item::TypeAlias(definition) => erase_groups(&mut definition.compile_groups),
-            Item::Effect(definition) => erase_groups(&mut definition.compile_groups),
+            Item::Effect(definition) => {
+                erase_groups(&mut definition.compile_groups);
+                for operation in &mut definition.operations {
+                    erase_function(operation);
+                }
+            }
             Item::Access(_) => {}
             Item::Struct(definition) => erase_groups(&mut definition.compile_groups),
             Item::Enum(definition) => erase_groups(&mut definition.compile_groups),
@@ -24520,6 +24749,9 @@ fn substitute_function_types(function: &mut Function, substitutions: &HashMap<St
     if let Some(error) = &mut function.effects.throws {
         substitute_type_parameters(error, substitutions);
     }
+    for effect in &mut function.effects.custom {
+        substitute_type_parameters(effect, substitutions);
+    }
     let mut remaining_effect_parameters = Vec::new();
     for parameter in function.effects.parameters.drain(..) {
         match substituted_effect_row(&parameter, substitutions) {
@@ -24536,13 +24768,19 @@ fn substitute_function_types(function: &mut Function, substitutions: &HashMap<St
                 if function.effects.throws.is_none() {
                     function.effects.throws = throws_error.map(Box::new);
                 }
-                function.effects.custom.extend(custom);
+                function
+                    .effects
+                    .custom
+                    .extend(effect_identity_sources(&custom));
             }
             Some(_) | None => remaining_effect_parameters.push(parameter),
         }
     }
-    function.effects.custom.sort();
-    function.effects.custom.dedup();
+    let mut seen_custom = HashSet::new();
+    function
+        .effects
+        .custom
+        .retain(|effect| seen_custom.insert(effect.clone()));
     function.effects.parameters = remaining_effect_parameters;
     if !had_throws {
         if let Some(error) = function.effects.throws.as_deref() {
@@ -25005,6 +25243,9 @@ fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<String, Typ
             if let Some(error) = &mut effects.throws {
                 substitute_type_parameters(error, substitutions);
             }
+            for effect in &mut effects.custom {
+                substitute_type_parameters(effect, substitutions);
+            }
             substitute_type_parameters(result, substitutions);
             let mut remaining = Vec::new();
             for parameter in effects.parameters.drain(..) {
@@ -25021,14 +25262,16 @@ fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<String, Typ
                         if effects.throws.is_none() {
                             effects.throws = throws_error.map(Box::new);
                         }
-                        effects.custom.extend(custom);
+                        effects.custom.extend(effect_identity_sources(&custom));
                     }
                     Some(_) | None => remaining.push(parameter),
                 }
             }
             effects.parameters = remaining;
-            effects.custom.sort();
-            effects.custom.dedup();
+            let mut seen_custom = HashSet::new();
+            effects
+                .custom
+                .retain(|effect| seen_custom.insert(effect.clone()));
             if !had_throws {
                 if let Some(error) = effects.throws.as_deref() {
                     let logical_result = std::mem::replace(result.as_mut(), Type::Unit);
@@ -29137,6 +29380,46 @@ let main(): i32 = { 0 }
             error
                 .message
                 .contains("active error type is `bool`; convert errors explicitly")
+        }));
+    }
+
+    #[test]
+    fn algebraic_effect_operations_are_typed_and_require_their_instantiated_row() {
+        compile_text(
+            r#"
+let State(S: type) = effect {
+  let get(): S
+  let put(move value: S): ()
+}
+let read(): i32 with(State(i32)) = { State(i32).get() }
+let write(value: i32): () with(State(i32)) = { State(i32).put(value) }
+let main(): i32 = { 0 }
+"#,
+        )
+        .expect("typed operations may propagate their exact effect instance");
+
+        let missing = compile_text(
+            r#"
+let State(S: type) = effect { let get(): S }
+let read(): i32 = { State(i32).get() }
+let main(): i32 = { 0 }
+"#,
+        )
+        .expect_err("an operation cannot run in a row that omits its effect");
+        assert!(missing.iter().any(|error| {
+            error.message.contains("requires custom effect") && error.message.contains("State(i32)")
+        }));
+
+        let wrong_instance = compile_text(
+            r#"
+let State(S: type) = effect { let get(): S }
+let read(): i32 with(State(i64)) = { State(i32).get() }
+let main(): i32 = { 0 }
+"#,
+        )
+        .expect_err("different effect applications have different identities");
+        assert!(wrong_instance.iter().any(|error| {
+            error.message.contains("requires custom effect") && error.message.contains("State(i32)")
         }));
     }
 

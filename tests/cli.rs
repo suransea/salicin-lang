@@ -964,6 +964,29 @@ fn type_constructor_aliases_cross_module_boundaries() {
 }
 
 #[test]
+fn algebraic_effect_operations_check_their_instantiated_row() {
+    let valid = salic()
+        .arg("check")
+        .arg(fixture("pass", "algebraic_effect_operations.sc"))
+        .output()
+        .expect("check algebraic effect operations");
+    assert!(valid.status.success(), "{}", output_text(&valid));
+
+    let invalid = salic()
+        .arg("check")
+        .arg(fixture("fail", "algebraic_effect_unhandled.sc"))
+        .output()
+        .expect("reject operation outside its effect row");
+    assert!(!invalid.status.success());
+    let stderr = String::from_utf8_lossy(&invalid.stderr);
+    assert!(
+        stderr.contains("requires custom effect") && stderr.contains("State(i32)"),
+        "{}",
+        output_text(&invalid)
+    );
+}
+
+#[test]
 fn m1_struct_errors_report_their_cause() {
     for (name, expected) in [
         ("unknown_field.sc", "unknown field"),

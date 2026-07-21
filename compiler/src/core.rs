@@ -1101,8 +1101,13 @@ fn validate_effect(
     diagnostics: &mut Vec<String>,
 ) {
     let valid = match kind {
-        LangItemKind::UnsafeEffect => definition.compile_groups.is_empty(),
-        LangItemKind::ThrowsEffect => definition.compile_groups == vec![vec![type_parameter("E")]],
+        LangItemKind::UnsafeEffect => {
+            definition.compile_groups.is_empty() && definition.operations.is_empty()
+        }
+        LangItemKind::ThrowsEffect => {
+            definition.compile_groups == vec![vec![type_parameter("E")]]
+                && definition.operations.is_empty()
+        }
         _ => false,
     };
     if !valid {

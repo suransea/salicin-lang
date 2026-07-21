@@ -57,6 +57,11 @@ Callable source types use the same shape, such as
 aliased, and partially applied unsafe calls require an
 enclosing unsafe function or `unsafe { ... }` handler. `do` forwards the implemented unsafe effect
 into nested immediate calls. `let UI = effect` declares a nominal, module-visible marker effect.
+Parameterized user effects may declare typed operation requirements. Operation calls use an exact
+instantiated identity such as `State(i32)`, propagate through the existing row machinery, and are
+checked for parameter modes, result types, arity, visibility, and missing row requirements. Derived
+handlers and one-shot continuation CPS lowering are the active next implementation slice;
+operation declarations alone are not reported as completed algebraic handlers.
 Function and generic inherent-member `E: effect` parameters represent complete rows, default to pure,
 participate in monomorphization, forward through ordinary compile-time calls such as
 `callee(E)(value)`, and infer pure, unsafe, custom, or `throws(Error)` rows from higher-order callable

@@ -296,10 +296,9 @@ impl Parser {
                 ));
             }
             self.advance();
-            return Ok(Item::Effect(EffectDef {
-                name,
-                compile_groups,
-            }));
+            return self
+                .effect_definition(name, compile_groups)
+                .map(Item::Effect);
         }
 
         if self.at_context_ident("access") {
@@ -367,6 +366,85 @@ impl Parser {
                 body: Some(body),
             }))
         }
+    }
+
+    fn effect_definition(
+        &mut self,
+        name: String,
+        compile_groups: Vec<Vec<CompileParam>>,
+    ) -> Result<EffectDef, ParseError> {
+        if !self.take(&TokenKind::LBrace) {
+            return Ok(EffectDef {
+                name,
+                compile_groups,
+                operations: Vec::new(),
+            });
+        }
+        self.skip_separators();
+        let mut operations = Vec::new();
+        let mut names = HashSet::new();
+        while !self.at(&TokenKind::RBrace) {
+            self.expect(&TokenKind::Let, "`let` in effect body")?;
+            if self.take(&TokenKind::Mut) {
+                return Err(self.error_here("effect operations cannot use `let mut`"));
+            }
+            let operation = self.expect_ident("an effect operation name")?;
+            if operation == "handle" || operation == "done" {
+                return Err(self.error_here(format!(
+                    "effect operation name `{operation}` is reserved by handler lowering"
+                )));
+            }
+            if !names.insert(operation.clone()) {
+                return Err(
+                    self.error_here(format!("duplicate effect operation `{name}.{operation}`"))
+                );
+            }
+            let (operation_compile_groups, groups) = self.declaration_groups(false)?;
+            if !operation_compile_groups.is_empty() {
+                return Err(self.error_here(
+                    "compile-time parameters on effect operations are not supported yet",
+                ));
+            }
+            if groups.is_empty() {
+                return Err(self.error_here(
+                    "effect operations require an explicit runtime parameter group; use `()` for no arguments",
+                ));
+            }
+            self.expect(&TokenKind::Colon, "`:` before effect operation result type")?;
+            let logical_result = self.function_result_type()?;
+            let (effects, throws_error, _) = self.function_effect_clause()?;
+            let return_type = Some(Self::apply_throws_effect(logical_result, throws_error));
+            self.effect_parameters_in_scope.clear();
+            if self.at(&TokenKind::Where) {
+                return Err(
+                    self.error_here("where clauses on effect operations are not supported yet")
+                );
+            }
+            if self.at(&TokenKind::Equal) {
+                return Err(
+                    self.error_here("effect operations are requirements and cannot have bodies")
+                );
+            }
+            operations.push(Function {
+                name: operation,
+                compile_groups: operation_compile_groups,
+                groups,
+                return_type,
+                effects,
+                where_predicates: Vec::new(),
+                body: None,
+            });
+            if !self.at(&TokenKind::RBrace) && !self.at_separator() {
+                return Err(self.error_here("expected a newline or `;` after effect operation"));
+            }
+            self.skip_separators();
+        }
+        self.expect(&TokenKind::RBrace, "`}` after effect operations")?;
+        Ok(EffectDef {
+            name,
+            compile_groups,
+            operations,
+        })
     }
 
     fn type_constructor_signature_follows(&self) -> bool {
@@ -1267,12 +1345,27 @@ impl Parser {
                         path.push(self.expect_ident("an effect path segment")?);
                     }
                     let name = path.join(".");
-                    if custom.contains(&name) {
+                    let mut arguments = Vec::new();
+                    if self.take(&TokenKind::LParen) && !self.take(&TokenKind::RParen) {
+                        loop {
+                            arguments.push(self.type_expr()?);
+                            if self.take(&TokenKind::Comma) {
+                                if self.take(&TokenKind::RParen) {
+                                    break;
+                                }
+                            } else {
+                                self.expect(&TokenKind::RParen, "`)` after effect arguments")?;
+                                break;
+                            }
+                        }
+                    }
+                    let effect = Type::Named(name.clone(), arguments);
+                    if custom.contains(&effect) {
                         return Err(self.error_here(format!(
                             "duplicate custom effect `{name}` in `with(...)`"
                         )));
                     }
-                    custom.push(name);
+                    custom.push(effect);
                 }
             } else {
                 return Err(self.error_here(
@@ -1290,7 +1383,6 @@ impl Parser {
             }
         }
 
-        custom.sort();
         effect_parameters.sort();
         Ok((
             FunctionEffects {
@@ -2762,7 +2854,22 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
                 validate_type_regions(&definition.target, &regions)?;
                 validate_type_accesses(&definition.target, &accesses)?;
             }
-            Item::Effect(_) | Item::Access(_) => {}
+            Item::Effect(definition) => {
+                reject_passing_parameters(
+                    &definition.compile_groups,
+                    &format!("effect `{}`", definition.name),
+                )?;
+                reject_effect_parameters(
+                    &definition.compile_groups,
+                    &format!("effect `{}`", definition.name),
+                )?;
+                let regions = declared_regions(&definition.compile_groups, &empty)?;
+                let accesses = declared_accesses(&definition.compile_groups, &empty)?;
+                for operation in &definition.operations {
+                    validate_function_scopes(operation, &regions, &accesses)?;
+                }
+            }
+            Item::Access(_) => {}
             Item::Struct(definition) => {
                 reject_passing_parameters(
                     &definition.compile_groups,
@@ -2991,6 +3098,11 @@ fn validate_function_scopes(
         validate_type_regions(return_type, &regions)?;
         validate_type_accesses(return_type, &accesses)?;
         validate_type_effects(return_type, &effects)?;
+    }
+    for effect in &function.effects.custom {
+        validate_type_regions(effect, &regions)?;
+        validate_type_accesses(effect, &accesses)?;
+        validate_type_effects(effect, &effects)?;
     }
     for predicate in &function.where_predicates {
         validate_type_regions(&predicate.subject, &regions)?;
@@ -4882,17 +4994,52 @@ mod tests {
         let Item::Function(render) = &program.items[1] else {
             panic!("expected render function");
         };
-        assert_eq!(render.effects.custom, ["UI"]);
+        assert_eq!(
+            render.effects.custom,
+            [Type::Named("UI".into(), Vec::new())]
+        );
         let Item::Function(invoke) = &program.items[2] else {
             panic!("expected invoke function");
         };
         assert!(matches!(
             &invoke.groups[0][0].ty,
-            Type::Function { effects, .. } if effects.custom == ["UI"]
+            Type::Function { effects, .. }
+                if effects.custom == [Type::Named("UI".into(), Vec::new())]
         ));
 
         let duplicate = parse("let f(): i32 with(UI, UI) = { 0 }\n").unwrap_err();
         assert!(duplicate.message.contains("duplicate custom effect `UI`"));
+    }
+
+    #[test]
+    fn parses_parameterized_algebraic_effect_operations() {
+        let program = parse(
+            "let State(S: type) = effect {\n\
+               let get(): S\n\
+               let put(move value: S): ()\n\
+             }\n\
+             let program(): i32 with(State(i32)) = { 0 }\n",
+        )
+        .unwrap();
+        let Item::Effect(state) = &program.items[0] else {
+            panic!("expected State effect");
+        };
+        assert_eq!(state.compile_groups[0][0].name, "S");
+        assert_eq!(state.operations.len(), 2);
+        assert_eq!(state.operations[0].name, "get");
+        assert_eq!(
+            state.operations[0].return_type,
+            Some(Type::Named("S".into(), Vec::new()))
+        );
+        assert_eq!(state.operations[1].groups[0][0].mode, PassMode::Move);
+
+        let Item::Function(program) = &program.items[1] else {
+            panic!("expected program function");
+        };
+        assert_eq!(
+            program.effects.custom,
+            [Type::Named("State".into(), vec![Type::I32])]
+        );
     }
 
     #[test]
