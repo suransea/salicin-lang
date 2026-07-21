@@ -39,3 +39,9 @@ copies a Copy value and moves a resource value. Growth move-initializes the new 
 destructor drops only the elements that remain within its logical length before deallocation.
 Copy-only `read` and `write` stay in their constrained extension; resource access never duplicates
 an owner.
+
+Since v0.63 `reserve(additional)` owns the checked growth path used by `push`. `truncate` and `clear`
+drop removed elements immediately while retaining storage, `is_empty` reports logical emptiness,
+and `swap_remove` returns the selected owner while moving the last element into its slot. These
+operations support resource elements without a `Copy` bound; capacity addition, layout size, and
+indices are checked before entering raw storage operations.

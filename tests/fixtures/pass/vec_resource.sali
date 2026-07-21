@@ -19,27 +19,36 @@ let main(): i32 = {
   }
   let mut score = 0
   do {
-    let mut values: Vec(Resource) = Vec(Resource).with_capacity(1)
+    let mut values: Vec(Resource) = Vec(Resource).new()
+    let started_empty = values.is_empty()
+    values.reserve(4)
     values.push(Resource(counter, 1))
     values.push(Resource(counter, 2))
     values.push(Resource(counter, 3))
-    let before_transfer = unsafe do {
+    values.push(Resource(counter, 4))
+    values.reserve(8)
+    let before_remove = unsafe do {
       *counter
     }
-    let replaced_value = do {
-      let replaced = values.replace(1)(Resource(counter, 4))
-      replaced.read()
+    let removed_value = do {
+      let removed = values.swap_remove(1)
+      removed.read()
     }
-    let popped_value = values.pop() match {
-      Some(value) => value.read(),
-      None => 0,
+    values.truncate(2)
+    values.truncate(9)
+    let after_truncate = unsafe do {
+      *counter
     }
-    let mut empty: Vec(Resource) = Vec(Resource).new()
-    let was_empty = empty.pop() match {
-      None => 1,
-      Some(_) => 0,
+    values.clear()
+    values.clear()
+    let after_clear = unsafe do {
+      *counter
     }
-    score = before_transfer + replaced_value + popped_value + was_empty
+    let ended_empty = values.is_empty()
+    values.push(Resource(counter, 5))
+    if started_empty && ended_empty && before_remove == 0 && removed_value == 2 && after_truncate == 2 && after_clear == 4 {
+      score = 37
+    }
   }
   let drops = unsafe do {
     *counter
@@ -47,8 +56,8 @@ let main(): i32 = {
   unsafe do {
     raw_dealloc(counter, size_of(i32), align_of(i32))
   }
-  if score == 6 {
-    38 + drops
+  if drops == 5 {
+    score + drops
   } else {
     0
   }

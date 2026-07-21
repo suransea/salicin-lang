@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.63.0 - 2026-07-21
+
+- Added checked `Vec.reserve(additional)` and made `push` reuse it as the single capacity-growth
+  path, including overflow checks for both required capacity and target layout size.
+- Added ownership-aware `swap_remove(index): T`, moving the last element into the removed slot
+  without copying resource owners.
+- Added `truncate(new_length)`, `clear()`, and `is_empty()`; shrinking eagerly drops each removed
+  resource exactly once while retaining the allocation for reuse.
+- Added native coverage for Copy and resource operations, growth without premature destruction,
+  no-op and repeated clearing, exact destructor counts, reserve overflow, and swap-remove bounds.
+
 ## 0.62.0 - 2026-07-21
 
 - Generalized `Vec.new`, `with_capacity`, and `push` from `T: Copy` to every represented element

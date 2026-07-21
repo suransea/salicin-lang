@@ -1,0 +1,6 @@
+let main(): i32 = {
+  let mut values: Vec(i32) = Vec(i32).new()
+  values.push(1)
+  values.reserve(18446744073709551615)
+  42
+}

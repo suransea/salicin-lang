@@ -408,6 +408,14 @@ v0.62.0 补齐 `Vec(T)` 的资源所有权：
 - Vec 的 source-backed `Drop` 会 move-out 并析构剩余的每个已初始化元素，再释放 allocation；
   零大小资源也执行相同次数的析构。
 
+v0.63.0 补齐常用容量与收缩操作：
+
+- `reserve(additional)` 以 `len + additional` 为最低容量，并同时检查加法、增长和最终 layout；`push`
+  复用这一条扩容路径。
+- `swap_remove(index)` 返回被移除的 owner，并把末元素移动到空位，不复制资源。
+- `truncate(new_length)` 和 `clear()` 会立即且恰好一次析构被移除元素，同时保留 allocation；
+  `is_empty()` 提供零长度查询。
+
 v0.30.0 进入普通 Salicin `alloc` 源并提供首个 owning `Box(T)`：
 
 - `library/alloc/src/prelude.sali` 随 compiler 按 edition 嵌入，仍经过普通 parser、模块 provenance、

@@ -1632,6 +1632,12 @@ v0.62 将 owning API 推广到资源元素。`new`、`with_capacity`、`push`、
 `pop` 返回 `Option(T)`，Vec 析构时仅析构仍位于 `[0, len)` 的元素。`read`/`write` 继续要求
 `T: Copy`，因此安全 API 不会复制资源 owner；借用元素需要 slice/reference API 后续开放。
 
+v0.63 增加 `reserve(additional)`、`truncate(new_length)`、`clear()`、`is_empty()` 与
+`swap_remove(index)`。`reserve` 保证容量至少为 `len + additional`，加法和 allocation layout 都会
+检查溢出，`push` 统一通过它增长。`truncate` 与 `clear` 从尾部 move-out 并立即析构资源，容量保持
+不变；大于当前长度的 truncate 是 no-op。`swap_remove` 返回指定 owner，并在需要时把末元素移动到
+该槽位，因此不要求 `T: Copy`，但不保持元素顺序。
+
 首版 C ABI 只允许标量、原始指针、C ABI 函数指针和 `@repr(C)` 聚合。C 函数只有一个参数组，
 不允许柯里化、泛型、闭包环境、trait、Future 或 Salicin 私有容器；`borrow` 不跨 ABI，必须转换为
 显式指针。普通 `bool`、`String`、slice、`Option`、`Result` 默认都不是 C ABI 类型。
