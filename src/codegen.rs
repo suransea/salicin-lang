@@ -12473,12 +12473,32 @@ impl Analyzer {
         groups: &[&[CallArg]],
         context: &mut LowerCtx,
     ) -> HirExpr {
-        let Some(receiver_place) = self.lower_place_without_diagnostic(receiver, context) else {
-            self.error(format!(
-                "temporary receiver for method `{member}` is not supported yet; bind it to a local first"
-            ));
-            return error_expr();
-        };
+        let (receiver_place, temporary_binding) =
+            if let Some(place) = self.lower_place_without_diagnostic(receiver, context) {
+                (place, None)
+            } else {
+                let value = self.lower_expr(receiver, None, context);
+                let id = context.fresh_local();
+                let ty = value.ty.clone();
+                (
+                    HirPlace {
+                        local: id,
+                        root_ty: ty.clone(),
+                        projections: Vec::new(),
+                        ty: ty.clone(),
+                        capability: LocalCapability::Owned,
+                        root_mutable: false,
+                        loan: None,
+                    },
+                    Some(HirBinding {
+                        id,
+                        name: format!("$temporary receiver for {member}"),
+                        ty,
+                        mutable: false,
+                        value,
+                    }),
+                )
+            };
         let target = match &receiver_place.ty {
             Ty::Struct(name) | Ty::Enum(name) => name.clone(),
             ty => {
@@ -12581,12 +12601,51 @@ impl Analyzer {
         }
 
         let mut temporary_loans = Vec::new();
-        let mut arguments = vec![self.lower_call_argument(
-            receiver,
-            receiver_parameter,
-            context,
-            &mut temporary_loans,
-        )];
+        let receiver_argument = if temporary_binding.is_none() {
+            self.lower_call_argument(receiver, receiver_parameter, context, &mut temporary_loans)
+        } else {
+            self.require_same_type(
+                &receiver_place.ty,
+                &receiver_parameter.ty,
+                format!("receiver for method `{target}.{member}`"),
+            );
+            match self.effective_pass_mode(receiver_parameter.mode, &receiver_parameter.ty) {
+                PassMode::Copy => {
+                    if !self.is_copy_type(&receiver_parameter.ty) {
+                        let ty = self.diagnostic_type_name(&receiver_parameter.ty);
+                        self.error(format!(
+                            "receiver for method `{target}.{member}` requires Copy, but `{ty}` does not implement Copy"
+                        ));
+                    }
+                    HirArgument::Copy(self.access_place(
+                        receiver_place.clone(),
+                        AccessKind::Copy,
+                        context,
+                    ))
+                }
+                PassMode::Move => HirArgument::Move(self.access_place(
+                    receiver_place.clone(),
+                    AccessKind::Move,
+                    context,
+                )),
+                PassMode::Borrow => {
+                    if let Some(loan) =
+                        self.acquire_loan(&receiver_place, LoanKind::Shared, false, context)
+                    {
+                        temporary_loans.push(loan);
+                    }
+                    HirArgument::SharedBorrow(receiver_place.clone())
+                }
+                PassMode::MutBorrow => {
+                    self.error(format!(
+                        "temporary receiver for method `{target}.{member}` cannot be mutably borrowed; bind it to a mutable local first"
+                    ));
+                    HirArgument::MutBorrow(receiver_place.clone())
+                }
+                PassMode::Inferred => unreachable!("effective mode is explicit"),
+            }
+        };
+        let mut arguments = vec![receiver_argument];
         for (relative_group, arguments_ast) in groups.iter().enumerate() {
             let group_index = relative_group + 1;
             let params = &signature.groups[group_index];
@@ -12627,7 +12686,7 @@ impl Analyzer {
             ));
         }
         self.release_loans(&temporary_loans, context);
-        if complete {
+        let call = if complete {
             HirExpr {
                 ty: (*function_ty.result).clone(),
                 kind: HirExprKind::Call {
@@ -12655,6 +12714,14 @@ impl Analyzer {
                     captures: arguments,
                 },
             }
+        };
+        if let Some(binding) = temporary_binding {
+            HirExpr {
+                ty: call.ty.clone(),
+                kind: HirExprKind::Block(vec![HirStmt::Let(binding)], Some(Box::new(call))),
+            }
+        } else {
+            call
         }
     }
 

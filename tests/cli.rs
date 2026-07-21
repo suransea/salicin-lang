@@ -1385,6 +1385,8 @@ fn m1_inherent_members_run_with_expected_result() {
         "inherent_recursive_method.sali",
         "inherent_enum_method.sali",
         "inherent_receiver_loan_released.sali",
+        "inherent_temporary_borrow_receiver.sali",
+        "inherent_temporary_resource_receiver.sali",
         "inherent_disjoint_forward_extend.sali",
     ] {
         let output = salic()
@@ -1425,10 +1427,7 @@ fn m1_inherent_member_errors_report_their_cause() {
         ("inherent_trait_extension_pending.sali", "unknown trait"),
         ("inherent_bound_method_value.sali", "must be called"),
         ("inherent_associated_function_value.sali", "must be called"),
-        (
-            "inherent_temporary_borrow_receiver.sali",
-            "temporary receiver",
-        ),
+        ("inherent_temporary_mut_receiver.sali", "mutably borrowed"),
         ("inherent_move_receiver_reuse.sali", "moved"),
         ("inherent_borrowed_partial.sali", "partial application"),
         ("inherent_receiver_borrow_conflict.sali", "borrowed"),
@@ -1611,6 +1610,7 @@ fn m2_concrete_trait_programs_run_with_expected_result() {
         "trait_generic_blanket_impl.sali",
         "trait_disjoint_blanket_impls.sali",
         "trait_default_method.sali",
+        "trait_temporary_receiver.sali",
         "trait_inherent_precedence.sali",
         "trait_declaration_order.sali",
     ] {

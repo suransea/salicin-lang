@@ -1,0 +1,12 @@
+let Counter = struct(value: i32)
+
+extend Counter {
+  let reset(mut borrow self)(): () = {
+    self.value = 0
+  }
+}
+
+let main(): i32 = {
+  Counter(42).reset()
+  0
+}

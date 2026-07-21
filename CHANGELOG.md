@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.42.0 - 2026-07-21
+
+- Allowed temporary nominal values to receive methods through shared `borrow self`, including both
+  inherent and trait-dispatched methods.
+- Materialized each borrowed temporary receiver as a compiler-generated lexical binding so it
+  remains addressable through the complete call and is destroyed exactly once afterward.
+- Kept mutable borrowing of temporary receivers explicit: `mut borrow self` still requires a
+  mutable local binding and now reports a focused diagnostic.
+
 ## 0.41.0 - 2026-07-21
 
 - Enabled source-backed default trait methods for concrete and blanket implementations; omitted
