@@ -4,7 +4,7 @@
 runtime for native builds.
 
 ```text
-.sali source
+.sc source
   -> lexer and parser
   -> module and package resolution
   -> type, ownership, borrow, and cleanup analysis

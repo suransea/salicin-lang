@@ -6,7 +6,7 @@
 
 本文定义“源程序是什么意思”，不把 LLVM 的实现限制暴露成语言规则。实现状态与未完成工作记录在
 [项目状态](../project/status.md)，版本变化记录在[更新日志](../../CHANGELOG.md)。Salicin 源文件统一
-使用 `.sali` 后缀。
+使用 `.sc` 后缀；它可理解为 successor C 或 super C 的简写，但这两个展开不构成语言正式名称。
 
 ## 1. 设计原则
 
@@ -25,7 +25,7 @@
   容易混淆的跨文字系统字符发出警告。包名、文件模块名和 FFI 链接名另行限制为 ASCII。
 - 建议类型和 trait 使用 `UpperCamelCase`，值、函数、显式模块和文件模块使用
   `lower_snake_case`；命名风格不是语义规则。
-- Salicin 源文件使用 `.sali` 后缀；UTF-8 是唯一源码编码。
+- Salicin 源文件使用 `.sc` 后缀；UTF-8 是唯一源码编码。
 - `//` 到行尾是行注释，`/* ... */` 是可嵌套块注释。
 - lexer 保留逻辑换行。未闭合圆括号或方括号内的换行被忽略；上一 token 是运算符、逗号、`.`、
   `?.`、`=`、`=>`、`->` 或 `:` 时，下一物理行继续当前表达式。其他表达式后的换行形成语句
@@ -1021,14 +1021,14 @@ let validate_internal_state() = ...
 
 ### 11.1 文件模块
 
-每个 `.sali` 文件都是一个隐式模块，模块路径由 `src` 下的相对路径确定：
+每个 `.sc` 文件都是一个隐式模块，模块路径由 `src` 下的相对路径确定：
 
 ```text
-src/lib.sali       -> 包的库根模块
-src/main.sali      -> 默认二进制根模块
-src/bin/tool.sali  -> 名为 tool 的额外二进制根模块
-src/net.sali       -> net
-src/net/http.sali  -> net.http
+src/lib.sc       -> 包的库根模块
+src/main.sc      -> 默认二进制根模块
+src/bin/tool.sc  -> 名为 tool 的额外二进制根模块
+src/net.sc       -> net
+src/net/http.sc  -> net.http
 ```
 
 同一路径不能同时由多个源文件定义。文件不需要 `mod` 声明；构建系统发现当前 target 可达的模块。
@@ -1063,17 +1063,17 @@ version = "0.1.0"
 edition = "2026"
 
 [lib]
-path = "src/lib.sali"
+path = "src/lib.sc"
 
 [[bin]]
 name = "hello-salicin"
-path = "src/main.sali"
+path = "src/main.sc"
 
 [dependencies]
 local_util = { path = "../local-util" }
 ```
 
-默认存在 `src/lib.sali` 时生成库 target，存在 `src/main.sali` 时生成同名二进制 target；清单可通过
+默认存在 `src/lib.sc` 时生成库 target，存在 `src/main.sc` 时生成同名二进制 target；清单可通过
 `[lib]` 和多个 `[[bin]]` 表显式指定其他入口。包名使用 kebab-case，在源码路径中规范化为
 snake_case。edition 固定解析和语义规则，不由所安装编译器静默改变。
 

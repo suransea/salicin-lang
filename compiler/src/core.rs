@@ -17,9 +17,9 @@ use crate::manifest::Edition;
 use crate::modules::{self, PackageId, SourceUnit};
 use crate::parser;
 
-const EDITION_2026_PRELUDE: &str = include_str!("../../library/core/src/prelude.sali");
-const EDITION_2026_OPS: &str = include_str!("../../library/core/src/ops.sali");
-const EDITION_2026_CONTROL: &str = include_str!("../../library/core/src/control.sali");
+const EDITION_2026_PRELUDE: &str = include_str!("../../library/core/src/prelude.sc");
+const EDITION_2026_OPS: &str = include_str!("../../library/core/src/ops.sc");
+const EDITION_2026_CONTROL: &str = include_str!("../../library/core/src/control.sc");
 
 /// A stable logical role fulfilled by one declaration in the edition's
 /// `core` bundle.

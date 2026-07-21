@@ -1,7 +1,7 @@
 # Core library
 
 `library/core` contains edition-matched declarations that do not require heap allocation or host
-services. The compiler embeds these `.sali` files, parses them through the ordinary frontend, and
+services. The compiler embeds these `.sc` files, parses them through the ordinary frontend, and
 validates declarations that have language-defined roles.
 
 ## Modules

@@ -291,7 +291,7 @@ mod tests {
         }
 
         fn package(&self, directory: &str, name: &str, dependencies: &str) {
-            self.write(format!("{directory}/src/lib.sali"), "let answer = 42\n");
+            self.write(format!("{directory}/src/lib.sc"), "let answer = 42\n");
             self.write(
                 format!("{directory}/salicin.toml"),
                 &format!(

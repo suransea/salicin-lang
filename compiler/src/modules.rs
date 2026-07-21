@@ -2470,13 +2470,13 @@ mod tests {
     fn flattens_modules_and_rewrites_calls_and_dotted_types() {
         let program = resolve_sources(&[
             unit(
-                "src/main.sali",
+                "src/main.sc",
                 &[],
                 "let main(): geometry.Point = geometry.make()\n",
                 true,
             ),
             unit(
-                "src/geometry.sali",
+                "src/geometry.sc",
                 &["geometry"],
                 "pub(package) let Point = struct(x: i32, y: i32)\n\
                  pub(package) let make(): Point = Point(x: 1, y: 2)\n",
@@ -2516,13 +2516,13 @@ mod tests {
     fn resolves_longest_declaration_prefix_and_preserves_fields() {
         let program = resolve_sources(&[
             unit(
-                "src/main.sali",
+                "src/main.sc",
                 &[],
                 "let main(): i32 = data.origin.x\n",
                 true,
             ),
             unit(
-                "src/data.sali",
+                "src/data.sc",
                 &["data"],
                 "pub(package) let Point = struct(pub(package) x: i32)\n\
                  pub(package) let origin = Point(x: 1)\n",
@@ -2542,7 +2542,7 @@ mod tests {
     fn local_parameters_blocks_closures_and_match_bindings_shadow_modules() {
         let program = resolve_sources(&[
             unit(
-                "src/main.sali",
+                "src/main.sc",
                 &[],
                 "let keep(math: i32): i32 = {\n\
                    let local = { (math: i32) -> math }\n\
@@ -2551,7 +2551,7 @@ mod tests {
                 true,
             ),
             unit(
-                "src/math.sali",
+                "src/math.sc",
                 &["math"],
                 "pub(package) let value = 42\n",
                 false,
@@ -2585,16 +2585,16 @@ mod tests {
     #[test]
     fn reports_private_sibling_access_but_allows_descendants() {
         let error = resolve_sources(&[
-            unit("src/main.sali", &[], "let main(): i32 = b.read()\n", true),
-            unit("src/a.sali", &["a"], "let secret(): i32 = 1\n", false),
+            unit("src/main.sc", &[], "let main(): i32 = b.read()\n", true),
+            unit("src/a.sc", &["a"], "let secret(): i32 = 1\n", false),
             unit(
-                "src/a/child.sali",
+                "src/a/child.sc",
                 &["a", "child"],
                 "pub(package) let read(): i32 = secret()\n",
                 false,
             ),
             unit(
-                "src/b.sali",
+                "src/b.sc",
                 &["b"],
                 "pub(package) let read(): i32 = a.secret()\n",
                 false,
@@ -2609,9 +2609,9 @@ mod tests {
     #[test]
     fn preserves_self_and_associated_types_inside_traits_and_extensions() {
         let program = resolve_sources(&[
-            unit("src/main.sali", &[], "let main(): i32 = 0\n", true),
+            unit("src/main.sc", &[], "let main(): i32 = 0\n", true),
             unit(
-                "src/api.sali",
+                "src/api.sc",
                 &["api"],
                 "pub(package) let Self = struct(value: i32)\n\
                  pub(package) let Output = struct(value: i32)\n\
@@ -2709,13 +2709,13 @@ mod tests {
     fn preserves_generic_extend_parameters_while_qualifying_the_target() {
         let program = resolve_sources(&[
             unit(
-                "src/main.sali",
+                "src/main.sc",
                 &[],
                 "let main(): i32 = api.Cell.new(42).take()\n",
                 true,
             ),
             unit(
-                "src/api.sali",
+                "src/api.sc",
                 &["api"],
                 "pub(package) let Cell(T: type) = struct(value: T)\n\
                  extend(T: type) Cell(T) {\n\
@@ -2758,7 +2758,7 @@ mod tests {
     #[test]
     fn leaves_unknown_names_for_semantic_analysis() {
         let program = resolve_sources(&[unit(
-            "src/main.sali",
+            "src/main.sc",
             &[],
             "let main(): i32 = missing.value()\n",
             true,
@@ -2776,29 +2776,25 @@ mod tests {
     #[test]
     fn rejects_duplicate_modules_declarations_and_module_name_conflicts() {
         let duplicate_module = resolve_sources(&[
-            unit("root.sali", &[], "let main() = {}\n", true),
-            unit("one.sali", &["net"], "let one = 1\n", false),
-            unit("two.sali", &["net"], "let two = 2\n", false),
+            unit("root.sc", &[], "let main() = {}\n", true),
+            unit("one.sc", &["net"], "let one = 1\n", false),
+            unit("two.sc", &["net"], "let two = 2\n", false),
         ])
         .unwrap_err();
         assert!(duplicate_module
             .iter()
             .any(|diagnostic| diagnostic.contains("duplicate module `net`")));
 
-        let duplicate_declaration = resolve_sources(&[unit(
-            "root.sali",
-            &[],
-            "let value = 1\nlet value = 2\n",
-            true,
-        )])
-        .unwrap_err();
+        let duplicate_declaration =
+            resolve_sources(&[unit("root.sc", &[], "let value = 1\nlet value = 2\n", true)])
+                .unwrap_err();
         assert!(duplicate_declaration
             .iter()
             .any(|diagnostic| diagnostic.contains("duplicate declaration `value`")));
 
         let conflict = resolve_sources(&[
-            unit("root.sali", &[], "let net = 1\n", true),
-            unit("net.sali", &["net"], "let value = 2\n", false),
+            unit("root.sc", &[], "let net = 1\n", true),
+            unit("net.sc", &["net"], "let value = 2\n", false),
         ])
         .unwrap_err();
         assert!(conflict
@@ -2809,12 +2805,12 @@ mod tests {
     #[test]
     fn requires_exactly_one_root_source() {
         let no_root =
-            resolve_sources(&[unit("a.sali", &["a"], "let value = 1\n", false)]).unwrap_err();
+            resolve_sources(&[unit("a.sc", &["a"], "let value = 1\n", false)]).unwrap_err();
         assert!(no_root[0].contains("exactly one root source"));
 
         let two_roots = resolve_sources(&[
-            unit("a.sali", &[], "let a = 1\n", true),
-            unit("b.sali", &["b"], "let b = 2\n", true),
+            unit("a.sc", &[], "let a = 1\n", true),
+            unit("b.sc", &["b"], "let b = 2\n", true),
         ])
         .unwrap_err();
         assert!(two_roots
@@ -2826,8 +2822,8 @@ mod tests {
     fn rejects_module_segments_that_are_unspellable_or_canonicalize_ambiguously() {
         for segment in ["", "_", "let", "Upper", "has-dash", "a.b", "a::b"] {
             let error = resolve_sources(&[
-                unit("root.sali", &[], "let main(): i32 = 0\n", true),
-                unit("bad.sali", &[segment], "let value = 1\n", false),
+                unit("root.sc", &[], "let main(): i32 = 0\n", true),
+                unit("bad.sc", &[segment], "let value = 1\n", false),
             ])
             .unwrap_err();
             assert!(
@@ -2843,19 +2839,19 @@ mod tests {
     fn resolves_forward_aliases_module_aliases_and_reexport_chains() {
         let program = resolve_sources(&[
             unit(
-                "root.sali",
+                "root.sc",
                 &[],
                 "use root.facade.answer as selected\nlet main(): i32 = selected()\n",
                 true,
             ),
             unit(
-                "facade.sali",
+                "facade.sc",
                 &["facade"],
                 "pub use root.implementation.answer\n",
                 false,
             ),
             unit(
-                "implementation.sali",
+                "implementation.sc",
                 &["implementation"],
                 "pub let answer(): i32 = 42\n",
                 false,
@@ -2875,7 +2871,7 @@ mod tests {
     fn rejects_bare_modules_before_they_can_fall_back_to_prelude_names() {
         let errors = resolve_sources(&[
             unit(
-                "root.sali",
+                "root.sc",
                 &[],
                 r#"use root.fake as Option
 use root.fake as Add
@@ -2891,8 +2887,8 @@ let main(): i32 = Option()
 "#,
                 true,
             ),
-            unit("fake.sali", &["fake"], "let marker = 0\n", false),
-            unit("never.sali", &["never"], "let marker = 0\n", false),
+            unit("fake.sc", &["fake"], "let marker = 0\n", false),
+            unit("never.sc", &["never"], "let marker = 0\n", false),
         ])
         .unwrap_err();
 
@@ -2914,19 +2910,19 @@ let main(): i32 = Option()
     fn resolves_root_self_super_and_anchor_only_module_aliases() {
         let program = resolve_sources(&[
             unit(
-                "root.sali",
+                "root.sc",
                 &[],
                 "let root_value(): i32 = 10\nlet main(): i32 = nested.deep.answer()\n",
                 true,
             ),
             unit(
-                "nested.sali",
+                "nested.sc",
                 &["nested"],
                 "let parent_value(): i32 = 20\n",
                 false,
             ),
             unit(
-                "nested/deep.sali",
+                "nested/deep.sc",
                 &["nested", "deep"],
                 "use root as pkg\n\
                  use self.local_value as local\n\
@@ -2947,7 +2943,7 @@ let main(): i32 = Option()
     #[test]
     fn rejects_import_cycles_privacy_and_visibility_escalation() {
         let cycle = resolve_sources(&[unit(
-            "root.sali",
+            "root.sc",
             &[],
             "use root.second as first\nuse root.first as second\nlet main(): i32 = 0\n",
             true,
@@ -2961,17 +2957,12 @@ let main(): i32 = Option()
 
         let private = resolve_sources(&[
             unit(
-                "root.sali",
+                "root.sc",
                 &[],
                 "use root.sibling.secret\nlet main(): i32 = secret()\n",
                 true,
             ),
-            unit(
-                "sibling.sali",
-                &["sibling"],
-                "let secret(): i32 = 1\n",
-                false,
-            ),
+            unit("sibling.sc", &["sibling"], "let secret(): i32 = 1\n", false),
         ])
         .unwrap_err();
         assert!(private.iter().any(|diagnostic| {
@@ -2979,9 +2970,9 @@ let main(): i32 = Option()
         }));
 
         let promotion = resolve_sources(&[
-            unit("root.sali", &[], "let main(): i32 = 0\n", true),
+            unit("root.sc", &[], "let main(): i32 = 0\n", true),
             unit(
-                "facade.sali",
+                "facade.sc",
                 &["facade"],
                 "pub(package) let internal(): i32 = 1\npub use self.internal as exposed\n",
                 false,
@@ -2999,13 +2990,13 @@ let main(): i32 = Option()
     fn preserves_private_module_alias_boundaries_and_skips_relative_self_aliases() {
         let program = resolve_sources(&[
             unit(
-                "root.sali",
+                "root.sc",
                 &[],
                 "pub(package) let answer(): i32 = 42\nlet main(): i32 = child.read()\n",
                 true,
             ),
             unit(
-                "child.sali",
+                "child.sc",
                 &["child"],
                 "use answer\npub(package) let read(): i32 = answer()\n",
                 false,
@@ -3019,21 +3010,21 @@ let main(): i32 = Option()
         ));
 
         let bypass = resolve_sources(&[
-            unit("root.sali", &[], "let main(): i32 = 0\n", true),
+            unit("root.sc", &[], "let main(): i32 = 0\n", true),
             unit(
-                "net.sali",
+                "net.sc",
                 &["net"],
                 "pub(package) let value(): i32 = 1\n",
                 false,
             ),
             unit(
-                "owner.sali",
+                "owner.sc",
                 &["owner"],
                 "use root.net as hidden\nlet local(): i32 = hidden.value()\n",
                 false,
             ),
             unit(
-                "sibling.sali",
+                "sibling.sc",
                 &["sibling"],
                 "use root.owner.hidden.value as stolen\nlet read(): i32 = stolen()\n",
                 false,
@@ -3045,7 +3036,7 @@ let main(): i32 = Option()
         }));
 
         let unknown = resolve_sources(&[unit(
-            "root.sali",
+            "root.sc",
             &[],
             "use missing as value\nlet main(): i32 = 0\n",
             true,
@@ -3069,7 +3060,7 @@ let main(): i32 = Option()
                 true,
                 &[("math", 1)],
                 vec![unit(
-                    "app/src/main.sali",
+                    "app/src/main.sc",
                     &[],
                     "use math.answer as selected\nlet main(): i32 = selected()\n",
                     true,
@@ -3080,14 +3071,9 @@ let main(): i32 = Option()
                 false,
                 &[],
                 vec![
+                    unit("math/src/lib.sc", &[], "pub use root.inner.answer\n", true),
                     unit(
-                        "math/src/lib.sali",
-                        &[],
-                        "pub use root.inner.answer\n",
-                        true,
-                    ),
-                    unit(
-                        "math/src/inner.sali",
+                        "math/src/inner.sc",
                         &["inner"],
                         "pub let answer(): i32 = 42\n",
                         false,
@@ -3114,7 +3100,7 @@ let main(): i32 = Option()
                     true,
                     &[("dep", 1)],
                     vec![unit(
-                        "app/src/main.sali",
+                        "app/src/main.sc",
                         &[],
                         "let main(): i32 = dep.hidden()\n",
                         true,
@@ -3125,7 +3111,7 @@ let main(): i32 = Option()
                     false,
                     &[],
                     vec![unit(
-                        "dep/src/lib.sali",
+                        "dep/src/lib.sc",
                         &[],
                         &format!("{visibility} let hidden(): i32 = 1\n"),
                         true,
@@ -3148,7 +3134,7 @@ let main(): i32 = Option()
                 true,
                 &[("dep", 1)],
                 vec![unit(
-                    "app/src/main.sali",
+                    "app/src/main.sc",
                     &[],
                     "pub let root_value(): i32 = 1\nlet main(): i32 = 0\n",
                     true,
@@ -3159,7 +3145,7 @@ let main(): i32 = Option()
                 false,
                 &[],
                 vec![unit(
-                    "dep/src/lib.sali",
+                    "dep/src/lib.sc",
                     &[],
                     "use root.root_value\npub let answer(): i32 = root_value()\n",
                     true,
@@ -3179,19 +3165,14 @@ let main(): i32 = Option()
                 0,
                 true,
                 &[("dep", 1)],
-                vec![unit(
-                    "app/src/main.sali",
-                    &[],
-                    "let main(): i32 = 0\n",
-                    true,
-                )],
+                vec![unit("app/src/main.sc", &[], "let main(): i32 = 0\n", true)],
             ),
             package(
                 1,
                 false,
                 &[],
                 vec![unit(
-                    "dep/src/lib.sali",
+                    "dep/src/lib.sc",
                     &[],
                     "use super.outside as value\npub let answer(): i32 = 0\n",
                     true,
@@ -3212,9 +3193,9 @@ let main(): i32 = Option()
                 true,
                 &[("dep", 1)],
                 vec![
-                    unit("app/src/main.sali", &[], "let main(): i32 = 0\n", true),
+                    unit("app/src/main.sc", &[], "let main(): i32 = 0\n", true),
                     unit(
-                        "app/src/dep/internal.sali",
+                        "app/src/dep/internal.sc",
                         &["dep", "internal"],
                         "pub(package) let local = 1\n",
                         false,
@@ -3226,7 +3207,7 @@ let main(): i32 = Option()
                 false,
                 &[],
                 vec![unit(
-                    "dep/src/lib.sali",
+                    "dep/src/lib.sc",
                     &[],
                     "pub let answer(): i32 = 1\n",
                     true,
@@ -3248,7 +3229,7 @@ let main(): i32 = Option()
                 true,
                 &[("middle", 1)],
                 vec![unit(
-                    "app/src/main.sali",
+                    "app/src/main.sc",
                     &[],
                     "use middle.leaf.answer\nlet main(): i32 = answer()\n",
                     true,
@@ -3259,7 +3240,7 @@ let main(): i32 = Option()
                 false,
                 &[("leaf", 2)],
                 vec![unit(
-                    "middle/src/lib.sali",
+                    "middle/src/lib.sc",
                     &[],
                     "pub let middle_value(): i32 = leaf.answer()\n",
                     true,
@@ -3270,7 +3251,7 @@ let main(): i32 = Option()
                 false,
                 &[],
                 vec![unit(
-                    "leaf/src/lib.sali",
+                    "leaf/src/lib.sc",
                     &[],
                     "pub let answer(): i32 = 42\n",
                     true,
@@ -3288,7 +3269,7 @@ let main(): i32 = Option()
                 true,
                 &[("middle", 1)],
                 vec![unit(
-                    "app/src/main.sali",
+                    "app/src/main.sc",
                     &[],
                     "use middle.answer as selected\nlet main(): i32 = selected()\n",
                     true,
@@ -3299,7 +3280,7 @@ let main(): i32 = Option()
                 false,
                 &[("leaf", 2)],
                 vec![unit(
-                    "middle/src/lib.sali",
+                    "middle/src/lib.sc",
                     &[],
                     "pub use leaf.answer\n",
                     true,
@@ -3310,7 +3291,7 @@ let main(): i32 = Option()
                 false,
                 &[],
                 vec![unit(
-                    "leaf/src/lib.sali",
+                    "leaf/src/lib.sc",
                     &[],
                     "pub let answer(): i32 = 42\n",
                     true,
@@ -3333,7 +3314,7 @@ let main(): i32 = Option()
                 true,
                 &[("left", 1), ("right", 2)],
                 vec![unit(
-                    "app/src/main.sali",
+                    "app/src/main.sc",
                     &[],
                     "let same(value: left.Token): right.Token = value\nlet main(): i32 = 0\n",
                     true,
@@ -3343,19 +3324,14 @@ let main(): i32 = Option()
                 1,
                 false,
                 &[("shared", 3)],
-                vec![unit(
-                    "left/src/lib.sali",
-                    &[],
-                    "pub use shared.Token\n",
-                    true,
-                )],
+                vec![unit("left/src/lib.sc", &[], "pub use shared.Token\n", true)],
             ),
             package(
                 2,
                 false,
                 &[("shared", 3)],
                 vec![unit(
-                    "right/src/lib.sali",
+                    "right/src/lib.sc",
                     &[],
                     "pub use shared.Token\n",
                     true,
@@ -3366,7 +3342,7 @@ let main(): i32 = Option()
                 false,
                 &[],
                 vec![unit(
-                    "shared/src/lib.sali",
+                    "shared/src/lib.sc",
                     &[],
                     "pub let Token = struct(value: i32)\n",
                     true,
@@ -3405,14 +3381,14 @@ let main(): i32 = Option()
                     0,
                     true,
                     &[("dep", 1)],
-                    vec![unit("app/src/main.sali", &[], source, true)],
+                    vec![unit("app/src/main.sc", &[], source, true)],
                 ),
                 package(
                     1,
                     false,
                     &[],
                     vec![unit(
-                        "dep/src/lib.sali",
+                        "dep/src/lib.sc",
                         &[],
                         "pub let answer(): i32 = 1\n",
                         true,
@@ -3433,13 +3409,13 @@ let main(): i32 = Option()
                 0,
                 true,
                 &[("next", 1)],
-                vec![unit("root.sali", &[], "let main(): i32 = 0\n", true)],
+                vec![unit("root.sc", &[], "let main(): i32 = 0\n", true)],
             ),
             package(
                 1,
                 false,
                 &[("back", 0)],
-                vec![unit("next.sali", &[], "pub let value = 1\n", true)],
+                vec![unit("next.sc", &[], "pub let value = 1\n", true)],
             ),
         ])
         .unwrap_err();
@@ -3452,13 +3428,13 @@ let main(): i32 = Option()
                 0,
                 true,
                 &[("missing", 99)],
-                vec![unit("root.sali", &[], "let main(): i32 = 0\n", true)],
+                vec![unit("root.sc", &[], "let main(): i32 = 0\n", true)],
             ),
             package(
                 1,
                 false,
                 &[],
-                vec![unit("orphan.sali", &[], "pub let value = 1\n", true)],
+                vec![unit("orphan.sc", &[], "pub let value = 1\n", true)],
             ),
         ])
         .unwrap_err();
@@ -3473,7 +3449,7 @@ let main(): i32 = Option()
             PackageId::CORE.0,
             true,
             &[],
-            vec![unit("root.sali", &[], "let main(): i32 = 0\n", true)],
+            vec![unit("root.sc", &[], "let main(): i32 = 0\n", true)],
         )])
         .unwrap_err();
         assert!(reserved
@@ -3487,7 +3463,7 @@ let main(): i32 = Option()
             PackageId::ALLOC.0,
             true,
             &[],
-            vec![unit("root.sali", &[], "let main(): i32 = 0\n", true)],
+            vec![unit("root.sc", &[], "let main(): i32 = 0\n", true)],
         )])
         .unwrap_err();
         assert!(reserved_alloc
@@ -3501,7 +3477,7 @@ let main(): i32 = Option()
     #[test]
     fn rejects_nominal_types_that_are_narrower_than_function_and_global_apis() {
         let errors = resolve_sources(&[unit(
-            "src/lib.sali",
+            "src/lib.sc",
             &[],
             "let Hidden = struct()\n\
              pub let Wrapper(T: type) = struct()\n\
@@ -3529,7 +3505,7 @@ let main(): i32 = Option()
     #[test]
     fn rejects_traits_that_are_narrower_than_public_where_predicates() {
         let errors = resolve_sources(&[unit(
-            "src/lib.sali",
+            "src/lib.sc",
             &[],
             "let Hidden = trait {}\n\
              pub let expose(T: type)(value: T): T where T: Hidden = value\n",
@@ -3549,7 +3525,7 @@ let main(): i32 = Option()
     #[test]
     fn rejects_traits_that_are_narrower_than_constrained_extension_members() {
         let errors = resolve_sources(&[unit(
-            "src/lib.sali",
+            "src/lib.sc",
             &[],
             "let Hidden = trait {}\n\
              pub let Cell(T: type) = struct(pub value: T)\n\
@@ -3573,7 +3549,7 @@ let main(): i32 = Option()
     fn compares_package_and_private_api_audiences_by_module_ancestry() {
         let errors = resolve_sources(&[
             unit(
-                "src/main.sali",
+                "src/main.sc",
                 &[],
                 "let RootSecret = struct()\n\
                  pub(package) let PackageSecret = struct()\n\
@@ -3581,7 +3557,7 @@ let main(): i32 = Option()
                 true,
             ),
             unit(
-                "src/child.sali",
+                "src/child.sc",
                 &["child"],
                 "let ChildSecret = struct()\n\
                  pub(package) let package_ok(value: RootSecret): RootSecret = value\n\
@@ -3607,7 +3583,7 @@ let main(): i32 = Option()
     #[test]
     fn validates_effective_struct_and_enum_field_audiences() {
         let errors = resolve_sources(&[unit(
-            "src/lib.sali",
+            "src/lib.sc",
             &[],
             "let Hidden = struct()\n\
              pub let Record = struct(pub visible: Hidden, private: Hidden)\n\
@@ -3641,7 +3617,7 @@ let main(): i32 = Option()
     #[test]
     fn validates_trait_signatures_without_treating_bound_types_as_nominals() {
         let valid = resolve_sources(&[unit(
-            "src/valid.sali",
+            "src/valid.sc",
             &[],
             "pub let Convert(T: type) = trait {\n\
                let Output: type = T\n\
@@ -3652,7 +3628,7 @@ let main(): i32 = Option()
         assert!(valid.is_ok(), "{valid:?}");
 
         let errors = resolve_sources(&[unit(
-            "src/invalid.sali",
+            "src/invalid.sc",
             &[],
             "let Hidden = struct()\n\
              pub let Expose = trait {\n\
@@ -3681,7 +3657,7 @@ let main(): i32 = Option()
     #[test]
     fn standard_library_modules_are_explicit_reserved_namespaces() {
         let program = resolve_sources(&[unit(
-            "main.sali",
+            "main.sc",
             &[],
             "use alloc.boxed.Box as HeapBox\nuse alloc.vec.Vec\n\
              let keep(move boxed: HeapBox(i32)): HeapBox(i32) = boxed\n\
@@ -3699,7 +3675,7 @@ let main(): i32 = Option()
         );
 
         let operator = resolve_sources(&[unit(
-            "operator.sali",
+            "operator.sc",
             &[],
             "use core.ops.Add as Plus\n\
              let Number = struct(value: i32)\n\
@@ -3717,7 +3693,7 @@ let main(): i32 = Option()
         }));
 
         let bare = resolve_sources(&[unit(
-            "main.sali",
+            "main.sc",
             &[],
             "let make(): Box(i32) = Box.new(1)\n",
             true,
@@ -3729,7 +3705,7 @@ let main(): i32 = Option()
         }));
 
         let bare_operator = resolve_sources(&[unit(
-            "operator.sali",
+            "operator.sc",
             &[],
             "let Number = struct(value: i32)\n\
              extend Number: Add(Number) {\n\
@@ -3745,7 +3721,7 @@ let main(): i32 = Option()
         }));
 
         let control = resolve_sources(&[unit(
-            "control.sali",
+            "control.sc",
             &[],
             "use core.control.{Try, FromResidual as ConvertResidual}\n\
              let accept(T: type)(move value: T): T where T: Try = value\n",
@@ -3759,7 +3735,7 @@ let main(): i32 = Option()
         }));
 
         let bare_control = resolve_sources(&[unit(
-            "control.sali",
+            "control.sc",
             &[],
             "let accept(T: type)(move value: T): T where T: Try = value\n",
             true,
@@ -3772,9 +3748,9 @@ let main(): i32 = Option()
 
         for namespace in ["core", "alloc"] {
             let module = resolve_sources(&[
-                unit("main.sali", &[], "let main(): i32 = 0\n", true),
+                unit("main.sc", &[], "let main(): i32 = 0\n", true),
                 unit(
-                    &format!("{namespace}.sali"),
+                    &format!("{namespace}.sc"),
                     &[namespace],
                     "let value = 1\n",
                     false,
@@ -3792,13 +3768,13 @@ let main(): i32 = Option()
                     0,
                     true,
                     &[(namespace, 1)],
-                    vec![unit("main.sali", &[], "let main(): i32 = 0\n", true)],
+                    vec![unit("main.sc", &[], "let main(): i32 = 0\n", true)],
                 ),
                 package(
                     1,
                     false,
                     &[],
-                    vec![unit("dep.sali", &[], "pub let value = 1\n", true)],
+                    vec![unit("dep.sc", &[], "pub let value = 1\n", true)],
                 ),
             ])
             .unwrap_err();

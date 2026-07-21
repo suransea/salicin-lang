@@ -2,8 +2,8 @@
 
 Salicin is an experimental, statically compiled programming language with an LLVM backend. It
 explores uniform `let` declarations, curried parameter groups, ownership-aware argument passing,
-traits, pattern matching, closures, and source-backed language items. Source files use `.sali`;
-the compiler executable is `salic`.
+traits, pattern matching, closures, and source-backed language items. Source files use `.sc`—a
+compact nod to “successor C” or “super C”—and the compiler executable is `salic`.
 
 > Salicin is under active development. Its syntax, semantics, and standard library are not stable.
 
@@ -23,19 +23,19 @@ The compiler requires Rust. Building or running a native executable also require
 
 ```sh
 cargo build --release
-target/release/salic run examples/basics.sali
+target/release/salic run examples/basics.sc
 ```
 
 Common commands:
 
 ```sh
-salic check main.sali
-salic emit-ir main.sali -o main.ll
-salic build main.sali -o main
-salic run main.sali -- argument
+salic check main.sc
+salic emit-ir main.sc -o main.ll
+salic build main.sc -o main
+salic run main.sc -- argument
 ```
 
-Project builds use `salicin.toml`, discover `src/lib.sali` and `src/main.sali`, and place artifacts
+Project builds use `salicin.toml`, discover `src/lib.sc` and `src/main.sc`, and place artifacts
 under `build/`. Local path dependencies are recorded in `salicin.lock`.
 
 ## Repository layout

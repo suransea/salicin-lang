@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use salicin_lang::lockfile::{write_package_lockfile, LOCKFILE_NAME};
 use salicin_lang::manifest::{
     load_dependency_graph, DependencyGraph, Manifest, Target, TargetKind, MANIFEST_FILE_NAME,
+    SOURCE_FILE_EXTENSION,
 };
 use salicin_lang::modules::{is_valid_module_segment, PackageId, SourcePackage, SourceUnit};
 use salicin_lang::{
@@ -42,7 +43,7 @@ Options:
   -h, --help           Print this help
   -V, --version        Print the compiler version
 
-Path may be a .sali file, a project directory, or a salicin.toml manifest.
+Path may be a .sc file, a project directory, or a salicin.toml manifest.
 When path is omitted, salic searches the current directory and its parents.
 Without an explicit command, the input is treated as a build command.";
 
@@ -445,7 +446,7 @@ fn resolve_input(
     binary_only: bool,
 ) -> Result<ResolvedTarget, String> {
     if let Some(path) = input {
-        if path.extension() == Some(OsStr::new("sali")) {
+        if path.extension() == Some(OsStr::new(SOURCE_FILE_EXTENSION)) {
             if !matches!(selection, TargetSelection::Default) {
                 return Err("target selectors require a salicin.toml package input".into());
             }
@@ -466,7 +467,7 @@ fn resolve_input(
         Some(path) if !path.exists() && path.extension().is_none() => path.join(MANIFEST_FILE_NAME),
         Some(path) => {
             return Err(format!(
-                "input '{}' must be a .sali file, a package directory, or {MANIFEST_FILE_NAME}",
+                "input '{}' must be a .sc file, a package directory, or {MANIFEST_FILE_NAME}",
                 path.display()
             ));
         }
@@ -569,7 +570,7 @@ fn discover_package_module_sources(
     }
 
     let mut candidates = Vec::new();
-    collect_sali_files(&source_root, &mut candidates)?;
+    collect_sc_files(&source_root, &mut candidates)?;
     candidates.sort();
 
     let mut modules = Vec::new();
@@ -589,8 +590,8 @@ fn discover_package_module_sources(
                 source_root.display()
             )
         })?;
-        if relative == Path::new("main.sali")
-            || relative == Path::new("lib.sali")
+        if relative == Path::new("main.sc")
+            || relative == Path::new("lib.sc")
             || relative
                 .components()
                 .next()
@@ -608,7 +609,7 @@ fn discover_package_module_sources(
     Ok(modules)
 }
 
-fn collect_sali_files(directory: &Path, output: &mut Vec<PathBuf>) -> Result<(), String> {
+fn collect_sc_files(directory: &Path, output: &mut Vec<PathBuf>) -> Result<(), String> {
     let entries = fs::read_dir(directory).map_err(|error| {
         format!(
             "could not read source directory '{}': {error}",
@@ -629,8 +630,10 @@ fn collect_sali_files(directory: &Path, output: &mut Vec<PathBuf>) -> Result<(),
             )
         })?;
         if file_type.is_dir() {
-            collect_sali_files(&entry.path(), output)?;
-        } else if file_type.is_file() && entry.path().extension() == Some(OsStr::new("sali")) {
+            collect_sc_files(&entry.path(), output)?;
+        } else if file_type.is_file()
+            && entry.path().extension() == Some(OsStr::new(SOURCE_FILE_EXTENSION))
+        {
             output.push(entry.path());
         }
     }

@@ -11,12 +11,12 @@ Source is organized by public module rather than accumulated in a release-orient
 ```text
 library/
   core/src/
-    prelude.sali
-    ops.sali
-    control.sali
+    prelude.sc
+    ops.sc
+    control.sc
   alloc/src/
-    boxed.sali
-    vec.sali
+    boxed.sc
+    vec.sc
 ```
 
 ## Prelude policy

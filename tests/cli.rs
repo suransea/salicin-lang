@@ -83,10 +83,27 @@ fn help_and_version_identify_salic() {
 }
 
 #[test]
+fn source_extension_is_sc_without_a_legacy_alias() {
+    let temporary = TestDirectory::new();
+    let legacy = temporary.write("legacy.sali", "let main(): i32 = 42\n");
+    let output = salic()
+        .arg("check")
+        .arg(legacy)
+        .output()
+        .expect("check rejected legacy source extension");
+    assert_eq!(output.status.code(), Some(2), "{}", output_text(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("must be a .sc file"),
+        "{}",
+        output_text(&output)
+    );
+}
+
+#[test]
 fn emit_ir_and_check_cover_the_frontend() {
     let emitted = salic()
         .args(["emit-ir"])
-        .arg(fixture("pass", "exit_42.sali"))
+        .arg(fixture("pass", "exit_42.sc"))
         .output()
         .expect("emit LLVM IR");
     assert!(emitted.status.success(), "{}", output_text(&emitted));
@@ -95,12 +112,12 @@ fn emit_ir_and_check_cover_the_frontend() {
 
     let checked = salic()
         .arg("check")
-        .arg(fixture("pass", "condition.sali"))
+        .arg(fixture("pass", "condition.sc"))
         .output()
         .expect("check source");
     assert!(checked.status.success(), "{}", output_text(&checked));
 
-    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/basics.sali");
+    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/basics.sc");
     let checked_example = salic()
         .arg("check")
         .arg(example)
@@ -117,21 +134,21 @@ fn emit_ir_and_check_cover_the_frontend() {
 fn run_supports_grouped_calls_and_unit_main() {
     let curried = salic()
         .arg("run")
-        .arg(fixture("pass", "curried_call.sali"))
+        .arg(fixture("pass", "curried_call.sc"))
         .output()
         .expect("run curried program");
     assert_eq!(curried.status.code(), Some(42), "{}", output_text(&curried));
 
     let unit = salic()
         .arg("run")
-        .arg(fixture("pass", "unit_main.sali"))
+        .arg(fixture("pass", "unit_main.sc"))
         .output()
         .expect("run unit program");
     assert!(unit.status.success(), "{}", output_text(&unit));
 
     let unit_values = salic()
         .arg("run")
-        .arg(fixture("pass", "unit_values.sali"))
+        .arg(fixture("pass", "unit_values.sc"))
         .output()
         .expect("run program with unit values");
     assert_eq!(
@@ -143,7 +160,7 @@ fn run_supports_grouped_calls_and_unit_main() {
 
     let control_flow = salic()
         .arg("run")
-        .arg(fixture("pass", "short_circuit_return.sali"))
+        .arg(fixture("pass", "short_circuit_return.sc"))
         .output()
         .expect("run short-circuit control flow program");
     assert_eq!(
@@ -157,9 +174,9 @@ fn run_supports_grouped_calls_and_unit_main() {
 #[test]
 fn raw_pointer_read_and_write_run_with_expected_result() {
     for name in [
-        "raw_pointer_read.sali",
-        "raw_pointer_write.sali",
-        "do_forwards_unsafe_color.sali",
+        "raw_pointer_read.sc",
+        "raw_pointer_write.sc",
+        "do_forwards_unsafe_color.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -178,13 +195,13 @@ fn raw_pointer_read_and_write_run_with_expected_result() {
 #[test]
 fn raw_allocator_abi_allocates_aligned_storage_and_deallocates_it() {
     for name in [
-        "raw_allocator_i32.sali",
-        "raw_allocator_inferred.sali",
-        "raw_allocator_layout.sali",
-        "raw_pointer_offset.sali",
-        "raw_pointer_offset_shared.sali",
-        "raw_pointer_offset_unit.sali",
-        "raw_pointer_borrow.sali",
+        "raw_allocator_i32.sc",
+        "raw_allocator_inferred.sc",
+        "raw_allocator_layout.sc",
+        "raw_pointer_offset.sc",
+        "raw_pointer_offset_shared.sc",
+        "raw_pointer_offset_unit.sc",
+        "raw_pointer_borrow.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -203,24 +220,24 @@ fn raw_allocator_abi_allocates_aligned_storage_and_deallocates_it() {
 #[test]
 fn raw_pointer_intrinsic_errors_report_their_cause() {
     for (name, expected) in [
-        ("raw_offset_safe.sali", "requires an `unsafe` block"),
+        ("raw_offset_safe.sc", "requires an `unsafe` block"),
         (
-            "raw_offset_non_pointer.sali",
+            "raw_offset_non_pointer.sc",
             "requires `Ptr(T)` or `MutPtr(T)`",
         ),
-        ("raw_trap_safe.sali", "requires an `unsafe` block"),
+        ("raw_trap_safe.sc", "requires an `unsafe` block"),
         (
-            "raw_trap_arguments.sali",
+            "raw_trap_arguments.sc",
             "expects one empty runtime argument group",
         ),
-        ("raw_borrow_safe.sali", "requires an `unsafe` block"),
+        ("raw_borrow_safe.sc", "requires an `unsafe` block"),
         (
-            "raw_borrow_mut_immutable_pointer.sali",
+            "raw_borrow_mut_immutable_pointer.sc",
             "requires a `MutPtr(T)`",
         ),
-        ("raw_borrow_anchor_conflict.sali", "borrowed"),
+        ("raw_borrow_anchor_conflict.sc", "borrowed"),
         (
-            "raw_borrow_mut_shared_anchor.sali",
+            "raw_borrow_mut_shared_anchor.sc",
             "requires a mutable borrow anchor",
         ),
     ] {
@@ -240,7 +257,7 @@ fn raw_pointer_intrinsic_errors_report_their_cause() {
 
 #[test]
 fn target_layout_intrinsics_cover_globals_aggregates_and_generic_instances() {
-    for name in ["layout_intrinsics.sali", "layout_intrinsics_generic.sali"] {
+    for name in ["layout_intrinsics.sc", "layout_intrinsics_generic.sc"] {
         let output = salic()
             .arg("run")
             .arg(fixture("pass", name))
@@ -258,17 +275,17 @@ fn target_layout_intrinsics_cover_globals_aggregates_and_generic_instances() {
 #[test]
 fn alloc_box_owns_copy_and_resource_payloads() {
     for name in [
-        "box_i32.sali",
-        "box_resource.sali",
-        "box_drop_once.sali",
-        "box_nested_and_unit.sali",
-        "box_recursive_layout.sali",
-        "box_read.sali",
-        "box_into_inner_drop_once.sali",
-        "box_replace_drop.sali",
-        "box_borrow.sali",
-        "forget_resource.sali",
-        "forget_temporary_resource.sali",
+        "box_i32.sc",
+        "box_resource.sc",
+        "box_drop_once.sc",
+        "box_nested_and_unit.sc",
+        "box_recursive_layout.sc",
+        "box_read.sc",
+        "box_into_inner_drop_once.sc",
+        "box_replace_drop.sc",
+        "box_borrow.sc",
+        "forget_resource.sc",
+        "forget_temporary_resource.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -285,7 +302,7 @@ fn alloc_box_owns_copy_and_resource_payloads() {
 
     let trapped = salic()
         .arg("run")
-        .arg(fixture("pass", "box_resource_drop_trap.sali"))
+        .arg(fixture("pass", "box_resource_drop_trap.sc"))
         .output()
         .expect("run Box recursive drop fixture");
     assert!(
@@ -295,9 +312,9 @@ fn alloc_box_owns_copy_and_resource_payloads() {
     );
 
     for name in [
-        "box_borrow_then_replace.sali",
-        "box_mut_borrow_conflict.sali",
-        "box_borrow_then_into_inner.sali",
+        "box_borrow_then_replace.sc",
+        "box_mut_borrow_conflict.sc",
+        "box_borrow_then_into_inner.sc",
     ] {
         let output = salic()
             .arg("check")
@@ -316,13 +333,13 @@ fn alloc_box_owns_copy_and_resource_payloads() {
 #[test]
 fn alloc_vec_owns_copy_and_resource_elements() {
     for name in [
-        "vec_copy.sali",
-        "vec_unit.sali",
-        "vec_resource.sali",
-        "vec_borrow.sali",
-        "vec_ordered_copy.sali",
-        "vec_ordered_resource.sali",
-        "vec_reorder_resource.sali",
+        "vec_copy.sc",
+        "vec_unit.sc",
+        "vec_resource.sc",
+        "vec_borrow.sc",
+        "vec_ordered_copy.sc",
+        "vec_ordered_resource.sc",
+        "vec_reorder_resource.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -338,19 +355,19 @@ fn alloc_vec_owns_copy_and_resource_elements() {
     }
 
     for name in [
-        "vec_read_out_of_bounds.sali",
-        "vec_write_out_of_bounds.sali",
-        "vec_replace_out_of_bounds.sali",
-        "vec_swap_remove_out_of_bounds.sali",
-        "vec_insert_out_of_bounds.sali",
-        "vec_remove_out_of_bounds.sali",
-        "vec_at_out_of_bounds.sali",
-        "vec_at_access_mut_out_of_bounds.sali",
-        "vec_swap_left_out_of_bounds.sali",
-        "vec_swap_right_out_of_bounds.sali",
-        "vec_capacity_overflow.sali",
-        "vec_reserve_overflow.sali",
-        "vec_zst_resource_drop_trap.sali",
+        "vec_read_out_of_bounds.sc",
+        "vec_write_out_of_bounds.sc",
+        "vec_replace_out_of_bounds.sc",
+        "vec_swap_remove_out_of_bounds.sc",
+        "vec_insert_out_of_bounds.sc",
+        "vec_remove_out_of_bounds.sc",
+        "vec_at_out_of_bounds.sc",
+        "vec_at_access_mut_out_of_bounds.sc",
+        "vec_swap_left_out_of_bounds.sc",
+        "vec_swap_right_out_of_bounds.sc",
+        "vec_capacity_overflow.sc",
+        "vec_reserve_overflow.sc",
+        "vec_zst_resource_drop_trap.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -366,7 +383,7 @@ fn alloc_vec_owns_copy_and_resource_elements() {
 
     let output = salic()
         .arg("check")
-        .arg(fixture("fail", "vec_resource_use_after_push.sali"))
+        .arg(fixture("fail", "vec_resource_use_after_push.sc"))
         .output()
         .expect("check use after resource Vec push");
     assert!(
@@ -381,7 +398,7 @@ fn alloc_vec_owns_copy_and_resource_elements() {
 
     let output = salic()
         .arg("check")
-        .arg(fixture("fail", "vec_append_self_borrow.sali"))
+        .arg(fixture("fail", "vec_append_self_borrow.sc"))
         .output()
         .expect("check self append borrow conflict");
     assert!(
@@ -394,7 +411,7 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         output_text(&output)
     );
 
-    for name in ["vec_borrow_then_push.sali", "vec_mut_borrow_conflict.sali"] {
+    for name in ["vec_borrow_then_push.sc", "vec_mut_borrow_conflict.sc"] {
         let output = salic()
             .arg("check")
             .arg(fixture("fail", name))
@@ -412,17 +429,17 @@ fn alloc_vec_owns_copy_and_resource_elements() {
 #[test]
 fn generic_inherent_extensions_infer_and_dispatch_concrete_instances() {
     for name in [
-        "generic_inherent_extend.sali",
-        "generic_inherent_reordered.sali",
-        "generic_inherent_resource.sali",
-        "generic_inherent_existing_instance.sali",
-        "generic_enum_inherent_extend.sali",
-        "generic_inherent_internal_dispatch.sali",
-        "generic_inherent_from_generic_function.sali",
-        "generic_extend_generic_member.sali",
-        "box_methods.sali",
-        "box_method_context_inference.sali",
-        "access_generic.sali",
+        "generic_inherent_extend.sc",
+        "generic_inherent_reordered.sc",
+        "generic_inherent_resource.sc",
+        "generic_inherent_existing_instance.sc",
+        "generic_enum_inherent_extend.sc",
+        "generic_inherent_internal_dispatch.sc",
+        "generic_inherent_from_generic_function.sc",
+        "generic_extend_generic_member.sc",
+        "box_methods.sc",
+        "box_method_context_inference.sc",
+        "access_generic.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -439,7 +456,7 @@ fn generic_inherent_extensions_infer_and_dispatch_concrete_instances() {
 
     let output = salic()
         .arg("check")
-        .arg(fixture("fail", "generic_inherent_member_shadow.sali"))
+        .arg(fixture("fail", "generic_inherent_member_shadow.sc"))
         .output()
         .expect("reject a member compile parameter that shadows its extension parameter");
     assert!(!output.status.success(), "{}", output_text(&output));
@@ -454,14 +471,14 @@ fn generic_inherent_extensions_infer_and_dispatch_concrete_instances() {
 fn passing_keyword_generics_select_auto_copy_and_move() {
     let output = salic()
         .arg("run")
-        .arg(fixture("pass", "passing_generic.sali"))
+        .arg(fixture("pass", "passing_generic.sc"))
         .output()
         .expect("run passing-generic fixture");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 
     let output = salic()
         .arg("check")
-        .arg(fixture("fail", "passing_copy_resource.sali"))
+        .arg(fixture("fail", "passing_copy_resource.sc"))
         .output()
         .expect("reject copy passing for a resource");
     assert!(!output.status.success(), "{}", output_text(&output));
@@ -472,8 +489,8 @@ fn passing_keyword_generics_select_auto_copy_and_move() {
     );
 
     for (name, expected) in [
-        ("passing_move_copy_use_after.sali", "moved"),
-        ("passing_invalid_argument.sali", "invalid passing argument"),
+        ("passing_move_copy_use_after.sc", "moved"),
+        ("passing_invalid_argument.sc", "invalid passing argument"),
     ] {
         let output = salic()
             .arg("check")
@@ -493,21 +510,18 @@ fn passing_keyword_generics_select_auto_copy_and_move() {
 fn where_copy_bounds_validate_generic_bodies_and_concrete_calls() {
     let output = salic()
         .arg("run")
-        .arg(fixture("pass", "where_copy_bound.sali"))
+        .arg(fixture("pass", "where_copy_bound.sc"))
         .output()
         .expect("run generic function with a Copy bound");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 
     for (name, expected) in [
-        ("where_copy_unsatisfied.sali", "not satisfied"),
-        ("box_read_resource.sali", "not satisfied"),
-        ("box_write_resource.sali", "not satisfied"),
-        ("where_unknown_trait.sali", "unknown trait"),
-        (
-            "where_duplicate_predicate.sali",
-            "duplicate where predicate",
-        ),
-        ("where_trait_arity.sali", "argument count mismatch"),
+        ("where_copy_unsatisfied.sc", "not satisfied"),
+        ("box_read_resource.sc", "not satisfied"),
+        ("box_write_resource.sc", "not satisfied"),
+        ("where_unknown_trait.sc", "unknown trait"),
+        ("where_duplicate_predicate.sc", "duplicate where predicate"),
+        ("where_trait_arity.sc", "argument count mismatch"),
     ] {
         let output = salic()
             .arg("check")
@@ -525,10 +539,7 @@ fn where_copy_bounds_validate_generic_bodies_and_concrete_calls() {
 
 #[test]
 fn where_trait_bounds_enable_abstract_method_dispatch() {
-    for name in [
-        "where_method_dispatch.sali",
-        "where_generic_trait_method.sali",
-    ] {
+    for name in ["where_method_dispatch.sc", "where_generic_trait_method.sc"] {
         let output = salic()
             .arg("run")
             .arg(fixture("pass", name))
@@ -544,7 +555,7 @@ fn where_trait_bounds_enable_abstract_method_dispatch() {
 
     let output = salic()
         .arg("check")
-        .arg(fixture("fail", "where_method_missing_bound.sali"))
+        .arg(fixture("fail", "where_method_missing_bound.sc"))
         .output()
         .expect("reject unbounded abstract method dispatch");
     assert!(!output.status.success());
@@ -557,7 +568,7 @@ fn where_trait_bounds_enable_abstract_method_dispatch() {
 
 #[test]
 fn where_associated_equalities_enable_operator_dispatch() {
-    for name in ["where_operator_output.sali", "where_associated_method.sali"] {
+    for name in ["where_operator_output.sc", "where_associated_method.sc"] {
         let output = salic()
             .arg("run")
             .arg(fixture("pass", name))
@@ -573,7 +584,7 @@ fn where_associated_equalities_enable_operator_dispatch() {
 
     let output = salic()
         .arg("check")
-        .arg(fixture("fail", "where_associated_type_mismatch.sali"))
+        .arg(fixture("fail", "where_associated_type_mismatch.sc"))
         .output()
         .expect("reject an unsatisfied associated type equality");
     assert!(!output.status.success());
@@ -585,7 +596,7 @@ fn where_associated_equalities_enable_operator_dispatch() {
 
     let output = salic()
         .arg("check")
-        .arg(fixture("fail", "where_unknown_associated_type.sali"))
+        .arg(fixture("fail", "where_unknown_associated_type.sc"))
         .output()
         .expect("reject an unknown associated type equality");
     assert!(!output.status.success());
@@ -600,23 +611,20 @@ fn where_associated_equalities_enable_operator_dispatch() {
 fn constrained_generic_extensions_select_members_per_instance() {
     let output = salic()
         .arg("run")
-        .arg(fixture("pass", "constrained_generic_extend.sali"))
+        .arg(fixture("pass", "constrained_generic_extend.sc"))
         .output()
         .expect("run constrained generic extension");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 
     for (name, expected) in [
+        ("constrained_extend_method_unsatisfied.sc", "unknown method"),
+        ("box_read_method_resource.sc", "unknown method"),
+        ("box_write_method_resource.sc", "unknown method"),
         (
-            "constrained_extend_method_unsatisfied.sali",
-            "unknown method",
-        ),
-        ("box_read_method_resource.sali", "unknown method"),
-        ("box_write_method_resource.sali", "unknown method"),
-        (
-            "constrained_extend_function_unsatisfied.sali",
+            "constrained_extend_function_unsatisfied.sc",
             "not satisfied",
         ),
-        ("constrained_extend_unknown_trait.sali", "unknown trait"),
+        ("constrained_extend_unknown_trait.sc", "unknown trait"),
     ] {
         let output = salic()
             .arg("check")
@@ -644,11 +652,11 @@ edition = "2026"
 "#,
     );
     project.write(
-        "src/main.sali",
+        "src/main.sc",
         "let main(): i32 = {\n  let cell = api.Cell.new(42)\n  cell.take()\n}\n",
     );
     project.write(
-        "src/api.sali",
+        "src/api.sc",
         "pub(package) let Cell(T: type) = struct(value: T)\n\
          extend(T: type) Cell(T) {\n\
            let new(move value: T): Cell(T) = Cell(value)\n\
@@ -675,11 +683,11 @@ version = "0.1.0"
 edition = "2026"
 
 [lib]
-path = "src/lib.sali"
+path = "src/lib.sc"
 "#,
     );
     project.write(
-        "dep/src/lib.sali",
+        "dep/src/lib.sc",
         "pub let Cell(T: type) = struct(pub value: T)\n",
     );
     project.write(
@@ -694,7 +702,7 @@ dep = { path = "../dep" }
 "#,
     );
     project.write(
-        "app/src/main.sali",
+        "app/src/main.sc",
         "extend(T: type) dep.Cell(T) {\n\
            let take(move self)(): T = self.value\n\
          }\n\
@@ -721,7 +729,7 @@ dep = { path = "../dep" }
 fn raw_allocator_runtime_rejects_an_invalid_layout() {
     let output = salic()
         .arg("run")
-        .arg(fixture("pass", "raw_allocator_invalid_alignment.sali"))
+        .arg(fixture("pass", "raw_allocator_invalid_alignment.sc"))
         .output()
         .expect("run invalid allocator layout fixture");
     assert!(
@@ -735,7 +743,7 @@ fn raw_allocator_runtime_rejects_an_invalid_layout() {
 fn raw_allocator_abi_can_be_replaced_by_strong_link_symbols() {
     let directory = TestDirectory::new();
     let source = directory.write(
-        "main.sali",
+        "main.sc",
         "let main(): i32 = {\n  let pointer = unsafe { raw_alloc(i32)(4, 4) }\n  unsafe { *pointer = 42 }\n  unsafe { raw_dealloc(pointer, 4, 4) }\n  0\n}\n",
     );
     let ir = directory.join("main.ll");
@@ -776,7 +784,7 @@ fn raw_allocator_abi_can_be_replaced_by_strong_link_symbols() {
 fn vec_drop_releases_its_allocation_through_the_allocator_abi() {
     let directory = TestDirectory::new();
     let source = directory.write(
-        "main.sali",
+        "main.sc",
         "use alloc.vec.Vec\n\nlet main(): i32 = {\n  let values: Vec(i32) = Vec(i32).new()\n  values.len()\n  0\n}\n",
     );
     let ir = directory.join("main.ll");
@@ -816,9 +824,9 @@ fn vec_drop_releases_its_allocation_through_the_allocator_abi() {
 #[test]
 fn m1_struct_programs_run_with_expected_result() {
     for name in [
-        "struct_fields.sali",
-        "struct_mutation.sali",
-        "positional_constructor.sali",
+        "struct_fields.sc",
+        "struct_mutation.sc",
+        "positional_constructor.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -837,11 +845,11 @@ fn m1_struct_programs_run_with_expected_result() {
 #[test]
 fn m1_struct_errors_report_their_cause() {
     for (name, expected) in [
-        ("unknown_field.sali", "unknown field"),
-        ("constructor_missing_field.sali", "missing field"),
-        ("constructor_duplicate_field.sali", "duplicate field"),
-        ("constructor_mixed_arguments.sali", "mixed"),
-        ("immutable_field_assignment.sali", "immutable"),
+        ("unknown_field.sc", "unknown field"),
+        ("constructor_missing_field.sc", "missing field"),
+        ("constructor_duplicate_field.sc", "duplicate field"),
+        ("constructor_mixed_arguments.sc", "mixed"),
+        ("immutable_field_assignment.sc", "immutable"),
     ] {
         let output = salic()
             .arg("check")
@@ -862,14 +870,14 @@ fn m1_struct_errors_report_their_cause() {
 #[test]
 fn m1_match_and_partial_programs_run_with_expected_result() {
     for name in [
-        "enum_match.sali",
-        "nested_match.sali",
-        "match_guard.sali",
-        "match_literal_payload.sali",
-        "match_literal_resource_guard.sali",
-        "match_scalar.sali",
-        "match_scalar_single_evaluation.sali",
-        "partial_application.sali",
+        "enum_match.sc",
+        "nested_match.sc",
+        "match_guard.sc",
+        "match_literal_payload.sc",
+        "match_literal_resource_guard.sc",
+        "match_scalar.sc",
+        "match_scalar_single_evaluation.sc",
+        "partial_application.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -888,17 +896,17 @@ fn m1_match_and_partial_programs_run_with_expected_result() {
 #[test]
 fn m1_match_and_partial_errors_report_their_cause() {
     for (name, expected) in [
-        ("non_exhaustive_match.sali", "exhaustive"),
-        ("pattern_type_mismatch.sali", "pattern"),
+        ("non_exhaustive_match.sc", "exhaustive"),
+        ("pattern_type_mismatch.sc", "pattern"),
         (
-            "pattern_literal_payload_mismatch.sali",
+            "pattern_literal_payload_mismatch.sc",
             "pattern type mismatch",
         ),
-        ("pattern_literal_payload_range.sali", "range"),
-        ("match_scalar_constructor.sali", "cannot match scalar"),
-        ("match_scalar_non_exhaustive.sali", "not exhaustive"),
-        ("match_scalar_literal_range.sali", "range"),
-        ("temporary_borrow_partial.sali", "partial application"),
+        ("pattern_literal_payload_range.sc", "range"),
+        ("match_scalar_constructor.sc", "cannot match scalar"),
+        ("match_scalar_non_exhaustive.sc", "not exhaustive"),
+        ("match_scalar_literal_range.sc", "range"),
+        ("temporary_borrow_partial.sc", "partial application"),
     ] {
         let output = salic()
             .arg("check")
@@ -919,24 +927,24 @@ fn m1_match_and_partial_errors_report_their_cause() {
 #[test]
 fn m1_ownership_programs_run_with_expected_result() {
     for name in [
-        "shared_borrow_call.sali",
-        "mut_borrow_field_update.sali",
-        "explicit_move_i32_once.sali",
-        "borrow_released_after_complete_call.sali",
-        "borrowed_unit_is_abi_erased.sali",
-        "branch_move_does_not_pollute_sibling.sali",
-        "disjoint_mut_field_borrows.sali",
-        "inferred_copy_i32.sali",
-        "move_then_return_preserves_other_branch.sali",
-        "temporary_borrow_argument_order.sali",
-        "temporary_mut_borrow_argument.sali",
-        "temporary_borrow_argument_drop.sali",
-        "temporary_borrow_method_argument.sali",
-        "temporary_borrow_partial_call.sali",
-        "explicit_borrow_types.sali",
-        "region_scoped_borrow.sali",
-        "returned_borrow.sali",
-        "borrow_value_parameter.sali",
+        "shared_borrow_call.sc",
+        "mut_borrow_field_update.sc",
+        "explicit_move_i32_once.sc",
+        "borrow_released_after_complete_call.sc",
+        "borrowed_unit_is_abi_erased.sc",
+        "branch_move_does_not_pollute_sibling.sc",
+        "disjoint_mut_field_borrows.sc",
+        "inferred_copy_i32.sc",
+        "move_then_return_preserves_other_branch.sc",
+        "temporary_borrow_argument_order.sc",
+        "temporary_mut_borrow_argument.sc",
+        "temporary_borrow_argument_drop.sc",
+        "temporary_borrow_method_argument.sc",
+        "temporary_borrow_partial_call.sc",
+        "explicit_borrow_types.sc",
+        "region_scoped_borrow.sc",
+        "returned_borrow.sc",
+        "borrow_value_parameter.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -955,25 +963,25 @@ fn m1_ownership_programs_run_with_expected_result() {
 #[test]
 fn m1_ownership_errors_report_their_cause() {
     for (name, expected) in [
-        ("use_after_move.sali", &["moved"][..]),
-        ("use_after_explicit_move_i32.sali", &["moved"][..]),
+        ("use_after_move.sc", &["moved"][..]),
+        ("use_after_explicit_move_i32.sc", &["moved"][..]),
         (
-            "copy_non_copy.sali",
+            "copy_non_copy.sc",
             &["requires `Copy`", "does not implement Copy"][..],
         ),
         (
-            "double_mut_borrow.sali",
+            "double_mut_borrow.sc",
             &["mutable borrow", "already borrowed"][..],
         ),
-        ("borrow_move_conflict.sali", &["move", "borrowed"][..]),
+        ("borrow_move_conflict.sc", &["move", "borrowed"][..]),
         (
-            "same_field_mut_borrow_conflict.sali",
+            "same_field_mut_borrow_conflict.sc",
             &["mutable borrow", "already borrowed"][..],
         ),
-        ("use_after_inferred_move.sali", &["moved"][..]),
-        ("possibly_moved_after_branch.sali", &["possibly moved"][..]),
-        ("both_branches_move.sali", &["moved"][..]),
-        ("short_circuit_possibly_moves.sali", &["possibly moved"][..]),
+        ("use_after_inferred_move.sc", &["moved"][..]),
+        ("possibly_moved_after_branch.sc", &["possibly moved"][..]),
+        ("both_branches_move.sc", &["moved"][..]),
+        ("short_circuit_possibly_moves.sc", &["possibly moved"][..]),
     ] {
         let output = salic()
             .arg("check")
@@ -1001,12 +1009,12 @@ fn m1_ownership_errors_report_their_cause() {
 #[test]
 fn explicit_borrow_type_errors_report_their_cause() {
     for (name, expected) in [
-        ("borrow_type_kind_mismatch.sali", "borrow kind mismatch"),
+        ("borrow_type_kind_mismatch.sc", "borrow kind mismatch"),
         (
-            "borrow_type_non_borrow_initializer.sali",
+            "borrow_type_non_borrow_initializer.sc",
             "borrow value of local",
         ),
-        ("borrow_type_pointee_mismatch.sali", "borrow pointee"),
+        ("borrow_type_pointee_mismatch.sc", "borrow pointee"),
     ] {
         let output = salic()
             .arg("check")
@@ -1025,12 +1033,12 @@ fn explicit_borrow_type_errors_report_their_cause() {
 #[test]
 fn region_frontend_errors_report_their_cause() {
     for (name, expected) in [
-        ("region_undeclared_parameter.sali", "undeclared region `'a'"),
-        ("region_undeclared_type.sali", "undeclared region `'a'"),
-        ("region_duplicate.sali", "duplicate region parameter `'a'"),
-        ("region_static_redeclared.sali", "predefined"),
-        ("region_name_with_type_kind.sali", "must use the `region`"),
-        ("region_plain_name.sali", "must start with `'`"),
+        ("region_undeclared_parameter.sc", "undeclared region `'a'"),
+        ("region_undeclared_type.sc", "undeclared region `'a'"),
+        ("region_duplicate.sc", "duplicate region parameter `'a'"),
+        ("region_static_redeclared.sc", "predefined"),
+        ("region_name_with_type_kind.sc", "must use the `region`"),
+        ("region_plain_name.sc", "must start with `'`"),
     ] {
         let output = salic()
             .arg("check")
@@ -1049,30 +1057,27 @@ fn region_frontend_errors_report_their_cause() {
 #[test]
 fn returned_borrow_errors_report_their_cause() {
     for (name, expected) in [
-        ("returned_borrow_local.sali", "borrow of a local value"),
+        ("returned_borrow_local.sc", "borrow of a local value"),
         (
-            "returned_borrow_temporary.sali",
+            "returned_borrow_temporary.sc",
             "cannot originate from a temporary",
         ),
         (
-            "returned_borrow_shared_as_mut.sali",
+            "returned_borrow_shared_as_mut.sc",
             "shared borrow as a mutable borrow",
         ),
-        ("returned_borrow_conflicting_write.sali", "already borrowed"),
+        ("returned_borrow_conflicting_write.sc", "already borrowed"),
         (
-            "returned_borrow_missing_region.sali",
+            "returned_borrow_missing_region.sc",
             "cannot infer the returned borrow region",
         ),
-        ("returned_borrow_field.sali", "borrow-typed field"),
+        ("returned_borrow_field.sc", "borrow-typed field"),
         (
-            "returned_borrow_method.sali",
+            "returned_borrow_method.sc",
             "cannot originate from a temporary",
         ),
-        ("returned_borrow_method_conflict.sali", "already borrowed"),
-        (
-            "returned_borrow_method_local.sali",
-            "borrowing a local value",
-        ),
+        ("returned_borrow_method_conflict.sc", "already borrowed"),
+        ("returned_borrow_method_local.sc", "borrowing a local value"),
     ] {
         let output = salic()
             .arg("check")
@@ -1091,16 +1096,13 @@ fn returned_borrow_errors_report_their_cause() {
 #[test]
 fn borrow_value_parameter_errors_report_their_cause() {
     for (name, expected) in [
-        ("borrow_value_mut_moved.sali", "moved"),
-        ("borrow_value_explicit_move.sali", "moved"),
-        ("borrow_value_copy_mut.sali", "requires `Copy`"),
+        ("borrow_value_mut_moved.sc", "moved"),
+        ("borrow_value_explicit_move.sc", "moved"),
+        ("borrow_value_copy_mut.sc", "requires `Copy`"),
+        ("borrow_value_block_escape_conflict.sc", "already borrowed"),
+        ("borrow_value_partial.sc", "partial application"),
         (
-            "borrow_value_block_escape_conflict.sali",
-            "already borrowed",
-        ),
-        ("borrow_value_partial.sali", "partial application"),
-        (
-            "borrow_value_local_escape.sali",
+            "borrow_value_local_escape.sc",
             "source is local or cannot be proven",
         ),
     ] {
@@ -1121,13 +1123,13 @@ fn borrow_value_parameter_errors_report_their_cause() {
 #[test]
 fn v09_reinitialization_programs_run_with_expected_result() {
     for name in [
-        "reinit_after_root_move.sali",
-        "reinit_partial_field.sali",
-        "reinit_root_move_field_by_field.sali",
-        "reinit_after_both_if_branches.sali",
-        "reinit_loop_backedge.sali",
-        "reinit_after_explicit_copy_move.sali",
-        "match_guard_copy_binding.sali",
+        "reinit_after_root_move.sc",
+        "reinit_partial_field.sc",
+        "reinit_root_move_field_by_field.sc",
+        "reinit_after_both_if_branches.sc",
+        "reinit_loop_backedge.sc",
+        "reinit_after_explicit_copy_move.sc",
+        "match_guard_copy_binding.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -1147,24 +1149,24 @@ fn v09_reinitialization_programs_run_with_expected_result() {
 fn v09_reinitialization_errors_preserve_flow_safety() {
     for (name, expected) in [
         (
-            "reinit_only_one_if_branch.sali",
+            "reinit_only_one_if_branch.sc",
             &["possibly", "uninitialized"][..],
         ),
         (
-            "move_only_one_if_branch.sali",
+            "move_only_one_if_branch.sc",
             &["possibly", "uninitialized"][..],
         ),
         (
-            "reinit_root_move_incomplete_fields.sali",
+            "reinit_root_move_incomplete_fields.sc",
             &["uninitialized"][..],
         ),
-        ("reinit_self_assignment_after_move.sali", &["moved"][..]),
+        ("reinit_self_assignment_after_move.sc", &["moved"][..]),
         (
-            "match_guard_move_non_copy_binding.sali",
+            "match_guard_move_non_copy_binding.sc",
             &["guard", "move"][..],
         ),
         (
-            "reinit_widening_many_independent_branches.sali",
+            "reinit_widening_many_independent_branches.sc",
             &["possibly", "uninitialized"][..],
         ),
     ] {
@@ -1189,10 +1191,10 @@ fn v09_reinitialization_errors_preserve_flow_safety() {
 #[test]
 fn source_backed_copy_programs_run_with_expected_result() {
     for name in [
-        "copy_nominal_repeated_and_parameters.sali",
-        "copy_nominal_capture.sali",
-        "copy_nominal_enum_array.sali",
-        "copy_generic_blanket.sali",
+        "copy_nominal_repeated_and_parameters.sc",
+        "copy_nominal_capture.sc",
+        "copy_nominal_enum_array.sc",
+        "copy_generic_blanket.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -1212,7 +1214,7 @@ fn source_backed_copy_programs_run_with_expected_result() {
 fn source_backed_drop_glue_links_and_runs() {
     let output = salic()
         .arg("run")
-        .arg(fixture("pass", "drop_glue.sali"))
+        .arg(fixture("pass", "drop_glue.sc"))
         .output()
         .expect("run source-backed Drop program");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
@@ -1222,14 +1224,14 @@ fn source_backed_drop_glue_links_and_runs() {
 fn drop_runs_on_structured_scope_exits_without_double_drop() {
     let output = salic()
         .arg("run")
-        .arg(fixture("pass", "drop_scope.sali"))
+        .arg(fixture("pass", "drop_scope.sc"))
         .output()
         .expect("run structured Drop program");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 
     let trapped = salic()
         .arg("run")
-        .arg(fixture("pass", "drop_trap.sali"))
+        .arg(fixture("pass", "drop_trap.sc"))
         .output()
         .expect("run observable Drop trap");
     assert!(
@@ -1240,7 +1242,7 @@ fn drop_runs_on_structured_scope_exits_without_double_drop() {
 
     let generic_trapped = salic()
         .arg("run")
-        .arg(fixture("pass", "drop_generic_blanket_trap.sali"))
+        .arg(fixture("pass", "drop_generic_blanket_trap.sc"))
         .output()
         .expect("run blanket generic Drop trap");
     assert!(
@@ -1251,7 +1253,7 @@ fn drop_runs_on_structured_scope_exits_without_double_drop() {
 
     let partial_exit = salic()
         .arg("run")
-        .arg(fixture("pass", "drop_partial_exit.sali"))
+        .arg(fixture("pass", "drop_partial_exit.sc"))
         .output()
         .expect("run partial-construction cleanup trap");
     assert!(
@@ -1265,14 +1267,14 @@ fn drop_runs_on_structured_scope_exits_without_double_drop() {
 fn projection_drop_flags_preserve_unmoved_fields_and_rebuild_roots() {
     let output = salic()
         .arg("run")
-        .arg(fixture("pass", "drop_partial_field.sali"))
+        .arg(fixture("pass", "drop_partial_field.sc"))
         .output()
         .expect("run projection drop-flag program");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 
     let trapped = salic()
         .arg("run")
-        .arg(fixture("pass", "drop_partial_field_trap.sali"))
+        .arg(fixture("pass", "drop_partial_field_trap.sc"))
         .output()
         .expect("run unmoved-field cleanup trap");
     assert!(
@@ -1286,14 +1288,14 @@ fn projection_drop_flags_preserve_unmoved_fields_and_rebuild_roots() {
 fn match_payload_moves_transfer_drop_ownership() {
     let output = salic()
         .arg("run")
-        .arg(fixture("pass", "drop_match_payload.sali"))
+        .arg(fixture("pass", "drop_match_payload.sc"))
         .output()
         .expect("run match payload drop program");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 
     let trapped = salic()
         .arg("run")
-        .arg(fixture("pass", "drop_match_payload_trap.sali"))
+        .arg(fixture("pass", "drop_match_payload_trap.sc"))
         .output()
         .expect("run unmatched payload sibling cleanup trap");
     assert!(
@@ -1304,14 +1306,14 @@ fn match_payload_moves_transfer_drop_ownership() {
 
     let nested = salic()
         .arg("run")
-        .arg(fixture("pass", "drop_match_nested.sali"))
+        .arg(fixture("pass", "drop_match_nested.sc"))
         .output()
         .expect("run nested match payload drop program");
     assert_eq!(nested.status.code(), Some(42), "{}", output_text(&nested));
 
     let nested_trap = salic()
         .arg("run")
-        .arg(fixture("pass", "drop_match_nested_trap.sali"))
+        .arg(fixture("pass", "drop_match_nested_trap.sc"))
         .output()
         .expect("run nested match sibling cleanup trap");
     assert!(
@@ -1325,14 +1327,14 @@ fn match_payload_moves_transfer_drop_ownership() {
 fn guarded_match_payload_moves_commit_only_after_success() {
     let output = salic()
         .arg("run")
-        .arg(fixture("pass", "drop_match_guarded.sali"))
+        .arg(fixture("pass", "drop_match_guarded.sc"))
         .output()
         .expect("run guarded match payload program");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 
     let trapped = salic()
         .arg("run")
-        .arg(fixture("pass", "drop_match_guarded_trap.sali"))
+        .arg(fixture("pass", "drop_match_guarded_trap.sc"))
         .output()
         .expect("run guarded match rollback sibling trap");
     assert!(
@@ -1346,18 +1348,18 @@ fn guarded_match_payload_moves_commit_only_after_success() {
 fn fn_once_resource_captures_drop_exactly_once() {
     let output = salic()
         .arg("run")
-        .arg(fixture("pass", "drop_closure_once.sali"))
+        .arg(fixture("pass", "drop_closure_once.sc"))
         .output()
         .expect("run resource-owning FnOnce closure");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 
     for (fixture_name, failure) in [
         (
-            "drop_closure_abandon_trap.sali",
+            "drop_closure_abandon_trap.sc",
             "an abandoned closure environment was not dropped",
         ),
         (
-            "drop_closure_early_trap.sali",
+            "drop_closure_early_trap.sc",
             "a capture staged before an early argument return was not dropped",
         ),
     ] {
@@ -1378,18 +1380,18 @@ fn fn_once_resource_captures_drop_exactly_once() {
 fn resource_partial_applications_transfer_and_drop_captures() {
     let output = salic()
         .arg("run")
-        .arg(fixture("pass", "drop_partial_application.sali"))
+        .arg(fixture("pass", "drop_partial_application.sc"))
         .output()
         .expect("run resource-owning partial applications");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 
     for (fixture_name, failure) in [
         (
-            "drop_partial_application_abandon_trap.sali",
+            "drop_partial_application_abandon_trap.sc",
             "an abandoned partial capture was not dropped",
         ),
         (
-            "drop_partial_application_early_trap.sali",
+            "drop_partial_application_early_trap.sc",
             "a partial capture staged before early return was not dropped",
         ),
     ] {
@@ -1410,7 +1412,7 @@ fn resource_partial_applications_transfer_and_drop_captures() {
 fn callable_aliases_move_named_partial_closure_and_resource_environments() {
     let output = salic()
         .arg("run")
-        .arg(fixture("pass", "callable_alias.sali"))
+        .arg(fixture("pass", "callable_alias.sc"))
         .output()
         .expect("run callable alias program");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
@@ -1419,9 +1421,9 @@ fn callable_aliases_move_named_partial_closure_and_resource_environments() {
 #[test]
 fn concrete_partial_environments_return_across_function_boundaries() {
     for fixture_name in [
-        "callable_return.sali",
-        "callable_resource_return.sali",
-        "closure_resource_return.sali",
+        "callable_return.sc",
+        "callable_resource_return.sc",
+        "closure_resource_return.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -1438,10 +1440,7 @@ fn concrete_partial_environments_return_across_function_boundaries() {
 
     let abandoned = salic()
         .arg("run")
-        .arg(fixture(
-            "pass",
-            "callable_resource_return_abandon_trap.sali",
-        ))
+        .arg(fixture("pass", "callable_resource_return_abandon_trap.sc"))
         .output()
         .expect("run abandoned returned callable environment");
     assert!(
@@ -1455,18 +1454,18 @@ fn concrete_partial_environments_return_across_function_boundaries() {
 fn mutable_borrow_overwrite_drops_the_replaced_value() {
     let output = salic()
         .arg("run")
-        .arg(fixture("pass", "drop_mut_borrow_overwrite.sali"))
+        .arg(fixture("pass", "drop_mut_borrow_overwrite.sc"))
         .output()
         .expect("run mutable-borrow overwrite program");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 
     for (fixture_name, failure) in [
         (
-            "drop_mut_borrow_root_trap.sali",
+            "drop_mut_borrow_root_trap.sc",
             "root overwrite did not drop the old referent",
         ),
         (
-            "drop_mut_borrow_field_trap.sali",
+            "drop_mut_borrow_field_trap.sc",
             "field overwrite did not drop the old referent field",
         ),
     ] {
@@ -1487,24 +1486,24 @@ fn mutable_borrow_overwrite_drops_the_replaced_value() {
 fn source_backed_copy_errors_report_their_cause() {
     for (name, expected) in [
         (
-            "copy_non_copy.sali",
+            "copy_non_copy.sc",
             &["requires `Copy`", "does not implement Copy"][..],
         ),
         (
-            "copy_nominal_invalid_struct_impl.sali",
+            "copy_nominal_invalid_struct_impl.sc",
             &["Container", "cannot implement `Copy`", "Payload"][..],
         ),
         (
-            "copy_nominal_invalid_enum_impl.sali",
+            "copy_nominal_invalid_enum_impl.sc",
             &["Message", "cannot implement `Copy`", "Payload"][..],
         ),
         (
-            "copy_nominal_transitive_invalid_impl.sali",
+            "copy_nominal_transitive_invalid_impl.sc",
             &["Branch", "Tree", "cannot implement `Copy`"][..],
         ),
-        ("copy_nominal_explicit_move_reuse.sali", &["moved"][..]),
+        ("copy_nominal_explicit_move_reuse.sc", &["moved"][..]),
         (
-            "copy_nominal_concrete_generic_impl.sali",
+            "copy_nominal_concrete_generic_impl.sc",
             &[
                 "function `read`",
                 "requires `Copy`",
@@ -1513,7 +1512,7 @@ fn source_backed_copy_errors_report_their_cause() {
             ][..],
         ),
         (
-            "copy_generic_blanket_unproven.sali",
+            "copy_generic_blanket_unproven.sc",
             &["blanket `Copy`", "not structurally valid"][..],
         ),
     ] {
@@ -1543,12 +1542,12 @@ fn source_backed_copy_errors_report_their_cause() {
 #[test]
 fn m1_local_closure_programs_run_with_expected_result() {
     for name in [
-        "capturing_closure.sali",
-        "closure_shared_repeat.sali",
-        "closure_capture_parameter.sali",
-        "closure_curried_capture.sali",
-        "closure_mut_capture.sali",
-        "closure_move_once.sali",
+        "capturing_closure.sc",
+        "closure_shared_repeat.sc",
+        "closure_capture_parameter.sc",
+        "closure_curried_capture.sc",
+        "closure_mut_capture.sc",
+        "closure_move_once.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -1567,12 +1566,12 @@ fn m1_local_closure_programs_run_with_expected_result() {
 #[test]
 fn m1_local_closure_errors_report_their_cause() {
     for (name, expected) in [
-        ("closure_escape_return.sali", "escape"),
-        ("closure_partial_application.sali", "partial application"),
-        ("closure_fnmut_immutable.sali", "FnMut"),
-        ("closure_capture_borrow_conflict.sali", "borrowed"),
-        ("closure_fnonce_twice.sali", "consumed"),
-        ("closure_move_capture_source_use.sali", "moved"),
+        ("closure_escape_return.sc", "escape"),
+        ("closure_partial_application.sc", "partial application"),
+        ("closure_fnmut_immutable.sc", "FnMut"),
+        ("closure_capture_borrow_conflict.sc", "borrowed"),
+        ("closure_fnonce_twice.sc", "consumed"),
+        ("closure_move_capture_source_use.sc", "moved"),
     ] {
         let output = salic()
             .arg("check")
@@ -1595,7 +1594,7 @@ fn shorthand_builds_a_native_executable() {
     let temporary = TestDirectory::new();
     let executable = temporary.join("mutation");
     let built = salic()
-        .arg(fixture("pass", "block_mutation.sali"))
+        .arg(fixture("pass", "block_mutation.sc"))
         .arg("-o")
         .arg(&executable)
         .output()
@@ -1615,10 +1614,7 @@ fn source_errors_fail_check_without_creating_output() {
     let mut fixtures: Vec<_> = fs::read_dir(directory)
         .expect("read failure fixtures")
         .map(|entry| entry.expect("read directory entry").path())
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "sali")
-        })
+        .filter(|path| path.extension().is_some_and(|extension| extension == "sc"))
         .collect();
     fixtures.sort();
 
@@ -1643,10 +1639,7 @@ fn every_pass_fixture_checks_successfully() {
     let mut fixtures: Vec<_> = fs::read_dir(directory)
         .expect("read passing fixtures")
         .map(|entry| entry.expect("read directory entry").path())
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "sali")
-        })
+        .filter(|path| path.extension().is_some_and(|extension| extension == "sc"))
         .collect();
     fixtures.sort();
 
@@ -1668,23 +1661,23 @@ fn every_pass_fixture_checks_successfully() {
 #[test]
 fn m1_loops_and_arrays_run_with_expected_result() {
     for name in [
-        "while_mutation.sali",
-        "loop_break_value.sali",
-        "fixed_array_index.sali",
-        "array_index_assignment.sali",
-        "array_constant_index_place.sali",
-        "array_index_move_reinitialize.sali",
-        "array_nested_constant_index_place.sali",
-        "array_index_raw_pointer.sali",
-        "array_non_copy_element.sali",
-        "array_resource_drop.sali",
-        "array_resource_nested_drop.sali",
-        "array_resource_overwrite_drop.sali",
-        "array_resource_temporary_index.sali",
-        "dynamic_array_index.sali",
-        "empty_array_typed.sali",
-        "nested_loop_break.sali",
-        "loop_move_then_break.sali",
+        "while_mutation.sc",
+        "loop_break_value.sc",
+        "fixed_array_index.sc",
+        "array_index_assignment.sc",
+        "array_constant_index_place.sc",
+        "array_index_move_reinitialize.sc",
+        "array_nested_constant_index_place.sc",
+        "array_index_raw_pointer.sc",
+        "array_non_copy_element.sc",
+        "array_resource_drop.sc",
+        "array_resource_nested_drop.sc",
+        "array_resource_overwrite_drop.sc",
+        "array_resource_temporary_index.sc",
+        "dynamic_array_index.sc",
+        "empty_array_typed.sc",
+        "nested_loop_break.sc",
+        "loop_move_then_break.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -1703,16 +1696,16 @@ fn m1_loops_and_arrays_run_with_expected_result() {
 #[test]
 fn m1_array_errors_report_their_cause() {
     for (name, expected) in [
-        ("array_index_type.sali", "index"),
-        ("array_length_mismatch.sali", "length"),
-        ("array_constant_oob.sali", "out of bounds"),
-        ("array_negative_oob.sali", "out of bounds"),
-        ("array_empty_without_context.sali", "empty array"),
-        ("array_resource_dynamic_index.sali", "requires Copy"),
-        ("array_resource_element_use_after_move.sali", "moved"),
-        ("array_resource_partial_root_move.sali", "moved"),
-        ("array_dynamic_index_assignment.sali", "compile-time"),
-        ("array_index_borrow_conflict.sali", "borrowed"),
+        ("array_index_type.sc", "index"),
+        ("array_length_mismatch.sc", "length"),
+        ("array_constant_oob.sc", "out of bounds"),
+        ("array_negative_oob.sc", "out of bounds"),
+        ("array_empty_without_context.sc", "empty array"),
+        ("array_resource_dynamic_index.sc", "requires Copy"),
+        ("array_resource_element_use_after_move.sc", "moved"),
+        ("array_resource_partial_root_move.sc", "moved"),
+        ("array_dynamic_index_assignment.sc", "compile-time"),
+        ("array_index_borrow_conflict.sc", "borrowed"),
     ] {
         let output = salic()
             .arg("check")
@@ -1733,10 +1726,10 @@ fn m1_array_errors_report_their_cause() {
 #[test]
 fn m1_loop_errors_report_their_cause() {
     for (name, expected) in [
-        ("break_outside_loop.sali", "outside"),
-        ("while_break_value.sali", "while"),
-        ("loop_break_type_mismatch.sali", "type mismatch"),
-        ("loop_backedge_move.sali", "move"),
+        ("break_outside_loop.sc", "outside"),
+        ("while_break_value.sc", "while"),
+        ("loop_break_type_mismatch.sc", "type mismatch"),
+        ("loop_backedge_move.sc", "move"),
     ] {
         let output = salic()
             .arg("check")
@@ -1758,7 +1751,7 @@ fn m1_loop_errors_report_their_cause() {
 fn dynamic_array_out_of_bounds_traps() {
     let output = salic()
         .arg("run")
-        .arg(fixture("pass", "dynamic_array_oob.sali"))
+        .arg(fixture("pass", "dynamic_array_oob.sc"))
         .output()
         .expect("run dynamically out-of-bounds array fixture");
     assert!(
@@ -1771,8 +1764,8 @@ fn dynamic_array_out_of_bounds_traps() {
 #[test]
 fn invalid_builtin_division_and_remainder_trap() {
     for name in [
-        "runtime_division_by_zero.sali",
-        "runtime_remainder_overflow.sali",
+        "runtime_division_by_zero.sc",
+        "runtime_remainder_overflow.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -1790,25 +1783,25 @@ fn invalid_builtin_division_and_remainder_trap() {
 #[test]
 fn m1_inherent_members_run_with_expected_result() {
     for name in [
-        "inherent_reset_and_constant.sali",
-        "inherent_grouped_shared_method.sali",
-        "inherent_move_receiver.sali",
-        "inherent_associated_function.sali",
-        "inherent_associated_field_same_name.sali",
-        "inherent_method_and_associated_same_name.sali",
-        "inherent_local_shadows_type.sali",
-        "inherent_recursive_method.sali",
-        "inherent_enum_method.sali",
-        "inherent_receiver_loan_released.sali",
-        "inherent_temporary_borrow_receiver.sali",
-        "inherent_temporary_mut_receiver.sali",
-        "inherent_temporary_mut_resource_receiver.sali",
-        "inherent_temporary_resource_receiver.sali",
-        "inherent_disjoint_forward_extend.sali",
-        "qualified_inherent_method.sali",
-        "qualified_trait_generic_method.sali",
-        "self_expression_members.sali",
-        "self_expression_generic.sali",
+        "inherent_reset_and_constant.sc",
+        "inherent_grouped_shared_method.sc",
+        "inherent_move_receiver.sc",
+        "inherent_associated_function.sc",
+        "inherent_associated_field_same_name.sc",
+        "inherent_method_and_associated_same_name.sc",
+        "inherent_local_shadows_type.sc",
+        "inherent_recursive_method.sc",
+        "inherent_enum_method.sc",
+        "inherent_receiver_loan_released.sc",
+        "inherent_temporary_borrow_receiver.sc",
+        "inherent_temporary_mut_receiver.sc",
+        "inherent_temporary_mut_resource_receiver.sc",
+        "inherent_temporary_resource_receiver.sc",
+        "inherent_disjoint_forward_extend.sc",
+        "qualified_inherent_method.sc",
+        "qualified_trait_generic_method.sc",
+        "self_expression_members.sc",
+        "self_expression_generic.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -1827,49 +1820,37 @@ fn m1_inherent_members_run_with_expected_result() {
 #[test]
 fn m1_inherent_member_errors_report_their_cause() {
     for (name, expected) in [
+        ("inherent_field_method_conflict.sc", "conflicts with field"),
+        ("inherent_duplicate_method.sc", "duplicate inherent method"),
         (
-            "inherent_field_method_conflict.sali",
-            "conflicts with field",
-        ),
-        (
-            "inherent_duplicate_method.sali",
-            "duplicate inherent method",
-        ),
-        (
-            "inherent_duplicate_associated.sali",
+            "inherent_duplicate_associated.sc",
             "duplicate associated member",
         ),
         (
-            "inherent_variant_associated_conflict.sali",
+            "inherent_variant_associated_conflict.sc",
             "conflicts with variant",
         ),
-        ("inherent_mut_receiver_immutable.sali", "immutable"),
-        ("inherent_unknown_target.sali", "unknown extension target"),
-        ("inherent_trait_extension_pending.sali", "unknown trait"),
-        ("inherent_bound_method_value.sali", "must be called"),
-        ("inherent_associated_function_value.sali", "must be called"),
-        ("inherent_temporary_mut_partial.sali", "partial application"),
-        ("inherent_move_receiver_reuse.sali", "moved"),
-        ("inherent_borrowed_partial.sali", "partial application"),
-        ("inherent_receiver_borrow_conflict.sali", "borrowed"),
-        ("inherent_non_nominal_target.sali", "nominal"),
+        ("inherent_mut_receiver_immutable.sc", "immutable"),
+        ("inherent_unknown_target.sc", "unknown extension target"),
+        ("inherent_trait_extension_pending.sc", "unknown trait"),
+        ("inherent_bound_method_value.sc", "must be called"),
+        ("inherent_associated_function_value.sc", "must be called"),
+        ("inherent_temporary_mut_partial.sc", "partial application"),
+        ("inherent_move_receiver_reuse.sc", "moved"),
+        ("inherent_borrowed_partial.sc", "partial application"),
+        ("inherent_receiver_borrow_conflict.sc", "borrowed"),
+        ("inherent_non_nominal_target.sc", "nominal"),
+        ("qualified_method_bad_label.sc", "unlabeled or named `self`"),
         (
-            "qualified_method_bad_label.sali",
-            "unlabeled or named `self`",
-        ),
-        (
-            "qualified_method_missing_receiver.sali",
+            "qualified_method_missing_receiver.sc",
             "exactly one argument",
         ),
-        ("qualified_method_wrong_receiver.sali", "requires receiver"),
+        ("qualified_method_wrong_receiver.sc", "requires receiver"),
         (
-            "qualified_method_borrowed_partial.sali",
+            "qualified_method_borrowed_partial.sc",
             "partial application",
         ),
-        (
-            "self_expression_outside_extend.sali",
-            "only available inside",
-        ),
+        ("self_expression_outside_extend.sc", "only available inside"),
     ] {
         let output = salic()
             .arg("check")
@@ -1890,13 +1871,13 @@ fn m1_inherent_member_errors_report_their_cause() {
 #[test]
 fn m2_generic_function_programs_run_with_expected_result() {
     for name in [
-        "generic_identity.sali",
-        "generic_multiple_instances.sali",
-        "generic_type_application_partial.sali",
-        "generic_composition.sali",
-        "generic_same_instance_recursion.sali",
-        "generic_call_inside_closure.sali",
-        "generic_validation_rollback.sali",
+        "generic_identity.sc",
+        "generic_multiple_instances.sc",
+        "generic_type_application_partial.sc",
+        "generic_composition.sc",
+        "generic_same_instance_recursion.sc",
+        "generic_call_inside_closure.sc",
+        "generic_validation_rollback.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -1915,10 +1896,10 @@ fn m2_generic_function_programs_run_with_expected_result() {
 #[test]
 fn m2_generic_function_errors_report_their_cause() {
     for (name, expected) in [
-        ("generic_unused_invalid_body.sali", "type mismatch"),
-        ("generic_parameter_moved_twice.sali", "moved"),
-        ("generic_missing_return_type.sali", "return type"),
-        ("generic_unconstrained_member.sali", "generic parameter"),
+        ("generic_unused_invalid_body.sc", "type mismatch"),
+        ("generic_parameter_moved_twice.sc", "moved"),
+        ("generic_missing_return_type.sc", "return type"),
+        ("generic_unconstrained_member.sc", "generic parameter"),
     ] {
         let output = salic()
             .arg("check")
@@ -1939,11 +1920,11 @@ fn m2_generic_function_errors_report_their_cause() {
 #[test]
 fn m2_generic_nominal_programs_run_with_expected_result() {
     for name in [
-        "generic_struct.sali",
-        "generic_nested_struct.sali",
-        "generic_enum_match.sali",
-        "generic_function_constructs_nominal.sali",
-        "generic_nominal_multiple_instances.sali",
+        "generic_struct.sc",
+        "generic_nested_struct.sc",
+        "generic_enum_match.sc",
+        "generic_function_constructs_nominal.sc",
+        "generic_nominal_multiple_instances.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -1962,9 +1943,9 @@ fn m2_generic_nominal_programs_run_with_expected_result() {
 #[test]
 fn m2_generic_nominal_errors_report_their_cause() {
     for (name, expected) in [
-        ("generic_nominal_unknown_field_type.sali", "unknown type"),
-        ("generic_nominal_recursive_layout.sali", "infinite size"),
-        ("generic_nominal_argument_count.sali", "argument count"),
+        ("generic_nominal_unknown_field_type.sc", "unknown type"),
+        ("generic_nominal_recursive_layout.sc", "infinite size"),
+        ("generic_nominal_argument_count.sc", "argument count"),
     ] {
         let output = salic()
             .arg("check")
@@ -1985,19 +1966,19 @@ fn m2_generic_nominal_errors_report_their_cause() {
 #[test]
 fn m2_inferred_type_arguments_run_with_expected_result() {
     for name in [
-        "infer_generic_function.sali",
-        "infer_function_from_expected.sali",
-        "infer_generic_struct.sali",
-        "infer_nested_generic_struct.sali",
-        "infer_nominal_from_expected.sali",
-        "infer_generic_enum_variant.sali",
-        "infer_runtime_partial.sali",
-        "infer_argument_once.sali",
-        "infer_constraint_order.sali",
-        "infer_fresh_constructor.sali",
-        "infer_named_arguments.sali",
-        "infer_nonempty_block.sali",
-        "infer_borrow_temporary.sali",
+        "infer_generic_function.sc",
+        "infer_function_from_expected.sc",
+        "infer_generic_struct.sc",
+        "infer_nested_generic_struct.sc",
+        "infer_nominal_from_expected.sc",
+        "infer_generic_enum_variant.sc",
+        "infer_runtime_partial.sc",
+        "infer_argument_once.sc",
+        "infer_constraint_order.sc",
+        "infer_fresh_constructor.sc",
+        "infer_named_arguments.sc",
+        "infer_nonempty_block.sc",
+        "infer_borrow_temporary.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -2016,12 +1997,12 @@ fn m2_inferred_type_arguments_run_with_expected_result() {
 #[test]
 fn m2_inferred_type_argument_errors_report_their_cause() {
     for (name, expected) in [
-        ("infer_conflicting_arguments.sali", "conflicting"),
-        ("infer_expected_conflict.sali", "conflicting"),
-        ("infer_unconstrained.sali", "cannot infer"),
-        ("infer_incomplete_application.sali", "requires explicit"),
-        ("infer_nested_hole.sali", "not an expression"),
-        ("infer_moved_argument.sali", "moved"),
+        ("infer_conflicting_arguments.sc", "conflicting"),
+        ("infer_expected_conflict.sc", "conflicting"),
+        ("infer_unconstrained.sc", "cannot infer"),
+        ("infer_incomplete_application.sc", "requires explicit"),
+        ("infer_nested_hole.sc", "not an expression"),
+        ("infer_moved_argument.sc", "moved"),
     ] {
         let output = salic()
             .arg("check")
@@ -2042,16 +2023,16 @@ fn m2_inferred_type_argument_errors_report_their_cause() {
 #[test]
 fn m2_concrete_trait_programs_run_with_expected_result() {
     for name in [
-        "trait_unique_method.sali",
-        "trait_associated_output.sali",
-        "trait_generic_nominal_impl.sali",
-        "trait_generic_blanket_impl.sali",
-        "trait_disjoint_blanket_impls.sali",
-        "trait_default_method.sali",
-        "trait_temporary_receiver.sali",
-        "trait_temporary_mut_receiver.sali",
-        "trait_inherent_precedence.sali",
-        "trait_declaration_order.sali",
+        "trait_unique_method.sc",
+        "trait_associated_output.sc",
+        "trait_generic_nominal_impl.sc",
+        "trait_generic_blanket_impl.sc",
+        "trait_disjoint_blanket_impls.sc",
+        "trait_default_method.sc",
+        "trait_temporary_receiver.sc",
+        "trait_temporary_mut_receiver.sc",
+        "trait_inherent_precedence.sc",
+        "trait_declaration_order.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -2070,24 +2051,21 @@ fn m2_concrete_trait_programs_run_with_expected_result() {
 #[test]
 fn m2_concrete_trait_errors_report_their_cause() {
     for (name, expected) in [
-        ("trait_unknown_trait.sali", "unknown trait"),
+        ("trait_unknown_trait.sc", "unknown trait"),
+        ("trait_duplicate_impl.sc", "duplicate trait implementation"),
+        ("trait_missing_method.sc", "missing trait method"),
+        ("trait_missing_type.sc", "missing associated type"),
+        ("trait_extra_member.sc", "unknown trait member"),
+        ("trait_pass_mode_mismatch.sc", "signature mismatch"),
+        ("trait_group_mismatch.sc", "signature mismatch"),
+        ("trait_return_mismatch.sc", "signature mismatch"),
+        ("trait_ambiguous_method.sc", "ambiguous trait method"),
         (
-            "trait_duplicate_impl.sali",
-            "duplicate trait implementation",
-        ),
-        ("trait_missing_method.sali", "missing trait method"),
-        ("trait_missing_type.sali", "missing associated type"),
-        ("trait_extra_member.sali", "unknown trait member"),
-        ("trait_pass_mode_mismatch.sali", "signature mismatch"),
-        ("trait_group_mismatch.sali", "signature mismatch"),
-        ("trait_return_mismatch.sali", "signature mismatch"),
-        ("trait_ambiguous_method.sali", "ambiguous trait method"),
-        (
-            "trait_generic_impl_pending.sali",
+            "trait_generic_impl_pending.sc",
             "generic trait implementation",
         ),
         (
-            "trait_generic_uninstantiated_body.sali",
+            "trait_generic_uninstantiated_body.sc",
             "unknown name `missing`",
         ),
     ] {
@@ -2110,12 +2088,12 @@ fn m2_concrete_trait_errors_report_their_cause() {
 #[test]
 fn m2_add_trait_programs_run_with_expected_result() {
     for name in [
-        "add_trait_nominal_pair.sali",
-        "add_trait_nominal_i32_nominal_output.sali",
-        "add_trait_nominal_i32_scalar_output.sali",
-        "add_trait_builtin_integer_precedence.sali",
-        "add_trait_operands_once.sali",
-        "add_trait_expected_output.sali",
+        "add_trait_nominal_pair.sc",
+        "add_trait_nominal_i32_nominal_output.sc",
+        "add_trait_nominal_i32_scalar_output.sc",
+        "add_trait_builtin_integer_precedence.sc",
+        "add_trait_operands_once.sc",
+        "add_trait_expected_output.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -2134,11 +2112,11 @@ fn m2_add_trait_programs_run_with_expected_result() {
 #[test]
 fn m2_add_trait_errors_report_their_cause() {
     for (name, expected) in [
-        ("add_trait_missing_impl.sali", "Add"),
-        ("add_trait_rhs_mismatch.sali", "Add"),
-        ("add_trait_ambiguous_literal.sali", "ambiguous"),
-        ("add_trait_use_after_move.sali", "moved"),
-        ("add_trait_rhs_use_after_move.sali", "moved"),
+        ("add_trait_missing_impl.sc", "Add"),
+        ("add_trait_rhs_mismatch.sc", "Add"),
+        ("add_trait_ambiguous_literal.sc", "ambiguous"),
+        ("add_trait_use_after_move.sc", "moved"),
+        ("add_trait_rhs_use_after_move.sc", "moved"),
     ] {
         let output = salic()
             .arg("check")
@@ -2159,9 +2137,9 @@ fn m2_add_trait_errors_report_their_cause() {
 #[test]
 fn arithmetic_trait_programs_run_with_expected_result() {
     for name in [
-        "arithmetic_traits_nominal_dispatch.sali",
-        "arithmetic_trait_operands_once.sali",
-        "arithmetic_trait_expected_output.sali",
+        "arithmetic_traits_nominal_dispatch.sc",
+        "arithmetic_trait_operands_once.sc",
+        "arithmetic_trait_expected_output.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -2180,10 +2158,10 @@ fn arithmetic_trait_programs_run_with_expected_result() {
 #[test]
 fn arithmetic_trait_errors_report_their_cause() {
     for (name, expected) in [
-        ("arithmetic_trait_ambiguous_literal.sali", "ambiguous"),
-        ("arithmetic_trait_rhs_mismatch.sali", "Div"),
-        ("arithmetic_trait_use_after_move.sali", "moved"),
-        ("arithmetic_trait_scalar_rhs_use_after_move.sali", "moved"),
+        ("arithmetic_trait_ambiguous_literal.sc", "ambiguous"),
+        ("arithmetic_trait_rhs_mismatch.sc", "Div"),
+        ("arithmetic_trait_use_after_move.sc", "moved"),
+        ("arithmetic_trait_scalar_rhs_use_after_move.sc", "moved"),
     ] {
         let output = salic()
             .arg("check")
@@ -2204,13 +2182,13 @@ fn arithmetic_trait_errors_report_their_cause() {
 #[test]
 fn m2_option_and_result_prelude_programs_run_with_expected_result() {
     for name in [
-        "prelude_option_some.sali",
-        "prelude_option_none.sali",
-        "prelude_result_ok.sali",
-        "prelude_result_err.sali",
-        "prelude_nested_option_result.sali",
-        "prelude_multiple_instances.sali",
-        "prelude_inferred_variants.sali",
+        "prelude_option_some.sc",
+        "prelude_option_none.sc",
+        "prelude_result_ok.sc",
+        "prelude_result_err.sc",
+        "prelude_nested_option_result.sc",
+        "prelude_multiple_instances.sc",
+        "prelude_inferred_variants.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -2229,15 +2207,15 @@ fn m2_option_and_result_prelude_programs_run_with_expected_result() {
 #[test]
 fn m2_option_and_result_prelude_errors_report_their_cause() {
     for (name, expected) in [
-        ("prelude_redefine_option.sali", "Option"),
-        ("prelude_redefine_result.sali", "Result"),
-        ("prelude_option_arity.sali", "argument count"),
-        ("prelude_result_arity.sali", "argument count"),
-        ("prelude_option_payload_mismatch.sali", "conflicting"),
-        ("prelude_result_ok_payload_mismatch.sali", "conflicting"),
-        ("prelude_result_err_payload_mismatch.sali", "conflicting"),
-        ("prelude_option_expected_mismatch.sali", "conflicting"),
-        ("prelude_result_expected_mismatch.sali", "conflicting"),
+        ("prelude_redefine_option.sc", "Option"),
+        ("prelude_redefine_result.sc", "Result"),
+        ("prelude_option_arity.sc", "argument count"),
+        ("prelude_result_arity.sc", "argument count"),
+        ("prelude_option_payload_mismatch.sc", "conflicting"),
+        ("prelude_result_ok_payload_mismatch.sc", "conflicting"),
+        ("prelude_result_err_payload_mismatch.sc", "conflicting"),
+        ("prelude_option_expected_mismatch.sc", "conflicting"),
+        ("prelude_result_expected_mismatch.sc", "conflicting"),
     ] {
         let output = salic()
             .arg("check")
@@ -2258,19 +2236,19 @@ fn m2_option_and_result_prelude_errors_report_their_cause() {
 #[test]
 fn m2_coalesce_programs_run_with_expected_result() {
     for name in [
-        "coalesce_option_some_short_circuit.sali",
-        "coalesce_option_none_fallback.sali",
-        "coalesce_result_ok_short_circuit.sali",
-        "coalesce_result_err_fallback.sali",
-        "coalesce_right_associative.sali",
-        "coalesce_logical_or_precedence.sali",
-        "coalesce_match_precedence_nested_option.sali",
-        "coalesce_lhs_once.sali",
-        "coalesce_nested_result_payload.sali",
-        "coalesce_infer_option_none.sali",
-        "coalesce_infer_result_err.sali",
-        "coalesce_infer_right_associative_none.sali",
-        "coalesce_infer_local_without_annotation.sali",
+        "coalesce_option_some_short_circuit.sc",
+        "coalesce_option_none_fallback.sc",
+        "coalesce_result_ok_short_circuit.sc",
+        "coalesce_result_err_fallback.sc",
+        "coalesce_right_associative.sc",
+        "coalesce_logical_or_precedence.sc",
+        "coalesce_match_precedence_nested_option.sc",
+        "coalesce_lhs_once.sc",
+        "coalesce_nested_result_payload.sc",
+        "coalesce_infer_option_none.sc",
+        "coalesce_infer_result_err.sc",
+        "coalesce_infer_right_associative_none.sc",
+        "coalesce_infer_local_without_annotation.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -2289,13 +2267,13 @@ fn m2_coalesce_programs_run_with_expected_result() {
 #[test]
 fn m2_coalesce_errors_report_their_cause() {
     for (name, expected) in [
-        ("coalesce_option_use_after_move.sali", "moved"),
-        ("coalesce_result_use_after_move.sali", "moved"),
-        ("coalesce_option_rhs_mismatch.sali", "type mismatch"),
-        ("coalesce_result_rhs_mismatch.sali", "type mismatch"),
-        ("coalesce_non_container_lhs.sali", "Option"),
+        ("coalesce_option_use_after_move.sc", "moved"),
+        ("coalesce_result_use_after_move.sc", "moved"),
+        ("coalesce_option_rhs_mismatch.sc", "type mismatch"),
+        ("coalesce_result_rhs_mismatch.sc", "type mismatch"),
+        ("coalesce_non_container_lhs.sc", "Option"),
         (
-            "coalesce_infer_result_error_unconstrained.sali",
+            "coalesce_infer_result_error_unconstrained.sc",
             "cannot infer",
         ),
     ] {
@@ -2318,23 +2296,23 @@ fn m2_coalesce_errors_report_their_cause() {
 #[test]
 fn m2_try_programs_run_with_expected_result() {
     for name in [
-        "try_option_some_continue.sali",
-        "try_option_none_propagate.sali",
-        "try_result_ok_continue.sali",
-        "try_result_err_propagate.sali",
-        "try_result_success_type_changes.sali",
-        "try_auto_wrap_tail.sali",
-        "try_auto_wrap_return.sali",
-        "try_auto_wrap_shadowing.sali",
-        "try_full_container_unchanged.sali",
-        "try_inferred_operand.sali",
-        "try_nested_auto_wrap.sali",
-        "try_unit_success.sali",
-        "try_then_member.sali",
-        "try_operand_once.sali",
-        "custom_try_boundary.sali",
-        "do_try_boundary.sali",
-        "do_function_boundary.sali",
+        "try_option_some_continue.sc",
+        "try_option_none_propagate.sc",
+        "try_result_ok_continue.sc",
+        "try_result_err_propagate.sc",
+        "try_result_success_type_changes.sc",
+        "try_auto_wrap_tail.sc",
+        "try_auto_wrap_return.sc",
+        "try_auto_wrap_shadowing.sc",
+        "try_full_container_unchanged.sc",
+        "try_inferred_operand.sc",
+        "try_nested_auto_wrap.sc",
+        "try_unit_success.sc",
+        "try_then_member.sc",
+        "try_operand_once.sc",
+        "custom_try_boundary.sc",
+        "do_try_boundary.sc",
+        "do_function_boundary.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -2353,16 +2331,16 @@ fn m2_try_programs_run_with_expected_result() {
 #[test]
 fn m2_try_errors_report_their_cause() {
     for (name, expected) in [
-        ("try_non_container_return.sali", "return"),
-        ("try_in_global.sali", "global"),
-        ("try_omitted_return_type.sali", "return type"),
-        ("try_in_closure.sali", "closure"),
-        ("try_option_into_result.sali", "Option"),
-        ("try_result_into_option.sali", "Result"),
-        ("try_result_error_mismatch.sali", "error type"),
-        ("try_non_container_operand.sali", "Option"),
-        ("try_use_after_move.sali", "moved"),
-        ("try_auto_wrap_type_mismatch.sali", "type mismatch"),
+        ("try_non_container_return.sc", "return"),
+        ("try_in_global.sc", "global"),
+        ("try_omitted_return_type.sc", "return type"),
+        ("try_in_closure.sc", "closure"),
+        ("try_option_into_result.sc", "Option"),
+        ("try_result_into_option.sc", "Result"),
+        ("try_result_error_mismatch.sc", "error type"),
+        ("try_non_container_operand.sc", "Option"),
+        ("try_use_after_move.sc", "moved"),
+        ("try_auto_wrap_type_mismatch.sc", "type mismatch"),
     ] {
         let output = salic()
             .arg("check")
@@ -2384,7 +2362,7 @@ fn m2_try_errors_report_their_cause() {
 fn eq_operator_protocol_runs_with_borrowed_operands() {
     let output = salic()
         .arg("run")
-        .arg(fixture("pass", "eq_operator_trait.sali"))
+        .arg(fixture("pass", "eq_operator_trait.sc"))
         .output()
         .expect("run Eq operator fixture");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
@@ -2394,7 +2372,7 @@ fn eq_operator_protocol_runs_with_borrowed_operands() {
 fn partial_ord_protocol_preserves_unordered_comparisons() {
     let output = salic()
         .arg("run")
-        .arg(fixture("pass", "partial_ord_operator_trait.sali"))
+        .arg(fixture("pass", "partial_ord_operator_trait.sc"))
         .output()
         .expect("run PartialOrd operator fixture");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
@@ -2404,7 +2382,7 @@ fn partial_ord_protocol_preserves_unordered_comparisons() {
 fn unary_operator_protocols_run_with_associated_outputs() {
     let output = salic()
         .arg("run")
-        .arg(fixture("pass", "unary_operator_traits.sali"))
+        .arg(fixture("pass", "unary_operator_traits.sc"))
         .output()
         .expect("run unary operator fixture");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
@@ -2414,12 +2392,12 @@ fn unary_operator_protocols_run_with_associated_outputs() {
 fn bitwise_protocols_run_and_invalid_shifts_trap() {
     let output = salic()
         .arg("run")
-        .arg(fixture("pass", "bitwise_operator_traits.sali"))
+        .arg(fixture("pass", "bitwise_operator_traits.sc"))
         .output()
         .expect("run bitwise operator fixture");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 
-    for name in ["shift_out_of_range.sali", "shift_negative.sali"] {
+    for name in ["shift_out_of_range.sc", "shift_negative.sc"] {
         let invalid = salic()
             .arg("run")
             .arg(fixture("pass", name))
@@ -2435,21 +2413,21 @@ fn bitwise_protocols_run_and_invalid_shifts_trap() {
 #[test]
 fn m2_optional_chain_programs_run_with_expected_result() {
     for name in [
-        "chain_option_some_field.sali",
-        "chain_option_none_field.sali",
-        "chain_result_ok_field.sali",
-        "chain_result_err_field.sali",
-        "chain_success_type_changes.sali",
-        "chain_consecutive_fields.sali",
-        "chain_option_method.sali",
-        "chain_result_method.sali",
-        "chain_borrowed_method.sali",
-        "chain_option_method_arguments_are_lazy.sali",
-        "chain_result_method_arguments_are_lazy.sali",
-        "chain_inferred_inputs.sali",
-        "chain_lhs_once.sali",
-        "chain_method_result_is_nested.sali",
-        "chain_then_coalesce.sali",
+        "chain_option_some_field.sc",
+        "chain_option_none_field.sc",
+        "chain_result_ok_field.sc",
+        "chain_result_err_field.sc",
+        "chain_success_type_changes.sc",
+        "chain_consecutive_fields.sc",
+        "chain_option_method.sc",
+        "chain_result_method.sc",
+        "chain_borrowed_method.sc",
+        "chain_option_method_arguments_are_lazy.sc",
+        "chain_result_method_arguments_are_lazy.sc",
+        "chain_inferred_inputs.sc",
+        "chain_lhs_once.sc",
+        "chain_method_result_is_nested.sc",
+        "chain_then_coalesce.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -2468,13 +2446,13 @@ fn m2_optional_chain_programs_run_with_expected_result() {
 #[test]
 fn m2_optional_chain_errors_report_their_cause() {
     for (name, expected) in [
-        ("chain_non_container.sali", "Option"),
-        ("chain_unknown_field.sali", "missing"),
-        ("chain_unknown_method.sali", "missing"),
-        ("chain_mut_borrow_method.sali", "mutable-borrow"),
-        ("chain_method_partial_application.sali", "fully applied"),
-        ("chain_use_after_move.sali", "moved"),
-        ("chain_nested_result_not_flattened.sali", "type mismatch"),
+        ("chain_non_container.sc", "Option"),
+        ("chain_unknown_field.sc", "missing"),
+        ("chain_unknown_method.sc", "missing"),
+        ("chain_mut_borrow_method.sc", "mutable-borrow"),
+        ("chain_method_partial_application.sc", "fully applied"),
+        ("chain_use_after_move.sc", "moved"),
+        ("chain_nested_result_not_flattened.sc", "type mismatch"),
     ] {
         let output = salic()
             .arg("check")
@@ -2495,11 +2473,11 @@ fn m2_optional_chain_errors_report_their_cause() {
 #[test]
 fn m2_throw_programs_run_with_expected_result() {
     for name in [
-        "throw_result_err_propagate.sali",
-        "throw_error_once.sali",
-        "throw_if_flow.sali",
-        "throw_generic_error.sali",
-        "throw_unit_error.sali",
+        "throw_result_err_propagate.sc",
+        "throw_error_once.sc",
+        "throw_if_flow.sc",
+        "throw_generic_error.sc",
+        "throw_unit_error.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -2518,13 +2496,13 @@ fn m2_throw_programs_run_with_expected_result() {
 #[test]
 fn m2_throw_errors_report_their_cause() {
     for (name, expected) in [
-        ("throw_in_option_return.sali", "Result"),
-        ("throw_in_plain_return.sali", "FromError"),
-        ("throw_in_global.sali", "global"),
-        ("throw_in_closure.sali", "closure"),
-        ("throw_omitted_return_type.sali", "return type"),
-        ("throw_error_type_mismatch.sali", "expected"),
-        ("throw_without_value.sali", "expression"),
+        ("throw_in_option_return.sc", "Result"),
+        ("throw_in_plain_return.sc", "FromError"),
+        ("throw_in_global.sc", "global"),
+        ("throw_in_closure.sc", "closure"),
+        ("throw_omitted_return_type.sc", "return type"),
+        ("throw_error_type_mismatch.sc", "expected"),
+        ("throw_without_value.sc", "expression"),
     ] {
         let output = salic()
             .arg("check")
@@ -2545,7 +2523,7 @@ fn m2_throw_errors_report_their_cause() {
 #[test]
 fn output_must_not_overwrite_the_source() {
     let temporary = TestDirectory::new();
-    let source = temporary.join("keep.sali");
+    let source = temporary.join("keep.sc");
     let original = b"let main(): i32 = 0\n";
     fs::write(&source, original).expect("write source fixture");
 
@@ -2565,7 +2543,7 @@ fn output_must_not_overwrite_the_source() {
 #[test]
 fn output_must_not_overwrite_a_source_hardlink() {
     let temporary = TestDirectory::new();
-    let source = temporary.join("keep.sali");
+    let source = temporary.join("keep.sc");
     let output_path = temporary.join("keep.ll");
     let original = b"let main(): i32 = 0\n";
     fs::write(&source, original).expect("write source fixture");
@@ -2597,7 +2575,7 @@ version = "0.1.0"
 edition = "2026"
 "#,
     );
-    project.write("src/main.sali", "let main(): i32 = 42\n");
+    project.write("src/main.sc", "let main(): i32 = 42\n");
 
     let checked = salic()
         .arg("check")
@@ -2654,20 +2632,20 @@ version = "0.1.0"
 edition = "2026"
 
 [lib]
-path = "src/toolbox.sali"
+path = "src/toolbox.sc"
 
 [[bin]]
 name = "toolbox"
-path = "src/main.sali"
+path = "src/main.sc"
 
 [[bin]]
 name = "answer"
-path = "src/answer.sali"
+path = "src/answer.sc"
 "#,
     );
-    project.write("src/toolbox.sali", "let answer(): i32 = 42\n");
-    project.write("src/main.sali", "let main(): i32 = 1\n");
-    project.write("src/answer.sali", "let main(): i32 = 42\n");
+    project.write("src/toolbox.sc", "let answer(): i32 = 42\n");
+    project.write("src/main.sc", "let main(): i32 = 1\n");
+    project.write("src/answer.sc", "let main(): i32 = 42\n");
 
     let checked = salic()
         .arg("check")
@@ -2711,15 +2689,15 @@ edition = "2026"
 
 [[bin]]
 name = "left"
-path = "src/left.sali"
+path = "src/left.sc"
 
 [[bin]]
 name = "right"
-path = "src/right.sali"
+path = "src/right.sc"
 "#,
     );
-    multiple_bins.write("src/left.sali", "let main(): i32 = 1\n");
-    multiple_bins.write("src/right.sali", "let main(): i32 = 2\n");
+    multiple_bins.write("src/left.sc", "let main(): i32 = 1\n");
+    multiple_bins.write("src/right.sc", "let main(): i32 = 2\n");
 
     let ambiguous = salic()
         .arg("run")
@@ -2747,10 +2725,10 @@ version = "0.1.0"
 edition = "2026"
 
 [lib]
-path = "src/lib.sali"
+path = "src/lib.sc"
 "#,
     );
-    library_only.write("src/lib.sali", "let answer(): i32 = 42\n");
+    library_only.write("src/lib.sc", "let answer(): i32 = 42\n");
 
     let no_binary = salic()
         .arg("run")
@@ -2805,7 +2783,7 @@ edition = "2026"
 broken = 42
 "#,
     );
-    invalid_dependency.write("src/main.sali", "let main(): i32 = 0\n");
+    invalid_dependency.write("src/main.sc", "let main(): i32 = 0\n");
 
     let dependency = salic()
         .arg("check")
@@ -2834,9 +2812,9 @@ edition = "2026"
 math = { path = "../math" }
 "#,
     );
-    workspace.write("app/src/main.sali", "let main(): i32 = math.answer()\n");
+    workspace.write("app/src/main.sc", "let main(): i32 = math.answer()\n");
     workspace.write(
-        "app/src/lib.sali",
+        "app/src/lib.sc",
         "pub let library_answer(): i32 = math.answer()\n",
     );
     workspace.write(
@@ -2848,17 +2826,17 @@ edition = "2026"
 
 [[bin]]
 name = "broken-tool"
-path = "src/broken.sali"
+path = "src/broken.sc"
 "#,
     );
     let dependency_library = "pub let answer(): i32 = internal.value()\n";
-    let dependency_library_path = workspace.write("math/src/lib.sali", dependency_library);
+    let dependency_library_path = workspace.write("math/src/lib.sc", dependency_library);
     workspace.write(
-        "math/src/internal.sali",
+        "math/src/internal.sc",
         "pub(package) let value(): i32 = 42\n",
     );
     workspace.write(
-        "math/src/broken.sali",
+        "math/src/broken.sc",
         "this deliberately is not valid Salicin\n",
     );
 
@@ -2944,7 +2922,7 @@ secret = { path = "../secret" }
 "#,
     );
     workspace.write(
-        "app/src/main.sali",
+        "app/src/main.sc",
         "let main(): i32 = restricted.hidden() + secret.hidden()\n",
     );
     workspace.write(
@@ -2952,14 +2930,14 @@ secret = { path = "../secret" }
         "[package]\nname = \"restricted\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
     );
     workspace.write(
-        "restricted/src/lib.sali",
+        "restricted/src/lib.sc",
         "pub(package) let hidden(): i32 = 20\n",
     );
     workspace.write(
         "secret/salicin.toml",
         "[package]\nname = \"secret\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
     );
-    workspace.write("secret/src/lib.sali", "let hidden(): i32 = 22\n");
+    workspace.write("secret/src/lib.sc", "let hidden(): i32 = 22\n");
 
     let output = salic()
         .arg("check")
@@ -2992,7 +2970,7 @@ dep = { path = "../dep" }
         "[package]\nname = \"trait-privacy-dep\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
     );
     workspace.write(
-        "dep/src/lib.sali",
+        "dep/src/lib.sc",
         r#"pub let Number = struct(value: i32)
 let Secret = trait {
   let reveal(borrow self)(): i32
@@ -3010,7 +2988,7 @@ pub let answer(): i32 = {
 "#,
     );
     workspace.write(
-        "app/src/main.sali",
+        "app/src/main.sc",
         r#"let main(): i32 = {
   let number = dep.make()
   number.reveal()
@@ -3033,7 +3011,7 @@ pub let answer(): i32 = {
     );
 
     workspace.write(
-        "app/src/main.sali",
+        "app/src/main.sc",
         "let main(): i32 = dep.maybe()?.reveal() ?? 0\n",
     );
     let optional = salic()
@@ -3056,7 +3034,7 @@ pub let answer(): i32 = {
     );
 
     workspace.write(
-        "app/src/main.sali",
+        "app/src/main.sc",
         "let main(): i32 = dep.reveal(i32)(dep.make()) + dep.answer()\n",
     );
     let internal = salic()
@@ -3091,7 +3069,7 @@ dep = { path = "../dep" }
         "[package]\nname = \"core-dependency\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
     );
     workspace.write(
-        "dep/src/lib.sali",
+        "dep/src/lib.sc",
         r#"use core.ops.Add
 
 pub let Number = struct(value: i32)
@@ -3105,7 +3083,7 @@ pub let maybe(value: i32): Option(i32) = Option(i32).Some(value)
 "#,
     );
     workspace.write(
-        "app/src/main.sali",
+        "app/src/main.sc",
         r#"let main(): i32 = {
   let sum = dep.make(19) + dep.make(23)
   dep.value(sum) + (dep.maybe(0) ?? 0)
@@ -3122,7 +3100,7 @@ pub let maybe(value: i32): Option(i32) = Option(i32).Some(value)
     assert_eq!(shared.status.code(), Some(42), "{}", output_text(&shared));
 
     workspace.write(
-        "app/src/fake.sali",
+        "app/src/fake.sc",
         r#"pub let Option(T: type) = enum { Some(T), None }
 pub let make_option(): Option(i32) = Option(i32).Some(42)
 
@@ -3147,7 +3125,7 @@ pub let make_number(value: i32): Number = Number(value)
 "#,
     );
     workspace.write(
-        "app/src/main.sali",
+        "app/src/main.sc",
         "let main(): i32 = fake.make_option() ?? 0\n",
     );
     let fake_option = salic()
@@ -3169,7 +3147,7 @@ pub let make_number(value: i32): Number = Number(value)
     );
 
     workspace.write(
-        "app/src/main.sali",
+        "app/src/main.sc",
         "let main(): i32 = fake.make_number(20) + fake.make_number(22)\n",
     );
     let fake_add = salic()
@@ -3190,7 +3168,7 @@ pub let make_number(value: i32): Number = Number(value)
     );
 
     workspace.write(
-        "app/src/main.sali",
+        "app/src/main.sc",
         "let main(): i32 = fake.make_number(44) - fake.make_number(2)\n",
     );
     let fake_sub = salic()
@@ -3211,7 +3189,7 @@ pub let make_number(value: i32): Number = Number(value)
     );
 
     workspace.write(
-        "app/src/main.sali",
+        "app/src/main.sc",
         "use root.fake as Option\nlet main(): i32 = Option()\n",
     );
     let module_option = salic()
@@ -3233,7 +3211,7 @@ pub let make_number(value: i32): Number = Number(value)
     );
 
     workspace.write(
-        "app/src/main.sali",
+        "app/src/main.sc",
         r#"use root.fake as Add
 let Number = struct(value: i32)
 extend Number: Add(Number) {
@@ -3261,9 +3239,9 @@ let main(): i32 = Number(20) + Number(22)
         output_text(&module_add)
     );
 
-    workspace.write("app/src/never.sali", "let marker = 0\n");
+    workspace.write("app/src/never.sc", "let marker = 0\n");
     workspace.write(
-        "app/src/main.sali",
+        "app/src/main.sc",
         "let stop(): never = loop {}\nlet main(): i32 = 42\n",
     );
     let module_never = salic()
@@ -3304,13 +3282,13 @@ dep = { path = "../dep" }
         "[package]\nname = \"copy-dependency\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
     );
     workspace.write(
-        "dep/src/lib.sali",
+        "dep/src/lib.sc",
         r#"pub let Token = struct(value: i32)
 pub let make(value: i32): Token = Token(value)
 "#,
     );
     workspace.write(
-        "app/src/main.sali",
+        "app/src/main.sc",
         r#"extend dep.Token: Copy {}
 let main(): i32 = 42
 "#,
@@ -3331,7 +3309,7 @@ let main(): i32 = 42
     );
 
     workspace.write(
-        "dep/src/lib.sali",
+        "dep/src/lib.sc",
         r#"pub let Token = struct(value: i32)
 extend Token: Copy {}
 pub let make(value: i32): Token = Token(value)
@@ -3339,7 +3317,7 @@ pub let read(copy token: Token): i32 = token.value
 "#,
     );
     workspace.write(
-        "app/src/main.sali",
+        "app/src/main.sc",
         r#"let main(): i32 = {
   let token = dep.make(42)
   let first = dep.read(token)
@@ -3360,9 +3338,9 @@ pub let read(copy token: Token): i32 = token.value
         output_text(&owner_impl)
     );
 
-    workspace.write("app/src/fake.sali", "pub let Copy = trait {}\n");
+    workspace.write("app/src/fake.sc", "pub let Copy = trait {}\n");
     workspace.write(
-        "app/src/main.sali",
+        "app/src/main.sc",
         r#"use root.fake.Copy as FakeCopy
 let Local = struct(value: i32)
 extend Local: FakeCopy {}
@@ -3390,7 +3368,7 @@ let main(): i32 = read(Local(42))
     );
 
     workspace.write(
-        "app/src/fake.sali",
+        "app/src/fake.sc",
         r#"pub let Copy = trait {}
 pub let Token = struct(value: i32)
 
@@ -3401,7 +3379,7 @@ pub let read(copy token: Token): i32 = token.value
 "#,
     );
     workspace.write(
-        "app/src/main.sali",
+        "app/src/main.sc",
         "let main(): i32 = fake.read(fake.make(42))\n",
     );
 
@@ -3427,7 +3405,7 @@ fn transitive_diamond_dependencies_share_nominal_identity() {
         "[package]\nname = \"shared-token\"\nversion = \"1.0.0\"\nedition = \"2026\"\n",
     );
     workspace.write(
-        "shared/src/lib.sali",
+        "shared/src/lib.sc",
         "pub let Token = struct(pub value: i32)\npub let make(value: i32): Token = Token(value: value)\n",
     );
     for side in ["left", "right"] {
@@ -3438,7 +3416,7 @@ fn transitive_diamond_dependencies_share_nominal_identity() {
             ),
         );
         workspace.write(
-            &format!("{side}/src/lib.sali"),
+            &format!("{side}/src/lib.sc"),
             "pub use shared.Token\npub let make(value: i32): Token = shared.make(value)\n",
         );
     }
@@ -3455,7 +3433,7 @@ right = { path = "../right" }
 "#,
     );
     workspace.write(
-        "app/src/main.sali",
+        "app/src/main.sc",
         r#"let bridge(move value: left.Token): right.Token = value
 let main(): i32 = bridge(left.make(42)).value
 "#,
@@ -3481,13 +3459,13 @@ fn dependency_cycles_and_binary_only_dependencies_fail_before_writing_a_lockfile
         "app/salicin.toml",
         "[package]\nname = \"cycle-app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nb = { path = \"../b\" }\n",
     );
-    cycle.write("app/src/lib.sali", "pub let value(): i32 = 1\n");
-    cycle.write("app/src/main.sali", "let main(): i32 = 0\n");
+    cycle.write("app/src/lib.sc", "pub let value(): i32 = 1\n");
+    cycle.write("app/src/main.sc", "let main(): i32 = 0\n");
     cycle.write(
         "b/salicin.toml",
         "[package]\nname = \"cycle-b\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\napp = { path = \"../app\" }\n",
     );
-    cycle.write("b/src/lib.sali", "pub let value(): i32 = 2\n");
+    cycle.write("b/src/lib.sc", "pub let value(): i32 = 2\n");
 
     let cyclic = salic()
         .arg("check")
@@ -3509,12 +3487,12 @@ fn dependency_cycles_and_binary_only_dependencies_fail_before_writing_a_lockfile
         "app/salicin.toml",
         "[package]\nname = \"missing-lib-app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\ntool = { path = \"../tool\" }\n",
     );
-    missing.write("app/src/main.sali", "let main(): i32 = 0\n");
+    missing.write("app/src/main.sc", "let main(): i32 = 0\n");
     missing.write(
         "tool/salicin.toml",
         "[package]\nname = \"binary-tool\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
     );
-    missing.write("tool/src/main.sali", "let main(): i32 = 0\n");
+    missing.write("tool/src/main.sc", "let main(): i32 = 0\n");
 
     let no_library = salic()
         .arg("check")
@@ -3546,17 +3524,17 @@ edition = "2026"
 
 [[bin]]
 name = "protected"
-path = "src/main.sali"
+path = "src/main.sc"
 
 [[bin]]
 name = "other"
-path = "src/other.sali"
+path = "src/other.sc"
 "#;
     let main_text = "let main(): i32 = 0\n";
     let other_text = "let main(): i32 = 1\n";
     let manifest = project.write("salicin.toml", manifest_text);
-    project.write("src/main.sali", main_text);
-    let other = project.write("src/other.sali", other_text);
+    project.write("src/main.sc", main_text);
+    let other = project.write("src/other.sc", other_text);
 
     let emit = salic()
         .args(["emit-ir", "--bin", "protected"])
@@ -3583,7 +3561,7 @@ path = "src/other.sali"
 fn prelude_never_coerces_through_diverging_calls() {
     let temporary = TestDirectory::new();
     let source = temporary.write(
-        "never.sali",
+        "never.sc",
         r#"let stop(): never = loop {}
 let absurd(move value: never): i32 = value
 let propagate(move value: never): Result(i32, ()) = value
@@ -3616,7 +3594,7 @@ edition = "2026"
 "#,
     );
     project.write(
-        "src/main.sali",
+        "src/main.sc",
         r#"let main(): i32 = {
   let reply: net.http.Reply = net.http.reply()
   let status: net.http.Status = net.http.Status.Ok(2)
@@ -3629,7 +3607,7 @@ edition = "2026"
 "#,
     );
     project.write(
-        "src/math.sali",
+        "src/math.sc",
         r#"pub(package) let Number = struct(value: i32)
 let Read = trait {
   let read(borrow self)(): i32
@@ -3644,7 +3622,7 @@ pub(package) let answer(): i32 = {
 "#,
     );
     project.write(
-        "src/net/http.sali",
+        "src/net/http.sc",
         r#"pub(package) let Reply = struct(pub(package) value: i32)
 pub(package) let Status = enum {
   Ok(i32),
@@ -3670,7 +3648,7 @@ fn field_visibility_controls_cross_module_and_cross_package_data_access() {
         "[package]\nname = \"private-fields\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
     );
     private_project.write(
-        "src/data.sali",
+        "src/data.sc",
         r#"pub(package) let Record = struct(secret: i32, pub(package) open: i32)
 pub(package) let Event = enum { Named(secret: i32), Empty }
 pub(package) let record(): Record = Record(secret: 20, open: 22)
@@ -3678,7 +3656,7 @@ pub(package) let event(): Event = Event.Named(secret: 42)
 "#,
     );
     private_project.write(
-        "src/main.sali",
+        "src/main.sc",
         r#"let read(): i32 = data.record().secret
 let build(): data.Record = data.Record(secret: 20, open: 22)
 let unpack(): i32 = data.event() match {
@@ -3707,7 +3685,7 @@ let main(): i32 = 0
         "[package]\nname = \"public-fields-dep\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
     );
     workspace.write(
-        "dep/src/lib.sali",
+        "dep/src/lib.sc",
         r#"pub let Record = struct(pub value: i32)
 pub let Event = enum { Named(pub value: i32), Empty }
 "#,
@@ -3724,7 +3702,7 @@ dep = { path = "../dep" }
 "#,
     );
     workspace.write(
-        "app/src/main.sali",
+        "app/src/main.sc",
         r#"let main(): i32 = {
   let record = dep.Record(value: 20)
   let event = dep.Event.Named(value: 22)
@@ -3755,8 +3733,8 @@ version = "0.1.0"
 edition = "2026"
 "#,
     );
-    private_member.write("src/main.sali", "let main(): i32 = sibling.secret()\n");
-    private_member.write("src/sibling.sali", "let secret(): i32 = 42\n");
+    private_member.write("src/main.sc", "let main(): i32 = sibling.secret()\n");
+    private_member.write("src/sibling.sc", "let secret(): i32 = 42\n");
 
     let private = salic()
         .arg("check")
@@ -3783,8 +3761,8 @@ version = "0.1.0"
 edition = "2026"
 "#,
     );
-    unknown_nested_member.write("src/main.sali", "let main(): i32 = net.http.missing()\n");
-    unknown_nested_member.write("src/net/http.sali", "pub(package) let answer(): i32 = 42\n");
+    unknown_nested_member.write("src/main.sc", "let main(): i32 = net.http.missing()\n");
+    unknown_nested_member.write("src/net/http.sc", "pub(package) let answer(): i32 = 42\n");
 
     let unknown = salic()
         .arg("check")
@@ -3815,15 +3793,15 @@ edition = "2026"
 
 [[bin]]
 name = "primary"
-path = "src/main.sali"
+path = "src/main.sc"
 
 [[bin]]
 name = "tool"
-path = "src/tool.sali"
+path = "src/tool.sc"
 "#,
     );
-    project.write("src/main.sali", "let main(): i32 = 42\n");
-    project.write("src/tool.sali", "this is deliberately not Salicin\n");
+    project.write("src/main.sc", "let main(): i32 = 42\n");
+    project.write("src/tool.sc", "this is deliberately not Salicin\n");
 
     let output = salic()
         .arg("run")
@@ -3842,8 +3820,8 @@ fn file_module_paths_reject_keywords_and_the_underscore_segment() {
             "salicin.toml",
             "[package]\nname = \"reserved-module\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
         );
-        project.write("src/main.sali", "let main(): i32 = 42\n");
-        project.write(&format!("src/{segment}.sali"), "let value = 0\n");
+        project.write("src/main.sc", "let main(): i32 = 42\n");
+        project.write(&format!("src/{segment}.sc"), "let value = 0\n");
 
         let output = salic()
             .arg("check")
@@ -3872,13 +3850,13 @@ edition = "2026"
 "#,
     );
     project.write(
-        "src/main.sali",
+        "src/main.sc",
         r#"let root_bonus(): i32 = 3
 let main(): i32 = nested.deep.answer()
 "#,
     );
     project.write(
-        "src/kit.sali",
+        "src/kit.sc",
         r#"pub(package) let Number = struct(pub(package) value: i32)
 pub(package) let Outcome = enum {
   Ready(i32),
@@ -3889,9 +3867,9 @@ pub(package) let increment(value: i32): i32 = value + 1
 pub(package) let make_number(value: i32): Number = Number(value: value)
 "#,
     );
-    project.write("src/nested.sali", "let parent_bonus(): i32 = 2\n");
+    project.write("src/nested.sc", "let parent_bonus(): i32 = 2\n");
     project.write(
-        "src/nested/deep.sali",
+        "src/nested/deep.sc",
         r#"use root.kit.{Number, Outcome, increment}
 use root.kit.make_number as make
 use root.kit as utilities
@@ -3933,17 +3911,17 @@ edition = "2026"
 "#,
     );
     project.write(
-        "src/main.sali",
+        "src/main.sc",
         "let main(): i32 = facade.answer() + package_facade.extra()\n",
     );
-    project.write("src/implementation.sali", "pub let answer(): i32 = 40\n");
+    project.write("src/implementation.sc", "pub let answer(): i32 = 40\n");
     project.write(
-        "src/package_implementation.sali",
+        "src/package_implementation.sc",
         "pub(package) let extra(): i32 = 2\n",
     );
-    project.write("src/facade.sali", "pub use root.implementation.answer\n");
+    project.write("src/facade.sc", "pub use root.implementation.answer\n");
     project.write(
-        "src/package_facade.sali",
+        "src/package_facade.sc",
         "pub(package) use root.package_implementation.extra\n",
     );
 
@@ -3967,7 +3945,7 @@ edition = "2026"
 "#,
     );
     project.write(
-        "src/main.sali",
+        "src/main.sc",
         r#"use root.numbers.answer
 
 let main(): i32 = {
@@ -3980,7 +3958,7 @@ let main(): i32 = {
 }
 "#,
     );
-    project.write("src/numbers.sali", "pub(package) let answer(): i32 = 40\n");
+    project.write("src/numbers.sc", "pub(package) let answer(): i32 = 40\n");
 
     let output = salic()
         .arg("run")
@@ -4007,28 +3985,28 @@ use root.second.answer as selected
 let main(): i32 = selected()
 "#,
             modules: &[
-                ("src/first.sali", "pub(package) let answer(): i32 = 1\n"),
-                ("src/second.sali", "pub(package) let answer(): i32 = 2\n"),
+                ("src/first.sc", "pub(package) let answer(): i32 = 1\n"),
+                ("src/second.sc", "pub(package) let answer(): i32 = 2\n"),
             ],
             expected: &["duplicate", "selected", "first.answer", "second.answer"],
         },
         Case {
             name: "unknown-import",
             root: "use root.net.missing as answer\nlet main(): i32 = answer()\n",
-            modules: &[("src/net.sali", "pub(package) let present(): i32 = 42\n")],
+            modules: &[("src/net.sc", "pub(package) let present(): i32 = 42\n")],
             expected: &["unknown", "net.missing"],
         },
         Case {
             name: "private-sibling-import",
             root: "use root.sibling.secret\nlet main(): i32 = secret()\n",
-            modules: &[("src/sibling.sali", "let secret(): i32 = 42\n")],
+            modules: &[("src/sibling.sc", "let secret(): i32 = 42\n")],
             expected: &["private", "sibling.secret"],
         },
         Case {
             name: "public-private-promotion",
             root: "let main(): i32 = 0\n",
             modules: &[(
-                "src/facade.sali",
+                "src/facade.sc",
                 "let secret(): i32 = 1\npub use self.secret as exposed\n",
             )],
             expected: &["pub use", "private", "facade.secret"],
@@ -4037,7 +4015,7 @@ let main(): i32 = selected()
             name: "public-package-promotion",
             root: "let main(): i32 = 0\n",
             modules: &[(
-                "src/facade.sali",
+                "src/facade.sc",
                 "pub(package) let internal(): i32 = 1\npub use self.internal as exposed\n",
             )],
             expected: &["pub use", "pub(package)", "facade.internal"],
@@ -4046,9 +4024,9 @@ let main(): i32 = selected()
             name: "private-module-alias",
             root: "let main(): i32 = 0\n",
             modules: &[
-                ("src/secret.sali", "pub let open(): i32 = 1\n"),
-                ("src/a.sali", "use root.secret as hidden\n"),
-                ("src/b.sali", "use root.a.hidden.open as leak\n"),
+                ("src/secret.sc", "pub let open(): i32 = 1\n"),
+                ("src/a.sc", "use root.secret as hidden\n"),
+                ("src/b.sc", "use root.a.hidden.open as leak\n"),
             ],
             expected: &["private", "a.hidden"],
         },
@@ -4063,7 +4041,7 @@ let main(): i32 = selected()
                 case.name
             ),
         );
-        project.write("src/main.sali", case.root);
+        project.write("src/main.sc", case.root);
         for (path, source) in case.modules {
             project.write(path, source);
         }

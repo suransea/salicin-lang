@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.85.0 - 2026-07-21
+
+- Changed the only recognized Salicin source extension from `.sali` to `.sc`, with the shorter
+  spelling suggesting “successor C” or “super C”.
+- Renamed all compiler-owned core and alloc sources, examples, and 524 end-to-end fixtures to
+  `.sc`.
+- Updated single-file input resolution, recursive file-module discovery, manifest target
+  validation, and default `src/lib.sc` / `src/main.sc` target discovery.
+- Removed the old extension before 1.0 rather than retaining a compatibility alias, with explicit
+  CLI and manifest rejection coverage for `.sali` inputs.
+
 ## 0.84.0 - 2026-07-21
 
 - Added `! unsafe` to function and method signatures as the first statically checked source-level

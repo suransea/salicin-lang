@@ -10,8 +10,8 @@ use crate::manifest::Edition;
 use crate::modules::{self, PackageId, SourceUnit};
 use crate::parser;
 
-const EDITION_2026_BOXED: &str = include_str!("../../library/alloc/src/boxed.sali");
-const EDITION_2026_VEC: &str = include_str!("../../library/alloc/src/vec.sali");
+const EDITION_2026_BOXED: &str = include_str!("../../library/alloc/src/boxed.sc");
+const EDITION_2026_VEC: &str = include_str!("../../library/alloc/src/vec.sc");
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AllocBundle {

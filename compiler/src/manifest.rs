@@ -12,6 +12,9 @@ use serde::Deserialize;
 /// The package manifest file name recognized by `salic`.
 pub const MANIFEST_FILE_NAME: &str = "salicin.toml";
 
+/// The only source-file extension recognized by this pre-1.0 compiler.
+pub const SOURCE_FILE_EXTENSION: &str = "sc";
+
 /// A validated Salicin package manifest.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Manifest {
@@ -81,7 +84,7 @@ impl fmt::Display for Edition {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Target {
     pub name: String,
-    /// Canonical absolute path to the target's `.sali` source file.
+    /// Canonical absolute path to the target's `.sc` source file.
     pub path: PathBuf,
     pub kind: TargetKind,
 }
@@ -225,7 +228,7 @@ fn validate_manifest(raw: RawManifest, manifest_path: PathBuf) -> Result<Manifes
         None => discover_default_target(
             &package_root,
             &manifest_path,
-            Path::new("src/lib.sali"),
+            Path::new("src/lib.sc"),
             package.name.replace('-', "_"),
             TargetKind::Lib,
         )?,
@@ -235,7 +238,7 @@ fn validate_manifest(raw: RawManifest, manifest_path: PathBuf) -> Result<Manifes
         discover_default_target(
             &package_root,
             &manifest_path,
-            Path::new("src/main.sali"),
+            Path::new("src/main.sc"),
             package.name.clone(),
             TargetKind::Bin,
         )?
@@ -280,7 +283,7 @@ fn validate_manifest(raw: RawManifest, manifest_path: PathBuf) -> Result<Manifes
     if lib.is_none() && bins.is_empty() {
         return Err(ManifestError::invalid(
             &manifest_path,
-            "package has no targets; add `src/lib.sali`, `src/main.sali`, `[lib]`, or `[[bin]]`",
+            "package has no targets; add `src/lib.sc`, `src/main.sc`, `[lib]`, or `[[bin]]`",
         ));
     }
 
@@ -586,12 +589,12 @@ fn resolve_target_path(
     if relative_path
         .extension()
         .and_then(|extension| extension.to_str())
-        != Some("sali")
+        != Some(SOURCE_FILE_EXTENSION)
     {
         return Err(ManifestError::invalid(
             manifest_path,
             format!(
-                "{kind} target path `{}` must have the `.sali` extension",
+                "{kind} target path `{}` must have the `.sc` extension",
                 relative_path.display()
             ),
         ));
@@ -766,18 +769,18 @@ edition = "2026"
     #[test]
     fn loads_explicit_targets_and_exposes_validated_metadata() {
         let temp = TempDir::new();
-        temp.write("source/library.sali", "let answer = 42\n");
-        temp.write("source/tool.sali", "let main() = 0\n");
+        temp.write("source/library.sc", "let answer = 42\n");
+        temp.write("source/tool.sc", "let main() = 0\n");
         temp.write(
             MANIFEST_FILE_NAME,
             &basic_manifest(
                 r#"
 [lib]
-path = "source/library.sali"
+path = "source/library.sc"
 
 [[bin]]
 name = "salicin-tool"
-path = "source/tool.sali"
+path = "source/tool.sc"
 
 [dependencies]
 "#,
@@ -799,8 +802,8 @@ path = "source/tool.sali"
     #[test]
     fn discovers_default_library_and_binary_and_allows_the_same_name() {
         let temp = TempDir::new();
-        temp.write("src/lib.sali", "let answer = 42\n");
-        temp.write("src/main.sali", "let main() = 0\n");
+        temp.write("src/lib.sc", "let answer = 42\n");
+        temp.write("src/main.sc", "let main() = 0\n");
         temp.write(MANIFEST_FILE_NAME, &basic_manifest("\n[dependencies]\n"));
 
         let manifest = load_manifest(temp.path().join(MANIFEST_FILE_NAME)).unwrap();
@@ -812,7 +815,7 @@ path = "source/tool.sali"
     #[test]
     fn rejects_unknown_fields_at_every_manifest_level() {
         let temp = TempDir::new();
-        temp.write("src/main.sali", "let main() = 0\n");
+        temp.write("src/main.sc", "let main() = 0\n");
         temp.write(
             MANIFEST_FILE_NAME,
             r#"[package]
@@ -835,7 +838,7 @@ license = "MIT"
             ("hello", "1.0.0", "2025", "not supported"),
         ] {
             let temp = TempDir::new();
-            temp.write("src/main.sali", "let main() = 0\n");
+            temp.write("src/main.sc", "let main() = 0\n");
             temp.write(
                 MANIFEST_FILE_NAME,
                 &format!(
@@ -860,7 +863,7 @@ license = "MIT"
     #[test]
     fn rejects_non_path_dependency_sources_and_unknown_fields() {
         let temp = TempDir::new();
-        temp.write("src/main.sali", "let main() = 0\n");
+        temp.write("src/main.sc", "let main() = 0\n");
         for (field, value) in [
             ("version", "\"1.2\""),
             ("git", "\"https://example.invalid/repo\""),
@@ -886,7 +889,7 @@ license = "MIT"
         let temp = TempDir::new();
         write_test_package(&temp, "alpha", "alpha-package", "");
         write_test_package(&temp, "zeta", "zeta-package", "");
-        temp.write("root/src/main.sali", "let main() = 0\n");
+        temp.write("root/src/main.sc", "let main() = 0\n");
         temp.write(
             "root/salicin.toml",
             r#"[package]
@@ -922,7 +925,7 @@ alpha_util = { path = "../alpha" }
     fn rejects_invalid_dependency_aliases_paths_and_manifests() {
         for alias in ["Upper", "has-dash", "self", "_", "let", "core", "alloc"] {
             let temp = TempDir::new();
-            temp.write("root/src/main.sali", "let main() = 0\n");
+            temp.write("root/src/main.sc", "let main() = 0\n");
             temp.write(
                 "root/salicin.toml",
                 &format!(
@@ -936,7 +939,7 @@ alpha_util = { path = "../alpha" }
         }
 
         let temp = TempDir::new();
-        temp.write("root/src/main.sali", "let main() = 0\n");
+        temp.write("root/src/main.sc", "let main() = 0\n");
         for path in [
             "/dep",
             "C:/dep",
@@ -1031,12 +1034,12 @@ alpha_util = { path = "../alpha" }
     #[test]
     fn dependency_graph_requires_library_targets() {
         let temp = TempDir::new();
-        temp.write("app/src/main.sali", "let main() = 0\n");
+        temp.write("app/src/main.sc", "let main() = 0\n");
         temp.write(
             "app/salicin.toml",
             "[package]\nname = \"app\"\nversion = \"1.0.0\"\nedition = \"2026\"\n\n[dependencies]\ntool = { path = \"../tool\" }\n",
         );
-        temp.write("tool/src/main.sali", "let main() = 0\n");
+        temp.write("tool/src/main.sc", "let main() = 0\n");
         temp.write(
             "tool/salicin.toml",
             "[package]\nname = \"tool\"\nversion = \"1.0.0\"\nedition = \"2026\"\n",
@@ -1049,7 +1052,7 @@ alpha_util = { path = "../alpha" }
     }
 
     fn write_test_package(temp: &TempDir, directory: &str, name: &str, extra: &str) {
-        temp.write(format!("{directory}/src/lib.sali"), "let answer = 42\n");
+        temp.write(format!("{directory}/src/lib.sc"), "let answer = 42\n");
         temp.write(
             format!("{directory}/salicin.toml"),
             &format!(
@@ -1061,19 +1064,19 @@ alpha_util = { path = "../alpha" }
     #[test]
     fn rejects_duplicate_binary_target_names() {
         let temp = TempDir::new();
-        temp.write("src/one.sali", "let main() = 0\n");
-        temp.write("src/two.sali", "let main() = 0\n");
+        temp.write("src/one.sc", "let main() = 0\n");
+        temp.write("src/two.sc", "let main() = 0\n");
         temp.write(
             MANIFEST_FILE_NAME,
             &basic_manifest(
                 r#"
 [[bin]]
 name = "tool"
-path = "src/one.sali"
+path = "src/one.sc"
 
 [[bin]]
 name = "tool"
-path = "src/two.sali"
+path = "src/two.sc"
 "#,
             ),
         );
@@ -1085,14 +1088,14 @@ path = "src/two.sali"
     #[test]
     fn rejects_binary_names_that_could_escape_the_build_directory() {
         let temp = TempDir::new();
-        temp.write("src/main.sali", "let main() = 0\n");
+        temp.write("src/main.sc", "let main() = 0\n");
         temp.write(
             MANIFEST_FILE_NAME,
             &basic_manifest(
                 r#"
 [[bin]]
 name = "../outside"
-path = "src/main.sali"
+path = "src/main.sc"
 "#,
             ),
         );
@@ -1104,13 +1107,14 @@ path = "src/main.sali"
     #[test]
     fn validates_target_paths() {
         let temp = TempDir::new();
-        temp.write("outside.sali", "let main() = 0\n");
+        temp.write("outside.sc", "let main() = 0\n");
         temp.write("package/src/not-salicin.txt", "text\n");
 
         for (path, expected) in [
-            ("../outside.sali", "escapes the package root"),
-            ("src/missing.sali", "does not exist"),
-            ("src/not-salicin.txt", "`.sali` extension"),
+            ("../outside.sc", "escapes the package root"),
+            ("src/missing.sc", "does not exist"),
+            ("src/not-salicin.txt", "`.sc` extension"),
+            ("src/legacy.sali", "`.sc` extension"),
         ] {
             temp.write(
                 "package/salicin.toml",
