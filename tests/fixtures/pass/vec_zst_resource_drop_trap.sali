@@ -1,7 +1,7 @@
 let Bomb = struct()
 
 extend Bomb: Drop {
-  let drop(mut borrow self)(): () = unsafe do {
+  let drop(borrow(mut) self)(): () = unsafe do {
     raw_trap()
   }
 }

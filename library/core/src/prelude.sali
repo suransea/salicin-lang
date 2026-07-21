@@ -15,5 +15,5 @@ pub let never = enum {}
 pub let Copy = trait {}
 
 pub let Drop = trait {
-  let drop(mut borrow self)(): ()
+  let drop(borrow(mut) self)(): ()
 }

@@ -113,8 +113,7 @@ parameter = [ pass_mode ], IDENT, ":", type_expr
 
 pass_mode = "copy" | "move"
           | "borrow", [ "(", access_or_region,
-                         [ ",", REGION ], ")" ]
-          | "mut", "borrow", [ "(", REGION, ")" ] ;
+                         [ ",", REGION ], ")" ] ;
 
 access_or_region = IDENT | "shared" | "mut" | REGION ;
 ```
@@ -213,8 +212,7 @@ type_atom = path, [ type_arguments ]
           | "(", type_expr, ")"
           | "(", type_expr, ",", [ type_expr, { ",", type_expr }, [ "," ] ], ")"
           | "borrow", [ "(", access_or_region,
-                         [ ",", REGION ], ")" ], type_atom
-          | "mut", "borrow", [ "(", REGION, ")" ], type_atom ;
+                         [ ",", REGION ], ")" ], type_atom ;
 
 type_arguments = "(", type_argument, { ",", type_argument }, [ "," ], ")" ;
 type_argument  = type_expr | INTEGER ;
@@ -263,7 +261,7 @@ trait_argument = type_expr | IDENT, "=", type_expr ;
 | 7 | `..`、`..=` | 不结合 |
 | 8 | `+`、`-`、按位运算 | 左结合 |
 | 9 | `*`、`/`、`%`、shift | 左结合 |
-| 10 | `-`、`!`、`borrow`、`mut borrow`、`move` | 前缀 |
+| 10 | `-`、`!`、`borrow`、`borrow(mut)`、`move` | 前缀 |
 | 11 | 调用、索引、成员、`?.`、`.try`、`.await`、尾随闭包 | 左到右后缀 |
 
 精确的按位/shift 相对层级在实现相应运算符前补入，不能由 parser generator 默认决定。

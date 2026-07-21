@@ -551,7 +551,7 @@ pub(crate) fn copy_trait_has_required_shape(definition: &TraitDef) -> bool {
 fn validate_drop(definition: &TraitDef, diagnostics: &mut Vec<String>) {
     if !drop_trait_has_required_shape(definition) {
         diagnostics.push(
-            "lang item `Drop` must have shape `pub let Drop = trait { let drop(mut borrow self)(): () }`"
+            "lang item `Drop` must have shape `pub let Drop = trait { let drop(borrow(mut) self)(): () }`"
                 .to_owned(),
         );
     }
@@ -650,7 +650,7 @@ pub let never = enum {}
             copy_declaration,
             r#"
 pub let Drop = trait {
-  let drop(mut borrow self)(): ()
+  let drop(borrow(mut) self)(): ()
 }
 pub let Add(Rhs: type) = trait {
   let Output: type
@@ -722,7 +722,7 @@ pub let Rem(Rhs: type) = trait {
 }
 pub let Copy = trait {}
 pub let Drop = trait {
-  let drop(mut borrow self)(): ()
+  let drop(borrow(mut) self)(): ()
 }
 pub let Add(Rhs: type) = trait {
   let Output: type
@@ -793,7 +793,7 @@ pub let Rem(Rhs: type) = trait {
   let rem(move self)(move rhs: Rhs): Output
 }
 pub let Drop = trait {
-  let drop(mut borrow self)(): ()
+  let drop(borrow(mut) self)(): ()
 }
 "#;
         let error = CoreBundle::from_source(Edition::Edition2026, source).unwrap_err();
@@ -878,22 +878,22 @@ pub let Rem(Rhs: type) = trait {
     #[test]
     fn rejects_malformed_drop_traits() {
         let malformed_declarations = [
-            "pub let Drop(T: type) = trait { let drop(mut borrow self)(): () }",
+            "pub let Drop(T: type) = trait { let drop(borrow(mut) self)(): () }",
             "pub let Drop = trait {}",
             "pub let Drop = trait { let drop(borrow self)(): () }",
-            "pub let Drop = trait { let drop(mut borrow self)(): i32 }",
+            "pub let Drop = trait { let drop(borrow(mut) self)(): i32 }",
         ];
 
         for declaration in malformed_declarations {
             let source = core_source_with_copy("pub let Copy = trait {}").replacen(
-                "pub let Drop = trait {\n  let drop(mut borrow self)(): ()\n}",
+                "pub let Drop = trait {\n  let drop(borrow(mut) self)(): ()\n}",
                 declaration,
                 1,
             );
             let error = CoreBundle::from_source(Edition::Edition2026, &source).unwrap_err();
             assert_eq!(
                 error.diagnostics(),
-                ["lang item `Drop` must have shape `pub let Drop = trait { let drop(mut borrow self)(): () }`"],
+                ["lang item `Drop` must have shape `pub let Drop = trait { let drop(borrow(mut) self)(): () }`"],
                 "unexpected diagnostic for `{declaration}`"
             );
         }
@@ -907,7 +907,7 @@ pub let Result(T: type, E: type) = enum { Ok(T), Err(E) }
 pub let never = enum {}
 pub let Copy = trait {}
 pub let Drop = trait {
-  let drop(mut borrow self)(): ()
+  let drop(borrow(mut) self)(): ()
 }
 pub let Add(Rhs: type) = trait {
   let Output: type

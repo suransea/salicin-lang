@@ -5,10 +5,11 @@ compiler pipeline, project manifests and local dependencies, ownership and borro
 source-backed core traits and containers, cleanup lowering, raw allocation primitives, and a growing
 `Box`/`Vec` allocation library.
 
-Access keyword generics are implemented for functions: `A: access` accepts `shared` or `mut`,
+Access keyword generics are implemented for functions and generic inherent members: `A: access` accepts `shared` or `mut`,
 defaults to shared when omitted, participates in monomorphization, and can drive parameter modes,
-borrow types, borrow expressions, and raw pointer borrows. The alloc free functions use this path.
-Generic methods nested in generic inherent extensions still use shared/mutable compatibility names.
+borrow types, borrow expressions, and raw pointer borrows. The alloc free functions and methods use
+this path. Mutable borrowing has one source spelling, `borrow(mut)`; separately named mutable alloc
+aliases and the former prefix spelling are intentionally absent before 1.0.
 General effect rows, effect polymorphism, and a generalized `passing` kind remain design work rather
 than source-language features.
 

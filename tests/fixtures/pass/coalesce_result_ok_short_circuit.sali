@@ -1,4 +1,4 @@
-let fallback(mut borrow count: i32): i32 = {
+let fallback(borrow(mut) count: i32): i32 = {
   count = count + 1
   0
 }

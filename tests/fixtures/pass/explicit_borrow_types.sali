@@ -13,7 +13,7 @@ let main(): i32 = {
     let shared: borrow Pair = borrow value
     shared.left
   }
-  let mutable: mut borrow Pair = mut borrow value
+  let mutable: borrow(mut) Pair = borrow(mut) value
   mutable.left = before + 20
   mutable.left + mutable.right + read(cell: Cell(1)) - 1
 }

@@ -1,11 +1,11 @@
 let Number = struct(value: i32)
 
-let first(mut borrow order: i32): Number = {
+let first(borrow(mut) order: i32): Number = {
   order = order * 10 + 1
   Number(20)
 }
 
-let second(mut borrow order: i32): Number = {
+let second(borrow(mut) order: i32): Number = {
   order = order * 10 + 2
   Number(22)
 }

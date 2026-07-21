@@ -8,7 +8,7 @@ let RightView = trait {
 let left('a: region)(borrow('a) pair: Pair): borrow('a) i32 = borrow pair.left
 
 let left_mut('a: region)
-  (mut borrow('a) pair: Pair): mut borrow('a) i32 = mut borrow pair.left
+  (borrow(mut, 'a) pair: Pair): borrow(mut, 'a) i32 = borrow(mut) pair.left
 
 let forward('a: region)(borrow('a) pair: Pair): borrow('a) i32 = left(pair)
 
@@ -28,11 +28,11 @@ extend Pair {
   let right_method('a: region)(borrow('a) self)(): borrow('a) i32 = borrow self.right
 
   let left_mut_method('a: region)
-    (mut borrow('a) self)(): mut borrow('a) i32 = mut borrow self.left
+    (borrow(mut, 'a) self)(): borrow(mut, 'a) i32 = borrow(mut) self.left
 
   let inferred_right(borrow self)(): borrow i32 = borrow self.right
 
-  let inferred_left_mut(mut borrow self)(): mut borrow i32 = mut borrow self.left
+  let inferred_left_mut(borrow(mut) self)(): borrow(mut) i32 = borrow(mut) self.left
 }
 
 extend(T: type) Holder(T) {

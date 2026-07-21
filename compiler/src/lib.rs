@@ -185,4 +185,37 @@ mod tests {
                       }\n";
         compile_source(source).expect("alloc accessors should instantiate mutable access");
     }
+
+    #[test]
+    fn generic_inherent_methods_accept_member_compile_parameters() {
+        let source = "let Cell(T: type) = struct(value: T)\n\
+                      extend(T: type) Cell(T) {\n\
+                        let make(U: type)(move value: T)(marker: U): Cell(T) =\n\
+                          Cell(T)(value)\n\
+                        let view(A: access)(borrow(A) self)(): borrow(A) T =\n\
+                          borrow(A) self.value\n\
+                      }\n\
+                      let main(): i32 = {\n\
+                        let mut cell = Cell.make(i32)(bool)(20)(true)\n\
+                        let before = do {\n\
+                          let reference = cell.view()\n\
+                          reference\n\
+                        }\n\
+                        do {\n\
+                          let reference = cell.view(mut)()\n\
+                          reference = 21\n\
+                        }\n\
+                        do {\n\
+                          let reference: borrow(mut) i32 = cell.view()\n\
+                          reference = 22\n\
+                        }\n\
+                        let after = do {\n\
+                          let reference = cell.view()\n\
+                          reference\n\
+                        }\n\
+                        after - before\n\
+                      }\n";
+        compile_source(source)
+            .expect("generic inherent methods should combine outer and member parameters");
+    }
 }

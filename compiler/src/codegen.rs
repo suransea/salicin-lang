@@ -324,7 +324,7 @@ impl fmt::Display for Ty {
                 mutable,
                 region,
             } => {
-                let qualifier = if *mutable { "mut borrow" } else { "borrow" };
+                let qualifier = if *mutable { "borrow(mut)" } else { "borrow" };
                 if let Some(region) = region {
                     write!(f, "{qualifier}('{region}) {pointee}")
                 } else {
@@ -1374,7 +1374,6 @@ impl Analyzer {
             "raw_take".to_owned(),
             "raw_offset".to_owned(),
             "raw_borrow".to_owned(),
-            "raw_mut_borrow".to_owned(),
             "raw_trap".to_owned(),
             "forget".to_owned(),
             "size_of".to_owned(),
@@ -1924,7 +1923,7 @@ impl Analyzer {
             && !drop_trait_has_required_shape(&definition)
         {
             self.error(
-                "`Drop` language trait must have shape `let Drop = trait { let drop(mut borrow self)(): () }`",
+                "`Drop` language trait must have shape `let Drop = trait { let drop(borrow(mut) self)(): () }`",
             );
             valid = false;
         }
@@ -2955,12 +2954,7 @@ impl Analyzer {
         for member in extension.members {
             match member {
                 ExtendMember::Function(mut function) => {
-                    if !function.compile_groups.is_empty() {
-                        self.error(
-                            "generic extend functions are not supported in the first generic slice",
-                        );
-                        continue;
-                    }
+                    let generic_member = !function.compile_groups.is_empty();
                     let short_name = function.name.clone();
                     let is_method = function
                         .groups
@@ -3021,30 +3015,37 @@ impl Analyzer {
                         associated_function_name(&target, &short_name)
                     };
                     function.name = canonical.clone();
-                    let groups = function
-                        .groups
-                        .iter()
-                        .map(|group| {
-                            group
-                                .iter()
-                                .map(|parameter| ParamSig {
-                                    name: parameter.name.clone(),
-                                    ty: self.lower_source_type(&parameter.ty),
-                                    mode: parameter.mode,
-                                })
-                                .collect()
-                        })
-                        .collect();
-                    let result = function
-                        .return_type
-                        .as_ref()
-                        .map(|result| self.lower_source_type(result));
-                    self.signatures
-                        .insert(canonical.clone(), FunctionSig { groups, result });
-                    self.function_order.push(canonical.clone());
-                    self.functions.insert(canonical.clone(), function);
-                    self.function_origins
-                        .insert(canonical.clone(), origin.clone());
+                    if generic_member {
+                        self.function_template_order.push(canonical.clone());
+                        self.function_templates.insert(canonical.clone(), function);
+                        self.function_template_origins
+                            .insert(canonical.clone(), origin.clone());
+                    } else {
+                        let groups = function
+                            .groups
+                            .iter()
+                            .map(|group| {
+                                group
+                                    .iter()
+                                    .map(|parameter| ParamSig {
+                                        name: parameter.name.clone(),
+                                        ty: self.lower_source_type(&parameter.ty),
+                                        mode: parameter.mode,
+                                    })
+                                    .collect()
+                            })
+                            .collect();
+                        let result = function
+                            .return_type
+                            .as_ref()
+                            .map(|result| self.lower_source_type(result));
+                        self.signatures
+                            .insert(canonical.clone(), FunctionSig { groups, result });
+                        self.function_order.push(canonical.clone());
+                        self.functions.insert(canonical.clone(), function);
+                        self.function_origins
+                            .insert(canonical.clone(), origin.clone());
+                    }
                     self.function_accesses
                         .insert(canonical.clone(), member_access.clone());
                     let members = self.inherent_members.entry(target.clone()).or_default();
@@ -3769,10 +3770,20 @@ impl Analyzer {
                 self.error("generic inherent associated constants are not supported yet");
                 return;
             };
-            if !function.compile_groups.is_empty() {
-                self.error(
-                    "generic members inside a generic inherent extend are not supported yet",
-                );
+            let outer_names = parameters
+                .iter()
+                .map(|parameter| parameter.name.as_str())
+                .collect::<HashSet<_>>();
+            if let Some(parameter) = function
+                .compile_groups
+                .iter()
+                .flatten()
+                .find(|parameter| outer_names.contains(parameter.name.as_str()))
+            {
+                self.error(format!(
+                    "generic inherent member `{target_template}.{}` redeclares outer compile-time parameter `{}`",
+                    function.name, parameter.name
+                ));
                 return;
             }
             let is_method = function
@@ -3841,8 +3852,12 @@ impl Analyzer {
             let canonical = generic_inherent_function_name(target_template, &function.name);
             let mut generic = function.clone();
             generic.name = canonical.clone();
-            generic.compile_groups = extension.compile_groups.clone();
-            generic.where_predicates = extension.where_predicates.clone();
+            let mut compile_groups = extension.compile_groups.clone();
+            compile_groups.extend(generic.compile_groups.clone());
+            generic.compile_groups = compile_groups;
+            let mut where_predicates = extension.where_predicates.clone();
+            where_predicates.extend(generic.where_predicates.clone());
+            generic.where_predicates = where_predicates;
             let mut self_substitution = HashMap::new();
             self_substitution.insert("Self".to_owned(), extension.target.clone());
             substitute_function_types(&mut generic, &self_substitution);
@@ -5376,7 +5391,7 @@ impl Analyzer {
                 mutable,
                 region,
             } => {
-                let mode = if *mutable { "mut borrow" } else { "borrow" };
+                let mode = if *mutable { "borrow(mut)" } else { "borrow" };
                 let region = region
                     .as_ref()
                     .map_or_else(String::new, |region| format!("('{region})"));
@@ -5829,6 +5844,9 @@ impl Analyzer {
                     Ty::Enum(name) => (NominalKind::Enum, name),
                     _ => return Err(mismatch()),
                 };
+                if arguments.is_empty() && name == actual_name {
+                    return Ok(false);
+                }
                 if let Some(instance) = self.nominal_instances.get(actual_name) {
                     if instance.key.kind != actual_kind
                         || instance.key.template != *name
@@ -5868,8 +5886,6 @@ impl Analyzer {
                         )?;
                     }
                     Ok(changed)
-                } else if arguments.is_empty() && name == actual_name {
-                    Ok(false)
                 } else {
                     Err(mismatch())
                 }
@@ -7799,6 +7815,50 @@ impl Analyzer {
                         unit_is_type,
                     )
                 })
+    }
+
+    fn explicit_compile_group_prefix(
+        &self,
+        compile_groups: &[Vec<CompileParam>],
+        groups: &[&[CallArg]],
+        context: &LowerCtx,
+    ) -> usize {
+        let mut compile_index = 0;
+        let mut source_index = 0;
+        while compile_index < compile_groups.len() && source_index < groups.len() {
+            let arguments = groups[source_index];
+            let labeled = arguments
+                .first()
+                .is_some_and(|argument| argument.label.is_some());
+            let target = if labeled {
+                (compile_index..compile_groups.len()).find(|index| {
+                    arguments.iter().all(|argument| {
+                        argument.label.as_ref().is_some_and(|label| {
+                            compile_groups[*index]
+                                .iter()
+                                .any(|parameter| parameter.name == *label)
+                        })
+                    })
+                })
+            } else if !arguments.is_empty()
+                && self.group_is_explicit_compile_application(
+                    &compile_groups[compile_index],
+                    arguments,
+                    context,
+                    false,
+                )
+            {
+                Some(compile_index)
+            } else {
+                None
+            };
+            let Some(target) = target else {
+                break;
+            };
+            compile_index = target + 1;
+            source_index += 1;
+        }
+        source_index
     }
 
     fn expression_is_explicit_compile_argument(
@@ -12403,7 +12463,7 @@ impl Analyzer {
             if name == "raw_offset" {
                 return self.lower_raw_offset(&groups, context);
             }
-            if matches!(name.as_str(), "raw_borrow" | "raw_mut_borrow") {
+            if name == "raw_borrow" {
                 return self.lower_raw_borrow(name, &groups, expected, context);
             }
             if name == "raw_trap" {
@@ -12969,8 +13029,8 @@ impl Analyzer {
             return error_expr();
         }
         let (required_mutable, runtime) = match groups {
-            [runtime] => (name == "raw_mut_borrow", *runtime),
-            [access, runtime] if name == "raw_borrow" => {
+            [runtime] => (false, *runtime),
+            [access, runtime] => {
                 let [argument] = *access else {
                     self.error("`raw_borrow` access group expects exactly one argument");
                     return error_expr();
@@ -13156,7 +13216,7 @@ impl Analyzer {
             self.error(format!(
                 "`{name}` requires `{}` borrowing",
                 if required_mutable {
-                    "mut borrow"
+                    "borrow(mut)"
                 } else {
                     "borrow"
                 }
@@ -13974,7 +14034,7 @@ impl Analyzer {
             .get(&target)
             .and_then(|members| members.methods.get(member))
             .cloned();
-        let canonical = if let Some(canonical) = inherent {
+        let mut canonical = if let Some(canonical) = inherent {
             canonical
         } else {
             let candidates =
@@ -14039,6 +14099,31 @@ impl Analyzer {
             }
         };
 
+        let mut runtime_groups = groups;
+        if let Some(template) = self.function_templates.get(&canonical).cloned() {
+            let compile_prefix =
+                self.explicit_compile_group_prefix(&template.compile_groups, groups, context);
+            let receiver_group = [CallArg {
+                label: None,
+                value: receiver.clone(),
+            }];
+            let mut full_groups = Vec::with_capacity(groups.len() + 1);
+            full_groups.extend_from_slice(&groups[..compile_prefix]);
+            full_groups.push(receiver_group.as_slice());
+            full_groups.extend_from_slice(&groups[compile_prefix..]);
+            let Some((instance, runtime_start)) = self.resolve_inferred_generic_function_instance(
+                &canonical,
+                &full_groups,
+                expected,
+                context,
+            ) else {
+                return error_expr();
+            };
+            debug_assert_eq!(runtime_start, compile_prefix);
+            canonical = instance;
+            runtime_groups = &groups[compile_prefix..];
+        }
+
         let function_ty = self.function_type(&canonical);
         let Ty::Function(function_ty) = function_ty else {
             return error_expr();
@@ -14051,12 +14136,12 @@ impl Analyzer {
             ));
             return error_expr();
         };
-        let consumed_groups = groups.len() + 1;
+        let consumed_groups = runtime_groups.len() + 1;
         if consumed_groups > signature.groups.len() {
             self.error(format!(
                 "too many parameter groups in method call `{target}.{member}`: expected {}, found {}",
                 signature.groups.len() - 1,
-                groups.len()
+                runtime_groups.len()
             ));
             return error_expr();
         }
@@ -14126,7 +14211,7 @@ impl Analyzer {
             }
         };
         let mut arguments = vec![receiver_argument];
-        for (relative_group, arguments_ast) in groups.iter().enumerate() {
+        for (relative_group, arguments_ast) in runtime_groups.iter().enumerate() {
             let group_index = relative_group + 1;
             let params = &signature.groups[group_index];
             let parameter_names = params
@@ -14574,6 +14659,7 @@ impl Analyzer {
                             );
                         }
                     }
+                    None if context.reference_value_depth > 0 => {}
                     None => self.error(
                         "cannot return a call result borrowing a local value; its source must be a region-bound borrow parameter",
                     ),
@@ -22216,7 +22302,7 @@ mod tests {
         assert!(analyzer.function_templates.contains_key("box_into_inner"));
         assert!(analyzer.function_templates.contains_key("box_replace"));
         assert!(analyzer.function_templates.contains_key("box_as_ref"));
-        assert!(analyzer.function_templates.contains_key("box_as_mut"));
+        assert!(!analyzer.function_templates.contains_key("box_as_mut"));
         assert!(matches!(
             analyzer.function_templates["box_as_ref"]
                 .compile_groups
@@ -22230,7 +22316,7 @@ mod tests {
             .function_templates
             .contains_key("vec_with_capacity"));
         assert!(analyzer.function_templates.contains_key("vec_at"));
-        assert!(analyzer.function_templates.contains_key("vec_at_mut"));
+        assert!(!analyzer.function_templates.contains_key("vec_at_mut"));
         assert!(matches!(
             analyzer.function_templates["vec_at"].compile_groups.as_slice(),
             [group] if matches!(group.as_slice(), [access, ty]
@@ -22327,11 +22413,11 @@ let choose(flag: bool): i32 = if flag { 42 } else { stop() }
     fn coalesce_lowers_option_and_result_through_lazy_match_control_flow() {
         let ir = compile_text(
             r#"
-let make(mut borrow count: i32): Option(i32) = {
+let make(borrow(mut) count: i32): Option(i32) = {
   count = count + 1
   Option(i32).Some(20)
 }
-let fallback(mut borrow count: i32): i32 = {
+let fallback(borrow(mut) count: i32): i32 = {
   count = count + 10
   22
 }
@@ -23447,7 +23533,7 @@ let main(): i32 = {
             r#"
 let Resource = struct(value: i32)
 extend Resource: Drop {
-  let drop(mut borrow self)(): () = { self.value = 0 }
+  let drop(borrow(mut) self)(): () = { self.value = 0 }
 }
 let Cell(T: type) = struct(value: T)
 extend(T: type) Cell(T): Copy
@@ -23466,7 +23552,7 @@ let main(): i32 = {
             r#"
 let Resource = struct(value: i32)
 extend Resource: Drop {
-  let drop(mut borrow self)(): () = { self.value = 0 }
+  let drop(borrow(mut) self)(): () = { self.value = 0 }
 }
 let Cell(T: type) = struct(value: T)
 extend(T: type) Cell(T): Copy {}
@@ -23484,7 +23570,7 @@ let Cell(T: type) = struct(value: T)
 extend(T: type) Cell(T): Copy
 where T: Copy {}
 extend(T: type) Cell(T): Drop {
-  let drop(mut borrow self)(): () = ()
+  let drop(borrow(mut) self)(): () = ()
 }
 let main(): i32 = {
   let cell = Cell(42)
@@ -23519,7 +23605,7 @@ let main(): i32 = 42
             r#"
 pub let Cell(T: type) = struct(value: T)
 extend(T: type) Cell(T): Drop {
-  let drop(mut borrow self)(): () = ()
+  let drop(borrow(mut) self)(): () = ()
 }
 let main(): i32 = 42
 "#,
@@ -23716,7 +23802,7 @@ let main(): i32 = {
 let Resource = struct(value: i32)
 extend Resource: Copy {}
 extend Resource: Drop {
-  let drop(mut borrow self)(): () = ()
+  let drop(borrow(mut) self)(): () = ()
 }
 let main(): i32 = 0
 "#,
@@ -23730,7 +23816,7 @@ let main(): i32 = 0
             r#"
 pub let Resource = struct(value: i32)
 extend Resource: Drop {
-  let drop(mut borrow self)(): () = ()
+  let drop(borrow(mut) self)(): () = ()
 }
 let main(): i32 = 0
 "#,
@@ -23749,7 +23835,7 @@ let main(): i32 = 0
             r#"
 let Resource = struct(value: i32)
 extend Resource: Drop {
-  let drop(mut borrow self)(): () = ()
+  let drop(borrow(mut) self)(): () = ()
 }
 let main(): i32 = {
   let mut value = Resource(0)
@@ -23820,7 +23906,7 @@ let Resource = struct(value: i32)
 let Wrapper = struct(resource: Resource, plain: i32)
 let Choice = enum { Some(Wrapper), None }
 extend Resource: Drop {
-  let drop(mut borrow self)(): () = { self.value = 0 }
+  let drop(borrow(mut) self)(): () = { self.value = 0 }
 }
 let main(): i32 = {
   let value = Choice.Some(Wrapper(Resource(42), 1))
@@ -23865,7 +23951,7 @@ let main(): i32 = {
 let Resource = struct(value: i32)
 let Wrapper = struct(resource: Resource, plain: i32)
 extend Resource: Drop {
-  let drop(mut borrow self)(): () = ()
+  let drop(borrow(mut) self)(): () = ()
 }
 let main(): i32 = {
   let wrapper = Wrapper(Resource(1), 0)
@@ -23880,7 +23966,7 @@ let main(): i32 = {
             r#"
 let Resource = struct(value: i32)
 extend Resource: Drop {
-  let drop(mut borrow self)(): () = ()
+  let drop(borrow(mut) self)(): () = ()
 }
 let consume_i32(move value: i32): () = ()
 let main(): i32 = {
@@ -23900,7 +23986,7 @@ let main(): i32 = {
 let Resource = struct(value: i32)
 let Choice = enum { Some(Resource), None }
 extend Resource: Drop {
-  let drop(mut borrow self)(): () = ()
+  let drop(borrow(mut) self)(): () = ()
 }
 let main(): i32 = Choice.Some(Resource(1)) match {
   Some(resource) => 1,
@@ -23915,10 +24001,10 @@ let main(): i32 = Choice.Some(Resource(1)) match {
 let Resource = struct(value: i32)
 let Choice = enum { Some(Resource), None }
 extend Resource: Drop {
-  let drop(mut borrow self)(): () = ()
+  let drop(borrow(mut) self)(): () = ()
 }
 extend Choice: Drop {
-  let drop(mut borrow self)(): () = ()
+  let drop(borrow(mut) self)(): () = ()
 }
 let main(): i32 = Choice.Some(Resource(1)) match {
   Some(resource) => 1,
@@ -23935,7 +24021,7 @@ let main(): i32 = Choice.Some(Resource(1)) match {
             r#"
 let Choice = enum { Some(i32), None }
 extend Choice: Drop {
-  let drop(mut borrow self)(): () = ()
+  let drop(borrow(mut) self)(): () = ()
 }
 let main(): i32 = Choice.Some(1) match {
   whole if true => 1,
@@ -23950,7 +24036,7 @@ let main(): i32 = Choice.Some(1) match {
 let Resource = struct(value: i32)
 let Choice = enum { Some(Resource), None }
 extend Resource: Drop {
-  let drop(mut borrow self)(): () = ()
+  let drop(borrow(mut) self)(): () = ()
 }
 let main(): i32 = Choice.Some(Resource(1)) match {
   Some(resource) if false => 1,
@@ -23967,10 +24053,10 @@ let Resource = struct(value: i32)
 let Wrapper = struct(resource: Resource)
 let Choice = enum { Some(Wrapper), None }
 extend Resource: Drop {
-  let drop(mut borrow self)(): () = ()
+  let drop(borrow(mut) self)(): () = ()
 }
 extend Wrapper: Drop {
-  let drop(mut borrow self)(): () = ()
+  let drop(borrow(mut) self)(): () = ()
 }
 let main(): i32 = Choice.Some(Wrapper(Resource(1))) match {
   Some(Wrapper(resource)) => 1,
@@ -24765,7 +24851,7 @@ let main(): i32 = {
             r#"
 let Resource = struct(value: i32)
 extend Resource: Drop {
-  let drop(mut borrow self)(): () = ()
+  let drop(borrow(mut) self)(): () = ()
 }
 let finish(move resource: Resource)(value: i32): i32 = value
 let main(): i32 = {
@@ -24843,7 +24929,7 @@ let main(): i32 = {
 let Counter = struct(value: i32)
 extend Counter {
   let read(borrow self)(): i32 = self.value
-  let reset(mut borrow self)(): () = { self.value = 0 }
+  let reset(borrow(mut) self)(): () = { self.value = 0 }
   let take(move self)(): i32 = self.value
   let answer = 1
 }
@@ -25533,7 +25619,7 @@ let main(): i32 = {
             r#"
 let Payload = struct(value: i32)
 extend Payload: Drop {
-  let drop(mut borrow self)(): () = ()
+  let drop(borrow(mut) self)(): () = ()
 }
 let Holder = struct(values: Array(Payload, 1))
 let main(): i32 = 42
@@ -25769,7 +25855,7 @@ let main(): i32 = 0
             (
                 r#"
 let Payload = struct(value: i32)
-extend Payload { let reset(mut borrow self)(): i32 = self.value }
+extend Payload { let reset(borrow(mut) self)(): i32 = self.value }
 let read(value: Option(Payload)): Option(i32) = value?.reset()
 let main(): i32 = 0
 "#,
@@ -26095,7 +26181,7 @@ let get(): Payload = payload
             r#"
 let Payload = struct(value: i32)
 let Pair = struct(left: Payload)
-let replace(mut borrow target: Pair, move replacement: Payload): () = {
+let replace(borrow(mut) target: Pair, move replacement: Payload): () = {
   target.left = replacement
 }
 "#,
@@ -26186,7 +26272,7 @@ let Resource = struct(value: i32)
 let Bundle = struct(left: Resource, right: Resource)
 let Choice = enum { Some(Bundle), None }
 extend Resource: Drop {
-  let drop(mut borrow self)(): () = ()
+  let drop(borrow(mut) self)(): () = ()
 }
 let consume(move value: Resource): () = ()
 let inspect(move choice: Choice): i32 = choice match {
@@ -26972,7 +27058,7 @@ let run(): i32 = {
             r#"
 let Resource = struct(value: i32)
 extend Resource: Drop {
-  let drop(mut borrow self)(): () = ()
+  let drop(borrow(mut) self)(): () = ()
 }
 let consume(move value: Resource): () = ()
 let run(): () = {
@@ -26993,7 +27079,7 @@ let run(): () = {
             r#"
 let Resource = struct(value: i32)
 extend Resource: Drop {
-  let drop(mut borrow self)(): () = ()
+  let drop(borrow(mut) self)(): () = ()
 }
 let finish(move resource: Resource)(value: i32): i32 = value
 let main(): i32 = {
@@ -27467,7 +27553,7 @@ let classify(flag: bool): i32 = {
             r#"
 let Boxed = struct(value: i32)
 extend Boxed: Drop {
-  let drop(mut borrow self)(): () = ()
+  let drop(borrow(mut) self)(): () = ()
 }
 let consume(move value: Boxed): () = ()
 let finish(flag: bool): () = {

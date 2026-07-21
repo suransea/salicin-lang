@@ -1,9 +1,9 @@
-let make(mut borrow count: i32): Option(i32) = {
+let make(borrow(mut) count: i32): Option(i32) = {
   count = count + 1
   Option(i32).Some(42)
 }
 
-let read(mut borrow count: i32): Option(i32) = make(count).try
+let read(borrow(mut) count: i32): Option(i32) = make(count).try
 
 let main(): i32 = {
   let mut count = 0

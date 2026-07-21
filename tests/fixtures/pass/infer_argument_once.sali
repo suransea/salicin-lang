@@ -1,6 +1,6 @@
 let identity(T: type)(move value: T): T = value
 
-let tick(mut borrow count: i32): i32 = {
+let tick(borrow(mut) count: i32): i32 = {
   count = count + 1
   42
 }

@@ -17,7 +17,7 @@ where T: Copy = unsafe do {
   *boxed.pointer
 }
 
-pub let box_write(T: type)(mut borrow boxed: Box(T))(copy value: T): ()
+pub let box_write(T: type)(borrow(mut) boxed: Box(T))(copy value: T): ()
 where T: Copy = unsafe do {
   *boxed.pointer = value
 }
@@ -34,7 +34,7 @@ pub let box_into_inner(T: type)(move boxed: Box(T)): T = {
   value
 }
 
-pub let box_replace(T: type)(mut borrow boxed: Box(T))(move value: T): T = {
+pub let box_replace(T: type)(borrow(mut) boxed: Box(T))(move value: T): T = {
   let pointer = boxed.pointer
   let previous = unsafe do {
     raw_take(pointer)
@@ -50,26 +50,18 @@ pub let box_as_ref(A: access, 'a: region, T: type)
   raw_borrow(A)(boxed.pointer, borrow(A) boxed)
 }
 
-pub let box_as_mut('a: region, T: type)
-  (mut borrow('a) boxed: Box(T)): mut borrow('a) T = {
-  box_as_ref(A: mut, T: T)(boxed)
-}
-
 extend(T: type) Box(T) {
   let new(move value: T): Box(T) = box_new(value)
   let as_mut_ptr(borrow self)(): MutPtr(T) = box_ptr(self)
-  let as_ref(borrow self)(): borrow T = unsafe do {
-    raw_borrow(self.pointer, borrow self)
-  }
-  let as_mut(mut borrow self)(): mut borrow T = unsafe do {
-    raw_mut_borrow(self.pointer, mut borrow self)
+  let as_ref(A: access)(borrow(A) self)(): borrow(A) T = unsafe do {
+    raw_borrow(A)(self.pointer, borrow(A) self)
   }
   let into_inner(move self)(): T = box_into_inner(self)
-  let replace(mut borrow self)(move value: T): T = box_replace(self)(value)
+  let replace(borrow(mut) self)(move value: T): T = box_replace(self)(value)
 }
 
 extend(T: type) Box(T)
 where T: Copy {
   let read(borrow self)(): T = box_read(self)
-  let write(mut borrow self)(copy value: T): () = box_write(self)(value)
+  let write(borrow(mut) self)(copy value: T): () = box_write(self)(value)
 }

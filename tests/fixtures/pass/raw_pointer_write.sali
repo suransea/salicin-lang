@@ -1,7 +1,7 @@
 let main(): i32 = {
   let mut value = 40
   do {
-    let pointer = MutPtr(mut borrow value)
+    let pointer = MutPtr(borrow(mut) value)
     unsafe do {
       *pointer = *pointer + 2
     }

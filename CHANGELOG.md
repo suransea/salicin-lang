@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.70.0 - 2026-07-21
+
+- Enabled generic methods and associated functions inside generic inherent extensions, combining
+  outer nominal parameters with member-owned `type`, `access`, and region groups.
+- Added access inference for generic method receivers and expected reference types, including
+  `value.view()` for shared access and `value.view(mut)()` for exclusive access.
+- Replaced the source spelling `mut borrow` with the single compositional form `borrow(mut)` across
+  parameters, types, expressions, receivers, traits, core, alloc, and diagnostics.
+- Removed the pre-1.0 compatibility APIs `box_as_mut`, `vec_at_mut`, `Box.as_mut`, `Vec.at_mut`, and
+  `raw_mut_borrow`; their access-generic counterparts are now the only APIs.
+- Reclassified generic-extension member coverage from a rejected fixture to native execution and
+  retained deterministic diagnostics for member parameters that shadow outer parameters.
+
 ## 0.69.0 - 2026-07-21
 
 - Added the compile-time `access` kind with `shared` and `mut` values, default-shared inference,

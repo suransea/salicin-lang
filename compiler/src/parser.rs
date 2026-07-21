@@ -613,8 +613,10 @@ impl Parser {
                     region,
                 )
             } else if self.take(&TokenKind::Mut) {
-                self.expect(&TokenKind::Borrow, "`borrow` after `mut`")?;
-                (PassMode::MutBorrow, None, self.optional_region()?)
+                return Err(self.error_at(
+                    self.previous(),
+                    "`mut borrow` has been removed; use `borrow(mut)`",
+                ));
             } else {
                 (PassMode::Inferred, None, None)
             };
@@ -1002,8 +1004,10 @@ impl Parser {
             let (mutable, access, region) = self.optional_borrow_arguments()?;
             Some((mutable, access, region))
         } else if self.take(&TokenKind::Mut) {
-            self.expect(&TokenKind::Borrow, "`borrow` after `mut` in a borrow type")?;
-            Some((true, None, self.optional_region()?))
+            return Err(self.error_at(
+                self.previous(),
+                "`mut borrow` has been removed; use `borrow(mut)`",
+            ));
         } else {
             None
         };
@@ -1395,8 +1399,8 @@ impl Parser {
             self.borrow_expression(mutable, access, &borrow, allow_trailing_closure)
         } else if self.take(&TokenKind::Mut) {
             let mutable = self.previous().clone();
-            if self.take(&TokenKind::Borrow) {
-                self.borrow_expression(true, None, &mutable, allow_trailing_closure)
+            if self.at(&TokenKind::Borrow) {
+                Err(self.error_at(&mutable, "`mut borrow` has been removed; use `borrow(mut)`"))
             } else {
                 Ok(Expr::Name("mut".to_owned()))
             }
@@ -2925,7 +2929,7 @@ mod tests {
     #[test]
     fn parses_unsafe_raw_pointer_dereference_and_assignment() {
         let program = parse(
-            "let main(): i32 = {\n  let mut value = 41\n  let pointer = MutPtr(mut borrow value)\n  unsafe do {\n    *pointer = *pointer + 1\n  }\n  value\n}\n",
+            "let main(): i32 = {\n  let mut value = 41\n  let pointer = MutPtr(borrow(mut) value)\n  unsafe do {\n    *pointer = *pointer + 1\n  }\n  value\n}\n",
         )
         .unwrap();
         let Item::Function(function) = &program.items[0] else {
@@ -3378,7 +3382,7 @@ mod tests {
         let program = parse(
             "let main(): () = {\n\
                let shared = borrow value.field\n\
-               let exclusive = mut borrow value\n\
+               let exclusive = borrow(mut) value\n\
              }\n",
         )
         .unwrap();
@@ -3497,7 +3501,7 @@ mod tests {
             "let main(): i32 = {\n\
                let value = 42\n\
                let shared: borrow i32 = borrow value\n\
-               let mutable: mut borrow i32 = mut borrow value\n\
+               let mutable: borrow(mut) i32 = borrow(mut) value\n\
                shared\n\
              }\n",
         )
@@ -3533,6 +3537,18 @@ mod tests {
                 pointee: Box::new(Type::I32),
             })
         );
+    }
+
+    #[test]
+    fn rejects_removed_mut_borrow_spelling() {
+        for source in [
+            "let invalid(mut borrow value: i32): i32 = value\n",
+            "let invalid(value: mut borrow i32): i32 = value\n",
+            "let invalid(value: i32): borrow i32 = mut borrow value\n",
+        ] {
+            let error = parse(source).unwrap_err();
+            assert!(error.message.contains("use `borrow(mut)`"));
+        }
     }
 
     #[test]
@@ -3691,7 +3707,7 @@ mod tests {
         let program = parse(
             "let A = struct(value: i32)\n\
              extend A: Foo {\n\
-               let reset(mut borrow self)(): () = {}\n\
+               let reset(borrow(mut) self)(): () = {}\n\
                let answer: i32 = 42\n\
                let make(value: i32): A = A(value)\n\
              }\n",

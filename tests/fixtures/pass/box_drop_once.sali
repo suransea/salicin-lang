@@ -1,7 +1,7 @@
 let Resource = struct(counter: MutPtr(i32))
 
 extend Resource: Drop {
-  let drop(mut borrow self)(): () = unsafe do {
+  let drop(borrow(mut) self)(): () = unsafe do {
     *self.counter = *self.counter + 1
   }
 }
@@ -9,7 +9,7 @@ extend Resource: Drop {
 let main(): i32 = {
   let mut count = 0
   do {
-    let counter = MutPtr(mut borrow count)
+    let counter = MutPtr(borrow(mut) count)
     let first = box_new(Resource(counter))
     let second = first
   }

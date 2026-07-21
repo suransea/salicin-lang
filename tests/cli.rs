@@ -211,12 +211,12 @@ fn raw_pointer_intrinsic_errors_report_their_cause() {
         ),
         ("raw_borrow_safe.sali", "requires an `unsafe do` block"),
         (
-            "raw_mut_borrow_immutable_pointer.sali",
+            "raw_borrow_mut_immutable_pointer.sali",
             "requires a `MutPtr(T)`",
         ),
         ("raw_borrow_anchor_conflict.sali", "borrowed"),
         (
-            "raw_mut_borrow_shared_anchor.sali",
+            "raw_borrow_mut_shared_anchor.sali",
             "requires a mutable borrow anchor",
         ),
     ] {
@@ -341,7 +341,7 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         "vec_insert_out_of_bounds.sali",
         "vec_remove_out_of_bounds.sali",
         "vec_at_out_of_bounds.sali",
-        "vec_at_mut_out_of_bounds.sali",
+        "vec_at_access_mut_out_of_bounds.sali",
         "vec_swap_left_out_of_bounds.sali",
         "vec_swap_right_out_of_bounds.sali",
         "vec_capacity_overflow.sali",
@@ -415,8 +415,10 @@ fn generic_inherent_extensions_infer_and_dispatch_concrete_instances() {
         "generic_enum_inherent_extend.sali",
         "generic_inherent_internal_dispatch.sali",
         "generic_inherent_from_generic_function.sali",
+        "generic_extend_generic_member.sali",
         "box_methods.sali",
         "box_method_context_inference.sali",
+        "access_generic.sali",
     ] {
         let output = salic()
             .arg("run")
@@ -430,6 +432,18 @@ fn generic_inherent_extensions_infer_and_dispatch_concrete_instances() {
             output_text(&output)
         );
     }
+
+    let output = salic()
+        .arg("check")
+        .arg(fixture("fail", "generic_inherent_member_shadow.sali"))
+        .output()
+        .expect("reject a member compile parameter that shadows its extension parameter");
+    assert!(!output.status.success(), "{}", output_text(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("redeclares outer compile-time parameter"),
+        "{}",
+        output_text(&output)
+    );
 }
 
 #[test]
