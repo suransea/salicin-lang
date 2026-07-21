@@ -1,0 +1,29 @@
+let Resource = struct(counter: MutPtr(i32))
+
+extend Resource: Drop {
+  let drop(mut borrow self)(): () = unsafe do {
+    *self.counter = *self.counter + 1
+  }
+}
+
+let make(counter: MutPtr(i32)): Array(Resource, 2) = [Resource(counter), Resource(counter)]
+
+let main(): i32 = {
+  let counter = unsafe do {
+    raw_alloc(i32)(size_of(i32), align_of(i32))
+  }
+  unsafe do {
+    *counter = 0
+  }
+  do {
+    let first = [Resource(counter), Resource(counter)][0]
+    let second = make(counter)[1]
+  }
+  let drops = unsafe do {
+    *counter
+  }
+  unsafe do {
+    raw_dealloc(counter, size_of(i32), align_of(i32))
+  }
+  38 + drops
+}

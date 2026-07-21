@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.49.0 - 2026-07-21
+
+- Allowed a constant index to move a resource element directly out of an array temporary,
+  including array literals and arrays returned from calls.
+- Transferred the selected element from its cleanup constant-index path while dropping every
+  unselected resource element exactly once.
+- Continued to require `Copy` elements for dynamic indexing because a runtime-selected element
+  does not yet have a finite static move-path identity.
+
 ## 0.48.0 - 2026-07-21
 
 - Allowed fixed arrays to contain move-only nominal and resource values instead of requiring every

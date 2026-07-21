@@ -1289,6 +1289,7 @@ fn m1_loops_and_arrays_run_with_expected_result() {
         "array_resource_drop.sali",
         "array_resource_nested_drop.sali",
         "array_resource_overwrite_drop.sali",
+        "array_resource_temporary_index.sali",
         "dynamic_array_index.sali",
         "empty_array_typed.sali",
         "nested_loop_break.sali",
@@ -1319,10 +1320,6 @@ fn m1_array_errors_report_their_cause() {
         ("array_resource_dynamic_index.sali", "requires Copy"),
         ("array_resource_element_use_after_move.sali", "moved"),
         ("array_resource_partial_root_move.sali", "moved"),
-        (
-            "array_resource_temporary_index.sali",
-            "constant-index place",
-        ),
         ("array_dynamic_index_assignment.sali", "compile-time"),
         ("array_index_borrow_conflict.sali", "borrowed"),
     ] {

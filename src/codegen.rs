@@ -551,6 +551,7 @@ enum HirExprKind {
         base: Box<HirExpr>,
         index: HirIndex,
         length: u64,
+        moves: bool,
     },
     Read {
         place: HirPlace,
@@ -8801,9 +8802,10 @@ impl Analyzer {
         let lowered_index = self.lower_expr(index, None, context);
         self.require_same_type(&lowered_index.ty, &Ty::I32, "array index");
 
-        if !self.is_copy_type(&element_ty) {
+        let moves = !self.is_copy_type(&element_ty);
+        if moves && integer_literal_value(index).is_none() {
             self.error(format!(
-                "indexing an array expression requires Copy elements, found `{}`; bind the array and use a constant-index place to move or borrow a resource element",
+                "dynamic indexing requires Copy elements, found `{}`; use a constant index to move a resource element",
                 self.diagnostic_type_name(&element_ty)
             ));
             return error_expr();
@@ -8828,6 +8830,7 @@ impl Analyzer {
                 base: Box::new(base),
                 index,
                 length,
+                moves,
             },
         }
     }
@@ -14706,7 +14709,7 @@ impl<'a> HirCleanupPlanner<'a> {
     fn is_resource_ty(ty: &Ty) -> bool {
         matches!(
             ty,
-            Ty::Array(_, _) | Ty::Struct(_) | Ty::Enum(_) | Ty::Function(_)
+            Ty::Array(_, _) | Ty::Struct(_) | Ty::Enum(_) | Ty::Function(_) | Ty::Callable(_)
         )
     }
 
@@ -14813,10 +14816,12 @@ impl<'a> HirCleanupPlanner<'a> {
                 }
                 current
             }
-            HirExprKind::Index { base, index, .. } => {
+            HirExprKind::Index {
+                base, index, moves, ..
+            } => {
                 let (_, base_destination) = self.prepare_temporary_destination(cursor, &base.ty)?;
                 let Some(cursor) =
-                    self.walk_expr(base, cursor, ResultUse::Store(base_destination))?
+                    self.walk_expr(base, cursor, ResultUse::Store(base_destination.clone()))?
                 else {
                     return Ok(None);
                 };
@@ -14833,10 +14838,27 @@ impl<'a> HirCleanupPlanner<'a> {
                         cursor
                     }
                 };
-                // Index expressions are restricted to Copy elements. Both
-                // constant and dynamic indexing therefore leave the staged
-                // array initialized; a runtime index is not a finite move path.
-                self.initialize_result(cursor, &result_use)?;
+                if *moves {
+                    let HirIndex::Static(index) = index else {
+                        return Err(self.diagnostic(
+                            "resource array index reached cleanup without a constant path",
+                        ));
+                    };
+                    let source = self.project_destination(
+                        &base_destination,
+                        CleanupProjection::ConstantIndex(*index),
+                    )?;
+                    match &result_use {
+                        ResultUse::Store(destination) => {
+                            self.transfer(cursor, &source, destination, TransferKind::Initialize)?
+                        }
+                        ResultUse::Discard => self.move_out(cursor, source.path)?,
+                    }
+                } else {
+                    // Copy indexing leaves the staged array initialized; a
+                    // runtime index is not a finite move path.
+                    self.initialize_result(cursor, &result_use)?;
+                }
                 Some(cursor)
             }
             HirExprKind::Read { place, kind } => {
@@ -17121,7 +17143,8 @@ impl<'a> FunctionEmitter<'a> {
                 base,
                 index,
                 length,
-            } => self.emit_index(expression, base, index, *length),
+                moves,
+            } => self.emit_index(expression, base, index, *length, *moves),
             HirExprKind::Read { place, kind } => {
                 if place.projections.is_empty()
                     && matches!(expression.ty, Ty::Callable(_))
@@ -17851,6 +17874,7 @@ impl<'a> FunctionEmitter<'a> {
         base: &HirExpr,
         index: &HirIndex,
         length: u64,
+        moves: bool,
     ) -> Result<Operand, Diagnostic> {
         let base = self.emit_expr(base)?;
         if self.terminated {
@@ -17864,6 +17888,35 @@ impl<'a> FunctionEmitter<'a> {
                     "{register} = extractvalue {array_ty} {}, {index}",
                     base.value()?
                 ));
+                if moves && self.program.needs_drop(&expression.ty) {
+                    let cleanup_depth = self.drop_slots.len();
+                    let spill = self.entry_alloca(&array_ty, "resource array index spill");
+                    self.instruction(format!("store {array_ty} {}, ptr {spill}", base.value()?));
+                    self.register_drop_slot(None, base.ty.clone(), spill)?;
+                    let root = self
+                        .drop_slots
+                        .last()
+                        .cloned()
+                        .expect("resource array spill registered a drop slot");
+                    let projection = usize::try_from(*index).map_err(|_| {
+                        Diagnostic::new(format!(
+                            "internal error: array move index {index} does not fit this target"
+                        ))
+                    })?;
+                    let mut updates = Vec::new();
+                    Self::collect_place_flag_updates(
+                        &root,
+                        &[projection],
+                        false,
+                        false,
+                        &mut updates,
+                    );
+                    for (flag, value) in updates {
+                        self.instruction(format!("store i1 {value}, ptr {flag}"));
+                    }
+                    self.emit_cleanup_range(cleanup_depth)?;
+                    self.drop_slots.truncate(cleanup_depth);
+                }
                 Ok(Operand {
                     ty: expression.ty.clone(),
                     value: Some(register),
@@ -24325,6 +24378,24 @@ let take(): Payload = [Payload(1), Payload(2)][1]
                     source.place.local != staged_array.id || source.place.projections.is_empty()
                 }
                 _ => true,
+            })
+        }));
+    }
+
+    #[test]
+    fn cleanup_plan_moves_a_resource_out_of_a_temporary_array() {
+        let plan = cleanup_plan_text(
+            r#"
+let Payload = struct(value: i32)
+let take(): Payload = [Payload(1), Payload(2)][1]
+"#,
+            "take",
+        );
+        assert!(plan.blocks.iter().any(|block| {
+            block.operations.iter().any(|operation| {
+                matches!(operation, CleanupOp::Transfer { source, .. }
+                    if plan.move_paths[source.index()].place.projections
+                        == [CleanupProjection::ConstantIndex(1)])
             })
         }));
     }
