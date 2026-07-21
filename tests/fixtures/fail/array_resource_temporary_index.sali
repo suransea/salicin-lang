@@ -1,0 +1,3 @@
+let Resource = struct(value: i32)
+
+let main(): i32 = [Resource(42)][0].value

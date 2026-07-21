@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.48.0 - 2026-07-21
+
+- Allowed fixed arrays to contain move-only nominal and resource values instead of requiring every
+  element to implement `Copy`.
+- Completed resource-array cleanup by discovering local array drop glue, expanding runtime drop
+  slots per element, and preserving exactly-once drop across element moves, reinitialization, and
+  overwrites.
+- Kept dynamic and temporary-array indexing limited to `Copy` elements; resource elements must be
+  accessed through a bound array and a constant-index place so ownership has a finite identity.
+
 ## 0.47.0 - 2026-07-21
 
 - Promoted fixed-array constant indices to full places, allowing reads, shared and mutable

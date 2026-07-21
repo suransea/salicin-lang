@@ -367,6 +367,7 @@ struct HirProgram {
     functions: Vec<HirFunction>,
     drop_methods: HashMap<Ty, String>,
     box_pointees: HashMap<String, Ty>,
+    array_types: HashSet<Ty>,
 }
 
 impl HirProgram {
@@ -1194,6 +1195,7 @@ struct Analyzer {
     lifted_functions: Vec<HirFunction>,
     next_closure: usize,
     hir_globals: HashMap<String, HirGlobal>,
+    array_types: HashSet<Ty>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -1255,6 +1257,7 @@ impl Analyzer {
             lifted_functions: Vec::new(),
             next_closure: 0,
             hir_globals: HashMap::new(),
+            array_types: HashSet::new(),
             diagnostics: Vec::new(),
         };
         if !program.uses.is_empty() {
@@ -1484,7 +1487,6 @@ impl Analyzer {
         self.activate_generic_copy_extensions();
         self.validate_copy_implementations();
         self.copy_impls_finalized = true;
-        self.validate_deferred_array_elements();
         self.validate_trait_schemas();
         for (extension, origin) in remaining_extensions {
             self.collect_extension(extension, origin);
@@ -1822,48 +1824,6 @@ impl Analyzer {
             Ty::Enum(name) if name == self.lang_item_name(LangItemKind::Never) => true,
             Ty::Struct(_) | Ty::Enum(_) => valid.contains(ty),
             Ty::Function(_) | Ty::Callable(_) => false,
-        }
-    }
-
-    fn validate_deferred_array_elements(&mut self) {
-        let mut diagnostics = Vec::new();
-        for layout in self.struct_layouts.values() {
-            let owner = self.diagnostic_type_name(&Ty::Struct(layout.name.clone()));
-            for field in &layout.fields {
-                self.collect_invalid_array_element(
-                    &field.ty,
-                    &format!("field `{owner}.{}`", field.name),
-                    &mut diagnostics,
-                );
-            }
-        }
-        for layout in self.enum_layouts.values() {
-            let owner = self.diagnostic_type_name(&Ty::Enum(layout.name.clone()));
-            for variant in &layout.variants {
-                for field in &variant.fields {
-                    self.collect_invalid_array_element(
-                        &field.ty,
-                        &format!("field `{owner}.{}.{}`", variant.name, field.name),
-                        &mut diagnostics,
-                    );
-                }
-            }
-        }
-        diagnostics.sort();
-        diagnostics.dedup();
-        for diagnostic in diagnostics {
-            self.error(diagnostic);
-        }
-    }
-
-    fn collect_invalid_array_element(&self, ty: &Ty, context: &str, diagnostics: &mut Vec<String>) {
-        if let Ty::Array(element, _) = ty {
-            if !self.is_copy_type(element) {
-                let element = self.diagnostic_type_name(element);
-                diagnostics.push(format!(
-                    "array element type `{element}` must implement Copy in the first version ({context})"
-                ));
-            }
         }
     }
 
@@ -4569,6 +4529,7 @@ impl Analyzer {
                 })
                 .map(|(name, instance)| (name.clone(), instance.key.arguments[0].clone()))
                 .collect(),
+            array_types: self.array_types.clone(),
         })
     }
 
@@ -4986,14 +4947,10 @@ impl Analyzer {
                 } else if element == Ty::Unit {
                     self.error("array element type `()` is not supported in the first version");
                     Ty::Error
-                } else if self.copy_impls_finalized && !self.is_copy_type(&element) {
-                    let element = self.diagnostic_type_name(&element);
-                    self.error(format!(
-                        "array element type `{element}` must implement Copy in the first version"
-                    ));
-                    Ty::Error
                 } else {
-                    Ty::Array(Box::new(element), *length)
+                    let array = Ty::Array(Box::new(element), *length);
+                    self.array_types.insert(array.clone());
+                    array
                 }
             }
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => Ty::Unit,
@@ -8788,11 +8745,6 @@ impl Analyzer {
         if let Some((element_ty, length)) = expected_array {
             if element_ty == Ty::Unit {
                 self.error("array element type `()` is not supported in the first version");
-            } else if !self.is_copy_type(&element_ty) {
-                let element_ty = self.diagnostic_type_name(&element_ty);
-                self.error(format!(
-                    "array element type `{element_ty}` must implement Copy in the first version"
-                ));
             }
             if elements.len() as u64 != length {
                 self.error(format!(
@@ -8804,8 +8756,10 @@ impl Analyzer {
                 .iter()
                 .map(|element| self.lower_expr(element, Some(&element_ty), context))
                 .collect();
+            let array_ty = Ty::Array(Box::new(element_ty), length);
+            self.array_types.insert(array_ty.clone());
             return HirExpr {
-                ty: Ty::Array(Box::new(element_ty), length),
+                ty: array_ty,
                 kind: HirExprKind::Array(elements),
             };
         }
@@ -8818,19 +8772,16 @@ impl Analyzer {
         let element_ty = first.ty.clone();
         if element_ty == Ty::Unit {
             self.error("array element type `()` is not supported in the first version");
-        } else if !self.is_copy_type(&element_ty) {
-            let element_ty = self.diagnostic_type_name(&element_ty);
-            self.error(format!(
-                "array element type `{element_ty}` must implement Copy in the first version"
-            ));
         }
         let mut lowered = vec![first];
         lowered.extend(
             rest.iter()
                 .map(|element| self.lower_expr(element, Some(&element_ty), context)),
         );
+        let array_ty = Ty::Array(Box::new(element_ty), elements.len() as u64);
+        self.array_types.insert(array_ty.clone());
         HirExpr {
-            ty: Ty::Array(Box::new(element_ty), elements.len() as u64),
+            ty: array_ty,
             kind: HirExprKind::Array(lowered),
         }
     }
@@ -8849,6 +8800,14 @@ impl Analyzer {
         let length = *length;
         let lowered_index = self.lower_expr(index, None, context);
         self.require_same_type(&lowered_index.ty, &Ty::I32, "array index");
+
+        if !self.is_copy_type(&element_ty) {
+            self.error(format!(
+                "indexing an array expression requires Copy elements, found `{}`; bind the array and use a constant-index place to move or borrow a resource element",
+                self.diagnostic_type_name(&element_ty)
+            ));
+            return error_expr();
+        }
 
         let index = match integer_literal_value(index) {
             Some(value) => {
@@ -14874,10 +14833,9 @@ impl<'a> HirCleanupPlanner<'a> {
                         cursor
                     }
                 };
-                // Array elements are required to implement Copy in this
-                // language slice. Both constant and dynamic indexing copy the
-                // selected element and therefore leave the staged array fully
-                // initialized; a runtime index is not a finite move path.
+                // Index expressions are restricted to Copy elements. Both
+                // constant and dynamic indexing therefore leave the staged
+                // array initialized; a runtime index is not a finite move path.
                 self.initialize_result(cursor, &result_use)?;
                 Some(cursor)
             }
@@ -16482,6 +16440,9 @@ impl<'a> Emitter<'a> {
 
     fn drop_glue_types(&self) -> Vec<Ty> {
         let mut types = HashSet::new();
+        for ty in &self.program.array_types {
+            self.collect_drop_glue_type(ty, &mut types);
+        }
         for layout in &self.program.structs {
             let ty = Ty::Struct(layout.name.clone());
             if self.program.needs_drop(&ty) {
@@ -16848,6 +16809,28 @@ impl<'a> FunctionEmitter<'a> {
         self.instruction(format!("store i1 true, ptr {flag}"));
         let mut children = Vec::new();
         if !self.program.drop_methods.contains_key(&ty) {
+            if let Ty::Array(element, length) = &ty {
+                let aggregate_ty = llvm_value_type(&ty)?;
+                for index in 0..*length {
+                    let projection = usize::try_from(index).map_err(|_| {
+                        Diagnostic::new(format!(
+                            "internal error: array drop projection {index} does not fit this target"
+                        ))
+                    })?;
+                    let element_pointer = self.fresh_register();
+                    self.instruction(format!(
+                        "{element_pointer} = getelementptr inbounds {aggregate_ty}, ptr {pointer}, i32 0, i64 {index}"
+                    ));
+                    let mut element_projections = projections.clone();
+                    element_projections.push(projection);
+                    children.push(self.build_drop_slot(
+                        local,
+                        element.as_ref().clone(),
+                        element_pointer,
+                        element_projections,
+                    )?);
+                }
+            }
             if let Ty::Struct(name) = &ty {
                 let fields = self
                     .program
@@ -23350,19 +23333,28 @@ let main(): i32 = {
     }
 
     #[test]
-    fn rejects_non_copy_array_elements_in_uninstantiated_layout_fields() {
-        let errors = compile_text(
+    fn emits_resource_array_drop_glue_for_unconstructed_layout_fields() {
+        let ir = compile_text(
             r#"
 let Payload = struct(value: i32)
+extend Payload: Drop {
+  let drop(mut borrow self)(): () = ()
+}
 let Holder = struct(values: Array(Payload, 1))
 let main(): i32 = 42
 "#,
         )
-        .expect_err("array field layouts must be checked even when no value is constructed");
-        assert!(errors.iter().any(|error| {
-            error.message.contains("array element type `Payload`")
-                && error.message.contains("Holder.values")
-        }));
+        .expect("resource arrays are valid even when their containing layout is not constructed");
+        let payload = Ty::Struct("Payload".to_owned());
+        let array = Ty::Array(Box::new(payload.clone()), 1);
+        assert!(ir.contains(&format!(
+            "define internal void @{}",
+            drop_glue_symbol(&payload)
+        )));
+        assert!(ir.contains(&format!(
+            "define internal void @{}",
+            drop_glue_symbol(&array)
+        )));
     }
 
     #[test]
