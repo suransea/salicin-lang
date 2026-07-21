@@ -26,6 +26,7 @@ use crate::core::{
     operator_trait_has_required_shape, CoreBundle, LangItemKind, LangItems,
 };
 use crate::manifest::Edition;
+use crate::modules::PackageId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
@@ -1203,6 +1204,13 @@ struct TraitSchema {
     method_order: Vec<String>,
     access: AccessBoundary,
     valid: bool,
+}
+
+fn schema_function_has_receiver(function: &Function) -> bool {
+    function
+        .groups
+        .first()
+        .is_some_and(|group| group.len() == 1 && group[0].name == "self")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2807,13 +2815,11 @@ impl Analyzer {
                 valid = false;
                 continue;
             }
-            let is_method = function
-                .groups
-                .first()
-                .is_some_and(|group| group.len() == 1 && group[0].name == "self");
-            if !is_method {
+            if schema_function_has_receiver(&schema.methods[method_name])
+                != schema_function_has_receiver(&function)
+            {
                 self.error(format!(
-                    "trait method `{}.{method_name}` signature mismatch: implementation requires a contextual `self` receiver",
+                    "trait method `{}.{method_name}` signature mismatch: contextual `self` receiver does not match the trait declaration",
                     key.trait_ref.name
                 ));
                 valid = false;
@@ -2880,10 +2886,12 @@ impl Analyzer {
             self.function_type_substitutions
                 .insert(canonical.clone(), substitutions.clone());
             methods.insert(method_name.clone(), canonical);
-            self.trait_methods_by_receiver
-                .entry((target.clone(), method_name))
-                .or_default()
-                .push(key.clone());
+            if schema_function_has_receiver(&schema.methods[&method_name]) {
+                self.trait_methods_by_receiver
+                    .entry((target.clone(), method_name))
+                    .or_default()
+                    .push(key.clone());
+            }
         }
         self.trait_impls.insert(
             key.clone(),
@@ -3459,17 +3467,6 @@ impl Analyzer {
                         ));
                         valid = false;
                     }
-                    if !function
-                        .groups
-                        .first()
-                        .is_some_and(|group| group.len() == 1 && group[0].name == "self")
-                    {
-                        self.error(format!(
-                            "trait method `{trait_name}.{}` signature mismatch: implementation requires a contextual `self` receiver",
-                            function.name
-                        ));
-                        valid = false;
-                    }
                 }
             }
         }
@@ -3546,6 +3543,13 @@ impl Analyzer {
             let mut expected = schema.methods[method_name].clone();
             substitute_function_types(&mut expected, &expected_substitutions);
             let mut actual = actual.clone();
+            if schema_function_has_receiver(&expected) != schema_function_has_receiver(&actual) {
+                self.error(format!(
+                    "trait method `{trait_name}.{method_name}` signature mismatch in generic implementation"
+                ));
+                valid = false;
+                continue;
+            }
             substitute_function_types(&mut actual, &actual_self);
             if !source_function_shapes_match(&expected, &actual) {
                 self.error(format!(
@@ -3565,6 +3569,13 @@ impl Analyzer {
         access: &AccessBoundary,
         origin: &ItemOrigin,
     ) {
+        // Edition-pinned core extensions are validated as part of the core
+        // bundle and again whenever a concrete instance materializes. Keeping
+        // an abstract user-program validation template would let unrelated
+        // user declarations shadow short core enum variants in those bodies.
+        if origin.package == PackageId::CORE.0 {
+            return;
+        }
         let mut self_substitution = HashMap::new();
         self_substitution.insert("Self".to_owned(), extension.target.clone());
         let target_access = self.nominal_access_or_internal(target_template);
@@ -4903,10 +4914,12 @@ impl Analyzer {
                 self.signatures
                     .insert(canonical.clone(), FunctionSig { groups, result });
                 methods.insert(method_name.clone(), canonical);
-                self.trait_methods_by_receiver
-                    .entry((key.self_ty.clone(), method_name.clone()))
-                    .or_default()
-                    .push(key.clone());
+                if schema_function_has_receiver(&schema.methods[method_name]) {
+                    self.trait_methods_by_receiver
+                        .entry((key.self_ty.clone(), method_name.clone()))
+                        .or_default()
+                        .push(key.clone());
+                }
             }
             self.trait_impls.insert(
                 key.clone(),
@@ -6478,6 +6491,33 @@ impl Analyzer {
             .collect()
     }
 
+    fn trait_associated_function_candidates(
+        &self,
+        target: &Ty,
+        member: &str,
+        origin: &ItemOrigin,
+    ) -> Vec<String> {
+        let mut candidates = self
+            .trait_impls
+            .values()
+            .filter_map(|implementation| {
+                if implementation.key.self_ty != *target
+                    || !Self::access_boundary_allows(origin, &implementation.access)
+                {
+                    return None;
+                }
+                let schema = self.traits.get(&implementation.key.trait_ref.name)?;
+                let function = schema.methods.get(member)?;
+                if schema_function_has_receiver(function) {
+                    return None;
+                }
+                implementation.methods.get(member).cloned()
+            })
+            .collect::<Vec<_>>();
+        candidates.sort();
+        candidates
+    }
+
     fn is_drop_impl(&self, key: &TraitImplKey) -> bool {
         key.trait_ref.name == self.lang_item_name(LangItemKind::Drop)
             && key.trait_ref.arguments.is_empty()
@@ -6652,6 +6692,38 @@ impl Analyzer {
         }
     }
 
+    fn builtin_try_info_for_ty(&self, ty: &Ty) -> Option<BuiltinFallibleInfo> {
+        let info = self.builtin_fallible_info_for_ty(ty)?;
+        let implementation =
+            self.trait_implementation(ty, self.lang_item_name(LangItemKind::Try), &[])?;
+        let residual = info.error.clone().unwrap_or(Ty::Unit);
+        (implementation.associated_types.get("Output") == Some(&info.payload)
+            && implementation.associated_types.get("Residual") == Some(&residual))
+        .then_some(info)
+    }
+
+    fn trait_implementation(
+        &self,
+        self_ty: &Ty,
+        trait_name: &str,
+        arguments: &[Ty],
+    ) -> Option<&TraitImplInfo> {
+        self.trait_impls.values().find(|implementation| {
+            implementation.key.self_ty == *self_ty
+                && implementation.key.trait_ref.name == trait_name
+                && implementation.key.trait_ref.arguments == arguments
+        })
+    }
+
+    fn has_conversion_impl(&self, target: &Ty, kind: LangItemKind, source: &Ty) -> bool {
+        self.trait_implementation(
+            target,
+            self.lang_item_name(kind),
+            std::slice::from_ref(source),
+        )
+        .is_some()
+    }
+
     fn builtin_fallible_info_for_probe(&self, probe: &TypeProbe) -> Option<BuiltinFallibleInfo> {
         let ty = match probe {
             TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) => ty,
@@ -6805,7 +6877,7 @@ impl Analyzer {
     }
 
     fn return_boundary_for_ty(&self, ty: &Ty) -> Option<ReturnBoundary> {
-        let info = self.builtin_fallible_info_for_ty(ty)?;
+        let info = self.builtin_try_info_for_ty(ty)?;
         Some(ReturnBoundary {
             kind: info.kind,
             container: ty.clone(),
@@ -11635,13 +11707,21 @@ impl Analyzer {
         if operand.ty == Ty::Error {
             return error_expr();
         }
-        let Some(info) = self.builtin_fallible_info_for_ty(&operand.ty) else {
+        let Some(info) = self.builtin_try_info_for_ty(&operand.ty) else {
             self.error(format!(
-                "postfix `.try` requires an `Option(T)` or `Result(T, E)` operand, found `{}`",
+                "postfix `.try` requires an `Option` or `Result` value implementing `core.control.Try`, found `{}`",
                 operand.ty
             ));
             return error_expr();
         };
+        let residual = info.error.clone().unwrap_or(Ty::Unit);
+        if !self.has_conversion_impl(&boundary.container, LangItemKind::FromResidual, &residual) {
+            self.error(format!(
+                "postfix `.try` cannot convert the residual or error type of `{}` into `{}`",
+                operand.ty, boundary.container
+            ));
+            return error_expr();
+        }
         if info.kind != boundary.kind {
             self.error(format!(
                 "postfix `.try` cannot propagate `{}` through `{}`",
@@ -11731,6 +11811,14 @@ impl Analyzer {
             .error
             .clone()
             .expect("Result return boundary has an error type");
+        if !self.has_conversion_impl(&boundary.container, LangItemKind::FromError, &error_ty) {
+            let _ = self.lower_expr(value, None, context);
+            self.error(format!(
+                "`throw` requires `{}` to implement `core.control.FromError({error_ty})`",
+                boundary.container
+            ));
+            return error_expr();
+        }
         let error = self.lower_expr(value, Some(&error_ty), context);
         if self.is_uninhabited_type(&error.ty) {
             return error;
@@ -12571,27 +12659,33 @@ impl Analyzer {
         }
         if let Expr::Member(base, variant_name) = root {
             if let Some((name, type_groups)) = self.inferred_generic_enum_type_head(base, context) {
-                let Some(canonical) = self.resolve_inferred_generic_enum_instance(
-                    &name,
-                    &type_groups,
-                    variant_name,
-                    &groups,
-                    InferredEnumHints {
-                        payload: None,
-                        result: expected,
-                    },
-                    context,
-                ) else {
-                    return error_expr();
-                };
-                return self.lower_nominal_type_member_call(
-                    &canonical,
-                    NominalKind::Enum,
-                    variant_name,
-                    &groups,
-                    expected,
-                    context,
-                );
+                let is_variant = self.enum_templates[&name]
+                    .variants
+                    .iter()
+                    .any(|variant| variant.name == *variant_name);
+                if is_variant {
+                    let Some(canonical) = self.resolve_inferred_generic_enum_instance(
+                        &name,
+                        &type_groups,
+                        variant_name,
+                        &groups,
+                        InferredEnumHints {
+                            payload: None,
+                            result: expected,
+                        },
+                        context,
+                    ) else {
+                        return error_expr();
+                    };
+                    return self.lower_nominal_type_member_call(
+                        &canonical,
+                        NominalKind::Enum,
+                        variant_name,
+                        &groups,
+                        expected,
+                        context,
+                    );
+                }
             }
             if let Expr::Name(target_template) = base.as_ref() {
                 if !context.shadows_top_level_name(target_template) {
@@ -13315,6 +13409,24 @@ impl Analyzer {
                 .cloned()
             {
                 return self.lower_named_function_call(&canonical, groups, expected, context);
+            }
+            let self_ty = match kind {
+                NominalKind::Struct => Ty::Struct(target.to_owned()),
+                NominalKind::Enum => Ty::Enum(target.to_owned()),
+            };
+            let associated =
+                self.trait_associated_function_candidates(&self_ty, member, &context.origin);
+            match associated.as_slice() {
+                [canonical] => {
+                    return self.lower_named_function_call(canonical, groups, expected, context);
+                }
+                [_, _, ..] => {
+                    self.error(format!(
+                        "ambiguous trait associated function `{target}.{member}`"
+                    ));
+                    return error_expr();
+                }
+                [] => {}
             }
             if self
                 .inherent_members
@@ -25552,6 +25664,55 @@ let main(): i32 = {
             arguments: vec![Ty::I32],
         };
         assert!(ir.contains(&hex_name(&nominal_instance_name(&instance))));
+    }
+
+    #[test]
+    fn trait_associated_functions_dispatch_from_the_implementing_type() {
+        let ir = compile_text(
+            r#"
+let Construct(T: type) = trait {
+  let construct(move value: T): Self
+}
+let Number = struct(value: i32)
+extend Number: Construct(i32) {
+  let construct(move value: i32): Number = Number(value)
+}
+let main(): i32 = Number.construct(42).value
+"#,
+        )
+        .expect("receiver-free trait function must dispatch through its implementing type");
+
+        assert!(ir.contains("ret i32 42") || ir.contains("i32 42"));
+    }
+
+    #[test]
+    fn core_try_constructors_dispatch_through_generic_option_and_result_impls() {
+        let source = r#"
+let main(): i32 = {
+  let option = Option(i32).from_output(40)
+  let result: Result(i32, bool) = Result(i32, bool).from_error(false)
+  (option match { Some(value) => value, None => 0 }) + (result match { Ok(value) => value, Err(_) => 2 })
+}
+"#;
+        let program = crate::parser::parse(source).unwrap();
+        let mut analyzer = Analyzer::new(&program);
+        assert!(analyzer.generic_trait_extensions.contains_key("Option"));
+        let option = analyzer.lower_source_type(&Type::Named("Option".into(), vec![Type::I32]));
+        assert!(analyzer.trait_impls.keys().any(|key| key.self_ty == option));
+        assert!(
+            analyzer
+                .trait_associated_function_candidates(
+                    &option,
+                    "from_output",
+                    &ItemOrigin::default()
+                )
+                .len()
+                == 1
+        );
+        let ir = compile(&program)
+            .expect("core control associated functions must materialize for builtin containers");
+
+        assert!(ir.contains("add i32"));
     }
 
     #[test]

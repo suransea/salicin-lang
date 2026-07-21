@@ -6,6 +6,21 @@ subset.
 
 ## Unreleased
 
+## 0.75.0 - 2026-07-21
+
+- Implemented `Try`, `FromResidual`, and `FromError` for the edition-pinned generic `Option` and
+  `Result` types in ordinary `core.control` Salicin source.
+- Added receiver-free trait implementation functions and static `Type.function(...)` dispatch,
+  including generic blanket implementations, ambiguity checks, receiver-shape validation, and
+  source-shadowing isolation for compiler-owned core templates.
+- Required built-in `.try` propagation boundaries and operands to carry the validated `Try`
+  language-item implementation, and required matching `FromResidual` or `FromError` implementations
+  before `.try` or `throw` may propagate.
+- Prevented generic enum variant inference from intercepting trait associated functions on explicit
+  generic type heads such as `Option(i32).from_output(42)`.
+- Removed the dedicated pre-1.0 `mut borrow` compatibility diagnostic paths; `borrow(mut)` is the
+  sole mutable-borrow grammar and legacy token sequences are ordinary invalid syntax.
+
 ## 0.74.0 - 2026-07-21
 
 - Added the edition-pinned `core.control` module with validated `ControlFlow`, `Try`,

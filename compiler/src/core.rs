@@ -475,6 +475,9 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         .zip(&program.item_visibilities)
         .enumerate()
     {
+        if matches!(item, Item::Extend(_)) {
+            continue;
+        }
         let Some(name) = item_name(item) else {
             diagnostics.push(format!(
                 "unexpected anonymous {} declaration at item {}",
@@ -908,7 +911,7 @@ pub let Rem(Rhs: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), 14);
+        assert_eq!(bundle.program().items.len(), 19);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);

@@ -35,9 +35,9 @@ use core.control.{Try, FromResidual}
 ```
 
 The compiler validates their complete edition-defined declaration shapes before compiling a
-package. Postfix `.try` and `throw` are being migrated to these identities; the current executable
-subset still supplies the built-in `Option` and `Result` behavior described by the language
-specification.
+package. `Option` and `Result` implement these protocols in ordinary generic core extensions.
+Postfix `.try` and `throw` validate those edition identities before using their currently supported
+`Option` and `Result` propagation lowering; custom `Try` lowering is the next implementation stage.
 
 Primitive implementations and the unit spelling `void` remain compiler-defined. A declaration only
 receives language-item behavior when its validated identity comes from this edition's embedded core;

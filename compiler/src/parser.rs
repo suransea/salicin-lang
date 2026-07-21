@@ -647,11 +647,6 @@ impl Parser {
                     access,
                     region,
                 )
-            } else if self.take(&TokenKind::Mut) {
-                return Err(self.error_at(
-                    self.previous(),
-                    "`mut borrow` has been removed; use `borrow(mut)`",
-                ));
             } else {
                 (PassMode::Inferred, None, None)
             };
@@ -1039,11 +1034,6 @@ impl Parser {
         let borrow_qualifier = if self.take(&TokenKind::Borrow) {
             let (mutable, access, region) = self.optional_borrow_arguments()?;
             Some((mutable, access, region))
-        } else if self.take(&TokenKind::Mut) {
-            return Err(self.error_at(
-                self.previous(),
-                "`mut borrow` has been removed; use `borrow(mut)`",
-            ));
         } else {
             None
         };
@@ -1434,12 +1424,7 @@ impl Parser {
             let (mutable, access, _) = self.optional_borrow_arguments()?;
             self.borrow_expression(mutable, access, &borrow, allow_trailing_closure)
         } else if self.take(&TokenKind::Mut) {
-            let mutable = self.previous().clone();
-            if self.at(&TokenKind::Borrow) {
-                Err(self.error_at(&mutable, "`mut borrow` has been removed; use `borrow(mut)`"))
-            } else {
-                Ok(Expr::Name("mut".to_owned()))
-            }
+            Ok(Expr::Name("mut".to_owned()))
         } else {
             self.postfix(allow_trailing_closure)
         }
@@ -3627,14 +3612,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_removed_mut_borrow_spelling() {
+    fn rejects_legacy_mut_borrow_token_sequence() {
         for source in [
             "let invalid(mut borrow value: i32): i32 = value\n",
             "let invalid(value: mut borrow i32): i32 = value\n",
             "let invalid(value: i32): borrow i32 = mut borrow value\n",
         ] {
             let error = parse(source).unwrap_err();
-            assert!(error.message.contains("use `borrow(mut)`"));
+            assert!(!error.message.is_empty());
         }
     }
 
