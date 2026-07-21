@@ -196,12 +196,17 @@ fn raw_allocator_abi_allocates_aligned_storage_and_deallocates_it() {
 }
 
 #[test]
-fn raw_pointer_offset_errors_report_their_cause() {
+fn raw_pointer_intrinsic_errors_report_their_cause() {
     for (name, expected) in [
         ("raw_offset_safe.sali", "requires an `unsafe do` block"),
         (
             "raw_offset_non_pointer.sali",
             "requires `Ptr(T)` or `MutPtr(T)`",
+        ),
+        ("raw_trap_safe.sali", "requires an `unsafe do` block"),
+        (
+            "raw_trap_arguments.sali",
+            "expects one empty runtime argument group",
         ),
     ] {
         let output = salic()
@@ -271,6 +276,52 @@ fn alloc_box_owns_copy_and_resource_payloads() {
         !trapped.status.success(),
         "boxed resource destructor did not run: {}",
         output_text(&trapped)
+    );
+}
+
+#[test]
+fn alloc_vec_grows_and_accesses_copy_elements() {
+    for name in ["vec_copy.sali", "vec_unit.sali"] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run Vec fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+
+    for name in [
+        "vec_read_out_of_bounds.sali",
+        "vec_write_out_of_bounds.sali",
+        "vec_capacity_overflow.sali",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run out-of-bounds Vec fixture");
+        assert!(
+            !output.status.success(),
+            "{name} did not trap: {}",
+            output_text(&output)
+        );
+    }
+
+    let output = salic()
+        .arg("check")
+        .arg(fixture("fail", "vec_resource_element.sali"))
+        .output()
+        .expect("check resource Vec fixture");
+    assert!(!output.status.success(), "resource Vec unexpectedly passed");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("not satisfied"),
+        "{}",
+        output_text(&output)
     );
 }
 
@@ -581,6 +632,47 @@ fn raw_allocator_abi_can_be_replaced_by_strong_link_symbols() {
     let status = Command::new(&executable)
         .status()
         .expect("run replacement allocator fixture");
+    assert_eq!(status.code(), Some(42));
+}
+
+#[test]
+fn vec_drop_releases_its_allocation_through_the_allocator_abi() {
+    let directory = TestDirectory::new();
+    let source = directory.write(
+        "main.sali",
+        "let main(): i32 = {\n  let values: Vec(i32) = Vec(i32).new()\n  values.len()\n  0\n}\n",
+    );
+    let ir = directory.join("main.ll");
+    let executable = directory.join("main");
+    let custom = directory.write(
+        "custom.c",
+        "#include <stdint.h>\n#include <stdlib.h>\n_Alignas(64) static unsigned char storage[64];\nvoid *salicin_alloc(uint64_t size, uint64_t align) { (void)size; (void)align; return storage; }\nvoid salicin_dealloc(void *pointer, uint64_t size, uint64_t align) { (void)pointer; (void)size; (void)align; _Exit(42); }\n",
+    );
+    let emitted = salic()
+        .args(["emit-ir"])
+        .arg(&source)
+        .arg("-o")
+        .arg(&ir)
+        .output()
+        .expect("emit Vec allocator ABI IR");
+    assert!(emitted.status.success(), "{}", output_text(&emitted));
+
+    let runtime = Path::new(env!("CARGO_MANIFEST_DIR")).join("runtime/allocator.c");
+    let linked = Command::new("/usr/bin/clang")
+        .args(["-Wno-override-module", "-x", "ir"])
+        .arg(&ir)
+        .args(["-x", "c", "-std=c11"])
+        .arg(&custom)
+        .arg(&runtime)
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .expect("link Vec replacement allocator");
+    assert!(linked.status.success(), "{}", output_text(&linked));
+
+    let status = Command::new(&executable)
+        .status()
+        .expect("run Vec replacement allocator fixture");
     assert_eq!(status.code(), Some(42));
 }
 

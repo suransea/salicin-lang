@@ -1,0 +1,11 @@
+let Resource = struct(value: i32)
+
+extend Resource: Drop {
+  let drop(mut borrow self)(): () = {}
+}
+
+let main(): i32 = {
+  let values = vec_new(Resource)()
+  vec_len(values)
+  0
+}

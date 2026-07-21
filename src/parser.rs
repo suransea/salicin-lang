@@ -964,6 +964,12 @@ impl Parser {
             let element = self.type_expr()?;
             self.expect(&TokenKind::Comma, "`,` before array length")?;
             let length_token = self.current().clone();
+            if matches!(&length_token.kind, TokenKind::Ident(name) if name == "_") {
+                return Err(self.error_at(
+                    &length_token,
+                    "`_` compile-time argument inference has been removed; provide an explicit array length",
+                ));
+            }
             let TokenKind::Integer(length) = length_token.kind else {
                 return Err(self.error_at(
                     &length_token,
@@ -2649,6 +2655,10 @@ mod tests {
         for source in [
             "let value: Cell(_) = Cell(i32)(20)\n",
             "let value = Cell(_)(20)\n",
+            "let value = Cell(T: _)(20)\n",
+            "let value = Cell(Cell(_))(Cell(i32)(20))\n",
+            "let value = _\n",
+            "let value: Array(i32, _) = []\n",
         ] {
             let error = parse(source).unwrap_err();
             assert!(error.message.contains("`_`"));

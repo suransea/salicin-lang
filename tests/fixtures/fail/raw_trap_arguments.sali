@@ -1,0 +1,3 @@
+let main(): i32 = unsafe do {
+  raw_trap(1)
+}

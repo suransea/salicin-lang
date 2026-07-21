@@ -57,3 +57,118 @@ where T: Copy {
   let read(borrow self)(): T = box_read(self)
   let write(mut borrow self)(copy value: T): () = box_write(self)(value)
 }
+
+pub let Vec(T: type) = struct(
+  pointer: MutPtr(T),
+  length: u64,
+  storage_capacity: u64,
+)
+
+let vec_layout_size(T: type)(capacity: u64): u64 = {
+  let element_size = size_of(T)
+  if element_size != 0 && capacity > 18446744073709551615 / element_size {
+    unsafe do {
+      raw_trap()
+    }
+  }
+  capacity * element_size
+}
+
+let vec_allocate(T: type)(capacity: u64): MutPtr(T) = unsafe do {
+  raw_alloc(T)(vec_layout_size(T: T)(capacity), align_of(T))
+}
+
+let vec_deallocate(T: type)(pointer: MutPtr(T), capacity: u64): () = unsafe do {
+  raw_dealloc(T)(pointer, vec_layout_size(T: T)(capacity), align_of(T))
+}
+
+pub let vec_new(T: type)(): Vec(T)
+where T: Copy = Vec(T)(
+  pointer: vec_allocate(T: T)(0),
+  length: 0,
+  storage_capacity: 0,
+)
+
+pub let vec_with_capacity(T: type)(capacity: u64): Vec(T)
+where T: Copy = Vec(T)(
+  pointer: vec_allocate(T: T)(capacity),
+  length: 0,
+  storage_capacity: capacity,
+)
+
+pub let vec_len(T: type)(borrow values: Vec(T)): u64 = values.length
+
+pub let vec_capacity(T: type)(borrow values: Vec(T)): u64 = values.storage_capacity
+
+pub let vec_push(T: type)(mut borrow values: Vec(T))(copy value: T): ()
+where T: Copy = {
+  if values.length == values.storage_capacity {
+    let new_capacity: u64 = if values.storage_capacity == 0 {
+      1
+    } else {
+      if values.storage_capacity > 9223372036854775807 {
+        unsafe do {
+          raw_trap()
+        }
+      }
+      values.storage_capacity * 2
+    }
+    let new_pointer = vec_allocate(T: T)(new_capacity)
+    let mut index: u64 = 0
+    while index < values.length {
+      let item = unsafe do {
+        *raw_offset(values.pointer, index)
+      }
+      unsafe do {
+        raw_init(raw_offset(new_pointer, index), item)
+      }
+      index = index + 1
+    }
+    vec_deallocate(values.pointer, values.storage_capacity)
+    values.pointer = new_pointer
+    values.storage_capacity = new_capacity
+  }
+  unsafe do {
+    raw_init(raw_offset(values.pointer, values.length), value)
+  }
+  values.length = values.length + 1
+}
+
+pub let vec_read(T: type)(borrow values: Vec(T))(index: u64): T
+where T: Copy = {
+  if index >= values.length {
+    unsafe do {
+      raw_trap()
+    }
+  }
+  unsafe do {
+    *raw_offset(values.pointer, index)
+  }
+}
+
+pub let vec_write(T: type)(mut borrow values: Vec(T))(index: u64)(copy value: T): ()
+where T: Copy = {
+  if index >= values.length {
+    unsafe do {
+      raw_trap()
+    }
+  }
+  unsafe do {
+    *raw_offset(values.pointer, index) = value
+  }
+}
+
+extend(T: type) Vec(T)
+where T: Copy {
+  let new(): Vec(T) = vec_new()
+  let with_capacity(capacity: u64): Vec(T) = vec_with_capacity(capacity)
+  let len(borrow self)(): u64 = vec_len(self)
+  let capacity(borrow self)(): u64 = vec_capacity(self)
+  let push(mut borrow self)(copy value: T): () = vec_push(self)(value)
+  let read(borrow self)(index: u64): T = vec_read(self)(index)
+  let write(mut borrow self)(index: u64)(copy value: T): () = vec_write(self)(index)(value)
+}
+
+extend(T: type) Vec(T): Drop {
+  let drop(mut borrow self)(): () = vec_deallocate(self.pointer, self.storage_capacity)
+}

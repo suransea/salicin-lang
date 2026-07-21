@@ -6,6 +6,20 @@ subset.
 
 ## Unreleased
 
+## 0.61.0 - 2026-07-21
+
+- Clarified that `_` is never a type or compile-time argument inference placeholder, including in
+  named arguments and array lengths; it remains available only in non-inference ignore slots such
+  as wildcard patterns.
+- Added the first source-defined `Vec(T)` for `T: Copy`, with `new`, `with_capacity`, `len`,
+  `capacity`, `push`, checked `read`/`write`, geometric growth, and allocation-owning `Drop`.
+- Checked capacity doubling and `capacity * size_of(T)` before allocation, including zero-sized
+  elements, and added the unsafe diverging `raw_trap()` intrinsic used to close safe wrapper paths.
+- Recognized unit as an explicit expression-level type argument and kept abstract generic type
+  markers valid in named compile-time arguments during generic-body validation.
+- Added native coverage for growth, preallocation, zero-sized elements, bounds and layout traps,
+  rejected resource elements, and deallocation through an overridden allocator ABI.
+
 ## 0.60.0 - 2026-07-21
 
 - Added the unsafe `raw_offset(pointer, index)` intrinsic for both `Ptr(T)` and `MutPtr(T)`, with a

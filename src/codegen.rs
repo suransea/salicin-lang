@@ -648,6 +648,7 @@ enum HirExprKind {
     },
     RawTake(Box<HirExpr>),
     Forget(Box<HirExpr>),
+    RawTrap,
     RawAlloc {
         size: Box<HirExpr>,
         align: Box<HirExpr>,
@@ -1361,6 +1362,7 @@ impl Analyzer {
             "raw_init".to_owned(),
             "raw_take".to_owned(),
             "raw_offset".to_owned(),
+            "raw_trap".to_owned(),
             "forget".to_owned(),
             "size_of".to_owned(),
             "align_of".to_owned(),
@@ -5460,7 +5462,9 @@ impl Analyzer {
             }
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => Some(Ty::Unit),
             Type::Named(name, arguments)
-                if arguments.is_empty() && self.abstract_type_parameters.contains_key(name) =>
+                if arguments.is_empty()
+                    && (self.abstract_type_parameters.contains_key(name)
+                        || name.starts_with("$generic$param$")) =>
             {
                 Some(Ty::Struct(name.clone()))
             }
@@ -7550,6 +7554,7 @@ impl Analyzer {
         compile_groups: &[Vec<CompileParam>],
         groups: &[&[CallArg]],
         context: &LowerCtx,
+        unit_is_type: bool,
     ) -> Option<(
         HashSet<String>,
         HashMap<String, InferredTypeArgument>,
@@ -7580,7 +7585,8 @@ impl Analyzer {
                 })
             } else if !arguments.is_empty()
                 && arguments.iter().all(|argument| {
-                    self.expression_is_explicit_type_argument(&argument.value, context)
+                    (unit_is_type && matches!(argument.value, Expr::Unit))
+                        || self.expression_is_explicit_type_argument(&argument.value, context)
                 })
             {
                 Some(compile_index)
@@ -9425,6 +9431,7 @@ impl Analyzer {
             | HirExprKind::PartialCapture { .. }
             | HirExprKind::Borrow { .. }
             | HirExprKind::RawAddress { .. }
+            | HirExprKind::RawTrap
             | HirExprKind::LayoutQuery { .. }
             | HirExprKind::Return(None)
             | HirExprKind::Break(None) => {}
@@ -12216,6 +12223,9 @@ impl Analyzer {
             if name == "raw_offset" {
                 return self.lower_raw_offset(&groups, context);
             }
+            if name == "raw_trap" {
+                return self.lower_raw_trap(&groups, context);
+            }
             if name == "forget" {
                 return self.lower_forget(&groups, context);
             }
@@ -12764,6 +12774,21 @@ impl Analyzer {
         }
     }
 
+    fn lower_raw_trap(&mut self, groups: &[&[CallArg]], context: &mut LowerCtx) -> HirExpr {
+        if context.unsafe_depth == 0 {
+            self.error("`raw_trap` requires an `unsafe do` block");
+            return error_expr();
+        }
+        if !matches!(groups, [arguments] if arguments.is_empty()) {
+            self.error("`raw_trap` expects one empty runtime argument group");
+            return error_expr();
+        }
+        HirExpr {
+            ty: Ty::Never,
+            kind: HirExprKind::RawTrap,
+        }
+    }
+
     fn lower_forget(&mut self, groups: &[&[CallArg]], context: &mut LowerCtx) -> HirExpr {
         let [runtime] = groups else {
             self.error("`forget` expects exactly one runtime argument group");
@@ -13000,7 +13025,13 @@ impl Analyzer {
     ) -> Option<String> {
         let template = self.enum_templates[name].clone();
         let (compile_parameters, mut inferred, consumed_groups) = self
-            .seed_type_argument_inference(name, &template.compile_groups, type_groups, context)?;
+            .seed_type_argument_inference(
+                name,
+                &template.compile_groups,
+                type_groups,
+                context,
+                false,
+            )?;
         if consumed_groups != type_groups.len() {
             self.error(format!("invalid type argument group in `{name}`"));
             return None;
@@ -13206,8 +13237,13 @@ impl Analyzer {
         if !self.require_source_fields_access(name, &template.fields, &context.origin) {
             return None;
         }
-        let (compile_parameters, mut inferred, runtime_start) =
-            self.seed_type_argument_inference(name, &template.compile_groups, groups, context)?;
+        let (compile_parameters, mut inferred, runtime_start) = self.seed_type_argument_inference(
+            name,
+            &template.compile_groups,
+            groups,
+            context,
+            false,
+        )?;
         let value_groups = &groups[runtime_start..];
         if value_groups.len() != 1 {
             self.error(format!(
@@ -13340,7 +13376,7 @@ impl Analyzer {
             return None;
         };
         let (compile_parameters, inferred, consumed_groups) =
-            self.seed_type_argument_inference(name, &compile_groups, groups, context)?;
+            self.seed_type_argument_inference(name, &compile_groups, groups, context, true)?;
         if consumed_groups != groups.len() {
             self.error(format!("invalid type argument group in `{name}`"));
             return None;
@@ -13431,7 +13467,9 @@ impl Analyzer {
                     } else if next_compile_group < expected_groups.len()
                         && !arguments.is_empty()
                         && arguments.iter().all(|argument| {
-                            self.expression_is_explicit_type_argument(&argument.value, context)
+                            matches!(argument.value, Expr::Unit)
+                                || self
+                                    .expression_is_explicit_type_argument(&argument.value, context)
                         })
                     {
                         Some(next_compile_group)
@@ -13468,8 +13506,13 @@ impl Analyzer {
         context: &LowerCtx,
     ) -> Option<(String, usize)> {
         let template = self.function_templates[name].clone();
-        let (compile_parameters, mut inferred, runtime_start) =
-            self.seed_type_argument_inference(name, &template.compile_groups, groups, context)?;
+        let (compile_parameters, mut inferred, runtime_start) = self.seed_type_argument_inference(
+            name,
+            &template.compile_groups,
+            groups,
+            context,
+            false,
+        )?;
         let runtime_groups = &groups[runtime_start..];
         if runtime_groups.len() > template.groups.len() {
             self.error(format!(
@@ -16205,6 +16248,7 @@ impl<'a> HirCleanupPlanner<'a> {
                 self.initialize_result(cursor, &result_use)?;
                 Some(cursor)
             }
+            HirExprKind::RawTrap => Some(cursor),
             HirExprKind::RawOffset { pointer, index } => {
                 let Some(cursor) = self.walk_expr(pointer, cursor, ResultUse::Discard)? else {
                     return Ok(None);
@@ -17479,6 +17523,7 @@ impl ConstantEvaluator<'_> {
             | HirExprKind::RawInit { .. }
             | HirExprKind::RawTake(_)
             | HirExprKind::Forget(_)
+            | HirExprKind::RawTrap
             | HirExprKind::RawAlloc { .. }
             | HirExprKind::RawDealloc { .. }
             | HirExprKind::Call { .. }
@@ -18617,6 +18662,11 @@ impl<'a> FunctionEmitter<'a> {
                 }
                 let _ = value;
                 Ok(Operand::unit())
+            }
+            HirExprKind::RawTrap => {
+                self.instruction("call void @llvm.trap()");
+                self.terminate("unreachable");
+                Ok(Operand::never())
             }
             HirExprKind::RawAlloc { size, align } => {
                 let size = self.emit_expr(size)?;
@@ -21758,16 +21808,29 @@ mod tests {
         assert_eq!(analyzer.nominal_instances.len(), 1);
         assert_eq!(analyzer.nominal_instance_names.len(), 1);
         assert!(analyzer.functions.is_empty());
-        assert_eq!(analyzer.function_templates.len(), 7);
         assert!(analyzer.function_templates.contains_key("box_new"));
         assert!(analyzer.function_templates.contains_key("box_ptr"));
         assert!(analyzer.function_templates.contains_key("box_read"));
         assert!(analyzer.function_templates.contains_key("box_write"));
         assert!(analyzer.function_templates.contains_key("box_into_inner"));
         assert!(analyzer.function_templates.contains_key("box_replace"));
+        assert!(analyzer.function_templates.contains_key("vec_new"));
+        assert!(analyzer
+            .function_templates
+            .contains_key("vec_with_capacity"));
+        assert!(analyzer.function_templates.contains_key("vec_push"));
+        assert!(analyzer.function_templates.contains_key("vec_read"));
+        assert!(analyzer.function_templates.contains_key("vec_write"));
         assert!(analyzer
             .generic_inherent_functions
             .contains_key(&("Box".to_owned(), "new".to_owned())));
+        assert!(analyzer
+            .generic_inherent_functions
+            .contains_key(&("Vec".to_owned(), "new".to_owned())));
+        assert!(analyzer.generic_inherent_extensions["Vec"]
+            .iter()
+            .flat_map(|extension| &extension.members)
+            .any(|member| matches!(member, ExtendMember::Function(function) if function.name == "push")));
         assert!(analyzer.function_order.is_empty());
     }
 

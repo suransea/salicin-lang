@@ -3,10 +3,11 @@
 This directory contains the edition-pinned, compiler-embedded `alloc` bootstrap source. Unlike
 `core`, it depends on the replaceable allocator ABI and target-layout intrinsics.
 
-The bootstrap defines `Box(T)`, `box_new`, `box_ptr`, `box_read`, `box_write`, `box_into_inner`, and `box_replace`
-in ordinary Salicin source. The compiler recognizes the validated `Box` representation only to supply recursive
-heap drop/deallocation glue; construction and access still pass through the normal parser, generic
-monomorphizer, visibility checker, ownership analysis, and LLVM lowering.
+The bootstrap defines `Box(T)` and the first `Vec(T)` in ordinary Salicin source. The compiler
+recognizes the validated `Box` representation only to supply recursive heap drop/deallocation glue;
+construction and access still pass through the normal parser, generic monomorphizer, visibility
+checker, ownership analysis, and LLVM lowering. `Vec` uses an ordinary source-backed `Drop`
+implementation and needs no container-specific compiler glue.
 
 `box_into_inner` consumes the unique owner, moves the pointee back to the caller, and frees only the
 allocation. `box_replace` requires a mutable borrow and exchanges the heap value without duplicating
@@ -23,3 +24,11 @@ Since v0.32 the bundle also defines `extend(T: type) Box(T)` in source. This sup
 `Box.new`, `as_mut_ptr`, `into_inner`, and `replace` members through the compiler's general generic
 inherent-extension monomorphizer. Since v0.45 a second `where T: Copy` extension supplies `read` and `write`;
 the free functions remain the bootstrap and compatibility layer.
+
+Since v0.61 the bundle also defines a private three-field `Vec(T)` representation and safe APIs for
+`T: Copy`: `new`, `with_capacity`, `len`, `capacity`, `push`, `read`, and `write`. Growth doubles the
+capacity, copies initialized elements with `raw_offset`, and releases the old allocation. Both
+capacity doubling and `capacity * size_of(T)` are checked before allocator entry; bounds and layout
+failures use the diverging unsafe `raw_trap()` intrinsic inside the safe wrapper. Zero-sized elements
+retain normal length/capacity behavior. Resource-element move/drop support remains intentionally
+outside this first API rather than treating resources as copyable.

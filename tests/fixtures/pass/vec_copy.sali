@@ -1,0 +1,14 @@
+let main(): i32 = {
+  let mut values: Vec(i32) = Vec(i32).new()
+  let reserved: Vec(i32) = Vec(i32).with_capacity(8)
+  values.push(10)
+  values.push(11)
+  values.push(12)
+  values.push(9)
+  values.write(1)(11)
+  if values.len() == 4 && values.capacity() >= 4 && reserved.len() == 0 && reserved.capacity() == 8 {
+    values.read(0) + values.read(1) + values.read(2) + values.read(3)
+  } else {
+    0
+  }
+}

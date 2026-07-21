@@ -160,5 +160,7 @@ bound-method dispatch; v0.35 adds associated-type equality proofs and generic ar
 v0.36 applies the same proofs to conditional blanket inherent extensions. Generic trait impls and
 lifetime-carrying safe dereference remain next. v0.60 adds the reserved unsafe `raw_offset`
 intrinsic, lowering a `u64` element index through LLVM GEP with the concrete pointee layout while
-preserving pointer mutability; zero-sized pointees retain the original address. Platform
+preserving pointer mutability; zero-sized pointees retain the original address. v0.61 adds the
+diverging unsafe `raw_trap()` boundary and uses both primitives in alloc's source-defined,
+checked, Copy-element `Vec(T)` implementation. Platform
 `std` remains later work over the C ABI and minimal runtime.
