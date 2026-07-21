@@ -10619,7 +10619,8 @@ impl Analyzer {
 
         for arm in arms {
             context.push_scope();
-            let (matcher, bindings) = self.lower_enum_pattern(&arm.pattern, &layout, context);
+            let (matcher, bindings, literal_conditions) =
+                self.lower_enum_pattern(&arm.pattern, &layout, context);
             if self.type_has_custom_drop(&scrutinee.ty)
                 && bindings
                     .iter()
@@ -10646,8 +10647,20 @@ impl Analyzer {
                     .filter(|binding| !self.is_copy_type(&binding.ty))
                     .map(|binding| binding.id),
             );
-            let guard = arm
-                .guard
+            let pattern_guard = literal_conditions
+                .into_iter()
+                .reduce(|left, right| Expr::Binary(Box::new(left), BinaryOp::And, Box::new(right)));
+            let combined_guard = match (pattern_guard, arm.guard.as_ref()) {
+                (Some(pattern), Some(guard)) => Some(Expr::Binary(
+                    Box::new(pattern),
+                    BinaryOp::And,
+                    Box::new(guard.clone()),
+                )),
+                (Some(pattern), None) => Some(pattern),
+                (None, Some(guard)) => Some(guard.clone()),
+                (None, None) => None,
+            };
+            let guard = combined_guard
                 .as_ref()
                 .map(|guard| self.lower_expr(guard, Some(&Ty::Bool), context));
             context.guard_move_restricted = previous_guard_restrictions;
@@ -10724,10 +10737,11 @@ impl Analyzer {
         pattern: &Pattern,
         layout: &EnumLayout,
         context: &mut LowerCtx,
-    ) -> (HirMatcher, Vec<HirPatternBinding>) {
+    ) -> (HirMatcher, Vec<HirPatternBinding>, Vec<Expr>) {
         let mut bindings = Vec::new();
+        let mut literal_conditions = Vec::new();
         match pattern {
-            Pattern::Wildcard => (HirMatcher::All, bindings),
+            Pattern::Wildcard => (HirMatcher::All, bindings, literal_conditions),
             Pattern::Binding(name) => {
                 self.bind_pattern(
                     name,
@@ -10736,12 +10750,12 @@ impl Analyzer {
                     context,
                     &mut bindings,
                 );
-                (HirMatcher::All, bindings)
+                (HirMatcher::All, bindings, literal_conditions)
             }
             Pattern::Constructor { path, fields } => {
                 let Some(variant_name) = path.last() else {
                     self.error("empty constructor path in pattern");
-                    return (HirMatcher::All, bindings);
+                    return (HirMatcher::All, bindings, literal_conditions);
                 };
                 let source_name = self
                     .nominal_instances
@@ -10756,7 +10770,7 @@ impl Analyzer {
                         path.join("."),
                         layout.name
                     ));
-                    return (HirMatcher::All, bindings);
+                    return (HirMatcher::All, bindings, literal_conditions);
                 }
                 let Some(variant_index) = layout
                     .variants
@@ -10767,7 +10781,7 @@ impl Analyzer {
                         "unknown pattern variant `{variant_name}` for enum `{}`",
                         layout.name
                     ));
-                    return (HirMatcher::All, bindings);
+                    return (HirMatcher::All, bindings, literal_conditions);
                 };
                 let variant = &layout.variants[variant_index];
                 let patterns = self.normalize_pattern_fields(
@@ -10786,16 +10800,21 @@ impl Analyzer {
                         vec![1 + variant.payload_offset + field_index],
                         context,
                         &mut bindings,
+                        &mut literal_conditions,
                     );
                 }
-                (HirMatcher::Variant(variant_index), bindings)
+                (
+                    HirMatcher::Variant(variant_index),
+                    bindings,
+                    literal_conditions,
+                )
             }
             Pattern::Integer(_) | Pattern::Bool(_) => {
                 self.error(format!(
                     "pattern type mismatch: enum `{}` cannot be matched by a scalar literal",
                     layout.name
                 ));
-                (HirMatcher::All, bindings)
+                (HirMatcher::All, bindings, literal_conditions)
             }
         }
     }
@@ -10871,14 +10890,29 @@ impl Analyzer {
         path: Vec<usize>,
         context: &mut LowerCtx,
         bindings: &mut Vec<HirPatternBinding>,
+        literal_conditions: &mut Vec<Expr>,
     ) {
         match pattern {
             Pattern::Wildcard => {}
             Pattern::Binding(name) => self.bind_pattern(name, ty.clone(), path, context, bindings),
-            Pattern::Integer(_) if ty.is_integer() => self
-                .error("literal payload patterns are not supported yet; use a binding and a guard"),
-            Pattern::Bool(_) if *ty == Ty::Bool => self
-                .error("literal payload patterns are not supported yet; use a binding and a guard"),
+            Pattern::Integer(value) if ty.is_integer() => {
+                let name = format!("$match$literal${}", bindings.len());
+                self.bind_pattern(&name, ty.clone(), path, context, bindings);
+                literal_conditions.push(Expr::Binary(
+                    Box::new(Expr::Name(name)),
+                    BinaryOp::Eq,
+                    Box::new(Expr::Integer(*value)),
+                ));
+            }
+            Pattern::Bool(value) if *ty == Ty::Bool => {
+                let name = format!("$match$literal${}", bindings.len());
+                self.bind_pattern(&name, ty.clone(), path, context, bindings);
+                literal_conditions.push(Expr::Binary(
+                    Box::new(Expr::Name(name)),
+                    BinaryOp::Eq,
+                    Box::new(Expr::Bool(*value)),
+                ));
+            }
             Pattern::Constructor {
                 path: constructor,
                 fields,
@@ -10926,6 +10960,7 @@ impl Analyzer {
                         nested_path,
                         context,
                         bindings,
+                        literal_conditions,
                     );
                 }
                 if self.type_has_custom_drop(ty)

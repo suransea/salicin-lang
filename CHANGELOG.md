@@ -6,6 +6,14 @@ subset.
 
 ## Unreleased
 
+## 0.50.0 - 2026-07-21
+
+- Added integer and boolean literal patterns inside enum payloads and nested struct patterns.
+- Lowered literal tests into short-circuit candidate guards, preserving source-order fallback and
+  evaluating explicit guards only after every literal test succeeds.
+- Kept resource pattern bindings speculative until literal tests pass, then committed their moves
+  exactly once; added type and integer-range diagnostics for invalid literal payload patterns.
+
 ## 0.49.0 - 2026-07-21
 
 - Allowed a constant index to move a resource element directly out of an array temporary,

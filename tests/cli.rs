@@ -610,6 +610,8 @@ fn m1_match_and_partial_programs_run_with_expected_result() {
         "enum_match.sali",
         "nested_match.sali",
         "match_guard.sali",
+        "match_literal_payload.sali",
+        "match_literal_resource_guard.sali",
         "partial_application.sali",
     ] {
         let output = salic()
@@ -631,6 +633,11 @@ fn m1_match_and_partial_errors_report_their_cause() {
     for (name, expected) in [
         ("non_exhaustive_match.sali", "exhaustive"),
         ("pattern_type_mismatch.sali", "pattern"),
+        (
+            "pattern_literal_payload_mismatch.sali",
+            "pattern type mismatch",
+        ),
+        ("pattern_literal_payload_range.sali", "range"),
         ("temporary_borrow_partial.sali", "partial application"),
     ] {
         let output = salic()
