@@ -2,4 +2,4 @@ let fail() = {
   throw true
 }
 
-let main(): i32 = fail() ?? 42
+let main(): i32 = 42

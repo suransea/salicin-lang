@@ -2356,23 +2356,13 @@ fn m2_coalesce_errors_report_their_cause() {
 }
 
 #[test]
-fn m2_try_programs_run_with_expected_result() {
+fn result_wrapping_and_throws_handlers_run_with_expected_result() {
     for name in [
-        "try_option_some_continue.sc",
-        "try_option_none_propagate.sc",
-        "try_result_ok_continue.sc",
-        "try_result_err_propagate.sc",
-        "try_result_success_type_changes.sc",
         "try_auto_wrap_tail.sc",
         "try_auto_wrap_return.sc",
         "try_auto_wrap_shadowing.sc",
         "try_full_container_unchanged.sc",
-        "try_inferred_operand.sc",
         "try_nested_auto_wrap.sc",
-        "try_unit_success.sc",
-        "try_then_member.sc",
-        "try_operand_once.sc",
-        "custom_try_boundary.sc",
         "do_try_boundary.sc",
         "do_function_boundary.sc",
     ] {
@@ -2391,17 +2381,9 @@ fn m2_try_programs_run_with_expected_result() {
 }
 
 #[test]
-fn m2_try_errors_report_their_cause() {
+fn removed_postfix_try_reports_a_migration_diagnostic() {
     for (name, expected) in [
-        ("try_non_container_return.sc", "return"),
-        ("try_in_global.sc", "global"),
-        ("try_omitted_return_type.sc", "return type"),
-        ("try_in_closure.sc", "closure"),
-        ("try_option_into_result.sc", "Option"),
-        ("try_result_into_option.sc", "Result"),
-        ("try_result_error_mismatch.sc", "error type"),
-        ("try_non_container_operand.sc", "Option"),
-        ("try_use_after_move.sc", "moved"),
+        ("try_non_container_operand.sc", "postfix `.try` was removed"),
         ("try_auto_wrap_type_mismatch.sc", "type mismatch"),
     ] {
         let output = salic()
@@ -2533,7 +2515,7 @@ fn m2_optional_chain_errors_report_their_cause() {
 }
 
 #[test]
-fn m2_throw_programs_run_with_expected_result() {
+fn throws_programs_run_with_expected_result() {
     for name in [
         "throw_result_err_propagate.sc",
         "throw_error_once.sc",
@@ -2556,13 +2538,13 @@ fn m2_throw_programs_run_with_expected_result() {
 }
 
 #[test]
-fn m2_throw_errors_report_their_cause() {
+fn throws_errors_report_their_cause() {
     for (name, expected) in [
-        ("throw_in_option_return.sc", "Result"),
-        ("throw_in_plain_return.sc", "FromError"),
+        ("throw_in_option_return.sc", "with(throws(Error))"),
+        ("throw_in_plain_return.sc", "with(throws(Error))"),
         ("throw_in_global.sc", "global"),
-        ("throw_in_closure.sc", "closure"),
-        ("throw_omitted_return_type.sc", "return type"),
+        ("throw_in_closure.sc", "with(throws(Error))"),
+        ("throw_omitted_return_type.sc", "with(throws(Error))"),
         ("throw_error_type_mismatch.sc", "expected"),
         ("throw_without_value.sc", "expression"),
     ] {
@@ -3627,7 +3609,7 @@ fn prelude_never_coerces_through_diverging_calls() {
         r#"let stop(): never = loop {}
 let absurd(move value: never): i32 = value
 let propagate(move value: never): Result(i32, ()) = value
-let throw_never(move value: never): Result(i32, ()) = { throw value }
+let throw_never(move value: never): i32 with(throws(())) = { throw value }
 let Empty = enum {}
 let Holder = struct(value: Empty)
 let project(move holder: Holder): i32 = holder.value

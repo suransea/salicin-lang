@@ -1981,6 +1981,9 @@ impl Resolver {
         if let Some(return_type) = &mut function.return_type {
             self.rewrite_type(return_type, context, &type_scope);
         }
+        if let Some(error) = &mut function.effects.throws {
+            self.rewrite_type(error, context, &type_scope);
+        }
         for effect in &mut function.effects.custom {
             let segments = effect.split('.').map(str::to_owned).collect::<Vec<_>>();
             if let Some(canonical) = self.resolve_logical_path(&segments, context) {
@@ -2041,9 +2044,16 @@ impl Resolver {
         match ty {
             Type::Borrow { pointee, .. } => self.rewrite_type(pointee, context, type_scope),
             Type::Array(element, _) => self.rewrite_type(element, context, type_scope),
-            Type::Function { groups, result, .. } => {
+            Type::Function {
+                groups,
+                effects,
+                result,
+            } => {
                 for ty in groups.iter_mut().flatten() {
                     self.rewrite_type(ty, context, type_scope);
+                }
+                if let Some(error) = &mut effects.throws {
+                    self.rewrite_type(error, context, type_scope);
                 }
                 self.rewrite_type(result, context, type_scope);
             }

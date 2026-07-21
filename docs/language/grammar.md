@@ -19,7 +19,8 @@ x | y         二选一
 ( x )         文法分组
 ```
 
-关键字不能作为普通 `IDENT`。`await`、`try` 等当前均保留，不采用随上下文变化的关键字集合。
+关键字不能作为普通 `IDENT`。`try`、`async` 等当前均保留，不采用随上下文变化的关键字集合；
+已经移除的 `await` 不再是表达式关键字。
 
 ## 2. 词法 token
 
@@ -91,7 +92,7 @@ let_decl = "let", [ "mut" ], IDENT,
            [ "=", initializer ] ;
 
 with_clause = IDENT("with"), "(", effect, { ",", effect }, [ "," ], ")" ;
-effect = "unsafe" | "try", [ "(", type_expr, ")" ] | IDENT ;
+effect = "unsafe" | "async" | IDENT("throws"), "(", type_expr, ")" | IDENT ;
 
 initializer = expression | "effect" | struct_decl | enum_decl | trait_decl | module_decl ;
 ```
@@ -100,8 +101,8 @@ initializer = expression | "effect" | struct_decl | enum_decl | trait_decl | mod
 
 - 普通值、函数、类型和模块声明必须有 initializer；只有 trait 要求可以省略。
 - `let mut` 不能含参数组，且必须绑定运行时值。
-- `with(...)` 属于函数签名，位于返回类型之后；`with(try)` 把逻辑返回 `T` 规范化为
-  `Option(T)`，`with(try(E))` 规范化为 `Result(T, E)`，`with(unsafe)` 增加调用要求。
+- `with(...)` 属于函数签名，位于返回类型之后；`with(throws(E))` 声明可传播错误 `E`，
+  `with(unsafe)` 增加调用要求。
 - `with` 和 marker 声明右侧的 `effect` 是上下文词，不是全局关键字。`let UI = effect` 声明名义
   effect；旧的 `(effect): T`、`T(effect)` 与 `T ! effect` 都不属于语法。
 - `let f(x: T) = body` 是具名函数声明。
@@ -282,7 +283,7 @@ trait_argument = type_expr | IDENT, "=", type_expr ;
 | 12 | `+`、`-` | 左结合 |
 | 13 | `*`、`/`、`%` | 左结合 |
 | 14 | `-`、`!`、`borrow`、`borrow(mut)`、`move` | 前缀 |
-| 15 | 调用、索引、成员、`?.`、`.try`、`.await`、尾随闭包 | 左到右后缀 |
+| 15 | 调用、索引、成员、`?.`、尾随闭包 | 左到右后缀 |
 
 ```ebnf
 expression       = assignment_expr ;
@@ -311,8 +312,6 @@ postfix_part = call_group
              | "[", expression, "]"
              | ".", IDENT
              | "?.", IDENT
-             | ".try"
-             | ".await"
              | trailing_closure ;
 
 call_group = "(", [ call_argument, { ",", call_argument }, [ "," ] ], ")" ;
@@ -333,6 +332,7 @@ primary_expr = literal
              | tuple_literal
              | array_literal
              | do_block
+             | try_block
              | unsafe_block
              | closure_literal
              | if_expr
@@ -346,6 +346,7 @@ primary_expr = literal
              | continue_expr ;
 
 do_block = "do", block ;
+try_block = "try", block ;
 unsafe_block = "unsafe", block ;
 
 closure_literal = [ "move" ], "{",
@@ -401,9 +402,10 @@ continue_expr = "continue" ;
 
 ```
 
-`do { ... }`、`unsafe { ... }` 和未来的 `async { ... }` 在语义上都是接受尾闭包的内建函数调用，
+`do { ... }`、`try { ... }`、`unsafe { ... }` 和未来的 `async { ... }` 在语义上都是接受尾闭包的内建函数调用，
 不是三种互不相关的块节点。parser 保留专用产生式以消除关键字后大括号的歧义。`do` 立即调用闭包
-并原样转发其 effect/color；`unsafe` 处理闭包要求的 `unsafe` color。
+并原样转发其 effect/color；`try` 把 `throws(E)` 处理为 `Result(T, E)`；`unsafe` 处理闭包要求的
+`unsafe` color。
 
 解析 `if`、`while`、`for` 控制头的最外层时禁用尾随闭包；第一个未被括号包围的 `{` 是控制主体。
 条件要使用尾随闭包必须整体加括号。

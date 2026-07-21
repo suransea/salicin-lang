@@ -1,3 +1,3 @@
-let answer(): Option(i32) = 42.try
+let answer(): i32 = 42.try
 
-let main(): i32 = answer() ?? 0
+let main(): i32 = answer()

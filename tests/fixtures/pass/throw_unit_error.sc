@@ -1,5 +1,8 @@
-let fail(): Result(i32, ()) = {
+let fail(): i32 with(throws(())) = {
   throw ()
 }
 
-let main(): i32 = fail() ?? 42
+let main(): i32 = {
+  let result: Result(i32, ()) = try { fail() }
+  result ?? 42
+}

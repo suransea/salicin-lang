@@ -1,4 +1,4 @@
-let choose(flag: bool): Result(i32, bool) = {
+let choose(flag: bool): i32 with(throws(bool)) = {
   if flag {
     throw true
   } else {
@@ -6,4 +6,8 @@ let choose(flag: bool): Result(i32, bool) = {
   }
 }
 
-let main(): i32 = (choose(false) ?? 0) + (choose(true) ?? 0)
+let main(): i32 = {
+  let first: Result(i32, bool) = try { choose(false) }
+  let second: Result(i32, bool) = try { choose(true) }
+  (first ?? 0) + (second ?? 0)
+}

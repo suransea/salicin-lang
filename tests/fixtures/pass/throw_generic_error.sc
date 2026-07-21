@@ -1,5 +1,8 @@
-let fail(E: type)(move error: E): Result(i32, E) = {
+let fail(E: type)(move error: E): i32 with(throws(E)) = {
   throw error
 }
 
-let main(): i32 = fail(bool)(true) ?? 42
+let main(): i32 = {
+  let result: Result(i32, bool) = try { fail(bool)(true) }
+  result ?? 42
+}

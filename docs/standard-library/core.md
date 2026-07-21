@@ -70,12 +70,11 @@ use core.control.{Try, FromResidual}
 ```
 
 The compiler validates their complete edition-defined declaration shapes before compiling a
-package. `Option` and `Result` implement these protocols in ordinary generic core extensions.
-Postfix `.try` and `throw` validate those edition identities. User-defined nominal types may
-implement `Try` and serve as either operands or explicit function propagation boundaries. Normal
-function completion and `return` use `from_output`, `.try` uses `FromResidual`, and `throw` uses
-`FromError`. A `do` call whose contextual closure result implements `Try` uses the same ordinary
-closure boundary; `do` itself has no error-specific semantics.
+package. `Option` and `Result` implement these protocols in ordinary generic core extensions, so
+libraries may use them for explicit container algorithms and normal function completion may use
+`Try.from_output` as value-construction sugar. They no longer control language error propagation:
+`throws(E)`, `throw`, and `try { ... }` are built-in effect semantics, and user-defined `Try`
+implementations cannot intercept them. `do` itself has no error-specific semantics.
 
 Primitive implementations and the unit spelling `void` remain compiler-defined. A declaration only
 receives language-item behavior when its validated identity comes from this edition's embedded core;

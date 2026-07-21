@@ -3,12 +3,12 @@ let make_error(borrow(mut) count: i32): bool = {
   true
 }
 
-let fail(borrow(mut) count: i32): Result(i32, bool) = {
+let fail(): i32 with(throws(bool)) = {
+  let mut count = 0
   throw make_error(count)
 }
 
 let main(): i32 = {
-  let mut count = 0
-  let answer = fail(count) ?? 42
-  if count == 1 { answer } else { 0 }
+  let result: Result(i32, bool) = try { fail() }
+  result match { Ok(_) => 0, Err(error) => if error { 42 } else { 0 } }
 }

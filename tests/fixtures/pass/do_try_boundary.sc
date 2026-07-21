@@ -1,15 +1,14 @@
-let read(fail: bool): Result(i32, bool) = if fail { Err(true) } else { Ok(40) }
+let read(fail: bool): i32 with(throws(bool)) = if fail { throw true } else { 40 }
 
 let main(): i32 = {
-  let fail = true
-  let propagated: Result(i32, bool) = do {
-    read(fail).try + 2
+  let propagated: Result(i32, bool) = try {
+    read(true) + 2
   }
-  let thrown: Result(i32, bool) = do {
+  let thrown: Result(i32, bool) = try {
     throw true
   }
-  let success: Result(i32, bool) = do {
-    read(false).try + 2
+  let success: Result(i32, bool) = try {
+    read(false) + 2
   }
   let propagation_ok = propagated match { Ok(_) => false, Err(error) => error }
   let throw_ok = thrown match { Ok(_) => false, Err(error) => error }

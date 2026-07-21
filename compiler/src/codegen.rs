@@ -329,6 +329,7 @@ enum NominalInstanceState {
 struct FunctionTy {
     groups: Vec<Vec<Ty>>,
     unsafe_effect: bool,
+    throws_error: Option<Box<Ty>>,
     custom_effects: Vec<String>,
     result: Box<Ty>,
 }
@@ -398,6 +399,11 @@ fn function_type_is_assignable(actual: &FunctionTy, expected: &FunctionTy) -> bo
             })
         && type_is_assignable(&actual.result, &expected.result)
         && (!actual.unsafe_effect || expected.unsafe_effect)
+        && match (&actual.throws_error, &expected.throws_error) {
+            (None, _) => true,
+            (Some(actual), Some(expected)) => type_is_assignable(actual, expected),
+            (Some(_), None) => false,
+        }
         && actual
             .custom_effects
             .iter()
@@ -448,6 +454,9 @@ impl fmt::Display for Ty {
                 let mut effects = function.custom_effects.clone();
                 if function.unsafe_effect {
                     effects.insert(0, "unsafe".to_owned());
+                }
+                if let Some(error) = &function.throws_error {
+                    effects.push(format!("throws({error})"));
                 }
                 if !effects.is_empty() {
                     write!(f, " with({})", effects.join(", "))?;
@@ -818,6 +827,7 @@ struct ParamSig {
 struct FunctionSig {
     groups: Vec<Vec<ParamSig>>,
     unsafe_effect: bool,
+    throws_error: Option<Ty>,
     custom_effects: Vec<String>,
     result: Option<Ty>,
 }
@@ -831,6 +841,7 @@ impl FunctionSig {
                 .map(|group| group.iter().map(|param| param.ty.clone()).collect())
                 .collect(),
             unsafe_effect: self.unsafe_effect,
+            throws_error: self.throws_error.clone().map(Box::new),
             custom_effects: self.custom_effects.clone(),
             result: Box::new(self.result.clone()?),
         }))
@@ -1063,6 +1074,7 @@ struct LowerCtx {
     reference_loans: HashMap<LocalId, Vec<LoanId>>,
     reference_value_depth: usize,
     unsafe_depth: usize,
+    active_throws_error: Option<Ty>,
     active_custom_effects: HashSet<String>,
 }
 
@@ -1085,6 +1097,7 @@ impl LowerCtx {
             reference_loans: HashMap::new(),
             reference_value_depth: 0,
             unsafe_depth: 0,
+            active_throws_error: None,
             active_custom_effects: HashSet::new(),
         }
     }
@@ -1107,6 +1120,7 @@ impl LowerCtx {
             reference_loans: HashMap::new(),
             reference_value_depth: 0,
             unsafe_depth: 0,
+            active_throws_error: None,
             active_custom_effects: HashSet::new(),
         }
     }
@@ -1886,11 +1900,17 @@ impl Analyzer {
                 .return_type
                 .as_ref()
                 .map(|ty| self.lower_source_type(ty));
+            let throws_error = function
+                .effects
+                .throws
+                .as_deref()
+                .map(|error| self.lower_source_type(error));
             self.signatures.insert(
                 name,
                 FunctionSig {
                     groups,
                     unsafe_effect: function.effects.unsafe_effect,
+                    throws_error,
                     custom_effects: function.effects.custom.clone(),
                     result,
                 },
@@ -3275,11 +3295,17 @@ impl Analyzer {
                 .return_type
                 .as_ref()
                 .map(|result| self.lower_source_type(result));
+            let throws_error = function
+                .effects
+                .throws
+                .as_deref()
+                .map(|error| self.lower_source_type(error));
             self.signatures.insert(
                 canonical.clone(),
                 FunctionSig {
                     groups,
                     unsafe_effect: function.effects.unsafe_effect,
+                    throws_error,
                     custom_effects: function.effects.custom.clone(),
                     result,
                 },
@@ -3457,11 +3483,17 @@ impl Analyzer {
                             .return_type
                             .as_ref()
                             .map(|result| self.lower_source_type(result));
+                        let throws_error = function
+                            .effects
+                            .throws
+                            .as_deref()
+                            .map(|error| self.lower_source_type(error));
                         self.signatures.insert(
                             canonical.clone(),
                             FunctionSig {
                                 groups,
                                 unsafe_effect: function.effects.unsafe_effect,
+                                throws_error,
                                 custom_effects: function.effects.custom.clone(),
                                 result,
                             },
@@ -5217,6 +5249,11 @@ impl Analyzer {
                 .as_ref()
                 .map(|ty| self.lower_source_type(ty));
             let unsafe_effect = function.effects.unsafe_effect;
+            let throws_error = function
+                .effects
+                .throws
+                .as_deref()
+                .map(|error| self.lower_source_type(error));
             let custom_effects = function.effects.custom.clone();
             self.functions.insert(validation_name.clone(), function);
             self.function_origins.insert(
@@ -5228,6 +5265,7 @@ impl Analyzer {
                 FunctionSig {
                     groups,
                     unsafe_effect,
+                    throws_error,
                     custom_effects,
                     result,
                 },
@@ -5337,11 +5375,17 @@ impl Analyzer {
                     .return_type
                     .as_ref()
                     .map(|result| self.lower_source_type(result));
+                let throws_error = method
+                    .effects
+                    .throws
+                    .as_deref()
+                    .map(|error| self.lower_source_type(error));
                 self.signatures.insert(
                     canonical.clone(),
                     FunctionSig {
                         groups,
                         unsafe_effect: method.effects.unsafe_effect,
+                        throws_error,
                         custom_effects: method.effects.custom.clone(),
                         result,
                     },
@@ -5601,6 +5645,10 @@ impl Analyzer {
                         .map(|group| group.iter().map(|ty| self.lower_source_type(ty)).collect())
                         .collect(),
                     unsafe_effect: effects.unsafe_effect,
+                    throws_error: effects
+                        .throws
+                        .as_deref()
+                        .map(|error| Box::new(self.lower_source_type(error))),
                     custom_effects: effects.custom.clone(),
                     result: Box::new(self.lower_source_type(result)),
                 })
@@ -5882,6 +5930,11 @@ impl Analyzer {
                     .collect::<Option<Vec<_>>>()?,
                 effects: FunctionEffects {
                     unsafe_effect: function.unsafe_effect,
+                    throws: function
+                        .throws_error
+                        .as_deref()
+                        .and_then(|error| self.source_type_for_ty(error))
+                        .map(Box::new),
                     custom: function.custom_effects.clone(),
                     parameters: Vec::new(),
                 },
@@ -6055,6 +6108,10 @@ impl Analyzer {
                         })
                         .collect::<Option<Vec<_>>>()?,
                     unsafe_effect: effects.unsafe_effect,
+                    throws_error: match effects.throws.as_deref() {
+                        Some(error) => Some(Box::new(self.probe_source_ty(error)?)),
+                        None => None,
+                    },
                     custom_effects: effects.custom.clone(),
                     result: Box::new(self.probe_source_ty(result)?),
                 }))
@@ -6385,6 +6442,27 @@ impl Analyzer {
                 {
                     return Err(mismatch());
                 }
+                let throws_changed = match (
+                    effects.throws.as_deref(),
+                    actual_function.throws_error.as_deref(),
+                ) {
+                    (None, Some(_)) if !effects.parameters.is_empty() => {
+                        return Err(
+                            "inferring `throws(Error)` through an `E: effect` row is not implemented yet"
+                                .to_owned(),
+                        );
+                    }
+                    (None, None) => false,
+                    (Some(template_error), Some(actual_error)) => self.unify_template_ty(
+                        template_error,
+                        actual_error,
+                        None,
+                        compile_parameters,
+                        inferred,
+                        origin,
+                    )?,
+                    _ => return Err(mismatch()),
+                };
                 if effects.parameters.is_empty()
                     && ((actual_function.unsafe_effect && !effects.unsafe_effect)
                         || actual_function
@@ -6394,7 +6472,7 @@ impl Analyzer {
                 {
                     return Err(mismatch());
                 }
-                let mut changed = false;
+                let mut changed = throws_changed;
                 let selected_unsafe = actual_function.unsafe_effect && !effects.unsafe_effect;
                 let selected_custom = actual_function
                     .custom_effects
@@ -6612,6 +6690,14 @@ impl Analyzer {
                         })
                         .collect::<Option<Vec<_>>>()?,
                     unsafe_effect,
+                    throws_error: match effects.throws.as_deref() {
+                        Some(error) => Some(Box::new(self.resolved_template_ty(
+                            error,
+                            compile_parameters,
+                            inferred,
+                        )?)),
+                        None => None,
+                    },
                     custom_effects,
                     result: Box::new(self.resolved_template_ty(
                         result,
@@ -7474,15 +7560,6 @@ impl Analyzer {
         })
     }
 
-    fn has_conversion_impl(&self, target: &Ty, kind: LangItemKind, source: &Ty) -> bool {
-        self.trait_implementation(
-            target,
-            self.lang_item_name(kind),
-            std::slice::from_ref(source),
-        )
-        .is_some()
-    }
-
     fn builtin_fallible_info_for_probe(&self, probe: &TypeProbe) -> Option<BuiltinFallibleInfo> {
         let ty = match probe {
             TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) => ty,
@@ -7645,39 +7722,6 @@ impl Analyzer {
             residual: protocol.residual,
             error: builtin.and_then(|info| info.error),
         })
-    }
-
-    fn inferred_try_operand_expected(
-        &mut self,
-        expression: &Expr,
-        expected: Option<&Ty>,
-        boundary: &ReturnBoundary,
-        context: &LowerCtx,
-    ) -> Option<Ty> {
-        let inferred = self.inferred_builtin_coalesce_lhs(expression, context)?;
-        if Some(inferred.kind) != boundary.kind {
-            return None;
-        }
-
-        let payload = expected
-            .filter(|ty| **ty != Ty::Error && !self.is_uninhabited_type(ty))
-            .cloned()
-            .or_else(|| self.inferred_try_payload(&inferred, context))?;
-        let mut arguments = vec![payload];
-        if inferred.kind == BuiltinFallibleKind::Result {
-            arguments.push(boundary.error.clone()?);
-        }
-        let source_arguments = arguments
-            .iter()
-            .map(|argument| self.source_type_for_ty(argument))
-            .collect::<Option<Vec<_>>>()?;
-        let canonical = self.ensure_nominal_instance(
-            NominalKind::Enum,
-            &inferred.name,
-            source_arguments,
-            arguments,
-        )?;
-        Some(Ty::Enum(canonical))
     }
 
     fn inferred_try_payload(
@@ -8427,6 +8471,12 @@ impl Analyzer {
                         return TypeProbe::Unsupported;
                     };
                     if runtime_groups.len() == template.groups.len() {
+                        if template.effects.throws.is_some() {
+                            let Some(info) = self.builtin_fallible_info_for_ty(&result) else {
+                                return TypeProbe::Unsupported;
+                            };
+                            return TypeProbe::Known(info.payload);
+                        }
                         return TypeProbe::KnownSource(result, result_source);
                     }
                     let remaining = template.groups[runtime_groups.len()..]
@@ -8443,9 +8493,19 @@ impl Analyzer {
                         })
                         .collect::<Option<Vec<_>>>();
                     if let Some(groups) = remaining {
+                        let throws_error = match template.effects.throws.as_deref() {
+                            Some(error) => {
+                                let Some(error) = self.probe_source_ty(error) else {
+                                    return TypeProbe::Unsupported;
+                                };
+                                Some(Box::new(error))
+                            }
+                            None => None,
+                        };
                         return TypeProbe::Known(Ty::Function(FunctionTy {
                             groups,
                             unsafe_effect: template.effects.unsafe_effect,
+                            throws_error,
                             custom_effects: template.effects.custom.clone(),
                             result: Box::new(result),
                         }));
@@ -8463,10 +8523,17 @@ impl Analyzer {
                 return TypeProbe::Unsupported;
             }
             if groups.len() == signature.groups.len() {
-                return signature
-                    .result
-                    .clone()
-                    .map_or(TypeProbe::Unsupported, TypeProbe::Known);
+                let Some(result) = signature.result.clone() else {
+                    return TypeProbe::Unsupported;
+                };
+                if signature.throws_error.is_some() {
+                    return self
+                        .builtin_fallible_info_for_ty(&result)
+                        .map_or(TypeProbe::Unsupported, |info| {
+                            TypeProbe::Known(info.payload)
+                        });
+                }
+                return TypeProbe::Known(result);
             }
             let Some(result) = signature.result.clone() else {
                 return TypeProbe::Unsupported;
@@ -8477,6 +8544,7 @@ impl Analyzer {
                     .map(|group| group.iter().map(|parameter| parameter.ty.clone()).collect())
                     .collect(),
                 unsafe_effect: signature.unsafe_effect,
+                throws_error: signature.throws_error.clone().map(Box::new),
                 custom_effects: signature.custom_effects.clone(),
                 result: Box::new(result),
             }));
@@ -9086,11 +9154,17 @@ impl Analyzer {
             .return_type
             .as_ref()
             .map(|ty| self.lower_source_type(ty));
+        let throws_error = function
+            .effects
+            .throws
+            .as_deref()
+            .map(|error| self.lower_source_type(error));
         self.signatures.insert(
             canonical.clone(),
             FunctionSig {
                 groups,
                 unsafe_effect: function.effects.unsafe_effect,
+                throws_error,
                 custom_effects: function.effects.custom.clone(),
                 result,
             },
@@ -9265,6 +9339,7 @@ impl Analyzer {
                 .expect("every registered function has source provenance"),
         );
         context.unsafe_depth = usize::from(function.effects.unsafe_effect);
+        context.active_throws_error = signature.throws_error.clone();
         context.active_custom_effects = function.effects.custom.iter().cloned().collect();
         if function.return_type.is_some() {
             context.return_boundary = signature
@@ -10022,7 +10097,7 @@ impl Analyzer {
                                             binding.name
                                         ));
                                     }
-                                    self.lower_local_closure(params, body, None, 0, context)
+                                    self.lower_local_closure(params, body, None, 0, None, context)
                                 }
                                 Expr::Name(_) if callable_source.is_some() => {
                                     let source = callable_source
@@ -10962,6 +11037,7 @@ impl Analyzer {
         body: &Expr,
         declared_result: Option<Ty>,
         forwarded_unsafe_depth: usize,
+        active_throws_error: Option<Ty>,
         outer: &mut LowerCtx,
     ) -> HirExpr {
         let mut source_groups = vec![source_params];
@@ -10985,6 +11061,7 @@ impl Analyzer {
         let mut context =
             LowerCtx::for_function(&function, declared_result.clone(), outer.origin.clone());
         context.unsafe_depth = forwarded_unsafe_depth;
+        context.active_throws_error = active_throws_error;
         context.return_boundary = declared_result
             .as_ref()
             .and_then(|result| self.return_boundary_for_ty(result));
@@ -11173,6 +11250,7 @@ impl Analyzer {
                     .map(|group| group.iter().map(|param| param.ty.clone()).collect())
                     .collect(),
                 unsafe_effect: forwarded_unsafe_depth > 0,
+                throws_error: None,
                 custom_effects: Vec::new(),
                 result: Box::new(result.clone()),
             },
@@ -12631,136 +12709,70 @@ impl Analyzer {
         self.lower_match_with_scrutinee(scrutinee, &arms, Some(&Ty::Enum(canonical)), context)
     }
 
-    fn lower_try(
-        &mut self,
-        value: &Expr,
-        expected: Option<&Ty>,
-        context: &mut LowerCtx,
-    ) -> HirExpr {
-        let boundary = context.return_boundary.clone();
-        let operand_expected = boundary.as_ref().and_then(|boundary| {
-            self.inferred_try_operand_expected(value, expected, boundary, context)
-        });
-        let Some(boundary) = boundary else {
-            let _ = self.lower_expr(value, operand_expected.as_ref(), context);
-            self.error(
-                "postfix `.try` requires a named function with an explicit return type implementing `core.control.Try`",
-            );
+    fn lower_try(&mut self, body: &Expr, expected: Option<&Ty>, context: &mut LowerCtx) -> HirExpr {
+        let Some(expected) = expected.cloned() else {
+            let _ = self.lower_expr(body, None, context);
+            self.error("`try { ... }` requires an expected `Result(T, E)` type");
             return error_expr();
         };
-        let operand_probe = self.probe_expr_ty(value, operand_expected.as_ref(), context);
-        let operand_ty = match &operand_probe {
-            TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) => Some(ty.clone()),
-            TypeProbe::Defaultable(_) | TypeProbe::Unsupported => None,
+        let Some(info) = self.builtin_fallible_info_for_ty(&expected) else {
+            let _ = self.lower_expr(body, None, context);
+            self.error(format!(
+                "`try {{ ... }}` produces `Result(T, E)`, but this context expects `{expected}`"
+            ));
+            return error_expr();
         };
-        if let Some((operand_ty, protocol)) = operand_ty
-            .and_then(|ty| {
-                self.try_protocol_info_for_ty(&ty)
-                    .map(|protocol| (ty, protocol))
+        if info.kind != BuiltinFallibleKind::Result {
+            let _ = self.lower_expr(body, None, context);
+            self.error("`try { ... }` requires `Result(T, E)`, not `Option(T)`");
+            return error_expr();
+        }
+        let error = info.error.expect("Result has an error type");
+        let closure = self.lower_local_closure(
+            &[],
+            body,
+            Some(expected.clone()),
+            context.unsafe_depth,
+            Some(error),
+            context,
+        );
+        let HirExprKind::LocalClosure(info) = closure.kind else {
+            return error_expr();
+        };
+        let mut loans = Vec::new();
+        let arguments = info
+            .captures
+            .into_iter()
+            .map(|capture| match capture.mode {
+                ClosureCaptureMode::Shared => {
+                    if let Some(loan) = capture.place.loan {
+                        loans.push(loan);
+                    }
+                    HirArgument::SharedBorrow(capture.place)
+                }
+                ClosureCaptureMode::Mutable => {
+                    if let Some(loan) = capture.place.loan {
+                        loans.push(loan);
+                    }
+                    HirArgument::MutBorrow(capture.place)
+                }
+                ClosureCaptureMode::Move => HirArgument::Move(
+                    *capture
+                        .value
+                        .expect("move capture stores its evaluated value"),
+                ),
             })
-            .filter(|(ty, _)| {
-                boundary.kind.is_none() || self.builtin_fallible_info_for_ty(ty).is_none()
-            })
-        {
-            return self.lower_protocol_try(
-                value,
-                &operand_ty,
-                &protocol,
-                expected,
-                &boundary,
-                context,
-            );
-        }
-        let operand = self.lower_expr(value, operand_expected.as_ref(), context);
-        if operand.ty == Ty::Error {
-            return error_expr();
-        }
-        let Some(info) = self.builtin_try_info_for_ty(&operand.ty) else {
-            self.error(format!(
-                "postfix `.try` requires an `Option` or `Result` value implementing `core.control.Try`, found `{}`",
-                operand.ty
-            ));
-            return error_expr();
-        };
-        let residual = info.error.clone().unwrap_or(Ty::Unit);
-        if !self.has_conversion_impl(&boundary.container, LangItemKind::FromResidual, &residual) {
-            self.error(format!(
-                "postfix `.try` cannot convert the residual or error type of `{}` into `{}`",
-                operand.ty, boundary.container
-            ));
-            return error_expr();
-        }
-        if Some(info.kind) != boundary.kind {
-            self.error(format!(
-                "postfix `.try` cannot propagate `{}` through `{}`",
-                operand.ty, boundary.container
-            ));
-            return error_expr();
-        }
-        if info.kind == BuiltinFallibleKind::Result && info.error != boundary.error {
-            self.error(format!(
-                "postfix `.try` requires the same `Result` error type as `{}`",
-                boundary.container
-            ));
-            return error_expr();
-        }
-
-        let Some(boundary_name) = nominal_name(&boundary.container) else {
-            self.error("internal error: non-nominal `.try` return boundary");
-            return error_expr();
-        };
-        const PAYLOAD_BINDING: &str = "$try$payload";
-        const ERROR_BINDING: &str = "$try$error";
-        let success_variant = match info.kind {
-            BuiltinFallibleKind::Option => "Some",
-            BuiltinFallibleKind::Result => "Ok",
-        };
-        let residual_arm = match info.kind {
-            BuiltinFallibleKind::Option => MatchArm {
-                pattern: Pattern::Constructor {
-                    path: vec!["None".to_owned()],
-                    fields: PatternFields::Unit,
-                },
-                guard: None,
-                body: Expr::Return(Some(Box::new(Expr::Member(
-                    Box::new(Expr::Name(boundary_name.to_owned())),
-                    "None".to_owned(),
-                )))),
+            .collect();
+        self.release_loans(&loans, context);
+        HirExpr {
+            ty: expected,
+            kind: HirExprKind::Call {
+                function: info.function,
+                arguments,
+                consumed_callable: None,
+                diverges: false,
             },
-            BuiltinFallibleKind::Result => MatchArm {
-                pattern: Pattern::Constructor {
-                    path: vec!["Err".to_owned()],
-                    fields: PatternFields::Positional(vec![Pattern::Binding(
-                        ERROR_BINDING.to_owned(),
-                    )]),
-                },
-                guard: None,
-                body: Expr::Return(Some(Box::new(Expr::Call(
-                    Box::new(Expr::Member(
-                        Box::new(Expr::Name(boundary_name.to_owned())),
-                        "Err".to_owned(),
-                    )),
-                    vec![CallArg {
-                        label: None,
-                        value: Expr::Name(ERROR_BINDING.to_owned()),
-                    }],
-                )))),
-            },
-        };
-        let arms = vec![
-            MatchArm {
-                pattern: Pattern::Constructor {
-                    path: vec![success_variant.to_owned()],
-                    fields: PatternFields::Positional(vec![Pattern::Binding(
-                        PAYLOAD_BINDING.to_owned(),
-                    )]),
-                },
-                guard: None,
-                body: Expr::Name(PAYLOAD_BINDING.to_owned()),
-            },
-            residual_arm,
-        ];
-        self.lower_match_with_scrutinee(operand, &arms, expected, context)
+        }
     }
 
     fn lower_do_block(
@@ -12773,8 +12785,14 @@ impl Analyzer {
             return self.lower_expr(body, expected, context);
         }
         let declared_result = expected.filter(|ty| **ty != Ty::Error).cloned();
-        let closure =
-            self.lower_local_closure(&[], body, declared_result, context.unsafe_depth, context);
+        let closure = self.lower_local_closure(
+            &[],
+            body,
+            declared_result,
+            context.unsafe_depth,
+            None,
+            context,
+        );
         let HirExprKind::LocalClosure(info) = closure.kind else {
             return error_expr();
         };
@@ -12815,66 +12833,48 @@ impl Analyzer {
         }
     }
 
-    fn lower_protocol_try(
+    fn lower_automatic_throws(
         &mut self,
-        value: &Expr,
-        operand_ty: &Ty,
-        protocol: &TryProtocolInfo,
+        operand: HirExpr,
+        thrown_error: &Ty,
         expected: Option<&Ty>,
-        boundary: &ReturnBoundary,
         context: &mut LowerCtx,
     ) -> HirExpr {
-        if !self.has_conversion_impl(
-            &boundary.container,
-            LangItemKind::FromResidual,
-            &protocol.residual,
-        ) {
-            let _ = self.lower_expr(value, Some(operand_ty), context);
+        let Some(active_error) = context.active_throws_error.clone() else {
             self.error(format!(
-                "postfix `.try` cannot convert residual type `{}` from `{operand_ty}` into `{}`",
-                protocol.residual, boundary.container
+                "call requires `throws({thrown_error})`; propagate it from the current function or handle it with `try {{ ... }}`"
+            ));
+            return error_expr();
+        };
+        if active_error != *thrown_error {
+            self.error(format!(
+                "call throws `{thrown_error}`, but the active error type is `{active_error}`; convert errors explicitly"
             ));
             return error_expr();
         }
-        if expected.is_some_and(|expected| {
-            *expected != Ty::Error
-                && *expected != protocol.output
-                && !self.is_uninhabited_type(&protocol.output)
-        }) {
-            self.error(format!(
-                "postfix `.try` produces `{}`, but this context expects `{}`",
-                protocol.output,
-                expected.expect("checked expected type")
-            ));
+        let Some(boundary) = context.return_boundary.clone() else {
+            self.error("internal error: active throws effect has no Result return boundary");
             return error_expr();
-        }
-        let empty_group: &[CallArg] = &[];
-        let branch =
-            self.lower_bound_method_call(value, "branch", &[empty_group], None, None, context);
-        if branch.ty == Ty::Error {
-            return branch;
+        };
+        let Some(info) = self.builtin_fallible_info_for_ty(&operand.ty) else {
+            self.error("internal error: throws call does not use a Result ABI");
+            return error_expr();
+        };
+        if info.kind != BuiltinFallibleKind::Result || info.error.as_ref() != Some(thrown_error) {
+            self.error("internal error: throws call Result ABI does not match its error effect");
+            return error_expr();
         }
         let Some(boundary_name) = nominal_name(&boundary.container) else {
-            self.error("internal error: non-nominal `.try` return boundary");
+            self.error("internal error: throws boundary is not a nominal Result type");
             return error_expr();
         };
 
-        const OUTPUT_BINDING: &str = "$try$protocol$output";
-        const RESIDUAL_BINDING: &str = "$try$protocol$residual";
-        let convert = Expr::Call(
-            Box::new(Expr::Member(
-                Box::new(Expr::Name(boundary_name.to_owned())),
-                "from_residual".to_owned(),
-            )),
-            vec![CallArg {
-                label: None,
-                value: Expr::Name(RESIDUAL_BINDING.to_owned()),
-            }],
-        );
+        const OUTPUT_BINDING: &str = "$throws$output";
+        const ERROR_BINDING: &str = "$throws$error";
         let arms = vec![
             MatchArm {
                 pattern: Pattern::Constructor {
-                    path: vec!["Continue".to_owned()],
+                    path: vec!["Ok".to_owned()],
                     fields: PatternFields::Positional(vec![Pattern::Binding(
                         OUTPUT_BINDING.to_owned(),
                     )]),
@@ -12884,80 +12884,45 @@ impl Analyzer {
             },
             MatchArm {
                 pattern: Pattern::Constructor {
-                    path: vec!["Break".to_owned()],
+                    path: vec!["Err".to_owned()],
                     fields: PatternFields::Positional(vec![Pattern::Binding(
-                        RESIDUAL_BINDING.to_owned(),
+                        ERROR_BINDING.to_owned(),
                     )]),
                 },
                 guard: None,
-                body: Expr::Return(Some(Box::new(convert))),
+                body: Expr::Return(Some(Box::new(Expr::Call(
+                    Box::new(Expr::Member(
+                        Box::new(Expr::Name(boundary_name.to_owned())),
+                        "Err".to_owned(),
+                    )),
+                    vec![CallArg {
+                        label: None,
+                        value: Expr::Name(ERROR_BINDING.to_owned()),
+                    }],
+                )))),
             },
         ];
-        self.lower_match_with_scrutinee(branch, &arms, Some(&protocol.output), context)
+        self.lower_match_with_scrutinee(operand, &arms, expected.or(Some(&info.payload)), context)
     }
 
     fn lower_throw(&mut self, value: &Expr, context: &mut LowerCtx) -> HirExpr {
-        let boundary = context.return_boundary.clone();
-        let Some(boundary) = boundary else {
+        let Some(error_ty) = context.active_throws_error.clone() else {
             let _ = self.lower_expr(value, None, context);
             self.error(
-                "`throw` requires a named function with an explicit return type implementing `core.control.FromError(E)`",
+                "`throw` requires an enclosing `with(throws(Error))` function or `try { ... }` handler",
             );
             return error_expr();
         };
-        if boundary.kind.is_none() {
-            let probe = self.probe_expr_ty(value, None, context);
-            let error_ty = match probe {
-                TypeProbe::Known(ty)
-                | TypeProbe::KnownSource(ty, _)
-                | TypeProbe::Defaultable(ty) => ty,
-                TypeProbe::Unsupported => {
-                    let _ = self.lower_expr(value, None, context);
-                    self.error("cannot infer the error type passed to `throw`");
-                    return error_expr();
-                }
-            };
-            if !self.has_conversion_impl(&boundary.container, LangItemKind::FromError, &error_ty) {
-                let _ = self.lower_expr(value, Some(&error_ty), context);
-                self.error(format!(
-                    "`throw` requires `{}` to implement `core.control.FromError({error_ty})`",
-                    boundary.container
-                ));
-                return error_expr();
-            }
-            let error = self.lower_expr(value, Some(&error_ty), context);
-            if self.is_uninhabited_type(&error.ty) {
-                return error;
-            }
-            let result = self.call_boundary_conversion(
-                &boundary,
-                LangItemKind::FromError,
-                std::slice::from_ref(&error_ty),
-                "from_error",
-                error,
-            );
-            context.returned_types.push(boundary.container);
-            context.flow.reachable = false;
-            return HirExpr {
-                ty: Ty::Never,
-                kind: HirExprKind::Return(Some(Box::new(result))),
-            };
-        }
-        if boundary.kind != Some(BuiltinFallibleKind::Result) {
-            let _ = self.lower_expr(value, None, context);
-            self.error("`throw` may only propagate through a `Result` return type");
+        let Some(boundary) = context.return_boundary.clone() else {
+            let _ = self.lower_expr(value, Some(&error_ty), context);
+            self.error("internal error: throws effect has no Result return boundary");
             return error_expr();
-        }
-        let error_ty = boundary
-            .error
-            .clone()
-            .expect("Result return boundary has an error type");
-        if !self.has_conversion_impl(&boundary.container, LangItemKind::FromError, &error_ty) {
-            let _ = self.lower_expr(value, None, context);
-            self.error(format!(
-                "`throw` requires `{}` to implement `core.control.FromError({error_ty})`",
-                boundary.container
-            ));
+        };
+        if boundary.kind != Some(BuiltinFallibleKind::Result)
+            || boundary.error.as_ref() != Some(&error_ty)
+        {
+            let _ = self.lower_expr(value, Some(&error_ty), context);
+            self.error("internal error: throws effect does not match its Result ABI");
             return error_expr();
         }
         let error = self.lower_expr(value, Some(&error_ty), context);
@@ -13843,10 +13808,11 @@ impl Analyzer {
                     return self.lower_local_closure_call(name, &local, &groups, context);
                 }
                 if local.partial.is_some() {
-                    return self.lower_local_partial_call(name, &local, &groups, context);
+                    return self.lower_local_partial_call(name, &local, &groups, expected, context);
                 }
                 if matches!(local.ty, Ty::Function(_)) {
-                    return self.lower_indirect_function_call(name, &local, &groups, context);
+                    return self
+                        .lower_indirect_function_call(name, &local, &groups, expected, context);
                 }
                 self.error(format!("local value `{name}` is not callable"));
                 return error_expr();
@@ -15306,8 +15272,16 @@ impl Analyzer {
         if runtime_groups.len() == template.groups.len() {
             if let (Some(expected), Some(result)) = (expected, template.return_type.as_ref()) {
                 if *expected != Ty::Error {
+                    let logical_result = if template.effects.throws.is_some() {
+                        match result {
+                            Type::Named(_, arguments) if arguments.len() == 2 => &arguments[0],
+                            _ => result,
+                        }
+                    } else {
+                        result
+                    };
                     if let Err(message) = self.unify_template_ty(
-                        result,
+                        logical_result,
                         expected,
                         None,
                         &compile_parameters,
@@ -15659,14 +15633,23 @@ impl Analyzer {
         }
         self.release_loans(&temporary_loans, context);
         let call = if complete {
-            HirExpr {
-                ty: contextual_reference_result(&function_ty.result, expected),
+            let call = HirExpr {
+                ty: if function_ty.throws_error.is_some() {
+                    (*function_ty.result).clone()
+                } else {
+                    contextual_reference_result(&function_ty.result, expected)
+                },
                 kind: HirExprKind::Call {
                     function: canonical,
                     arguments: arguments.clone(),
                     consumed_callable: None,
                     diverges: self.is_uninhabited_type(&function_ty.result),
                 },
+            };
+            if let Some(error) = function_ty.throws_error.as_deref() {
+                self.lower_automatic_throws(call, error, expected, context)
+            } else {
+                call
             }
         } else {
             let callable_ty = partial_callable_ty(
@@ -15675,6 +15658,7 @@ impl Analyzer {
                 FunctionTy {
                     groups: function_ty.groups[consumed_groups..].to_vec(),
                     unsafe_effect: function_ty.unsafe_effect,
+                    throws_error: function_ty.throws_error.clone(),
                     custom_effects: function_ty.custom_effects.clone(),
                     result: function_ty.result.clone(),
                 },
@@ -15836,6 +15820,7 @@ impl Analyzer {
         local_name: &str,
         local: &LocalInfo,
         groups: &[&[CallArg]],
+        expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
         let Ty::Function(function_ty) = &local.ty else {
@@ -15930,6 +15915,11 @@ impl Analyzer {
                 diverges: self.is_uninhabited_type(&function_ty.result),
             },
         };
+        let call = if let Some(error) = function_ty.throws_error.as_deref() {
+            self.lower_automatic_throws(call, error, expected, context)
+        } else {
+            call
+        };
         self.wrap_call_argument_temporaries(
             call,
             &mut lowered_arguments,
@@ -16013,14 +16003,23 @@ impl Analyzer {
         self.release_loans(&temporary_loans, context);
 
         let call = if complete {
-            HirExpr {
-                ty: contextual_reference_result(&function_ty.result, expected),
+            let call = HirExpr {
+                ty: if function_ty.throws_error.is_some() {
+                    (*function_ty.result).clone()
+                } else {
+                    contextual_reference_result(&function_ty.result, expected)
+                },
                 kind: HirExprKind::Call {
                     function: name.to_owned(),
                     arguments: arguments.clone(),
                     consumed_callable: None,
                     diverges: self.is_uninhabited_type(&function_ty.result),
                 },
+            };
+            if let Some(error) = function_ty.throws_error.as_deref() {
+                self.lower_automatic_throws(call, error, expected, context)
+            } else {
+                call
             }
         } else {
             let remaining = function_ty.groups[groups.len()..].to_vec();
@@ -16030,6 +16029,7 @@ impl Analyzer {
                 FunctionTy {
                     groups: remaining,
                     unsafe_effect: function_ty.unsafe_effect,
+                    throws_error: function_ty.throws_error.clone(),
                     custom_effects: function_ty.custom_effects.clone(),
                     result: function_ty.result.clone(),
                 },
@@ -16245,6 +16245,7 @@ impl Analyzer {
         local_name: &str,
         local: &LocalInfo,
         groups: &[&[CallArg]],
+        expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
         let partial = local
@@ -16379,7 +16380,7 @@ impl Analyzer {
         }
         self.release_loans(&temporary_loans, context);
         let call = if consumed_groups == function_ty.groups.len() {
-            HirExpr {
+            let call = HirExpr {
                 ty: (*function_ty.result).clone(),
                 kind: HirExprKind::Call {
                     function: partial.function.clone(),
@@ -16387,6 +16388,11 @@ impl Analyzer {
                     consumed_callable: partial.is_fn_once.then_some(local.id),
                     diverges: self.is_uninhabited_type(&function_ty.result),
                 },
+            };
+            if let Some(error) = function_ty.throws_error.as_deref() {
+                self.lower_automatic_throws(call, error, expected, context)
+            } else {
+                call
             }
         } else {
             let callable_ty = partial_callable_ty(
@@ -16395,6 +16401,7 @@ impl Analyzer {
                 FunctionTy {
                     groups: function_ty.groups[consumed_groups..].to_vec(),
                     unsafe_effect: function_ty.unsafe_effect,
+                    throws_error: function_ty.throws_error.clone(),
                     custom_effects: function_ty.custom_effects.clone(),
                     result: function_ty.result.clone(),
                 },
@@ -16928,7 +16935,7 @@ impl Analyzer {
             Some(result) => result,
             None => self.lower_function("main"),
         };
-        let signature = &self.signatures["main"];
+        let signature = self.signatures["main"].clone();
         if signature.groups.len() != 1 || !signature.groups[0].is_empty() {
             self.error("`main` must have exactly one empty parameter group: `main()`");
         }
@@ -16937,6 +16944,11 @@ impl Analyzer {
         }
         if !self.functions["main"].effects.custom.is_empty() {
             self.error("`main` cannot expose unhandled custom effects");
+        }
+        if let Some(error) = &signature.throws_error {
+            self.error(format!(
+                "`main` cannot expose unhandled `throws({error})`; handle it with `try {{ ... }}`"
+            ));
         }
         if !matches!(result, Ty::Unit | Ty::I32 | Ty::Error) {
             self.error(format!(
@@ -22633,6 +22645,9 @@ fn substitute_function_types(function: &mut Function, substitutions: &HashMap<St
     if let Some(result) = &mut function.return_type {
         substitute_type_parameters(result, substitutions);
     }
+    if let Some(error) = &mut function.effects.throws {
+        substitute_type_parameters(error, substitutions);
+    }
     let mut remaining_effect_parameters = Vec::new();
     for parameter in function.effects.parameters.drain(..) {
         match substituted_effect_row(&parameter, substitutions) {
@@ -23077,6 +23092,9 @@ fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<String, Typ
             for ty in groups.iter_mut().flatten() {
                 substitute_type_parameters(ty, substitutions);
             }
+            if let Some(error) = &mut effects.throws {
+                substitute_type_parameters(error, substitutions);
+            }
             substitute_type_parameters(result, substitutions);
             let mut remaining = Vec::new();
             for parameter in effects.parameters.drain(..) {
@@ -23482,6 +23500,13 @@ fn canonical_type_encoding(ty: &Ty) -> String {
                 }
             }
             encoded.push_str(if function.unsafe_effect { "u:" } else { "p:" });
+            match &function.throws_error {
+                Some(error) => {
+                    encoded.push_str("t:");
+                    push_canonical_component(&mut encoded, &canonical_type_encoding(error));
+                }
+                None => encoded.push_str("n:"),
+            }
             encoded.push_str(&function.custom_effects.len().to_string());
             encoded.push(':');
             for effect in &function.custom_effects {
@@ -24410,39 +24435,77 @@ let main(): i32 = {
     }
 
     #[test]
-    fn throw_returns_the_enclosing_result_error_variant() {
+    fn throw_returns_the_enclosing_throws_error_variant() {
         let ir = compile_text(
             r#"
-let answer(fail: bool): Result(i32, bool) = {
+let answer(fail: bool): i32 with(throws(bool)) = {
   if fail { throw true }
   42
 }
-let main(): i32 = answer(true) ?? 42
+let main(): i32 = {
+  let result: Result(i32, bool) = try { answer(true) }
+  result ?? 42
+}
 "#,
         )
-        .expect("throw in an explicit Result function must compile");
+        .expect("throw in a throws function must compile");
         assert!(ir.contains("switch i32"));
         assert!(ir.contains("ret %sali.type."));
     }
 
     #[test]
-    fn throw_requires_an_exact_explicit_result_error_boundary() {
+    fn throws_calls_propagate_automatically_and_try_handles_them() {
+        let ir = compile_text(
+            r#"
+let read(fail: bool): i32 with(throws(bool)) = {
+  if fail { throw true }
+  40
+}
+let forward(fail: bool): i32 with(throws(bool)) = read(fail) + 2
+let invoke(action: (bool): i32 with(throws(bool)))(fail: bool): i32 with(throws(bool)) =
+  action(fail)
+let main(): i32 = {
+  let result: Result(i32, bool) = try { invoke(forward)(false) }
+  result match {
+    Ok(value) => value,
+    Err(_) => 0
+  }
+}
+"#,
+        )
+        .expect("throws calls should branch automatically and try should produce Result");
+        assert!(ir.contains("switch"));
+
+        let unhandled = compile_text(
+            r#"
+let read(): i32 with(throws(bool)) = throw true
+let main(): i32 = read()
+"#,
+        )
+        .expect_err("a pure caller must handle a throws effect");
+        assert!(unhandled
+            .iter()
+            .any(|error| error.message.contains("handle it with `try { ... }`")));
+    }
+
+    #[test]
+    fn throw_requires_an_exact_active_throws_boundary() {
         for (source, expected) in [
             (
-                "let fail(): Result(i32, bool) = throw 0\nlet main(): i32 = 0\n",
+                "let fail(): i32 with(throws(bool)) = throw 0\nlet main(): i32 = 0\n",
                 "where `bool` is expected",
             ),
             (
                 "let fail(): Option(i32) = throw false\nlet main(): i32 = 0\n",
-                "only propagate through a `Result`",
+                "requires an enclosing `with(throws(Error))`",
             ),
             (
                 "let fail(): i32 = throw false\nlet main(): i32 = 0\n",
-                "FromError",
+                "requires an enclosing `with(throws(Error))`",
             ),
             (
                 "let fail() = throw false\nlet main(): i32 = 0\n",
-                "FromError",
+                "requires an enclosing `with(throws(Error))`",
             ),
         ] {
             let errors = compile_text(source).expect_err("invalid throw must be rejected");
@@ -27005,41 +27068,42 @@ let main(): i32 = {
     }
 
     #[test]
-    fn return_type_try_effect_groups_lower_to_option_and_result_boundaries() {
+    fn throws_effects_lower_to_result_boundaries_and_propagate() {
         let ir = compile_text(
             r#"
-let keep(move value: Option(i32)): i32 with(try) = value.try
-let fail(flag: bool): i32 with(try(bool)) = if flag { throw true } else { 40 }
-let main(): i32 = (keep(Option(i32).None) ?? 1) + (fail(false) ?? 0) + 1
+let fail(flag: bool): i32 with(throws(bool)) = if flag { throw true } else { 41 }
+let forward(flag: bool): i32 with(throws(bool)) = fail(flag)
+let main(): i32 = {
+  let result: Result(i32, bool) = try { forward(false) }
+  result ?? 0
+}
 "#,
         )
-        .expect("try effect groups should reuse the typed Try return boundary");
+        .expect("throws effects should use a Result ABI with automatic propagation");
         assert!(ir.contains("define internal %sali.type."));
     }
 
     #[test]
-    fn try_and_unsafe_share_one_return_type_effect_group() {
-        let ir = compile_text(
+    fn throws_and_unsafe_share_one_effect_row() {
+        let ir = compile_library_text(
             r#"
-let read(pointer: Ptr(i32), fail: bool): i32 with(try(bool), unsafe) = {
+let read(pointer: Ptr(i32), fail: bool): i32 with(throws(bool), unsafe) = {
   if fail { throw true }
   *pointer
 }
-let main(): i32 = {
-  let value = 42
-  unsafe { read(Ptr(borrow value), false) ?? 0 }
-}
+let forward(pointer: Ptr(i32), fail: bool): i32 with(throws(bool), unsafe) =
+  read(pointer, fail)
 "#,
         )
-        .expect("try should transform the return carrier while unsafe remains a call requirement");
+        .expect("throws should propagate while unsafe remains a separate call requirement");
         assert!(ir.contains("define internal %sali.type."));
 
         let errors = compile_text(
             r#"
-let read(pointer: Ptr(i32)): i32 with(try(bool), unsafe) = *pointer
+let read(pointer: Ptr(i32)): i32 with(throws(bool), unsafe) = *pointer
 let main(): i32 = {
   let value = 42
-  read(Ptr(borrow value)) ?? 0
+  read(Ptr(borrow value))
 }
 "#,
         )
@@ -28113,26 +28177,20 @@ let main(): i32 = {
     }
 
     #[test]
-    fn custom_try_operands_branch_through_the_core_protocol() {
+    fn nominal_error_types_propagate_through_throws() {
         let ir = compile_resolved_text(
             r#"
-use core.control.{ControlFlow, Try}
-let Step = enum { Value(i32), Stop(bool) }
-extend Step: Try {
-  let Output = i32
-  let Residual = bool
-  let branch(move self)(): ControlFlow(bool, i32) = self match {
-    Value(value) => Continue(value),
-    Stop(error) => Break(error),
-  }
-  let from_output(move output: i32): Step = Value(output)
+let Failure = enum { Stop(bool) }
+let read(fail: bool): i32 with(throws(Failure)) =
+  if fail { throw Stop(true) } else { 40 }
+let run(fail: bool): i32 with(throws(Failure)) = read(fail) + 2
+let main(): i32 = {
+  let result: Result(i32, Failure) = try { run(false) }
+  result match { Ok(value) => value, Err(_) => 0 }
 }
-let read(fail: bool): Step = if fail { Stop(true) } else { Value(40) }
-let run(fail: bool): Result(i32, bool) = read(fail).try + 2
-let main(): i32 = run(false) match { Ok(value) => value, Err(_) => 0 }
 "#,
         )
-        .expect("custom Try operand must lower through branch and FromResidual");
+        .expect("nominal errors should use the same automatic throws propagation");
 
         assert!(ir.contains("add i32"));
         assert!(ir.contains("switch i32"));
@@ -28917,10 +28975,11 @@ let replace(borrow(mut) target: Pair, move replacement: Payload): () = {
     fn cleanup_plan_try_and_throw_returns_exit_match_arm_scopes() {
         let plan = cleanup_plan_text(
             r#"
-let propagate(move value: Result(i32, bool)): Result(i32, bool) = {
-  let item = value.try
+let read(fail: bool): i32 with(throws(bool)) = if fail { throw true } else { 42 }
+let propagate(fail: bool): i32 with(throws(bool)) = {
+  let item = read(fail)
   if item == 0 { throw true }
-  Result(i32, bool).Ok(item)
+  item
 }
 "#,
             "propagate",

@@ -39,8 +39,9 @@ either standard namespace.
 `core.ops` uses the same rule: `Add`, `Sub`, `Mul`, `Div`, `Rem`, `Eq`, `PartialOrdering`,
 `PartialOrd`, `Neg`, `Not`, `BitAnd`, `BitOr`, `BitXor`, `Shl`, and `Shr` require ordinary imports when
 named. Merely writing the corresponding operator token does not require importing its protocol.
-Likewise, `ControlFlow`, `Try`, `FromResidual`, and `FromError` require imports when named; `.try`
-and `throw` do not inject those names into source scope.
+Likewise, `ControlFlow`, `Try`, `FromResidual`, and `FromError` require imports when named. The
+language-level `throws(E)`, `throw`, and `try { ... }` effect semantics do not inject those library
+names into source scope.
 
 The compiler, library sources, and edition form one toolchain unit. Compiler-matched language items
 must come from the matching `core`, while user declarations with the same spelling remain ordinary

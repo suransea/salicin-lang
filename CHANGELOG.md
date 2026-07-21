@@ -6,6 +6,20 @@ subset.
 
 ## Unreleased
 
+## 0.91.0 - 2026-07-21
+
+- Replaced `with(try)` / `with(try(Error))` with the explicit error effect
+  `with(throws(Error))`; a throwing function keeps logical result `T` while the current native ABI
+  lowers it through `Result(T, Error)`.
+- Made complete direct, method, partial, and non-capturing indirect throwing calls propagate
+  automatically through a matching throws boundary, with exact error types and no postfix `.try`.
+- Added `try { ... }` as the error handler that removes `throws(Error)` and yields an explicit
+  `Result(T, Error)`, including normal-tail and `throw` lowering through an immediate closure.
+- Removed the obsolete postfix propagation implementation and migrated its end-to-end fixtures;
+  the deleted spellings now receive focused migration diagnostics rather than compatibility aliases.
+- Unified the language design for future control effects: async calls will be suspension points by
+  virtue of their effect row, while `async { ... }` will handle that effect without postfix `.await`.
+
 ## 0.90.0 - 2026-07-21
 
 - Added requirement subtyping for callable effect rows: a callable requiring fewer effects can fill

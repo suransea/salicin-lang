@@ -1,5 +1,10 @@
-let fail(): Result(i32, bool) = {
+let fail(): i32 with(throws(bool)) = {
   throw true
 }
 
-let main(): i32 = fail() ?? 42
+let forward(): i32 with(throws(bool)) = fail()
+
+let main(): i32 = {
+  let result: Result(i32, bool) = try { forward() }
+  result ?? 42
+}

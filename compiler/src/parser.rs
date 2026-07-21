@@ -229,13 +229,14 @@ impl Parser {
             }
             None
         };
-        let (effects, try_effect, has_effect_group) = self.function_effect_clause()?;
-        if try_effect.is_some() && logical_result.is_none() {
+        let (effects, throws_error, has_effect_group) = self.function_effect_clause()?;
+        if throws_error.is_some() && logical_result.is_none() {
             return Err(self.error_here(
-                "`try` effects require an explicit logical return type before `with(...)`",
+                "`throws(Error)` requires an explicit logical return type before `with(...)`",
             ));
         }
-        let annotation = logical_result.map(|result| Self::apply_try_effect(result, try_effect));
+        let annotation =
+            logical_result.map(|result| Self::apply_throws_effect(result, throws_error));
         self.effect_parameters_in_scope.clear();
 
         if !compile_groups.is_empty() || !groups.is_empty() {
@@ -395,13 +396,14 @@ impl Parser {
             }
             None
         };
-        let (effects, try_effect, has_effect_group) = self.function_effect_clause()?;
-        if try_effect.is_some() && logical_result.is_none() {
+        let (effects, throws_error, has_effect_group) = self.function_effect_clause()?;
+        if throws_error.is_some() && logical_result.is_none() {
             return Err(self.error_here(
-                "`try` effects require an explicit logical return type before `with(...)`",
+                "`throws(Error)` requires an explicit logical return type before `with(...)`",
             ));
         }
-        let annotation = logical_result.map(|result| Self::apply_try_effect(result, try_effect));
+        let annotation =
+            logical_result.map(|result| Self::apply_throws_effect(result, throws_error));
         self.effect_parameters_in_scope.clear();
         if !compile_groups.is_empty() || !groups.is_empty() {
             self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::Equal]);
@@ -1027,13 +1029,14 @@ impl Parser {
             }
             None
         };
-        let (effects, try_effect, _has_effect_group) = self.function_effect_clause()?;
-        if try_effect.is_some() && logical_result.is_none() {
+        let (effects, throws_error, _has_effect_group) = self.function_effect_clause()?;
+        if throws_error.is_some() && logical_result.is_none() {
             return Err(self.error_here(
-                "`try` effects require an explicit logical return type before `with(...)`",
+                "`throws(Error)` requires an explicit logical return type before `with(...)`",
             ));
         }
-        let return_type = logical_result.map(|result| Self::apply_try_effect(result, try_effect));
+        let return_type =
+            logical_result.map(|result| Self::apply_throws_effect(result, throws_error));
         self.effect_parameters_in_scope.clear();
 
         if compile_groups.is_empty() && groups.is_empty() {
@@ -1071,7 +1074,7 @@ impl Parser {
 
     fn function_effect_clause(
         &mut self,
-    ) -> Result<(FunctionEffects, Option<Option<Type>>, bool), ParseError> {
+    ) -> Result<(FunctionEffects, Option<Type>, bool), ParseError> {
         if !self.at_context_ident("with") {
             return Ok((FunctionEffects::default(), None, false));
         }
@@ -1079,7 +1082,7 @@ impl Parser {
         self.advance();
         self.expect(&TokenKind::LParen, "`(` after `with`")?;
         let mut unsafe_effect = false;
-        let mut try_effect: Option<Option<Type>> = None;
+        let mut throws_error: Option<Type> = None;
         let mut effect_parameters = Vec::new();
         let mut custom = Vec::new();
         loop {
@@ -1089,20 +1092,20 @@ impl Parser {
                 }
                 unsafe_effect = true;
             } else if self.take(&TokenKind::Try) {
-                if try_effect.is_some() {
-                    return Err(self.error_here("duplicate `try` effect in `with(...)`"));
-                }
-                let error = if self.take(&TokenKind::LParen) {
-                    let error = self.type_expr()?;
-                    self.expect(&TokenKind::RParen, "`)` after the `try` error type")?;
-                    Some(error)
-                } else {
-                    None
-                };
-                try_effect = Some(error);
+                return Err(
+                    self.error_here("`with(try...)` was removed; use `with(throws(Error))`")
+                );
             } else if let TokenKind::Ident(name) = &self.current().kind {
                 let name = name.clone();
-                if self.effect_parameters_in_scope.contains(&name)
+                if name == "throws" && !self.at_offset(1, &TokenKind::Dot) {
+                    self.advance();
+                    if throws_error.is_some() {
+                        return Err(self.error_here("duplicate `throws` effect in `with(...)`"));
+                    }
+                    self.expect(&TokenKind::LParen, "`(` after `throws`")?;
+                    throws_error = Some(self.type_expr()?);
+                    self.expect(&TokenKind::RParen, "`)` after the thrown error type")?;
+                } else if self.effect_parameters_in_scope.contains(&name)
                     && !self.at_offset(1, &TokenKind::Dot)
                 {
                     self.advance();
@@ -1127,7 +1130,7 @@ impl Parser {
                 }
             } else {
                 return Err(self.error_here(
-                    "expected `try`, `try(Error)`, `unsafe`, an effect parameter, or a custom effect name in `with(...)`",
+                    "expected `throws(Error)`, `unsafe`, an effect parameter, or a custom effect name in `with(...)`",
                 ));
             }
 
@@ -1146,19 +1149,19 @@ impl Parser {
         Ok((
             FunctionEffects {
                 unsafe_effect,
+                throws: throws_error.clone().map(Box::new),
                 custom,
                 parameters: effect_parameters,
             },
-            try_effect,
+            throws_error,
             true,
         ))
     }
 
-    fn apply_try_effect(output: Type, try_effect: Option<Option<Type>>) -> Type {
-        match try_effect {
+    fn apply_throws_effect(output: Type, throws_error: Option<Type>) -> Type {
+        match throws_error {
             None => output,
-            Some(None) => Type::Named("Option".to_owned(), vec![output]),
-            Some(Some(error)) => Type::Named("Result".to_owned(), vec![output, error]),
+            Some(error) => Type::Named("Result".to_owned(), vec![output, error]),
         }
     }
 
@@ -1410,8 +1413,8 @@ impl Parser {
             return Err(self.error_here("function types require `:` before the result type"));
         }
         let logical_result = self.function_result_type()?;
-        let (effects, try_effect, _has_effect_clause) = self.function_effect_clause()?;
-        let result = Self::apply_try_effect(logical_result, try_effect);
+        let (effects, throws_error, _has_effect_clause) = self.function_effect_clause()?;
+        let result = Self::apply_throws_effect(logical_result, throws_error);
         Ok(Type::Function {
             groups,
             effects,
@@ -1852,7 +1855,9 @@ impl Parser {
                 };
             } else if self.take(&TokenKind::Dot) {
                 if self.take(&TokenKind::Try) {
-                    expression = Expr::Try(Box::new(expression));
+                    return Err(self.error_here(
+                        "postfix `.try` was removed; calls with `throws(Error)` propagate automatically",
+                    ));
                 } else {
                     let member = if self.at(&TokenKind::Super)
                         && Self::is_super_path_expression(&expression)
@@ -1945,10 +1950,11 @@ impl Parser {
                 })
             }
             TokenKind::Try => {
-                Err(self.error_at(
-                    &token,
-                    "prefix `try` was removed; use `do { ... }` with a contextual return type",
-                ))
+                self.advance();
+                if !self.at(&TokenKind::LBrace) {
+                    return Err(self.error_at(&token, "expected a block after `try`"));
+                }
+                Ok(Expr::Try(Box::new(self.block()?)))
             }
             TokenKind::Unsafe => {
                 self.advance();
@@ -2642,6 +2648,9 @@ fn validate_type_effects(ty: &Type, effects: &HashSet<String>) -> Result<(), Str
             for ty in groups.iter().flatten() {
                 validate_type_effects(ty, effects)?;
             }
+            if let Some(error) = &function_effects.throws {
+                validate_type_effects(error, effects)?;
+            }
             validate_type_effects(result, effects)
         }
         Type::Named(_, arguments) => {
@@ -2673,9 +2682,16 @@ fn validate_type_accesses(ty: &Type, accesses: &HashSet<String>) -> Result<(), S
             validate_type_accesses(pointee, accesses)
         }
         Type::Array(element, _) => validate_type_accesses(element, accesses),
-        Type::Function { groups, result, .. } => {
+        Type::Function {
+            groups,
+            effects,
+            result,
+        } => {
             for ty in groups.iter().flatten() {
                 validate_type_accesses(ty, accesses)?;
+            }
+            if let Some(error) = &effects.throws {
+                validate_type_accesses(error, accesses)?;
             }
             validate_type_accesses(result, accesses)
         }
@@ -2812,9 +2828,16 @@ fn validate_type_regions(ty: &Type, regions: &HashSet<String>) -> Result<(), Str
             validate_type_regions(pointee, regions)
         }
         Type::Array(element, _) => validate_type_regions(element, regions),
-        Type::Function { groups, result, .. } => {
+        Type::Function {
+            groups,
+            effects,
+            result,
+        } => {
             for ty in groups.iter().flatten() {
                 validate_type_regions(ty, regions)?;
+            }
+            if let Some(error) = &effects.throws {
+                validate_type_regions(error, regions)?;
             }
             validate_type_regions(result, regions)
         }
@@ -3047,19 +3070,9 @@ mod tests {
         let error = parse("let f(): i32 ! unsafe = 42\n").unwrap_err();
         assert!(error.message.contains("`!` effect syntax was removed"));
 
-        let program = parse(
-            "let optional(): i32 with(try) = 42\n\
-             let fallible(): i32 with(try(bool), unsafe) = throw true\n",
-        )
-        .unwrap();
-        let Item::Function(optional) = &program.items[0] else {
-            panic!("expected optional function");
-        };
-        assert_eq!(
-            optional.return_type,
-            Some(Type::Named("Option".to_owned(), vec![Type::I32]))
-        );
-        let Item::Function(fallible) = &program.items[1] else {
+        let program =
+            parse("let fallible(): i32 with(throws(bool), unsafe) = throw true\n").unwrap();
+        let Item::Function(fallible) = &program.items[0] else {
             panic!("expected fallible function");
         };
         assert_eq!(
@@ -3070,14 +3083,18 @@ mod tests {
             ))
         );
         assert!(fallible.effects.unsafe_effect);
+        assert_eq!(fallible.effects.throws.as_deref(), Some(&Type::Bool));
 
         for source in [
             "let f(): i32 with(unsafe, unsafe) = 0\n",
-            "let f(): i32 with(try, try) = 0\n",
+            "let f(): i32 with(throws(bool), throws(bool)) = 0\n",
         ] {
             let error = parse(source).unwrap_err();
             assert!(error.message.contains("duplicate"));
         }
+
+        let removed = parse("let f(): i32 with(try(bool)) = 0\n").unwrap_err();
+        assert!(removed.message.contains("`with(try...)` was removed"));
     }
 
     #[test]
@@ -3834,28 +3851,28 @@ mod tests {
     }
 
     #[test]
-    fn parses_do_as_an_immediately_invoked_function_and_rejects_prefix_try() {
+    fn parses_do_and_try_as_distinct_immediate_handlers() {
         let program = parse(
-            "let main(): Result(i32, bool) = do { 42 }\n\
-             let other(): Result(i32, bool) = do { throw true }\n",
+            "let main(): Result(i32, bool) = try { 42 }\n\
+             let other(): i32 = do { 42 }\n",
         )
         .unwrap();
         let Item::Function(main) = &program.items[0] else {
             panic!("expected function");
         };
-        assert!(matches!(main.body, Some(Expr::DoBlock { .. })));
+        assert!(matches!(main.body, Some(Expr::Try(_))));
         let Item::Function(other) = &program.items[1] else {
             panic!("expected function");
         };
         assert!(matches!(other.body, Some(Expr::DoBlock { .. })));
 
-        for source in [
-            "let value: Result(i32, bool) = try do { 42 }\n",
-            "let value: Result(i32, bool) = try Result(i32, bool) do { 42 }\n",
-        ] {
-            let error = parse(source).unwrap_err();
-            assert!(error.message.contains("prefix `try` was removed"));
-        }
+        let old =
+            parse("let unwrap(value: Result(i32, bool)): i32 with(throws(bool)) = value.try\n")
+                .unwrap_err();
+        assert!(old.message.contains("postfix `.try` was removed"));
+
+        let malformed = parse("let value: Result(i32, bool) = try do { 42 }\n").unwrap_err();
+        assert!(malformed.message.contains("expected a block after `try`"));
     }
 
     #[test]

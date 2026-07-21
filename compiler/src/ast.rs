@@ -182,6 +182,8 @@ pub struct Function {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct FunctionEffects {
     pub unsafe_effect: bool,
+    /// Error type propagated automatically by calls and handled by `try { ... }`.
+    pub throws: Option<Box<Type>>,
     /// Nominal user-defined marker effects, canonicalized by module lowering.
     pub custom: Vec<String>,
     /// Compile-time effect-row parameters awaiting generic instantiation.

@@ -1,5 +1,5 @@
-let fail(): Result(i32, bool) = {
+let fail(): i32 with(throws(bool)) = {
   throw 42
 }
 
-let main(): i32 = fail() ?? 42
+let main(): i32 = 42
