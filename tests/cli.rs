@@ -681,6 +681,7 @@ fn m1_ownership_programs_run_with_expected_result() {
         "explicit_borrow_types.sali",
         "region_scoped_borrow.sali",
         "returned_borrow.sali",
+        "borrow_value_parameter.sali",
     ] {
         let output = salic()
             .arg("run")
@@ -748,13 +749,9 @@ fn explicit_borrow_type_errors_report_their_cause() {
         ("borrow_type_kind_mismatch.sali", "borrow kind mismatch"),
         (
             "borrow_type_non_borrow_initializer.sali",
-            "must be initialized by a borrow expression",
+            "borrow value of local",
         ),
         ("borrow_type_pointee_mismatch.sali", "borrow pointee"),
-        (
-            "borrow_type_signature.sali",
-            "cannot use a borrow value type yet",
-        ),
     ] {
         let output = salic()
             .arg("check")
@@ -811,10 +808,6 @@ fn returned_borrow_errors_report_their_cause() {
             "returned_borrow_missing_region.sali",
             "cannot infer the returned borrow region",
         ),
-        (
-            "borrow_type_signature.sali",
-            "cannot use a borrow value type yet",
-        ),
         ("returned_borrow_field.sali", "borrow-typed field"),
         (
             "returned_borrow_method.sali",
@@ -831,6 +824,36 @@ fn returned_borrow_errors_report_their_cause() {
             .arg(fixture("fail", name))
             .output()
             .expect("check invalid returned borrow fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn borrow_value_parameter_errors_report_their_cause() {
+    for (name, expected) in [
+        ("borrow_value_mut_moved.sali", "moved"),
+        ("borrow_value_explicit_move.sali", "moved"),
+        ("borrow_value_copy_mut.sali", "requires `Copy`"),
+        (
+            "borrow_value_block_escape_conflict.sali",
+            "already borrowed",
+        ),
+        ("borrow_value_partial.sali", "partial application"),
+        (
+            "borrow_value_local_escape.sali",
+            "source is local or cannot be proven",
+        ),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid borrow value parameter fixture");
         assert!(!output.status.success(), "{name} unexpectedly passed");
         assert!(
             String::from_utf8_lossy(&output.stderr).contains(expected),

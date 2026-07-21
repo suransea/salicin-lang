@@ -1,0 +1,8 @@
+let consume(value: mut borrow i32): i32 = value
+
+let main(): i32 = {
+  let mut number = 42
+  let reference: mut borrow i32 = mut borrow number
+  let value = consume(reference)
+  value + reference
+}

@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.59.0 - 2026-07-21
+
+- Added borrow value types to ordinary function parameters: shared references follow `Copy`,
+  mutable references follow `move`, and explicit `copy` or `move` modes retain their usual
+  ownership semantics.
+- Distinguished loading a reference value from automatically dereferencing its pointee, enabling
+  direct and generic calls, mutable writes through parameters, and safe reference-value forwarding
+  through explicit or inferred regions.
+- Carried loans with reference locals across value-producing block scopes, rejected use after a
+  mutable or explicitly moved reference, local-source escape, and partial applications that would
+  capture a reference before callable lifetime tracking is available.
+
 ## 0.58.0 - 2026-07-21
 
 - Inferred an omitted returned-borrow region when a function or method has exactly one borrow

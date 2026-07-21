@@ -533,6 +533,11 @@ enum HirArgument {
     MutBorrow(HirPlace),
 }
 
+enum ReferenceCallSource<'a> {
+    Place(&'a HirPlace),
+    Expression(&'a HirExpr),
+}
+
 #[derive(Debug, Clone)]
 struct HirPatternBinding {
     id: LocalId,
@@ -927,6 +932,8 @@ struct LowerCtx {
     loops: Vec<LoopFrame>,
     guard_move_restricted: HashSet<LocalId>,
     borrowed_parameter_regions: HashMap<LocalId, (Option<String>, bool)>,
+    reference_loans: HashMap<LocalId, Vec<LoanId>>,
+    reference_value_depth: usize,
     unsafe_depth: usize,
 }
 
@@ -946,6 +953,8 @@ impl LowerCtx {
             loops: Vec::new(),
             guard_move_restricted: HashSet::new(),
             borrowed_parameter_regions: HashMap::new(),
+            reference_loans: HashMap::new(),
+            reference_value_depth: 0,
             unsafe_depth: 0,
         }
     }
@@ -965,6 +974,8 @@ impl LowerCtx {
             loops: Vec::new(),
             guard_move_restricted: HashSet::new(),
             borrowed_parameter_regions: HashMap::new(),
+            reference_loans: HashMap::new(),
+            reference_value_depth: 0,
             unsafe_depth: 0,
         }
     }
@@ -998,6 +1009,27 @@ impl LowerCtx {
         let scope = self.scopes.pop().expect("cannot pop all scopes");
         for loan in scope.lexical_loans {
             self.flow.loans.remove(&loan);
+        }
+        for alternative in &mut self.flow.uninitialized {
+            alternative.retain(|place| !scope.locals.contains(&place.local));
+        }
+        self.flow.normalize_uninitialized();
+    }
+
+    fn pop_scope_preserving_loans(&mut self, preserved: &[LoanId]) {
+        let scope = self.scopes.pop().expect("cannot pop all scopes");
+        for loan in scope.lexical_loans {
+            if preserved.contains(&loan) {
+                let parent = self
+                    .scopes
+                    .last_mut()
+                    .expect("an escaping block reference has a parent scope");
+                if !parent.lexical_loans.contains(&loan) {
+                    parent.lexical_loans.push(loan);
+                }
+            } else {
+                self.flow.loans.remove(&loan);
+            }
         }
         for alternative in &mut self.flow.uninitialized {
             alternative.retain(|place| !scope.locals.contains(&place.local));
@@ -7076,7 +7108,25 @@ impl Analyzer {
                     TypeProbe::Unsupported
                 }
             }
-            Expr::Borrow { value, .. } => self.probe_expr_ty(value, hint, context),
+            Expr::Borrow { mutable, value } => {
+                let pointee_hint = match hint {
+                    Some(Ty::Reference { pointee, .. }) => Some(pointee.as_ref()),
+                    _ => None,
+                };
+                let pointee = match self.probe_expr_ty(value, pointee_hint, context) {
+                    TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) => ty,
+                    TypeProbe::Defaultable(ty) => ty,
+                    TypeProbe::Unsupported => return TypeProbe::Unsupported,
+                };
+                TypeProbe::Known(Ty::Reference {
+                    pointee: Box::new(pointee),
+                    mutable: *mutable,
+                    region: match hint {
+                        Some(Ty::Reference { region, .. }) => region.clone(),
+                        _ => None,
+                    },
+                })
+            }
             Expr::Unsafe(body) => self.probe_expr_ty(body, hint, context),
             Expr::Unary(UnaryOp::Neg, operand) => {
                 self.probe_expr_ty(operand, hint.filter(|ty| ty.is_signed()), context)
@@ -8008,6 +8058,13 @@ impl Analyzer {
                             param.mode == PassMode::MutBorrow,
                         ),
                     );
+                } else if let Ty::Reference {
+                    mutable, region, ..
+                } = &param.ty
+                {
+                    context
+                        .borrowed_parameter_regions
+                        .insert(id, (region.clone(), *mutable));
                 }
                 let capability = match param.mode {
                     PassMode::Borrow => LocalCapability::SharedParam,
@@ -8069,6 +8126,10 @@ impl Analyzer {
         } else {
             self.lower_expr(body, signature.result.as_ref(), &mut context)
         };
+        if let Some(expected @ Ty::Reference { .. }) = signature.result.as_ref() {
+            self.validate_reference_escape_value(&lowered_body, expected, &context);
+            self.validate_explicit_reference_returns(&lowered_body, expected, &context);
+        }
         let result = if let Some(declared) = signature.result {
             for returned in &context.returned_types {
                 self.require_same_type(
@@ -8113,12 +8174,6 @@ impl Analyzer {
     }
 
     fn validate_parameter_mode(&mut self, function: &str, param: &ParamSig) {
-        if matches!(param.ty, Ty::Reference { .. }) {
-            self.error(format!(
-                "parameter `{}` in function `{function}` cannot use a borrow value type yet; use borrow pass-mode syntax",
-                param.name
-            ));
-        }
         if param.mode == PassMode::Copy && !self.is_copy_type(&param.ty) {
             let ty = self.diagnostic_type_name(&param.ty);
             self.error(format!(
@@ -8338,7 +8393,21 @@ impl Analyzer {
             Expr::Array(elements) => self.lower_array_literal(elements, expected, context),
             Expr::Name(name) => {
                 if let Some(local) = context.lookup(name).cloned() {
-                    if local.partial.is_some() || local.closure.is_some() {
+                    if matches!(expected, Some(Ty::Reference { .. }))
+                        && matches!(local.ty, Ty::Reference { .. })
+                    {
+                        let place = HirPlace {
+                            local: local.id,
+                            root_ty: local.ty.clone(),
+                            projections: Vec::new(),
+                            ty: local.ty.clone(),
+                            capability: LocalCapability::Owned,
+                            root_mutable: local.mutable,
+                            loan: None,
+                            indirect: false,
+                        };
+                        self.access_place(place, AccessKind::Auto, context)
+                    } else if local.partial.is_some() || local.closure.is_some() {
                         if matches!(&local.ty, Ty::Callable(callable) if callable.captures.iter().any(|capture| matches!(capture.mode, PassMode::Borrow | PassMode::MutBorrow)))
                         {
                             self.error(format!(
@@ -8426,26 +8495,32 @@ impl Analyzer {
                 if let Some((pointee, expected_mutable, expected_region)) = &returned_reference {
                     self.require_same_type(&place.ty, pointee, "returned borrow pointee");
                     if *expected_mutable && !*mutable {
-                        self.error("cannot return a shared borrow as a mutable borrow");
+                        self.error(if context.reference_value_depth > 0 {
+                            "borrow kind mismatch: expected mutable borrow, found shared borrow"
+                        } else {
+                            "cannot return a shared borrow as a mutable borrow"
+                        });
                     }
-                    match context.borrowed_parameter_regions.get(&place.local) {
-                        Some((source_region, source_mutable)) => {
-                            if expected_region.is_some() && source_region != expected_region {
-                                self.error(format!(
-                                    "returned borrow region mismatch: expected {}, found {}",
-                                    display_region(expected_region.as_deref()),
-                                    display_region(source_region.as_deref())
-                                ));
+                    if context.reference_value_depth == 0 {
+                        match context.borrowed_parameter_regions.get(&place.local) {
+                            Some((source_region, source_mutable)) => {
+                                if expected_region.is_some() && source_region != expected_region {
+                                    self.error(format!(
+                                        "returned borrow region mismatch: expected {}, found {}",
+                                        display_region(expected_region.as_deref()),
+                                        display_region(source_region.as_deref())
+                                    ));
+                                }
+                                if *expected_mutable && !source_mutable {
+                                    self.error(
+                                        "cannot return a mutable borrow through a shared borrow parameter",
+                                    );
+                                }
                             }
-                            if *expected_mutable && !source_mutable {
-                                self.error(
-                                    "cannot return a mutable borrow through a shared borrow parameter",
-                                );
-                            }
+                            None => self.error(
+                                "cannot return a borrow of a local value; returned borrows must originate from a region-bound borrow parameter",
+                            ),
                         }
-                        None => self.error(
-                            "cannot return a borrow of a local value; returned borrows must originate from a region-bound borrow parameter",
-                        ),
                     }
                 }
                 if *mutable {
@@ -8671,20 +8746,14 @@ impl Analyzer {
                 for statement in statements {
                     match statement {
                         Stmt::Let(binding) => {
-                            let borrow_annotation = match binding.annotation.as_ref() {
-                                Some(Type::Borrow {
-                                    mutable, pointee, ..
-                                }) => Some((*mutable, self.lower_source_type(pointee))),
-                                _ => None,
-                            };
-                            let annotation = match (&binding.annotation, &borrow_annotation) {
-                                (Some(_), Some((_, pointee))) => Some(pointee.clone()),
-                                (Some(annotation), None) => {
-                                    Some(self.lower_source_type(annotation))
-                                }
-                                (None, None) => None,
-                                (None, Some(_)) => unreachable!("borrow annotation has source"),
-                            };
+                            let borrow_annotation = binding.annotation.as_ref().and_then(|ty| {
+                                matches!(ty, Type::Borrow { .. })
+                                    .then(|| self.lower_source_type(ty))
+                            });
+                            let annotation = binding
+                                .annotation
+                                .as_ref()
+                                .map(|annotation| self.lower_source_type(annotation));
                             let callable_source = match &binding.value {
                                 Expr::Name(name) => context.lookup(name).cloned().filter(|local| {
                                     local.partial.is_some() || local.closure.is_some()
@@ -8717,33 +8786,21 @@ impl Analyzer {
                                     };
                                     self.access_place(place, AccessKind::Move, context)
                                 }
+                                _ if borrow_annotation.is_some() => self
+                                    .lower_reference_value_expr(
+                                        &binding.value,
+                                        borrow_annotation
+                                            .as_ref()
+                                            .expect("borrow annotation was checked"),
+                                        context,
+                                    ),
                                 _ => self.lower_expr(&binding.value, annotation.as_ref(), context),
                             };
-                            if let Some((expected_mutable, pointee)) = &borrow_annotation {
-                                match &value.kind {
-                                    HirExprKind::Borrow { mutable, .. }
-                                        if mutable == expected_mutable => {}
-                                    HirExprKind::Borrow { mutable, .. } => {
-                                        let expected = if *expected_mutable {
-                                            "mutable"
-                                        } else {
-                                            "shared"
-                                        };
-                                        let found = if *mutable { "mutable" } else { "shared" };
-                                        self.error(format!(
-                                            "borrow kind mismatch for local `{}`: expected {expected} borrow, found {found} borrow",
-                                            binding.name
-                                        ));
-                                    }
-                                    _ => self.error(format!(
-                                        "borrow-typed local `{}` must be initialized by a borrow expression",
-                                        binding.name
-                                    )),
-                                }
+                            if let Some(borrow_ty) = &borrow_annotation {
                                 self.require_same_type(
                                     &value.ty,
-                                    pointee,
-                                    format_args!("borrow pointee of local `{}`", binding.name),
+                                    borrow_ty,
+                                    format_args!("borrow value of local `{}`", binding.name),
                                 );
                             }
                             let ty = annotation.unwrap_or_else(|| value.ty.clone());
@@ -8779,6 +8836,18 @@ impl Analyzer {
                                 _ => closure_info_for_callable(&ty),
                             };
                             let (capability, alias) = match &value.kind {
+                                HirExprKind::Borrow { mutable, .. }
+                                    if matches!(ty, Ty::Reference { .. }) =>
+                                {
+                                    (
+                                        if *mutable {
+                                            LocalCapability::MutParam
+                                        } else {
+                                            LocalCapability::SharedParam
+                                        },
+                                        None,
+                                    )
+                                }
                                 HirExprKind::Borrow { place, mutable } => (
                                     if *mutable {
                                         LocalCapability::MutParam
@@ -8795,6 +8864,10 @@ impl Analyzer {
                                 }
                                 _ => (LocalCapability::Owned, None),
                             };
+                            let reference_origin =
+                                self.reference_origin_for_hir_expr(&value, context);
+                            let reference_loans =
+                                self.reference_loans_for_hir_expr(&value, context);
                             if matches!(ty, Ty::Function(_))
                                 && partial.is_none()
                                 && closure.is_none()
@@ -8832,6 +8905,12 @@ impl Analyzer {
                             }
                             let id = context.fresh_local();
                             if !duplicate {
+                                if let Some(origin) = reference_origin {
+                                    context.borrowed_parameter_regions.insert(id, origin);
+                                }
+                                if !reference_loans.is_empty() {
+                                    context.reference_loans.insert(id, reference_loans);
+                                }
                                 context.insert_local(
                                     binding.name.clone(),
                                     LocalInfo {
@@ -8865,7 +8944,14 @@ impl Analyzer {
                 let ty = lowered_tail
                     .as_ref()
                     .map_or(Ty::Unit, |tail| tail.ty.clone());
-                context.pop_scope();
+                let escaping_loans = lowered_tail.as_ref().map_or_else(Vec::new, |tail| {
+                    self.reference_loans_for_hir_expr(tail, context)
+                });
+                if escaping_loans.is_empty() {
+                    context.pop_scope();
+                } else {
+                    context.pop_scope_preserving_loans(&escaping_loans);
+                }
                 HirExpr {
                     ty,
                     kind: HirExprKind::Block(lowered_statements, lowered_tail),
@@ -8998,9 +9084,342 @@ impl Analyzer {
             context.flow.reachable = false;
         }
         if let Some(expected) = expected {
-            self.require_same_type(&lowered.ty, expected, "expression");
+            if context.reference_value_depth == 0
+                || !reference_value_types_compatible(&lowered.ty, expected)
+            {
+                self.require_same_type(&lowered.ty, expected, "expression");
+            }
         }
         lowered
+    }
+
+    fn lower_reference_value_expr(
+        &mut self,
+        expression: &Expr,
+        expected: &Ty,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        context.reference_value_depth += 1;
+        let mut lowered = self.lower_expr(expression, Some(expected), context);
+        context.reference_value_depth -= 1;
+        if reference_value_types_compatible(&lowered.ty, expected) {
+            lowered.ty = expected.clone();
+        }
+        lowered
+    }
+
+    fn reference_origin_for_hir_expr(
+        &self,
+        expression: &HirExpr,
+        context: &LowerCtx,
+    ) -> Option<(Option<String>, bool)> {
+        if !matches!(expression.ty, Ty::Reference { .. }) {
+            return None;
+        }
+        match &expression.kind {
+            HirExprKind::Borrow { place, .. } | HirExprKind::Read { place, .. } => context
+                .borrowed_parameter_regions
+                .get(&place.local)
+                .cloned(),
+            HirExprKind::Block(_, Some(tail)) => self.reference_origin_for_hir_expr(tail, context),
+            HirExprKind::If {
+                then_branch,
+                else_branch: Some(else_branch),
+                ..
+            } => {
+                let then_origin = self.reference_origin_for_hir_expr(then_branch, context)?;
+                let else_origin = self.reference_origin_for_hir_expr(else_branch, context)?;
+                (then_origin == else_origin).then_some(then_origin)
+            }
+            HirExprKind::Call {
+                function,
+                arguments,
+                ..
+            } => {
+                let sources = self.reference_call_source_expressions(function, arguments)?;
+                let mut origins = sources.into_iter().map(|source| match source {
+                    ReferenceCallSource::Place(place) => context
+                        .borrowed_parameter_regions
+                        .get(&place.local)
+                        .cloned(),
+                    ReferenceCallSource::Expression(value) => {
+                        self.reference_origin_for_hir_expr(value, context)
+                    }
+                });
+                let first = origins.next()??;
+                origins
+                    .all(|origin| origin.as_ref() == Some(&first))
+                    .then_some(first)
+            }
+            _ => None,
+        }
+    }
+
+    fn reference_call_source_expressions<'a>(
+        &self,
+        function: &str,
+        arguments: &'a [HirArgument],
+    ) -> Option<Vec<ReferenceCallSource<'a>>> {
+        let result_region = match self.signatures.get(function)?.result.as_ref()? {
+            Ty::Reference { region, .. } => region,
+            _ => return None,
+        };
+        let parameters = self.functions.get(function)?.groups.iter().flatten();
+        let mut sources = Vec::new();
+        for (parameter, argument) in parameters.zip(arguments) {
+            let parameter_region = match (&parameter.mode, &parameter.ty) {
+                (PassMode::Borrow | PassMode::MutBorrow, _) => Some(&parameter.region),
+                (_, Type::Borrow { region, .. }) => Some(region),
+                _ => None,
+            };
+            let Some(parameter_region) = parameter_region else {
+                continue;
+            };
+            if result_region.is_some() && parameter_region != result_region {
+                continue;
+            }
+            sources.push(match argument {
+                HirArgument::SharedBorrow(place) | HirArgument::MutBorrow(place) => {
+                    ReferenceCallSource::Place(place)
+                }
+                HirArgument::Copy(value) | HirArgument::Move(value) => {
+                    ReferenceCallSource::Expression(value)
+                }
+            });
+        }
+        Some(sources)
+    }
+
+    fn reference_loans_for_hir_expr(
+        &self,
+        expression: &HirExpr,
+        context: &LowerCtx,
+    ) -> Vec<LoanId> {
+        if !matches!(expression.ty, Ty::Reference { .. }) {
+            return Vec::new();
+        }
+        let mut loans = match &expression.kind {
+            HirExprKind::Borrow { place, .. } => place.loan.into_iter().collect(),
+            HirExprKind::Read { place, .. } => context
+                .reference_loans
+                .get(&place.local)
+                .cloned()
+                .unwrap_or_default(),
+            HirExprKind::Block(_, Some(tail)) => self.reference_loans_for_hir_expr(tail, context),
+            HirExprKind::If {
+                then_branch,
+                else_branch: Some(else_branch),
+                ..
+            } => {
+                let mut loans = self.reference_loans_for_hir_expr(then_branch, context);
+                loans.extend(self.reference_loans_for_hir_expr(else_branch, context));
+                loans
+            }
+            HirExprKind::Call {
+                function,
+                arguments,
+                ..
+            } => self
+                .reference_call_source_expressions(function, arguments)
+                .unwrap_or_default()
+                .into_iter()
+                .flat_map(|source| match source {
+                    ReferenceCallSource::Place(place) => place
+                        .loan
+                        .into_iter()
+                        .chain(
+                            context
+                                .reference_loans
+                                .get(&place.local)
+                                .into_iter()
+                                .flatten()
+                                .copied(),
+                        )
+                        .collect::<Vec<_>>(),
+                    ReferenceCallSource::Expression(value) => {
+                        self.reference_loans_for_hir_expr(value, context)
+                    }
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        loans.sort_unstable();
+        loans.dedup();
+        loans
+    }
+
+    fn validate_reference_escape_value(
+        &mut self,
+        value: &HirExpr,
+        expected: &Ty,
+        context: &LowerCtx,
+    ) {
+        if value.ty == Ty::Error || self.is_uninhabited_type(&value.ty) {
+            return;
+        }
+        if !matches!(value.ty, Ty::Reference { .. }) {
+            return;
+        }
+        let Ty::Reference {
+            mutable: expected_mutable,
+            region: expected_region,
+            ..
+        } = expected
+        else {
+            return;
+        };
+        let Some((source_region, source_mutable)) =
+            self.reference_origin_for_hir_expr(value, context)
+        else {
+            self.error("cannot return a reference value whose source is local or cannot be proven");
+            return;
+        };
+        if expected_region.is_some() && source_region != *expected_region {
+            self.error(format!(
+                "returned reference value region mismatch: expected {}, found {}",
+                display_region(expected_region.as_deref()),
+                display_region(source_region.as_deref())
+            ));
+        }
+        if *expected_mutable && !source_mutable {
+            self.error("cannot return a mutable reference value through a shared source");
+        }
+    }
+
+    fn validate_explicit_reference_returns(
+        &mut self,
+        expression: &HirExpr,
+        expected: &Ty,
+        context: &LowerCtx,
+    ) {
+        match &expression.kind {
+            HirExprKind::Return(Some(value)) => {
+                self.validate_reference_escape_value(value, expected, context);
+            }
+            HirExprKind::Array(values) => {
+                for value in values {
+                    self.validate_explicit_reference_returns(value, expected, context);
+                }
+            }
+            HirExprKind::Index { base, index, .. } => {
+                self.validate_explicit_reference_returns(base, expected, context);
+                if let HirIndex::Dynamic(index) = index {
+                    self.validate_explicit_reference_returns(index, expected, context);
+                }
+            }
+            HirExprKind::Unary(_, value)
+            | HirExprKind::Field { base: value, .. }
+            | HirExprKind::RawLoad(value)
+            | HirExprKind::RawTake(value)
+            | HirExprKind::Forget(value)
+            | HirExprKind::Loop { body: value } => {
+                self.validate_explicit_reference_returns(value, expected, context);
+            }
+            HirExprKind::Binary(left, _, right) => {
+                self.validate_explicit_reference_returns(left, expected, context);
+                self.validate_explicit_reference_returns(right, expected, context);
+            }
+            HirExprKind::Assign { value, .. } => {
+                self.validate_explicit_reference_returns(value, expected, context);
+            }
+            HirExprKind::Call { arguments, .. }
+            | HirExprKind::Partial {
+                captures: arguments,
+                ..
+            } => {
+                for argument in arguments {
+                    if let HirArgument::Copy(value) | HirArgument::Move(value) = argument {
+                        self.validate_explicit_reference_returns(value, expected, context);
+                    }
+                }
+            }
+            HirExprKind::LocalClosure(closure) => {
+                for capture in &closure.captures {
+                    if let Some(value) = &capture.value {
+                        self.validate_explicit_reference_returns(value, expected, context);
+                    }
+                }
+            }
+            HirExprKind::ConstructStruct { fields, .. }
+            | HirExprKind::ConstructEnum { fields, .. } => {
+                for (_, value) in fields {
+                    self.validate_explicit_reference_returns(value, expected, context);
+                }
+            }
+            HirExprKind::RawStore { pointer, value } | HirExprKind::RawInit { pointer, value } => {
+                self.validate_explicit_reference_returns(pointer, expected, context);
+                self.validate_explicit_reference_returns(value, expected, context);
+            }
+            HirExprKind::RawAlloc { size, align } => {
+                self.validate_explicit_reference_returns(size, expected, context);
+                self.validate_explicit_reference_returns(align, expected, context);
+            }
+            HirExprKind::RawDealloc {
+                pointer,
+                size,
+                align,
+            } => {
+                self.validate_explicit_reference_returns(pointer, expected, context);
+                self.validate_explicit_reference_returns(size, expected, context);
+                self.validate_explicit_reference_returns(align, expected, context);
+            }
+            HirExprKind::Block(statements, tail) => {
+                for statement in statements {
+                    match statement {
+                        HirStmt::Let(binding) => self.validate_explicit_reference_returns(
+                            &binding.value,
+                            expected,
+                            context,
+                        ),
+                        HirStmt::Expr(value) => {
+                            self.validate_explicit_reference_returns(value, expected, context)
+                        }
+                    }
+                }
+                if let Some(tail) = tail {
+                    self.validate_explicit_reference_returns(tail, expected, context);
+                }
+            }
+            HirExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.validate_explicit_reference_returns(condition, expected, context);
+                self.validate_explicit_reference_returns(then_branch, expected, context);
+                if let Some(else_branch) = else_branch {
+                    self.validate_explicit_reference_returns(else_branch, expected, context);
+                }
+            }
+            HirExprKind::While { condition, body } => {
+                self.validate_explicit_reference_returns(condition, expected, context);
+                self.validate_explicit_reference_returns(body, expected, context);
+            }
+            HirExprKind::Break(Some(value)) => {
+                self.validate_explicit_reference_returns(value, expected, context);
+            }
+            HirExprKind::Match { scrutinee, arms } => {
+                self.validate_explicit_reference_returns(scrutinee, expected, context);
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        self.validate_explicit_reference_returns(guard, expected, context);
+                    }
+                    self.validate_explicit_reference_returns(&arm.body, expected, context);
+                }
+            }
+            HirExprKind::Integer(_)
+            | HirExprKind::Bool(_)
+            | HirExprKind::Unit
+            | HirExprKind::Read { .. }
+            | HirExprKind::Global(_)
+            | HirExprKind::Function(_)
+            | HirExprKind::PartialCapture { .. }
+            | HirExprKind::Borrow { .. }
+            | HirExprKind::RawAddress { .. }
+            | HirExprKind::LayoutQuery { .. }
+            | HirExprKind::Return(None)
+            | HirExprKind::Break(None) => {}
+        }
     }
 
     fn lower_expr_from_flow(
@@ -13332,7 +13751,7 @@ impl Analyzer {
                 matches!(
                     argument,
                     HirArgument::SharedBorrow(_) | HirArgument::MutBorrow(_)
-                )
+                ) || matches!(argument, HirArgument::Copy(value) | HirArgument::Move(value) if matches!(value.ty, Ty::Reference { .. }))
             })
         {
             self.error(format!(
@@ -13572,7 +13991,7 @@ impl Analyzer {
                 matches!(
                     argument,
                     HirArgument::SharedBorrow(_) | HirArgument::MutBorrow(_)
-                )
+                ) || matches!(argument, HirArgument::Copy(value) | HirArgument::Move(value) if matches!(value.ty, Ty::Reference { .. }))
             })
         {
             self.error("partial application cannot capture borrowed arguments");
@@ -13661,30 +14080,52 @@ impl Analyzer {
             .collect::<HashSet<_>>();
         let mut sources = Vec::new();
         for (parameter, argument) in source_parameters.into_iter().zip(arguments) {
-            if !matches!(parameter.mode, PassMode::Borrow | PassMode::MutBorrow)
-                || (result_region.is_some() && parameter.region.as_ref() != result_region.as_ref())
-            {
+            let parameter_region = match (&parameter.mode, &parameter.ty) {
+                (PassMode::Borrow | PassMode::MutBorrow, _) => Some(&parameter.region),
+                (_, Type::Borrow { region, .. }) => Some(region),
+                _ => None,
+            };
+            let Some(parameter_region) = parameter_region else {
+                continue;
+            };
+            if result_region.is_some() && parameter_region != result_region {
                 continue;
             }
-            let place = match argument {
-                HirArgument::SharedBorrow(place) | HirArgument::MutBorrow(place) => place,
-                HirArgument::Copy(_) | HirArgument::Move(_) => continue,
+            let (place, origin) = match argument {
+                HirArgument::SharedBorrow(place) | HirArgument::MutBorrow(place) => (
+                    Some(place),
+                    context
+                        .borrowed_parameter_regions
+                        .get(&place.local)
+                        .cloned(),
+                ),
+                HirArgument::Copy(value) | HirArgument::Move(value) => {
+                    let place = match &value.kind {
+                        HirExprKind::Borrow { place, .. } | HirExprKind::Read { place, .. } => {
+                            Some(place)
+                        }
+                        _ => None,
+                    };
+                    (place, self.reference_origin_for_hir_expr(value, context))
+                }
             };
-            if temporary_ids.contains(&place.local) {
-                self.error("a returned borrow cannot originate from a temporary call argument");
-            }
-            if let Some(loan) = place.loan {
-                temporary_loans.retain(|candidate| *candidate != loan);
-                let lexical_loans = &mut context
-                    .scopes
-                    .last_mut()
-                    .expect("call lowering has a lexical scope")
-                    .lexical_loans;
-                if !lexical_loans.contains(&loan) {
-                    lexical_loans.push(loan);
+            if let Some(place) = place {
+                if temporary_ids.contains(&place.local) {
+                    self.error("a returned borrow cannot originate from a temporary call argument");
+                }
+                if let Some(loan) = place.loan {
+                    temporary_loans.retain(|candidate| *candidate != loan);
+                    let lexical_loans = &mut context
+                        .scopes
+                        .last_mut()
+                        .expect("call lowering has a lexical scope")
+                        .lexical_loans;
+                    if !lexical_loans.contains(&loan) {
+                        lexical_loans.push(loan);
+                    }
                 }
             }
-            sources.push(place.clone());
+            sources.push(origin);
         }
         if sources.is_empty() {
             self.error(format!(
@@ -13710,9 +14151,9 @@ impl Analyzer {
                 self.error("cannot return a shared call result as a mutable borrow");
             }
             for source in sources {
-                match context.borrowed_parameter_regions.get(&source.local) {
+                match source {
                     Some((source_region, source_mutable)) => {
-                        if expected_region.is_some() && source_region != expected_region {
+                        if expected_region.is_some() && source_region != *expected_region {
                             self.error(format!(
                                 "returned call argument region mismatch: expected {}, found {}",
                                 display_region(expected_region.as_deref()),
@@ -13922,7 +14363,7 @@ impl Analyzer {
                 matches!(
                     argument,
                     HirArgument::SharedBorrow(_) | HirArgument::MutBorrow(_)
-                )
+                ) || matches!(argument, HirArgument::Copy(value) | HirArgument::Move(value) if matches!(value.ty, Ty::Reference { .. }))
             })
         {
             self.error("partial application cannot capture borrowed arguments");
@@ -13971,17 +14412,52 @@ impl Analyzer {
         let mode = self.effective_pass_mode(parameter.mode, &parameter.ty);
         match mode {
             PassMode::Copy | PassMode::Move => {
-                let value =
-                    if let Some(place) = self.lower_place_without_diagnostic(argument, context) {
-                        let access = if mode == PassMode::Copy {
-                            AccessKind::Copy
+                let value = if matches!(parameter.ty, Ty::Reference { .. }) {
+                    if let Expr::Name(name) = argument {
+                        if let Some(local) = context
+                            .lookup(name)
+                            .cloned()
+                            .filter(|local| matches!(local.ty, Ty::Reference { .. }))
+                        {
+                            let place = HirPlace {
+                                local: local.id,
+                                root_ty: local.ty.clone(),
+                                projections: Vec::new(),
+                                ty: local.ty,
+                                capability: LocalCapability::Owned,
+                                root_mutable: local.mutable,
+                                loan: None,
+                                indirect: false,
+                            };
+                            let mut value = self.access_place(
+                                place,
+                                if mode == PassMode::Copy {
+                                    AccessKind::Copy
+                                } else {
+                                    AccessKind::Move
+                                },
+                                context,
+                            );
+                            if reference_value_types_compatible(&value.ty, &parameter.ty) {
+                                value.ty = parameter.ty.clone();
+                            }
+                            value
                         } else {
-                            AccessKind::Move
-                        };
-                        self.access_place(place, access, context)
+                            self.lower_reference_value_expr(argument, &parameter.ty, context)
+                        }
                     } else {
-                        self.lower_expr(argument, Some(&parameter.ty), context)
+                        self.lower_reference_value_expr(argument, &parameter.ty, context)
+                    }
+                } else if let Some(place) = self.lower_place_without_diagnostic(argument, context) {
+                    let access = if mode == PassMode::Copy {
+                        AccessKind::Copy
+                    } else {
+                        AccessKind::Move
                     };
+                    self.access_place(place, access, context)
+                } else {
+                    self.lower_expr(argument, Some(&parameter.ty), context)
+                };
                 self.require_same_type(
                     &value.ty,
                     &parameter.ty,
@@ -14583,6 +15059,24 @@ fn contextual_reference_result(result: &Ty, expected: Option<&Ty>) -> Ty {
         ) if pointee == expected_pointee && mutable == expected_mutable => expected.clone(),
         _ => result.clone(),
     }
+}
+
+fn reference_value_types_compatible(actual: &Ty, expected: &Ty) -> bool {
+    matches!(
+        (actual, expected),
+        (
+            Ty::Reference {
+                pointee: actual_pointee,
+                mutable: actual_mutable,
+                ..
+            },
+            Ty::Reference {
+                pointee: expected_pointee,
+                mutable: expected_mutable,
+                ..
+            }
+        ) if actual_pointee == expected_pointee && actual_mutable == expected_mutable
+    )
 }
 
 fn flatten_call<'a>(expression: &'a Expr, groups: &mut Vec<&'a [CallArg]>) -> &'a Expr {
