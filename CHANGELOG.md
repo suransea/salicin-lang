@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.54.0 - 2026-07-21
+
+- Added explicit `borrow T` and `mut borrow T` type syntax to the AST, parser, module resolver,
+  generic substitution, visibility traversal, and type-pattern infrastructure.
+- Allowed those types on local `let` aliases, validating that the initializer is a borrow with the
+  same mutability and pointee type while preserving alias-based ownership and cleanup semantics.
+- Kept borrow types out of function and data signatures until region parameters can prove escape
+  safety, with dedicated diagnostics instead of silently treating a borrow as an owned value.
+
 ## 0.53.0 - 2026-07-21
 
 - Added expression-level `Self` inside concrete and generic inherent or trait extensions, including

@@ -220,6 +220,7 @@ pub enum Type {
     U64,
     Bool,
     Unit,
+    Borrow { mutable: bool, pointee: Box<Type> },
     Array(Box<Type>, u64),
     Named(String, Vec<Type>),
 }

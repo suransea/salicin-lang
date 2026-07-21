@@ -1384,6 +1384,15 @@ fn validate_exposed_type(
     diagnostics: &mut Vec<String>,
 ) {
     match ty {
+        Type::Borrow { pointee, .. } => validate_exposed_type(
+            pointee,
+            exposed,
+            source_path,
+            bound_types,
+            description,
+            nominal_boundaries,
+            diagnostics,
+        ),
         Type::Array(element, _) => validate_exposed_type(
             element,
             exposed,
@@ -1698,6 +1707,7 @@ impl Resolver {
         type_scope: &HashSet<String>,
     ) {
         match ty {
+            Type::Borrow { pointee, .. } => self.rewrite_type(pointee, context, type_scope),
             Type::Array(element, _) => self.rewrite_type(element, context, type_scope),
             Type::Named(name, arguments) => {
                 for argument in arguments {

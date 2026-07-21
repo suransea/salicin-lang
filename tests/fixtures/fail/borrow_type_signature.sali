@@ -1,0 +1,2 @@
+let inspect(value: borrow i32): i32 = 42
+let main(): i32 = 42

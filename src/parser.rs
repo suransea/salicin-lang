@@ -878,6 +878,21 @@ impl Parser {
             return Ok(Type::Unit);
         }
 
+        let borrow_mutability = if self.take(&TokenKind::Borrow) {
+            Some(false)
+        } else if self.take(&TokenKind::Mut) {
+            self.expect(&TokenKind::Borrow, "`borrow` after `mut` in a borrow type")?;
+            Some(true)
+        } else {
+            None
+        };
+        if let Some(mutable) = borrow_mutability {
+            return Ok(Type::Borrow {
+                mutable,
+                pointee: Box::new(self.type_expr()?),
+            });
+        }
+
         if matches!(&self.current().kind, TokenKind::Ident(name) if name == "_") {
             return Err(self.error_here(
                 "`_` type inference has been removed; omit the compile-time argument group or use named arguments",
@@ -2904,6 +2919,46 @@ mod tests {
             }) if matches!(value.as_ref(), Expr::Index { .. })
         ));
         assert!(matches!(tail.as_ref(), Expr::Index { .. }));
+    }
+
+    #[test]
+    fn parses_explicit_borrow_types() {
+        let program = parse(
+            "let main(): i32 = {\n\
+               let value = 42\n\
+               let shared: borrow i32 = borrow value\n\
+               let mutable: mut borrow i32 = mut borrow value\n\
+               shared\n\
+             }\n",
+        )
+        .unwrap();
+
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        let Some(Expr::Block(statements, _)) = &function.body else {
+            panic!("expected block");
+        };
+        let Stmt::Let(shared) = &statements[1] else {
+            panic!("expected shared borrow binding");
+        };
+        assert_eq!(
+            shared.annotation,
+            Some(Type::Borrow {
+                mutable: false,
+                pointee: Box::new(Type::I32),
+            })
+        );
+        let Stmt::Let(mutable) = &statements[2] else {
+            panic!("expected mutable borrow binding");
+        };
+        assert_eq!(
+            mutable.annotation,
+            Some(Type::Borrow {
+                mutable: true,
+                pointee: Box::new(Type::I32),
+            })
+        );
     }
 
     #[test]

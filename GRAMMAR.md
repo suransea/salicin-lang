@@ -223,6 +223,9 @@ type_arguments = "(", type_argument, { ",", type_argument }, [ "," ], ")" ;
 type_argument  = type_expr | INTEGER ;
 ```
 
+v0.54 已实现不带显式 region 的 `borrow T` / `mut borrow T` 解析及局部 `let` 注解。`REGION`、签名中的
+借用值和返回引用保留到 region/逃逸检查阶段；当前在这些签名位置使用借用类型会得到语义诊断。
+
 `_` 不是类型实参。调用中的编译期参数组可整体省略，并由运行时实参和期望类型推断；显式消歧使用
 普通的 `IDENT ":" expression` 命名实参，不增加另一套括号或关键字。
 

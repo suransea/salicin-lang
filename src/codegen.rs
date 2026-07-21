@@ -2123,6 +2123,9 @@ impl Analyzer {
     ) -> bool {
         match source {
             Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => true,
+            Type::Borrow { pointee, .. } => {
+                self.validate_trait_source_type(trait_name, member_name, pointee, type_names)
+            }
             Type::Array(element, length) => {
                 let mut valid = true;
                 if *length > i32::MAX as u64 {
@@ -2209,6 +2212,7 @@ impl Analyzer {
     fn source_type_is_concrete(&self, source: &Type) -> bool {
         match source {
             Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => true,
+            Type::Borrow { pointee, .. } => self.source_type_is_concrete(pointee),
             Type::Array(element, _) => self.source_type_is_concrete(element),
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => true,
             Type::Named(name, arguments) if arguments.is_empty() => {
@@ -2235,6 +2239,7 @@ impl Analyzer {
     fn source_type_is_abstract_or_concrete(&self, source: &Type) -> bool {
         match source {
             Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => true,
+            Type::Borrow { pointee, .. } => self.source_type_is_abstract_or_concrete(pointee),
             Type::Array(element, _) => self.source_type_is_abstract_or_concrete(element),
             Type::Named(name, arguments) if arguments.is_empty() => {
                 self.abstract_type_parameters.contains_key(name)
@@ -2382,6 +2387,17 @@ impl Analyzer {
         visiting: &mut Vec<String>,
     ) -> Option<Type> {
         match source {
+            Type::Borrow { mutable, pointee } => Some(Type::Borrow {
+                mutable: *mutable,
+                pointee: Box::new(self.normalize_trait_impl_type(
+                    trait_name,
+                    pointee,
+                    raw,
+                    base_substitutions,
+                    normalized,
+                    visiting,
+                )?),
+            }),
             Type::Named(name, arguments) if arguments.is_empty() => {
                 if raw.contains_key(name) {
                     self.normalize_trait_impl_associated_type(
@@ -4955,6 +4971,12 @@ impl Analyzer {
             Type::U64 => Ty::U64,
             Type::Bool => Ty::Bool,
             Type::Unit => Ty::Unit,
+            Type::Borrow { .. } => {
+                self.error(
+                    "borrow types are currently supported only as local `let` annotations; function and data type signatures require explicit region support",
+                );
+                Ty::Error
+            }
             Type::Array(element, length) => {
                 let element = self.lower_source_type(element);
                 if *length > i32::MAX as u64 {
@@ -5316,6 +5338,7 @@ impl Analyzer {
             Type::U64 => Some(Ty::U64),
             Type::Bool => Some(Ty::Bool),
             Type::Unit => Some(Ty::Unit),
+            Type::Borrow { .. } => None,
             Type::Array(element, length) => {
                 Some(Ty::Array(Box::new(self.probe_source_ty(element)?), *length))
             }
@@ -5521,6 +5544,7 @@ impl Analyzer {
             Type::U64 => (*actual == Ty::U64).then_some(false).ok_or_else(mismatch),
             Type::Bool => (*actual == Ty::Bool).then_some(false).ok_or_else(mismatch),
             Type::Unit => (*actual == Ty::Unit).then_some(false).ok_or_else(mismatch),
+            Type::Borrow { .. } => Err(mismatch()),
             Type::Array(element, length) => {
                 let Ty::Array(actual_element, actual_length) = actual else {
                     return Err(mismatch());
@@ -5639,6 +5663,7 @@ impl Analyzer {
             Type::U64 => Some(Ty::U64),
             Type::Bool => Some(Ty::Bool),
             Type::Unit => Some(Ty::Unit),
+            Type::Borrow { .. } => None,
             Type::Array(element, length) => Some(Ty::Array(
                 Box::new(self.resolved_template_ty(element, compile_parameters, inferred)?),
                 *length,
@@ -8446,10 +8471,20 @@ impl Analyzer {
                 for statement in statements {
                     match statement {
                         Stmt::Let(binding) => {
-                            let annotation = binding
-                                .annotation
-                                .as_ref()
-                                .map(|ty| self.lower_source_type(ty));
+                            let borrow_annotation = match binding.annotation.as_ref() {
+                                Some(Type::Borrow { mutable, pointee }) => {
+                                    Some((*mutable, self.lower_source_type(pointee)))
+                                }
+                                _ => None,
+                            };
+                            let annotation = match (&binding.annotation, &borrow_annotation) {
+                                (Some(_), Some((_, pointee))) => Some(pointee.clone()),
+                                (Some(annotation), None) => {
+                                    Some(self.lower_source_type(annotation))
+                                }
+                                (None, None) => None,
+                                (None, Some(_)) => unreachable!("borrow annotation has source"),
+                            };
                             let callable_source = match &binding.value {
                                 Expr::Name(name) => context.lookup(name).cloned().filter(|local| {
                                     local.partial.is_some() || local.closure.is_some()
@@ -8483,6 +8518,33 @@ impl Analyzer {
                                 }
                                 _ => self.lower_expr(&binding.value, annotation.as_ref(), context),
                             };
+                            if let Some((expected_mutable, pointee)) = &borrow_annotation {
+                                match &value.kind {
+                                    HirExprKind::Borrow { mutable, .. }
+                                        if mutable == expected_mutable => {}
+                                    HirExprKind::Borrow { mutable, .. } => {
+                                        let expected = if *expected_mutable {
+                                            "mutable"
+                                        } else {
+                                            "shared"
+                                        };
+                                        let found = if *mutable { "mutable" } else { "shared" };
+                                        self.error(format!(
+                                            "borrow kind mismatch for local `{}`: expected {expected} borrow, found {found} borrow",
+                                            binding.name
+                                        ));
+                                    }
+                                    _ => self.error(format!(
+                                        "borrow-typed local `{}` must be initialized by a borrow expression",
+                                        binding.name
+                                    )),
+                                }
+                                self.require_same_type(
+                                    &value.ty,
+                                    pointee,
+                                    format_args!("borrow pointee of local `{}`", binding.name),
+                                );
+                            }
                             let ty = annotation.unwrap_or_else(|| value.ty.clone());
                             let partial = match &value.kind {
                                 HirExprKind::Partial {
@@ -19196,6 +19258,9 @@ fn collect_nominal_type_dependencies(
     output: &mut Vec<String>,
 ) {
     match ty {
+        Type::Borrow { pointee, .. } => {
+            collect_nominal_type_dependencies(pointee, nominal_names, bound, output)
+        }
         Type::Array(element, _) => {
             collect_nominal_type_dependencies(element, nominal_names, bound, output)
         }
@@ -19568,6 +19633,7 @@ fn source_type_expression(source: &Type) -> Expr {
         Type::U32 => Expr::Name("u32".to_owned()),
         Type::U64 => Expr::Name("u64".to_owned()),
         Type::Bool => Expr::Name("bool".to_owned()),
+        Type::Borrow { .. } => Expr::Name("<borrow-type>".to_owned()),
         Type::Array(element, length) => Expr::Call(
             Box::new(Expr::Name("Array".to_owned())),
             vec![
@@ -19602,6 +19668,7 @@ fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<String, Typ
                 *ty = replacement.clone();
             }
         }
+        Type::Borrow { pointee, .. } => substitute_type_parameters(pointee, substitutions),
         Type::Array(element, _) => substitute_type_parameters(element, substitutions),
         Type::Named(_, arguments) => {
             for argument in arguments {
@@ -19708,6 +19775,10 @@ fn impl_type_pattern(
         Type::U64 => ImplTypePattern::U64,
         Type::Bool => ImplTypePattern::Bool,
         Type::Unit => ImplTypePattern::Unit,
+        Type::Borrow { mutable, pointee } => ImplTypePattern::Named(
+            if *mutable { "$mut_borrow" } else { "$borrow" }.to_owned(),
+            vec![impl_type_pattern(pointee, variables, side)],
+        ),
         Type::Array(element, length) => ImplTypePattern::Array(
             Box::new(impl_type_pattern(element, variables, side)),
             *length,
@@ -19948,6 +20019,7 @@ fn canonical_type_encoding(ty: &Ty) -> String {
 
 fn substitute_self_type(ty: &mut Type, target: &str) {
     match ty {
+        Type::Borrow { pointee, .. } => substitute_self_type(pointee, target),
         Type::Array(element, _) => substitute_self_type(element, target),
         Type::Named(name, arguments) if name == "Self" && arguments.is_empty() => {
             *ty = Type::Named(target.to_owned(), Vec::new());

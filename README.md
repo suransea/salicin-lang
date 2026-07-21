@@ -450,8 +450,10 @@ v0.48 随后解除数组元素的 `Copy` 限制，并补齐资源数组逐元素
 类型限定方法调用；同名关联函数存在时可用 `A.method(self: a)()` 明确选择方法，泛型类型实参还可由
 具体 receiver 推断。v0.53 又在具体、泛型及 trait `extend` 成员中开放表达式级 `Self`：可写
 `Self(value)`、`Self.CONSTANT`、`Self.method(self: value)()` 和 `Self.Some(payload)` 模式；默认 trait
-方法中的限定调用也会在具体实现上静态分派。
-下一步推进显式引用与生命周期基础，再以相同
+方法中的限定调用也会在具体实现上静态分派。v0.54 开始显式引用基础：局部别名可写
+`let r: borrow T = borrow value` 或 `let r: mut borrow T = mut borrow value`，编译器会核对借用种类和
+pointee 类型，并继续把别名排除在 owned cleanup 之外。
+下一步加入 region 编译期参数与返回引用，再以相同
 allocator/drop 基础推进
 `Vec(T)`；泛型 callable
 参数将在正式的 `where` / `Fn` 约束语法落地后开放。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
@@ -481,6 +483,8 @@ let main(): i32 = add(1)(41)
 标量 `match` 支持字面量、binding、`_` 与 guard；无 guard 的 `true` 和 `false` 可共同覆盖 `bool`，
 整数匹配或带 guard 的布尔覆盖仍需无 guard 的 `_` / binding 回退。
 函数类型和闭包类型也不实现 `Copy`。
+`borrow T` / `mut borrow T` 当前只可作为局部 `let` 的类型注解，借用期仍采用词法作用域；函数返回、
+参数值类型和数据字段中的借用必须等 region 参数与逃逸检查落地后才开放，编译器会明确拒绝这些签名。
 表达式级 `Self` 只在 `extend` 成员内部有效，并表示当前扩展目标。省略编译期组的嵌套推断仍受当前表达式类型探测能力限制；
 无法唯一推断时需用 `T: Concrete` 形式的命名编译期实参。普通泛型 trait impl 已按具体实例静态
 选择；默认方法已静态单态化，暂不支持泛型关联类型、带显式 trait 名的完全限定调用

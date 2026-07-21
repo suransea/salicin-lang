@@ -678,6 +678,7 @@ fn m1_ownership_programs_run_with_expected_result() {
         "temporary_borrow_argument_drop.sali",
         "temporary_borrow_method_argument.sali",
         "temporary_borrow_partial_call.sali",
+        "explicit_borrow_types.sali",
     ] {
         let output = salic()
             .arg("run")
@@ -734,6 +735,34 @@ fn m1_ownership_errors_report_their_cause() {
         assert!(
             !stderr.contains("not supported"),
             "{name} reached a placeholder diagnostic:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn explicit_borrow_type_errors_report_their_cause() {
+    for (name, expected) in [
+        ("borrow_type_kind_mismatch.sali", "borrow kind mismatch"),
+        (
+            "borrow_type_non_borrow_initializer.sali",
+            "must be initialized by a borrow expression",
+        ),
+        ("borrow_type_pointee_mismatch.sali", "borrow pointee"),
+        (
+            "borrow_type_signature.sali",
+            "function and data type signatures require explicit region support",
+        ),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid explicit borrow type fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{name} did not report `{expected}`:\n{}",
             output_text(&output)
         );
     }

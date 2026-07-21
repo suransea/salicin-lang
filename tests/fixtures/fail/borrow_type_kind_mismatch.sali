@@ -1,0 +1,5 @@
+let main(): i32 = {
+  let value = 42
+  let alias: mut borrow i32 = borrow value
+  alias
+}
