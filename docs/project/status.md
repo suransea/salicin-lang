@@ -34,9 +34,11 @@ callable's exact source row.
 Fixed and effect-parameterized `throws(E)` are implemented for direct, method, partial, and
 non-capturing indirect calls. Ordinary `Option` and `Result` functions require explicit variant
 construction; the removed `Try`, `FromResidual`, `FromError`, and `ControlFlow` language protocols no
-longer participate in return completion or propagation. Inferring a handler without a contextual
-`Result`, fully effect-polymorphic `do`, user-defined handlers, capturing closure values, generic
-trait methods, and async color lowering remain design or implementation work.
+longer participate in return completion or propagation. `do` transparently forwards the complete
+active row through its immediate closure boundary, including `throws` carrier lowering, `unsafe`,
+and nominal marker effects. Inferring a handler without a contextual `Result`, user-defined
+handlers, capturing closure values, generic trait methods, and async color lowering remain design
+or implementation work.
 
 `core` and `alloc` are mounted in ordinary module resolution. `core.ops` traits and alloc containers
 are not part of the prelude. `Box`, `Vec`, and their free functions require

@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.93.0 - 2026-07-21
+
+- Made `do { ... }` transparently forward the complete active effect row through its immediate
+  closure boundary, including blocks whose local `return` requires a lifted function.
+- Preserved parameterized `throws(Error)` carrier lowering across `do`, then automatically
+  propagated the immediate call back into the enclosing throws boundary.
+- Forwarded `unsafe` authorization and nominal marker effects into lifted `do` and `try` closure
+  bodies instead of checking them as accidentally pure nested functions.
+- Added combined throws/unsafe/custom lowering coverage, exact mismatched-error diagnostics, and a
+  native success/error regression for throwing `do` blocks.
+
 ## 0.92.0 - 2026-07-21
 
 - Removed the edition language items `Try`, `FromResidual`, `FromError`, and their supporting

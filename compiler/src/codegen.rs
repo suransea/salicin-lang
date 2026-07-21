@@ -1055,10 +1055,19 @@ struct ClosureInfo {
     function: String,
     groups: Vec<Vec<ParamSig>>,
     unsafe_effect: bool,
+    throws_error: Option<Ty>,
+    custom_effects: Vec<String>,
     result: Ty,
     captures: Vec<ClosureCapture>,
     is_fn_mut: bool,
     is_fn_once: bool,
+}
+
+#[derive(Clone, Default)]
+struct ClosureEffectContext {
+    unsafe_depth: usize,
+    throws_error: Option<Ty>,
+    custom_effects: HashSet<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7820,6 +7829,23 @@ impl Analyzer {
         })
     }
 
+    fn ensure_throws_result_type(&mut self, payload: Ty, error: Ty) -> Option<Ty> {
+        let arguments = vec![payload, error];
+        let Some(source_arguments) = arguments
+            .iter()
+            .map(|argument| self.source_type_for_ty(argument))
+            .collect::<Option<Vec<_>>>()
+        else {
+            self.error(
+                "throws result type cannot be represented by the current source type system",
+            );
+            return None;
+        };
+        let template = self.lang_item_name(LangItemKind::Result).to_owned();
+        self.ensure_nominal_instance(NominalKind::Enum, &template, source_arguments, arguments)
+            .map(Ty::Enum)
+    }
+
     fn inferred_try_payload(
         &self,
         inferred: &InferredCoalesceLhs<'_>,
@@ -9987,7 +10013,13 @@ impl Analyzer {
                                             binding.name
                                         ));
                                     }
-                                    self.lower_local_closure(params, body, None, 0, None, context)
+                                    self.lower_local_closure(
+                                        params,
+                                        body,
+                                        None,
+                                        ClosureEffectContext::default(),
+                                        context,
+                                    )
                                 }
                                 Expr::Name(_) if callable_source.is_some() => {
                                     let source = callable_source
@@ -10926,8 +10958,7 @@ impl Analyzer {
         source_params: &[crate::ast::Param],
         body: &Expr,
         declared_result: Option<Ty>,
-        forwarded_unsafe_depth: usize,
-        active_throws_error: Option<Ty>,
+        effects: ClosureEffectContext,
         outer: &mut LowerCtx,
     ) -> HirExpr {
         let mut source_groups = vec![source_params];
@@ -10950,9 +10981,10 @@ impl Analyzer {
         self.next_closure += 1;
         let mut context =
             LowerCtx::for_function(&function, declared_result.clone(), outer.origin.clone());
-        context.unsafe_depth = forwarded_unsafe_depth;
-        context.active_throws_error = active_throws_error.clone();
-        context.return_boundary = active_throws_error.as_ref().and_then(|error| {
+        context.unsafe_depth = effects.unsafe_depth;
+        context.active_throws_error = effects.throws_error.clone();
+        context.active_custom_effects = effects.custom_effects.clone();
+        context.return_boundary = effects.throws_error.as_ref().and_then(|error| {
             declared_result
                 .as_ref()
                 .and_then(|result| self.throws_boundary_for_ty(result, error))
@@ -11135,15 +11167,17 @@ impl Analyzer {
             body: lowered_body,
         });
 
+        let mut custom_effects = effects.custom_effects.into_iter().collect::<Vec<_>>();
+        custom_effects.sort();
         let callable_ty = Ty::Callable(CallableTy {
             signature: FunctionTy {
                 groups: groups
                     .iter()
                     .map(|group| group.iter().map(|param| param.ty.clone()).collect())
                     .collect(),
-                unsafe_effect: forwarded_unsafe_depth > 0,
-                throws_error: None,
-                custom_effects: Vec::new(),
+                unsafe_effect: effects.unsafe_depth > 0,
+                throws_error: effects.throws_error.clone().map(Box::new),
+                custom_effects: custom_effects.clone(),
                 result: Box::new(result.clone()),
             },
             captures: captures
@@ -11166,7 +11200,9 @@ impl Analyzer {
         let info = ClosureInfo {
             function,
             groups: groups.clone(),
-            unsafe_effect: forwarded_unsafe_depth > 0,
+            unsafe_effect: effects.unsafe_depth > 0,
+            throws_error: effects.throws_error,
+            custom_effects,
             result: result.clone(),
             captures,
             is_fn_mut,
@@ -12624,8 +12660,11 @@ impl Analyzer {
             &[],
             body,
             Some(expected.clone()),
-            context.unsafe_depth,
-            Some(error),
+            ClosureEffectContext {
+                unsafe_depth: context.unsafe_depth,
+                throws_error: Some(error),
+                custom_effects: context.active_custom_effects.clone(),
+            },
             context,
         );
         let HirExprKind::LocalClosure(info) = closure.kind else {
@@ -12676,13 +12715,39 @@ impl Analyzer {
         if !do_block_requires_function_boundary(body) {
             return self.lower_expr(body, expected, context);
         }
-        let declared_result = expected.filter(|ty| **ty != Ty::Error).cloned();
+        let active_throws_error = context.active_throws_error.clone();
+        let logical_result =
+            expected
+                .filter(|ty| **ty != Ty::Error)
+                .cloned()
+                .or_else(|| match self.probe_expr_ty(body, None, context) {
+                    TypeProbe::Known(ty)
+                    | TypeProbe::KnownSource(ty, _)
+                    | TypeProbe::Defaultable(ty) => Some(ty),
+                    TypeProbe::Unsupported => None,
+                });
+        let declared_result = match (&logical_result, &active_throws_error) {
+            (Some(logical), Some(error)) => {
+                self.ensure_throws_result_type(logical.clone(), error.clone())
+            }
+            (Some(logical), None) => Some(logical.clone()),
+            (None, Some(_)) => {
+                self.error(
+                    "cannot infer the result of an effect-forwarding `do` block; add a contextual type",
+                );
+                Some(Ty::Error)
+            }
+            (None, None) => None,
+        };
         let closure = self.lower_local_closure(
             &[],
             body,
             declared_result,
-            context.unsafe_depth,
-            None,
+            ClosureEffectContext {
+                unsafe_depth: context.unsafe_depth,
+                throws_error: active_throws_error.clone(),
+                custom_effects: context.active_custom_effects.clone(),
+            },
             context,
         );
         let HirExprKind::LocalClosure(info) = closure.kind else {
@@ -12714,7 +12779,7 @@ impl Analyzer {
             })
             .collect();
         self.release_loans(&loans, context);
-        HirExpr {
+        let call = HirExpr {
             ty: result,
             kind: HirExprKind::Call {
                 function: info.function,
@@ -12722,6 +12787,11 @@ impl Analyzer {
                 consumed_callable: None,
                 diverges: false,
             },
+        };
+        if let Some(error) = active_throws_error.as_ref() {
+            self.lower_automatic_throws(call, error, expected.or(logical_result.as_ref()), context)
+        } else {
+            call
         }
     }
 
@@ -13683,7 +13753,7 @@ impl Analyzer {
             }
             if let Some(local) = context.lookup(name).cloned() {
                 if local.closure.is_some() {
-                    return self.lower_local_closure_call(name, &local, &groups, context);
+                    return self.lower_local_closure_call(name, &local, &groups, expected, context);
                 }
                 if local.partial.is_some() {
                     return self.lower_local_partial_call(name, &local, &groups, expected, context);
@@ -15559,6 +15629,7 @@ impl Analyzer {
         local_name: &str,
         local: &LocalInfo,
         groups: &[&[CallArg]],
+        expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
         let closure = local
@@ -15593,6 +15664,19 @@ impl Analyzer {
         if closure.unsafe_effect && context.unsafe_depth == 0 {
             self.error(format!(
                 "call to unsafe closure `{local_name}` requires an `unsafe` handler"
+            ));
+        }
+        let missing = closure
+            .custom_effects
+            .iter()
+            .filter(|effect| !context.active_custom_effects.contains(*effect))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            self.error(format!(
+                "call to closure `{local_name}` requires custom effect{} `{}`",
+                if missing.len() == 1 { "" } else { "s" },
+                missing.join(", ")
             ));
         }
 
@@ -15684,6 +15768,11 @@ impl Analyzer {
                 consumed_callable: closure.is_fn_once.then_some(local.id),
                 diverges: self.is_uninhabited_type(&closure.result),
             },
+        };
+        let call = if let Some(error) = closure.throws_error.as_ref() {
+            self.lower_automatic_throws(call, error, expected, context)
+        } else {
+            call
         };
         self.wrap_call_argument_temporaries(
             call,
@@ -17016,6 +17105,8 @@ fn closure_info_for_callable(ty: &Ty) -> Option<ClosureInfo> {
         function: function.clone(),
         groups,
         unsafe_effect: callable.signature.unsafe_effect,
+        throws_error: callable.signature.throws_error.as_deref().cloned(),
+        custom_effects: callable.signature.custom_effects.clone(),
         result: (*callable.signature.result).clone(),
         captures,
         is_fn_mut: *is_fn_mut,
@@ -26715,6 +26806,44 @@ let main(): i32 = loop {
     }
 
     #[test]
+    fn do_transparently_forwards_throws_unsafe_and_custom_effects() {
+        let ir = compile_text(
+            r#"
+let UI = effect
+let fail(flag: bool): i32 with(throws(bool)) = {
+  if flag { throw true }
+  40
+}
+let render(value: i32): i32 with(UI) = value
+let combined(pointer: Ptr(i32)): i32 with(throws(bool), unsafe, UI) = do {
+  let attempted = fail(false)
+  let value = render(attempted)
+  if value == 40 { return *pointer }
+  0
+}
+let main(): i32 = 0
+"#,
+        )
+        .expect("do should forward the complete active effect row through its closure boundary");
+        assert!(ir.contains("@sali.fn.5f5f636c6f737572652e"));
+        assert!(ir.contains("switch"));
+
+        let errors = compile_text(
+            r#"
+let fail(): i32 with(throws(i64)) = throw 1
+let outer(): i32 with(throws(bool)) = do { return fail() }
+let main(): i32 = 0
+"#,
+        )
+        .unwrap_err();
+        assert!(errors.iter().any(|error| {
+            error
+                .message
+                .contains("active error type is `bool`; convert errors explicitly")
+        }));
+    }
+
+    #[test]
     fn passes_and_invokes_a_non_capturing_function_value_indirectly() {
         let ir = compile_text(
             r#"
@@ -27076,6 +27205,23 @@ let main(): i32 = {
         assert!(errors
             .iter()
             .any(|error| error.message.contains("requires an `unsafe` handler")));
+    }
+
+    #[test]
+    fn try_handles_throws_while_forwarding_unsafe_and_custom_effects() {
+        compile_text(
+            r#"
+let UI = effect
+let render(value: i32): i32 with(UI) = value
+let read(pointer: Ptr(i32)): i32 with(unsafe) = *pointer
+let handle(pointer: Ptr(i32)): Result(i32, bool) with(unsafe, UI) = try {
+  let value = read(pointer)
+  return render(value)
+}
+let main(): i32 = 0
+"#,
+        )
+        .expect("try should remove only throws and forward the rest of the active effect row");
     }
 
     #[test]

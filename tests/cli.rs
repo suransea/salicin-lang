@@ -2361,6 +2361,7 @@ fn explicit_result_values_and_throws_handlers_run_with_expected_result() {
         "try_full_container_unchanged.sc",
         "do_try_boundary.sc",
         "do_function_boundary.sc",
+        "do_forwards_throws.sc",
     ] {
         let output = salic()
             .arg("run")
