@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.39.0 - 2026-07-21
+
+- Replaced conservative same-trait blanket rejection with first-order unification of trait argument
+  patterns, including nested nominal and array types with occurs checking.
+- Allowed provably disjoint blanket implementations such as `Convert(i32)` and `Convert(i64)` on
+  the same generic target.
+- Added source-order-independent coherence checks between blanket and concrete implementations,
+  grounding blanket parameters from each concrete target before deciding overlap.
+- Kept where predicates out of disjointness proofs, so potentially compatible implementations
+  remain rejected without specialization or a proof of mutually exclusive constraints.
+
 ## 0.38.0 - 2026-07-21
 
 - Enabled blanket generic `Copy` implementations with `where` proofs, including nested generic

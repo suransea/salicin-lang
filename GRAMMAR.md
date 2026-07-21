@@ -176,6 +176,8 @@ specialization、generic member 和 inherent associated constant 暂不合法。
 v0.37 再加入 blanket generic trait implementation selection，包括 where 条件和关联类型替换；
 v0.38 又开放 blanket `Copy` / `Drop`：`Copy` 必须能由字段布局与 where proofs 在定义处证明，
 `Drop` 随 concrete instance 生成析构实现。重叠 specialization 仍保留为后续语义。
+v0.39 对 generic/concrete trait argument patterns 做统一检查，允许可证明不相交的实现并拒绝所有
+存在共同 concrete instance 的组合；where 暂不参与互斥证明。
 
 ### 4.4 导入与 FFI
 

@@ -952,8 +952,10 @@ instance 不得同时获得二者。
 
 采用孤儿规则：一个实现只有在 trait 或目标类型至少一个定义于当前包时才合法。对同一
 “类型 + trait + 类型参数组合”最多存在一个实现。任意两个可统一的实现也视为重叠，例如
-`extend(T) List(T): Foo` 与 `extend List(i32): Foo` 不能同时存在。当前实现对同一 generic target 与
-trait 名保守地只接受一个 blanket 实现；首版不支持 specialization。
+`extend(T) List(T): Foo` 与 `extend List(i32): Foo` 不能同时存在。v0.39 会对嵌套 trait argument
+模式做一阶统一，因此同一 target 上的 `Convert(i32)` 与 `Convert(i64)` 可以并存；blanket 参数在与
+concrete 实现比较前先由 concrete target 实参确定。where predicates 暂不用于证明两个实现互斥，
+首版不支持 specialization。
 
 `Copy`、`Drop`、`Fn`、`FnMut`、`FnOnce`、`Try`、`FromResidual`、运算符协议和 `Future` 是
 编译器登记的 lang-item traits，但其声明由匹配工具链版本的 `core` 提供。首版只做静态分派；

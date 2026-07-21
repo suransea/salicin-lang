@@ -425,7 +425,8 @@ layout intrinsic，v0.30 以普通 alloc 源实现首个 owning `Box(T)`，v0.31
 method 静态分派和泛型间证明转交，v0.35 加入 `Output = T` 关联类型等式与受约束泛型运算符，
 v0.36 开放带 where 的 blanket inherent extension 和按实例条件成员，v0.37 又加入普通泛型 trait
 impl、关联类型替换、按 where 条件选择和跨包孤儿规则，v0.38 补齐 blanket `Copy` / `Drop` 的结构
-证明、固定点和析构一致性。下一步推进生命周期化 Box 借用，再以相同 allocator/drop 基础推进
+证明、固定点和析构一致性，v0.39 再以类型模式统一完成 blanket/concrete 重叠检查并允许不相交的
+trait 参数实现。下一步推进生命周期化 Box 借用，再以相同 allocator/drop 基础推进
 `Vec(T)`；泛型 callable
 参数将在正式的 `where` / `Fn` 约束语法落地后开放。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
 运行时之后。

@@ -170,6 +170,19 @@ struct GenericTraitExtension {
     origin: ItemOrigin,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ImplTypePattern {
+    Variable(u8, usize),
+    I32,
+    I64,
+    U32,
+    U64,
+    Bool,
+    Unit,
+    Array(Box<ImplTypePattern>, u64),
+    Named(String, Vec<ImplTypePattern>),
+}
+
 #[derive(Debug, Clone)]
 struct InferredTypeArgument {
     ty: Ty,
@@ -1160,6 +1173,7 @@ struct Analyzer {
     inherent_members: HashMap<String, InherentMemberSet>,
     generic_inherent_extensions: HashMap<String, Vec<GenericInherentExtension>>,
     generic_trait_extensions: HashMap<String, Vec<GenericTraitExtension>>,
+    instantiating_generic_trait_extension: usize,
     generic_inherent_functions: HashMap<(String, String), String>,
     suppress_generic_inherent_instantiation: usize,
     traits: HashMap<String, TraitSchema>,
@@ -1220,6 +1234,7 @@ impl Analyzer {
             inherent_members: HashMap::new(),
             generic_inherent_extensions: HashMap::new(),
             generic_trait_extensions: HashMap::new(),
+            instantiating_generic_trait_extension: 0,
             generic_inherent_functions: HashMap::new(),
             suppress_generic_inherent_instantiation: 0,
             traits: HashMap::new(),
@@ -2455,6 +2470,16 @@ impl Analyzer {
             ));
             return;
         }
+        if self.instantiating_generic_trait_extension == 0
+            && self.concrete_trait_impl_overlaps_generic(&target, &key.trait_ref)
+        {
+            let target = self.diagnostic_type_name(&target);
+            self.error(format!(
+                "concrete trait implementation of `{}` for `{target}` overlaps a blanket generic implementation",
+                key.trait_ref.name
+            ));
+            return;
+        }
         let mut implementation_access =
             self.restrict_access_boundary_to_type(&schema.access, &target, &origin);
         for argument in &key.trait_ref.arguments {
@@ -2924,6 +2949,98 @@ impl Analyzer {
         }
     }
 
+    fn concrete_trait_impl_overlaps_generic(&self, target: &Ty, trait_ref: &TraitRefKey) -> bool {
+        let Some(name) = nominal_name(target) else {
+            return false;
+        };
+        let Some(instance) = self.nominal_instances.get(name) else {
+            return false;
+        };
+        if instance.key.arguments.is_empty() {
+            return false;
+        }
+        let Some(extensions) = self.generic_trait_extensions.get(&instance.key.template) else {
+            return false;
+        };
+        let concrete_arguments = trait_ref
+            .arguments
+            .iter()
+            .map(|argument| self.source_type_for_ty(argument))
+            .collect::<Option<Vec<_>>>();
+        let target_arguments = instance
+            .key
+            .arguments
+            .iter()
+            .map(|argument| self.source_type_for_ty(argument))
+            .collect::<Option<Vec<_>>>();
+        extensions.iter().any(|extension| {
+            let Type::Named(name, arguments) = &extension.trait_ref else {
+                return false;
+            };
+            if name != &trait_ref.name || arguments.len() != trait_ref.arguments.len() {
+                return false;
+            }
+            concrete_arguments
+                .as_ref()
+                .zip(target_arguments.as_ref())
+                .is_none_or(|(arguments, target_arguments)| {
+                    generic_trait_pattern_overlaps_concrete(
+                        extension,
+                        trait_ref,
+                        arguments,
+                        target_arguments,
+                    )
+                })
+        })
+    }
+
+    fn generic_trait_extension_overlaps_concrete(
+        &self,
+        target_template: &str,
+        extension: &GenericTraitExtension,
+    ) -> bool {
+        self.trait_impls.keys().any(|key| {
+            let Some(name) = nominal_name(&key.self_ty) else {
+                return false;
+            };
+            let Some(instance) = self.nominal_instances.get(name) else {
+                return false;
+            };
+            if instance.key.template != target_template || instance.key.arguments.is_empty() {
+                return false;
+            }
+            let Type::Named(name, arguments) = &extension.trait_ref else {
+                return false;
+            };
+            if name != &key.trait_ref.name || arguments.len() != key.trait_ref.arguments.len() {
+                return false;
+            }
+            let trait_arguments = key
+                .trait_ref
+                .arguments
+                .iter()
+                .map(|argument| self.source_type_for_ty(argument))
+                .collect::<Option<Vec<_>>>();
+            let target_arguments = instance
+                .key
+                .arguments
+                .iter()
+                .map(|argument| self.source_type_for_ty(argument))
+                .collect::<Option<Vec<_>>>();
+            trait_arguments
+                .as_ref()
+                .zip(target_arguments.as_ref())
+                .is_none_or(|(arguments, target_arguments)| {
+                    generic_trait_pattern_overlaps_concrete(
+                        extension,
+                        &key.trait_ref,
+                        arguments,
+                        target_arguments,
+                    )
+                })
+        })
+    }
+
     fn collect_generic_trait_extension(&mut self, extension: ExtendDef, origin: ItemOrigin) {
         if !self
             .validate_where_predicate_shapes("generic trait extension", &extension.where_predicates)
@@ -3047,21 +3164,6 @@ impl Analyzer {
             ));
             return;
         }
-        if self
-            .generic_trait_extensions
-            .get(target_template)
-            .is_some_and(|extensions| {
-                extensions.iter().any(|existing| {
-                    matches!(&existing.trait_ref, Type::Named(name, _) if name == trait_name)
-                })
-            })
-        {
-            self.error(format!(
-                "overlapping generic trait implementation of `{trait_name}` for `{target_template}`"
-            ));
-            return;
-        }
-
         let template = GenericTraitExtension {
             target_arguments,
             trait_ref: trait_ref.clone(),
@@ -3069,6 +3171,26 @@ impl Analyzer {
             members: extension.members.clone(),
             origin: origin.clone(),
         };
+        if self
+            .generic_trait_extensions
+            .get(target_template)
+            .is_some_and(|extensions| {
+                extensions
+                    .iter()
+                    .any(|existing| trait_reference_patterns_overlap(existing, &template))
+            })
+        {
+            self.error(format!(
+                "overlapping generic trait implementation of `{trait_name}` for `{target_template}`"
+            ));
+            return;
+        }
+        if self.generic_trait_extension_overlaps_concrete(target_template, &template) {
+            self.error(format!(
+                "generic trait implementation of `{trait_name}` for `{target_template}` overlaps an existing concrete implementation"
+            ));
+            return;
+        }
         self.generic_trait_extensions
             .entry(target_template.clone())
             .or_default()
@@ -3244,6 +3366,7 @@ impl Analyzer {
                 }
             }
         }
+        self.instantiating_generic_trait_extension += 1;
         self.collect_trait_extension(
             ExtendDef {
                 compile_groups: Vec::new(),
@@ -3254,6 +3377,7 @@ impl Analyzer {
             },
             extension.origin.clone(),
         );
+        self.instantiating_generic_trait_extension -= 1;
     }
 
     fn collect_generic_inherent_extension(&mut self, extension: ExtendDef, origin: ItemOrigin) {
@@ -18449,6 +18573,182 @@ fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<String, Typ
     }
 }
 
+fn trait_reference_patterns_overlap(
+    left: &GenericTraitExtension,
+    right: &GenericTraitExtension,
+) -> bool {
+    let (Type::Named(left_name, left_arguments), Type::Named(right_name, right_arguments)) =
+        (&left.trait_ref, &right.trait_ref)
+    else {
+        return false;
+    };
+    if left_name != right_name || left_arguments.len() != right_arguments.len() {
+        return false;
+    }
+    let left_variables = left
+        .target_arguments
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (name.clone(), index))
+        .collect::<HashMap<_, _>>();
+    let right_variables = right
+        .target_arguments
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (name.clone(), index))
+        .collect::<HashMap<_, _>>();
+    let equations = left_arguments
+        .iter()
+        .zip(right_arguments)
+        .map(|(left, right)| {
+            (
+                impl_type_pattern(left, &left_variables, 0),
+                impl_type_pattern(right, &right_variables, 1),
+            )
+        });
+    type_patterns_unify(equations)
+}
+
+fn generic_trait_pattern_overlaps_concrete(
+    generic: &GenericTraitExtension,
+    concrete: &TraitRefKey,
+    concrete_arguments: &[Type],
+    concrete_target_arguments: &[Type],
+) -> bool {
+    let Type::Named(name, generic_arguments) = &generic.trait_ref else {
+        return false;
+    };
+    if name != &concrete.name || generic_arguments.len() != concrete_arguments.len() {
+        return false;
+    }
+    let substitutions = generic
+        .target_arguments
+        .iter()
+        .cloned()
+        .zip(concrete_target_arguments.iter().cloned())
+        .collect::<HashMap<_, _>>();
+    let equations = generic_arguments
+        .iter()
+        .zip(concrete_arguments)
+        .map(|(generic, concrete)| {
+            let mut generic = generic.clone();
+            substitute_type_parameters(&mut generic, &substitutions);
+            (
+                impl_type_pattern(&generic, &HashMap::new(), 0),
+                impl_type_pattern(concrete, &HashMap::new(), 1),
+            )
+        });
+    type_patterns_unify(equations)
+}
+
+fn impl_type_pattern(
+    source: &Type,
+    variables: &HashMap<String, usize>,
+    side: u8,
+) -> ImplTypePattern {
+    match source {
+        Type::I32 => ImplTypePattern::I32,
+        Type::I64 => ImplTypePattern::I64,
+        Type::U32 => ImplTypePattern::U32,
+        Type::U64 => ImplTypePattern::U64,
+        Type::Bool => ImplTypePattern::Bool,
+        Type::Unit => ImplTypePattern::Unit,
+        Type::Array(element, length) => ImplTypePattern::Array(
+            Box::new(impl_type_pattern(element, variables, side)),
+            *length,
+        ),
+        Type::Named(name, arguments) if arguments.is_empty() && variables.contains_key(name) => {
+            ImplTypePattern::Variable(side, variables[name])
+        }
+        Type::Named(name, arguments) => ImplTypePattern::Named(
+            name.clone(),
+            arguments
+                .iter()
+                .map(|argument| impl_type_pattern(argument, variables, side))
+                .collect(),
+        ),
+    }
+}
+
+fn type_patterns_unify(
+    equations: impl IntoIterator<Item = (ImplTypePattern, ImplTypePattern)>,
+) -> bool {
+    let mut pending = equations.into_iter().collect::<Vec<_>>();
+    let mut substitutions = HashMap::<(u8, usize), ImplTypePattern>::new();
+    while let Some((left, right)) = pending.pop() {
+        let left = resolve_impl_pattern(left, &substitutions);
+        let right = resolve_impl_pattern(right, &substitutions);
+        if left == right {
+            continue;
+        }
+        match (left, right) {
+            (ImplTypePattern::Variable(side, index), term)
+            | (term, ImplTypePattern::Variable(side, index)) => {
+                if impl_pattern_contains_variable(&term, (side, index), &substitutions) {
+                    return false;
+                }
+                substitutions.insert((side, index), term);
+            }
+            (
+                ImplTypePattern::Array(left, left_length),
+                ImplTypePattern::Array(right, right_length),
+            ) if left_length == right_length => {
+                pending.push((*left, *right));
+            }
+            (
+                ImplTypePattern::Named(left, left_arguments),
+                ImplTypePattern::Named(right, right_arguments),
+            ) if left == right && left_arguments.len() == right_arguments.len() => {
+                pending.extend(left_arguments.into_iter().zip(right_arguments));
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
+fn resolve_impl_pattern(
+    pattern: ImplTypePattern,
+    substitutions: &HashMap<(u8, usize), ImplTypePattern>,
+) -> ImplTypePattern {
+    match pattern {
+        ImplTypePattern::Variable(side, index) => substitutions
+            .get(&(side, index))
+            .cloned()
+            .map(|replacement| resolve_impl_pattern(replacement, substitutions))
+            .unwrap_or(ImplTypePattern::Variable(side, index)),
+        pattern => pattern,
+    }
+}
+
+fn impl_pattern_contains_variable(
+    pattern: &ImplTypePattern,
+    variable: (u8, usize),
+    substitutions: &HashMap<(u8, usize), ImplTypePattern>,
+) -> bool {
+    match pattern {
+        ImplTypePattern::Variable(side, index) => {
+            let current = (*side, *index);
+            current == variable
+                || substitutions.get(&current).is_some_and(|replacement| {
+                    impl_pattern_contains_variable(replacement, variable, substitutions)
+                })
+        }
+        ImplTypePattern::Array(element, _) => {
+            impl_pattern_contains_variable(element, variable, substitutions)
+        }
+        ImplTypePattern::Named(_, arguments) => arguments
+            .iter()
+            .any(|argument| impl_pattern_contains_variable(argument, variable, substitutions)),
+        ImplTypePattern::I32
+        | ImplTypePattern::I64
+        | ImplTypePattern::U32
+        | ImplTypePattern::U64
+        | ImplTypePattern::Bool
+        | ImplTypePattern::Unit => false,
+    }
+}
+
 fn function_instance_name(key: &FunctionInstanceKey) -> String {
     let mut canonical = String::from("$mono$fn$");
     push_canonical_component(&mut canonical, &key.template);
@@ -20286,6 +20586,70 @@ let main(): i32 = 0
         assert!(errors.iter().any(|error| error
             .message
             .contains("overlapping generic trait implementation")));
+
+        compile_text(
+            r#"
+let Convert(To: type) = trait {
+  let convert(borrow self)(): To
+}
+let Cell(T: type) = struct(value: T)
+extend(T: type) Cell(T): Convert(i32) {
+  let convert(borrow self)(): i32 = 1
+}
+extend(T: type) Cell(T): Convert(i64) {
+  let convert(borrow self)(): i64 = 2
+}
+let main(): i32 = {
+  let cell = Cell(true)
+  42
+}
+"#,
+        )
+        .expect("blanket implementations with disjoint trait arguments should coexist");
+
+        compile_text(
+            r#"
+let Convert(To: type) = trait { let convert(borrow self)(): To }
+let Cell(T: type) = struct(value: T)
+extend(T: type) Cell(T): Convert(T) {
+  let convert(borrow self)(): T = self.value
+}
+extend Cell(i32): Convert(i64) {
+  let convert(borrow self)(): i64 = 42
+}
+let main(): i32 = 42
+"#,
+        )
+        .expect("a concrete implementation disjoint after target substitution should coexist");
+
+        for source in [
+            r#"
+let Convert(To: type) = trait { let convert(borrow self)(): To }
+let Cell(T: type) = struct(value: T)
+extend(T: type) Cell(T): Convert(i32) {
+  let convert(borrow self)(): i32 = 1
+}
+extend Cell(i32): Convert(i32) {
+  let convert(borrow self)(): i32 = 2
+}
+let main(): i32 = 42
+"#,
+            r#"
+let Convert(To: type) = trait { let convert(borrow self)(): To }
+let Cell(T: type) = struct(value: T)
+extend Cell(i32): Convert(i32) {
+  let convert(borrow self)(): i32 = 2
+}
+extend(T: type) Cell(T): Convert(i32) {
+  let convert(borrow self)(): i32 = 1
+}
+let main(): i32 = 42
+"#,
+        ] {
+            let errors = compile_text(source)
+                .expect_err("blanket and concrete specializations must overlap in either order");
+            assert!(errors.iter().any(|error| error.message.contains("overlap")));
+        }
     }
 
     #[test]
