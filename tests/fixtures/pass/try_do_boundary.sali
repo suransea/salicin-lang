@@ -1,0 +1,18 @@
+let read(fail: bool): Result(i32, bool) = if fail { Err(true) } else { Ok(40) }
+
+let main(): i32 = {
+  let fail = true
+  let propagated: Result(i32, bool) = try Result(i32, bool) do {
+    read(fail).try + 2
+  }
+  let thrown: Result(i32, bool) = try do {
+    throw true
+  }
+  let success: Result(i32, bool) = try do {
+    read(false).try + 2
+  }
+  let propagation_ok = propagated match { Ok(_) => false, Err(error) => error }
+  let throw_ok = thrown match { Ok(_) => false, Err(error) => error }
+  let value = success match { Ok(value) => value, Err(_) => 0 }
+  if propagation_ok && throw_ok && value == 42 { 42 } else { 0 }
+}

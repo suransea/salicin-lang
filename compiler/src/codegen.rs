@@ -7165,6 +7165,7 @@ impl Analyzer {
             | Expr::Return(_)
             | Expr::While { .. }
             | Expr::Loop { .. }
+            | Expr::TryBlock { .. }
             | Expr::Break(_) => false,
         }
     }
@@ -7365,6 +7366,11 @@ impl Analyzer {
                 }
             }
             Expr::Throw(_) => TypeProbe::Unsupported,
+            Expr::TryBlock { container, .. } => container
+                .as_ref()
+                .and_then(|container| self.probe_source_ty(container))
+                .or_else(|| hint.cloned())
+                .map_or(TypeProbe::Unsupported, TypeProbe::Known),
             Expr::Array(elements) => {
                 if let Some(Ty::Array(element, length)) = hint {
                     if *length != elements.len() as u64 {
@@ -9084,6 +9090,9 @@ impl Analyzer {
             }
             Expr::Coalesce(left, right) => self.lower_coalesce(left, right, expected, context),
             Expr::Try(value) => self.lower_try(value, expected, context),
+            Expr::TryBlock { container, body } => {
+                self.lower_try_block(container.as_ref(), body, expected, context)
+            }
             Expr::Throw(value) => self.lower_throw(value, context),
             Expr::Assign(place, value) => {
                 if let Expr::Unary(UnaryOp::Deref, pointer) = place.as_ref() {
@@ -9198,7 +9207,7 @@ impl Analyzer {
                                             binding.name
                                         ));
                                     }
-                                    self.lower_local_closure(params, body, context)
+                                    self.lower_local_closure(params, body, None, context)
                                 }
                                 Expr::Name(_) if callable_source.is_some() => {
                                     let source = callable_source
@@ -10126,6 +10135,7 @@ impl Analyzer {
         &mut self,
         source_params: &[crate::ast::Param],
         body: &Expr,
+        declared_result: Option<Ty>,
         outer: &mut LowerCtx,
     ) -> HirExpr {
         let mut source_groups = vec![source_params];
@@ -10146,7 +10156,11 @@ impl Analyzer {
 
         let function = format!("__closure.{}", self.next_closure);
         self.next_closure += 1;
-        let mut context = LowerCtx::for_function(&function, None, outer.origin.clone());
+        let mut context =
+            LowerCtx::for_function(&function, declared_result.clone(), outer.origin.clone());
+        context.return_boundary = declared_result
+            .as_ref()
+            .and_then(|result| self.return_boundary_for_ty(result));
         context.type_substitutions = outer.type_substitutions.clone();
         let mut hir_params = Vec::new();
         let mut captures = Vec::new();
@@ -10294,8 +10308,15 @@ impl Analyzer {
             groups.push(group);
         }
 
-        let lowered_body = self.lower_expr(body, None, &mut context);
-        let mut result = if self.is_uninhabited_type(&lowered_body.ty) {
+        let boundary = context.return_boundary.clone();
+        let lowered_body = if let Some(boundary) = &boundary {
+            self.lower_return_value(body, boundary, &mut context)
+        } else {
+            self.lower_expr(body, declared_result.as_ref(), &mut context)
+        };
+        let mut result = if let Some(declared) = declared_result {
+            Some(declared)
+        } else if self.is_uninhabited_type(&lowered_body.ty) {
             None
         } else {
             Some(lowered_body.ty.clone())
@@ -11889,6 +11910,75 @@ impl Analyzer {
             residual_arm,
         ];
         self.lower_match_with_scrutinee(operand, &arms, expected, context)
+    }
+
+    fn lower_try_block(
+        &mut self,
+        annotation: Option<&Type>,
+        body: &Expr,
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        if try_block_contains_outer_return(body) {
+            self.error(
+                "plain `return` inside `try do` is not implemented yet; move the return outside the block",
+            );
+            return error_expr();
+        }
+        let container = annotation
+            .map(|annotation| self.lower_source_type(annotation))
+            .or_else(|| expected.filter(|ty| **ty != Ty::Error).cloned());
+        let Some(container) = container else {
+            self.error(
+                "cannot infer the container of `try do`; write `try Container do` or provide an expected type",
+            );
+            return error_expr();
+        };
+        if self.try_protocol_info_for_ty(&container).is_none() {
+            self.error(format!(
+                "`try do` container `{container}` does not implement `core.control.Try`"
+            ));
+            return error_expr();
+        }
+
+        let closure = self.lower_local_closure(&[], body, Some(container.clone()), context);
+        let HirExprKind::LocalClosure(info) = closure.kind else {
+            return error_expr();
+        };
+        let mut loans = Vec::new();
+        let arguments = info
+            .captures
+            .into_iter()
+            .map(|capture| match capture.mode {
+                ClosureCaptureMode::Shared => {
+                    if let Some(loan) = capture.place.loan {
+                        loans.push(loan);
+                    }
+                    HirArgument::SharedBorrow(capture.place)
+                }
+                ClosureCaptureMode::Mutable => {
+                    if let Some(loan) = capture.place.loan {
+                        loans.push(loan);
+                    }
+                    HirArgument::MutBorrow(capture.place)
+                }
+                ClosureCaptureMode::Move => HirArgument::Move(
+                    *capture
+                        .value
+                        .expect("move capture stores its evaluated value"),
+                ),
+            })
+            .collect();
+        self.release_loans(&loans, context);
+        HirExpr {
+            ty: container,
+            kind: HirExprKind::Call {
+                function: info.function,
+                arguments,
+                consumed_callable: None,
+                diverges: false,
+            },
+        }
     }
 
     fn lower_protocol_try(
@@ -15766,6 +15856,68 @@ impl Analyzer {
 
     fn error(&mut self, message: impl Into<String>) {
         self.diagnostics.push(Diagnostic::new(message));
+    }
+}
+
+fn try_block_contains_outer_return(expression: &Expr) -> bool {
+    match expression {
+        Expr::Return(_) => true,
+        Expr::Closure(_, _) => false,
+        Expr::Unary(_, value)
+        | Expr::Try(value)
+        | Expr::Throw(value)
+        | Expr::Unsafe(value)
+        | Expr::Borrow { value, .. }
+        | Expr::Member(value, _)
+        | Expr::ChainMember(value, _)
+        | Expr::Loop { body: value } => try_block_contains_outer_return(value),
+        Expr::TryBlock { body, .. } => try_block_contains_outer_return(body),
+        Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
+            try_block_contains_outer_return(left) || try_block_contains_outer_return(right)
+        }
+        Expr::Call(callee, arguments) => {
+            try_block_contains_outer_return(callee)
+                || arguments
+                    .iter()
+                    .any(|argument| try_block_contains_outer_return(&argument.value))
+        }
+        Expr::Array(elements) => elements.iter().any(try_block_contains_outer_return),
+        Expr::Index { base, index } => {
+            try_block_contains_outer_return(base) || try_block_contains_outer_return(index)
+        }
+        Expr::Block(statements, tail) => {
+            statements.iter().any(|statement| match statement {
+                Stmt::Let(binding) => try_block_contains_outer_return(&binding.value),
+                Stmt::Expr(expression) => try_block_contains_outer_return(expression),
+            }) || tail.as_deref().is_some_and(try_block_contains_outer_return)
+        }
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            try_block_contains_outer_return(condition)
+                || try_block_contains_outer_return(then_branch)
+                || else_branch
+                    .as_deref()
+                    .is_some_and(try_block_contains_outer_return)
+        }
+        Expr::While { condition, body } => {
+            try_block_contains_outer_return(condition) || try_block_contains_outer_return(body)
+        }
+        Expr::Break(value) => value
+            .as_deref()
+            .is_some_and(try_block_contains_outer_return),
+        Expr::Match { scrutinee, arms } => {
+            try_block_contains_outer_return(scrutinee)
+                || arms.iter().any(|arm| {
+                    arm.guard
+                        .as_ref()
+                        .is_some_and(try_block_contains_outer_return)
+                        || try_block_contains_outer_return(&arm.body)
+                })
+        }
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => false,
     }
 }
 
@@ -21255,6 +21407,7 @@ fn substitute_self_expression_target(expression: &mut Expr, target: &str) {
         | Expr::Try(operand)
         | Expr::Throw(operand)
         | Expr::Unsafe(operand) => substitute_self_expression_target(operand, target),
+        Expr::TryBlock { body, .. } => substitute_self_expression_target(body, target),
         Expr::Borrow { value, .. } => substitute_self_expression_target(value, target),
         Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
             substitute_self_expression_target(left, target);
@@ -21378,6 +21531,7 @@ fn rewrite_abstract_self_qualified_methods(expression: &mut Expr) {
         | Expr::Try(operand)
         | Expr::Throw(operand)
         | Expr::Unsafe(operand) => rewrite_abstract_self_qualified_methods(operand),
+        Expr::TryBlock { body, .. } => rewrite_abstract_self_qualified_methods(body),
         Expr::Borrow { value, .. } => rewrite_abstract_self_qualified_methods(value),
         Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
             rewrite_abstract_self_qualified_methods(left);
@@ -21463,6 +21617,12 @@ fn substitute_expr_types(expression: &mut Expr, substitutions: &HashMap<String, 
         | Expr::Try(operand)
         | Expr::Throw(operand)
         | Expr::Unsafe(operand) => substitute_expr_types(operand, substitutions),
+        Expr::TryBlock { container, body } => {
+            if let Some(container) = container {
+                substitute_type_parameters(container, substitutions);
+            }
+            substitute_expr_types(body, substitutions);
+        }
         Expr::Borrow {
             mutable,
             access,

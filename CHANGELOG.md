@@ -6,6 +6,21 @@ subset.
 
 ## Unreleased
 
+## 0.78.0 - 2026-07-21
+
+- Added prefix `try do { ... }` expressions and explicitly typed `try Container do { ... }`
+  propagation blocks.
+- Inferred an omitted block container from the surrounding expected type and required every chosen
+  container to implement the edition-validated `Try` protocol.
+- Lowered each propagation block through a private immediate boundary closure so `.try` and `throw`
+  leave the nearest block while ordinary outer locals remain available through checked captures.
+- Applied `Try.from_output`, `FromResidual`, and `FromError` inside the block exactly as for function
+  boundaries, including custom containers.
+- Added parser coverage and native execution coverage for explicit/contextual containers, captured
+  locals, success wrapping, residual propagation, and `throw` without exiting the outer function.
+- Diagnosed plain `return` inside `try do` until non-local return lowering is added, avoiding the
+  incorrect behavior of treating the implementation closure as a source-level closure boundary.
+
 ## 0.77.0 - 2026-07-21
 
 - Generalized explicit function propagation boundaries from built-in `Option` and `Result` to any

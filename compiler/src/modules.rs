@@ -1987,6 +1987,12 @@ impl Resolver {
             | Expr::Borrow { value: operand, .. } => {
                 self.rewrite_expr(operand, context, type_scope, value_scope);
             }
+            Expr::TryBlock { container, body } => {
+                if let Some(container) = container {
+                    self.rewrite_type(container, context, type_scope);
+                }
+                self.rewrite_expr(body, context, type_scope, value_scope);
+            }
             Expr::Binary(left, _, right)
             | Expr::Coalesce(left, right)
             | Expr::Assign(left, right) => {
@@ -3854,6 +3860,7 @@ let main(): i32 = Option()
                 | Expr::Borrow { value, .. }
                 | Expr::ChainMember(value, _)
                 | Expr::Loop { body: value } => visit(value, names),
+                Expr::TryBlock { body, .. } => visit(body, names),
                 Expr::Binary(left, _, right)
                 | Expr::Coalesce(left, right)
                 | Expr::Assign(left, right) => {

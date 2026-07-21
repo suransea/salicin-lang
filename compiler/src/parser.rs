@@ -1593,6 +1593,19 @@ impl Parser {
                 self.advance();
                 self.block()
             }
+            TokenKind::Try => {
+                self.advance();
+                let container = if self.at(&TokenKind::Do) {
+                    None
+                } else {
+                    Some(self.type_expr()?)
+                };
+                self.expect(&TokenKind::Do, "`do` in try block")?;
+                Ok(Expr::TryBlock {
+                    container,
+                    body: Box::new(self.block()?),
+                })
+            }
             TokenKind::Unsafe => {
                 self.advance();
                 self.expect(&TokenKind::Do, "`do` after `unsafe`")?;
@@ -2247,6 +2260,12 @@ fn validate_expr_accesses(expression: &Expr, accesses: &HashSet<String>) -> Resu
         Expr::Unary(_, value) | Expr::Try(value) | Expr::Throw(value) | Expr::Unsafe(value) => {
             validate_expr_accesses(value, accesses)
         }
+        Expr::TryBlock { container, body } => {
+            if let Some(container) = container {
+                validate_type_accesses(container, accesses)?;
+            }
+            validate_expr_accesses(body, accesses)
+        }
         Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
             validate_expr_accesses(left, accesses)?;
             validate_expr_accesses(right, accesses)
@@ -2384,6 +2403,12 @@ fn validate_expr_regions(expression: &Expr, regions: &HashSet<String>) -> Result
         | Expr::Throw(value)
         | Expr::Unsafe(value)
         | Expr::Borrow { value, .. } => validate_expr_regions(value, regions),
+        Expr::TryBlock { container, body } => {
+            if let Some(container) = container {
+                validate_type_regions(container, regions)?;
+            }
+            validate_expr_regions(body, regions)
+        }
         Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
             validate_expr_regions(left, regions)?;
             validate_expr_regions(right, regions)
@@ -3272,6 +3297,35 @@ mod tests {
 
         let error = parse("let fail(): Result(i32, bool) = { throw\n}\n").unwrap_err();
         assert!(error.message.contains("expression after `throw`"));
+    }
+
+    #[test]
+    fn parses_annotated_and_contextual_try_do_blocks() {
+        let program = parse(
+            "let main(): Result(i32, bool) = try Result(i32, bool) do { 42 }\n\
+             let other(): Result(i32, bool) = try do { throw true }\n",
+        )
+        .unwrap();
+        let Item::Function(main) = &program.items[0] else {
+            panic!("expected function");
+        };
+        assert!(matches!(
+            main.body,
+            Some(Expr::TryBlock {
+                container: Some(_),
+                ..
+            })
+        ));
+        let Item::Function(other) = &program.items[1] else {
+            panic!("expected function");
+        };
+        assert!(matches!(
+            other.body,
+            Some(Expr::TryBlock {
+                container: None,
+                ..
+            })
+        ));
     }
 
     #[test]

@@ -2329,6 +2329,7 @@ fn m2_try_programs_run_with_expected_result() {
         "try_then_member.sali",
         "try_operand_once.sali",
         "custom_try_boundary.sali",
+        "try_do_boundary.sali",
     ] {
         let output = salic()
             .arg("run")
