@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.60.0 - 2026-07-21
+
+- Added the unsafe `raw_offset(pointer, index)` intrinsic for both `Ptr(T)` and `MutPtr(T)`, with a
+  `u64` element index and result mutability matching the input pointer.
+- Lowered pointer offsets to LLVM `getelementptr` using the concrete pointee layout, so aggregate
+  padding and target-specific element size determine the byte displacement without host guesses.
+- Defined zero-sized pointee offsets as the same pointer and added native tests for multi-element
+  allocation, move initialization/take, deallocation, unit pointees, and unsafe/type diagnostics.
+
 ## 0.59.0 - 2026-07-21
 
 - Added borrow value types to ordinary function parameters: shared references follow `Copy`,

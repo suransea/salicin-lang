@@ -177,6 +177,9 @@ fn raw_allocator_abi_allocates_aligned_storage_and_deallocates_it() {
         "raw_allocator_i32.sali",
         "raw_allocator_inferred.sali",
         "raw_allocator_layout.sali",
+        "raw_pointer_offset.sali",
+        "raw_pointer_offset_shared.sali",
+        "raw_pointer_offset_unit.sali",
     ] {
         let output = salic()
             .arg("run")
@@ -187,6 +190,29 @@ fn raw_allocator_abi_allocates_aligned_storage_and_deallocates_it() {
             output.status.code(),
             Some(42),
             "{name}: {}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn raw_pointer_offset_errors_report_their_cause() {
+    for (name, expected) in [
+        ("raw_offset_safe.sali", "requires an `unsafe do` block"),
+        (
+            "raw_offset_non_pointer.sali",
+            "requires `Ptr(T)` or `MutPtr(T)`",
+        ),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid raw pointer offset fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{name} did not report `{expected}`:\n{}",
             output_text(&output)
         );
     }

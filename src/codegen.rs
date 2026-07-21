@@ -633,6 +633,10 @@ enum HirExprKind {
     RawAddress {
         place: HirPlace,
     },
+    RawOffset {
+        pointer: Box<HirExpr>,
+        index: Box<HirExpr>,
+    },
     RawLoad(Box<HirExpr>),
     RawStore {
         pointer: Box<HirExpr>,
@@ -1356,6 +1360,7 @@ impl Analyzer {
             "raw_dealloc".to_owned(),
             "raw_init".to_owned(),
             "raw_take".to_owned(),
+            "raw_offset".to_owned(),
             "forget".to_owned(),
             "size_of".to_owned(),
             "align_of".to_owned(),
@@ -9350,6 +9355,10 @@ impl Analyzer {
                 self.validate_explicit_reference_returns(pointer, expected, context);
                 self.validate_explicit_reference_returns(value, expected, context);
             }
+            HirExprKind::RawOffset { pointer, index } => {
+                self.validate_explicit_reference_returns(pointer, expected, context);
+                self.validate_explicit_reference_returns(index, expected, context);
+            }
             HirExprKind::RawAlloc { size, align } => {
                 self.validate_explicit_reference_returns(size, expected, context);
                 self.validate_explicit_reference_returns(align, expected, context);
@@ -12204,6 +12213,9 @@ impl Analyzer {
             if name == "raw_take" {
                 return self.lower_raw_take(&groups, context);
             }
+            if name == "raw_offset" {
+                return self.lower_raw_offset(&groups, context);
+            }
             if name == "forget" {
                 return self.lower_forget(&groups, context);
             }
@@ -12711,6 +12723,44 @@ impl Analyzer {
         HirExpr {
             ty: (**pointee).clone(),
             kind: HirExprKind::RawTake(Box::new(pointer)),
+        }
+    }
+
+    fn lower_raw_offset(&mut self, groups: &[&[CallArg]], context: &mut LowerCtx) -> HirExpr {
+        if context.unsafe_depth == 0 {
+            self.error("`raw_offset` requires an `unsafe do` block");
+            return error_expr();
+        }
+        let [runtime] = groups else {
+            self.error("`raw_offset` expects exactly one runtime argument group");
+            return error_expr();
+        };
+        let names = ["pointer".to_owned(), "index".to_owned()];
+        let Some(arguments) = self.ordered_call_arguments("raw_offset", 1, runtime, &names) else {
+            return error_expr();
+        };
+        let pointer = self.lower_expr(&arguments[0].value, None, context);
+        let Ty::Pointer { pointee, .. } = &pointer.ty else {
+            self.error(format!(
+                "`raw_offset` requires `Ptr(T)` or `MutPtr(T)`, found `{}`",
+                pointer.ty
+            ));
+            return error_expr();
+        };
+        if matches!(pointee.as_ref(), Ty::Never | Ty::Function(_) | Ty::Error) {
+            self.error(format!(
+                "`raw_offset` cannot index a pointee without a concrete data representation: `{}`",
+                self.diagnostic_type_name(pointee)
+            ));
+            return error_expr();
+        }
+        let index = self.lower_expr(&arguments[1].value, Some(&Ty::U64), context);
+        HirExpr {
+            ty: pointer.ty.clone(),
+            kind: HirExprKind::RawOffset {
+                pointer: Box::new(pointer),
+                index: Box::new(index),
+            },
         }
     }
 
@@ -16155,6 +16205,16 @@ impl<'a> HirCleanupPlanner<'a> {
                 self.initialize_result(cursor, &result_use)?;
                 Some(cursor)
             }
+            HirExprKind::RawOffset { pointer, index } => {
+                let Some(cursor) = self.walk_expr(pointer, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                let Some(cursor) = self.walk_expr(index, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                self.initialize_result(cursor, &result_use)?;
+                Some(cursor)
+            }
             HirExprKind::RawLoad(pointer) => {
                 let Some(cursor) = self.walk_expr(pointer, cursor, ResultUse::Discard)? else {
                     return Ok(None);
@@ -17413,6 +17473,7 @@ impl ConstantEvaluator<'_> {
             HirExprKind::Assign { .. }
             | HirExprKind::Borrow { .. }
             | HirExprKind::RawAddress { .. }
+            | HirExprKind::RawOffset { .. }
             | HirExprKind::RawLoad(_)
             | HirExprKind::RawStore { .. }
             | HirExprKind::RawInit { .. }
@@ -18443,6 +18504,38 @@ impl<'a> FunctionEmitter<'a> {
                 ty: expression.ty.clone(),
                 value: Some(self.emit_place_address(place)?),
             }),
+            HirExprKind::RawOffset { pointer, index } => {
+                let pointer = self.emit_expr(pointer)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                let index = self.emit_expr(index)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                let Ty::Pointer { pointee, .. } = &expression.ty else {
+                    return Err(Diagnostic::new(
+                        "internal error: raw offset result is not a pointer",
+                    ));
+                };
+                if **pointee == Ty::Unit {
+                    return Ok(Operand {
+                        ty: expression.ty.clone(),
+                        value: pointer.value,
+                    });
+                }
+                let register = self.fresh_register();
+                self.instruction(format!(
+                    "{register} = getelementptr {}, ptr {}, i64 {}",
+                    llvm_value_type(pointee)?,
+                    pointer.value()?,
+                    index.value()?
+                ));
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: Some(register),
+                })
+            }
             HirExprKind::RawLoad(pointer) => {
                 let pointer = self.emit_expr(pointer)?;
                 if self.terminated {

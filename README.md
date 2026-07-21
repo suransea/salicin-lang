@@ -378,6 +378,14 @@ v0.29.0 提供 target-aware 类型布局查询：
 - 查询可参与函数中的普通整数表达式，也可单独初始化顶层常量；target-dependent 顶层符号运算暂时
   明确拒绝。allocator 原生测试已经直接使用查询结果分配、访问并释放聚合。
 
+v0.60.0 增加按元素寻址的 raw pointer intrinsic：
+
+- `unsafe do { raw_offset(pointer, index) }` 接受 `Ptr(T)` 或 `MutPtr(T)` 与 `u64` index，返回相同
+  mutability 的 pointer。
+- LLVM lowering 使用具体 `T` 的 `getelementptr`，因此 index 按目标平台上的完整 pointee layout 缩放；
+  `T = ()` 时地址保持不变。
+- intrinsic 不做 allocation 边界或初始化状态检查；越界、悬空和错误 provenance 仍由 unsafe 调用者负责。
+
 v0.30.0 进入普通 Salicin `alloc` 源并提供首个 owning `Box(T)`：
 
 - `library/alloc/src/prelude.sali` 随 compiler 按 edition 嵌入，仍经过普通 parser、模块 provenance、
@@ -460,7 +468,8 @@ v0.56 让显式 region 参与自由函数和关联函数的返回借用证明，
 v0.57 将同一规则扩展到固有方法和 trait 方法，包括实例、类型限定及泛型方法调用，并拒绝从临时或
 局部接收者逃逸。v0.58 允许只有一个借用参数时省略返回 region；若没有来源或存在多个候选，仍需显式
 region 消歧。v0.59 开放 `value: borrow T` / `value: mut borrow T` 普通引用值参数：共享引用默认复制，
-可变引用默认移动，并支持泛型推断、返回转发和跨块 loan 保留。下一步以相同
+可变引用默认移动，并支持泛型推断、返回转发和跨块 loan 保留。v0.60 增加 unsafe
+`raw_offset(pointer, index)`，按 LLVM pointee layout 计算元素地址，为连续存储容器提供基础。下一步以相同
 allocator/drop 基础推进
 `Vec(T)`；泛型 callable
 参数将在正式的 `where` / `Fn` 约束语法落地后开放。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小

@@ -1528,7 +1528,9 @@ C 函数需要 `unsafe`。`core.ffi` 提供 `c_char`、`c_int`、`c_long` 等平
 
 当前 v0.27 引导子集先提供 `Ptr(borrow place)`、`MutPtr(mut borrow place)` 和 `unsafe do` 中的 `*p`
 读写，且 pointee 必须实现 `Copy`。指针值采用 LLVM `ptr` 表示并实现 `Copy`；取址仍保留词法 loan。
-null、指针算术、`unsafe let`、属性和完整 C ABI 尚未实现。
+v0.60 又提供 `raw_offset(pointer, index)`：index 为 `u64` 元素下标，LLVM 按具体 pointee layout 缩放，
+并保留输入 pointer 的共享/可变种类；零大小 pointee 返回原地址。它不检查 allocation 边界，且只能在
+`unsafe do` 中调用。null、一般字节指针算术、`unsafe let`、属性和完整 C ABI 尚未实现。
 
 v0.28 固定最小可替换 allocator ABI。编译器保留以下两个 intrinsic；它们只能在 `unsafe do` 中调用：
 

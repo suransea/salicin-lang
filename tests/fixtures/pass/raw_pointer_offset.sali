@@ -1,0 +1,22 @@
+let main(): i32 = {
+  let pointer = unsafe do {
+    raw_alloc(i32)(8, align_of(i32))
+  }
+  let second = unsafe do {
+    raw_offset(pointer, 1)
+  }
+  unsafe do {
+    raw_init(pointer, 20)
+    raw_init(second, 22)
+  }
+  let first_value = unsafe do {
+    raw_take(pointer)
+  }
+  let second_value = unsafe do {
+    raw_take(second)
+  }
+  unsafe do {
+    raw_dealloc(pointer, 8, align_of(i32))
+  }
+  first_value + second_value
+}
