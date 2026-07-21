@@ -1084,7 +1084,7 @@ mod tests {
 
     #[test]
     fn rejects_box_read_without_its_copy_proof() {
-        let source = alloc_source().replacen("where T: Copy = unsafe do {", "= unsafe do {", 1);
+        let source = alloc_source().replacen("where T: Copy = unsafe {", "= unsafe {", 1);
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
             .expect_err("box_read without Copy must fail bootstrap validation");
         assert!(error.to_string().contains("box_read"));
@@ -1093,8 +1093,8 @@ mod tests {
     #[test]
     fn rejects_box_write_without_its_copy_proof() {
         let source = alloc_source().replacen(
-            "pub let box_write(T: type)(borrow(mut) boxed: Box(T))(copy value: T): ()\nwhere T: Copy = unsafe do {",
-            "pub let box_write(T: type)(borrow(mut) boxed: Box(T))(copy value: T): ()\n= unsafe do {",
+            "pub let box_write(T: type)(borrow(mut) boxed: Box(T))(copy value: T): ()\nwhere T: Copy = unsafe {",
+            "pub let box_write(T: type)(borrow(mut) boxed: Box(T))(copy value: T): ()\n= unsafe {",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))

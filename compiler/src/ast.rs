@@ -307,8 +307,7 @@ pub enum Expr {
     Binary(Box<Expr>, BinaryOp, Box<Expr>),
     Coalesce(Box<Expr>, Box<Expr>),
     Try(Box<Expr>),
-    TryBlock {
-        container: Option<Type>,
+    DoBlock {
         body: Box<Expr>,
     },
     Throw(Box<Expr>),

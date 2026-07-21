@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.83.0 - 2026-07-21
+
+- Redefined `do { ... }` as an immediately invoked zero-parameter trailing closure whose `return`
+  and `break` behavior follows an ordinary function boundary.
+- Removed the pre-1.0 `try do` and `try Container do` forms; a contextually Try-typed `do` closure
+  now handles `.try` and `throw` through the ordinary closure return protocol.
+- Replaced `unsafe do { ... }` with the uniform trailing-closure form `unsafe { ... }` and rejected
+  the removed spelling instead of retaining a compatibility alias.
+- Made `do` forward the implemented unsafe color through lifted immediate closures, matching the
+  effect-polymorphic design intended for future async and typed try colors.
+- Migrated the allocation library and compiler fixtures to the new syntax and added native coverage
+  for local `do` returns, Try propagation, and unsafe-color forwarding.
+
 ## 0.82.0 - 2026-07-21
 
 - Added fixed lexical tokens and conventional precedence for `&`, `|`, `^`, `<<`, and `>>`.

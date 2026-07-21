@@ -1,10 +1,10 @@
 pub let Box(T: type) = struct(pointer: MutPtr(T))
 
 pub let box_new(T: type)(move value: T): Box(T) = {
-  let pointer = unsafe do {
+  let pointer = unsafe {
     raw_alloc(T)(size_of(T), align_of(T))
   }
-  unsafe do {
+  unsafe {
     raw_init(pointer, value)
   }
   Box(T)(pointer: pointer)
@@ -13,21 +13,21 @@ pub let box_new(T: type)(move value: T): Box(T) = {
 pub let box_ptr(T: type)(borrow boxed: Box(T)): MutPtr(T) = boxed.pointer
 
 pub let box_read(T: type)(borrow boxed: Box(T)): T
-where T: Copy = unsafe do {
+where T: Copy = unsafe {
   *boxed.pointer
 }
 
 pub let box_write(T: type)(borrow(mut) boxed: Box(T))(copy value: T): ()
-where T: Copy = unsafe do {
+where T: Copy = unsafe {
   *boxed.pointer = value
 }
 
 pub let box_into_inner(T: type)(move boxed: Box(T)): T = {
   let pointer = boxed.pointer
-  let value = unsafe do {
+  let value = unsafe {
     raw_take(pointer)
   }
-  unsafe do {
+  unsafe {
     raw_dealloc(pointer, size_of(T), align_of(T))
   }
   forget(boxed)
@@ -36,24 +36,24 @@ pub let box_into_inner(T: type)(move boxed: Box(T)): T = {
 
 pub let box_replace(T: type)(borrow(mut) boxed: Box(T))(move value: T): T = {
   let pointer = boxed.pointer
-  let previous = unsafe do {
+  let previous = unsafe {
     raw_take(pointer)
   }
-  unsafe do {
+  unsafe {
     raw_init(pointer, value)
   }
   previous
 }
 
 pub let box_as_ref(A: access, 'a: region, T: type)
-  (borrow(A, 'a) boxed: Box(T)): borrow(A, 'a) T = unsafe do {
+  (borrow(A, 'a) boxed: Box(T)): borrow(A, 'a) T = unsafe {
   raw_borrow(A)(boxed.pointer, borrow(A) boxed)
 }
 
 extend(T: type) Box(T) {
   let new(move value: T): Box(T) = box_new(value)
   let as_mut_ptr(borrow self)(): MutPtr(T) = box_ptr(self)
-  let as_ref(A: access)(borrow(A) self)(): borrow(A) T = unsafe do {
+  let as_ref(A: access)(borrow(A) self)(): borrow(A) T = unsafe {
     raw_borrow(A)(self.pointer, borrow(A) self)
   }
   let into_inner(move self)(): T = box_into_inner(self)

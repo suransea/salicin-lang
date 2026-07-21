@@ -156,7 +156,11 @@ fn run_supports_grouped_calls_and_unit_main() {
 
 #[test]
 fn raw_pointer_read_and_write_run_with_expected_result() {
-    for name in ["raw_pointer_read.sali", "raw_pointer_write.sali"] {
+    for name in [
+        "raw_pointer_read.sali",
+        "raw_pointer_write.sali",
+        "do_forwards_unsafe_color.sali",
+    ] {
         let output = salic()
             .arg("run")
             .arg(fixture("pass", name))
@@ -199,17 +203,17 @@ fn raw_allocator_abi_allocates_aligned_storage_and_deallocates_it() {
 #[test]
 fn raw_pointer_intrinsic_errors_report_their_cause() {
     for (name, expected) in [
-        ("raw_offset_safe.sali", "requires an `unsafe do` block"),
+        ("raw_offset_safe.sali", "requires an `unsafe` block"),
         (
             "raw_offset_non_pointer.sali",
             "requires `Ptr(T)` or `MutPtr(T)`",
         ),
-        ("raw_trap_safe.sali", "requires an `unsafe do` block"),
+        ("raw_trap_safe.sali", "requires an `unsafe` block"),
         (
             "raw_trap_arguments.sali",
             "expects one empty runtime argument group",
         ),
-        ("raw_borrow_safe.sali", "requires an `unsafe do` block"),
+        ("raw_borrow_safe.sali", "requires an `unsafe` block"),
         (
             "raw_borrow_mut_immutable_pointer.sali",
             "requires a `MutPtr(T)`",
@@ -732,7 +736,7 @@ fn raw_allocator_abi_can_be_replaced_by_strong_link_symbols() {
     let directory = TestDirectory::new();
     let source = directory.write(
         "main.sali",
-        "let main(): i32 = {\n  let pointer = unsafe do { raw_alloc(i32)(4, 4) }\n  unsafe do { *pointer = 42 }\n  unsafe do { raw_dealloc(pointer, 4, 4) }\n  0\n}\n",
+        "let main(): i32 = {\n  let pointer = unsafe { raw_alloc(i32)(4, 4) }\n  unsafe { *pointer = 42 }\n  unsafe { raw_dealloc(pointer, 4, 4) }\n  0\n}\n",
     );
     let ir = directory.join("main.ll");
     let executable = directory.join("main");
@@ -2329,7 +2333,8 @@ fn m2_try_programs_run_with_expected_result() {
         "try_then_member.sali",
         "try_operand_once.sali",
         "custom_try_boundary.sali",
-        "try_do_boundary.sali",
+        "do_try_boundary.sali",
+        "do_function_boundary.sali",
     ] {
         let output = salic()
             .arg("run")

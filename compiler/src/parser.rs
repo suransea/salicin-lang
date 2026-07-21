@@ -1637,25 +1637,26 @@ impl Parser {
             TokenKind::LBracket => self.array_literal(),
             TokenKind::Do => {
                 self.advance();
-                self.block()
-            }
-            TokenKind::Try => {
-                self.advance();
-                let container = if self.at(&TokenKind::Do) {
-                    None
-                } else {
-                    Some(self.type_expr()?)
-                };
-                self.expect(&TokenKind::Do, "`do` in try block")?;
-                Ok(Expr::TryBlock {
-                    container,
+                Ok(Expr::DoBlock {
                     body: Box::new(self.block()?),
                 })
             }
+            TokenKind::Try => {
+                Err(self.error_at(
+                    &token,
+                    "prefix `try` was removed; use `do { ... }` with a contextual return type",
+                ))
+            }
             TokenKind::Unsafe => {
                 self.advance();
-                self.expect(&TokenKind::Do, "`do` after `unsafe`")?;
-                Ok(Expr::Unsafe(Box::new(self.block()?)))
+                if !self.at(&TokenKind::LBrace) {
+                    return Err(self.error_here(
+                        "expected a trailing closure after `unsafe`; write `unsafe { ... }`",
+                    ));
+                }
+                Ok(Expr::Unsafe(Box::new(Expr::DoBlock {
+                    body: Box::new(self.block()?),
+                })))
             }
             TokenKind::If => self.if_expression(),
             TokenKind::Return => self.return_expression(allow_trailing_closure),
@@ -2306,12 +2307,7 @@ fn validate_expr_accesses(expression: &Expr, accesses: &HashSet<String>) -> Resu
         Expr::Unary(_, value) | Expr::Try(value) | Expr::Throw(value) | Expr::Unsafe(value) => {
             validate_expr_accesses(value, accesses)
         }
-        Expr::TryBlock { container, body } => {
-            if let Some(container) = container {
-                validate_type_accesses(container, accesses)?;
-            }
-            validate_expr_accesses(body, accesses)
-        }
+        Expr::DoBlock { body } => validate_expr_accesses(body, accesses),
         Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
             validate_expr_accesses(left, accesses)?;
             validate_expr_accesses(right, accesses)
@@ -2449,12 +2445,7 @@ fn validate_expr_regions(expression: &Expr, regions: &HashSet<String>) -> Result
         | Expr::Throw(value)
         | Expr::Unsafe(value)
         | Expr::Borrow { value, .. } => validate_expr_regions(value, regions),
-        Expr::TryBlock { container, body } => {
-            if let Some(container) = container {
-                validate_type_regions(container, regions)?;
-            }
-            validate_expr_regions(body, regions)
-        }
+        Expr::DoBlock { body } => validate_expr_regions(body, regions),
         Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
             validate_expr_regions(left, regions)?;
             validate_expr_regions(right, regions)
@@ -3111,7 +3102,7 @@ mod tests {
     #[test]
     fn parses_unsafe_raw_pointer_dereference_and_assignment() {
         let program = parse(
-            "let main(): i32 = {\n  let mut value = 41\n  let pointer = MutPtr(borrow(mut) value)\n  unsafe do {\n    *pointer = *pointer + 1\n  }\n  value\n}\n",
+            "let main(): i32 = {\n  let mut value = 41\n  let pointer = MutPtr(borrow(mut) value)\n  unsafe {\n    *pointer = *pointer + 1\n  }\n  value\n}\n",
         )
         .unwrap();
         let Item::Function(function) = &program.items[0] else {
@@ -3123,12 +3114,17 @@ mod tests {
         assert!(matches!(
             &statements[2],
             Stmt::Expr(Expr::Unsafe(body))
-                if matches!(body.as_ref(), Expr::Block(_, Some(tail)) if matches!(
-                    tail.as_ref(),
-                    Expr::Assign(left, _)
-                        if matches!(left.as_ref(), Expr::Unary(UnaryOp::Deref, _))
+                if matches!(body.as_ref(), Expr::DoBlock { body } if matches!(
+                    body.as_ref(), Expr::Block(_, Some(tail)) if matches!(
+                        tail.as_ref(),
+                        Expr::Assign(left, _)
+                            if matches!(left.as_ref(), Expr::Unary(UnaryOp::Deref, _))
+                    )
                 ))
         ));
+
+        let error = parse("let main(): () = unsafe do {}\n").unwrap_err();
+        assert!(error.message.contains("trailing closure after `unsafe`"));
     }
 
     #[test]
@@ -3366,7 +3362,7 @@ mod tests {
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };
-        assert!(matches!(function.body, Some(Expr::Block(_, _))));
+        assert!(matches!(function.body, Some(Expr::DoBlock { .. })));
     }
 
     #[test]
@@ -3385,32 +3381,28 @@ mod tests {
     }
 
     #[test]
-    fn parses_annotated_and_contextual_try_do_blocks() {
+    fn parses_do_as_an_immediately_invoked_function_and_rejects_prefix_try() {
         let program = parse(
-            "let main(): Result(i32, bool) = try Result(i32, bool) do { 42 }\n\
-             let other(): Result(i32, bool) = try do { throw true }\n",
+            "let main(): Result(i32, bool) = do { 42 }\n\
+             let other(): Result(i32, bool) = do { throw true }\n",
         )
         .unwrap();
         let Item::Function(main) = &program.items[0] else {
             panic!("expected function");
         };
-        assert!(matches!(
-            main.body,
-            Some(Expr::TryBlock {
-                container: Some(_),
-                ..
-            })
-        ));
+        assert!(matches!(main.body, Some(Expr::DoBlock { .. })));
         let Item::Function(other) = &program.items[1] else {
             panic!("expected function");
         };
-        assert!(matches!(
-            other.body,
-            Some(Expr::TryBlock {
-                container: None,
-                ..
-            })
-        ));
+        assert!(matches!(other.body, Some(Expr::DoBlock { .. })));
+
+        for source in [
+            "let value: Result(i32, bool) = try do { 42 }\n",
+            "let value: Result(i32, bool) = try Result(i32, bool) do { 42 }\n",
+        ] {
+            let error = parse(source).unwrap_err();
+            assert!(error.message.contains("prefix `try` was removed"));
+        }
     }
 
     #[test]

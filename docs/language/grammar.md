@@ -328,7 +328,6 @@ primary_expr = literal
              | loop_expr
              | while_expr
              | for_expr
-             | try_block
              | async_expr
              | return_expr
              | throw_expr
@@ -336,17 +335,17 @@ primary_expr = literal
              | continue_expr ;
 
 do_block = "do", block ;
-unsafe_block = "unsafe", "do", block ;
+unsafe_block = "unsafe", block ;
 
 closure_literal = [ "move" ], "{",
                   ( "}" | parameter_group, { parameter_group }, "->",
                     block_contents, "}" | "->", block_contents, "}" ) ;
 
-async_expr = "async", closure_literal | "async", "do", block ;
+async_expr = "async", closure_literal ;
 ```
 
 `raw_alloc(T)(size, align)` 与 `raw_dealloc(pointer, size, align)` 使用普通调用语法，但它们是 edition
-保留的 allocator intrinsic，只能出现在 `unsafe do` 的动态作用域内；`raw_alloc` 的类型组可由期望
+保留的 allocator intrinsic，只能出现在 `unsafe` 的动态作用域内；`raw_alloc` 的类型组可由期望
 `MutPtr(T)` 省略。
 
 `raw_init(pointer, value)` 是第三个 `unsafe` allocator intrinsic：它以 move 语义把 `value` 初始化到
@@ -389,8 +388,11 @@ throw_expr    = "throw", expression ;
 break_expr    = "break", [ expression ] ;
 continue_expr = "continue" ;
 
-try_block = "try", [ type_expr ], "do", block ;
 ```
+
+`do { ... }`、`unsafe { ... }` 和未来的 `async { ... }` 在语义上都是接受尾闭包的内建函数调用，
+不是三种互不相关的块节点。parser 保留专用产生式以消除关键字后大括号的歧义。`do` 立即调用闭包
+并原样转发其 effect/color；`unsafe` 处理闭包要求的 `unsafe` color。
 
 解析 `if`、`while`、`for` 控制头的最外层时禁用尾随闭包；第一个未被括号包围的 `{` 是控制主体。
 条件要使用尾随闭包必须整体加括号。
@@ -405,7 +407,7 @@ try_block = "try", [ type_expr ], "do", block ;
 | `struct`/`enum`/`trait`/`extend` 后 | 声明体 |
 | `value match { ... }` | match arm 列表 |
 | 其他表达式位置 | 闭包 |
-| `do { ... }` | 立即块表达式 |
+| `do { ... }` | effect 多态的立即尾闭包调用 |
 
 ## 8. `match` 与 pattern
 

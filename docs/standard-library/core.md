@@ -74,8 +74,8 @@ package. `Option` and `Result` implement these protocols in ordinary generic cor
 Postfix `.try` and `throw` validate those edition identities. User-defined nominal types may
 implement `Try` and serve as either operands or explicit function propagation boundaries. Normal
 function completion and `return` use `from_output`, `.try` uses `FromResidual`, and `throw` uses
-`FromError`. Explicit `try do` expressions use the same protocols while establishing a nearer
-propagation boundary.
+`FromError`. A `do` call whose contextual closure result implements `Try` uses the same ordinary
+closure boundary; `do` itself has no error-specific semantics.
 
 Primitive implementations and the unit spelling `void` remain compiler-defined. A declaration only
 receives language-item behavior when its validated identity comes from this edition's embedded core;

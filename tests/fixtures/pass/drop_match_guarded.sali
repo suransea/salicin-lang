@@ -35,7 +35,7 @@ let guard_true(move choice: Choice): i32 = choice match {
 }
 
 let guard_return(move choice: Choice): i32 = choice match {
-  Pair(left, _) if do { return 42 } => 0,
+  Pair(left, _) if return 42 => 0,
   Pair(left, _) => do {
     consume(left)
     0

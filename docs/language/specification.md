@@ -514,9 +514,10 @@ trap 回归测试证明 scope cleanup 可观察执行，并检查同一 storage 
 
 ## 7. 块、闭包与捕获
 
-### 7.1 块表达式
+### 7.1 `do` 与立即调用
 
-块的最后一个无分号表达式是块值；空块值为 `()`：
+`do` 是接受零参数尾闭包并立即调用它的内建函数。闭包的最后一个无分号表达式是返回值；空闭包
+返回 `()`：
 
 ```sali
 let n = do {
@@ -539,8 +540,12 @@ let curried = { (x: i32)(y: i32) -> x + y }
 `{}` 保留为零参数、返回 `()` 的闭包，以满足简洁写法。带参数闭包必须含 `->`。
 零参数但非空的闭包写 `{ -> expression }`。闭包可以像命名函数一样声明多个参数组。
 
-为彻底消除 `{ ... }` 究竟是立即执行块还是闭包的歧义，值位置中的立即执行块必须写
-`do { ... }`。函数体、`if`、`match` 等语法要求的块不写 `do`。
+为彻底消除 `{ ... }` 究竟是立即执行还是闭包值的歧义，值位置中的立即调用写 `do { ... }`。
+它可理解为 `do` 接受一个尾闭包的调用；函数体、`if`、`match` 等语法要求的块不写 `do`。
+`return` 只返回这个匿名函数，不会越过 `do` 返回外层命名函数。
+
+`do` 对闭包的 effect/color 行是多态的：它不处理也不新增 effect，而是把 `unsafe`、`async`、
+错误传播等要求原样传给调用上下文。`unsafe` 与 `async` 则是对应 color 的 handler/构造函数。
 
 因此：
 
@@ -559,7 +564,7 @@ let f(x: i32) = {}     // 函数体，返回 ()
 | `if` / `else` / `while` / `for` / `loop` 后 | 控制流主体 |
 | `struct` / `enum` / `trait` / `extend` 后 | 声明体 |
 | `value match { ... }` | match 分支列表 |
-| `do { ... }` | 立即执行的块表达式 |
+| `do { ... }` | effect 多态的立即尾闭包调用 |
 
 match 分支需要执行多条语句时也写 `do { ... }`；写 `{ -> ... }` 明确表示该分支返回一个闭包。
 函数需要返回空闭包时可写 `let make() = do { {} }`，避免把 `{}` 解释为空函数体。
@@ -1274,7 +1279,7 @@ value match {
 
 其中 `propagate` 是说明语义使用的伪操作，不是源码关键字。它离开最近的传播边界，而不是无条件
 退出外层函数。`Option`、`Result` 和其他控制流容器可以实现 `Try`。当前编译器支持自定义 `Try`
-操作数、显式函数返回边界和 `try do` 块。
+操作数、显式函数返回边界和返回 Try 容器的 `do` 闭包。
 
 ### 15.1 成功值的自动包装
 
@@ -1293,28 +1298,26 @@ let load(): Result(Document, Error) = {
 传播错误并重新使用当前边界的 `from_output` 包装成功值。不会在普通赋值、函数实参或非传播边界
 中自动把 `T` 包装成 `Result(T, E)`。
 
-### 15.2 显式传播块
+### 15.2 `do` 中的传播
 
-传播边界是最近的 Try 返回函数、闭包或显式 `try do` 块。普通 `do` 块不建立新边界。
-
-`try do` 的容器类型首先从期望类型和其中 residual 推断；无法唯一决定时在 `try` 后标注：
+传播边界是最近的 Try 返回函数或闭包。`do` 没有 try 专用规则；它立即调用的匿名函数和任何其他
+闭包遵循相同规则。其返回容器通常由赋值、返回值或实参上下文给出：
 
 ```sali
-try Result((), Error) do {
+let result: Result((), Error) = do {
   let a = foo().try
   bar(a).try
-} match {
+}
+
+result match {
   Ok(_) => println("success"),
   Err(_) => println("failed"),
 }
 ```
 
-当前实现可从赋值、返回和调用实参的期望类型推断容器；缺少期望类型时必须使用
-`try Container do`。块内的 `.try` 和 `throw` 只退出该块。普通 `return` 的非局部退出 lowering
-尚未完成，因此当前会被明确拒绝。
-
-正常块尾值由该容器的 `Try.from_output` 包装，失败只离开此块。`.try` 位于闭包内时只传播出该
-闭包的最近 Try 边界，不能越过闭包返回外层函数。
+当前实现可从赋值、返回和调用实参的期望类型推断容器。缺少足以确定 Try 返回类型的上下文时会
+报推断错误，应给绑定或外层函数补类型。旧的 `try do` 和 `try Container do` 在 1.0 前直接删除。
+正常尾值由返回容器的 `Try.from_output` 包装，失败、`throw` 和普通 `return` 都只离开该匿名函数。
 
 `throw err` 是：
 
@@ -1323,7 +1326,7 @@ propagate ReturnType.from_error(err)
 ```
 
 的语义糖；其中 `propagate` 仍是上述伪操作。它要求当前传播边界实现 `FromError(E)`。在
-`try do` 内它退出该块，在函数中退出函数；
+`do` 的 Try 闭包内它退出该闭包，在命名函数中退出函数；
 `throw` 的类型为 `never`。
 
 标准库默认只提供 `Option` 到 `Option`、以及 `Result(T, E1)` 到 `Result(T, E2)` 的 residual 转换，
@@ -1361,7 +1364,7 @@ Future 不能完成两次。异步闭包和立即异步块分别写：
 ```sali
 let task = async { -> fetch().await }
 let future = task()                 // 调用异步闭包才创建 Future
-let immediate = async do { fetch().await } // 立即创建 Future，不立即执行块体
+let immediate = async { fetch().await } // async 处理尾闭包的 async color 并构造 Future
 ```
 
 异步函数编译成状态机；跨 `.await` 存活的局部值成为状态机字段。借用外部输入可以跨 `.await`，
@@ -1436,8 +1439,9 @@ C 可表示的签名和布局。
 
 ### 19.1 `unsafe` 与 C FFI
 
-内存安全核心之外的操作必须显式进入 `unsafe do` 块或 `unsafe let` 函数。`unsafe` 允许调用者承担
-编译器无法证明的前置条件，但不会关闭普通类型检查、借用检查或可见性检查。
+内存安全核心之外的操作必须显式进入 `unsafe { ... }` handler 或 `unsafe let` 函数。表面上的
+`unsafe` 与 `do` 一样接受尾闭包，但它会处理闭包要求的 `unsafe` color；`do` 只负责透传该 color。
+`unsafe` 允许调用者承担编译器无法证明的前置条件，但不会关闭普通类型检查、借用检查或可见性检查。
 
 ```sali
 @repr(C)
@@ -1457,8 +1461,8 @@ C 函数需要 `unsafe`。`core.ffi` 提供 `c_char`、`c_int`、`c_long` 等平
 `char` 是 Unicode scalar，不能代替 C `char`。
 
 ```sali
-let pointer = unsafe do { raw_alloc(T)(size: bytes, align: alignment) }
-unsafe do { raw_dealloc(pointer: pointer, size: bytes, align: alignment) }
+let pointer = unsafe { raw_alloc(T)(size: bytes, align: alignment) }
+unsafe { raw_dealloc(pointer: pointer, size: bytes, align: alignment) }
 ```
 
 `raw_alloc` 返回非空 `MutPtr(T)`，失败或非法 layout 会终止进程；若期望类型是 `MutPtr(T)`，类型组可

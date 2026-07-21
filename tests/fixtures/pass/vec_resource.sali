@@ -7,16 +7,16 @@ extend Resource {
 }
 
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = unsafe do {
+  let drop(borrow(mut) self)(): () = unsafe {
     *self.counter = *self.counter + 1
   }
 }
 
 let main(): i32 = {
-  let counter = unsafe do {
+  let counter = unsafe {
     raw_alloc(i32)(size_of(i32), align_of(i32))
   }
-  unsafe do {
+  unsafe {
     *counter = 0
   }
   let mut score = 0
@@ -29,7 +29,7 @@ let main(): i32 = {
     values.push(Resource(counter, 3))
     values.push(Resource(counter, 4))
     values.reserve(8)
-    let before_remove = unsafe do {
+    let before_remove = unsafe {
       *counter
     }
     let removed_value = do {
@@ -38,12 +38,12 @@ let main(): i32 = {
     }
     values.truncate(2)
     values.truncate(9)
-    let after_truncate = unsafe do {
+    let after_truncate = unsafe {
       *counter
     }
     values.clear()
     values.clear()
-    let after_clear = unsafe do {
+    let after_clear = unsafe {
       *counter
     }
     let ended_empty = values.is_empty()
@@ -52,10 +52,10 @@ let main(): i32 = {
       score = 37
     }
   }
-  let drops = unsafe do {
+  let drops = unsafe {
     *counter
   }
-  unsafe do {
+  unsafe {
     raw_dealloc(counter, size_of(i32), align_of(i32))
   }
   if drops == 5 {

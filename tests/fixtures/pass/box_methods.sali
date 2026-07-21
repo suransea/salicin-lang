@@ -4,7 +4,7 @@ let main(): i32 = {
   let mut boxed = Box.new(40)
   let previous = boxed.replace(41)
   let pointer = boxed.as_mut_ptr()
-  let observed = unsafe do {
+  let observed = unsafe {
     *pointer
   }
   if observed != 41 {

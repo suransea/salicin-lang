@@ -7446,7 +7446,7 @@ impl Analyzer {
             | Expr::Return(_)
             | Expr::While { .. }
             | Expr::Loop { .. }
-            | Expr::TryBlock { .. }
+            | Expr::DoBlock { .. }
             | Expr::Break(_) => false,
         }
     }
@@ -7653,11 +7653,7 @@ impl Analyzer {
                 }
             }
             Expr::Throw(_) => TypeProbe::Unsupported,
-            Expr::TryBlock { container, .. } => container
-                .as_ref()
-                .and_then(|container| self.probe_source_ty(container))
-                .or_else(|| hint.cloned())
-                .map_or(TypeProbe::Unsupported, TypeProbe::Known),
+            Expr::DoBlock { body } => self.probe_expr_ty(body, hint, context),
             Expr::Array(elements) => {
                 if let Some(Ty::Array(element, length)) = hint {
                     if *length != elements.len() as u64 {
@@ -9286,7 +9282,7 @@ impl Analyzer {
                 if *operator == UnaryOp::Deref {
                     let pointer = self.lower_expr(operand, None, context);
                     if context.unsafe_depth == 0 {
-                        self.error("raw pointer dereference requires an `unsafe do` block");
+                        self.error("raw pointer dereference requires an `unsafe` block");
                         return error_expr();
                     }
                     let Ty::Pointer { pointee, .. } = &pointer.ty else {
@@ -9389,15 +9385,13 @@ impl Analyzer {
             }
             Expr::Coalesce(left, right) => self.lower_coalesce(left, right, expected, context),
             Expr::Try(value) => self.lower_try(value, expected, context),
-            Expr::TryBlock { container, body } => {
-                self.lower_try_block(container.as_ref(), body, expected, context)
-            }
+            Expr::DoBlock { body } => self.lower_do_block(body, expected, context),
             Expr::Throw(value) => self.lower_throw(value, context),
             Expr::Assign(place, value) => {
                 if let Expr::Unary(UnaryOp::Deref, pointer) = place.as_ref() {
                     let pointer = self.lower_expr(pointer, None, context);
                     if context.unsafe_depth == 0 {
-                        self.error("raw pointer assignment requires an `unsafe do` block");
+                        self.error("raw pointer assignment requires an `unsafe` block");
                         return error_expr();
                     }
                     let Ty::Pointer { pointee, mutable } = &pointer.ty else {
@@ -9506,7 +9500,7 @@ impl Analyzer {
                                             binding.name
                                         ));
                                     }
-                                    self.lower_local_closure(params, body, None, context)
+                                    self.lower_local_closure(params, body, None, 0, context)
                                 }
                                 Expr::Name(_) if callable_source.is_some() => {
                                     let source = callable_source
@@ -10435,6 +10429,7 @@ impl Analyzer {
         source_params: &[crate::ast::Param],
         body: &Expr,
         declared_result: Option<Ty>,
+        forwarded_unsafe_depth: usize,
         outer: &mut LowerCtx,
     ) -> HirExpr {
         let mut source_groups = vec![source_params];
@@ -10457,6 +10452,7 @@ impl Analyzer {
         self.next_closure += 1;
         let mut context =
             LowerCtx::for_function(&function, declared_result.clone(), outer.origin.clone());
+        context.unsafe_depth = forwarded_unsafe_depth;
         context.return_boundary = declared_result
             .as_ref()
             .and_then(|result| self.return_boundary_for_ty(result));
@@ -10692,7 +10688,12 @@ impl Analyzer {
                 }
                 true
             }
-            Expr::Unary(_, operand) | Expr::Try(operand) | Expr::Throw(operand) => {
+            Expr::Unary(_, operand)
+            | Expr::Try(operand)
+            | Expr::Throw(operand)
+            | Expr::Unsafe(operand)
+            | Expr::DoBlock { body: operand }
+            | Expr::Borrow { value: operand, .. } => {
                 self.scan_simple_closure_captures(operand, bound, outer, captures)
             }
             Expr::Binary(left, _, right) | Expr::Coalesce(left, right) => {
@@ -10772,8 +10773,24 @@ impl Analyzer {
                 self.scan_simple_closure_captures(condition, bound, outer, captures)
                     & self.scan_simple_closure_captures(body, bound, outer, captures)
             }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let mut valid =
+                    self.scan_simple_closure_captures(condition, bound, outer, captures);
+                valid &= self.scan_simple_closure_captures(then_branch, bound, outer, captures);
+                if let Some(else_branch) = else_branch {
+                    valid &= self.scan_simple_closure_captures(else_branch, bound, outer, captures);
+                }
+                valid
+            }
             Expr::Loop { body } => self.scan_simple_closure_captures(body, bound, outer, captures),
             Expr::Break(value) => value.as_ref().is_none_or(|value| {
+                self.scan_simple_closure_captures(value, bound, outer, captures)
+            }),
+            Expr::Return(value) => value.as_ref().is_none_or(|value| {
                 self.scan_simple_closure_captures(value, bound, outer, captures)
             }),
             _ => {
@@ -12211,39 +12228,22 @@ impl Analyzer {
         self.lower_match_with_scrutinee(operand, &arms, expected, context)
     }
 
-    fn lower_try_block(
+    fn lower_do_block(
         &mut self,
-        annotation: Option<&Type>,
         body: &Expr,
         expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
-        if try_block_contains_outer_return(body) {
-            self.error(
-                "plain `return` inside `try do` is not implemented yet; move the return outside the block",
-            );
-            return error_expr();
+        if !do_block_requires_function_boundary(body) {
+            return self.lower_expr(body, expected, context);
         }
-        let container = annotation
-            .map(|annotation| self.lower_source_type(annotation))
-            .or_else(|| expected.filter(|ty| **ty != Ty::Error).cloned());
-        let Some(container) = container else {
-            self.error(
-                "cannot infer the container of `try do`; write `try Container do` or provide an expected type",
-            );
-            return error_expr();
-        };
-        if self.try_protocol_info_for_ty(&container).is_none() {
-            self.error(format!(
-                "`try do` container `{container}` does not implement `core.control.Try`"
-            ));
-            return error_expr();
-        }
-
-        let closure = self.lower_local_closure(&[], body, Some(container.clone()), context);
+        let declared_result = expected.filter(|ty| **ty != Ty::Error).cloned();
+        let closure =
+            self.lower_local_closure(&[], body, declared_result, context.unsafe_depth, context);
         let HirExprKind::LocalClosure(info) = closure.kind else {
             return error_expr();
         };
+        let result = info.result.clone();
         let mut loans = Vec::new();
         let arguments = info
             .captures
@@ -12270,7 +12270,7 @@ impl Analyzer {
             .collect();
         self.release_loans(&loans, context);
         HirExpr {
-            ty: container,
+            ty: result,
             kind: HirExprKind::Call {
                 function: info.function,
                 arguments,
@@ -13612,7 +13612,7 @@ impl Analyzer {
         context: &mut LowerCtx,
     ) -> HirExpr {
         if context.unsafe_depth == 0 {
-            self.error("`raw_alloc` requires an `unsafe do` block");
+            self.error("`raw_alloc` requires an `unsafe` block");
             return error_expr();
         }
         let (pointee, runtime) = match groups {
@@ -13662,7 +13662,7 @@ impl Analyzer {
 
     fn lower_raw_dealloc(&mut self, groups: &[&[CallArg]], context: &mut LowerCtx) -> HirExpr {
         if context.unsafe_depth == 0 {
-            self.error("`raw_dealloc` requires an `unsafe do` block");
+            self.error("`raw_dealloc` requires an `unsafe` block");
             return error_expr();
         }
         let (explicit, runtime) = match groups {
@@ -13724,7 +13724,7 @@ impl Analyzer {
 
     fn lower_raw_init(&mut self, groups: &[&[CallArg]], context: &mut LowerCtx) -> HirExpr {
         if context.unsafe_depth == 0 {
-            self.error("`raw_init` requires an `unsafe do` block");
+            self.error("`raw_init` requires an `unsafe` block");
             return error_expr();
         }
         let [runtime] = groups else {
@@ -13777,7 +13777,7 @@ impl Analyzer {
 
     fn lower_raw_take(&mut self, groups: &[&[CallArg]], context: &mut LowerCtx) -> HirExpr {
         if context.unsafe_depth == 0 {
-            self.error("`raw_take` requires an `unsafe do` block");
+            self.error("`raw_take` requires an `unsafe` block");
             return error_expr();
         }
         let [runtime] = groups else {
@@ -13815,7 +13815,7 @@ impl Analyzer {
 
     fn lower_raw_offset(&mut self, groups: &[&[CallArg]], context: &mut LowerCtx) -> HirExpr {
         if context.unsafe_depth == 0 {
-            self.error("`raw_offset` requires an `unsafe do` block");
+            self.error("`raw_offset` requires an `unsafe` block");
             return error_expr();
         }
         let [runtime] = groups else {
@@ -13859,7 +13859,7 @@ impl Analyzer {
         context: &mut LowerCtx,
     ) -> HirExpr {
         if context.unsafe_depth == 0 {
-            self.error(format!("`{name}` requires an `unsafe do` block"));
+            self.error(format!("`{name}` requires an `unsafe` block"));
             return error_expr();
         }
         let (required_mutable, runtime) = match groups {
@@ -13985,7 +13985,7 @@ impl Analyzer {
 
     fn lower_raw_trap(&mut self, groups: &[&[CallArg]], context: &mut LowerCtx) -> HirExpr {
         if context.unsafe_depth == 0 {
-            self.error("`raw_trap` requires an `unsafe do` block");
+            self.error("`raw_trap` requires an `unsafe` block");
             return error_expr();
         }
         if !matches!(groups, [arguments] if arguments.is_empty()) {
@@ -16251,62 +16251,60 @@ impl Analyzer {
     }
 }
 
-fn try_block_contains_outer_return(expression: &Expr) -> bool {
+fn do_block_requires_function_boundary(expression: &Expr) -> bool {
     match expression {
-        Expr::Return(_) => true,
-        Expr::Closure(_, _) => false,
+        Expr::Return(_) | Expr::Try(_) | Expr::Throw(_) => true,
+        Expr::Closure(_, _) | Expr::DoBlock { .. } => false,
         Expr::Unary(_, value)
-        | Expr::Try(value)
-        | Expr::Throw(value)
         | Expr::Unsafe(value)
         | Expr::Borrow { value, .. }
         | Expr::Member(value, _)
         | Expr::ChainMember(value, _)
-        | Expr::Loop { body: value } => try_block_contains_outer_return(value),
-        Expr::TryBlock { body, .. } => try_block_contains_outer_return(body),
+        | Expr::Loop { body: value } => do_block_requires_function_boundary(value),
         Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
-            try_block_contains_outer_return(left) || try_block_contains_outer_return(right)
+            do_block_requires_function_boundary(left) || do_block_requires_function_boundary(right)
         }
         Expr::Call(callee, arguments) => {
-            try_block_contains_outer_return(callee)
+            do_block_requires_function_boundary(callee)
                 || arguments
                     .iter()
-                    .any(|argument| try_block_contains_outer_return(&argument.value))
+                    .any(|argument| do_block_requires_function_boundary(&argument.value))
         }
-        Expr::Array(elements) => elements.iter().any(try_block_contains_outer_return),
+        Expr::Array(elements) => elements.iter().any(do_block_requires_function_boundary),
         Expr::Index { base, index } => {
-            try_block_contains_outer_return(base) || try_block_contains_outer_return(index)
+            do_block_requires_function_boundary(base) || do_block_requires_function_boundary(index)
         }
         Expr::Block(statements, tail) => {
             statements.iter().any(|statement| match statement {
-                Stmt::Let(binding) => try_block_contains_outer_return(&binding.value),
-                Stmt::Expr(expression) => try_block_contains_outer_return(expression),
-            }) || tail.as_deref().is_some_and(try_block_contains_outer_return)
+                Stmt::Let(binding) => do_block_requires_function_boundary(&binding.value),
+                Stmt::Expr(expression) => do_block_requires_function_boundary(expression),
+            }) || tail
+                .as_deref()
+                .is_some_and(do_block_requires_function_boundary)
         }
         Expr::If {
             condition,
             then_branch,
             else_branch,
         } => {
-            try_block_contains_outer_return(condition)
-                || try_block_contains_outer_return(then_branch)
+            do_block_requires_function_boundary(condition)
+                || do_block_requires_function_boundary(then_branch)
                 || else_branch
                     .as_deref()
-                    .is_some_and(try_block_contains_outer_return)
+                    .is_some_and(do_block_requires_function_boundary)
         }
         Expr::While { condition, body } => {
-            try_block_contains_outer_return(condition) || try_block_contains_outer_return(body)
+            do_block_requires_function_boundary(condition)
+                || do_block_requires_function_boundary(body)
         }
-        Expr::Break(value) => value
-            .as_deref()
-            .is_some_and(try_block_contains_outer_return),
+        Expr::Break(_) => true,
         Expr::Match { scrutinee, arms } => {
-            try_block_contains_outer_return(scrutinee)
+            do_block_requires_function_boundary(scrutinee)
                 || arms.iter().any(|arm| {
                     arm.guard
                         .as_ref()
-                        .is_some_and(try_block_contains_outer_return)
-                        || try_block_contains_outer_return(&arm.body)
+                        .is_some_and(do_block_requires_function_boundary)
+                        || do_block_requires_function_boundary(&arm.body)
                 })
         }
         Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => false,
@@ -16626,7 +16624,7 @@ fn is_unconstrained_integer(expression: &Expr) -> bool {
     match expression {
         Expr::Integer(_) => true,
         Expr::Unary(UnaryOp::Neg, operand) => matches!(operand.as_ref(), Expr::Integer(_)),
-        Expr::Block(_, Some(tail)) => is_unconstrained_integer(tail),
+        Expr::Block(_, Some(tail)) | Expr::DoBlock { body: tail } => is_unconstrained_integer(tail),
         _ => false,
     }
 }
@@ -16641,6 +16639,7 @@ fn integer_literal_value(expression: &Expr) -> Option<i128> {
             value.checked_neg()
         }
         Expr::Block(statements, Some(tail)) if statements.is_empty() => integer_literal_value(tail),
+        Expr::DoBlock { body } => integer_literal_value(body),
         _ => None,
     }
 }
@@ -21870,7 +21869,7 @@ fn substitute_self_expression_target(expression: &mut Expr, target: &str) {
         | Expr::Try(operand)
         | Expr::Throw(operand)
         | Expr::Unsafe(operand) => substitute_self_expression_target(operand, target),
-        Expr::TryBlock { body, .. } => substitute_self_expression_target(body, target),
+        Expr::DoBlock { body } => substitute_self_expression_target(body, target),
         Expr::Borrow { value, .. } => substitute_self_expression_target(value, target),
         Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
             substitute_self_expression_target(left, target);
@@ -21994,7 +21993,7 @@ fn rewrite_abstract_self_qualified_methods(expression: &mut Expr) {
         | Expr::Try(operand)
         | Expr::Throw(operand)
         | Expr::Unsafe(operand) => rewrite_abstract_self_qualified_methods(operand),
-        Expr::TryBlock { body, .. } => rewrite_abstract_self_qualified_methods(body),
+        Expr::DoBlock { body } => rewrite_abstract_self_qualified_methods(body),
         Expr::Borrow { value, .. } => rewrite_abstract_self_qualified_methods(value),
         Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
             rewrite_abstract_self_qualified_methods(left);
@@ -22080,12 +22079,7 @@ fn substitute_expr_types(expression: &mut Expr, substitutions: &HashMap<String, 
         | Expr::Try(operand)
         | Expr::Throw(operand)
         | Expr::Unsafe(operand) => substitute_expr_types(operand, substitutions),
-        Expr::TryBlock { container, body } => {
-            if let Some(container) = container {
-                substitute_type_parameters(container, substitutions);
-            }
-            substitute_expr_types(body, substitutions);
-        }
+        Expr::DoBlock { body } => substitute_expr_types(body, substitutions),
         Expr::Borrow {
             mutable,
             access,
@@ -25764,6 +25758,36 @@ let main(): i32 = {
     }
 
     #[test]
+    fn do_is_an_immediate_function_boundary_and_break_cannot_cross_it() {
+        let ir = compile_text(
+            r#"
+let main(): i32 = {
+  let outer = 40
+  let local: i32 = do {
+    if outer == 40 { return outer }
+    0
+  }
+  local + 2
+}
+"#,
+        )
+        .expect("do should lower as an immediately invoked closure");
+        assert!(ir.contains("@sali.fn.5f5f636c6f737572652e"));
+
+        let errors = compile_text(
+            r#"
+let main(): i32 = loop {
+  do { break 42 }
+}
+"#,
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("`break` cannot be used outside")));
+    }
+
+    #[test]
     fn moves_named_functions_partials_and_closures_between_local_bindings() {
         let ir = compile_text(
             r#"
@@ -27298,7 +27322,7 @@ let main(): i32 = 0
             r#"
 let choose(flag: bool): i32 = {
   let outer = 40
-  do {
+  if true {
     let inner = 2
     if flag { return outer + inner }
   }
@@ -27448,7 +27472,7 @@ let make(flag: bool): Boxed = loop {
 let Payload = struct(value: i32)
 let Pair = struct(left: Payload, right: Payload)
 let make(): Pair = loop {
-  break Pair(Payload(1), do { break Pair(Payload(2), Payload(3)) })
+  break Pair(Payload(1), break Pair(Payload(2), Payload(3)))
 }
 "#,
             "make",
@@ -28129,7 +28153,7 @@ let Payload = struct(value: i32)
 let Pair = struct(left: Payload, right: Payload)
 let update(): Pair = {
   let mut old = Pair(Payload(0), Payload(1))
-  old = Pair(Payload(2), do { return Pair(Payload(3), Payload(4)) })
+  old = Pair(Payload(2), return Pair(Payload(3), Payload(4)))
   old
 }
 "#,
@@ -28205,7 +28229,7 @@ let update(): Pair = {
             r#"
 let Payload = struct(value: i32)
 let Pair = struct(left: Payload, right: Payload)
-let make(): Pair = Pair(Payload(1), do { return Pair(Payload(2), Payload(3)) })
+let make(): Pair = Pair(Payload(1), return Pair(Payload(2), Payload(3)))
 "#,
             "make",
         );
@@ -28215,7 +28239,7 @@ let make(): Pair = Pair(Payload(1), do { return Pair(Payload(2), Payload(3)) })
             r#"
 let Payload = struct(value: i32)
 let Choice = enum { Pair(Payload, Payload) }
-let make(): Choice = Choice.Pair(Payload(1), do { return Choice.Pair(Payload(2), Payload(3)) })
+let make(): Choice = Choice.Pair(Payload(1), return Choice.Pair(Payload(2), Payload(3)))
 "#,
             "make",
         );
@@ -28231,7 +28255,7 @@ let make(): Choice = Choice.Pair(Payload(1), do { return Choice.Pair(Payload(2),
             r#"
 let Payload = struct(value: i32)
 extend Payload: Copy {}
-let make(): Array(Payload, 2) = [Payload(1), do { return [Payload(2), Payload(3)] }]
+let make(): Array(Payload, 2) = [Payload(1), return [Payload(2), Payload(3)]]
 "#,
             "make",
         );
@@ -28799,11 +28823,11 @@ let cycle(): never = loop { 1; () }
     }
 
     #[test]
-    fn cleanup_plan_keeps_breaks_from_while_conditions_reachable() {
+    fn cleanup_plan_keeps_condition_break_values_reachable() {
         let plan = cleanup_plan_text(
             r#"
 let bind(): () = {
-  let done = while do { break; true } {}
+  let done = while loop { break false } {}
   done
 }
 "#,
@@ -28828,26 +28852,27 @@ let bind(): () = {
             .iter()
             .any(|block| matches!(block.terminator, Some(CleanupTerminator::Return { .. }))));
 
-        let return_plan = cleanup_plan_text(
+        let do_plan = cleanup_plan_text(
             r#"
-let bind(): () = {
-  let done = while do { return; true } {}
-  done
+let bind(): i32 = {
+  let done: i32 = do {
+    return 40
+    0
+  }
+  done + 2
 }
 "#,
             "bind",
         );
-        let done = return_plan
+        let done = do_plan
             .locals
             .iter()
             .find(|local| local.debug_name.as_deref() == Some("done"))
-            .expect("while binding");
-        assert!(return_plan.blocks.iter().all(|block| {
-            block.operations.iter().all(|operation| match operation {
-                CleanupOp::Init(path) => {
-                    return_plan.move_paths[path.index()].place.local != done.id
-                }
-                _ => true,
+            .expect("do result binding");
+        assert!(do_plan.blocks.iter().any(|block| {
+            block.operations.iter().any(|operation| match operation {
+                CleanupOp::Init(path) => do_plan.move_paths[path.index()].place.local == done.id,
+                _ => false,
             })
         }));
     }

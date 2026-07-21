@@ -1,13 +1,13 @@
-let next(counter: MutPtr(i32)): i32 = unsafe do {
+let next(counter: MutPtr(i32)): i32 = unsafe {
   *counter = *counter + 1
   41
 }
 
 let main(): i32 = {
-  let counter = unsafe do {
+  let counter = unsafe {
     raw_alloc(i32)(size_of(i32), align_of(i32))
   }
-  unsafe do {
+  unsafe {
     *counter = 0
   }
   let selected = next(counter) match {
@@ -15,10 +15,10 @@ let main(): i32 = {
     value if value == 41 => value,
     _ => 0,
   }
-  let evaluations = unsafe do {
+  let evaluations = unsafe {
     *counter
   }
-  unsafe do {
+  unsafe {
     raw_dealloc(counter, size_of(i32), align_of(i32))
   }
   selected + evaluations

@@ -2,13 +2,13 @@ let read(fail: bool): Result(i32, bool) = if fail { Err(true) } else { Ok(40) }
 
 let main(): i32 = {
   let fail = true
-  let propagated: Result(i32, bool) = try Result(i32, bool) do {
+  let propagated: Result(i32, bool) = do {
     read(fail).try + 2
   }
-  let thrown: Result(i32, bool) = try do {
+  let thrown: Result(i32, bool) = do {
     throw true
   }
-  let success: Result(i32, bool) = try do {
+  let success: Result(i32, bool) = do {
     read(false).try + 2
   }
   let propagation_ok = propagated match { Ok(_) => false, Err(error) => error }
