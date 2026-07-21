@@ -389,6 +389,7 @@ struct AlgebraicHandler {
     identity: String,
     clauses: HashMap<String, AlgebraicHandlerClause>,
     operations: HashMap<String, Vec<AlgebraicHandlerOperation>>,
+    function_aliases: Rc<RefCell<HashMap<String, String>>>,
     done: Option<AlgebraicHandlerClause>,
     inlining: Rc<RefCell<HashMap<String, SourceInlineFrame>>>,
     loop_breaks: Rc<RefCell<HashMap<String, SourceContinuation>>>,
@@ -16457,6 +16458,7 @@ impl Analyzer {
             identity: source_effect_identity(instance),
             clauses,
             operations: handler_operations,
+            function_aliases: Rc::new(RefCell::new(HashMap::new())),
             done,
             inlining: Rc::new(RefCell::new(HashMap::new())),
             loop_breaks: Rc::new(RefCell::new(HashMap::new())),
@@ -16505,6 +16507,14 @@ impl Analyzer {
         resume: Option<SourceResume>,
         continuation: SourceContinuation,
     ) -> Result<Expr, ()> {
+        if let Expr::Name(name) = &expression {
+            if handler.function_aliases.borrow().contains_key(name) {
+                self.error(format!(
+                    "effectful function alias `{name}` cannot escape its handler or be used as a runtime value"
+                ));
+                return Err(());
+            }
+        }
         if let Some((name, argument)) = internal_handler_return_argument(&expression) {
             let returned = handler
                 .return_continuations
@@ -17553,9 +17563,11 @@ impl Analyzer {
         continuation: SourceContinuation,
     ) -> Option<Result<Expr, ()>> {
         let mut groups = Vec::new();
-        let Expr::Name(name) = flatten_call(expression, &mut groups) else {
+        let Expr::Name(source_name) = flatten_call(expression, &mut groups) else {
             return None;
         };
+        let aliased_name = handler.function_aliases.borrow().get(source_name).cloned();
+        let name = aliased_name.as_deref().unwrap_or(source_name);
         let function = self.functions.get(name)?.clone();
         if !function
             .effects
@@ -17564,6 +17576,18 @@ impl Analyzer {
             .any(|effect| source_effect_identity(effect) == handler.identity)
         {
             return None;
+        }
+        if let Some(alias) = groups
+            .iter()
+            .flat_map(|group| group.iter())
+            .find_map(|argument| {
+                handler_alias_reference(&argument.value, &handler.function_aliases.borrow())
+            })
+        {
+            self.error(format!(
+                "effectful function alias `{alias}` cannot escape its handler or be used as a runtime value"
+            ));
+            return Some(Err(()));
         }
         if let Some(frame) = handler.inlining.borrow().get(name).cloned() {
             let specialization = self.next_closure;
@@ -17673,7 +17697,7 @@ impl Analyzer {
                 Err(()) => return Some(Err(())),
             };
         handler.inlining.borrow_mut().insert(
-            name.clone(),
+            name.to_owned(),
             SourceInlineFrame {
                 recursive_name,
                 input: input.clone(),
@@ -17856,6 +17880,50 @@ impl Analyzer {
         let first = statements.remove(0);
         match first {
             Stmt::Let(mut binding) => {
+                if let Expr::Name(target) = &binding.value {
+                    let resolved_target = handler
+                        .function_aliases
+                        .borrow()
+                        .get(target)
+                        .cloned()
+                        .unwrap_or_else(|| target.clone());
+                    let aliases_handler_effect =
+                        self.functions
+                            .get(&resolved_target)
+                            .is_some_and(|function| {
+                                function.effects.custom.iter().any(|effect| {
+                                    source_effect_identity(effect) == handler.identity
+                                })
+                            });
+                    if aliases_handler_effect {
+                        if binding.mutable || binding.annotation.is_some() {
+                            self.error(format!(
+                                "effectful function alias `{}` must be an inferred immutable binding",
+                                binding.name
+                            ));
+                            return Err(());
+                        }
+                        let alias = binding.name.clone();
+                        let previous = handler
+                            .function_aliases
+                            .borrow_mut()
+                            .insert(alias.clone(), resolved_target);
+                        let transformed = self.transform_handler_block(
+                            statements,
+                            tail,
+                            handler.clone(),
+                            resume,
+                            continuation,
+                        );
+                        let mut aliases = handler.function_aliases.borrow_mut();
+                        if let Some(previous) = previous {
+                            aliases.insert(alias, previous);
+                        } else {
+                            aliases.remove(&alias);
+                        }
+                        return transformed;
+                    }
+                }
                 if binding.name.starts_with("$handler$frame$")
                     || binding.name.starts_with("$handler$continuation$")
                     || binding.name.starts_with("$handler$call$continuation$")
@@ -21885,6 +21953,30 @@ fn call_argument_labels(arguments: &[CallArg]) -> Option<Vec<String>> {
         .iter()
         .map(|argument| argument.label.clone())
         .collect()
+}
+
+fn handler_alias_reference(expression: &Expr, aliases: &HashMap<String, String>) -> Option<String> {
+    if let Expr::Name(name) = expression {
+        return aliases.contains_key(name).then(|| name.clone());
+    }
+    if let Expr::Closure(parameters, body) = expression {
+        let shadowed = parameters
+            .iter()
+            .map(|parameter| parameter.name.as_str())
+            .collect::<HashSet<_>>();
+        if aliases.keys().any(|name| shadowed.contains(name.as_str())) {
+            let visible = aliases
+                .iter()
+                .filter(|(name, _)| !shadowed.contains(name.as_str()))
+                .map(|(name, target)| (name.clone(), target.clone()))
+                .collect::<HashMap<_, _>>();
+            return handler_alias_reference(body, &visible);
+        }
+        return handler_alias_reference(body, aliases);
+    }
+    handler_expression_children(expression)
+        .into_iter()
+        .find_map(|child| handler_alias_reference(child, aliases))
 }
 
 fn handler_expression_children(expression: &Expr) -> Vec<&Expr> {
@@ -33894,6 +33986,38 @@ let main(): i32 = { 0 }
         assert!(positional.iter().any(|error| error
             .message
             .contains("overloaded effect operation `value` requires named arguments")));
+    }
+
+    #[test]
+    fn algebraic_effect_function_aliases_stay_static_and_handler_local() {
+        compile_text(
+            r#"
+let Ask = effect { let value(): i32 }
+let ask(): i32 with(Ask) = { Ask.value() }
+let main(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) {
+  let action = ask
+  let forwarded = action
+  forwarded()
+} }
+"#,
+        )
+        .expect("a chained local alias should retain its statically known effectful target");
+
+        let escaping = compile_text(
+            r#"
+let Ask = effect { let value(): i32 }
+let ask(): i32 with(Ask) = { Ask.value() }
+let consume(action: (): i32 with(Ask)): i32 with(Ask) = { action() }
+let main(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) {
+  let action = ask
+  consume(action)
+} }
+"#,
+        )
+        .expect_err("the static alias path must not pretend to implement a dynamic callable ABI");
+        assert!(escaping.iter().any(|error| error
+            .message
+            .contains("cannot escape its handler or be used as a runtime value")));
     }
 
     #[test]

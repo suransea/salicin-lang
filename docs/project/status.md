@@ -65,8 +65,10 @@ use named arguments, and repeated handler labels select signatures through claus
 Derived handlers support typed one-shot resumption, abandonment, `done:` answer conversion, named-call
 propagation, direct recursion, and resumable loop backedges. Cross-function abandonment and
 computation after `resume` use explicit CPS continuation closures. Direct and mutually recursive
-frames share an erased call/drop-entry plus environment ABI with a runtime one-shot flag. Capturing
-indirect calls remain implementation work. Recursive-frame visibility is limited to callee-body
+frames share an erased call/drop-entry plus environment ABI with a runtime one-shot flag. Inferred
+immutable local aliases of statically known effectful functions are resolved through the same CPS
+path, including chained aliases. Capturing and genuinely dynamic indirect calls remain
+implementation work. Recursive-frame visibility is limited to callee-body
 transformation, so sequential calls to the same effectful named function remain independent.
 Abandonment invokes the armed environment's drop entry,
 whereas resumption transfers and disarms it; native resource regressions cover exactly-once cleanup

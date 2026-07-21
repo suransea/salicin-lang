@@ -6,6 +6,14 @@ subset.
 
 ## Unreleased
 
+## 0.127.0 - 2026-07-22
+
+- Propagated statically known effectful function identity through inferred immutable local aliases
+  and alias chains inside handlers.
+- Lowered calls through those aliases with the existing named-function CPS frames instead of
+  materializing an unresolved ordinary function pointer.
+- Added native execution coverage for a chained non-capturing effectful alias resumed by a handler.
+
 ## 0.126.0 - 2026-07-22
 
 - Added effect-operation overload sets distinguished only by runtime parameter names, consistently
