@@ -1,3 +1,5 @@
+use core.ops.Add
+
 let Number = struct(value: i32)
 
 extend Number: Add(i32) {

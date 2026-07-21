@@ -427,7 +427,7 @@ fn resolve_dependency_manifest_path(
 }
 
 fn is_ascii_snake_case_module_name(name: &str) -> bool {
-    if name == "_" || name == "self" || crate::lexer::is_keyword(name) {
+    if matches!(name, "_" | "self" | "core" | "alloc") || crate::lexer::is_keyword(name) {
         return false;
     }
     let mut bytes = name.bytes();
@@ -920,7 +920,7 @@ alpha_util = { path = "../alpha" }
 
     #[test]
     fn rejects_invalid_dependency_aliases_paths_and_manifests() {
-        for alias in ["Upper", "has-dash", "self", "_", "let"] {
+        for alias in ["Upper", "has-dash", "self", "_", "let", "core", "alloc"] {
             let temp = TempDir::new();
             temp.write("root/src/main.sali", "let main() = 0\n");
             temp.write(

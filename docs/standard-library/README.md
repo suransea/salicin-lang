@@ -30,12 +30,13 @@ use alloc.boxed.Box
 use alloc.vec.{Vec, vec_at}
 ```
 
-The compiler mounts `alloc` as a reserved standard-library namespace in every package. Its
-declarations have qualified internal identities, so an unimported user declaration may still be
-named `Box` or `Vec`. A project dependency or top-level file module cannot claim the name `alloc`.
-`core.ops` still has a bootstrap visibility migration remaining before its traits require ordinary
-imports; see [implementation status](../project/status.md).
+The compiler mounts `core` and `alloc` as reserved standard-library namespaces in every package.
+Their non-prelude declarations have qualified internal identities, so an unimported user declaration
+may still be named `Add`, `Box`, or `Vec`. A project dependency or top-level file module cannot claim
+either standard namespace.
+`core.ops` uses the same rule: `Add`, `Sub`, `Mul`, `Div`, and `Rem` require ordinary imports when
+named. Merely writing the corresponding operator token does not require importing its protocol.
 
 The compiler, library sources, and edition form one toolchain unit. Compiler-matched language items
 must come from the matching `core`, while user declarations with the same spelling remain ordinary
-declarations.
+declarations. `core` and `alloc` are reserved top-level namespaces, not manifest dependencies.

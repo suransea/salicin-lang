@@ -14,7 +14,7 @@ use crate::ast::{
     TraitDef, TraitMember, Type, VariantDef, VariantFields, Visibility,
 };
 use crate::manifest::Edition;
-use crate::modules::PackageId;
+use crate::modules::{self, PackageId, SourceUnit};
 use crate::parser;
 
 const EDITION_2026_PRELUDE: &str = include_str!("../../library/core/src/prelude.sali");
@@ -275,10 +275,56 @@ impl CoreBundle {
             combined.item_origins.append(&mut program.item_origins);
             combined.uses.append(&mut program.uses);
         }
-        let lang_items = validate_program(edition, &combined)?;
+        let mut lang_items = validate_program(edition, &combined)?;
+        let sources = modules
+            .iter()
+            .map(|(module, source)| SourceUnit {
+                path: format!("<core/{module}>"),
+                module_path: if *module == "prelude" {
+                    Vec::new()
+                } else {
+                    vec!["core".to_owned(), (*module).to_owned()]
+                },
+                source: (*source).to_owned(),
+                is_root: *module == "prelude",
+            })
+            .collect::<Vec<_>>();
+        let mut program = modules::resolve_embedded_sources(&sources)
+            .map_err(|diagnostics| CoreBundleError::new(edition, diagnostics))?;
+        for origin in &mut program.item_origins {
+            origin.package = PackageId::CORE.0;
+            origin.module_path = if origin.module_path.is_empty() {
+                vec!["@core".to_owned(), "prelude".to_owned()]
+            } else {
+                vec![
+                    "@core".to_owned(),
+                    origin
+                        .module_path
+                        .last()
+                        .expect("non-root embedded core module has a name")
+                        .clone(),
+                ]
+            };
+        }
+        for lang_item in [
+            &mut lang_items.option,
+            &mut lang_items.result,
+            &mut lang_items.never,
+            &mut lang_items.copy,
+            &mut lang_items.drop,
+            &mut lang_items.add,
+            &mut lang_items.sub,
+            &mut lang_items.mul,
+            &mut lang_items.div,
+            &mut lang_items.rem,
+        ] {
+            lang_item.canonical_name = item_name(&program.items[lang_item.item_index])
+                .expect("resolved core lang item remains named")
+                .to_owned();
+        }
         Ok(Self {
             edition,
-            program: combined,
+            program,
             lang_items,
         })
     }
@@ -686,11 +732,23 @@ pub let Rem(Rhs: type) = trait {
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
+            let canonical = match kind {
+                LangItemKind::Option
+                | LangItemKind::Result
+                | LangItemKind::Never
+                | LangItemKind::Copy
+                | LangItemKind::Drop => kind.source_name().to_owned(),
+                LangItemKind::Add
+                | LangItemKind::Sub
+                | LangItemKind::Mul
+                | LangItemKind::Div
+                | LangItemKind::Rem => format!("core::ops::{}", kind.source_name()),
+            };
             assert_eq!(
                 item_name(&bundle.program().items[lang_item.item_index()]),
-                Some(kind.source_name())
+                Some(canonical.as_str())
             );
-            assert_eq!(lang_item.canonical_name(), kind.source_name());
+            assert_eq!(lang_item.canonical_name(), canonical);
             let module = match kind {
                 LangItemKind::Option
                 | LangItemKind::Result

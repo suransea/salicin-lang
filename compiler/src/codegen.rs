@@ -21795,8 +21795,23 @@ mod tests {
     use super::*;
     use crate::ast::Param;
 
+    fn resolve_text(source: &str) -> Program {
+        crate::modules::resolve_sources(&[crate::modules::SourceUnit {
+            path: "<test>".to_owned(),
+            module_path: Vec::new(),
+            source: source.to_owned(),
+            is_root: true,
+        }])
+        .unwrap_or_else(|diagnostics| panic!("test source must resolve: {diagnostics:?}"))
+    }
+
     fn compile_text(source: &str) -> Result<String, Vec<Diagnostic>> {
         let program = crate::parser::parse(source).expect("test source must parse");
+        compile(&program)
+    }
+
+    fn compile_resolved_text(source: &str) -> Result<String, Vec<Diagnostic>> {
+        let program = resolve_text(source);
         compile(&program)
     }
 
@@ -22359,14 +22374,14 @@ mod tests {
         assert!(never.variants.is_empty());
         assert!(analyzer.enum_layouts["never"].variants.is_empty());
         for operator_trait in BINARY_OPERATOR_TRAITS {
-            let name = operator_trait.lang_item.source_name();
-            assert!(analyzer.traits[name].valid);
+            let name = analyzer.lang_item_name(operator_trait.lang_item).to_owned();
+            assert!(analyzer.traits[&name].valid);
             assert_eq!(
                 analyzer.lang_item_name(operator_trait.lang_item),
                 analyzer
                     .lang_items
                     .get(operator_trait.lang_item)
-                    .source_name()
+                    .canonical_name()
             );
         }
         assert_eq!(analyzer.nominal_instances.len(), 1);
@@ -22824,13 +22839,14 @@ let main(): i32 = {
             .any(|diagnostic| { diagnostic.message == "duplicate top-level name `void`" }));
 
         let program = crate::parser::parse("let Add = struct(value: i32)\nlet main(): i32 = 42\n")
-            .expect("reserved Add source must parse");
+            .expect("unimported Add source must parse");
         let analyzer = Analyzer::new(&program);
-        assert!(analyzer
+        assert!(!analyzer
             .diagnostics
             .iter()
             .any(|diagnostic| { diagnostic.message == "duplicate top-level name `Add`" }));
-        assert!(analyzer.traits["Add"].valid);
+        assert!(analyzer.struct_defs.contains_key("Add"));
+        assert!(analyzer.traits["core::ops::Add"].valid);
     }
 
     #[test]
@@ -25104,8 +25120,9 @@ let main(): i32 = {
 
     #[test]
     fn lowers_core_add_trait_to_a_static_call() {
-        let program = crate::parser::parse(
+        let program = resolve_text(
             r#"
+use core.ops.Add
 let Number = struct(value: i32)
 extend Number: Add(Number) {
   let Output = i32
@@ -25113,12 +25130,11 @@ extend Number: Add(Number) {
 }
 let main(): i32 = Number(40) + Number(2)
 "#,
-        )
-        .expect("core Add source must parse");
+        );
         let key = TraitImplKey {
             self_ty: Ty::Struct("Number".into()),
             trait_ref: TraitRefKey {
-                name: "Add".into(),
+                name: "core::ops::Add".into(),
                 arguments: vec![Ty::Struct("Number".into())],
             },
         };
@@ -25133,8 +25149,9 @@ let main(): i32 = Number(40) + Number(2)
 
     #[test]
     fn lowers_all_core_arithmetic_traits_to_their_static_methods() {
-        let program = crate::parser::parse(
+        let program = resolve_text(
             r#"
+use core.ops.{Sub, Mul, Div, Rem}
 let Number = struct(value: i32)
 extend Number: Sub(Number) {
   let Output = Number
@@ -25160,8 +25177,7 @@ let main(): i32 = {
   difference.value + product.value + quotient.value + remainder.value
 }
 "#,
-        )
-        .expect("core arithmetic trait source must parse");
+        );
         let ir = compile(&program).expect("all core arithmetic traits must compile");
 
         for (trait_name, method) in [
@@ -25173,7 +25189,7 @@ let main(): i32 = {
             let key = TraitImplKey {
                 self_ty: Ty::Struct("Number".into()),
                 trait_ref: TraitRefKey {
-                    name: trait_name.into(),
+                    name: format!("core::ops::{trait_name}"),
                     arguments: vec![Ty::Struct("Number".into())],
                 },
             };
@@ -25245,8 +25261,9 @@ let main(): i32 = invalid
 
     #[test]
     fn a_unique_operator_candidate_must_match_the_expected_output() {
-        let errors = compile_text(
+        let errors = compile_resolved_text(
             r#"
+use core.ops.Add
 let Number = struct(value: i32)
 extend Number: Add(i32) {
   let Output = bool
@@ -25265,8 +25282,9 @@ let main(): i32 = Number(42) + 42
 
     #[test]
     fn uninhabited_operator_output_coerces_when_no_exact_output_exists() {
-        compile_text(
+        compile_resolved_text(
             r#"
+use core.ops.Sub
 let Number = struct(value: i32)
 extend Number: Sub(i32) {
   let Output = never
@@ -25280,8 +25298,9 @@ let main(): i32 = Number(42) - 1
 
     #[test]
     fn exact_operator_output_takes_precedence_over_uninhabited_output() {
-        let program = crate::parser::parse(
+        let program = resolve_text(
             r#"
+use core.ops.Sub
 let Number = struct(value: i32)
 extend Number: Sub(i32) {
   let Output = never
@@ -25293,19 +25312,18 @@ extend Number: Sub(i64) {
 }
 let main(): i32 = Number(42) - 1
 "#,
-        )
-        .expect("operator output precedence source must parse");
+        );
         let exact = TraitImplKey {
             self_ty: Ty::Struct("Number".into()),
             trait_ref: TraitRefKey {
-                name: "Sub".into(),
+                name: "core::ops::Sub".into(),
                 arguments: vec![Ty::I64],
             },
         };
         let uninhabited = TraitImplKey {
             self_ty: Ty::Struct("Number".into()),
             trait_ref: TraitRefKey {
-                name: "Sub".into(),
+                name: "core::ops::Sub".into(),
                 arguments: vec![Ty::I32],
             },
         };
@@ -25322,8 +25340,9 @@ let main(): i32 = Number(42) - 1
 
     #[test]
     fn operator_candidates_probe_bindings_in_nonempty_rhs_blocks() {
-        let program = crate::parser::parse(
+        let program = resolve_text(
             r#"
+use core.ops.Sub
 let Number = struct(value: i32)
 extend Number: Sub(i32) {
   let Output = i32
@@ -25338,19 +25357,18 @@ let main(): i32 = Number(1) - do {
   flag
 }
 "#,
-        )
-        .expect("nonempty RHS block source must parse");
+        );
         let boolean = TraitImplKey {
             self_ty: Ty::Struct("Number".into()),
             trait_ref: TraitRefKey {
-                name: "Sub".into(),
+                name: "core::ops::Sub".into(),
                 arguments: vec![Ty::Bool],
             },
         };
         let integer = TraitImplKey {
             self_ty: Ty::Struct("Number".into()),
             trait_ref: TraitRefKey {
-                name: "Sub".into(),
+                name: "core::ops::Sub".into(),
                 arguments: vec![Ty::I32],
             },
         };
@@ -25367,8 +25385,9 @@ let main(): i32 = Number(1) - do {
 
     #[test]
     fn non_add_output_participates_in_outer_generic_inference() {
-        let ir = compile_text(
+        let ir = compile_resolved_text(
             r#"
+use core.ops.Sub
 let Number = struct(value: i32)
 extend Number: Sub(i32) {
   let Output = i64
@@ -25391,8 +25410,9 @@ let main(): i32 = {
 
     #[test]
     fn add_output_participates_in_outer_generic_inference() {
-        let ir = compile_text(
+        let ir = compile_resolved_text(
             r#"
+use core.ops.Add
 let Number = struct(value: i32)
 extend Number: Add(i32) {
   let Output = i32
@@ -25412,8 +25432,9 @@ let main(): i32 = identity(Number(40) + 2)
 
     #[test]
     fn add_literal_range_eliminates_incompatible_rhs_candidates() {
-        let program = crate::parser::parse(
+        let program = resolve_text(
             r#"
+use core.ops.Add
 let Number = struct(value: i32)
 extend Number: Add(i32) {
   let Output = i64
@@ -25428,19 +25449,18 @@ let main(): i32 = {
   if answer == 2147483648 { 42 } else { 0 }
 }
 "#,
-        )
-        .expect("large literal Add source must parse");
+        );
         let i32_key = TraitImplKey {
             self_ty: Ty::Struct("Number".into()),
             trait_ref: TraitRefKey {
-                name: "Add".into(),
+                name: "core::ops::Add".into(),
                 arguments: vec![Ty::I32],
             },
         };
         let i64_key = TraitImplKey {
             self_ty: Ty::Struct("Number".into()),
             trait_ref: TraitRefKey {
-                name: "Add".into(),
+                name: "core::ops::Add".into(),
                 arguments: vec![Ty::I64],
             },
         };
@@ -25453,8 +25473,9 @@ let main(): i32 = {
 
     #[test]
     fn add_lowering_is_independent_of_inferred_producer_declaration_order() {
-        let program = crate::parser::parse(
+        let program = resolve_text(
             r#"
+use core.ops.Add
 let Number = struct(value: i32)
 extend Number: Add(Number) {
   let Output = Number
@@ -25466,12 +25487,11 @@ let main(): i32 = {
 }
 let make() = Number(40)
 "#,
-        )
-        .expect("inferred producer source must parse");
+        );
         let key = TraitImplKey {
             self_ty: Ty::Struct("Number".into()),
             trait_ref: TraitRefKey {
-                name: "Add".into(),
+                name: "core::ops::Add".into(),
                 arguments: vec![Ty::Struct("Number".into())],
             },
         };
@@ -25494,8 +25514,9 @@ let make() = 40
 
     #[test]
     fn add_reports_when_no_ambiguous_candidate_has_the_expected_output() {
-        let errors = compile_text(
+        let errors = compile_resolved_text(
             r#"
+use core.ops.Add
 let Number = struct(value: i32)
 extend Number: Add(i32) {
   let Output = bool

@@ -192,7 +192,7 @@ mod tests {
     fn alloc_items_require_imports_and_may_be_renamed() {
         let errors = compile_source("let main(): i32 = Box.new(42).read()\n").unwrap_err();
         assert!(errors.iter().any(|diagnostic| {
-            diagnostic.contains("alloc item `Box` is not in the prelude")
+            diagnostic.contains("standard-library item `Box` is not in the prelude")
                 && diagnostic.contains("use alloc.boxed.Box")
         }));
 
@@ -207,6 +207,34 @@ mod tests {
                       let Vec = struct(value: i32)\n\
                       let main(): i32 = Box(value: 20).value + Vec(value: 22).value\n";
         compile_source(source).expect("alloc names should not be reserved without an import");
+    }
+
+    #[test]
+    fn operator_traits_require_imports_but_operator_syntax_does_not() {
+        let missing = "let Number = struct(value: i32)\n\
+                       extend Number: Add(Number) {\n\
+                         let Output = Number\n\
+                         let add(move self)(move rhs: Number): Number = Number(self.value + rhs.value)\n\
+                       }\n\
+                       let main(): i32 = 0\n";
+        let errors = compile_source(missing).unwrap_err();
+        assert!(errors.iter().any(|diagnostic| {
+            diagnostic.contains("standard-library item `Add` is not in the prelude")
+                && diagnostic.contains("use core.ops.Add")
+        }));
+
+        let imported = format!("use core.ops.Add\n{missing}").replace(
+            "let main(): i32 = 0",
+            "let main(): i32 = (Number(20) + Number(22)).value",
+        );
+        compile_source(&imported).expect("imported operator trait should define `+`");
+
+        compile_source("let main(): i32 = 20 + 22\n")
+            .expect("built-in operator syntax should not require importing its protocol");
+
+        let local = "let Add = struct(value: i32)\n\
+                     let main(): i32 = Add(value: 42).value\n";
+        compile_source(local).expect("unimported operator names should remain available to users");
     }
 
     #[test]

@@ -771,6 +771,8 @@ let made: Product = make(10)
 使用 `where` 表达 trait 约束：
 
 ```sali
+use core.ops.Add
+
 let twice(T: type)(x: T): T
 where T: Add(T, Output = T), T: Copy = x + x
 ```
@@ -823,6 +825,8 @@ let Chain = trait {
 约束中的 `Output = T` 是关联类型等式，不是运行时命名实参：
 
 ```sali
+use core.ops.Add
+
 where T: Add(T, Output = T)
 ```
 
@@ -873,6 +877,9 @@ trait object 及动态分派留作独立设计，不让 `Foo` 默认同时表示
 a + b   // Add.add(a, b)
 a == b  // Eq.eq(borrow a, borrow b)
 ```
+
+使用运算符语法本身不要求导入协议；实现协议、在 `where` 中引用协议或直接调用协议成员时，必须
+通过普通模块导入，例如 `use core.ops.Add`。同名的用户 trait 不会获得 `+` 的 lang-item 身份。
 
 运算符优先级和求值顺序由语言固定，trait 只能改变操作含义，不能改变解析方式或短路规则。
 `&&`、`||`、赋值、成员访问、普通调用以及 `.await` 不可重载。

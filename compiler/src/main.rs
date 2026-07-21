@@ -662,6 +662,13 @@ fn module_path_from_relative(relative: &Path) -> Result<Vec<String>, String> {
             relative.display()
         ));
     }
+    if matches!(modules.first().map(String::as_str), Some("core" | "alloc")) {
+        return Err(format!(
+            "top-level file module `{}` in '{}' conflicts with the standard-library namespace",
+            modules[0],
+            relative.display()
+        ));
+    }
     Ok(modules)
 }
 

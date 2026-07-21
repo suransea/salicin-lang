@@ -6,6 +6,20 @@ subset.
 
 ## Unreleased
 
+## 0.73.0 - 2026-07-21
+
+- Split embedded `core.prelude` and `core.ops` semantic identities: `Option`, `Result`, `never`,
+  `Copy`, and `Drop` remain implicit, while arithmetic protocol traits use qualified identities.
+- Required ordinary `use core.ops...` imports whenever source names `Add`, `Sub`, `Mul`, `Div`, or
+  `Rem`, with precise missing-import diagnostics, grouped imports, renaming, and re-export support.
+- Kept operator tokens independent of lexical imports: built-in arithmetic and overloaded operator
+  dispatch continue to use the edition-validated lang-item identity.
+- Allowed user declarations named `Add`, `Sub`, `Mul`, `Div`, or `Rem` without granting them operator
+  behavior or colliding with compiler-owned traits.
+- Reserved both `core` and `alloc` against top-level file modules and dependency aliases, including
+  manifest validation, and migrated all arithmetic trait fixtures and package tests to explicit
+  imports.
+
 ## 0.72.0 - 2026-07-21
 
 - Mounted the compiler-owned `alloc.boxed` and `alloc.vec` modules in ordinary package name

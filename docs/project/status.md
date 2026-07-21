@@ -15,14 +15,16 @@ Passing keyword generics are also implemented for functions and generic inherent
 position. General effect rows and effect polymorphism remain design work rather than source-language
 features.
 
-`alloc` is mounted in ordinary module resolution and is not part of the prelude. `Box`, `Vec`, and
-their free functions require `use alloc.boxed...` / `use alloc.vec...` (or a qualified path), while
-their internal identities remain isolated from same-named user declarations.
+`core` and `alloc` are mounted in ordinary module resolution. `core.ops` traits and alloc containers
+are not part of the prelude. `Box`, `Vec`, and their free functions require
+`use alloc.boxed...` / `use alloc.vec...` (or a qualified path), while operator traits require
+`use core.ops...` when named. Their internal identities remain isolated from same-named user
+declarations; operator syntax continues to dispatch through validated lang items.
 
 The implementation is broad but not stable. Important incomplete boundaries include:
 
-- `core.ops` is tracked separately but its operator traits still use bootstrap visibility rather
-  than ordinary `use core.ops...` resolution;
+- `core` still contains only its initial prelude and arithmetic protocol subset; slices, iteration,
+  richer comparison/indexing traits, `Try`, and `Future` remain to be implemented;
 - `std` host APIs have not been started;
 - registry dependencies, workspaces, stable ABI guarantees, and a package distribution format are
   not defined;

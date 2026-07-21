@@ -102,10 +102,10 @@ pub(crate) fn resolve_embedded_sources(sources: &[SourceUnit]) -> Result<Program
 
 fn resolve_packages_impl(
     packages: &[SourcePackage],
-    expose_alloc: bool,
+    expose_standard_library: bool,
 ) -> Result<Program, Vec<String>> {
     let (prepared, dependencies, mut diagnostics) =
-        validate_package_layout(packages, !expose_alloc);
+        validate_package_layout(packages, !expose_standard_library);
     let mut parsed = Vec::with_capacity(prepared.len());
 
     for unit in prepared {
@@ -127,8 +127,8 @@ fn resolve_packages_impl(
 
     let (mut symbols, mut module_paths, mut collection_diagnostics) =
         collect_symbols(&parsed, &dependencies);
-    let required_imports = if expose_alloc {
-        install_alloc_namespace(
+    let required_imports = if expose_standard_library {
+        install_standard_namespaces(
             &parsed,
             &mut symbols,
             &mut module_paths,
@@ -293,9 +293,12 @@ const ALLOC_EXPORTS: &[(&str, &str)] = &[
     ("vec", "vec_write"),
 ];
 
+const CORE_PRELUDE_EXPORTS: &[&str] = &["Option", "Result", "never", "Copy", "Drop"];
+const CORE_OPS_EXPORTS: &[&str] = &["Add", "Sub", "Mul", "Div", "Rem"];
+
 fn validate_package_layout(
     packages: &[SourcePackage],
-    allow_alloc_namespace: bool,
+    allow_standard_namespaces: bool,
 ) -> (Vec<PreparedUnit<'_>>, DependencyTable, Vec<String>) {
     let mut diagnostics = Vec::new();
     let primary_count = packages.iter().filter(|package| package.is_primary).count();
@@ -339,10 +342,10 @@ fn validate_package_layout(
         };
         let mut aliases = BTreeMap::new();
         for (alias, target_id) in &package.dependencies {
-            if alias == "alloc" && !allow_alloc_namespace {
+            if matches!(alias.as_str(), "core" | "alloc") && !allow_standard_namespaces {
                 diagnostics.push(format!(
-                    "<package {}>: error: dependency alias `alloc` conflicts with the standard-library namespace",
-                    package.id.0
+                    "<package {}>: error: dependency alias `{alias}` conflicts with the standard-library namespace",
+                    package.id.0,
                 ));
                 continue;
             }
@@ -416,10 +419,10 @@ fn validate_package_layout(
                 }
             }
             if let Some(first) = source.module_path.first() {
-                if first == "alloc" && !allow_alloc_namespace {
+                if matches!(first.as_str(), "core" | "alloc") && !allow_standard_namespaces {
                     diagnostics.push(format!(
-                        "{}: error: top-level module `alloc` conflicts with the standard-library namespace",
-                        source.path
+                        "{}: error: top-level module `{first}` conflicts with the standard-library namespace",
+                        source.path,
                     ));
                 }
                 if package.dependencies.contains_key(first) {
@@ -648,7 +651,7 @@ fn collect_symbols(
     (symbols, module_paths, diagnostics)
 }
 
-fn install_alloc_namespace(
+fn install_standard_namespaces(
     parsed: &[ParsedUnit<'_>],
     symbols: &mut SymbolTable,
     module_paths: &mut HashSet<Vec<String>>,
@@ -663,8 +666,64 @@ fn install_alloc_namespace(
     for (module, name) in ALLOC_EXPORTS {
         required_imports.insert((*name).to_owned(), format!("alloc.{module}.{name}"));
     }
+    for name in CORE_OPS_EXPORTS {
+        required_imports.insert((*name).to_owned(), format!("core.ops.{name}"));
+    }
 
     for package_root in package_roots {
+        let mut core_root = package_root.clone();
+        core_root.push("core".to_owned());
+        if module_paths.contains(&core_root) {
+            diagnostics.push(
+                "<package>: error: top-level module `core` conflicts with the standard-library namespace"
+                    .to_owned(),
+            );
+        } else if let Some(symbol) = symbols.get(&core_root) {
+            diagnostics.push(format!(
+                "{}: error: root declaration `core` conflicts with the standard-library namespace",
+                symbol.source_path
+            ));
+        } else {
+            module_paths.insert(core_root.clone());
+            for module in ["prelude", "ops"] {
+                let mut module_path = core_root.clone();
+                module_path.push(module.to_owned());
+                module_paths.insert(module_path);
+            }
+            for name in CORE_PRELUDE_EXPORTS {
+                let mut module_path = core_root.clone();
+                module_path.push("prelude".to_owned());
+                let mut logical_path = module_path.clone();
+                logical_path.push((*name).to_owned());
+                symbols.insert(
+                    logical_path,
+                    Symbol {
+                        canonical: (*name).to_owned(),
+                        module_path,
+                        package_root: package_root.clone(),
+                        visibility: Visibility::Public,
+                        source_path: "<core>".to_owned(),
+                    },
+                );
+            }
+            for name in CORE_OPS_EXPORTS {
+                let mut module_path = core_root.clone();
+                module_path.push("ops".to_owned());
+                let mut logical_path = module_path.clone();
+                logical_path.push((*name).to_owned());
+                symbols.insert(
+                    logical_path,
+                    Symbol {
+                        canonical: format!("core::ops::{name}"),
+                        module_path,
+                        package_root: package_root.clone(),
+                        visibility: Visibility::Public,
+                        source_path: "<core>".to_owned(),
+                    },
+                );
+            }
+        }
+
         let mut alloc_root = package_root.clone();
         alloc_root.push("alloc".to_owned());
         if module_paths.contains(&alloc_root) {
@@ -1872,7 +1931,7 @@ impl Resolver {
                 if let Some(canonical) = self.resolve_logical_path(&segments, context) {
                     *name = canonical;
                 } else {
-                    if !self.reject_unimported_alloc(&segments, context) {
+                    if !self.reject_unimported_standard(&segments, context) {
                         self.reject_bare_module(&segments, context, "a type");
                     }
                 }
@@ -1895,7 +1954,7 @@ impl Resolver {
                     if let Some(canonical) = self.resolve_logical_path(&logical, context) {
                         *name = canonical;
                     } else {
-                        if !self.reject_unimported_alloc(&logical, context) {
+                        if !self.reject_unimported_standard(&logical, context) {
                             self.reject_bare_module(&logical, context, "a value or callable");
                         }
                     }
@@ -2032,7 +2091,7 @@ impl Resolver {
                         resolved.extend(path[consumed..].iter().cloned());
                         *path = resolved;
                     } else {
-                        if !self.reject_unimported_alloc(path, context) {
+                        if !self.reject_unimported_standard(path, context) {
                             self.reject_bare_module(path, context, "a constructor");
                         }
                     }
@@ -2077,7 +2136,7 @@ impl Resolver {
                 return;
             }
 
-            if self.reject_unimported_alloc(&segments, context) {
+            if self.reject_unimported_standard(&segments, context) {
                 return;
             }
 
@@ -2273,11 +2332,14 @@ impl Resolver {
         }
     }
 
-    fn reject_unimported_alloc(
+    fn reject_unimported_standard(
         &mut self,
         logical_path: &[String],
         context: ResolveContext<'_>,
     ) -> bool {
+        if self.longest_module_prefix(logical_path, context) > 0 {
+            return false;
+        }
         let Some(name) = logical_path.first() else {
             return false;
         };
@@ -2285,7 +2347,7 @@ impl Resolver {
             return false;
         };
         self.diagnostics.push(format!(
-            "{}: error: alloc item `{name}` is not in the prelude; import it with `use {import_path}`",
+            "{}: error: standard-library item `{name}` is not in the prelude; import it with `use {import_path}`",
             context.source_path
         ));
         true
@@ -3578,7 +3640,7 @@ let main(): i32 = Option()
     }
 
     #[test]
-    fn alloc_is_an_explicit_reserved_standard_namespace() {
+    fn standard_library_modules_are_explicit_reserved_namespaces() {
         let program = resolve_sources(&[unit(
             "main.sali",
             &[],
@@ -3597,6 +3659,24 @@ let main(): i32 = Option()
             Some(Type::Named("alloc::vec::Vec".into(), vec![Type::I32]))
         );
 
+        let operator = resolve_sources(&[unit(
+            "operator.sali",
+            &[],
+            "use core.ops.Add as Plus\n\
+             let Number = struct(value: i32)\n\
+             extend Number: Plus(Number) {\n\
+               let Output = Number\n\
+               let add(move self)(move rhs: Number): Number = Number(self.value + rhs.value)\n\
+             }\n",
+            true,
+        )])
+        .unwrap();
+        assert!(operator.items.iter().any(|item| {
+            matches!(item, Item::Extend(extension)
+                if matches!(&extension.trait_ref,
+                    Some(Type::Named(name, _)) if name == "core::ops::Add"))
+        }));
+
         let bare = resolve_sources(&[unit(
             "main.sali",
             &[],
@@ -3605,37 +3685,113 @@ let main(): i32 = Option()
         )])
         .unwrap_err();
         assert!(bare.iter().any(|diagnostic| {
-            diagnostic.contains("alloc item `Box` is not in the prelude")
+            diagnostic.contains("standard-library item `Box` is not in the prelude")
                 && diagnostic.contains("use alloc.boxed.Box")
         }));
 
-        let module = resolve_sources(&[
-            unit("main.sali", &[], "let main(): i32 = 0\n", true),
-            unit("alloc.sali", &["alloc"], "let value = 1\n", false),
-        ])
+        let bare_operator = resolve_sources(&[unit(
+            "operator.sali",
+            &[],
+            "let Number = struct(value: i32)\n\
+             extend Number: Add(Number) {\n\
+               let Output = Number\n\
+               let add(move self)(move rhs: Number): Number = self\n\
+             }\n",
+            true,
+        )])
         .unwrap_err();
-        assert!(module
-            .iter()
-            .any(|diagnostic| diagnostic.contains("standard-library namespace")));
+        assert!(bare_operator.iter().any(|diagnostic| {
+            diagnostic.contains("standard-library item `Add` is not in the prelude")
+                && diagnostic.contains("use core.ops.Add")
+        }));
 
-        let dependency = resolve_packages(&[
-            package(
-                0,
-                true,
-                &[("alloc", 1)],
-                vec![unit("main.sali", &[], "let main(): i32 = 0\n", true)],
-            ),
-            package(
-                1,
-                false,
-                &[],
-                vec![unit("dep.sali", &[], "pub let value = 1\n", true)],
-            ),
-        ])
-        .unwrap_err();
-        assert!(dependency
+        for namespace in ["core", "alloc"] {
+            let module = resolve_sources(&[
+                unit("main.sali", &[], "let main(): i32 = 0\n", true),
+                unit(
+                    &format!("{namespace}.sali"),
+                    &[namespace],
+                    "let value = 1\n",
+                    false,
+                ),
+            ])
+            .unwrap_err();
+            assert!(module
+                .iter()
+                .any(|diagnostic| diagnostic.contains("standard-library namespace")));
+        }
+
+        for namespace in ["core", "alloc"] {
+            let dependency = resolve_packages(&[
+                package(
+                    0,
+                    true,
+                    &[(namespace, 1)],
+                    vec![unit("main.sali", &[], "let main(): i32 = 0\n", true)],
+                ),
+                package(
+                    1,
+                    false,
+                    &[],
+                    vec![unit("dep.sali", &[], "pub let value = 1\n", true)],
+                ),
+            ])
+            .unwrap_err();
+            assert!(dependency.iter().any(|diagnostic| {
+                diagnostic.contains(&format!("dependency alias `{namespace}`"))
+            }));
+        }
+    }
+
+    #[test]
+    fn mounted_standard_exports_match_the_validated_bundles() {
+        let core =
+            crate::core::CoreBundle::for_edition(crate::manifest::Edition::Edition2026).unwrap();
+        let core_exports = core
+            .program()
+            .items
             .iter()
-            .any(|diagnostic| diagnostic.contains("dependency alias `alloc`")));
+            .zip(&core.program().item_origins)
+            .filter_map(|(item, origin)| {
+                Some((
+                    origin.module_path.last()?.as_str(),
+                    declaration_name(item)?.rsplit("::").next()?,
+                ))
+            })
+            .collect::<BTreeSet<_>>();
+        let expected_core = CORE_PRELUDE_EXPORTS
+            .iter()
+            .map(|name| ("prelude", *name))
+            .chain(CORE_OPS_EXPORTS.iter().map(|name| ("ops", *name)))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(core_exports, expected_core);
+
+        let alloc =
+            crate::alloc::AllocBundle::for_edition(crate::manifest::Edition::Edition2026).unwrap();
+        let alloc_exports = alloc
+            .program()
+            .items
+            .iter()
+            .zip(&alloc.program().item_visibilities)
+            .zip(&alloc.program().item_origins)
+            .filter(|((_, visibility), _)| **visibility == Visibility::Public)
+            .map(|((item, _), origin)| {
+                (
+                    origin
+                        .module_path
+                        .last()
+                        .expect("alloc declaration has module provenance")
+                        .as_str(),
+                    declaration_name(item)
+                        .expect("public alloc item is named")
+                        .rsplit("::")
+                        .next()
+                        .expect("declaration name is nonempty"),
+                )
+            })
+            .collect::<BTreeSet<_>>();
+        let expected_alloc = ALLOC_EXPORTS.iter().copied().collect::<BTreeSet<_>>();
+        assert_eq!(alloc_exports, expected_alloc);
     }
 
     fn expression_names(expression: Option<&Expr>) -> HashSet<String> {

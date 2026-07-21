@@ -1,3 +1,5 @@
+use core.ops.Sub
+
 let Number = struct(value: i32)
 
 extend Number: Sub(i32) {

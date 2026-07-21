@@ -3033,7 +3033,9 @@ dep = { path = "../dep" }
     );
     workspace.write(
         "dep/src/lib.sali",
-        r#"pub let Number = struct(value: i32)
+        r#"use core.ops.Add
+
+pub let Number = struct(value: i32)
 extend Number: Add(Number) {
   let Output = Number
   let add(move self)(move rhs: Number): Number = Number(self.value + rhs.value)
