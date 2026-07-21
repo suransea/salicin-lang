@@ -1526,6 +1526,11 @@ fn assignment_operator_trait(operator: BinaryOp) -> Option<LangItemKind> {
         BinaryOp::Mul => LangItemKind::MulAssign,
         BinaryOp::Div => LangItemKind::DivAssign,
         BinaryOp::Rem => LangItemKind::RemAssign,
+        BinaryOp::BitAnd => LangItemKind::BitAndAssign,
+        BinaryOp::BitOr => LangItemKind::BitOrAssign,
+        BinaryOp::BitXor => LangItemKind::BitXorAssign,
+        BinaryOp::Shl => LangItemKind::ShlAssign,
+        BinaryOp::Shr => LangItemKind::ShrAssign,
         _ => return None,
     })
 }

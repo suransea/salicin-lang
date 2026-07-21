@@ -19,5 +19,20 @@ let main(): i32 = {
   let mut array = [40, 0]
   array[0] += 2
 
-  (add.value + sub + mul + div + rem + array[0]) / 6
+  let mut bit_and = 47
+  bit_and &= 42
+
+  let mut bit_or = 40
+  bit_or |= 2
+
+  let mut bit_xor = 40
+  bit_xor ^= 2
+
+  let mut shl = 21
+  shl <<= 1
+
+  let mut shr = 84
+  shr >>= 1
+
+  (add.value + sub + mul + div + rem + array[0] + bit_and + bit_or + bit_xor + shl + shr) / 11
 }

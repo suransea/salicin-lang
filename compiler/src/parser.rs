@@ -1491,6 +1491,16 @@ impl Parser {
             Some(BinaryOp::Div)
         } else if self.take(&TokenKind::PercentEqual) {
             Some(BinaryOp::Rem)
+        } else if self.take(&TokenKind::AmpEqual) {
+            Some(BinaryOp::BitAnd)
+        } else if self.take(&TokenKind::PipeEqual) {
+            Some(BinaryOp::BitOr)
+        } else if self.take(&TokenKind::CaretEqual) {
+            Some(BinaryOp::BitXor)
+        } else if self.take(&TokenKind::ShlEqual) {
+            Some(BinaryOp::Shl)
+        } else if self.take(&TokenKind::ShrEqual) {
+            Some(BinaryOp::Shr)
         } else {
             None
         };
@@ -3296,10 +3306,15 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::AndAnd => "`&&`",
         TokenKind::OrOr => "`||`",
         TokenKind::Amp => "`&`",
+        TokenKind::AmpEqual => "`&=`",
         TokenKind::Pipe => "`|`",
+        TokenKind::PipeEqual => "`|=`",
         TokenKind::Caret => "`^`",
+        TokenKind::CaretEqual => "`^=`",
         TokenKind::Shl => "`<<`",
+        TokenKind::ShlEqual => "`<<=`",
         TokenKind::Shr => "`>>`",
+        TokenKind::ShrEqual => "`>>=`",
         TokenKind::QuestionQuestion => "`??`",
         TokenKind::QuestionDot => "`?.`",
         TokenKind::Eof => "end of file",
@@ -4119,6 +4134,11 @@ mod tests {
                value *= 4\n\
                value /= 5\n\
                value %= 6\n\
+               value &= 7\n\
+               value |= 8\n\
+               value ^= 9\n\
+               value <<= 1\n\
+               value >>= 1\n\
                ()\n\
              }\n",
         )
@@ -4136,6 +4156,11 @@ mod tests {
             BinaryOp::Mul,
             BinaryOp::Div,
             BinaryOp::Rem,
+            BinaryOp::BitAnd,
+            BinaryOp::BitOr,
+            BinaryOp::BitXor,
+            BinaryOp::Shl,
+            BinaryOp::Shr,
         ]) {
             assert!(matches!(
                 statement,

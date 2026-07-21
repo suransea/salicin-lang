@@ -6,6 +6,14 @@ subset.
 
 ## Unreleased
 
+## 0.108.0 - 2026-07-22
+
+- Added source-backed `BitAndAssign`, `BitOrAssign`, `BitXorAssign`, `ShlAssign`, and `ShrAssign`
+  protocols to `core.ops`.
+- Implemented `&=`, `|=`, `^=`, `<<=`, and `>>=` for built-in integer places and nominal values.
+- Preserved single evaluation of the left place, checked shift semantics, and forced nominal
+  dispatch through the validated assignment lang item.
+
 ## 0.107.0 - 2026-07-22
 
 - Added source-backed, edition-validated `AddAssign`, `SubAssign`, `MulAssign`, `DivAssign`, and

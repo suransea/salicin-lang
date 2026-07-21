@@ -39,7 +39,7 @@ Their non-prelude declarations have qualified internal identities, so an unimpor
 may still be named `Add`, `Box`, or `Vec`. A project dependency or top-level file module cannot claim
 either standard namespace.
 `core.ops` uses the same rule: `Add`, `Sub`, `Mul`, `Div`, `Rem`, `Eq`, `PartialOrdering`,
-`PartialOrd`, `Neg`, `Not`, `BitAnd`, `BitOr`, `BitXor`, `Shl`, `Shr`, and the arithmetic `*Assign`
+`PartialOrd`, `Neg`, `Not`, `BitAnd`, `BitOr`, `BitXor`, `Shl`, `Shr`, and their `*Assign` mutation
 traits require ordinary imports when
 named. Merely writing the corresponding operator token does not require importing its protocol.
 The syntax spellings for `throws(E)`, `do`, `try`, `unsafe`, and `loop` bind directly to validated

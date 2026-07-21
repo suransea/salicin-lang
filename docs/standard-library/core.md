@@ -59,8 +59,10 @@ parameter groups and associated `Output` shape as arithmetic protocols. Built-in
 arithmetic right shift for signed integers and logical right shift for unsigned integers. Negative
 or out-of-width shift counts trap instead of exposing backend undefined behavior.
 
-`AddAssign(Rhs)`, `SubAssign(Rhs)`, `MulAssign(Rhs)`, `DivAssign(Rhs)`, and `RemAssign(Rhs)` are
-separate mutation protocols. Each mutably borrows `self`, consumes `rhs`, and returns `()`:
+`AddAssign(Rhs)`, `SubAssign(Rhs)`, `MulAssign(Rhs)`, `DivAssign(Rhs)`, `RemAssign(Rhs)`,
+`BitAndAssign(Rhs)`, `BitOrAssign(Rhs)`, `BitXorAssign(Rhs)`, `ShlAssign(Rhs)`, and
+`ShrAssign(Rhs)` are separate mutation protocols. Each mutably borrows `self`, consumes `rhs`, and
+returns `()`:
 
 ```sali
 pub let AddAssign(Rhs: type) = trait {
@@ -68,10 +70,11 @@ pub let AddAssign(Rhs: type) = trait {
 }
 ```
 
-The corresponding `+=`, `-=`, `*=`, `/=`, and `%=` syntax binds to these validated identities for
-nominal values. Built-in integers use the same fixed arithmetic semantics, including division and
-remainder traps. The left place is resolved once; an inherent or unrelated trait method with the
-same member spelling cannot intercept compound assignment.
+The corresponding `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, and `>>=` syntax binds to
+these validated identities for nominal values. Built-in integers use the same fixed operator
+semantics, including division, remainder, and shift traps. The left place is resolved once; an
+inherent or unrelated trait method with the same member spelling cannot intercept compound
+assignment.
 
 Writing `left + right`, `left & right`, `left == right`, or `left < right` does not itself require an import. An
 import is required when source names the protocol in an implementation, bound, type, or direct

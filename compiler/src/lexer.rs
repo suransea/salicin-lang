@@ -73,10 +73,15 @@ pub enum TokenKind {
     AndAnd,
     OrOr,
     Amp,
+    AmpEqual,
     Pipe,
+    PipeEqual,
     Caret,
+    CaretEqual,
     Shl,
+    ShlEqual,
     Shr,
+    ShrEqual,
     QuestionDot,
     QuestionQuestion,
     Eof,
@@ -239,16 +244,31 @@ impl Lexer {
                     '=' => TokenKind::Equal,
                     '!' if self.take('=') => TokenKind::BangEqual,
                     '!' => TokenKind::Bang,
-                    '<' if self.take('<') => TokenKind::Shl,
+                    '<' if self.take('<') => {
+                        if self.take('=') {
+                            TokenKind::ShlEqual
+                        } else {
+                            TokenKind::Shl
+                        }
+                    }
                     '<' if self.take('=') => TokenKind::LessEqual,
                     '<' => TokenKind::Less,
-                    '>' if self.take('>') => TokenKind::Shr,
+                    '>' if self.take('>') => {
+                        if self.take('=') {
+                            TokenKind::ShrEqual
+                        } else {
+                            TokenKind::Shr
+                        }
+                    }
                     '>' if self.take('=') => TokenKind::GreaterEqual,
                     '>' => TokenKind::Greater,
                     '&' if self.take('&') => TokenKind::AndAnd,
+                    '&' if self.take('=') => TokenKind::AmpEqual,
                     '&' => TokenKind::Amp,
                     '|' if self.take('|') => TokenKind::OrOr,
+                    '|' if self.take('=') => TokenKind::PipeEqual,
                     '|' => TokenKind::Pipe,
+                    '^' if self.take('=') => TokenKind::CaretEqual,
                     '^' => TokenKind::Caret,
                     '?' if self.take('.') => TokenKind::QuestionDot,
                     '?' if self.take('?') => TokenKind::QuestionQuestion,
@@ -307,10 +327,15 @@ impl Lexer {
                     | TokenKind::AndAnd
                     | TokenKind::OrOr
                     | TokenKind::Amp
+                    | TokenKind::AmpEqual
                     | TokenKind::Pipe
+                    | TokenKind::PipeEqual
                     | TokenKind::Caret
+                    | TokenKind::CaretEqual
                     | TokenKind::Shl
+                    | TokenKind::ShlEqual
                     | TokenKind::Shr
+                    | TokenKind::ShrEqual
                     | TokenKind::QuestionDot
                     | TokenKind::QuestionQuestion
             )

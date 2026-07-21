@@ -27,7 +27,8 @@ bindings stay scoped to that arm and share the same ownership and cleanup analys
 `while let pattern = value { ... }` reevaluates the scrutinee each iteration and exits when the
 pattern fails. It lowers to the same `match` and unit-loop machinery, including normal `break`,
 `continue`, ownership backedges, and lexical cleanup.
-Arithmetic compound assignment (`+=`, `-=`, `*=`, `/=`, `%=`) resolves its left place once.
+Arithmetic, bitwise, and shift compound assignment (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`,
+`^=`, `<<=`, `>>=`) resolves its left place once.
 Built-in integers retain checked trap boundaries, while nominal values dispatch through the
 source-backed `core.ops` `*Assign` traits with a mutable receiver borrow. Same-named ordinary methods
 cannot intercept operator lowering.

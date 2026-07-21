@@ -43,6 +43,26 @@ pub let RemAssign(Rhs: type) = trait {
   let rem_assign(borrow(mut) self)(move rhs: Rhs): ()
 }
 
+pub let BitAndAssign(Rhs: type) = trait {
+  let bit_and_assign(borrow(mut) self)(move rhs: Rhs): ()
+}
+
+pub let BitOrAssign(Rhs: type) = trait {
+  let bit_or_assign(borrow(mut) self)(move rhs: Rhs): ()
+}
+
+pub let BitXorAssign(Rhs: type) = trait {
+  let bit_xor_assign(borrow(mut) self)(move rhs: Rhs): ()
+}
+
+pub let ShlAssign(Rhs: type) = trait {
+  let shl_assign(borrow(mut) self)(move rhs: Rhs): ()
+}
+
+pub let ShrAssign(Rhs: type) = trait {
+  let shr_assign(borrow(mut) self)(move rhs: Rhs): ()
+}
+
 pub let Eq(Rhs: type) = trait {
   let eq(borrow self)(borrow rhs: Rhs): bool
 }

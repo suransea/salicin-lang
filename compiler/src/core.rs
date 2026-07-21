@@ -29,6 +29,11 @@ pub let SubAssign(Rhs: type) = trait { let sub_assign(borrow(mut) self)(move rhs
 pub let MulAssign(Rhs: type) = trait { let mul_assign(borrow(mut) self)(move rhs: Rhs): () }
 pub let DivAssign(Rhs: type) = trait { let div_assign(borrow(mut) self)(move rhs: Rhs): () }
 pub let RemAssign(Rhs: type) = trait { let rem_assign(borrow(mut) self)(move rhs: Rhs): () }
+pub let BitAndAssign(Rhs: type) = trait { let bit_and_assign(borrow(mut) self)(move rhs: Rhs): () }
+pub let BitOrAssign(Rhs: type) = trait { let bit_or_assign(borrow(mut) self)(move rhs: Rhs): () }
+pub let BitXorAssign(Rhs: type) = trait { let bit_xor_assign(borrow(mut) self)(move rhs: Rhs): () }
+pub let ShlAssign(Rhs: type) = trait { let shl_assign(borrow(mut) self)(move rhs: Rhs): () }
+pub let ShrAssign(Rhs: type) = trait { let shr_assign(borrow(mut) self)(move rhs: Rhs): () }
 "#;
 
 /// A stable logical role fulfilled by one declaration in the edition's
@@ -50,6 +55,11 @@ pub enum LangItemKind {
     MulAssign,
     DivAssign,
     RemAssign,
+    BitAndAssign,
+    BitOrAssign,
+    BitXorAssign,
+    ShlAssign,
+    ShrAssign,
     Eq,
     PartialOrdering,
     PartialOrd,
@@ -73,7 +83,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 35] = [
+    const ALL: [Self; 40] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -89,6 +99,11 @@ impl LangItemKind {
         Self::MulAssign,
         Self::DivAssign,
         Self::RemAssign,
+        Self::BitAndAssign,
+        Self::BitOrAssign,
+        Self::BitXorAssign,
+        Self::ShlAssign,
+        Self::ShrAssign,
         Self::Eq,
         Self::PartialOrdering,
         Self::PartialOrd,
@@ -128,6 +143,11 @@ impl LangItemKind {
             Self::MulAssign => "MulAssign",
             Self::DivAssign => "DivAssign",
             Self::RemAssign => "RemAssign",
+            Self::BitAndAssign => "BitAndAssign",
+            Self::BitOrAssign => "BitOrAssign",
+            Self::BitXorAssign => "BitXorAssign",
+            Self::ShlAssign => "ShlAssign",
+            Self::ShrAssign => "ShrAssign",
             Self::Eq => "Eq",
             Self::PartialOrdering => "PartialOrdering",
             Self::PartialOrd => "PartialOrd",
@@ -169,6 +189,11 @@ impl LangItemKind {
             | Self::MulAssign
             | Self::DivAssign
             | Self::RemAssign
+            | Self::BitAndAssign
+            | Self::BitOrAssign
+            | Self::BitXorAssign
+            | Self::ShlAssign
+            | Self::ShrAssign
             | Self::Eq
             | Self::PartialOrd
             | Self::Neg
@@ -210,6 +235,11 @@ impl LangItemKind {
             | Self::MulAssign
             | Self::DivAssign
             | Self::RemAssign
+            | Self::BitAndAssign
+            | Self::BitOrAssign
+            | Self::BitXorAssign
+            | Self::ShlAssign
+            | Self::ShrAssign
             | Self::UnsafeEffect
             | Self::ThrowsEffect
             | Self::SharedAccess
@@ -229,6 +259,11 @@ impl LangItemKind {
             Self::MulAssign => Some("mul_assign"),
             Self::DivAssign => Some("div_assign"),
             Self::RemAssign => Some("rem_assign"),
+            Self::BitAndAssign => Some("bit_and_assign"),
+            Self::BitOrAssign => Some("bit_or_assign"),
+            Self::BitXorAssign => Some("bit_xor_assign"),
+            Self::ShlAssign => Some("shl_assign"),
+            Self::ShrAssign => Some("shr_assign"),
             _ => None,
         }
     }
@@ -290,6 +325,11 @@ pub struct LangItems {
     mul_assign: LangItem,
     div_assign: LangItem,
     rem_assign: LangItem,
+    bit_and_assign: LangItem,
+    bit_or_assign: LangItem,
+    bit_xor_assign: LangItem,
+    shl_assign: LangItem,
+    shr_assign: LangItem,
     eq: LangItem,
     partial_ordering: LangItem,
     partial_ord: LangItem,
@@ -366,6 +406,21 @@ impl LangItems {
     }
     pub const fn rem_assign(&self) -> &LangItem {
         &self.rem_assign
+    }
+    pub const fn bit_and_assign(&self) -> &LangItem {
+        &self.bit_and_assign
+    }
+    pub const fn bit_or_assign(&self) -> &LangItem {
+        &self.bit_or_assign
+    }
+    pub const fn bit_xor_assign(&self) -> &LangItem {
+        &self.bit_xor_assign
+    }
+    pub const fn shl_assign(&self) -> &LangItem {
+        &self.shl_assign
+    }
+    pub const fn shr_assign(&self) -> &LangItem {
+        &self.shr_assign
     }
 
     pub const fn eq(&self) -> &LangItem {
@@ -456,6 +511,11 @@ impl LangItems {
             LangItemKind::MulAssign => &self.mul_assign,
             LangItemKind::DivAssign => &self.div_assign,
             LangItemKind::RemAssign => &self.rem_assign,
+            LangItemKind::BitAndAssign => &self.bit_and_assign,
+            LangItemKind::BitOrAssign => &self.bit_or_assign,
+            LangItemKind::BitXorAssign => &self.bit_xor_assign,
+            LangItemKind::ShlAssign => &self.shl_assign,
+            LangItemKind::ShrAssign => &self.shr_assign,
             LangItemKind::Eq => &self.eq,
             LangItemKind::PartialOrdering => &self.partial_ordering,
             LangItemKind::PartialOrd => &self.partial_ord,
@@ -615,6 +675,11 @@ impl CoreBundle {
             &mut lang_items.mul_assign,
             &mut lang_items.div_assign,
             &mut lang_items.rem_assign,
+            &mut lang_items.bit_and_assign,
+            &mut lang_items.bit_or_assign,
+            &mut lang_items.bit_xor_assign,
+            &mut lang_items.shl_assign,
+            &mut lang_items.shr_assign,
             &mut lang_items.eq,
             &mut lang_items.partial_ordering,
             &mut lang_items.partial_ord,
@@ -813,6 +878,11 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         mul_assign: item(LangItemKind::MulAssign),
         div_assign: item(LangItemKind::DivAssign),
         rem_assign: item(LangItemKind::RemAssign),
+        bit_and_assign: item(LangItemKind::BitAndAssign),
+        bit_or_assign: item(LangItemKind::BitOrAssign),
+        bit_xor_assign: item(LangItemKind::BitXorAssign),
+        shl_assign: item(LangItemKind::ShlAssign),
+        shr_assign: item(LangItemKind::ShrAssign),
         eq: item(LangItemKind::Eq),
         partial_ordering: item(LangItemKind::PartialOrdering),
         partial_ord: item(LangItemKind::PartialOrd),
@@ -1528,7 +1598,7 @@ pub let Shr(Rhs: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), 35);
+        assert_eq!(bundle.program().items.len(), 40);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -1548,6 +1618,11 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::MulAssign
                 | LangItemKind::DivAssign
                 | LangItemKind::RemAssign
+                | LangItemKind::BitAndAssign
+                | LangItemKind::BitOrAssign
+                | LangItemKind::BitXorAssign
+                | LangItemKind::ShlAssign
+                | LangItemKind::ShrAssign
                 | LangItemKind::Eq
                 | LangItemKind::PartialOrdering
                 | LangItemKind::PartialOrd
@@ -1591,6 +1666,11 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::MulAssign
                 | LangItemKind::DivAssign
                 | LangItemKind::RemAssign
+                | LangItemKind::BitAndAssign
+                | LangItemKind::BitOrAssign
+                | LangItemKind::BitXorAssign
+                | LangItemKind::ShlAssign
+                | LangItemKind::ShrAssign
                 | LangItemKind::Eq
                 | LangItemKind::PartialOrdering
                 | LangItemKind::PartialOrd
