@@ -280,8 +280,8 @@ fn alloc_box_owns_copy_and_resource_payloads() {
 }
 
 #[test]
-fn alloc_vec_grows_and_accesses_copy_elements() {
-    for name in ["vec_copy.sali", "vec_unit.sali"] {
+fn alloc_vec_owns_copy_and_resource_elements() {
+    for name in ["vec_copy.sali", "vec_unit.sali", "vec_resource.sali"] {
         let output = salic()
             .arg("run")
             .arg(fixture("pass", name))
@@ -298,7 +298,9 @@ fn alloc_vec_grows_and_accesses_copy_elements() {
     for name in [
         "vec_read_out_of_bounds.sali",
         "vec_write_out_of_bounds.sali",
+        "vec_replace_out_of_bounds.sali",
         "vec_capacity_overflow.sali",
+        "vec_zst_resource_drop_trap.sali",
     ] {
         let output = salic()
             .arg("run")
@@ -314,12 +316,15 @@ fn alloc_vec_grows_and_accesses_copy_elements() {
 
     let output = salic()
         .arg("check")
-        .arg(fixture("fail", "vec_resource_element.sali"))
+        .arg(fixture("fail", "vec_resource_use_after_push.sali"))
         .output()
-        .expect("check resource Vec fixture");
-    assert!(!output.status.success(), "resource Vec unexpectedly passed");
+        .expect("check use after resource Vec push");
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("not satisfied"),
+        !output.status.success(),
+        "resource push unexpectedly copied"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("moved"),
         "{}",
         output_text(&output)
     );

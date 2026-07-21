@@ -21819,6 +21819,8 @@ mod tests {
             .function_templates
             .contains_key("vec_with_capacity"));
         assert!(analyzer.function_templates.contains_key("vec_push"));
+        assert!(analyzer.function_templates.contains_key("vec_replace"));
+        assert!(analyzer.function_templates.contains_key("vec_pop"));
         assert!(analyzer.function_templates.contains_key("vec_read"));
         assert!(analyzer.function_templates.contains_key("vec_write"));
         assert!(analyzer

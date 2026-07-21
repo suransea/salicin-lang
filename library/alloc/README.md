@@ -32,3 +32,10 @@ capacity doubling and `capacity * size_of(T)` are checked before allocator entry
 failures use the diverging unsafe `raw_trap()` intrinsic inside the safe wrapper. Zero-sized elements
 retain normal length/capacity behavior. Resource-element move/drop support remains intentionally
 outside this first API rather than treating resources as copyable.
+
+Since v0.62 construction and `push` work for resource elements as well. The inferred push parameter
+copies a Copy value and moves a resource value. Growth move-initializes the new allocation from
+`raw_take` results, `replace` and `pop` return ownership to the caller, and Vec's source-backed
+destructor drops only the elements that remain within its logical length before deallocation.
+Copy-only `read` and `write` stay in their constrained extension; resource access never duplicates
+an owner.

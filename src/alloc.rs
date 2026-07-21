@@ -80,38 +80,27 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
     if !program.uses.is_empty() {
         diagnostics.push("embedded alloc must not contain `use` declarations".to_owned());
     }
-    if program.items.len() != 22
-        || program.item_visibilities.len() != 22
-        || program.item_origins.len() != 22
+    if program.items.len() != 25
+        || program.item_visibilities.len() != 25
+        || program.item_origins.len() != 25
     {
         diagnostics
             .push("embedded alloc must contain the fixed Box and Vec bootstrap schema".to_owned());
     } else {
-        let expected_visibilities = [
-            Visibility::Public,
-            Visibility::Public,
-            Visibility::Public,
-            Visibility::Public,
-            Visibility::Public,
-            Visibility::Public,
-            Visibility::Public,
-            Visibility::Private,
-            Visibility::Private,
-            Visibility::Public,
-            Visibility::Private,
-            Visibility::Private,
-            Visibility::Private,
-            Visibility::Public,
-            Visibility::Public,
-            Visibility::Public,
-            Visibility::Public,
-            Visibility::Public,
-            Visibility::Public,
-            Visibility::Public,
-            Visibility::Private,
-            Visibility::Private,
-        ];
-        if program.item_visibilities.as_slice() != expected_visibilities {
+        let visibilities_are_valid =
+            program
+                .item_visibilities
+                .iter()
+                .enumerate()
+                .all(|(index, visibility)| {
+                    let expected = if matches!(index, 0..=6 | 9 | 13..=21) {
+                        Visibility::Public
+                    } else {
+                        Visibility::Private
+                    };
+                    *visibility == expected
+                });
+        if !visibilities_are_valid {
             diagnostics.push("embedded alloc bootstrap item visibility is invalid".to_owned());
         }
         match &program.items[0] {
@@ -212,18 +201,30 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
             _ => diagnostics.push("alloc vec_push has an invalid signature".to_owned()),
         }
         match &program.items[18] {
+            Item::Function(function) if valid_vec_replace(function) => {}
+            _ => diagnostics.push("alloc vec_replace has an invalid signature".to_owned()),
+        }
+        match &program.items[19] {
+            Item::Function(function) if valid_vec_pop(function) => {}
+            _ => diagnostics.push("alloc vec_pop has an invalid signature".to_owned()),
+        }
+        match &program.items[20] {
             Item::Function(function) if valid_vec_read(function) => {}
             _ => diagnostics.push("alloc vec_read has an invalid signature".to_owned()),
         }
-        match &program.items[19] {
+        match &program.items[21] {
             Item::Function(function) if valid_vec_write(function) => {}
             _ => diagnostics.push("alloc vec_write has an invalid signature".to_owned()),
         }
-        match &program.items[20] {
+        match &program.items[22] {
+            Item::Extend(extension) if valid_vec_extension(extension) => {}
+            _ => diagnostics.push("alloc Vec extension has an invalid shape".to_owned()),
+        }
+        match &program.items[23] {
             Item::Extend(extension) if valid_copy_vec_extension(extension) => {}
             _ => diagnostics.push("alloc Copy Vec extension has an invalid shape".to_owned()),
         }
-        match &program.items[21] {
+        match &program.items[24] {
             Item::Extend(extension) if valid_vec_drop_extension(extension) => {}
             _ => diagnostics.push("alloc Vec Drop extension has an invalid shape".to_owned()),
         }
@@ -525,7 +526,7 @@ fn valid_vec_new(function: &Function) -> bool {
         && generic_t(function)
         && matches!(function.groups.as_slice(), [group] if group.is_empty())
         && function.return_type == Some(applied("Vec", named("T")))
-        && matches!(function.where_predicates.as_slice(), [predicate] if is_copy_bound(predicate))
+        && function.where_predicates.is_empty()
         && function.body.is_some()
 }
 
@@ -535,7 +536,7 @@ fn valid_vec_with_capacity(function: &Function) -> bool {
         && matches!(function.groups.as_slice(), [group]
             if has_parameter(group, "capacity", PassMode::Inferred, Type::U64))
         && function.return_type == Some(applied("Vec", named("T")))
-        && matches!(function.where_predicates.as_slice(), [predicate] if is_copy_bound(predicate))
+        && function.where_predicates.is_empty()
         && function.body.is_some()
 }
 
@@ -554,9 +555,31 @@ fn valid_vec_push(function: &Function) -> bool {
         && generic_t(function)
         && matches!(function.groups.as_slice(), [receiver, value]
             if has_parameter(receiver, "values", PassMode::MutBorrow, applied("Vec", named("T")))
-                && has_parameter(value, "value", PassMode::Copy, named("T")))
+                && has_parameter(value, "value", PassMode::Inferred, named("T")))
         && function.return_type == Some(Type::Unit)
-        && matches!(function.where_predicates.as_slice(), [predicate] if is_copy_bound(predicate))
+        && function.where_predicates.is_empty()
+        && function.body.is_some()
+}
+
+fn valid_vec_replace(function: &Function) -> bool {
+    function.name == "vec_replace"
+        && generic_t(function)
+        && matches!(function.groups.as_slice(), [receiver, index, value]
+            if has_parameter(receiver, "values", PassMode::MutBorrow, applied("Vec", named("T")))
+                && has_parameter(index, "index", PassMode::Inferred, Type::U64)
+                && has_parameter(value, "value", PassMode::Inferred, named("T")))
+        && function.return_type == Some(named("T"))
+        && function.where_predicates.is_empty()
+        && function.body.is_some()
+}
+
+fn valid_vec_pop(function: &Function) -> bool {
+    function.name == "vec_pop"
+        && generic_t(function)
+        && matches!(function.groups.as_slice(), [receiver]
+            if has_parameter(receiver, "values", PassMode::MutBorrow, applied("Vec", named("T"))))
+        && function.return_type == Some(applied("Option", named("T")))
+        && function.where_predicates.is_empty()
         && function.body.is_some()
 }
 
@@ -607,21 +630,21 @@ fn valid_vec_receiver_method(
         && function.body.is_some()
 }
 
-fn valid_copy_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
+fn valid_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
     matches!(extension.compile_groups.as_slice(), [group]
         if matches!(group.as_slice(), [parameter]
             if parameter.name == "T" && parameter.kind == CompileParamKind::Type))
         && extension.target == applied("Vec", named("T"))
         && extension.trait_ref.is_none()
-        && matches!(extension.where_predicates.as_slice(), [predicate] if is_copy_bound(predicate))
+        && extension.where_predicates.is_empty()
         && matches!(extension.members.as_slice(), [
             crate::ast::ExtendMember::Function(new),
             crate::ast::ExtendMember::Function(with_capacity),
             crate::ast::ExtendMember::Function(len),
             crate::ast::ExtendMember::Function(capacity),
             crate::ast::ExtendMember::Function(push),
-            crate::ast::ExtendMember::Function(read),
-            crate::ast::ExtendMember::Function(write),
+            crate::ast::ExtendMember::Function(replace),
+            crate::ast::ExtendMember::Function(pop),
         ] if new.name == "new"
             && new.compile_groups.is_empty()
             && matches!(new.groups.as_slice(), [group] if group.is_empty())
@@ -635,8 +658,22 @@ fn valid_copy_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
             && with_capacity.body.is_some()
             && valid_vec_receiver_method(len, "len", PassMode::Borrow, &[], Type::U64)
             && valid_vec_receiver_method(capacity, "capacity", PassMode::Borrow, &[], Type::U64)
-            && valid_vec_receiver_method(push, "push", PassMode::MutBorrow, &[("value", PassMode::Copy, named("T"))], Type::Unit)
-            && valid_vec_receiver_method(read, "read", PassMode::Borrow, &[("index", PassMode::Inferred, Type::U64)], named("T"))
+            && valid_vec_receiver_method(push, "push", PassMode::MutBorrow, &[("value", PassMode::Inferred, named("T"))], Type::Unit)
+            && valid_vec_receiver_method(replace, "replace", PassMode::MutBorrow, &[("index", PassMode::Inferred, Type::U64), ("value", PassMode::Inferred, named("T"))], named("T"))
+            && valid_vec_receiver_method(pop, "pop", PassMode::MutBorrow, &[], applied("Option", named("T"))))
+}
+
+fn valid_copy_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
+    matches!(extension.compile_groups.as_slice(), [group]
+        if matches!(group.as_slice(), [parameter]
+            if parameter.name == "T" && parameter.kind == CompileParamKind::Type))
+        && extension.target == applied("Vec", named("T"))
+        && extension.trait_ref.is_none()
+        && matches!(extension.where_predicates.as_slice(), [predicate] if is_copy_bound(predicate))
+        && matches!(extension.members.as_slice(), [
+            crate::ast::ExtendMember::Function(read),
+            crate::ast::ExtendMember::Function(write),
+        ] if valid_vec_receiver_method(read, "read", PassMode::Borrow, &[("index", PassMode::Inferred, Type::U64)], named("T"))
             && valid_vec_receiver_method(write, "write", PassMode::MutBorrow, &[("index", PassMode::Inferred, Type::U64), ("value", PassMode::Copy, named("T"))], Type::Unit))
 }
 
@@ -670,7 +707,7 @@ mod tests {
     #[test]
     fn edition_2026_alloc_bundle_parses_and_validates() {
         let bundle = AllocBundle::for_edition(Edition::Edition2026).unwrap();
-        assert_eq!(bundle.program.items.len(), 22);
+        assert_eq!(bundle.program.items.len(), 25);
         assert!(bundle
             .program
             .item_origins
@@ -726,12 +763,36 @@ mod tests {
     #[test]
     fn rejects_a_malformed_vec_drop_extension() {
         let source = EDITION_2026_PRELUDE.replacen(
-            "let drop(mut borrow self)(): () = vec_deallocate",
-            "let release(mut borrow self)(): () = vec_deallocate",
+            "let drop(mut borrow self)(): () = {",
+            "let release(mut borrow self)(): () = {",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
             .expect_err("malformed Vec Drop must fail bootstrap validation");
         assert!(error.to_string().contains("Vec Drop extension"));
+    }
+
+    #[test]
+    fn rejects_a_malformed_vec_owning_extension() {
+        let source = EDITION_2026_PRELUDE.replacen(
+            "let pop(mut borrow self)(): Option(T) = vec_pop(self)",
+            "let take(mut borrow self)(): Option(T) = vec_pop(self)",
+            1,
+        );
+        let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
+            .expect_err("malformed Vec owning extension must fail bootstrap validation");
+        assert!(error.to_string().contains("alloc Vec extension"));
+    }
+
+    #[test]
+    fn rejects_a_malformed_copy_vec_extension() {
+        let source = EDITION_2026_PRELUDE.replacen(
+            "let read(borrow self)(index: u64): T = vec_read(self)(index)",
+            "let peek(borrow self)(index: u64): T = vec_read(self)(index)",
+            1,
+        );
+        let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
+            .expect_err("malformed Copy Vec extension must fail bootstrap validation");
+        assert!(error.to_string().contains("Copy Vec extension"));
     }
 }

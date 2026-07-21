@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.62.0 - 2026-07-21
+
+- Generalized `Vec.new`, `with_capacity`, and `push` from `T: Copy` to every represented element
+  type, using inferred parameter passing so Copy inputs copy while resource inputs move.
+- Moved initialized elements during growth with `raw_take`/`raw_init`, avoiding premature or double
+  destruction when the old allocation is released.
+- Added ownership-aware `Vec.replace(index)(value): T` and `Vec.pop(): Option(T)` operations with
+  checked indexing and exact transfer of element ownership.
+- Made the source-backed Vec destructor move out and drop every remaining initialized element before
+  deallocating storage, including zero-sized resource elements.
+- Added native coverage for resource growth, preallocation, replace/pop, empty pop, move diagnostics,
+  exact destructor counts, Copy reuse, bounds traps, and zero-sized resource destruction.
+
 ## 0.61.0 - 2026-07-21
 
 - Clarified that `_` is never a type or compile-time argument inference placeholder, including in

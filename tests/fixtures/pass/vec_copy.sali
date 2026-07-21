@@ -4,9 +4,10 @@ let main(): i32 = {
   values.push(10)
   values.push(11)
   values.push(12)
-  values.push(9)
+  let reusable = 9
+  values.push(reusable)
   values.write(1)(11)
-  if values.len() == 4 && values.capacity() >= 4 && reserved.len() == 0 && reserved.capacity() == 8 {
+  if values.len() == 4 && values.capacity() >= 4 && reserved.len() == 0 && reserved.capacity() == 8 && reusable == 9 {
     values.read(0) + values.read(1) + values.read(2) + values.read(3)
   } else {
     0

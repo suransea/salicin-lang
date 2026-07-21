@@ -82,15 +82,13 @@ let vec_deallocate(T: type)(pointer: MutPtr(T), capacity: u64): () = unsafe do {
   raw_dealloc(T)(pointer, vec_layout_size(T: T)(capacity), align_of(T))
 }
 
-pub let vec_new(T: type)(): Vec(T)
-where T: Copy = Vec(T)(
+pub let vec_new(T: type)(): Vec(T) = Vec(T)(
   pointer: vec_allocate(T: T)(0),
   length: 0,
   storage_capacity: 0,
 )
 
-pub let vec_with_capacity(T: type)(capacity: u64): Vec(T)
-where T: Copy = Vec(T)(
+pub let vec_with_capacity(T: type)(capacity: u64): Vec(T) = Vec(T)(
   pointer: vec_allocate(T: T)(capacity),
   length: 0,
   storage_capacity: capacity,
@@ -100,8 +98,7 @@ pub let vec_len(T: type)(borrow values: Vec(T)): u64 = values.length
 
 pub let vec_capacity(T: type)(borrow values: Vec(T)): u64 = values.storage_capacity
 
-pub let vec_push(T: type)(mut borrow values: Vec(T))(copy value: T): ()
-where T: Copy = {
+pub let vec_push(T: type)(mut borrow values: Vec(T))(value: T): () = {
   if values.length == values.storage_capacity {
     let new_capacity: u64 = if values.storage_capacity == 0 {
       1
@@ -117,7 +114,7 @@ where T: Copy = {
     let mut index: u64 = 0
     while index < values.length {
       let item = unsafe do {
-        *raw_offset(values.pointer, index)
+        raw_take(raw_offset(values.pointer, index))
       }
       unsafe do {
         raw_init(raw_offset(new_pointer, index), item)
@@ -132,6 +129,36 @@ where T: Copy = {
     raw_init(raw_offset(values.pointer, values.length), value)
   }
   values.length = values.length + 1
+}
+
+pub let vec_replace(T: type)(mut borrow values: Vec(T))(index: u64)(value: T): T = {
+  if index >= values.length {
+    unsafe do {
+      raw_trap()
+    }
+  }
+  let pointer = unsafe do {
+    raw_offset(values.pointer, index)
+  }
+  let previous = unsafe do {
+    raw_take(pointer)
+  }
+  unsafe do {
+    raw_init(pointer, value)
+  }
+  previous
+}
+
+pub let vec_pop(T: type)(mut borrow values: Vec(T)): Option(T) = {
+  if values.length == 0 {
+    Option(T).None
+  } else {
+    values.length = values.length - 1
+    let value = unsafe do {
+      raw_take(raw_offset(values.pointer, values.length))
+    }
+    Option(T).Some(value)
+  }
 }
 
 pub let vec_read(T: type)(borrow values: Vec(T))(index: u64): T
@@ -158,17 +185,31 @@ where T: Copy = {
   }
 }
 
-extend(T: type) Vec(T)
-where T: Copy {
+extend(T: type) Vec(T) {
   let new(): Vec(T) = vec_new()
   let with_capacity(capacity: u64): Vec(T) = vec_with_capacity(capacity)
   let len(borrow self)(): u64 = vec_len(self)
   let capacity(borrow self)(): u64 = vec_capacity(self)
-  let push(mut borrow self)(copy value: T): () = vec_push(self)(value)
+  let push(mut borrow self)(value: T): () = vec_push(self)(value)
+  let replace(mut borrow self)(index: u64)(value: T): T = vec_replace(self)(index)(value)
+  let pop(mut borrow self)(): Option(T) = vec_pop(self)
+}
+
+extend(T: type) Vec(T)
+where T: Copy {
   let read(borrow self)(index: u64): T = vec_read(self)(index)
   let write(mut borrow self)(index: u64)(copy value: T): () = vec_write(self)(index)(value)
 }
 
 extend(T: type) Vec(T): Drop {
-  let drop(mut borrow self)(): () = vec_deallocate(self.pointer, self.storage_capacity)
+  let drop(mut borrow self)(): () = {
+    let mut index: u64 = 0
+    while index < self.length {
+      let item = unsafe do {
+        raw_take(raw_offset(self.pointer, index))
+      }
+      index = index + 1
+    }
+    vec_deallocate(self.pointer, self.storage_capacity)
+  }
 }

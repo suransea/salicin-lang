@@ -1,0 +1,55 @@
+let Resource = struct(counter: MutPtr(i32), value: i32)
+
+extend Resource {
+  let read(borrow self)(): i32 = self.value
+}
+
+extend Resource: Drop {
+  let drop(mut borrow self)(): () = unsafe do {
+    *self.counter = *self.counter + 1
+  }
+}
+
+let main(): i32 = {
+  let counter = unsafe do {
+    raw_alloc(i32)(size_of(i32), align_of(i32))
+  }
+  unsafe do {
+    *counter = 0
+  }
+  let mut score = 0
+  do {
+    let mut values: Vec(Resource) = Vec(Resource).with_capacity(1)
+    values.push(Resource(counter, 1))
+    values.push(Resource(counter, 2))
+    values.push(Resource(counter, 3))
+    let before_transfer = unsafe do {
+      *counter
+    }
+    let replaced_value = do {
+      let replaced = values.replace(1)(Resource(counter, 4))
+      replaced.read()
+    }
+    let popped_value = values.pop() match {
+      Some(value) => value.read(),
+      None => 0,
+    }
+    let mut empty: Vec(Resource) = Vec(Resource).new()
+    let was_empty = empty.pop() match {
+      None => 1,
+      Some(_) => 0,
+    }
+    score = before_transfer + replaced_value + popped_value + was_empty
+  }
+  let drops = unsafe do {
+    *counter
+  }
+  unsafe do {
+    raw_dealloc(counter, size_of(i32), align_of(i32))
+  }
+  if score == 6 {
+    38 + drops
+  } else {
+    0
+  }
+}
