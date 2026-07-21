@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.118.0 - 2026-07-22
+
+- Extended selective algebraic-effect CPS traversal through arrays, indexes, ordinary and optional
+  members, `match` scrutinees and arm bodies, `do`, `unsafe`, and `try` wrappers.
+- Preserved lazy `&&` and `||` semantics by lowering them as CPS branches instead of evaluating an
+  effectful right operand eagerly.
+- Extended closure capture discovery through generated match continuations, including bindings,
+  guards, nested arm bodies, and recursion tokens inside compiler-created closures.
+- Added native coverage for effectful structural expressions, short-circuit abandonment, and a
+  cross-function continuation whose input and handler answer types differ.
+
 ## 0.117.0 - 2026-07-22
 
 - Replaced callback-style named-call completion with typed one-shot continuation closures and an

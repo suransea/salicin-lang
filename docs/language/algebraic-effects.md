@@ -145,6 +145,9 @@ computing after `resume` returns. Shared and mutable captures forwarded through 
 are rebased to pointers in its new callable environment. Direct recursion and resumable loop
 backedges use these CPS frames. Mutually recursive SCCs temporarily retain the previous
 same-answer-type direct-frame lowering; an erased environment-plus-entry continuation ABI is needed
-to make their varying static continuation layouts uniform. Capturing indirect calls and that final
-general continuation ABI remain implementation work; unsupported cases are rejected rather than
-compiled with callback-only semantics.
+to make their varying static continuation layouts uniform. Selective CPS preserves source order
+through operation and ordinary-call arguments, arrays, indexes, members, `match` scrutinees and arm
+bodies, and immediate `do`, `unsafe`, and `try` wrappers. Effectful `&&` and `||` operands retain
+their lazy branch semantics. Effectful coalescing fallbacks, optional-call arguments, match guards,
+capturing indirect calls, and the final general continuation ABI remain implementation work;
+unsupported cases are rejected rather than compiled with callback-only semantics.

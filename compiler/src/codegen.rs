@@ -12414,12 +12414,21 @@ impl Analyzer {
             Expr::Return(value) => value.as_ref().is_none_or(|value| {
                 self.scan_simple_closure_captures(value, bound, outer, captures)
             }),
-            _ => {
-                self.error(
-                    "closure body form requires mutable or consuming capture analysis, which is not supported yet",
-                );
-                false
+            Expr::Match { scrutinee, arms } => {
+                let mut valid =
+                    self.scan_simple_closure_captures(scrutinee, bound, outer, captures);
+                for arm in arms {
+                    let saved = bound.clone();
+                    collect_pattern_binding_names(&arm.pattern, bound);
+                    if let Some(guard) = &arm.guard {
+                        valid &= self.scan_simple_closure_captures(guard, bound, outer, captures);
+                    }
+                    valid &= self.scan_simple_closure_captures(&arm.body, bound, outer, captures);
+                    *bound = saved;
+                }
+                valid
             }
+            Expr::Continue => true,
         }
     }
 
@@ -16086,6 +16095,41 @@ impl Analyzer {
                 )
             }
             Expr::Binary(left, operator, right) => {
+                if matches!(operator, BinaryOp::And | BinaryOp::Or) {
+                    let right = *right;
+                    let handler_for_right = handler.clone();
+                    let resume_for_right = resume.clone();
+                    let next = continuation.clone();
+                    return self.transform_handler_expr(
+                        *left,
+                        handler,
+                        resume,
+                        Rc::new(move |analyzer, left| {
+                            let short_circuit = operator == BinaryOp::Or;
+                            let next_for_right = next.clone();
+                            let right_branch = analyzer.transform_handler_expr(
+                                right.clone(),
+                                handler_for_right.clone(),
+                                resume_for_right.clone(),
+                                next_for_right,
+                            )?;
+                            let short_value = next(analyzer, Expr::Bool(short_circuit))?;
+                            Ok(Expr::If {
+                                condition: Box::new(left),
+                                then_branch: Box::new(if short_circuit {
+                                    short_value.clone()
+                                } else {
+                                    right_branch.clone()
+                                }),
+                                else_branch: Some(Box::new(if short_circuit {
+                                    right_branch
+                                } else {
+                                    short_value
+                                })),
+                            })
+                        }),
+                    );
+                }
                 let right = *right;
                 let handler_for_right = handler.clone();
                 let resume_for_right = resume.clone();
@@ -16177,6 +16221,138 @@ impl Analyzer {
                             condition: Box::new(condition),
                             then_branch: Box::new(then_branch),
                             else_branch,
+                        })
+                    }),
+                )
+            }
+            Expr::Array(elements) => {
+                let arguments = elements
+                    .into_iter()
+                    .map(|value| CallArg { label: None, value })
+                    .collect();
+                let completed: SourceArgumentsContinuation = Rc::new(move |analyzer, values| {
+                    continuation(
+                        analyzer,
+                        Expr::Array(values.into_iter().map(|value| value.value).collect()),
+                    )
+                });
+                self.transform_handler_arguments(arguments, Vec::new(), handler, resume, completed)
+            }
+            Expr::Index { base, index } => {
+                let index = *index;
+                let handler_for_index = handler.clone();
+                let resume_for_index = resume.clone();
+                let next = continuation.clone();
+                self.transform_handler_expr(
+                    *base,
+                    handler,
+                    resume,
+                    Rc::new(move |analyzer, base| {
+                        let base = base.clone();
+                        let next = next.clone();
+                        analyzer.transform_handler_expr(
+                            index.clone(),
+                            handler_for_index.clone(),
+                            resume_for_index.clone(),
+                            Rc::new(move |analyzer, index| {
+                                next(
+                                    analyzer,
+                                    Expr::Index {
+                                        base: Box::new(base.clone()),
+                                        index: Box::new(index),
+                                    },
+                                )
+                            }),
+                        )
+                    }),
+                )
+            }
+            Expr::Member(base, member) => {
+                let next = continuation.clone();
+                self.transform_handler_expr(
+                    *base,
+                    handler,
+                    resume,
+                    Rc::new(move |analyzer, base| {
+                        next(analyzer, Expr::Member(Box::new(base), member.clone()))
+                    }),
+                )
+            }
+            Expr::ChainMember(base, member) => {
+                let next = continuation.clone();
+                self.transform_handler_expr(
+                    *base,
+                    handler,
+                    resume,
+                    Rc::new(move |analyzer, base| {
+                        next(analyzer, Expr::ChainMember(Box::new(base), member.clone()))
+                    }),
+                )
+            }
+            Expr::Try(value) => {
+                let next = continuation.clone();
+                self.transform_handler_expr(
+                    *value,
+                    handler,
+                    resume,
+                    Rc::new(move |analyzer, value| next(analyzer, Expr::Try(Box::new(value)))),
+                )
+            }
+            Expr::Throw(value) => {
+                let identity: SourceContinuation =
+                    Rc::new(|_, value| Ok(Expr::Throw(Box::new(value))));
+                self.transform_handler_expr(*value, handler, resume, identity)
+            }
+            Expr::Unsafe(value) => {
+                let next = continuation.clone();
+                self.transform_handler_expr(
+                    *value,
+                    handler,
+                    resume,
+                    Rc::new(move |analyzer, value| next(analyzer, Expr::Unsafe(Box::new(value)))),
+                )
+            }
+            Expr::DoBlock { body } => {
+                let next = continuation.clone();
+                self.transform_handler_expr(
+                    *body,
+                    handler,
+                    resume,
+                    Rc::new(move |analyzer, body| {
+                        next(
+                            analyzer,
+                            Expr::DoBlock {
+                                body: Box::new(body),
+                            },
+                        )
+                    }),
+                )
+            }
+            Expr::Match { scrutinee, arms } => {
+                let handler_for_arms = handler.clone();
+                let resume_for_arms = resume.clone();
+                let next = continuation.clone();
+                self.transform_handler_expr(
+                    *scrutinee,
+                    handler,
+                    resume,
+                    Rc::new(move |analyzer, scrutinee| {
+                        let mut transformed = Vec::with_capacity(arms.len());
+                        for arm in &arms {
+                            transformed.push(MatchArm {
+                                pattern: arm.pattern.clone(),
+                                guard: arm.guard.clone(),
+                                body: analyzer.transform_handler_expr(
+                                    arm.body.clone(),
+                                    handler_for_arms.clone(),
+                                    resume_for_arms.clone(),
+                                    next.clone(),
+                                )?,
+                            });
+                        }
+                        Ok(Expr::Match {
+                            scrutinee: Box::new(scrutinee),
+                            arms: transformed,
                         })
                     }),
                 )
@@ -20955,6 +21131,28 @@ fn place_root_name(expression: &Expr) -> Option<&str> {
             place_root_name(base)
         }
         _ => None,
+    }
+}
+
+fn collect_pattern_binding_names(pattern: &Pattern, names: &mut HashSet<String>) {
+    match pattern {
+        Pattern::Binding(name) => {
+            names.insert(name.clone());
+        }
+        Pattern::Constructor { fields, .. } => match fields {
+            PatternFields::Unit => {}
+            PatternFields::Positional(patterns) => {
+                for pattern in patterns {
+                    collect_pattern_binding_names(pattern, names);
+                }
+            }
+            PatternFields::Named(fields) => {
+                for field in fields {
+                    collect_pattern_binding_names(&field.pattern, names);
+                }
+            }
+        },
+        Pattern::Wildcard | Pattern::Integer(_) | Pattern::Bool(_) => {}
     }
 }
 

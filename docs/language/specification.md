@@ -430,7 +430,9 @@ identity、传播和类型检查。派生的 `State(i32).handle(get: { (resume) 
 `resume` 会中止完整的跨函数剩余计算，调用 `resume` 后也可以继续组成 handler 答案。直接递归和
 effectful `while`、`loop` backedge 使用 CPS lifted frame。互递归 SCC 暂时保留相同 answer type 的
 直接 frame lowering；统一不同静态 continuation 环境仍需擦除后的 environment + entry ABI。捕获型
-间接调用和最终通用 continuation ABI 按
+数组元素、索引、普通与可空成员、`match` scrutinee/arm body 以及 `do`、`unsafe`、`try` 中的
+operation 按源顺序进入 selective CPS，`&&` 与 `||` 保持短路。带 effect 的 `??` fallback、可空调用
+参数和 match guard 尚未覆盖。捕获型间接调用和最终通用 continuation ABI 按
 [代数效应设计](algebraic-effects.md)继续实现；尚未覆盖的路径会被拒绝，不能让带 operation 的
 effect 逃逸原生入口。
 
