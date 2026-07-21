@@ -637,6 +637,10 @@ enum HirExprKind {
         pointer: Box<HirExpr>,
         index: Box<HirExpr>,
     },
+    RawBorrow {
+        pointer: Box<HirExpr>,
+        anchor: HirPlace,
+    },
     RawLoad(Box<HirExpr>),
     RawStore {
         pointer: Box<HirExpr>,
@@ -1362,6 +1366,8 @@ impl Analyzer {
             "raw_init".to_owned(),
             "raw_take".to_owned(),
             "raw_offset".to_owned(),
+            "raw_borrow".to_owned(),
+            "raw_mut_borrow".to_owned(),
             "raw_trap".to_owned(),
             "forget".to_owned(),
             "size_of".to_owned(),
@@ -9132,6 +9138,10 @@ impl Analyzer {
                 .borrowed_parameter_regions
                 .get(&place.local)
                 .cloned(),
+            HirExprKind::RawBorrow { anchor, .. } => context
+                .borrowed_parameter_regions
+                .get(&anchor.local)
+                .cloned(),
             HirExprKind::Block(_, Some(tail)) => self.reference_origin_for_hir_expr(tail, context),
             HirExprKind::If {
                 then_branch,
@@ -9211,6 +9221,7 @@ impl Analyzer {
         }
         let mut loans = match &expression.kind {
             HirExprKind::Borrow { place, .. } => place.loan.into_iter().collect(),
+            HirExprKind::RawBorrow { anchor, .. } => anchor.loan.into_iter().collect(),
             HirExprKind::Read { place, .. } => context
                 .reference_loans
                 .get(&place.local)
@@ -9431,6 +9442,7 @@ impl Analyzer {
             | HirExprKind::PartialCapture { .. }
             | HirExprKind::Borrow { .. }
             | HirExprKind::RawAddress { .. }
+            | HirExprKind::RawBorrow { .. }
             | HirExprKind::RawTrap
             | HirExprKind::LayoutQuery { .. }
             | HirExprKind::Return(None)
@@ -12223,6 +12235,9 @@ impl Analyzer {
             if name == "raw_offset" {
                 return self.lower_raw_offset(&groups, context);
             }
+            if matches!(name.as_str(), "raw_borrow" | "raw_mut_borrow") {
+                return self.lower_raw_borrow(name, &groups, expected, context);
+            }
             if name == "raw_trap" {
                 return self.lower_raw_trap(&groups, context);
             }
@@ -12770,6 +12785,120 @@ impl Analyzer {
             kind: HirExprKind::RawOffset {
                 pointer: Box::new(pointer),
                 index: Box::new(index),
+            },
+        }
+    }
+
+    fn lower_raw_borrow(
+        &mut self,
+        name: &str,
+        groups: &[&[CallArg]],
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        if context.unsafe_depth == 0 {
+            self.error(format!("`{name}` requires an `unsafe do` block"));
+            return error_expr();
+        }
+        let [runtime] = groups else {
+            self.error(format!(
+                "`{name}` expects exactly one runtime argument group"
+            ));
+            return error_expr();
+        };
+        let names = ["pointer".to_owned(), "anchor".to_owned()];
+        let Some(arguments) = self.ordered_call_arguments(name, 1, runtime, &names) else {
+            return error_expr();
+        };
+        let pointer = self.lower_expr(&arguments[0].value, None, context);
+        let required_mutable = name == "raw_mut_borrow";
+        let Ty::Pointer { pointee, mutable } = &pointer.ty else {
+            self.error(format!(
+                "`{name}` requires `Ptr(T)` or `MutPtr(T)`, found `{}`",
+                pointer.ty
+            ));
+            return error_expr();
+        };
+        if required_mutable && !mutable {
+            self.error("`raw_mut_borrow` requires a `MutPtr(T)`");
+            return error_expr();
+        }
+        if matches!(pointee.as_ref(), Ty::Never | Ty::Function(_) | Ty::Error) {
+            self.error(format!(
+                "`{name}` cannot borrow a pointee without a concrete data representation: `{}`",
+                self.diagnostic_type_name(pointee)
+            ));
+            return error_expr();
+        }
+        let Expr::Borrow {
+            mutable: anchor_mutable,
+            value: anchor_value,
+        } = &arguments[1].value
+        else {
+            self.error(format!(
+                "`{name}` requires an explicit `{}borrow` anchor",
+                if required_mutable { "mut " } else { "" }
+            ));
+            return error_expr();
+        };
+        if *anchor_mutable != required_mutable {
+            self.error(format!(
+                "`{name}` requires a {}borrow anchor",
+                if required_mutable {
+                    "mutable "
+                } else {
+                    "shared "
+                }
+            ));
+            return error_expr();
+        }
+        let Some(mut anchor) = self.lower_place(anchor_value, context) else {
+            return error_expr();
+        };
+        if required_mutable {
+            self.ensure_writable(&anchor);
+        }
+        let loan = self.acquire_loan(
+            &anchor,
+            if required_mutable {
+                LoanKind::Mutable
+            } else {
+                LoanKind::Shared
+            },
+            true,
+            context,
+        );
+        anchor.capability = if required_mutable {
+            LocalCapability::MutParam
+        } else {
+            LocalCapability::SharedParam
+        };
+        anchor.loan = loan;
+        let source_region = context
+            .borrowed_parameter_regions
+            .get(&anchor.local)
+            .and_then(|(region, _)| region.clone());
+        let expected_region = expected.and_then(|expected| match expected {
+            Ty::Reference {
+                pointee: expected_pointee,
+                mutable: expected_mutable,
+                region,
+            } if expected_pointee.as_ref() == pointee.as_ref()
+                && *expected_mutable == required_mutable =>
+            {
+                region.clone()
+            }
+            _ => None,
+        });
+        HirExpr {
+            ty: Ty::Reference {
+                pointee: pointee.clone(),
+                mutable: required_mutable,
+                region: expected_region.or(source_region),
+            },
+            kind: HirExprKind::RawBorrow {
+                pointer: Box::new(pointer),
+                anchor,
             },
         }
     }
@@ -16151,6 +16280,13 @@ impl<'a> HirCleanupPlanner<'a> {
                 self.initialize_result(cursor, &result_use)?;
                 Some(cursor)
             }
+            HirExprKind::RawBorrow { pointer, .. } => {
+                let Some(cursor) = self.walk_expr(pointer, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                self.initialize_result(cursor, &result_use)?;
+                Some(cursor)
+            }
             HirExprKind::Array(elements) => {
                 let mut current = Some(cursor);
                 for (index, element) in elements.iter().enumerate() {
@@ -17518,6 +17654,7 @@ impl ConstantEvaluator<'_> {
             | HirExprKind::Borrow { .. }
             | HirExprKind::RawAddress { .. }
             | HirExprKind::RawOffset { .. }
+            | HirExprKind::RawBorrow { .. }
             | HirExprKind::RawLoad(_)
             | HirExprKind::RawStore { .. }
             | HirExprKind::RawInit { .. }
@@ -18543,6 +18680,16 @@ impl<'a> FunctionEmitter<'a> {
                 Ok(Operand {
                     ty: expression.ty.clone(),
                     value: Some(register),
+                })
+            }
+            HirExprKind::RawBorrow { pointer, .. } => {
+                let pointer = self.emit_expr(pointer)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: pointer.value,
                 })
             }
             HirExprKind::RawAddress { place } => Ok(Operand {
@@ -21818,6 +21965,8 @@ mod tests {
         assert!(analyzer
             .function_templates
             .contains_key("vec_with_capacity"));
+        assert!(analyzer.function_templates.contains_key("vec_at"));
+        assert!(analyzer.function_templates.contains_key("vec_at_mut"));
         assert!(analyzer.function_templates.contains_key("vec_reserve"));
         assert!(analyzer.function_templates.contains_key("vec_push"));
         assert!(analyzer.function_templates.contains_key("vec_replace"));

@@ -1,0 +1,10 @@
+let main(): i32 = {
+  let pointer = unsafe do {
+    raw_alloc(i32)(size_of(i32), align_of(i32))
+  }
+  let mut anchor = 0
+  let reference = unsafe do {
+    raw_mut_borrow(pointer, borrow anchor)
+  }
+  reference
+}

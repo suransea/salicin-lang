@@ -80,9 +80,9 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
     if !program.uses.is_empty() {
         diagnostics.push("embedded alloc must not contain `use` declarations".to_owned());
     }
-    if program.items.len() != 34
-        || program.item_visibilities.len() != 34
-        || program.item_origins.len() != 34
+    if program.items.len() != 36
+        || program.item_visibilities.len() != 36
+        || program.item_origins.len() != 36
     {
         diagnostics
             .push("embedded alloc must contain the fixed Box and Vec bootstrap schema".to_owned());
@@ -93,7 +93,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
                 .iter()
                 .enumerate()
                 .all(|(index, visibility)| {
-                    let expected = if matches!(index, 0..=6 | 9 | 13..=30) {
+                    let expected = if matches!(index, 0..=6 | 9 | 13..=32) {
                         Visibility::Public
                     } else {
                         Visibility::Private
@@ -197,70 +197,78 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
             _ => diagnostics.push("alloc vec_capacity has an invalid signature".to_owned()),
         }
         match &program.items[17] {
+            Item::Function(function) if valid_vec_at(function, false) => {}
+            _ => diagnostics.push("alloc vec_at has an invalid signature".to_owned()),
+        }
+        match &program.items[18] {
+            Item::Function(function) if valid_vec_at(function, true) => {}
+            _ => diagnostics.push("alloc vec_at_mut has an invalid signature".to_owned()),
+        }
+        match &program.items[19] {
             Item::Function(function) if valid_vec_reserve(function) => {}
             _ => diagnostics.push("alloc vec_reserve has an invalid signature".to_owned()),
         }
-        match &program.items[18] {
+        match &program.items[20] {
             Item::Function(function) if valid_vec_push(function) => {}
             _ => diagnostics.push("alloc vec_push has an invalid signature".to_owned()),
         }
-        match &program.items[19] {
+        match &program.items[21] {
             Item::Function(function) if valid_vec_replace(function) => {}
             _ => diagnostics.push("alloc vec_replace has an invalid signature".to_owned()),
         }
-        match &program.items[20] {
+        match &program.items[22] {
             Item::Function(function) if valid_vec_pop(function) => {}
             _ => diagnostics.push("alloc vec_pop has an invalid signature".to_owned()),
         }
-        match &program.items[21] {
+        match &program.items[23] {
             Item::Function(function) if valid_vec_truncate(function) => {}
             _ => diagnostics.push("alloc vec_truncate has an invalid signature".to_owned()),
         }
-        match &program.items[22] {
+        match &program.items[24] {
             Item::Function(function) if valid_vec_clear(function) => {}
             _ => diagnostics.push("alloc vec_clear has an invalid signature".to_owned()),
         }
-        match &program.items[23] {
+        match &program.items[25] {
             Item::Function(function) if valid_vec_is_empty(function) => {}
             _ => diagnostics.push("alloc vec_is_empty has an invalid signature".to_owned()),
         }
-        match &program.items[24] {
+        match &program.items[26] {
             Item::Function(function) if valid_vec_swap_remove(function) => {}
             _ => diagnostics.push("alloc vec_swap_remove has an invalid signature".to_owned()),
         }
-        match &program.items[25] {
+        match &program.items[27] {
             Item::Function(function) if valid_vec_insert(function) => {}
             _ => diagnostics.push("alloc vec_insert has an invalid signature".to_owned()),
         }
-        match &program.items[26] {
+        match &program.items[28] {
             Item::Function(function) if valid_vec_remove(function) => {}
             _ => diagnostics.push("alloc vec_remove has an invalid signature".to_owned()),
         }
-        match &program.items[27] {
+        match &program.items[29] {
             Item::Function(function) if valid_vec_append(function) => {}
             _ => diagnostics.push("alloc vec_append has an invalid signature".to_owned()),
         }
-        match &program.items[28] {
+        match &program.items[30] {
             Item::Function(function) if valid_vec_shrink_to_fit(function) => {}
             _ => diagnostics.push("alloc vec_shrink_to_fit has an invalid signature".to_owned()),
         }
-        match &program.items[29] {
+        match &program.items[31] {
             Item::Function(function) if valid_vec_read(function) => {}
             _ => diagnostics.push("alloc vec_read has an invalid signature".to_owned()),
         }
-        match &program.items[30] {
+        match &program.items[32] {
             Item::Function(function) if valid_vec_write(function) => {}
             _ => diagnostics.push("alloc vec_write has an invalid signature".to_owned()),
         }
-        match &program.items[31] {
+        match &program.items[33] {
             Item::Extend(extension) if valid_vec_extension(extension) => {}
             _ => diagnostics.push("alloc Vec extension has an invalid shape".to_owned()),
         }
-        match &program.items[32] {
+        match &program.items[34] {
             Item::Extend(extension) if valid_copy_vec_extension(extension) => {}
             _ => diagnostics.push("alloc Copy Vec extension has an invalid shape".to_owned()),
         }
-        match &program.items[33] {
+        match &program.items[35] {
             Item::Extend(extension) if valid_vec_drop_extension(extension) => {}
             _ => diagnostics.push("alloc Vec Drop extension has an invalid shape".to_owned()),
         }
@@ -586,6 +594,31 @@ fn valid_vec_len_or_capacity(function: &Function, name: &str) -> bool {
         && function.body.is_some()
 }
 
+fn valid_vec_at(function: &Function, mutable: bool) -> bool {
+    function.name == if mutable { "vec_at_mut" } else { "vec_at" }
+        && matches!(function.compile_groups.as_slice(), [group]
+            if matches!(group.as_slice(), [region, element]
+                if region.name == "a"
+                    && region.kind == CompileParamKind::Region
+                    && element.name == "T"
+                    && element.kind == CompileParamKind::Type))
+        && matches!(function.groups.as_slice(), [receiver, index]
+            if matches!(receiver.as_slice(), [parameter]
+                if parameter.name == "values"
+                    && parameter.mode == if mutable { PassMode::MutBorrow } else { PassMode::Borrow }
+                    && parameter.region.as_deref() == Some("a")
+                    && parameter.ty == applied("Vec", named("T")))
+                && has_parameter(index, "index", PassMode::Inferred, Type::U64))
+        && function.return_type
+            == Some(Type::Borrow {
+                mutable,
+                region: Some("a".to_owned()),
+                pointee: Box::new(named("T")),
+            })
+        && function.where_predicates.is_empty()
+        && function.body.is_some()
+}
+
 fn valid_vec_reserve(function: &Function) -> bool {
     function.name == "vec_reserve"
         && generic_t(function)
@@ -775,6 +808,8 @@ fn valid_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
             crate::ast::ExtendMember::Function(with_capacity),
             crate::ast::ExtendMember::Function(len),
             crate::ast::ExtendMember::Function(capacity),
+            crate::ast::ExtendMember::Function(at),
+            crate::ast::ExtendMember::Function(at_mut),
             crate::ast::ExtendMember::Function(reserve),
             crate::ast::ExtendMember::Function(push),
             crate::ast::ExtendMember::Function(replace),
@@ -800,6 +835,8 @@ fn valid_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
             && with_capacity.body.is_some()
             && valid_vec_receiver_method(len, "len", PassMode::Borrow, &[], Type::U64)
             && valid_vec_receiver_method(capacity, "capacity", PassMode::Borrow, &[], Type::U64)
+            && valid_vec_receiver_method(at, "at", PassMode::Borrow, &[("index", PassMode::Inferred, Type::U64)], Type::Borrow { mutable: false, region: None, pointee: Box::new(named("T")) })
+            && valid_vec_receiver_method(at_mut, "at_mut", PassMode::MutBorrow, &[("index", PassMode::Inferred, Type::U64)], Type::Borrow { mutable: true, region: None, pointee: Box::new(named("T")) })
             && valid_vec_receiver_method(reserve, "reserve", PassMode::MutBorrow, &[("additional", PassMode::Inferred, Type::U64)], Type::Unit)
             && valid_vec_receiver_method(push, "push", PassMode::MutBorrow, &[("value", PassMode::Inferred, named("T"))], Type::Unit)
             && valid_vec_receiver_method(replace, "replace", PassMode::MutBorrow, &[("index", PassMode::Inferred, Type::U64), ("value", PassMode::Inferred, named("T"))], named("T"))
@@ -858,7 +895,7 @@ mod tests {
     #[test]
     fn edition_2026_alloc_bundle_parses_and_validates() {
         let bundle = AllocBundle::for_edition(Edition::Edition2026).unwrap();
-        assert_eq!(bundle.program.items.len(), 34);
+        assert_eq!(bundle.program.items.len(), 36);
         assert!(bundle
             .program
             .item_origins

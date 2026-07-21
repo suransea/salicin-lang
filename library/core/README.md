@@ -163,5 +163,8 @@ intrinsic, lowering a `u64` element index through LLVM GEP with the concrete poi
 preserving pointer mutability; zero-sized pointees retain the original address. v0.61 adds the
 diverging unsafe `raw_trap()` boundary and uses both primitives in alloc's source-defined,
 checked, Copy-element `Vec(T)` implementation. v0.62 generalizes its owning operations to resource
-elements with raw move initialization and source-backed element destruction. Platform
+elements with raw move initialization and source-backed element destruction. v0.65 adds anchored
+unsafe `raw_borrow`/`raw_mut_borrow` conversions: LLVM preserves the pointer value while the
+frontend ties the reference region and lexical loan to an explicit shared or mutable owner anchor.
+This supports checked Vec element references without weakening ordinary alias or escape rules. Platform
 `std` remains later work over the C ABI and minimal runtime.

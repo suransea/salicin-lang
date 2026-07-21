@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.65.0 - 2026-07-21
+
+- Added unsafe `raw_borrow(pointer, borrow anchor)` and
+  `raw_mut_borrow(pointer, mut borrow anchor)` intrinsics, converting initialized raw storage to a
+  reference whose lexical loan and returned region are tied to an explicit owner anchor.
+- Added bounds-checked `Vec.at(index): borrow T` and `Vec.at_mut(index): mut borrow T` for Copy and
+  resource elements, with inferred method regions and explicit-region free-function forms.
+- Lowered raw borrows as pointer-preserving LLVM values while integrating their anchor loans with
+  reference escape proof, cleanup planning, alias conflicts, and mutable-reference move semantics.
+- Added native and diagnostic coverage for shared reads, mutable writes, resource fields, bounds
+  traps, safe-context rejection, pointer and anchor kind checks, and mutation/growth conflicts.
+
 ## 0.64.0 - 2026-07-21
 
 - Added ownership-aware ordered `Vec.insert(index)(value)` and `Vec.remove(index): T`, shifting

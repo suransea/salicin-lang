@@ -1,0 +1,8 @@
+let main(): i32 = {
+  let mut anchor = 42
+  let pointer = Ptr(borrow anchor)
+  let reference = unsafe do {
+    raw_mut_borrow(pointer, mut borrow anchor)
+  }
+  reference
+}

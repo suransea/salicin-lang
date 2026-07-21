@@ -51,3 +51,9 @@ Since v0.64 ordered `insert` and `remove` shift initialized suffix elements usin
 its allocation intact; ordinary alias checking rejects self-append. `shrink_to_fit` similarly moves
 elements into exact-length storage. None of these APIs require `Copy` or destroy elements merely
 because their storage location changes.
+
+Since v0.65 `at(index)` and `at_mut(index)` return bounds-checked shared and mutable element
+references for Copy and resource types. Their inferred regions are tied to the receiver borrow, so
+live references prevent vector mutation or conflicting access. Small internal unsafe regions use
+`raw_borrow`/`raw_mut_borrow` with the Vec receiver as the explicit lifetime anchor; users never
+receive an unanchored raw storage reference through the safe API.

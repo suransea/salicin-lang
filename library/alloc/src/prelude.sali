@@ -98,6 +98,29 @@ pub let vec_len(T: type)(borrow values: Vec(T)): u64 = values.length
 
 pub let vec_capacity(T: type)(borrow values: Vec(T)): u64 = values.storage_capacity
 
+pub let vec_at('a: region, T: type)(borrow('a) values: Vec(T))(index: u64): borrow('a) T = {
+  if index >= values.length {
+    unsafe do {
+      raw_trap()
+    }
+  }
+  unsafe do {
+    raw_borrow(raw_offset(values.pointer, index), borrow values)
+  }
+}
+
+pub let vec_at_mut('a: region, T: type)
+  (mut borrow('a) values: Vec(T))(index: u64): mut borrow('a) T = {
+  if index >= values.length {
+    unsafe do {
+      raw_trap()
+    }
+  }
+  unsafe do {
+    raw_mut_borrow(raw_offset(values.pointer, index), mut borrow values)
+  }
+}
+
 pub let vec_reserve(T: type)(mut borrow values: Vec(T))(additional: u64): () = {
   if additional > 18446744073709551615 - values.length {
     unsafe do {
@@ -322,6 +345,26 @@ extend(T: type) Vec(T) {
   let with_capacity(capacity: u64): Vec(T) = vec_with_capacity(capacity)
   let len(borrow self)(): u64 = vec_len(self)
   let capacity(borrow self)(): u64 = vec_capacity(self)
+  let at(borrow self)(index: u64): borrow T = {
+    if index >= self.length {
+      unsafe do {
+        raw_trap()
+      }
+    }
+    unsafe do {
+      raw_borrow(raw_offset(self.pointer, index), borrow self)
+    }
+  }
+  let at_mut(mut borrow self)(index: u64): mut borrow T = {
+    if index >= self.length {
+      unsafe do {
+        raw_trap()
+      }
+    }
+    unsafe do {
+      raw_mut_borrow(raw_offset(self.pointer, index), mut borrow self)
+    }
+  }
   let reserve(mut borrow self)(additional: u64): () = vec_reserve(self)(additional)
   let push(mut borrow self)(value: T): () = vec_push(self)(value)
   let replace(mut borrow self)(index: u64)(value: T): T = vec_replace(self)(index)(value)

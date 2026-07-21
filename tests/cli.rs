@@ -180,6 +180,7 @@ fn raw_allocator_abi_allocates_aligned_storage_and_deallocates_it() {
         "raw_pointer_offset.sali",
         "raw_pointer_offset_shared.sali",
         "raw_pointer_offset_unit.sali",
+        "raw_pointer_borrow.sali",
     ] {
         let output = salic()
             .arg("run")
@@ -207,6 +208,16 @@ fn raw_pointer_intrinsic_errors_report_their_cause() {
         (
             "raw_trap_arguments.sali",
             "expects one empty runtime argument group",
+        ),
+        ("raw_borrow_safe.sali", "requires an `unsafe do` block"),
+        (
+            "raw_mut_borrow_immutable_pointer.sali",
+            "requires a `MutPtr(T)`",
+        ),
+        ("raw_borrow_anchor_conflict.sali", "borrowed"),
+        (
+            "raw_mut_borrow_shared_anchor.sali",
+            "requires a mutable borrow anchor",
         ),
     ] {
         let output = salic()
@@ -285,6 +296,7 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         "vec_copy.sali",
         "vec_unit.sali",
         "vec_resource.sali",
+        "vec_borrow.sali",
         "vec_ordered_copy.sali",
         "vec_ordered_resource.sali",
     ] {
@@ -308,6 +320,8 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         "vec_swap_remove_out_of_bounds.sali",
         "vec_insert_out_of_bounds.sali",
         "vec_remove_out_of_bounds.sali",
+        "vec_at_out_of_bounds.sali",
+        "vec_at_mut_out_of_bounds.sali",
         "vec_capacity_overflow.sali",
         "vec_reserve_overflow.sali",
         "vec_zst_resource_drop_trap.sali",
@@ -353,6 +367,20 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         "{}",
         output_text(&output)
     );
+
+    for name in ["vec_borrow_then_push.sali", "vec_mut_borrow_conflict.sali"] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check Vec element borrow conflict");
+        assert!(!output.status.success(), "{name} unexpectedly compiled");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("borrowed"),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
 }
 
 #[test]
