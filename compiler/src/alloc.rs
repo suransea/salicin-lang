@@ -450,21 +450,34 @@ fn valid_box_replace(function: &Function) -> bool {
 
 fn valid_box_borrow(function: &Function, mutable: bool) -> bool {
     function.name == if mutable { "box_as_mut" } else { "box_as_ref" }
-        && matches!(function.compile_groups.as_slice(), [group]
-            if matches!(group.as_slice(), [region, element]
-                if region.name == "a"
-                    && region.kind == CompileParamKind::Region
-                    && element.name == "T"
-                    && element.kind == CompileParamKind::Type))
+        && if mutable {
+            matches!(function.compile_groups.as_slice(), [group]
+                if matches!(group.as_slice(), [region, element]
+                    if region.name == "a"
+                        && region.kind == CompileParamKind::Region
+                        && element.name == "T"
+                        && element.kind == CompileParamKind::Type))
+        } else {
+            matches!(function.compile_groups.as_slice(), [group]
+                if matches!(group.as_slice(), [access, region, element]
+                    if access.name == "A"
+                        && access.kind == CompileParamKind::Access
+                        && region.name == "a"
+                        && region.kind == CompileParamKind::Region
+                        && element.name == "T"
+                        && element.kind == CompileParamKind::Type))
+        }
         && matches!(function.groups.as_slice(), [receiver]
             if matches!(receiver.as_slice(), [parameter]
                 if parameter.name == "boxed"
                     && parameter.mode == if mutable { PassMode::MutBorrow } else { PassMode::Borrow }
+                    && parameter.access.as_deref() == if mutable { None } else { Some("A") }
                     && parameter.region.as_deref() == Some("a")
                     && parameter.ty == applied("Box", named("T"))))
         && function.return_type
             == Some(Type::Borrow {
                 mutable,
+                access: if mutable { None } else { Some("A".to_owned()) },
                 region: Some("a".to_owned()),
                 pointee: Box::new(named("T")),
             })
@@ -495,9 +508,9 @@ fn valid_box_extension(extension: &crate::ast::ExtendDef) -> bool {
         && matches!(&extension.members[1], crate::ast::ExtendMember::Function(function)
             if valid_box_method(function, "as_mut_ptr", PassMode::Borrow, &[], applied("MutPtr", named("T"))))
         && matches!(&extension.members[2], crate::ast::ExtendMember::Function(function)
-            if valid_box_method(function, "as_ref", PassMode::Borrow, &[], Type::Borrow { mutable: false, region: None, pointee: Box::new(named("T")) }))
+            if valid_box_method(function, "as_ref", PassMode::Borrow, &[], Type::Borrow { mutable: false, access: None, region: None, pointee: Box::new(named("T")) }))
         && matches!(&extension.members[3], crate::ast::ExtendMember::Function(function)
-            if valid_box_method(function, "as_mut", PassMode::MutBorrow, &[], Type::Borrow { mutable: true, region: None, pointee: Box::new(named("T")) }))
+            if valid_box_method(function, "as_mut", PassMode::MutBorrow, &[], Type::Borrow { mutable: true, access: None, region: None, pointee: Box::new(named("T")) }))
         && matches!(&extension.members[4], crate::ast::ExtendMember::Function(function)
             if valid_box_method(function, "into_inner", PassMode::Move, &[], named("T")))
         && matches!(&extension.members[5], crate::ast::ExtendMember::Function(function)
@@ -652,22 +665,35 @@ fn valid_vec_len_or_capacity(function: &Function, name: &str) -> bool {
 
 fn valid_vec_at(function: &Function, mutable: bool) -> bool {
     function.name == if mutable { "vec_at_mut" } else { "vec_at" }
-        && matches!(function.compile_groups.as_slice(), [group]
-            if matches!(group.as_slice(), [region, element]
-                if region.name == "a"
-                    && region.kind == CompileParamKind::Region
-                    && element.name == "T"
-                    && element.kind == CompileParamKind::Type))
+        && if mutable {
+            matches!(function.compile_groups.as_slice(), [group]
+                if matches!(group.as_slice(), [region, element]
+                    if region.name == "a"
+                        && region.kind == CompileParamKind::Region
+                        && element.name == "T"
+                        && element.kind == CompileParamKind::Type))
+        } else {
+            matches!(function.compile_groups.as_slice(), [group]
+                if matches!(group.as_slice(), [access, region, element]
+                    if access.name == "A"
+                        && access.kind == CompileParamKind::Access
+                        && region.name == "a"
+                        && region.kind == CompileParamKind::Region
+                        && element.name == "T"
+                        && element.kind == CompileParamKind::Type))
+        }
         && matches!(function.groups.as_slice(), [receiver, index]
             if matches!(receiver.as_slice(), [parameter]
                 if parameter.name == "values"
                     && parameter.mode == if mutable { PassMode::MutBorrow } else { PassMode::Borrow }
+                    && parameter.access.as_deref() == if mutable { None } else { Some("A") }
                     && parameter.region.as_deref() == Some("a")
                     && parameter.ty == applied("Vec", named("T")))
                 && has_parameter(index, "index", PassMode::Inferred, Type::U64))
         && function.return_type
             == Some(Type::Borrow {
                 mutable,
+                access: if mutable { None } else { Some("A".to_owned()) },
                 region: Some("a".to_owned()),
                 pointee: Box::new(named("T")),
             })
@@ -937,8 +963,8 @@ fn valid_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
             && with_capacity.body.is_some()
             && valid_vec_receiver_method(len, "len", PassMode::Borrow, &[], Type::U64)
             && valid_vec_receiver_method(capacity, "capacity", PassMode::Borrow, &[], Type::U64)
-            && valid_vec_receiver_method(at, "at", PassMode::Borrow, &[("index", PassMode::Inferred, Type::U64)], Type::Borrow { mutable: false, region: None, pointee: Box::new(named("T")) })
-            && valid_vec_receiver_method(at_mut, "at_mut", PassMode::MutBorrow, &[("index", PassMode::Inferred, Type::U64)], Type::Borrow { mutable: true, region: None, pointee: Box::new(named("T")) })
+            && valid_vec_receiver_method(at, "at", PassMode::Borrow, &[("index", PassMode::Inferred, Type::U64)], Type::Borrow { mutable: false, access: None, region: None, pointee: Box::new(named("T")) })
+            && valid_vec_receiver_method(at_mut, "at_mut", PassMode::MutBorrow, &[("index", PassMode::Inferred, Type::U64)], Type::Borrow { mutable: true, access: None, region: None, pointee: Box::new(named("T")) })
             && valid_vec_receiver_method(reserve, "reserve", PassMode::MutBorrow, &[("additional", PassMode::Inferred, Type::U64)], Type::Unit)
             && valid_vec_receiver_method(push, "push", PassMode::MutBorrow, &[("value", PassMode::Inferred, named("T"))], Type::Unit)
             && valid_vec_receiver_method(replace, "replace", PassMode::MutBorrow, &[("index", PassMode::Inferred, Type::U64), ("value", PassMode::Inferred, named("T"))], named("T"))

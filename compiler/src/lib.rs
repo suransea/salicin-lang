@@ -150,4 +150,39 @@ mod tests {
             }));
         }
     }
+
+    #[test]
+    fn access_compile_parameters_select_shared_or_mutable_borrowing() {
+        let source = "let inspect(A: access)(borrow(A) value: i32): i32 = value\n\
+                      let borrow_value(A: access, 'a: region, T: type)\n\
+                        (borrow(A, 'a) value: T): borrow(A, 'a) T = borrow(A, 'a) value\n\
+                      let main(): i32 = {\n\
+                        let mut left = 20\n\
+                        let right = 22\n\
+                        let mut third = 0\n\
+                        let mutable = borrow_value(mut, i32)(left)\n\
+                        let shared = borrow_value(T: i32)(right)\n\
+                        mutable + shared + inspect(mut)(third)\n\
+                      }\n";
+        compile_source(source).expect("access-generic function should instantiate both modes");
+    }
+
+    #[test]
+    fn alloc_accessors_use_the_access_generic_entry_points() {
+        let source = "let main(): i32 = {\n\
+                        let mut boxed = Box.new(20)\n\
+                        do {\n\
+                          let value = box_as_ref(A: mut, T: i32)(boxed)\n\
+                          value = 21\n\
+                        }\n\
+                        let mut values: Vec(i32) = Vec(i32).new()\n\
+                        values.push(20)\n\
+                        do {\n\
+                          let value = vec_at(A: mut, T: i32)(values)(0)\n\
+                          value = value + 1\n\
+                        }\n\
+                        boxed.read() + values.read(0)\n\
+                      }\n";
+        compile_source(source).expect("alloc accessors should instantiate mutable access");
+    }
 }

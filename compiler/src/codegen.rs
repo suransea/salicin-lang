@@ -10,8 +10,9 @@ use std::fmt;
 use crate::alloc::AllocBundle;
 use crate::ast::{
     BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EnumDef, Expr, ExtendDef,
-    ExtendMember, Field, Function, Item, ItemOrigin, MatchArm, PassMode, Pattern, PatternFields,
-    Program, Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantFields, Visibility,
+    ExtendMember, Field, Function, Item, ItemOrigin, MatchArm, Param, PassMode, Pattern,
+    PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantFields,
+    Visibility,
 };
 use crate::cleanup::{
     BasicBlockId as CleanupBlockId, CleanupEdge, CleanupOp, CleanupPlan, CleanupPlanBuilder,
@@ -140,6 +141,8 @@ struct FunctionInstanceInfo {
 
 const MAX_FUNCTION_INSTANCES: usize = 256;
 const MAX_NOMINAL_INSTANCES: usize = 256;
+const ACCESS_SHARED_MARKER: &str = "$access$shared";
+const ACCESS_MUT_MARKER: &str = "$access$mut";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum NominalKind {
@@ -2465,10 +2468,12 @@ impl Analyzer {
         match source {
             Type::Borrow {
                 mutable,
+                access,
                 region,
                 pointee,
             } => Some(Type::Borrow {
                 mutable: *mutable,
+                access: access.clone(),
                 region: region.clone(),
                 pointee: Box::new(self.normalize_trait_impl_type(
                     trait_name,
@@ -4680,9 +4685,17 @@ impl Analyzer {
 
             let mut substitutions = HashMap::new();
             for (index, parameter) in template.compile_groups.iter().flatten().enumerate() {
-                let marker = generic_parameter_marker(&template_name, index, &parameter.name);
-                self.abstract_type_parameters
-                    .insert(marker.clone(), parameter.name.clone());
+                let marker = match parameter.kind {
+                    CompileParamKind::Type => {
+                        let marker =
+                            generic_parameter_marker(&template_name, index, &parameter.name);
+                        self.abstract_type_parameters
+                            .insert(marker.clone(), parameter.name.clone());
+                        marker
+                    }
+                    CompileParamKind::Access => ACCESS_SHARED_MARKER.to_owned(),
+                    CompileParamKind::Region => continue,
+                };
                 if substitutions
                     .insert(parameter.name.clone(), Type::Named(marker, Vec::new()))
                     .is_some()
@@ -5072,6 +5085,7 @@ impl Analyzer {
                 mutable,
                 region,
                 pointee,
+                ..
             } => Ty::Reference {
                 pointee: Box::new(self.lower_source_type(pointee)),
                 mutable: *mutable,
@@ -5095,6 +5109,12 @@ impl Analyzer {
                 }
             }
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => Ty::Unit,
+            Type::Named(name, arguments)
+                if arguments.is_empty()
+                    && matches!(name.as_str(), ACCESS_SHARED_MARKER | ACCESS_MUT_MARKER) =>
+            {
+                Ty::Struct(name.clone())
+            }
             Type::Named(name, arguments) if matches!(name.as_str(), "Ptr" | "MutPtr") => {
                 if arguments.len() != 1 {
                     self.error(format!("type `{name}` expects exactly one type argument"));
@@ -5301,10 +5321,14 @@ impl Analyzer {
                 region,
             } => Some(Type::Borrow {
                 mutable: *mutable,
+                access: None,
                 region: region.clone(),
                 pointee: Box::new(self.source_type_for_ty(pointee)?),
             }),
             Ty::Struct(name) | Ty::Enum(name) => {
+                if matches!(name.as_str(), ACCESS_SHARED_MARKER | ACCESS_MUT_MARKER) {
+                    return Some(Type::Named(name.clone(), Vec::new()));
+                }
                 if let Some(instance) = self.nominal_instances.get(name) {
                     let arguments = instance
                         .key
@@ -5462,6 +5486,7 @@ impl Analyzer {
                 mutable,
                 region,
                 pointee,
+                ..
             } => Some(Ty::Reference {
                 pointee: Box::new(self.probe_source_ty(pointee)?),
                 mutable: *mutable,
@@ -5471,6 +5496,12 @@ impl Analyzer {
                 Some(Ty::Array(Box::new(self.probe_source_ty(element)?), *length))
             }
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => Some(Ty::Unit),
+            Type::Named(name, arguments)
+                if arguments.is_empty()
+                    && matches!(name.as_str(), ACCESS_SHARED_MARKER | ACCESS_MUT_MARKER) =>
+            {
+                Some(Ty::Struct(name.clone()))
+            }
             Type::Named(name, arguments)
                 if arguments.is_empty()
                     && (self.abstract_type_parameters.contains_key(name)
@@ -5676,6 +5707,7 @@ impl Analyzer {
             Type::Unit => (*actual == Ty::Unit).then_some(false).ok_or_else(mismatch),
             Type::Borrow {
                 mutable,
+                access,
                 region,
                 pointee,
             } => {
@@ -5687,7 +5719,44 @@ impl Analyzer {
                 else {
                     return Err(mismatch());
                 };
-                if mutable != actual_mutable || region != actual_region {
+                let mut changed = false;
+                if let Some(access) = access {
+                    let marker = if *actual_mutable {
+                        ACCESS_MUT_MARKER
+                    } else {
+                        ACCESS_SHARED_MARKER
+                    };
+                    let selected = InferredTypeArgument {
+                        ty: Ty::Struct(marker.to_owned()),
+                        source: Some(Type::Named(marker.to_owned(), Vec::new())),
+                        origin: origin.to_owned(),
+                    };
+                    match inferred.get(access) {
+                        Some(previous)
+                            if previous.origin != "default shared access"
+                                && previous.ty != selected.ty =>
+                        {
+                            return Err(format!(
+                                "conflicting inference for access parameter `{access}`: `{}` from {} conflicts with `{}` from {origin}",
+                                if previous.ty == Ty::Struct(ACCESS_MUT_MARKER.to_owned()) {
+                                    "mut"
+                                } else {
+                                    "shared"
+                                },
+                                previous.origin,
+                                if *actual_mutable { "mut" } else { "shared" }
+                            ));
+                        }
+                        Some(previous) if previous.ty == selected.ty => {}
+                        _ => {
+                            inferred.insert(access.clone(), selected);
+                            changed = true;
+                        }
+                    }
+                } else if mutable != actual_mutable {
+                    return Err(mismatch());
+                }
+                if region != actual_region {
                     return Err(mismatch());
                 }
                 self.unify_template_ty(
@@ -5701,6 +5770,7 @@ impl Analyzer {
                     inferred,
                     origin,
                 )
+                .map(|pointee_changed| changed || pointee_changed)
             }
             Type::Array(element, length) => {
                 let Ty::Array(actual_element, actual_length) = actual else {
@@ -5824,6 +5894,7 @@ impl Analyzer {
                 mutable,
                 region,
                 pointee,
+                ..
             } => Some(Ty::Reference {
                 pointee: Box::new(self.resolved_template_ty(
                     pointee,
@@ -7127,7 +7198,7 @@ impl Analyzer {
                     TypeProbe::Unsupported
                 }
             }
-            Expr::Borrow { mutable, value } => {
+            Expr::Borrow { mutable, value, .. } => {
                 let pointee_hint = match hint {
                     Some(Ty::Reference { pointee, .. }) => Some(pointee.as_ref()),
                     _ => None,
@@ -7573,6 +7644,7 @@ impl Analyzer {
         let compile_parameters: HashSet<_> = compile_groups
             .iter()
             .flatten()
+            .filter(|parameter| parameter.kind == CompileParamKind::Type)
             .map(|parameter| parameter.name.clone())
             .collect();
         let mut inferred = HashMap::new();
@@ -7594,10 +7666,12 @@ impl Analyzer {
                     })
                 })
             } else if !arguments.is_empty()
-                && arguments.iter().all(|argument| {
-                    (unit_is_type && matches!(argument.value, Expr::Unit))
-                        || self.expression_is_explicit_type_argument(&argument.value, context)
-                })
+                && self.group_is_explicit_compile_application(
+                    &compile_groups[compile_index],
+                    arguments,
+                    context,
+                    unit_is_type,
+                )
             {
                 Some(compile_index)
             } else {
@@ -7632,8 +7706,30 @@ impl Analyzer {
                 } else {
                     &parameters[position]
                 };
-                let source =
-                    self.type_argument_from_expr(&argument.value, &context.type_substitutions)?;
+                let source = match parameter.kind {
+                    CompileParamKind::Type => {
+                        self.type_argument_from_expr(&argument.value, &context.type_substitutions)?
+                    }
+                    CompileParamKind::Access => match &argument.value {
+                        Expr::Name(name) if name == "shared" => {
+                            Type::Named(ACCESS_SHARED_MARKER.to_owned(), Vec::new())
+                        }
+                        Expr::Name(name) if name == "mut" => {
+                            Type::Named(ACCESS_MUT_MARKER.to_owned(), Vec::new())
+                        }
+                        _ => {
+                            self.error(format!(
+                                "invalid access argument for `{}` in `{owner}`; expected `shared` or `mut`",
+                                parameter.name
+                            ));
+                            return None;
+                        }
+                    },
+                    CompileParamKind::Region => {
+                        self.error("region arguments are erased before semantic analysis");
+                        return None;
+                    }
+                };
                 let Some(ty) = self.probe_source_ty(&source) else {
                     self.error(format!(
                         "invalid explicit type argument for `{}` in `{owner}`",
@@ -7653,7 +7749,75 @@ impl Analyzer {
             source_index += 1;
             compile_index = target + 1;
         }
+        for parameter in compile_groups.iter().flatten() {
+            if parameter.kind == CompileParamKind::Access {
+                inferred
+                    .entry(parameter.name.clone())
+                    .or_insert_with(|| InferredTypeArgument {
+                        ty: Ty::Struct(ACCESS_SHARED_MARKER.to_owned()),
+                        source: Some(Type::Named(ACCESS_SHARED_MARKER.to_owned(), Vec::new())),
+                        origin: "default shared access".to_owned(),
+                    });
+            }
+        }
         Some((compile_parameters, inferred, source_index))
+    }
+
+    fn group_is_explicit_compile_application(
+        &self,
+        parameters: &[CompileParam],
+        arguments: &[CallArg],
+        context: &LowerCtx,
+        unit_is_type: bool,
+    ) -> bool {
+        if parameters
+            .iter()
+            .all(|parameter| parameter.kind == CompileParamKind::Type)
+        {
+            return arguments.iter().all(|argument| {
+                (unit_is_type && matches!(argument.value, Expr::Unit))
+                    || self.expression_is_explicit_type_argument(&argument.value, context)
+            });
+        }
+        if parameters
+            .iter()
+            .all(|parameter| parameter.kind == CompileParamKind::Access)
+        {
+            return arguments.iter().all(|argument| {
+                matches!(&argument.value, Expr::Name(name) if name == "shared" || name == "mut")
+            });
+        }
+        parameters.len() == arguments.len()
+            && parameters
+                .iter()
+                .zip(arguments)
+                .all(|(parameter, argument)| {
+                    self.expression_is_explicit_compile_argument(
+                        parameter,
+                        &argument.value,
+                        context,
+                        unit_is_type,
+                    )
+                })
+    }
+
+    fn expression_is_explicit_compile_argument(
+        &self,
+        parameter: &CompileParam,
+        expression: &Expr,
+        context: &LowerCtx,
+        unit_is_type: bool,
+    ) -> bool {
+        match parameter.kind {
+            CompileParamKind::Type => {
+                (unit_is_type && matches!(expression, Expr::Unit))
+                    || self.expression_is_explicit_type_argument(expression, context)
+            }
+            CompileParamKind::Access => {
+                matches!(expression, Expr::Name(name) if name == "shared" || name == "mut")
+            }
+            CompileParamKind::Region => false,
+        }
     }
 
     fn expression_is_explicit_type_argument(&self, expression: &Expr, context: &LowerCtx) -> bool {
@@ -8501,7 +8665,7 @@ impl Analyzer {
                     error_expr()
                 }
             }
-            Expr::Borrow { mutable, value } => {
+            Expr::Borrow { mutable, value, .. } => {
                 let Some(mut place) = self.lower_place(value, context) else {
                     return error_expr();
                 };
@@ -12804,18 +12968,35 @@ impl Analyzer {
             self.error(format!("`{name}` requires an `unsafe do` block"));
             return error_expr();
         }
-        let [runtime] = groups else {
-            self.error(format!(
-                "`{name}` expects exactly one runtime argument group"
-            ));
-            return error_expr();
+        let (required_mutable, runtime) = match groups {
+            [runtime] => (name == "raw_mut_borrow", *runtime),
+            [access, runtime] if name == "raw_borrow" => {
+                let [argument] = *access else {
+                    self.error("`raw_borrow` access group expects exactly one argument");
+                    return error_expr();
+                };
+                let mutable = match &argument.value {
+                    Expr::Name(value) if value == "shared" => false,
+                    Expr::Name(value) if value == "mut" => true,
+                    _ => {
+                        self.error("`raw_borrow` access argument must be `shared` or `mut`");
+                        return error_expr();
+                    }
+                };
+                (mutable, *runtime)
+            }
+            _ => {
+                self.error(format!(
+                    "`{name}` expects one runtime group and at most one access group"
+                ));
+                return error_expr();
+            }
         };
         let names = ["pointer".to_owned(), "anchor".to_owned()];
         let Some(arguments) = self.ordered_call_arguments(name, 1, runtime, &names) else {
             return error_expr();
         };
         let pointer = self.lower_expr(&arguments[0].value, None, context);
-        let required_mutable = name == "raw_mut_borrow";
         let Ty::Pointer { pointee, mutable } = &pointer.ty else {
             self.error(format!(
                 "`{name}` requires `Ptr(T)` or `MutPtr(T)`, found `{}`",
@@ -12824,7 +13005,7 @@ impl Analyzer {
             return error_expr();
         };
         if required_mutable && !mutable {
-            self.error("`raw_mut_borrow` requires a `MutPtr(T)`");
+            self.error("mutable `raw_borrow` requires a `MutPtr(T)`");
             return error_expr();
         }
         if matches!(pointee.as_ref(), Ty::Never | Ty::Function(_) | Ty::Error) {
@@ -12837,6 +13018,7 @@ impl Analyzer {
         let Expr::Borrow {
             mutable: anchor_mutable,
             value: anchor_value,
+            ..
         } = &arguments[1].value
         else {
             self.error(format!(
@@ -12963,7 +13145,7 @@ impl Analyzer {
             return error_expr();
         }
         let required_mutable = name == "MutPtr";
-        let Expr::Borrow { mutable, value } = &argument.value else {
+        let Expr::Borrow { mutable, value, .. } = &argument.value else {
             self.error(format!(
                 "`{name}` requires an explicit `{}borrow` argument",
                 if required_mutable { "mut " } else { "" }
@@ -20512,7 +20694,7 @@ fn substitute_struct_types(definition: &mut StructDef, substitutions: &HashMap<S
 fn erase_region_parameters(program: &mut Program) {
     fn erase_groups(groups: &mut Vec<Vec<CompileParam>>) {
         for group in &mut *groups {
-            group.retain(|parameter| parameter.kind == CompileParamKind::Type);
+            group.retain(|parameter| parameter.kind != CompileParamKind::Region);
         }
         groups.retain(|group| !group.is_empty());
     }
@@ -20571,7 +20753,7 @@ fn substitute_enum_types(definition: &mut EnumDef, substitutions: &HashMap<Strin
 fn substitute_function_types(function: &mut Function, substitutions: &HashMap<String, Type>) {
     for group in &mut function.groups {
         for parameter in group {
-            substitute_type_parameters(&mut parameter.ty, substitutions);
+            substitute_parameter_types(parameter, substitutions);
         }
     }
     if let Some(result) = &mut function.return_type {
@@ -20587,6 +20769,20 @@ fn substitute_function_types(function: &mut Function, substitutions: &HashMap<St
     if let Some(body) = &mut function.body {
         substitute_expr_types(body, substitutions);
     }
+}
+
+fn substitute_parameter_types(parameter: &mut Param, substitutions: &HashMap<String, Type>) {
+    if let Some(access) = parameter.access.as_deref() {
+        if let Some(mutable) = substituted_access_mutability(access, substitutions) {
+            parameter.mode = if mutable {
+                PassMode::MutBorrow
+            } else {
+                PassMode::Borrow
+            };
+            parameter.access = None;
+        }
+    }
+    substitute_type_parameters(&mut parameter.ty, substitutions);
 }
 
 fn substitute_self_expression_target(expression: &mut Expr, target: &str) {
@@ -20786,12 +20982,35 @@ fn rewrite_abstract_self_qualified_methods(expression: &mut Expr) {
 
 fn substitute_expr_types(expression: &mut Expr, substitutions: &HashMap<String, Type>) {
     match expression {
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => {}
+        Expr::Name(name) => {
+            if let Some(Type::Named(marker, arguments)) = substitutions.get(name) {
+                if arguments.is_empty() {
+                    match marker.as_str() {
+                        ACCESS_SHARED_MARKER => *name = "shared".to_owned(),
+                        ACCESS_MUT_MARKER => *name = "mut".to_owned(),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) => {}
         Expr::Unary(_, operand)
         | Expr::Try(operand)
         | Expr::Throw(operand)
         | Expr::Unsafe(operand) => substitute_expr_types(operand, substitutions),
-        Expr::Borrow { value, .. } => substitute_expr_types(value, substitutions),
+        Expr::Borrow {
+            mutable,
+            access,
+            value,
+        } => {
+            if let Some(name) = access.as_deref() {
+                if let Some(selected) = substituted_access_mutability(name, substitutions) {
+                    *mutable = selected;
+                    *access = None;
+                }
+            }
+            substitute_expr_types(value, substitutions)
+        }
         Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
             substitute_expr_types(left, substitutions);
             substitute_expr_types(right, substitutions);
@@ -20832,7 +21051,7 @@ fn substitute_expr_types(expression: &mut Expr, substitutions: &HashMap<String, 
         }
         Expr::Closure(parameters, body) => {
             for parameter in parameters {
-                substitute_type_parameters(&mut parameter.ty, substitutions);
+                substitute_parameter_types(parameter, substitutions);
             }
             substitute_expr_types(body, substitutions);
         }
@@ -20933,7 +21152,20 @@ fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<String, Typ
                 *ty = replacement.clone();
             }
         }
-        Type::Borrow { pointee, .. } => substitute_type_parameters(pointee, substitutions),
+        Type::Borrow {
+            mutable,
+            access,
+            pointee,
+            ..
+        } => {
+            if let Some(name) = access.as_deref() {
+                if let Some(selected) = substituted_access_mutability(name, substitutions) {
+                    *mutable = selected;
+                    *access = None;
+                }
+            }
+            substitute_type_parameters(pointee, substitutions)
+        }
         Type::Array(element, _) => substitute_type_parameters(element, substitutions),
         Type::Named(_, arguments) => {
             for argument in arguments {
@@ -20941,6 +21173,23 @@ fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<String, Typ
             }
         }
         Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => {}
+    }
+}
+
+fn substituted_access_mutability(
+    name: &str,
+    substitutions: &HashMap<String, Type>,
+) -> Option<bool> {
+    let Type::Named(marker, arguments) = substitutions.get(name)? else {
+        return None;
+    };
+    if !arguments.is_empty() {
+        return None;
+    }
+    match marker.as_str() {
+        ACCESS_SHARED_MARKER => Some(false),
+        ACCESS_MUT_MARKER => Some(true),
+        _ => None,
     }
 }
 
@@ -21448,6 +21697,7 @@ mod tests {
     fn param(name: &str, ty: Type) -> Param {
         Param {
             mode: PassMode::Inferred,
+            access: None,
             region: None,
             name: name.to_owned(),
             ty,
@@ -21971,8 +22221,9 @@ mod tests {
             analyzer.function_templates["box_as_ref"]
                 .compile_groups
                 .as_slice(),
-            [group] if matches!(group.as_slice(), [parameter]
-                if parameter.name == "T" && parameter.kind == CompileParamKind::Type)
+            [group] if matches!(group.as_slice(), [access, ty]
+                if access.name == "A" && access.kind == CompileParamKind::Access
+                    && ty.name == "T" && ty.kind == CompileParamKind::Type)
         ));
         assert!(analyzer.function_templates.contains_key("vec_new"));
         assert!(analyzer
@@ -21982,8 +22233,9 @@ mod tests {
         assert!(analyzer.function_templates.contains_key("vec_at_mut"));
         assert!(matches!(
             analyzer.function_templates["vec_at"].compile_groups.as_slice(),
-            [group] if matches!(group.as_slice(), [parameter]
-                if parameter.name == "T" && parameter.kind == CompileParamKind::Type)
+            [group] if matches!(group.as_slice(), [access, ty]
+                if access.name == "A" && access.kind == CompileParamKind::Access
+                    && ty.name == "T" && ty.kind == CompileParamKind::Type)
         ));
         assert!(analyzer.function_templates.contains_key("vec_reserve"));
         assert!(analyzer.function_templates.contains_key("vec_push"));
@@ -23398,6 +23650,7 @@ let main(): i32 = 0
             "consume",
             vec![vec![Param {
                 mode: PassMode::Move,
+                access: None,
                 region: None,
                 name: "value".into(),
                 ty: Type::I32,

@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.69.0 - 2026-07-21
+
+- Added the compile-time `access` kind with `shared` and `mut` values, default-shared inference,
+  named or positional explicit arguments, and distinct monomorphized instances.
+- Allowed `borrow(A)` and `borrow(A, 'a)` in parameter modes, borrow types, borrow expressions, and
+  unsafe raw pointer borrows, with access-aware substitution before ownership and borrow checking.
+- Unified the canonical free borrow APIs as `box_as_ref(A: access, ...)` and
+  `vec_at(A: access, ...)`; retained the mutable free functions and methods as compatibility wrappers.
+- Added scope diagnostics for undeclared or duplicate access parameters and documented the boundary
+  between access capability generics and future general effect polymorphism.
+
 ## 0.68.0 - 2026-07-21
 
 - Reorganized the repository around explicit `compiler`, `library`, `runtime`, `docs`, `examples`,

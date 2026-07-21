@@ -45,13 +45,14 @@ pub let box_replace(T: type)(mut borrow boxed: Box(T))(move value: T): T = {
   previous
 }
 
-pub let box_as_ref('a: region, T: type)(borrow('a) boxed: Box(T)): borrow('a) T = unsafe do {
-  raw_borrow(boxed.pointer, borrow boxed)
+pub let box_as_ref(A: access, 'a: region, T: type)
+  (borrow(A, 'a) boxed: Box(T)): borrow(A, 'a) T = unsafe do {
+  raw_borrow(A)(boxed.pointer, borrow(A) boxed)
 }
 
 pub let box_as_mut('a: region, T: type)
-  (mut borrow('a) boxed: Box(T)): mut borrow('a) T = unsafe do {
-  raw_mut_borrow(boxed.pointer, mut borrow boxed)
+  (mut borrow('a) boxed: Box(T)): mut borrow('a) T = {
+  box_as_ref(A: mut, T: T)(boxed)
 }
 
 extend(T: type) Box(T) {
@@ -72,4 +73,3 @@ where T: Copy {
   let read(borrow self)(): T = box_read(self)
   let write(mut borrow self)(copy value: T): () = box_write(self)(value)
 }
-

@@ -492,7 +492,12 @@ impl Parser {
                 Some(TokenKind::Ident(_)) | Some(TokenKind::RegionName(_))
             )
             && self.at_offset(2, &TokenKind::Colon)
-            && (self.at_offset(3, &TokenKind::Type) || self.at_offset(3, &TokenKind::Region))
+            && (self.at_offset(3, &TokenKind::Type)
+                || self.at_offset(3, &TokenKind::Region)
+                || matches!(
+                    self.tokens.get(self.index + 3).map(|token| &token.kind),
+                    Some(TokenKind::Ident(name)) if name == "access"
+                ))
     }
 
     fn current_starts_compile_parameter(&self) -> bool {
@@ -500,7 +505,12 @@ impl Parser {
             self.current().kind,
             TokenKind::Ident(_) | TokenKind::RegionName(_)
         ) && self.at_offset(1, &TokenKind::Colon)
-            && (self.at_offset(2, &TokenKind::Type) || self.at_offset(2, &TokenKind::Region))
+            && (self.at_offset(2, &TokenKind::Type)
+                || self.at_offset(2, &TokenKind::Region)
+                || matches!(
+                    self.tokens.get(self.index + 2).map(|token| &token.kind),
+                    Some(TokenKind::Ident(name)) if name == "access"
+                ))
     }
 
     fn compile_parameter_group(&mut self) -> Result<Vec<CompileParam>, ParseError> {
@@ -545,8 +555,17 @@ impl Parser {
                     ));
                 }
                 CompileParamKind::Type
+            } else if matches!(&self.current().kind, TokenKind::Ident(name) if name == "access") {
+                if region_name {
+                    return Err(self.error_at(
+                        &name_token,
+                        "access parameter names must be ordinary identifiers",
+                    ));
+                }
+                self.advance();
+                CompileParamKind::Access
             } else {
-                self.expect(&TokenKind::Region, "`type` or `region`")?;
+                self.expect(&TokenKind::Region, "`type`, `access`, or `region`")?;
                 if !region_name {
                     return Err(self.error_at(
                         &name_token,
@@ -578,17 +597,26 @@ impl Parser {
         }
 
         loop {
-            let (mode, region) = if self.take(&TokenKind::Copy) {
-                (PassMode::Copy, None)
+            let (mode, access, region) = if self.take(&TokenKind::Copy) {
+                (PassMode::Copy, None, None)
             } else if self.take(&TokenKind::Move) {
-                (PassMode::Move, None)
+                (PassMode::Move, None, None)
             } else if self.take(&TokenKind::Borrow) {
-                (PassMode::Borrow, self.optional_region()?)
+                let (mutable, access, region) = self.optional_borrow_arguments()?;
+                (
+                    if mutable {
+                        PassMode::MutBorrow
+                    } else {
+                        PassMode::Borrow
+                    },
+                    access,
+                    region,
+                )
             } else if self.take(&TokenKind::Mut) {
                 self.expect(&TokenKind::Borrow, "`borrow` after `mut`")?;
-                (PassMode::MutBorrow, self.optional_region()?)
+                (PassMode::MutBorrow, None, self.optional_region()?)
             } else {
-                (PassMode::Inferred, None)
+                (PassMode::Inferred, None, None)
             };
 
             if self.current_starts_compile_parameter() {
@@ -620,6 +648,7 @@ impl Parser {
             };
             params.push(Param {
                 mode,
+                access,
                 region,
                 name,
                 ty,
@@ -654,6 +683,44 @@ impl Parser {
         self.advance();
         self.expect(&TokenKind::RParen, "`)` after region")?;
         Ok(Some(name))
+    }
+
+    fn optional_borrow_arguments(
+        &mut self,
+    ) -> Result<(bool, Option<String>, Option<String>), ParseError> {
+        if !self.at(&TokenKind::LParen) {
+            return Ok((false, None, None));
+        }
+        match self.tokens.get(self.index + 1).map(|token| &token.kind) {
+            Some(TokenKind::RegionName(_)) => {
+                return Ok((false, None, self.optional_region()?));
+            }
+            Some(TokenKind::Mut) | Some(TokenKind::Ident(_)) => {}
+            _ => return Ok((false, None, None)),
+        }
+        self.expect(&TokenKind::LParen, "`(` after `borrow`")?;
+        let (mutable, access) = if self.take(&TokenKind::Mut) {
+            (true, None)
+        } else {
+            let name = self.expect_ident("an access value or access parameter")?;
+            if name == "shared" {
+                (false, None)
+            } else {
+                (false, Some(name))
+            }
+        };
+        let region = if self.take(&TokenKind::Comma) {
+            let token = self.current().clone();
+            let TokenKind::RegionName(name) = token.kind else {
+                return Err(self.error_at(&token, "expected a region after access argument"));
+            };
+            self.advance();
+            Some(name)
+        } else {
+            None
+        };
+        self.expect(&TokenKind::RParen, "`)` after borrow arguments")?;
+        Ok((mutable, access, region))
     }
 
     fn validate_receiver_groups(&self, groups: &[Vec<Param>]) -> Result<(), ParseError> {
@@ -931,18 +998,19 @@ impl Parser {
             return Ok(Type::Unit);
         }
 
-        let borrow_mutability = if self.take(&TokenKind::Borrow) {
-            Some(false)
+        let borrow_qualifier = if self.take(&TokenKind::Borrow) {
+            let (mutable, access, region) = self.optional_borrow_arguments()?;
+            Some((mutable, access, region))
         } else if self.take(&TokenKind::Mut) {
             self.expect(&TokenKind::Borrow, "`borrow` after `mut` in a borrow type")?;
-            Some(true)
+            Some((true, None, self.optional_region()?))
         } else {
             None
         };
-        if let Some(mutable) = borrow_mutability {
-            let region = self.optional_region()?;
+        if let Some((mutable, access, region)) = borrow_qualifier {
             return Ok(Type::Borrow {
                 mutable,
+                access,
                 region,
                 pointee: Box::new(self.type_expr()?),
             });
@@ -1323,11 +1391,15 @@ impl Parser {
             Ok(Expr::Unary(UnaryOp::Deref, Box::new(operand)))
         } else if self.take(&TokenKind::Borrow) {
             let borrow = self.previous().clone();
-            self.borrow_expression(false, &borrow, allow_trailing_closure)
+            let (mutable, access, _) = self.optional_borrow_arguments()?;
+            self.borrow_expression(mutable, access, &borrow, allow_trailing_closure)
         } else if self.take(&TokenKind::Mut) {
             let mutable = self.previous().clone();
-            self.expect(&TokenKind::Borrow, "`borrow` after `mut`")?;
-            self.borrow_expression(true, &mutable, allow_trailing_closure)
+            if self.take(&TokenKind::Borrow) {
+                self.borrow_expression(true, None, &mutable, allow_trailing_closure)
+            } else {
+                Ok(Expr::Name("mut".to_owned()))
+            }
         } else {
             self.postfix(allow_trailing_closure)
         }
@@ -1336,6 +1408,7 @@ impl Parser {
     fn borrow_expression(
         &mut self,
         mutable: bool,
+        access: Option<String>,
         operator: &Token,
         allow_trailing_closure: bool,
     ) -> Result<Expr, ParseError> {
@@ -1345,6 +1418,7 @@ impl Parser {
         }
         Ok(Expr::Borrow {
             mutable,
+            access,
             value: Box::new(value),
         })
     }
@@ -1895,27 +1969,32 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
     let empty = HashSet::new();
     for item in items {
         match item {
-            Item::Function(function) => validate_function_regions(function, &empty)?,
-            Item::Global(binding) => validate_binding_regions(binding, &empty)?,
+            Item::Function(function) => validate_function_scopes(function, &empty, &empty)?,
+            Item::Global(binding) => validate_binding_scopes(binding, &empty, &empty)?,
             Item::Struct(definition) => {
                 let regions = declared_regions(&definition.compile_groups, &empty)?;
+                let accesses = declared_accesses(&definition.compile_groups, &empty)?;
                 for field in &definition.fields {
                     validate_type_regions(&field.ty, &regions)?;
+                    validate_type_accesses(&field.ty, &accesses)?;
                 }
             }
             Item::Enum(definition) => {
                 let regions = declared_regions(&definition.compile_groups, &empty)?;
+                let accesses = declared_accesses(&definition.compile_groups, &empty)?;
                 for variant in &definition.variants {
                     match &variant.fields {
                         VariantFields::Unit => {}
                         VariantFields::Positional(types) => {
                             for ty in types {
                                 validate_type_regions(ty, &regions)?;
+                                validate_type_accesses(ty, &accesses)?;
                             }
                         }
                         VariantFields::Named(fields) => {
                             for field in fields {
                                 validate_type_regions(&field.ty, &regions)?;
+                                validate_type_accesses(&field.ty, &accesses)?;
                             }
                         }
                     }
@@ -1923,10 +2002,11 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
             }
             Item::Trait(definition) => {
                 let regions = declared_regions(&definition.compile_groups, &empty)?;
+                let accesses = declared_accesses(&definition.compile_groups, &empty)?;
                 for member in &definition.members {
                     match member {
                         TraitMember::Function(function) => {
-                            validate_function_regions(function, &regions)?
+                            validate_function_scopes(function, &regions, &accesses)?
                         }
                         TraitMember::AssociatedType {
                             compile_groups,
@@ -1934,8 +2014,10 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
                             ..
                         } => {
                             let member_regions = declared_regions(compile_groups, &regions)?;
+                            let member_accesses = declared_accesses(compile_groups, &accesses)?;
                             if let Some(default) = default {
                                 validate_type_regions(default, &member_regions)?;
+                                validate_type_accesses(default, &member_accesses)?;
                             }
                         }
                     }
@@ -1943,9 +2025,12 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
             }
             Item::Extend(extension) => {
                 let regions = declared_regions(&extension.compile_groups, &empty)?;
+                let accesses = declared_accesses(&extension.compile_groups, &empty)?;
                 validate_type_regions(&extension.target, &regions)?;
+                validate_type_accesses(&extension.target, &accesses)?;
                 if let Some(trait_ref) = &extension.trait_ref {
                     validate_type_regions(trait_ref, &regions)?;
+                    validate_type_accesses(trait_ref, &accesses)?;
                 }
                 for predicate in &extension.where_predicates {
                     validate_type_regions(&predicate.subject, &regions)?;
@@ -1957,10 +2042,10 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
                 for member in &extension.members {
                     match member {
                         ExtendMember::Function(function) => {
-                            validate_function_regions(function, &regions)?
+                            validate_function_scopes(function, &regions, &accesses)?
                         }
                         ExtendMember::Const(binding) => {
-                            validate_binding_regions(binding, &regions)?
+                            validate_binding_scopes(binding, &regions, &accesses)?
                         }
                     }
                 }
@@ -1968,6 +2053,19 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn declared_accesses(
+    groups: &[Vec<CompileParam>],
+    outer: &HashSet<String>,
+) -> Result<HashSet<String>, String> {
+    let mut accesses = outer.clone();
+    for parameter in groups.iter().flatten() {
+        if parameter.kind == CompileParamKind::Access && !accesses.insert(parameter.name.clone()) {
+            return Err(format!("duplicate access parameter `{}`", parameter.name));
+        }
+    }
+    Ok(accesses)
 }
 
 fn declared_regions(
@@ -1989,16 +2087,35 @@ fn declared_regions(
     Ok(regions)
 }
 
-fn validate_function_regions(function: &Function, outer: &HashSet<String>) -> Result<(), String> {
-    let regions = declared_regions(&function.compile_groups, outer)?;
+fn validate_function_scopes(
+    function: &Function,
+    outer_regions: &HashSet<String>,
+    outer_accesses: &HashSet<String>,
+) -> Result<(), String> {
+    let regions = declared_regions(&function.compile_groups, outer_regions)?;
+    let accesses = declared_accesses(&function.compile_groups, outer_accesses)?;
+    let mut compile_names = HashSet::new();
+    for parameter in function.compile_groups.iter().flatten() {
+        if !compile_names.insert(parameter.name.clone()) {
+            return Err(format!(
+                "duplicate compile-time parameter `{}`",
+                parameter.name
+            ));
+        }
+    }
     for parameter in function.groups.iter().flatten() {
+        if let Some(access) = &parameter.access {
+            validate_access_name(access, &accesses)?;
+        }
         if let Some(region) = &parameter.region {
             validate_region_name(region, &regions)?;
         }
         validate_type_regions(&parameter.ty, &regions)?;
+        validate_type_accesses(&parameter.ty, &accesses)?;
     }
     if let Some(return_type) = &function.return_type {
         validate_type_regions(return_type, &regions)?;
+        validate_type_accesses(return_type, &accesses)?;
     }
     for predicate in &function.where_predicates {
         validate_type_regions(&predicate.subject, &regions)?;
@@ -2009,15 +2126,149 @@ fn validate_function_regions(function: &Function, outer: &HashSet<String>) -> Re
     }
     if let Some(body) = &function.body {
         validate_expr_regions(body, &regions)?;
+        validate_expr_accesses(body, &accesses)?;
     }
     Ok(())
 }
 
-fn validate_binding_regions(binding: &Binding, regions: &HashSet<String>) -> Result<(), String> {
+fn validate_access_name(access: &str, accesses: &HashSet<String>) -> Result<(), String> {
+    if accesses.contains(access) {
+        Ok(())
+    } else {
+        Err(format!("use of undeclared access parameter `{access}`"))
+    }
+}
+
+fn validate_type_accesses(ty: &Type, accesses: &HashSet<String>) -> Result<(), String> {
+    match ty {
+        Type::Borrow {
+            access, pointee, ..
+        } => {
+            if let Some(access) = access {
+                validate_access_name(access, accesses)?;
+            }
+            validate_type_accesses(pointee, accesses)
+        }
+        Type::Array(element, _) => validate_type_accesses(element, accesses),
+        Type::Named(_, arguments) => {
+            for argument in arguments {
+                validate_type_accesses(argument, accesses)?;
+            }
+            Ok(())
+        }
+        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => Ok(()),
+    }
+}
+
+fn validate_expr_accesses(expression: &Expr, accesses: &HashSet<String>) -> Result<(), String> {
+    match expression {
+        Expr::Borrow { access, value, .. } => {
+            if let Some(access) = access {
+                validate_access_name(access, accesses)?;
+            }
+            validate_expr_accesses(value, accesses)
+        }
+        Expr::Unary(_, value) | Expr::Try(value) | Expr::Throw(value) | Expr::Unsafe(value) => {
+            validate_expr_accesses(value, accesses)
+        }
+        Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
+            validate_expr_accesses(left, accesses)?;
+            validate_expr_accesses(right, accesses)
+        }
+        Expr::Call(callee, arguments) => {
+            validate_expr_accesses(callee, accesses)?;
+            for argument in arguments {
+                validate_expr_accesses(&argument.value, accesses)?;
+            }
+            Ok(())
+        }
+        Expr::Member(base, _) | Expr::ChainMember(base, _) => {
+            validate_expr_accesses(base, accesses)
+        }
+        Expr::Array(elements) => {
+            for element in elements {
+                validate_expr_accesses(element, accesses)?;
+            }
+            Ok(())
+        }
+        Expr::Index { base, index } => {
+            validate_expr_accesses(base, accesses)?;
+            validate_expr_accesses(index, accesses)
+        }
+        Expr::Block(statements, tail) => {
+            for statement in statements {
+                match statement {
+                    Stmt::Let(binding) => {
+                        if let Some(annotation) = &binding.annotation {
+                            validate_type_accesses(annotation, accesses)?;
+                        }
+                        validate_expr_accesses(&binding.value, accesses)?;
+                    }
+                    Stmt::Expr(expression) => validate_expr_accesses(expression, accesses)?,
+                }
+            }
+            if let Some(tail) = tail {
+                validate_expr_accesses(tail, accesses)?;
+            }
+            Ok(())
+        }
+        Expr::Closure(parameters, body) => {
+            for parameter in parameters {
+                if let Some(access) = &parameter.access {
+                    validate_access_name(access, accesses)?;
+                }
+                validate_type_accesses(&parameter.ty, accesses)?;
+            }
+            validate_expr_accesses(body, accesses)
+        }
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            validate_expr_accesses(condition, accesses)?;
+            validate_expr_accesses(then_branch, accesses)?;
+            if let Some(else_branch) = else_branch {
+                validate_expr_accesses(else_branch, accesses)?;
+            }
+            Ok(())
+        }
+        Expr::Return(value) | Expr::Break(value) => {
+            if let Some(value) = value {
+                validate_expr_accesses(value, accesses)?;
+            }
+            Ok(())
+        }
+        Expr::While { condition, body } => {
+            validate_expr_accesses(condition, accesses)?;
+            validate_expr_accesses(body, accesses)
+        }
+        Expr::Loop { body } => validate_expr_accesses(body, accesses),
+        Expr::Match { scrutinee, arms } => {
+            validate_expr_accesses(scrutinee, accesses)?;
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    validate_expr_accesses(guard, accesses)?;
+                }
+                validate_expr_accesses(&arm.body, accesses)?;
+            }
+            Ok(())
+        }
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => Ok(()),
+    }
+}
+
+fn validate_binding_scopes(
+    binding: &Binding,
+    regions: &HashSet<String>,
+    accesses: &HashSet<String>,
+) -> Result<(), String> {
     if let Some(annotation) = &binding.annotation {
         validate_type_regions(annotation, regions)?;
+        validate_type_accesses(annotation, accesses)?;
     }
-    validate_expr_regions(&binding.value, regions)
+    validate_expr_regions(&binding.value, regions)?;
+    validate_expr_accesses(&binding.value, accesses)
 }
 
 fn validate_type_regions(ty: &Type, regions: &HashSet<String>) -> Result<(), String> {
@@ -2082,7 +2333,12 @@ fn validate_expr_regions(expression: &Expr, regions: &HashSet<String>) -> Result
         Expr::Block(statements, tail) => {
             for statement in statements {
                 match statement {
-                    Stmt::Let(binding) => validate_binding_regions(binding, regions)?,
+                    Stmt::Let(binding) => {
+                        if let Some(annotation) = &binding.annotation {
+                            validate_type_regions(annotation, regions)?;
+                        }
+                        validate_expr_regions(&binding.value, regions)?;
+                    }
                     Stmt::Expr(expression) => validate_expr_regions(expression, regions)?,
                 }
             }
@@ -3139,6 +3395,7 @@ mod tests {
                 value: Expr::Borrow {
                     mutable: false,
                     value,
+                    ..
                 },
                 ..
             }) if matches!(value.as_ref(), Expr::Member(_, field) if field == "field")
@@ -3149,6 +3406,7 @@ mod tests {
                 value: Expr::Borrow {
                     mutable: true,
                     value,
+                    ..
                 },
                 ..
             }) if value.as_ref() == &Expr::Name("value".into())
@@ -3258,6 +3516,7 @@ mod tests {
             shared.annotation,
             Some(Type::Borrow {
                 mutable: false,
+                access: None,
                 region: None,
                 pointee: Box::new(Type::I32),
             })
@@ -3269,6 +3528,7 @@ mod tests {
             mutable.annotation,
             Some(Type::Borrow {
                 mutable: true,
+                access: None,
                 region: None,
                 pointee: Box::new(Type::I32),
             })
@@ -3290,10 +3550,49 @@ mod tests {
             function.return_type,
             Some(Type::Borrow {
                 mutable: false,
+                access: None,
                 region: Some("a".to_owned()),
                 pointee: Box::new(Type::I32),
             })
         );
+    }
+
+    #[test]
+    fn parses_access_parameters_in_borrow_modes_types_and_expressions() {
+        let program = parse(
+            "let identity(A: access, 'a: region, T: type)\n\
+               (borrow(A, 'a) value: T): borrow(A, 'a) T = borrow(A, 'a) value\n",
+        )
+        .unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        assert_eq!(function.compile_groups[0][0].kind, CompileParamKind::Access);
+        assert_eq!(function.groups[0][0].access.as_deref(), Some("A"));
+        assert_eq!(function.groups[0][0].region.as_deref(), Some("a"));
+        assert!(matches!(
+            function.return_type,
+            Some(Type::Borrow {
+                mutable: false,
+                access: Some(ref access),
+                region: Some(ref region),
+                ..
+            }) if access == "A" && region == "a"
+        ));
+        assert!(matches!(
+            function.body,
+            Some(Expr::Borrow {
+                mutable: false,
+                access: Some(ref access),
+                ..
+            }) if access == "A"
+        ));
+    }
+
+    #[test]
+    fn rejects_undeclared_access_parameters() {
+        let error = parse("let invalid(borrow(A) value: i32): i32 = value\n").unwrap_err();
+        assert!(error.message.contains("undeclared access parameter `A`"));
     }
 
     #[test]

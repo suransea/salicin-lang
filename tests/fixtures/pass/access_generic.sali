@@ -1,0 +1,7 @@
+let inspect(A: access)(borrow(A) value: i32): i32 = value
+
+let main(): i32 = {
+  let mut left = 1
+  let right = 2
+  inspect(mut)(left) + inspect(right)
+}

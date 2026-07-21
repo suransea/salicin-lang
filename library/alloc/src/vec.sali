@@ -38,27 +38,21 @@ pub let vec_len(T: type)(borrow values: Vec(T)): u64 = values.length
 
 pub let vec_capacity(T: type)(borrow values: Vec(T)): u64 = values.storage_capacity
 
-pub let vec_at('a: region, T: type)(borrow('a) values: Vec(T))(index: u64): borrow('a) T = {
+pub let vec_at(A: access, 'a: region, T: type)
+  (borrow(A, 'a) values: Vec(T))(index: u64): borrow(A, 'a) T = {
   if index >= values.length {
     unsafe do {
       raw_trap()
     }
   }
   unsafe do {
-    raw_borrow(raw_offset(values.pointer, index), borrow values)
+    raw_borrow(A)(raw_offset(values.pointer, index), borrow(A) values)
   }
 }
 
 pub let vec_at_mut('a: region, T: type)
   (mut borrow('a) values: Vec(T))(index: u64): mut borrow('a) T = {
-  if index >= values.length {
-    unsafe do {
-      raw_trap()
-    }
-  }
-  unsafe do {
-    raw_mut_borrow(raw_offset(values.pointer, index), mut borrow values)
-  }
+  vec_at(A: mut, T: T)(values)(index)
 }
 
 pub let vec_reserve(T: type)(mut borrow values: Vec(T))(additional: u64): () = {

@@ -195,11 +195,15 @@ pub struct CompileParam {
 pub enum CompileParamKind {
     Type,
     Region,
+    Access,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub mode: PassMode,
+    /// An access compile-time parameter used by `borrow(A)` until generic
+    /// instantiation selects shared or mutable borrowing.
+    pub access: Option<String>,
     pub region: Option<String>,
     pub name: String,
     pub ty: Type,
@@ -224,6 +228,7 @@ pub enum Type {
     Unit,
     Borrow {
         mutable: bool,
+        access: Option<String>,
         region: Option<String>,
         pointee: Box<Type>,
     },
@@ -292,6 +297,7 @@ pub enum Expr {
     Unary(UnaryOp, Box<Expr>),
     Borrow {
         mutable: bool,
+        access: Option<String>,
         value: Box<Expr>,
     },
     Binary(Box<Expr>, BinaryOp, Box<Expr>),

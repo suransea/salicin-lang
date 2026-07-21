@@ -32,7 +32,7 @@
   边界。普通调用不能从下一逻辑行的 `(` 继续，因此 `f\n(x)` 是两个表达式而不是 `f(x)`。
 - 换行只分隔语句，不自动丢弃块尾值；显式 `;` 才强制丢弃表达式值。同一逻辑行包含多个语句时
   必须用 `;`。
-- 关键字至少包括：`let`、`mut`、`copy`、`move`、`borrow`、`type`、
+- 关键字至少包括：`let`、`mut`、`copy`、`move`、`borrow`、`type`、`access`、
   `struct`、`enum`、`trait`、`extend`、`match`、`return`、`throw`、`if`、
   `else`、`loop`、`while`、`for`、`in`、`break`、`continue`、`do`、`try`、
   `async`、`pub`、`use`、`as`、`where`、`region`、`extern`、`unsafe`、`root`、
@@ -385,7 +385,7 @@ let f(
 6. 返回值和闭包捕获都参与生命周期检查。
 
 借用检查采用基于最后一次使用的非词法生命周期。局部生命周期尽量推断；跨结构体保存借用或
-公开签名无法唯一推断来源时，使用 6.2 节的显式 region 参数。
+公开签名无法唯一推断来源时，使用 6.3 节的显式 region 参数。
 
 ### 6.1 显式模式优先于类型默认值
 
@@ -400,7 +400,29 @@ let f(
 对未标注的泛型参数，传递模式保留为 `auto`，并在单态化时依据实际类型是否实现 `Copy` 决定。
 如果 API 需要对所有实例保持相同的消费行为，必须显式写 `copy` 或 `move`。
 
-### 6.2 借用值与生命周期
+### 6.2 Access 关键字泛型
+
+共享和排他访问是编译期能力值，可由 `access` kind 参数化：
+
+```sali
+let identity(A: access, 'a: region, T: type)
+  (borrow(A, 'a) value: T): borrow(A, 'a) T =
+  borrow(A, 'a) value
+
+let shared = identity(T: i32)(value)        // A 默认推断为 shared
+let exclusive = identity(A: mut, T: i32)(mutable_value)
+let also_exclusive = identity(mut, i32)(mutable_value)
+```
+
+`access` 只有两个内建值：`shared` 和 `mut`。它们不是运行时值，不可保存进普通变量；每个不同的
+access 实参参与单态化。`borrow(A)` 可出现在参数传递模式、借用类型与借用表达式中。实例化为
+`shared` 时等价于 `borrow`，实例化为 `mut` 时等价于 `mut borrow`。省略且没有其他约束时采用
+`shared`，需要消歧时使用普通命名编译期实参 `A: mut`，不引入方括号语法或 `_` 占位。
+
+access 参数统一的是同一算法的访问能力，不是函数 effect：它不会表示抛错、异步、IO 或状态修改。
+通用 effect/passing 泛型若引入，将使用独立的 kind 和约束规则。
+
+### 6.3 借用值与生命周期
 
 参数模式会自动建立借用；其他位置可用 `borrow expression` 和 `mut borrow expression` 显式建立
 借用值，其类型分别写作 `borrow T` 和 `mut borrow T`：
@@ -424,7 +446,7 @@ region 是编译期参数，不存在于运行时。省略 region 不代表 `'st
 由预定义 region `'static` 表示。借用检查首先采用基于最后一次使用的非词法生命周期；诊断必须
 指出借用建立点、冲突使用点和借用结束条件。
 
-### 6.3 资源释放与拥有容器
+### 6.4 资源释放与拥有容器
 
 Salicin 默认不使用垃圾回收。拥有值在其作用域结束、被覆盖或容器析构时确定性释放。标准 trait
 `Drop` 定义自定义清理；实现 `Drop` 的类型不能实现 `Copy`。用户只能在类型定义所在包中实现其

@@ -111,10 +111,15 @@ parameter_list  = parameter, { ",", parameter }, [ "," ] ;
 parameter = [ pass_mode ], IDENT, ":", type_expr
           | [ pass_mode ], "self" ;
 
-pass_mode = "copy" | "move" | "borrow" | "mut", "borrow" ;
+pass_mode = "copy" | "move"
+          | "borrow", [ "(", access_or_region,
+                         [ ",", REGION ], ")" ]
+          | "mut", "borrow", [ "(", REGION, ")" ] ;
+
+access_or_region = IDENT | "shared" | "mut" | REGION ;
 ```
 
-一个编译期参数组只含 `T: type`、`'a: region` 等编译期参数，并位于所有运行时参数组之前；同一组
+一个编译期参数组只含 `T: type`、`A: access`、`'a: region` 等编译期参数，并位于所有运行时参数组之前；同一组
 不能混合编译期和运行时参数。忽略开头的编译期组后，实例方法的 `self` 独占第一个运行时组，
 并且后面至少还有一个显式运行时组。
 
@@ -155,7 +160,10 @@ extend_decl = "extend", [ compile_parameter_group ], type_expr,
               [ ":", trait_ref ], [ where_clause ],
               "{", separators, { let_decl, separators }, "}" ;
 
-compile_parameter_group = parameter_group ;
+compile_parameter_group = "(", compile_parameter,
+                          { ",", compile_parameter }, [ "," ], ")" ;
+compile_parameter = IDENT, ":", ( "type" | "access" )
+                  | REGION, ":", "region" ;
 ```
 
 编译期参数组的语义限制与函数相同。例如：
@@ -204,7 +212,8 @@ type_atom = path, [ type_arguments ]
           | "(", ")"
           | "(", type_expr, ")"
           | "(", type_expr, ",", [ type_expr, { ",", type_expr }, [ "," ] ], ")"
-          | "borrow", [ "(", REGION, ")" ], type_atom
+          | "borrow", [ "(", access_or_region,
+                         [ ",", REGION ], ")" ], type_atom
           | "mut", "borrow", [ "(", REGION, ")" ], type_atom ;
 
 type_arguments = "(", type_argument, { ",", type_argument }, [ "," ], ")" ;
@@ -213,6 +222,8 @@ type_argument  = type_expr | INTEGER ;
 
 `_` 不是类型实参。调用中的编译期参数组可整体省略，并由运行时实参和期望类型推断；显式消歧使用
 普通的 `IDENT ":" expression` 命名实参，不增加另一套括号或关键字。
+`access` 是编译期 kind；其内建实参为 `shared` 与 `mut`。`borrow(A)` 和
+`borrow(A, 'a)` 分别携带 access 参数以及 access/region 参数组合。
 
 `void` 和 `never` 按普通 prelude 名称解析，分别等价于 `let void = ()` 与
 `let never = enum {}`，不是 lexer 关键字。零 variant enum 合法；其值位置可以用空的
