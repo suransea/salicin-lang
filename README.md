@@ -149,7 +149,7 @@ v0.8.0 把 `Copy` 接入 source-backed core 与所有权检查：
   由编译器内建为 `Copy`。名义 struct/enum 必须显式写 `extend T: Copy {}`，且所有字段和每个 enum
   variant payload（包括私有表示）都必须递归为 `Copy`。
 - 名义 `Copy` 实现只能位于类型定义包。`extend Cell(i32): Copy {}` 只作用于该具体实例，不会泛化
-  到 `Cell(bool)` 或模板；当前也不支持 blanket/generic `Copy` impl 或 `where` 证明。
+  到 `Cell(bool)` 或模板；v0.38 另行支持显式、结构可证明且可带 `where T: Copy` 的 blanket impl。
 - 未标注参数对 `Copy` 类型默认为复制，否则默认为移动；显式 `move` 始终优先并消费实参。相同判定
   已用于普通读取、闭包捕获以及函数和 bound method 的部分应用。
 - 当前函数类型和闭包类型自身仍不是 `Copy`；`Drop` 已由 edition core 公开，但资源型全局仍未开放。
@@ -424,8 +424,9 @@ layout intrinsic，v0.30 以普通 alloc 源实现首个 owning `Box(T)`，v0.31
 普通 `where T: Trait` 谓词、`Copy` 抽象证明与具体调用点检查，v0.34 接通不涉及关联类型的 bound
 method 静态分派和泛型间证明转交，v0.35 加入 `Output = T` 关联类型等式与受约束泛型运算符，
 v0.36 开放带 where 的 blanket inherent extension 和按实例条件成员，v0.37 又加入普通泛型 trait
-impl、关联类型替换、按 where 条件选择和跨包孤儿规则。下一步补齐 blanket `Copy` / `Drop` 的结构
-一致性并推进生命周期化 Box 借用，再以相同 allocator/drop 基础推进 `Vec(T)`；泛型 callable
+impl、关联类型替换、按 where 条件选择和跨包孤儿规则，v0.38 补齐 blanket `Copy` / `Drop` 的结构
+证明、固定点和析构一致性。下一步推进生命周期化 Box 借用，再以相同 allocator/drop 基础推进
+`Vec(T)`；泛型 callable
 参数将在正式的 `where` / `Fn` 约束语法落地后开放。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
 运行时之后。
 
@@ -441,7 +442,8 @@ let main(): i32 = add(1)(41)
 当前借用期采用词法范围。固定数组只允许 `Copy` 元素并仅支持只读索引；循环回边禁止移动
 循环外部绑定，以保证下一轮仍拥有相同的可用值。方法的临时 receiver 目前需先绑定到局部；bound
 method 的部分应用只允许捕获 `Copy` receiver 和实参。名义 `Copy` 必须以具体、同包且结构合法的
-实现显式选择加入；尚无 blanket/generic `Copy` impl，但泛型函数可用 `where T: Copy` 消费已有具体证明。
+实现显式选择加入；blanket `Copy` 也必须显式声明并由字段布局和 where proofs 证明，泛型函数可用
+`where T: Copy` 消费该证明。
 函数类型和闭包类型也不实现 `Copy`。
 表达式路径中的 `Self` 与
 `A.method(a)()` 完全限定调用尚未开放。省略编译期组的嵌套推断仍受当前表达式类型探测能力限制；

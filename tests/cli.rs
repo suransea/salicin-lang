@@ -790,6 +790,7 @@ fn source_backed_copy_programs_run_with_expected_result() {
         "copy_nominal_repeated_and_parameters.sali",
         "copy_nominal_capture.sali",
         "copy_nominal_enum_array.sali",
+        "copy_generic_blanket.sali",
     ] {
         let output = salic()
             .arg("run")
@@ -833,6 +834,17 @@ fn drop_runs_on_structured_scope_exits_without_double_drop() {
         !trapped.status.success(),
         "Drop was not executed:\n{}",
         output_text(&trapped)
+    );
+
+    let generic_trapped = salic()
+        .arg("run")
+        .arg(fixture("pass", "drop_generic_blanket_trap.sali"))
+        .output()
+        .expect("run blanket generic Drop trap");
+    assert!(
+        !generic_trapped.status.success(),
+        "blanket generic Drop was not executed:\n{}",
+        output_text(&generic_trapped)
     );
 
     let partial_exit = salic()
@@ -1097,6 +1109,10 @@ fn source_backed_copy_errors_report_their_cause() {
                 "Cell(i64)",
                 "does not implement Copy",
             ][..],
+        ),
+        (
+            "copy_generic_blanket_unproven.sali",
+            &["blanket `Copy`", "not structurally valid"][..],
         ),
     ] {
         let output = salic()

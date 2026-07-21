@@ -1466,6 +1466,8 @@ impl Analyzer {
             }
         }
         self.validate_copy_implementations();
+        self.activate_generic_copy_extensions();
+        self.validate_copy_implementations();
         self.copy_impls_finalized = true;
         self.validate_deferred_array_elements();
         self.validate_trait_schemas();
@@ -1566,6 +1568,173 @@ impl Analyzer {
             self.trait_impls.remove(key);
         }
         self.copy_nominals = valid;
+    }
+
+    fn validate_dynamic_copy_implementation(&mut self, key: &TraitImplKey) {
+        let target = &key.self_ty;
+        if self.copy_layout_is_valid(target, &self.copy_nominals) {
+            self.copy_nominals.insert(target.clone());
+            return;
+        }
+        let target_name = self.diagnostic_type_name(target);
+        if let Some((member, ty)) = self.first_non_copy_member(target, &self.copy_nominals) {
+            let ty = self.diagnostic_type_name(&ty);
+            self.error(format!(
+                "`{target_name}` cannot implement `Copy`: {member} has type `{ty}`, which does not implement `Copy`"
+            ));
+        } else {
+            self.error(format!(
+                "`{target_name}` cannot implement `Copy` because its value layout is not Copy"
+            ));
+        }
+        self.trait_impls.remove(key);
+        self.trait_impl_headers.remove(key);
+    }
+
+    fn activate_generic_copy_extensions(&mut self) {
+        let copy_name = self.lang_item_name(LangItemKind::Copy).to_owned();
+        let template_names = self
+            .generic_trait_extensions
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        for template_name in template_names {
+            let extensions = self
+                .generic_trait_extensions
+                .get(&template_name)
+                .cloned()
+                .unwrap_or_default();
+            let mut retained = Vec::new();
+            for extension in extensions {
+                let is_copy = matches!(
+                    &extension.trait_ref,
+                    Type::Named(name, arguments) if name == &copy_name && arguments.is_empty()
+                );
+                if !is_copy || self.generic_copy_extension_is_structural(&template_name, &extension)
+                {
+                    retained.push(extension);
+                }
+            }
+            self.generic_trait_extensions
+                .insert(template_name.clone(), retained.clone());
+
+            let copy_extensions = retained
+                .iter()
+                .filter(|extension| {
+                    matches!(
+                        &extension.trait_ref,
+                        Type::Named(name, arguments) if name == &copy_name && arguments.is_empty()
+                    )
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            if copy_extensions.is_empty() {
+                continue;
+            }
+            let existing = self
+                .nominal_instances
+                .iter()
+                .filter(|(_, instance)| instance.key.template == template_name)
+                .map(|(canonical, instance)| (canonical.clone(), instance.key.arguments.clone()))
+                .collect::<Vec<_>>();
+            for extension in &copy_extensions {
+                for (canonical, arguments) in &existing {
+                    let Some(source_arguments) = arguments
+                        .iter()
+                        .map(|argument| self.source_type_for_ty(argument))
+                        .collect::<Option<Vec<_>>>()
+                    else {
+                        continue;
+                    };
+                    self.instantiate_generic_trait_extension(
+                        &template_name,
+                        canonical,
+                        &source_arguments,
+                        extension,
+                    );
+                }
+            }
+        }
+    }
+
+    fn generic_copy_extension_is_structural(
+        &mut self,
+        template_name: &str,
+        extension: &GenericTraitExtension,
+    ) -> bool {
+        let (kind, parameters) = if let Some(template) = self.struct_templates.get(template_name) {
+            (
+                NominalKind::Struct,
+                template
+                    .compile_groups
+                    .iter()
+                    .flatten()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            )
+        } else if let Some(template) = self.enum_templates.get(template_name) {
+            (
+                NominalKind::Enum,
+                template
+                    .compile_groups
+                    .iter()
+                    .flatten()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            return false;
+        };
+        let owner = format!("generic-copy::{template_name}");
+        let mut source_arguments = Vec::new();
+        let mut arguments = Vec::new();
+        for (index, parameter) in parameters.iter().enumerate() {
+            let marker = generic_parameter_marker(&owner, index, &parameter.name);
+            self.abstract_type_parameters
+                .insert(marker.clone(), parameter.name.clone());
+            source_arguments.push(Type::Named(marker.clone(), Vec::new()));
+            arguments.push(Ty::Struct(marker));
+        }
+        let substitutions = extension
+            .target_arguments
+            .iter()
+            .cloned()
+            .zip(source_arguments.iter().cloned())
+            .collect::<HashMap<_, _>>();
+        let nominals_before = self.snapshot_nominals();
+        let copy_before = self.copy_nominals.clone();
+        for predicate in &extension.where_predicates {
+            if !matches!(&predicate.trait_ref, Type::Named(name, arguments)
+                if name == self.lang_item_name(LangItemKind::Copy) && arguments.is_empty())
+            {
+                continue;
+            }
+            let mut subject = predicate.subject.clone();
+            substitute_type_parameters(&mut subject, &substitutions);
+            let subject = self.lower_source_type(&subject);
+            if subject != Ty::Error {
+                self.copy_nominals.insert(subject);
+            }
+        }
+        self.suppress_generic_inherent_instantiation += 1;
+        let instance =
+            self.ensure_nominal_instance(kind, template_name, source_arguments, arguments);
+        self.suppress_generic_inherent_instantiation -= 1;
+        let valid = instance.as_ref().is_some_and(|canonical| {
+            let target = match kind {
+                NominalKind::Struct => Ty::Struct(canonical.clone()),
+                NominalKind::Enum => Ty::Enum(canonical.clone()),
+            };
+            self.copy_layout_is_valid(&target, &self.copy_nominals)
+        });
+        if !valid {
+            self.error(format!(
+                "blanket `Copy` implementation for `{template_name}` is not structurally valid for every instance allowed by its where predicates"
+            ));
+        }
+        self.restore_nominals(nominals_before);
+        self.copy_nominals = copy_before;
+        valid
     }
 
     fn copy_layout_is_valid(&self, target: &Ty, valid: &HashSet<Ty>) -> bool {
@@ -2540,12 +2709,15 @@ impl Analyzer {
         self.trait_impls.insert(
             key.clone(),
             TraitImplInfo {
-                key,
+                key: key.clone(),
                 associated_types,
                 methods,
                 access: implementation_access,
             },
         );
+        if is_copy && self.copy_impls_finalized {
+            self.validate_dynamic_copy_implementation(&key);
+        }
     }
 
     fn collect_extension(&mut self, extension: ExtendDef, origin: ItemOrigin) {
@@ -2852,18 +3024,22 @@ impl Analyzer {
             ));
             return;
         }
-        if trait_name == self.lang_item_name(LangItemKind::Copy)
-            || trait_name == self.lang_item_name(LangItemKind::Drop)
-        {
-            self.error(format!(
-                "generic implementation of language trait `{trait_name}` is not supported yet"
-            ));
+        if !self.validate_generic_trait_members(trait_name, &schema, &extension.members) {
             return;
         }
+        let is_copy = trait_name == self.lang_item_name(LangItemKind::Copy);
+        let is_drop = trait_name == self.lang_item_name(LangItemKind::Drop);
         let target_package = self
             .nominal_accesses
             .get(target_template)
             .map(|access| access.origin.package);
+        if (is_copy || is_drop) && target_package != Some(origin.package) {
+            let trait_name = if is_copy { "Copy" } else { "Drop" };
+            self.error(format!(
+                "generic `{trait_name}` for `{target_template}` must be implemented in the package that defines the type"
+            ));
+            return;
+        }
         if target_package != Some(origin.package) && schema.access.origin.package != origin.package
         {
             self.error(format!(
@@ -2898,6 +3074,10 @@ impl Analyzer {
             .or_default()
             .push(template.clone());
 
+        if is_copy {
+            return;
+        }
+
         let existing = self
             .nominal_instances
             .iter()
@@ -2919,6 +3099,100 @@ impl Analyzer {
                 &template,
             );
         }
+    }
+
+    fn validate_generic_trait_members(
+        &mut self,
+        trait_name: &str,
+        schema: &TraitSchema,
+        members: &[ExtendMember],
+    ) -> bool {
+        let mut associated = HashSet::new();
+        let mut methods = HashSet::new();
+        let mut valid = true;
+        for member in members {
+            match member {
+                ExtendMember::Const(binding) => {
+                    if !schema.associated_types.contains(&binding.name) {
+                        self.error(format!(
+                            "unknown trait member `{trait_name}.{}`",
+                            binding.name
+                        ));
+                        valid = false;
+                    } else if !associated.insert(binding.name.clone()) {
+                        self.error(format!(
+                            "duplicate associated type `{trait_name}.{}`",
+                            binding.name
+                        ));
+                        valid = false;
+                    }
+                    if binding.annotation.is_some() {
+                        self.error(format!(
+                            "associated type `{trait_name}.{}` must not have a value annotation",
+                            binding.name
+                        ));
+                        valid = false;
+                    }
+                }
+                ExtendMember::Function(function) => {
+                    if !schema.methods.contains_key(&function.name) {
+                        self.error(format!(
+                            "unknown trait member `{trait_name}.{}`",
+                            function.name
+                        ));
+                        valid = false;
+                    } else if !methods.insert(function.name.clone()) {
+                        self.error(format!(
+                            "duplicate trait method `{trait_name}.{}`",
+                            function.name
+                        ));
+                        valid = false;
+                    }
+                    if !function.compile_groups.is_empty() {
+                        self.error(format!(
+                            "generic trait implementation method `{trait_name}.{}` is not supported",
+                            function.name
+                        ));
+                        valid = false;
+                    }
+                    if function.body.is_none() {
+                        self.error(format!(
+                            "trait implementation method `{trait_name}.{}` requires a body",
+                            function.name
+                        ));
+                        valid = false;
+                    }
+                    if !function
+                        .groups
+                        .first()
+                        .is_some_and(|group| group.len() == 1 && group[0].name == "self")
+                    {
+                        self.error(format!(
+                            "trait method `{trait_name}.{}` signature mismatch: implementation requires a contextual `self` receiver",
+                            function.name
+                        ));
+                        valid = false;
+                    }
+                }
+            }
+        }
+        for name in &schema.associated_types {
+            if !associated.contains(name) {
+                self.error(format!(
+                    "missing associated type `{trait_name}.{name}` in generic trait implementation"
+                ));
+                valid = false;
+            }
+        }
+        for name in &schema.method_order {
+            if !methods.contains(name) {
+                self.error(format!(
+                    "missing trait method `{trait_name}.{name}` in generic trait implementation"
+                ));
+                valid = false;
+            }
+        }
+        valid
     }
 
     fn instantiate_generic_trait_extension(
@@ -20012,6 +20286,150 @@ let main(): i32 = 0
         assert!(errors.iter().any(|error| error
             .message
             .contains("overlapping generic trait implementation")));
+    }
+
+    #[test]
+    fn generic_copy_and_drop_extensions_follow_concrete_instance_semantics() {
+        compile_text(
+            r#"
+let Cell(T: type) = struct(value: T)
+extend(T: type) Cell(T): Copy
+where T: Copy {}
+
+let sum(copy cell: Cell(i32)): i32 = cell.value
+let main(): i32 = {
+  let cell = Cell(42)
+  let first = cell
+  sum(cell) + first.value - 42
+}
+"#,
+        )
+        .expect("a structurally valid blanket Copy instance should be copyable");
+
+        compile_text(
+            r#"
+let Maybe(T: type) = enum {
+  Some(T),
+  None,
+}
+extend(T: type) Maybe(T): Copy
+where T: Copy {}
+
+let read(copy value: Maybe(i32)): i32 = value match {
+  Some(number) => number,
+  None => 0,
+}
+let main(): i32 = {
+  let value: Maybe(i32) = Maybe.Some(42)
+  let duplicate = value
+  read(value) + read(duplicate) - 42
+}
+"#,
+        )
+        .expect("blanket Copy should validate and materialize for generic enums");
+
+        compile_text(
+            r#"
+let Resource = struct(value: i32)
+extend Resource: Drop {
+  let drop(mut borrow self)(): () = { self.value = 0 }
+}
+let Cell(T: type) = struct(value: T)
+extend(T: type) Cell(T): Copy
+where T: Copy {}
+
+let main(): i32 = {
+  let cell = Cell(Resource(42))
+  let moved = cell
+  moved.value.value
+}
+"#,
+        )
+        .expect("an unsatisfied blanket Copy predicate should leave the instance movable");
+
+        let invalid = compile_text(
+            r#"
+let Resource = struct(value: i32)
+extend Resource: Drop {
+  let drop(mut borrow self)(): () = { self.value = 0 }
+}
+let Cell(T: type) = struct(value: T)
+extend(T: type) Cell(T): Copy {}
+let main(): i32 = 42
+"#,
+        )
+        .expect_err("an unconditional blanket Copy must still be structurally valid");
+        assert!(invalid
+            .iter()
+            .any(|error| error.message.contains("not structurally valid")));
+
+        let conflict = compile_text(
+            r#"
+let Cell(T: type) = struct(value: T)
+extend(T: type) Cell(T): Copy
+where T: Copy {}
+extend(T: type) Cell(T): Drop {
+  let drop(mut borrow self)(): () = ()
+}
+let main(): i32 = {
+  let cell = Cell(42)
+  42
+}
+"#,
+        )
+        .expect_err("a concrete instance cannot acquire both blanket Copy and Drop");
+        assert!(conflict
+            .iter()
+            .any(|error| error.message.contains("both `Copy` and `Drop`")));
+
+        let foreign_copy = compile_with_origins(
+            r#"
+pub let Cell(T: type) = struct(value: T)
+extend(T: type) Cell(T): Copy
+where T: Copy {}
+let main(): i32 = 42
+"#,
+            vec![
+                origin(1, &["owner"]),
+                origin(2, &["consumer"]),
+                origin(2, &["consumer"]),
+            ],
+        )
+        .expect_err("blanket Copy must be owned by the target package");
+        assert!(foreign_copy
+            .iter()
+            .any(|error| error.message.contains("package that defines the type")));
+
+        let foreign_drop = compile_with_origins(
+            r#"
+pub let Cell(T: type) = struct(value: T)
+extend(T: type) Cell(T): Drop {
+  let drop(mut borrow self)(): () = ()
+}
+let main(): i32 = 42
+"#,
+            vec![
+                origin(1, &["owner"]),
+                origin(2, &["consumer"]),
+                origin(2, &["consumer"]),
+            ],
+        )
+        .expect_err("blanket Drop must be owned by the target package");
+        assert!(foreign_drop
+            .iter()
+            .any(|error| error.message.contains("package that defines the type")));
+
+        let missing_drop = compile_text(
+            r#"
+let Cell(T: type) = struct(value: T)
+extend(T: type) Cell(T): Drop {}
+let main(): i32 = 42
+"#,
+        )
+        .expect_err("an unused blanket Drop implementation must still be complete");
+        assert!(missing_drop
+            .iter()
+            .any(|error| error.message.contains("missing trait method `Drop.drop`")));
     }
 
     #[test]

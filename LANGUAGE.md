@@ -452,8 +452,11 @@ v0.8 的实现由 edition core 普通源码声明唯一的 `pub let Copy = trait
 （包括私有表示）都必须递归实现 `Copy`；实现只能位于定义该名义类型的包。
 
 具体泛型实例的实现不泛化：`extend Cell(i32): Copy {}` 不会使 `Cell(bool)` 或 `Cell(T)` 模板成为
-`Copy`。截至 v0.14 尚不支持 blanket/generic `Copy` impl 或 `where` 证明，函数类型和闭包类型自身也不是
-`Copy`。未标注参数仍按“`Copy` 则 copy，否则 move”选择模式，显式 `move` 始终覆盖默认值；同一
+`Copy`。v0.38 起可以显式声明 blanket 实现，例如
+`extend(T: type) Cell(T): Copy where T: Copy {}`。编译器在定义处用抽象 where proof 验证每个字段，
+并让已有实例参与固定点、让后续实例即时接受相同结构检查；无 `T: Copy` 却包含 `T` 字段的 blanket
+声明会直接拒绝。函数类型和闭包类型自身仍不是 `Copy`。未标注参数仍按“`Copy` 则 copy，否则 move”
+选择模式，显式 `move` 始终覆盖默认值；同一
 判定已经接入普通读取、闭包捕获以及函数和 bound method 的部分应用。
 
 v0.9 将初始化状态表示为规范化的“未初始化 move-path 叶子集合”alternatives。移动 root 或字段后，
@@ -939,8 +942,9 @@ let value = cell.take()
 specialization 仍未开放。v0.36 起 blanket inherent
 extension 可以使用同一套 where predicates 条件选择成员；v0.37 起同样可写 blanket trait 实现，
 其中方法、trait 参数和 `let Item = T` 形式的关联类型会随具体 target instance 一同替换。只有 where
-谓词全部成立的实例才获得该 trait 实现。`Copy` 与 `Drop` 的 blanket 实现仍等待单独的结构 fixed
-point 与析构一致性规则。
+谓词全部成立的实例才获得该 trait 实现。v0.38 把 `Copy` 纳入定义期抽象结构证明与 concrete fixed
+point，把 `Drop` 纳入既有递归 drop glue；两者仍只能在 target 类型的定义包声明，且任一 concrete
+instance 不得同时获得二者。
 
 实现参数必须能从目标类型、trait 参数或 where 约束唯一决定，防止产生无法选择的自由参数。
 

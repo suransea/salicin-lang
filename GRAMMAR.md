@@ -174,7 +174,8 @@ specialization、generic member 和 inherent associated constant 暂不合法。
 泛型函数上的普通 `where T: Trait` 谓词、多个谓词和尾逗号；v0.34 又允许 bound method
 静态分派，v0.35 加入关联类型等式，v0.36 将同一谓词系统用于 blanket generic inherent extension。
 v0.37 再加入 blanket generic trait implementation selection，包括 where 条件和关联类型替换；
-blanket `Copy` / `Drop`、重叠 specialization 仍保留为后续语义。
+v0.38 又开放 blanket `Copy` / `Drop`：`Copy` 必须能由字段布局与 where proofs 在定义处证明，
+`Drop` 随 concrete instance 生成析构实现。重叠 specialization 仍保留为后续语义。
 
 ### 4.4 导入与 FFI
 

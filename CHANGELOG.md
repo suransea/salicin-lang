@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.38.0 - 2026-07-21
+
+- Enabled blanket generic `Copy` implementations with `where` proofs, including nested generic
+  structs and enums.
+- Added definition-time abstract structural validation, initial fixed-point participation, and
+  immediate validation for nominal instances materialized after the fixed point.
+- Enabled blanket generic `Drop` implementations and integrated their concrete methods into the
+  existing recursive drop glue and structured cleanup paths.
+- Preserved defining-package ownership for both language traits and rejected every concrete
+  instance that would acquire both `Copy` and `Drop`.
+
 ## 0.37.0 - 2026-07-21
 
 - Implemented blanket generic trait extensions such as
