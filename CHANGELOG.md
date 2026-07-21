@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.74.0 - 2026-07-21
+
+- Added the edition-pinned `core.control` module with validated `ControlFlow`, `Try`,
+  `FromResidual`, and `FromError` language protocol declarations.
+- Mounted error-control names in the reserved standard-library namespace and required ordinary
+  `use core.control...` imports whenever source names them, with precise missing-import diagnostics.
+- Allowed receiver-free functions in trait schemas so conversion constructors such as
+  `from_output`, `from_residual`, and `from_error` have direct declaration shapes.
+- Extended the core bundle contract, canonical identities, provenance checks, export synchronization,
+  standard-library documentation, and resolver coverage to the new module.
+- Removed stale compatibility wording from the embedded prelude; `.try` and `throw` remain syntax
+  and do not inject protocol names into lexical scope.
+
 ## 0.73.0 - 2026-07-21
 
 - Split embedded `core.prelude` and `core.ops` semantic identities: `Option`, `Result`, `never`,

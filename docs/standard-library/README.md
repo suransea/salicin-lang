@@ -13,6 +13,7 @@ library/
   core/src/
     prelude.sali
     ops.sali
+    control.sali
   alloc/src/
     boxed.sali
     vec.sali
@@ -21,7 +22,8 @@ library/
 ## Prelude policy
 
 The edition prelude must stay small. It is intended for universally useful language-level names,
-currently `Option`, `Result`, `never`, `Copy`, and `Drop`. Operator traits belong to `core.ops`;
+currently `Option`, `Result`, `never`, `Copy`, and `Drop`. Operator traits belong to `core.ops`,
+error-control traits belong to `core.control`, and
 owning containers belong to `alloc.boxed` and `alloc.vec`. Alloc declarations must be named through
 their module or imported explicitly with ordinary `use`; for example:
 
@@ -36,6 +38,8 @@ may still be named `Add`, `Box`, or `Vec`. A project dependency or top-level fil
 either standard namespace.
 `core.ops` uses the same rule: `Add`, `Sub`, `Mul`, `Div`, and `Rem` require ordinary imports when
 named. Merely writing the corresponding operator token does not require importing its protocol.
+Likewise, `ControlFlow`, `Try`, `FromResidual`, and `FromError` require imports when named; `.try`
+and `throw` do not inject those names into source scope.
 
 The compiler, library sources, and edition form one toolchain unit. Compiler-matched language items
 must come from the matching `core`, while user declarations with the same spelling remain ordinary

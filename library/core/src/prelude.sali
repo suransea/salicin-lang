@@ -1,5 +1,3 @@
-// `void` remains a compiler-provided alias of `()` until general type aliases land.
-
 pub let Option(T: type) = enum {
   Some(T),
   None,

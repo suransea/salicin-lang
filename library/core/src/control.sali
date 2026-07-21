@@ -1,0 +1,19 @@
+pub let ControlFlow(Break: type, Continue: type) = enum {
+  Continue(Continue),
+  Break(Break),
+}
+
+pub let Try = trait {
+  let Output: type
+  let Residual: type
+  let branch(move self)(): ControlFlow(Residual, Output)
+  let from_output(move output: Output): Self
+}
+
+pub let FromResidual(R: type) = trait {
+  let from_residual(move residual: R): Self
+}
+
+pub let FromError(E: type) = trait {
+  let from_error(move error: E): Self
+}

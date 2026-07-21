@@ -27,7 +27,19 @@ extend Number: Add(Number) {
 Writing `left + right` does not itself require an import. An import is required when source names the
 protocol in an implementation, bound, type, or direct member access.
 
-Primitive implementations and a few bootstrap aliases remain compiler-defined. A declaration only
+`core.control` contains the error-control protocols `ControlFlow`, `Try`, `FromResidual`, and
+`FromError`. They are ordinary, explicitly imported names:
+
+```sali
+use core.control.{Try, FromResidual}
+```
+
+The compiler validates their complete edition-defined declaration shapes before compiling a
+package. Postfix `.try` and `throw` are being migrated to these identities; the current executable
+subset still supplies the built-in `Option` and `Result` behavior described by the language
+specification.
+
+Primitive implementations and the unit spelling `void` remain compiler-defined. A declaration only
 receives language-item behavior when its validated identity comes from this edition's embedded core;
 same-named user declarations do not gain special semantics.
 

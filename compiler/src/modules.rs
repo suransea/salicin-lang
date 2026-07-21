@@ -295,6 +295,7 @@ const ALLOC_EXPORTS: &[(&str, &str)] = &[
 
 const CORE_PRELUDE_EXPORTS: &[&str] = &["Option", "Result", "never", "Copy", "Drop"];
 const CORE_OPS_EXPORTS: &[&str] = &["Add", "Sub", "Mul", "Div", "Rem"];
+const CORE_CONTROL_EXPORTS: &[&str] = &["ControlFlow", "Try", "FromResidual", "FromError"];
 
 fn validate_package_layout(
     packages: &[SourcePackage],
@@ -669,6 +670,9 @@ fn install_standard_namespaces(
     for name in CORE_OPS_EXPORTS {
         required_imports.insert((*name).to_owned(), format!("core.ops.{name}"));
     }
+    for name in CORE_CONTROL_EXPORTS {
+        required_imports.insert((*name).to_owned(), format!("core.control.{name}"));
+    }
 
     for package_root in package_roots {
         let mut core_root = package_root.clone();
@@ -685,7 +689,7 @@ fn install_standard_namespaces(
             ));
         } else {
             module_paths.insert(core_root.clone());
-            for module in ["prelude", "ops"] {
+            for module in ["prelude", "ops", "control"] {
                 let mut module_path = core_root.clone();
                 module_path.push(module.to_owned());
                 module_paths.insert(module_path);
@@ -715,6 +719,22 @@ fn install_standard_namespaces(
                     logical_path,
                     Symbol {
                         canonical: format!("core::ops::{name}"),
+                        module_path,
+                        package_root: package_root.clone(),
+                        visibility: Visibility::Public,
+                        source_path: "<core>".to_owned(),
+                    },
+                );
+            }
+            for name in CORE_CONTROL_EXPORTS {
+                let mut module_path = core_root.clone();
+                module_path.push("control".to_owned());
+                let mut logical_path = module_path.clone();
+                logical_path.push((*name).to_owned());
+                symbols.insert(
+                    logical_path,
+                    Symbol {
+                        canonical: format!("core::control::{name}"),
                         module_path,
                         package_root: package_root.clone(),
                         visibility: Visibility::Public,
@@ -3705,6 +3725,32 @@ let main(): i32 = Option()
                 && diagnostic.contains("use core.ops.Add")
         }));
 
+        let control = resolve_sources(&[unit(
+            "control.sali",
+            &[],
+            "use core.control.{Try, FromResidual as ConvertResidual}\n\
+             let accept(T: type)(move value: T): T where T: Try = value\n",
+            true,
+        )])
+        .unwrap();
+        assert!(control.items.iter().any(|item| {
+            matches!(item, Item::Function(function)
+                if function.where_predicates.iter().any(|predicate|
+                    matches!(&predicate.trait_ref, Type::Named(name, _) if name == "core::control::Try")))
+        }));
+
+        let bare_control = resolve_sources(&[unit(
+            "control.sali",
+            &[],
+            "let accept(T: type)(move value: T): T where T: Try = value\n",
+            true,
+        )])
+        .unwrap_err();
+        assert!(bare_control.iter().any(|diagnostic| {
+            diagnostic.contains("standard-library item `Try` is not in the prelude")
+                && diagnostic.contains("use core.control.Try")
+        }));
+
         for namespace in ["core", "alloc"] {
             let module = resolve_sources(&[
                 unit("main.sali", &[], "let main(): i32 = 0\n", true),
@@ -3763,6 +3809,7 @@ let main(): i32 = Option()
             .iter()
             .map(|name| ("prelude", *name))
             .chain(CORE_OPS_EXPORTS.iter().map(|name| ("ops", *name)))
+            .chain(CORE_CONTROL_EXPORTS.iter().map(|name| ("control", *name)))
             .collect::<BTreeSet<_>>();
         assert_eq!(core_exports, expected_core);
 

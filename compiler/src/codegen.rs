@@ -2051,17 +2051,6 @@ impl Analyzer {
                         ));
                         valid = false;
                     }
-                    let is_method = function
-                        .groups
-                        .first()
-                        .is_some_and(|group| group.len() == 1 && group[0].name == "self");
-                    if !is_method {
-                        self.error(format!(
-                            "associated trait function `{}.{name}` is not supported; declare a `self` receiver",
-                            definition.name
-                        ));
-                        valid = false;
-                    }
                     method_order.push(name.clone());
                     methods.insert(name, function);
                 }

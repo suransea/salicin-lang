@@ -19,6 +19,7 @@ use crate::parser;
 
 const EDITION_2026_PRELUDE: &str = include_str!("../../library/core/src/prelude.sali");
 const EDITION_2026_OPS: &str = include_str!("../../library/core/src/ops.sali");
+const EDITION_2026_CONTROL: &str = include_str!("../../library/core/src/control.sali");
 
 /// A stable logical role fulfilled by one declaration in the edition's
 /// `core` bundle.
@@ -34,10 +35,14 @@ pub enum LangItemKind {
     Mul,
     Div,
     Rem,
+    ControlFlow,
+    Try,
+    FromResidual,
+    FromError,
 }
 
 impl LangItemKind {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 14] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -48,6 +53,10 @@ impl LangItemKind {
         Self::Mul,
         Self::Div,
         Self::Rem,
+        Self::ControlFlow,
+        Self::Try,
+        Self::FromResidual,
+        Self::FromError,
     ];
 
     pub const fn source_name(self) -> &'static str {
@@ -62,15 +71,26 @@ impl LangItemKind {
             Self::Mul => "Mul",
             Self::Div => "Div",
             Self::Rem => "Rem",
+            Self::ControlFlow => "ControlFlow",
+            Self::Try => "Try",
+            Self::FromResidual => "FromResidual",
+            Self::FromError => "FromError",
         }
     }
 
     const fn expected_kind(self) -> &'static str {
         match self {
-            Self::Option | Self::Result | Self::Never => "enum",
-            Self::Copy | Self::Drop | Self::Add | Self::Sub | Self::Mul | Self::Div | Self::Rem => {
-                "trait"
-            }
+            Self::Option | Self::Result | Self::Never | Self::ControlFlow => "enum",
+            Self::Copy
+            | Self::Drop
+            | Self::Add
+            | Self::Sub
+            | Self::Mul
+            | Self::Div
+            | Self::Rem
+            | Self::Try
+            | Self::FromResidual
+            | Self::FromError => "trait",
         }
     }
 
@@ -81,7 +101,15 @@ impl LangItemKind {
             Self::Mul => Some("mul"),
             Self::Div => Some("div"),
             Self::Rem => Some("rem"),
-            Self::Option | Self::Result | Self::Never | Self::Copy | Self::Drop => None,
+            Self::Option
+            | Self::Result
+            | Self::Never
+            | Self::Copy
+            | Self::Drop
+            | Self::ControlFlow
+            | Self::Try
+            | Self::FromResidual
+            | Self::FromError => None,
         }
     }
 }
@@ -137,6 +165,10 @@ pub struct LangItems {
     mul: LangItem,
     div: LangItem,
     rem: LangItem,
+    control_flow: LangItem,
+    try_trait: LangItem,
+    from_residual: LangItem,
+    from_error: LangItem,
 }
 
 impl LangItems {
@@ -180,6 +212,22 @@ impl LangItems {
         &self.rem
     }
 
+    pub const fn control_flow(&self) -> &LangItem {
+        &self.control_flow
+    }
+
+    pub const fn try_trait(&self) -> &LangItem {
+        &self.try_trait
+    }
+
+    pub const fn from_residual(&self) -> &LangItem {
+        &self.from_residual
+    }
+
+    pub const fn from_error(&self) -> &LangItem {
+        &self.from_error
+    }
+
     pub const fn get(&self, kind: LangItemKind) -> &LangItem {
         match kind {
             LangItemKind::Option => &self.option,
@@ -192,6 +240,10 @@ impl LangItems {
             LangItemKind::Mul => &self.mul,
             LangItemKind::Div => &self.div,
             LangItemKind::Rem => &self.rem,
+            LangItemKind::ControlFlow => &self.control_flow,
+            LangItemKind::Try => &self.try_trait,
+            LangItemKind::FromResidual => &self.from_residual,
+            LangItemKind::FromError => &self.from_error,
         }
     }
 }
@@ -210,7 +262,11 @@ impl CoreBundle {
         match edition {
             Edition::Edition2026 => Self::from_modules(
                 edition,
-                &[("prelude", EDITION_2026_PRELUDE), ("ops", EDITION_2026_OPS)],
+                &[
+                    ("prelude", EDITION_2026_PRELUDE),
+                    ("ops", EDITION_2026_OPS),
+                    ("control", EDITION_2026_CONTROL),
+                ],
             ),
         }
     }
@@ -229,7 +285,10 @@ impl CoreBundle {
 
     #[cfg(test)]
     fn from_source(edition: Edition, source: &str) -> Result<Self, CoreBundleError> {
-        let mut program = parser::parse(source).map_err(|error| {
+        // Most contract tests isolate one prelude/operator declaration. Keep
+        // the independently tested control module present in those fixtures.
+        let source = format!("{source}\n{EDITION_2026_CONTROL}");
+        let mut program = parser::parse(&source).map_err(|error| {
             CoreBundleError::new(
                 edition,
                 vec![format!("embedded prelude does not parse: {error}")],
@@ -317,6 +376,10 @@ impl CoreBundle {
             &mut lang_items.mul,
             &mut lang_items.div,
             &mut lang_items.rem,
+            &mut lang_items.control_flow,
+            &mut lang_items.try_trait,
+            &mut lang_items.from_residual,
+            &mut lang_items.from_error,
         ] {
             lang_item.canonical_name = item_name(&program.items[lang_item.item_index])
                 .expect("resolved core lang item remains named")
@@ -382,6 +445,13 @@ pub const fn embedded_prelude_source(edition: Edition) -> &'static str {
 pub const fn embedded_ops_source(edition: Edition) -> &'static str {
     match edition {
         Edition::Edition2026 => EDITION_2026_OPS,
+    }
+}
+
+/// Return the error-control protocol source compiled into this compiler.
+pub const fn embedded_control_source(edition: Edition) -> &'static str {
+    match edition {
+        Edition::Edition2026 => EDITION_2026_CONTROL,
     }
 }
 
@@ -473,6 +543,10 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         mul: item(LangItemKind::Mul),
         div: item(LangItemKind::Div),
         rem: item(LangItemKind::Rem),
+        control_flow: item(LangItemKind::ControlFlow),
+        try_trait: item(LangItemKind::Try),
+        from_residual: item(LangItemKind::FromResidual),
+        from_error: item(LangItemKind::FromError),
     })
 }
 
@@ -511,8 +585,18 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         (LangItemKind::Option, Item::Enum(definition)) => validate_option(definition, diagnostics),
         (LangItemKind::Result, Item::Enum(definition)) => validate_result(definition, diagnostics),
         (LangItemKind::Never, Item::Enum(definition)) => validate_never(definition, diagnostics),
+        (LangItemKind::ControlFlow, Item::Enum(definition)) => {
+            validate_control_flow(definition, diagnostics)
+        }
         (LangItemKind::Copy, Item::Trait(definition)) => validate_copy(definition, diagnostics),
         (LangItemKind::Drop, Item::Trait(definition)) => validate_drop(definition, diagnostics),
+        (LangItemKind::Try, Item::Trait(definition)) => validate_try(definition, diagnostics),
+        (LangItemKind::FromResidual, Item::Trait(definition)) => {
+            validate_conversion_trait(definition, "R", "residual", "from_residual", diagnostics)
+        }
+        (LangItemKind::FromError, Item::Trait(definition)) => {
+            validate_conversion_trait(definition, "E", "error", "from_error", diagnostics)
+        }
         (kind, Item::Trait(definition)) if kind.operator_method().is_some() => {
             validate_operator(kind, definition, diagnostics)
         }
@@ -581,6 +665,102 @@ fn validate_never(definition: &EnumDef, diagnostics: &mut Vec<String>) {
     if !definition.compile_groups.is_empty() || !definition.variants.is_empty() {
         diagnostics.push("lang item `never` must have shape `pub let never = enum {}`".to_owned());
     }
+}
+
+fn validate_control_flow(definition: &EnumDef, diagnostics: &mut Vec<String>) {
+    let expected_groups = vec![vec![type_parameter("Break"), type_parameter("Continue")]];
+    let expected_variants = vec![
+        positional_variant("Continue", named_type("Continue")),
+        positional_variant("Break", named_type("Break")),
+    ];
+    if definition.compile_groups != expected_groups || definition.variants != expected_variants {
+        diagnostics.push(
+            "lang item `ControlFlow` must have shape `pub let ControlFlow(Break: type, Continue: type) = enum { Continue(Continue), Break(Break) }`"
+                .to_owned(),
+        );
+    }
+}
+
+fn validate_try(definition: &TraitDef, diagnostics: &mut Vec<String>) {
+    let valid = definition.compile_groups.is_empty()
+        && matches!(
+            definition.members.as_slice(),
+            [
+                TraitMember::AssociatedType { name: output, compile_groups: output_groups, default: None },
+                TraitMember::AssociatedType { name: residual, compile_groups: residual_groups, default: None },
+                TraitMember::Function(branch),
+                TraitMember::Function(from_output),
+            ] if output == "Output"
+                && output_groups.is_empty()
+                && residual == "Residual"
+                && residual_groups.is_empty()
+                && valid_try_branch(branch)
+                && valid_static_conversion(from_output, "from_output", "output", "Output")
+        );
+    if !valid {
+        diagnostics.push(
+            "lang item `Try` must declare `Output`, `Residual`, `branch(move self)(): ControlFlow(Residual, Output)`, and `from_output(move output: Output): Self`"
+                .to_owned(),
+        );
+    }
+}
+
+fn valid_try_branch(function: &Function) -> bool {
+    let [receiver_group, empty_group] = function.groups.as_slice() else {
+        return false;
+    };
+    let [receiver] = receiver_group.as_slice() else {
+        return false;
+    };
+    function.name == "branch"
+        && function.compile_groups.is_empty()
+        && function.return_type
+            == Some(Type::Named(
+                "ControlFlow".to_owned(),
+                vec![named_type("Residual"), named_type("Output")],
+            ))
+        && function.body.is_none()
+        && receiver.name == "self"
+        && receiver.mode == PassMode::Move
+        && receiver.ty == named_type("Self")
+        && empty_group.is_empty()
+}
+
+fn validate_conversion_trait(
+    definition: &TraitDef,
+    parameter: &str,
+    value_name: &str,
+    method: &str,
+    diagnostics: &mut Vec<String>,
+) {
+    let valid = definition.compile_groups == vec![vec![type_parameter(parameter)]]
+        && matches!(
+            definition.members.as_slice(),
+            [TraitMember::Function(function)]
+                if valid_static_conversion(function, method, value_name, parameter)
+        );
+    if !valid {
+        diagnostics.push(format!(
+            "lang item `{}` must have shape `pub let {}({parameter}: type) = trait {{ let {method}(move {value_name}: {parameter}): Self }}`",
+            definition.name, definition.name
+        ));
+    }
+}
+
+fn valid_static_conversion(function: &Function, method: &str, value_name: &str, ty: &str) -> bool {
+    let [group] = function.groups.as_slice() else {
+        return false;
+    };
+    let [value] = group.as_slice() else {
+        return false;
+    };
+    function.name == method
+        && function.compile_groups.is_empty()
+        && function.return_type == Some(named_type("Self"))
+        && function.body.is_none()
+        && value.name == value_name
+        && value.mode == PassMode::Move
+        && value.ty == named_type(ty)
 }
 
 fn validate_copy(definition: &TraitDef, diagnostics: &mut Vec<String>) {
@@ -728,7 +908,7 @@ pub let Rem(Rhs: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), 10);
+        assert_eq!(bundle.program().items.len(), 14);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -743,6 +923,10 @@ pub let Rem(Rhs: type) = trait {
                 | LangItemKind::Mul
                 | LangItemKind::Div
                 | LangItemKind::Rem => format!("core::ops::{}", kind.source_name()),
+                LangItemKind::ControlFlow
+                | LangItemKind::Try
+                | LangItemKind::FromResidual
+                | LangItemKind::FromError => format!("core::control::{}", kind.source_name()),
             };
             assert_eq!(
                 item_name(&bundle.program().items[lang_item.item_index()]),
@@ -760,6 +944,10 @@ pub let Rem(Rhs: type) = trait {
                 | LangItemKind::Mul
                 | LangItemKind::Div
                 | LangItemKind::Rem => "ops",
+                LangItemKind::ControlFlow
+                | LangItemKind::Try
+                | LangItemKind::FromResidual
+                | LangItemKind::FromError => "control",
             };
             assert_eq!(
                 bundle.program().item_origins[lang_item.item_index()],
