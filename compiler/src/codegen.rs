@@ -385,6 +385,8 @@ struct AlgebraicHandler {
     clauses: HashMap<String, AlgebraicHandlerClause>,
     done: Option<AlgebraicHandlerClause>,
     inlining: Rc<RefCell<HashMap<String, String>>>,
+    loop_breaks: Rc<RefCell<HashMap<String, SourceContinuation>>>,
+    result_source: Option<Type>,
 }
 
 #[derive(Clone)]
@@ -15658,6 +15660,8 @@ impl Analyzer {
             clauses,
             done,
             inlining: Rc::new(RefCell::new(HashMap::new())),
+            loop_breaks: Rc::new(RefCell::new(HashMap::new())),
+            result_source: expected.and_then(|ty| self.source_type_for_ty(ty)),
         });
         let final_continuation: SourceContinuation = if let Some(done) = handler.done.clone() {
             let handler = handler.clone();
@@ -15703,6 +15707,13 @@ impl Analyzer {
             let returned: SourceContinuation =
                 Rc::new(|_, value| Ok(Expr::Return(Some(Box::new(value)))));
             return self.transform_handler_expr(argument, handler, resume, returned);
+        }
+        if let Some((name, argument)) = internal_handler_loop_break_argument(&expression) {
+            let Some(loop_continuation) = handler.loop_breaks.borrow().get(&name).cloned() else {
+                self.error("internal handler loop break escaped its continuation frame");
+                return Err(());
+            };
+            return self.transform_handler_expr(argument, handler, resume, loop_continuation);
         }
         if let Some((operation, arguments)) = handled_operation_call(&expression, &handler.identity)
         {
@@ -15792,13 +15803,6 @@ impl Analyzer {
                 ));
                 return Err(());
             }
-        }
-
-        if matches!(&expression, Expr::While { .. } | Expr::Loop { .. })
-            && expression_contains_effect(&expression, &handler.identity)
-        {
-            self.error("handled operations inside loop backedges are not implemented yet");
-            return Err(());
         }
 
         if matches!(&expression, Expr::Call(_, _)) {
@@ -15927,6 +15931,12 @@ impl Analyzer {
                     }),
                 )
             }
+            Expr::While { condition, body } => {
+                self.transform_handler_loop(Some(*condition), *body, handler, resume, continuation)
+            }
+            Expr::Loop { body } => {
+                self.transform_handler_loop(None, *body, handler, resume, continuation)
+            }
             Expr::Call(callee, arguments) => {
                 let completed: SourceArgumentsContinuation = Rc::new(move |analyzer, arguments| {
                     continuation(analyzer, Expr::Call(callee.clone(), arguments))
@@ -15971,6 +15981,74 @@ impl Analyzer {
                 )
             }),
         )
+    }
+
+    fn transform_handler_loop(
+        &mut self,
+        condition: Option<Expr>,
+        mut body: Expr,
+        handler: Rc<AlgebraicHandler>,
+        resume: Option<SourceResume>,
+        continuation: SourceContinuation,
+    ) -> Result<Expr, ()> {
+        let Some(result_source) = handler.result_source.clone() else {
+            self.error("a handler containing a resumable loop requires a contextual result type");
+            return Err(());
+        };
+        let specialization = self.next_closure;
+        self.next_closure += 1;
+        let recursive_name = format!("$handler$recursive$loop${specialization}");
+        let break_name = format!("$handler$loop$break${specialization}");
+        rewrite_handler_loop_control(&mut body, &recursive_name, &break_name, 0);
+        let recursive_call =
+            || Expr::Call(Box::new(Expr::Name(recursive_name.clone())), Vec::new());
+        let break_call = |value| {
+            Expr::Call(
+                Box::new(Expr::Name(break_name.clone())),
+                vec![CallArg { label: None, value }],
+            )
+        };
+        let iteration = if let Some(condition) = condition {
+            Expr::If {
+                condition: Box::new(condition),
+                then_branch: Box::new(Expr::Block(
+                    vec![Stmt::Expr(body)],
+                    Some(Box::new(recursive_call())),
+                )),
+                else_branch: Some(Box::new(break_call(Expr::Unit))),
+            }
+        } else {
+            Expr::Block(vec![Stmt::Expr(body)], Some(Box::new(recursive_call())))
+        };
+        handler
+            .loop_breaks
+            .borrow_mut()
+            .insert(break_name, continuation);
+        let identity: SourceContinuation = Rc::new(|_, value| Ok(value));
+        let transformed = self.transform_handler_expr(iteration, handler.clone(), resume, identity);
+        handler
+            .loop_breaks
+            .borrow_mut()
+            .remove(&format!("$handler$loop$break${specialization}"));
+        let transformed = transformed?;
+        let frame_name = format!("$handler$loop$frame${specialization}");
+        let frame = Binding {
+            mutable: true,
+            name: frame_name.clone(),
+            annotation: Some(Type::Function {
+                groups: vec![Vec::new()],
+                effects: FunctionEffects::default(),
+                result: Box::new(result_source),
+            }),
+            value: Expr::Closure(Vec::new(), Box::new(transformed)),
+        };
+        Ok(Expr::Block(
+            vec![Stmt::Let(frame)],
+            Some(Box::new(Expr::Call(
+                Box::new(Expr::Name(frame_name)),
+                Vec::new(),
+            ))),
+        ))
     }
 
     fn transform_effectful_named_call(
@@ -19692,11 +19770,171 @@ fn internal_handler_return_argument(expression: &Expr) -> Option<Expr> {
     Some(groups[0][0].value.clone())
 }
 
+fn internal_handler_loop_break_argument(expression: &Expr) -> Option<(String, Expr)> {
+    let mut groups = Vec::new();
+    let root = flatten_call(expression, &mut groups);
+    let Expr::Name(name) = root else {
+        return None;
+    };
+    if !name.starts_with("$handler$loop$break$")
+        || groups.len() != 1
+        || groups[0].len() != 1
+        || groups[0][0].label.is_some()
+    {
+        return None;
+    }
+    Some((name.clone(), groups[0][0].value.clone()))
+}
+
 fn replace_call_root_name(expression: &mut Expr, replacement: &str) {
     match expression {
         Expr::Call(callee, _) => replace_call_root_name(callee, replacement),
         Expr::Name(name) => *name = replacement.to_owned(),
         _ => {}
+    }
+}
+
+fn rewrite_handler_loop_control(
+    expression: &mut Expr,
+    recursive_name: &str,
+    break_name: &str,
+    nested_loop_depth: usize,
+) {
+    if nested_loop_depth == 0 {
+        match expression {
+            Expr::Break(value) => {
+                let value = value.take().map_or(Expr::Unit, |value| *value);
+                *expression = Expr::Call(
+                    Box::new(Expr::Name(format!("$handler$return${recursive_name}"))),
+                    vec![CallArg {
+                        label: None,
+                        value: Expr::Call(
+                            Box::new(Expr::Name(break_name.to_owned())),
+                            vec![CallArg { label: None, value }],
+                        ),
+                    }],
+                );
+                return;
+            }
+            Expr::Continue => {
+                *expression = Expr::Call(
+                    Box::new(Expr::Name(format!("$handler$return${recursive_name}"))),
+                    vec![CallArg {
+                        label: None,
+                        value: Expr::Call(
+                            Box::new(Expr::Name(recursive_name.to_owned())),
+                            Vec::new(),
+                        ),
+                    }],
+                );
+                return;
+            }
+            _ => {}
+        }
+    }
+    match expression {
+        Expr::While { .. } | Expr::Loop { .. } | Expr::Closure(_, _) => {}
+        Expr::Unary(_, value)
+        | Expr::Try(value)
+        | Expr::DoBlock { body: value }
+        | Expr::Throw(value)
+        | Expr::Unsafe(value)
+        | Expr::Borrow { value, .. } => {
+            rewrite_handler_loop_control(value, recursive_name, break_name, nested_loop_depth)
+        }
+        Expr::Binary(left, _, right)
+        | Expr::Coalesce(left, right)
+        | Expr::Assign(left, right)
+        | Expr::CompoundAssign(left, _, right) => {
+            rewrite_handler_loop_control(left, recursive_name, break_name, nested_loop_depth);
+            rewrite_handler_loop_control(right, recursive_name, break_name, nested_loop_depth);
+        }
+        Expr::Call(callee, arguments) => {
+            rewrite_handler_loop_control(callee, recursive_name, break_name, nested_loop_depth);
+            for argument in arguments {
+                rewrite_handler_loop_control(
+                    &mut argument.value,
+                    recursive_name,
+                    break_name,
+                    nested_loop_depth,
+                );
+            }
+        }
+        Expr::Member(base, _) | Expr::ChainMember(base, _) => {
+            rewrite_handler_loop_control(base, recursive_name, break_name, nested_loop_depth)
+        }
+        Expr::Array(elements) => {
+            for element in elements {
+                rewrite_handler_loop_control(
+                    element,
+                    recursive_name,
+                    break_name,
+                    nested_loop_depth,
+                );
+            }
+        }
+        Expr::Index { base, index } => {
+            rewrite_handler_loop_control(base, recursive_name, break_name, nested_loop_depth);
+            rewrite_handler_loop_control(index, recursive_name, break_name, nested_loop_depth);
+        }
+        Expr::Block(statements, tail) => {
+            for statement in statements {
+                let expression = match statement {
+                    Stmt::Let(binding) => &mut binding.value,
+                    Stmt::Expr(expression) => expression,
+                };
+                rewrite_handler_loop_control(
+                    expression,
+                    recursive_name,
+                    break_name,
+                    nested_loop_depth,
+                );
+            }
+            if let Some(tail) = tail {
+                rewrite_handler_loop_control(tail, recursive_name, break_name, nested_loop_depth);
+            }
+        }
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            rewrite_handler_loop_control(condition, recursive_name, break_name, nested_loop_depth);
+            rewrite_handler_loop_control(
+                then_branch,
+                recursive_name,
+                break_name,
+                nested_loop_depth,
+            );
+            if let Some(branch) = else_branch {
+                rewrite_handler_loop_control(branch, recursive_name, break_name, nested_loop_depth);
+            }
+        }
+        Expr::Return(value) | Expr::Break(value) => {
+            if let Some(value) = value {
+                rewrite_handler_loop_control(value, recursive_name, break_name, nested_loop_depth);
+            }
+        }
+        Expr::Match { scrutinee, arms } => {
+            rewrite_handler_loop_control(scrutinee, recursive_name, break_name, nested_loop_depth);
+            for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    rewrite_handler_loop_control(
+                        guard,
+                        recursive_name,
+                        break_name,
+                        nested_loop_depth,
+                    );
+                }
+                rewrite_handler_loop_control(
+                    &mut arm.body,
+                    recursive_name,
+                    break_name,
+                    nested_loop_depth,
+                );
+            }
+        }
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => {}
     }
 }
 
@@ -19838,81 +20076,6 @@ fn source_type_expression_name(expression: &Expr) -> Option<String> {
         }
         Expr::Unit => Some("()".into()),
         _ => None,
-    }
-}
-
-fn expression_contains_effect(expression: &Expr, identity: &str) -> bool {
-    if handled_operation_call(expression, identity).is_some() {
-        return true;
-    }
-    match expression {
-        Expr::Unary(_, value)
-        | Expr::Try(value)
-        | Expr::DoBlock { body: value }
-        | Expr::Throw(value)
-        | Expr::Unsafe(value)
-        | Expr::Closure(_, value) => expression_contains_effect(value, identity),
-        Expr::Borrow { value, .. } => expression_contains_effect(value, identity),
-        Expr::Binary(left, _, right)
-        | Expr::Coalesce(left, right)
-        | Expr::Assign(left, right)
-        | Expr::CompoundAssign(left, _, right) => {
-            expression_contains_effect(left, identity)
-                || expression_contains_effect(right, identity)
-        }
-        Expr::Call(callee, arguments) => {
-            expression_contains_effect(callee, identity)
-                || arguments
-                    .iter()
-                    .any(|argument| expression_contains_effect(&argument.value, identity))
-        }
-        Expr::Member(base, _) | Expr::ChainMember(base, _) => {
-            expression_contains_effect(base, identity)
-        }
-        Expr::Array(elements) => elements
-            .iter()
-            .any(|element| expression_contains_effect(element, identity)),
-        Expr::Index { base, index } => {
-            expression_contains_effect(base, identity)
-                || expression_contains_effect(index, identity)
-        }
-        Expr::Block(statements, tail) => {
-            statements.iter().any(|statement| match statement {
-                Stmt::Let(binding) => expression_contains_effect(&binding.value, identity),
-                Stmt::Expr(expression) => expression_contains_effect(expression, identity),
-            }) || tail
-                .as_deref()
-                .is_some_and(|tail| expression_contains_effect(tail, identity))
-        }
-        Expr::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            expression_contains_effect(condition, identity)
-                || expression_contains_effect(then_branch, identity)
-                || else_branch
-                    .as_deref()
-                    .is_some_and(|branch| expression_contains_effect(branch, identity))
-        }
-        Expr::Return(value) | Expr::Break(value) => value
-            .as_deref()
-            .is_some_and(|value| expression_contains_effect(value, identity)),
-        Expr::While { condition, body } => {
-            expression_contains_effect(condition, identity)
-                || expression_contains_effect(body, identity)
-        }
-        Expr::Loop { body } => expression_contains_effect(body, identity),
-        Expr::Match { scrutinee, arms } => {
-            expression_contains_effect(scrutinee, identity)
-                || arms.iter().any(|arm| {
-                    arm.guard
-                        .as_ref()
-                        .is_some_and(|guard| expression_contains_effect(guard, identity))
-                        || expression_contains_effect(&arm.body, identity)
-                })
-        }
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => false,
     }
 }
 

@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.116.0 - 2026-07-22
+
+- Lowered resumable `while` and value-producing `loop` backedges as recursive lifted iteration
+  frames with the handler answer type.
+- Routed normal iteration, `continue`, condition failure, and value-carrying `break` through explicit
+  internal frame continuations while preserving current-frame cleanup.
+- Supported handled operations in loop conditions and bodies without compile-time unfolding.
+- Added native combined coverage for effectful conditions, bodies, continue edges, and break values.
+
 ## 0.115.0 - 2026-07-22
 
 - Lowered direct and mutually recursive resumable calls to direct calls between lifted handler

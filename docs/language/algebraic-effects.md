@@ -139,7 +139,8 @@ type, and nested handlers of the same identity select the nearest matching bound
 Each named-call specialization is a real local closure frame, so shared and mutable borrow
 parameters retain their capabilities, explicit returns target the callee frame, and its locals are
 cleaned before the caller continuation resumes. Direct and mutually recursive named calls become
-direct calls between lifted frame functions with explicit environment forwarding. Indirect calls,
-loop backedges, and
-the final general continuation ABI remain implementation work; those cases are rejected rather
-than compiled with callback-only semantics.
+direct calls between lifted frame functions with explicit environment forwarding. Indirect calls
+and the final general continuation ABI remain implementation work. Resumable `while` conditions,
+loop bodies, `continue`, and value-carrying `break` lower through recursive lifted iteration frames
+whose result is the complete handler answer; unsupported cases are rejected rather than compiled
+with callback-only semantics.
