@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.40.0 - 2026-07-21
+
+- Added definition-time signature checking for every blanket trait method, including trait type
+  arguments, `Self`, and associated-type substitutions.
+- Reused generic-function abstract validation for blanket method bodies through hidden templates,
+  so unused implementations are checked under their declared where proofs.
+- Allowed abstract trait arguments only inside guarded template validation and rolled every
+  temporary nominal, method, signature, and assumed implementation back afterward.
+- Added eager diagnostics for invalid associated type expressions, signature mismatches, missing
+  names, and incomplete blanket `Drop` implementations without requiring concrete instantiation.
+
 ## 0.39.0 - 2026-07-21
 
 - Replaced conservative same-trait blanket rejection with first-order unification of trait argument

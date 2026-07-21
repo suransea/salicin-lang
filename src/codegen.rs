@@ -2215,6 +2215,24 @@ impl Analyzer {
         }
     }
 
+    fn source_type_is_abstract_or_concrete(&self, source: &Type) -> bool {
+        match source {
+            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => true,
+            Type::Array(element, _) => self.source_type_is_abstract_or_concrete(element),
+            Type::Named(name, arguments) if arguments.is_empty() => {
+                self.abstract_type_parameters.contains_key(name)
+                    || self.struct_defs.contains_key(name)
+                    || self.enum_defs.contains_key(name)
+            }
+            Type::Named(name, arguments) => {
+                (self.struct_templates.contains_key(name) || self.enum_templates.contains_key(name))
+                    && arguments
+                        .iter()
+                        .all(|argument| self.source_type_is_abstract_or_concrete(argument))
+            }
+        }
+    }
+
     fn resolve_trait_impl_target(&mut self, source: &Type) -> Option<Ty> {
         let Type::Named(name, arguments) = source else {
             self.error("trait implementation target must be a nominal type");
@@ -2269,10 +2287,11 @@ impl Analyzer {
             ));
             return None;
         }
-        if source_arguments
-            .iter()
-            .any(|argument| !self.source_type_is_concrete(argument))
-        {
+        if source_arguments.iter().any(|argument| {
+            !(self.source_type_is_concrete(argument)
+                || self.instantiating_generic_trait_extension > 0
+                    && self.source_type_is_abstract_or_concrete(argument))
+        }) {
             self.error(format!(
                 "generic trait implementation of `{name}` is not supported; trait arguments must be concrete"
             ));
@@ -3144,6 +3163,14 @@ impl Analyzer {
         if !self.validate_generic_trait_members(trait_name, &schema, &extension.members) {
             return;
         }
+        if !self.validate_generic_trait_method_shapes(
+            trait_name,
+            &schema,
+            trait_arguments,
+            &extension,
+        ) {
+            return;
+        }
         let is_copy = trait_name == self.lang_item_name(LangItemKind::Copy);
         let is_drop = trait_name == self.lang_item_name(LangItemKind::Drop);
         let target_package = self
@@ -3195,6 +3222,13 @@ impl Analyzer {
             .entry(target_template.clone())
             .or_default()
             .push(template.clone());
+        self.register_generic_trait_validation_templates(
+            target_template,
+            trait_name,
+            &extension,
+            &schema.access,
+            &origin,
+        );
 
         if is_copy {
             return;
@@ -3315,6 +3349,106 @@ impl Analyzer {
             }
         }
         valid
+    }
+
+    fn validate_generic_trait_method_shapes(
+        &mut self,
+        trait_name: &str,
+        schema: &TraitSchema,
+        trait_arguments: &[Type],
+        extension: &ExtendDef,
+    ) -> bool {
+        let mut expected_substitutions = schema
+            .compile_parameters
+            .iter()
+            .zip(trait_arguments)
+            .map(|(parameter, argument)| (parameter.name.clone(), argument.clone()))
+            .collect::<HashMap<_, _>>();
+        expected_substitutions.insert("Self".to_owned(), extension.target.clone());
+        let mut raw_associated = HashMap::new();
+        let mut valid = true;
+        for member in &extension.members {
+            let ExtendMember::Const(binding) = member else {
+                continue;
+            };
+            let Some(source) =
+                self.type_argument_from_expr(&binding.value, &expected_substitutions)
+            else {
+                valid = false;
+                continue;
+            };
+            raw_associated.insert(binding.name.clone(), source);
+        }
+        let mut normalized = HashMap::new();
+        for associated in &schema.associated_types {
+            if let Some(source) = self.normalize_trait_impl_associated_type(
+                trait_name,
+                associated,
+                &raw_associated,
+                &expected_substitutions,
+                &mut normalized,
+                &mut Vec::new(),
+            ) {
+                expected_substitutions.insert(associated.clone(), source);
+            } else {
+                valid = false;
+            }
+        }
+        let mut actual_self = HashMap::new();
+        actual_self.insert("Self".to_owned(), extension.target.clone());
+        for method_name in &schema.method_order {
+            let Some(ExtendMember::Function(actual)) = extension.members.iter().find(|member| {
+                matches!(member, ExtendMember::Function(function) if function.name == *method_name)
+            }) else {
+                continue;
+            };
+            let mut expected = schema.methods[method_name].clone();
+            substitute_function_types(&mut expected, &expected_substitutions);
+            let mut actual = actual.clone();
+            substitute_function_types(&mut actual, &actual_self);
+            if !source_function_shapes_match(&expected, &actual) {
+                self.error(format!(
+                    "trait method `{trait_name}.{method_name}` signature mismatch in generic implementation"
+                ));
+                valid = false;
+            }
+        }
+        valid
+    }
+
+    fn register_generic_trait_validation_templates(
+        &mut self,
+        target_template: &str,
+        trait_name: &str,
+        extension: &ExtendDef,
+        access: &AccessBoundary,
+        origin: &ItemOrigin,
+    ) {
+        let mut self_substitution = HashMap::new();
+        self_substitution.insert("Self".to_owned(), extension.target.clone());
+        let target_access = self.nominal_access_or_internal(target_template);
+        let validation_access = Self::intersect_access_boundaries(access, &target_access, origin);
+        for member in &extension.members {
+            let ExtendMember::Function(function) = member else {
+                continue;
+            };
+            let canonical = format!(
+                "$generic$trait$validation${target_template}${trait_name}${}${}",
+                function.name,
+                self.function_template_order.len()
+            );
+            let mut template = function.clone();
+            template.name = canonical.clone();
+            template.compile_groups = extension.compile_groups.clone();
+            template.where_predicates = extension.where_predicates.clone();
+            substitute_function_types(&mut template, &self_substitution);
+            self.function_template_order.push(canonical.clone());
+            self.function_templates.insert(canonical.clone(), template);
+            self.function_template_origins
+                .insert(canonical.clone(), origin.clone());
+            self.function_accesses
+                .insert(canonical, validation_access.clone());
+        }
     }
 
     fn instantiate_generic_trait_extension(
@@ -18609,6 +18743,22 @@ fn trait_reference_patterns_overlap(
     type_patterns_unify(equations)
 }
 
+fn source_function_shapes_match(expected: &Function, actual: &Function) -> bool {
+    expected.groups.len() == actual.groups.len()
+        && expected
+            .groups
+            .iter()
+            .zip(&actual.groups)
+            .all(|(left, right)| {
+                left.len() == right.len()
+                    && left
+                        .iter()
+                        .zip(right)
+                        .all(|(left, right)| left.mode == right.mode && left.ty == right.ty)
+            })
+        && expected.return_type == actual.return_type
+}
+
 fn generic_trait_pattern_overlaps_concrete(
     generic: &GenericTraitExtension,
     concrete: &TraitRefKey,
@@ -20611,7 +20761,8 @@ let main(): i32 = {
             r#"
 let Convert(To: type) = trait { let convert(borrow self)(): To }
 let Cell(T: type) = struct(value: T)
-extend(T: type) Cell(T): Convert(T) {
+extend(T: type) Cell(T): Convert(T)
+where T: Copy {
   let convert(borrow self)(): T = self.value
 }
 extend Cell(i32): Convert(i64) {
@@ -20650,6 +20801,49 @@ let main(): i32 = 42
                 .expect_err("blanket and concrete specializations must overlap in either order");
             assert!(errors.iter().any(|error| error.message.contains("overlap")));
         }
+
+        compile_text(
+            r#"
+let Read = trait { let read(borrow self)(): i32 }
+let Cell(T: type) = struct(value: T)
+extend(T: type) Cell(T): Read
+where T: Read {
+  let read(borrow self)(): i32 = self.value.read()
+}
+let main(): i32 = 42
+"#,
+        )
+        .expect("an uninstantiated blanket body should validate from its where proofs");
+
+        let mismatch = compile_text(
+            r#"
+let Read = trait { let read(borrow self)(): i32 }
+let Cell(T: type) = struct(value: T)
+extend(T: type) Cell(T): Read {
+  let read(borrow self)(): i64 = 0
+}
+let main(): i32 = 42
+"#,
+        )
+        .expect_err("an uninstantiated blanket signature mismatch must be rejected");
+        assert!(mismatch.iter().any(|error| error
+            .message
+            .contains("signature mismatch in generic implementation")));
+
+        let invalid_body = compile_text(
+            r#"
+let Read = trait { let read(borrow self)(): i32 }
+let Cell(T: type) = struct(value: T)
+extend(T: type) Cell(T): Read {
+  let read(borrow self)(): i32 = missing
+}
+let main(): i32 = 42
+"#,
+        )
+        .expect_err("an uninstantiated blanket method body must be checked");
+        assert!(invalid_body
+            .iter()
+            .any(|error| error.message.contains("unknown name `missing`")));
     }
 
     #[test]

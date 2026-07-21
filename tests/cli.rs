@@ -1646,6 +1646,10 @@ fn m2_concrete_trait_errors_report_their_cause() {
             "trait_generic_impl_pending.sali",
             "generic trait implementation",
         ),
+        (
+            "trait_generic_uninstantiated_body.sali",
+            "unknown name `missing`",
+        ),
     ] {
         let output = salic()
             .arg("check")
