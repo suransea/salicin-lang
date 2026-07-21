@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.55.0 - 2026-07-21
+
+- Added the `region` compile-time kind and apostrophe-prefixed region names, including predefined
+  `'static`, for region-only and mixed type/region parameter groups.
+- Parsed explicit regions on borrow pass modes and borrow types, such as `borrow('a) value: T` and
+  `borrow('a) T`, while erasing regions before monomorphization so they never become type arguments.
+- Added whole-item region scope validation for functions, local annotations, closures, nominal
+  fields, traits, extensions, and where predicates, with diagnostics for undeclared, duplicate,
+  malformed, or redeclared predefined regions.
+
 ## 0.54.0 - 2026-07-21
 
 - Added explicit `borrow T` and `mut borrow T` type syntax to the AST, parser, module resolver,

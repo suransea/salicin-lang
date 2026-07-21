@@ -7,9 +7,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::ast::{
-    Binding, EnumDef, Expr, ExtendDef, ExtendMember, Field, Function, Item, ItemOrigin, MatchArm,
-    Param, Pattern, PatternField, PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember,
-    Type, UseDecl, VariantFields, Visibility,
+    Binding, CompileParamKind, EnumDef, Expr, ExtendDef, ExtendMember, Field, Function, Item,
+    ItemOrigin, MatchArm, Param, Pattern, PatternField, PatternFields, Program, Stmt, StructDef,
+    TraitDef, TraitMember, Type, UseDecl, VariantFields, Visibility,
 };
 use crate::{lexer, parser};
 
@@ -2124,6 +2124,7 @@ fn compile_parameter_names(
         groups
             .iter()
             .flatten()
+            .filter(|parameter| parameter.kind == CompileParamKind::Type)
             .map(|parameter| parameter.name.clone()),
     );
     names

@@ -194,11 +194,13 @@ pub struct CompileParam {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompileParamKind {
     Type,
+    Region,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub mode: PassMode,
+    pub region: Option<String>,
     pub name: String,
     pub ty: Type,
 }
@@ -220,7 +222,11 @@ pub enum Type {
     U64,
     Bool,
     Unit,
-    Borrow { mutable: bool, pointee: Box<Type> },
+    Borrow {
+        mutable: bool,
+        region: Option<String>,
+        pointee: Box<Type>,
+    },
     Array(Box<Type>, u64),
     Named(String, Vec<Type>),
 }

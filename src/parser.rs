@@ -79,6 +79,9 @@ impl Parser {
             self.skip_separators();
         }
 
+        if let Err(message) = validate_region_scopes(&items) {
+            return Err(self.error_here(message));
+        }
         Ok(Program::with_uses(items, item_visibilities, uses))
     }
 
@@ -486,16 +489,18 @@ impl Parser {
         self.at(&TokenKind::LParen)
             && matches!(
                 self.tokens.get(self.index + 1).map(|token| &token.kind),
-                Some(TokenKind::Ident(_))
+                Some(TokenKind::Ident(_)) | Some(TokenKind::RegionName(_))
             )
             && self.at_offset(2, &TokenKind::Colon)
-            && self.at_offset(3, &TokenKind::Type)
+            && (self.at_offset(3, &TokenKind::Type) || self.at_offset(3, &TokenKind::Region))
     }
 
     fn current_starts_compile_parameter(&self) -> bool {
-        matches!(self.current().kind, TokenKind::Ident(_))
-            && self.at_offset(1, &TokenKind::Colon)
-            && self.at_offset(2, &TokenKind::Type)
+        matches!(
+            self.current().kind,
+            TokenKind::Ident(_) | TokenKind::RegionName(_)
+        ) && self.at_offset(1, &TokenKind::Colon)
+            && (self.at_offset(2, &TokenKind::Type) || self.at_offset(2, &TokenKind::Region))
     }
 
     fn compile_parameter_group(&mut self) -> Result<Vec<CompileParam>, ParseError> {
@@ -509,24 +514,48 @@ impl Parser {
                 ));
             }
             let name_token = self.current().clone();
-            let name = self.expect_ident("a compile-time parameter name")?;
-            if matches!(
-                name.as_str(),
-                "_" | "i32" | "i64" | "u32" | "u64" | "bool" | "void" | "never"
-            ) {
-                return Err(self.error_at(
-                    &name_token,
-                    format!(
-                        "reserved type name `{name}` cannot be used as a compile-time parameter"
-                    ),
-                ));
-            }
+            let (name, region_name) = match self.current().kind.clone() {
+                TokenKind::Ident(name) => {
+                    self.advance();
+                    (name, false)
+                }
+                TokenKind::RegionName(name) => {
+                    self.advance();
+                    (name, true)
+                }
+                _ => unreachable!("compile parameter start was checked"),
+            };
             self.expect(&TokenKind::Colon, "`:` after compile-time parameter name")?;
-            self.expect(&TokenKind::Type, "`type`")?;
-            params.push(CompileParam {
-                name,
-                kind: CompileParamKind::Type,
-            });
+            let kind = if self.take(&TokenKind::Type) {
+                if region_name {
+                    return Err(self.error_at(
+                        &name_token,
+                        "region names must use the `region` compile-time kind",
+                    ));
+                }
+                if matches!(
+                    name.as_str(),
+                    "_" | "i32" | "i64" | "u32" | "u64" | "bool" | "void" | "never"
+                ) {
+                    return Err(self.error_at(
+                        &name_token,
+                        format!(
+                            "reserved type name `{name}` cannot be used as a compile-time parameter"
+                        ),
+                    ));
+                }
+                CompileParamKind::Type
+            } else {
+                self.expect(&TokenKind::Region, "`type` or `region`")?;
+                if !region_name {
+                    return Err(self.error_at(
+                        &name_token,
+                        "region compile-time parameters must start with `'`",
+                    ));
+                }
+                CompileParamKind::Region
+            };
+            params.push(CompileParam { name, kind });
 
             if self.take(&TokenKind::Comma) {
                 if self.take(&TokenKind::RParen) {
@@ -549,17 +578,17 @@ impl Parser {
         }
 
         loop {
-            let mode = if self.take(&TokenKind::Copy) {
-                PassMode::Copy
+            let (mode, region) = if self.take(&TokenKind::Copy) {
+                (PassMode::Copy, None)
             } else if self.take(&TokenKind::Move) {
-                PassMode::Move
+                (PassMode::Move, None)
             } else if self.take(&TokenKind::Borrow) {
-                PassMode::Borrow
+                (PassMode::Borrow, self.optional_region()?)
             } else if self.take(&TokenKind::Mut) {
                 self.expect(&TokenKind::Borrow, "`borrow` after `mut`")?;
-                PassMode::MutBorrow
+                (PassMode::MutBorrow, self.optional_region()?)
             } else {
-                PassMode::Inferred
+                (PassMode::Inferred, None)
             };
 
             if self.current_starts_compile_parameter() {
@@ -589,7 +618,12 @@ impl Parser {
                 self.expect(&TokenKind::Colon, "`:` after parameter name")?;
                 self.type_expr()?
             };
-            params.push(Param { mode, name, ty });
+            params.push(Param {
+                mode,
+                region,
+                name,
+                ty,
+            });
 
             if self.take(&TokenKind::Comma) {
                 if self.take(&TokenKind::RParen) {
@@ -601,6 +635,25 @@ impl Parser {
             }
         }
         Ok(params)
+    }
+
+    fn optional_region(&mut self) -> Result<Option<String>, ParseError> {
+        if !self.at(&TokenKind::LParen)
+            || !matches!(
+                self.tokens.get(self.index + 1).map(|token| &token.kind),
+                Some(TokenKind::RegionName(_))
+            )
+        {
+            return Ok(None);
+        }
+        self.expect(&TokenKind::LParen, "`(` before region")?;
+        let token = self.current().clone();
+        let TokenKind::RegionName(name) = token.kind else {
+            unreachable!("optional region lookahead was checked");
+        };
+        self.advance();
+        self.expect(&TokenKind::RParen, "`)` after region")?;
+        Ok(Some(name))
     }
 
     fn validate_receiver_groups(&self, groups: &[Vec<Param>]) -> Result<(), ParseError> {
@@ -887,8 +940,10 @@ impl Parser {
             None
         };
         if let Some(mutable) = borrow_mutability {
+            let region = self.optional_region()?;
             return Ok(Type::Borrow {
                 mutable,
+                region,
                 pointee: Box::new(self.type_expr()?),
             });
         }
@@ -1830,6 +1885,251 @@ impl Parser {
     }
 }
 
+fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
+    let empty = HashSet::new();
+    for item in items {
+        match item {
+            Item::Function(function) => validate_function_regions(function, &empty)?,
+            Item::Global(binding) => validate_binding_regions(binding, &empty)?,
+            Item::Struct(definition) => {
+                let regions = declared_regions(&definition.compile_groups, &empty)?;
+                for field in &definition.fields {
+                    validate_type_regions(&field.ty, &regions)?;
+                }
+            }
+            Item::Enum(definition) => {
+                let regions = declared_regions(&definition.compile_groups, &empty)?;
+                for variant in &definition.variants {
+                    match &variant.fields {
+                        VariantFields::Unit => {}
+                        VariantFields::Positional(types) => {
+                            for ty in types {
+                                validate_type_regions(ty, &regions)?;
+                            }
+                        }
+                        VariantFields::Named(fields) => {
+                            for field in fields {
+                                validate_type_regions(&field.ty, &regions)?;
+                            }
+                        }
+                    }
+                }
+            }
+            Item::Trait(definition) => {
+                let regions = declared_regions(&definition.compile_groups, &empty)?;
+                for member in &definition.members {
+                    match member {
+                        TraitMember::Function(function) => {
+                            validate_function_regions(function, &regions)?
+                        }
+                        TraitMember::AssociatedType {
+                            compile_groups,
+                            default,
+                            ..
+                        } => {
+                            let member_regions = declared_regions(compile_groups, &regions)?;
+                            if let Some(default) = default {
+                                validate_type_regions(default, &member_regions)?;
+                            }
+                        }
+                    }
+                }
+            }
+            Item::Extend(extension) => {
+                let regions = declared_regions(&extension.compile_groups, &empty)?;
+                validate_type_regions(&extension.target, &regions)?;
+                if let Some(trait_ref) = &extension.trait_ref {
+                    validate_type_regions(trait_ref, &regions)?;
+                }
+                for predicate in &extension.where_predicates {
+                    validate_type_regions(&predicate.subject, &regions)?;
+                    validate_type_regions(&predicate.trait_ref, &regions)?;
+                    for binding in &predicate.associated_types {
+                        validate_type_regions(&binding.ty, &regions)?;
+                    }
+                }
+                for member in &extension.members {
+                    match member {
+                        ExtendMember::Function(function) => {
+                            validate_function_regions(function, &regions)?
+                        }
+                        ExtendMember::Const(binding) => {
+                            validate_binding_regions(binding, &regions)?
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn declared_regions(
+    groups: &[Vec<CompileParam>],
+    outer: &HashSet<String>,
+) -> Result<HashSet<String>, String> {
+    let mut regions = outer.clone();
+    for parameter in groups.iter().flatten() {
+        if parameter.kind != CompileParamKind::Region {
+            continue;
+        }
+        if parameter.name == "static" {
+            return Err("`'static` is predefined and cannot be redeclared".to_owned());
+        }
+        if !regions.insert(parameter.name.clone()) {
+            return Err(format!("duplicate region parameter `'{}'", parameter.name));
+        }
+    }
+    Ok(regions)
+}
+
+fn validate_function_regions(function: &Function, outer: &HashSet<String>) -> Result<(), String> {
+    let regions = declared_regions(&function.compile_groups, outer)?;
+    for parameter in function.groups.iter().flatten() {
+        if let Some(region) = &parameter.region {
+            validate_region_name(region, &regions)?;
+        }
+        validate_type_regions(&parameter.ty, &regions)?;
+    }
+    if let Some(return_type) = &function.return_type {
+        validate_type_regions(return_type, &regions)?;
+    }
+    for predicate in &function.where_predicates {
+        validate_type_regions(&predicate.subject, &regions)?;
+        validate_type_regions(&predicate.trait_ref, &regions)?;
+        for binding in &predicate.associated_types {
+            validate_type_regions(&binding.ty, &regions)?;
+        }
+    }
+    if let Some(body) = &function.body {
+        validate_expr_regions(body, &regions)?;
+    }
+    Ok(())
+}
+
+fn validate_binding_regions(binding: &Binding, regions: &HashSet<String>) -> Result<(), String> {
+    if let Some(annotation) = &binding.annotation {
+        validate_type_regions(annotation, regions)?;
+    }
+    validate_expr_regions(&binding.value, regions)
+}
+
+fn validate_type_regions(ty: &Type, regions: &HashSet<String>) -> Result<(), String> {
+    match ty {
+        Type::Borrow {
+            region, pointee, ..
+        } => {
+            if let Some(region) = region {
+                validate_region_name(region, regions)?;
+            }
+            validate_type_regions(pointee, regions)
+        }
+        Type::Array(element, _) => validate_type_regions(element, regions),
+        Type::Named(_, arguments) => {
+            for argument in arguments {
+                validate_type_regions(argument, regions)?;
+            }
+            Ok(())
+        }
+        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => Ok(()),
+    }
+}
+
+fn validate_region_name(region: &str, regions: &HashSet<String>) -> Result<(), String> {
+    if region == "static" || regions.contains(region) {
+        Ok(())
+    } else {
+        Err(format!("use of undeclared region `'{}'", region))
+    }
+}
+
+fn validate_expr_regions(expression: &Expr, regions: &HashSet<String>) -> Result<(), String> {
+    match expression {
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => Ok(()),
+        Expr::Unary(_, value)
+        | Expr::Try(value)
+        | Expr::Throw(value)
+        | Expr::Unsafe(value)
+        | Expr::Borrow { value, .. } => validate_expr_regions(value, regions),
+        Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
+            validate_expr_regions(left, regions)?;
+            validate_expr_regions(right, regions)
+        }
+        Expr::Call(callee, arguments) => {
+            validate_expr_regions(callee, regions)?;
+            for argument in arguments {
+                validate_expr_regions(&argument.value, regions)?;
+            }
+            Ok(())
+        }
+        Expr::Member(base, _) | Expr::ChainMember(base, _) => validate_expr_regions(base, regions),
+        Expr::Array(elements) => {
+            for element in elements {
+                validate_expr_regions(element, regions)?;
+            }
+            Ok(())
+        }
+        Expr::Index { base, index } => {
+            validate_expr_regions(base, regions)?;
+            validate_expr_regions(index, regions)
+        }
+        Expr::Block(statements, tail) => {
+            for statement in statements {
+                match statement {
+                    Stmt::Let(binding) => validate_binding_regions(binding, regions)?,
+                    Stmt::Expr(expression) => validate_expr_regions(expression, regions)?,
+                }
+            }
+            if let Some(tail) = tail {
+                validate_expr_regions(tail, regions)?;
+            }
+            Ok(())
+        }
+        Expr::Closure(parameters, body) => {
+            for parameter in parameters {
+                if let Some(region) = &parameter.region {
+                    validate_region_name(region, regions)?;
+                }
+                validate_type_regions(&parameter.ty, regions)?;
+            }
+            validate_expr_regions(body, regions)
+        }
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            validate_expr_regions(condition, regions)?;
+            validate_expr_regions(then_branch, regions)?;
+            if let Some(else_branch) = else_branch {
+                validate_expr_regions(else_branch, regions)?;
+            }
+            Ok(())
+        }
+        Expr::Return(value) | Expr::Break(value) => {
+            if let Some(value) = value {
+                validate_expr_regions(value, regions)?;
+            }
+            Ok(())
+        }
+        Expr::While { condition, body } => {
+            validate_expr_regions(condition, regions)?;
+            validate_expr_regions(body, regions)
+        }
+        Expr::Loop { body } => validate_expr_regions(body, regions),
+        Expr::Match { scrutinee, arms } => {
+            validate_expr_regions(scrutinee, regions)?;
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    validate_expr_regions(guard, regions)?;
+                }
+                validate_expr_regions(&arm.body, regions)?;
+            }
+            Ok(())
+        }
+    }
+}
+
 fn describe(kind: &TokenKind) -> &'static str {
     match kind {
         TokenKind::Let => "`let`",
@@ -1844,6 +2144,7 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::Move => "`move`",
         TokenKind::Borrow => "`borrow`",
         TokenKind::Type => "`type`",
+        TokenKind::Region => "`region`",
         TokenKind::Do => "`do`",
         TokenKind::Unsafe => "`unsafe`",
         TokenKind::If => "`if`",
@@ -1862,6 +2163,7 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::Try => "`try`",
         TokenKind::True => "`true`",
         TokenKind::False => "`false`",
+        TokenKind::RegionName(_) => "a region name",
         TokenKind::Ident(_) => "an identifier",
         TokenKind::Integer(_) => "an integer",
         TokenKind::LParen => "`(`",
@@ -2946,6 +3248,7 @@ mod tests {
             shared.annotation,
             Some(Type::Borrow {
                 mutable: false,
+                region: None,
                 pointee: Box::new(Type::I32),
             })
         );
@@ -2956,6 +3259,28 @@ mod tests {
             mutable.annotation,
             Some(Type::Borrow {
                 mutable: true,
+                region: None,
+                pointee: Box::new(Type::I32),
+            })
+        );
+    }
+
+    #[test]
+    fn parses_region_parameters_and_borrow_regions() {
+        let program =
+            parse("let choose('a: region)(borrow('a) value: i32): borrow('a) i32 = borrow value\n")
+                .unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        assert_eq!(function.compile_groups[0][0].name, "a");
+        assert_eq!(function.compile_groups[0][0].kind, CompileParamKind::Region);
+        assert_eq!(function.groups[0][0].region.as_deref(), Some("a"));
+        assert_eq!(
+            function.return_type,
+            Some(Type::Borrow {
+                mutable: false,
+                region: Some("a".to_owned()),
                 pointee: Box::new(Type::I32),
             })
         );

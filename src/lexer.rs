@@ -14,6 +14,7 @@ pub enum TokenKind {
     Move,
     Borrow,
     Type,
+    Region,
     Unsafe,
     Do,
     If,
@@ -33,6 +34,7 @@ pub enum TokenKind {
     True,
     False,
     Ident(String),
+    RegionName(String),
     Integer(i128),
     LParen,
     RParen,
@@ -120,6 +122,7 @@ fn keyword(text: &str) -> Option<TokenKind> {
         "move" => TokenKind::Move,
         "borrow" => TokenKind::Borrow,
         "type" => TokenKind::Type,
+        "region" => TokenKind::Region,
         "unsafe" => TokenKind::Unsafe,
         "do" => TokenKind::Do,
         "if" => TokenKind::If,
@@ -177,6 +180,8 @@ impl Lexer {
             let column = self.column;
             let kind = if ch.is_ascii_digit() {
                 self.number()?
+            } else if ch == '\'' {
+                self.region_name()?
             } else if ch == '_' || ch.is_alphabetic() {
                 self.identifier()
             } else {
@@ -343,6 +348,23 @@ impl Lexer {
         }
     }
 
+    fn region_name(&mut self) -> Result<TokenKind, LexError> {
+        let line = self.line;
+        let column = self.column;
+        self.bump();
+        let Some(first) = self.peek() else {
+            return Err(self.error("expected a region name after `'`".into(), line, column));
+        };
+        if first != '_' && !first.is_alphabetic() {
+            return Err(self.error("expected a region name after `'`".into(), line, column));
+        }
+        let mut name = String::new();
+        while self.peek().is_some_and(|c| c == '_' || c.is_alphanumeric()) {
+            name.push(self.bump().expect("peeked character exists"));
+        }
+        Ok(TokenKind::RegionName(name))
+    }
+
     fn peek(&self) -> Option<char> {
         self.chars.get(self.index).copied()
     }
@@ -449,6 +471,19 @@ mod tests {
         let tokens = lex("let Foo = trait { let Item: type }").unwrap();
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Trait));
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Type));
+    }
+
+    #[test]
+    fn recognizes_region_parameters_and_names() {
+        let tokens = lex("let choose('a: region)(borrow('a) value: i32): borrow('a) i32").unwrap();
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Region));
+        assert_eq!(
+            tokens
+                .iter()
+                .filter(|token| token.kind == TokenKind::RegionName("a".to_owned()))
+                .count(),
+            3
+        );
     }
 
     #[test]

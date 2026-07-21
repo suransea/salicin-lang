@@ -9,9 +9,9 @@ use std::fmt;
 
 use crate::alloc::AllocBundle;
 use crate::ast::{
-    BinaryOp, Binding, CallArg, CompileParam, EnumDef, Expr, ExtendDef, ExtendMember, Field,
-    Function, Item, ItemOrigin, MatchArm, PassMode, Pattern, PatternFields, Program, Stmt,
-    StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantFields, Visibility,
+    BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EnumDef, Expr, ExtendDef,
+    ExtendMember, Field, Function, Item, ItemOrigin, MatchArm, PassMode, Pattern, PatternFields,
+    Program, Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantFields, Visibility,
 };
 use crate::cleanup::{
     BasicBlockId as CleanupBlockId, CleanupEdge, CleanupOp, CleanupPlan, CleanupPlanBuilder,
@@ -1266,7 +1266,9 @@ impl Analyzer {
                 "unresolved `use` declarations reached semantic analysis; resolve source modules before code generation",
             );
         }
-        analyzer.collect_items(core.program(), alloc.program(), program);
+        let mut source_program = program.clone();
+        erase_region_parameters(&mut source_program);
+        analyzer.collect_items(core.program(), alloc.program(), &source_program);
         Ok(analyzer)
     }
 
@@ -2387,8 +2389,13 @@ impl Analyzer {
         visiting: &mut Vec<String>,
     ) -> Option<Type> {
         match source {
-            Type::Borrow { mutable, pointee } => Some(Type::Borrow {
+            Type::Borrow {
+                mutable,
+                region,
+                pointee,
+            } => Some(Type::Borrow {
                 mutable: *mutable,
+                region: region.clone(),
                 pointee: Box::new(self.normalize_trait_impl_type(
                     trait_name,
                     pointee,
@@ -8472,9 +8479,9 @@ impl Analyzer {
                     match statement {
                         Stmt::Let(binding) => {
                             let borrow_annotation = match binding.annotation.as_ref() {
-                                Some(Type::Borrow { mutable, pointee }) => {
-                                    Some((*mutable, self.lower_source_type(pointee)))
-                                }
+                                Some(Type::Borrow {
+                                    mutable, pointee, ..
+                                }) => Some((*mutable, self.lower_source_type(pointee))),
                                 _ => None,
                             };
                             let annotation = match (&binding.annotation, &borrow_annotation) {
@@ -19285,6 +19292,47 @@ fn substitute_struct_types(definition: &mut StructDef, substitutions: &HashMap<S
     }
 }
 
+fn erase_region_parameters(program: &mut Program) {
+    fn erase_groups(groups: &mut Vec<Vec<CompileParam>>) {
+        for group in &mut *groups {
+            group.retain(|parameter| parameter.kind == CompileParamKind::Type);
+        }
+        groups.retain(|group| !group.is_empty());
+    }
+
+    fn erase_function(function: &mut Function) {
+        erase_groups(&mut function.compile_groups);
+    }
+
+    for item in &mut program.items {
+        match item {
+            Item::Function(function) => erase_function(function),
+            Item::Global(_) => {}
+            Item::Struct(definition) => erase_groups(&mut definition.compile_groups),
+            Item::Enum(definition) => erase_groups(&mut definition.compile_groups),
+            Item::Trait(definition) => {
+                erase_groups(&mut definition.compile_groups);
+                for member in &mut definition.members {
+                    match member {
+                        TraitMember::Function(function) => erase_function(function),
+                        TraitMember::AssociatedType { compile_groups, .. } => {
+                            erase_groups(compile_groups)
+                        }
+                    }
+                }
+            }
+            Item::Extend(extension) => {
+                erase_groups(&mut extension.compile_groups);
+                for member in &mut extension.members {
+                    if let ExtendMember::Function(function) = member {
+                        erase_function(function);
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn substitute_enum_types(definition: &mut EnumDef, substitutions: &HashMap<String, Type>) {
     for variant in &mut definition.variants {
         match &mut variant.fields {
@@ -19775,7 +19823,9 @@ fn impl_type_pattern(
         Type::U64 => ImplTypePattern::U64,
         Type::Bool => ImplTypePattern::Bool,
         Type::Unit => ImplTypePattern::Unit,
-        Type::Borrow { mutable, pointee } => ImplTypePattern::Named(
+        Type::Borrow {
+            mutable, pointee, ..
+        } => ImplTypePattern::Named(
             if *mutable { "$mut_borrow" } else { "$borrow" }.to_owned(),
             vec![impl_type_pattern(pointee, variables, side)],
         ),
@@ -20167,6 +20217,7 @@ mod tests {
     fn param(name: &str, ty: Type) -> Param {
         Param {
             mode: PassMode::Inferred,
+            region: None,
             name: name.to_owned(),
             ty,
         }
@@ -22072,6 +22123,7 @@ let main(): i32 = 0
             "consume",
             vec![vec![Param {
                 mode: PassMode::Move,
+                region: None,
                 name: "value".into(),
                 ty: Type::I32,
             }]],

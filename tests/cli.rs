@@ -679,6 +679,7 @@ fn m1_ownership_programs_run_with_expected_result() {
         "temporary_borrow_method_argument.sali",
         "temporary_borrow_partial_call.sali",
         "explicit_borrow_types.sali",
+        "region_scoped_borrow.sali",
     ] {
         let output = salic()
             .arg("run")
@@ -759,6 +760,30 @@ fn explicit_borrow_type_errors_report_their_cause() {
             .arg(fixture("fail", name))
             .output()
             .expect("check invalid explicit borrow type fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn region_frontend_errors_report_their_cause() {
+    for (name, expected) in [
+        ("region_undeclared_parameter.sali", "undeclared region `'a'"),
+        ("region_undeclared_type.sali", "undeclared region `'a'"),
+        ("region_duplicate.sali", "duplicate region parameter `'a'"),
+        ("region_static_redeclared.sali", "predefined"),
+        ("region_name_with_type_kind.sali", "must use the `region`"),
+        ("region_plain_name.sali", "must start with `'`"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid region fixture");
         assert!(!output.status.success(), "{name} unexpectedly passed");
         assert!(
             String::from_utf8_lossy(&output.stderr).contains(expected),
