@@ -23,6 +23,26 @@ pub let Rem(Rhs: type) = trait {
   let rem(move self)(move rhs: Rhs): Output
 }
 
+pub let AddAssign(Rhs: type) = trait {
+  let add_assign(borrow(mut) self)(move rhs: Rhs): ()
+}
+
+pub let SubAssign(Rhs: type) = trait {
+  let sub_assign(borrow(mut) self)(move rhs: Rhs): ()
+}
+
+pub let MulAssign(Rhs: type) = trait {
+  let mul_assign(borrow(mut) self)(move rhs: Rhs): ()
+}
+
+pub let DivAssign(Rhs: type) = trait {
+  let div_assign(borrow(mut) self)(move rhs: Rhs): ()
+}
+
+pub let RemAssign(Rhs: type) = trait {
+  let rem_assign(borrow(mut) self)(move rhs: Rhs): ()
+}
+
 pub let Eq(Rhs: type) = trait {
   let eq(borrow self)(borrow rhs: Rhs): bool
 }

@@ -1519,6 +1519,17 @@ fn binary_operator_trait(operator: BinaryOp) -> Option<BinaryOperatorTrait> {
         .find(|candidate| candidate.operator == operator)
 }
 
+fn assignment_operator_trait(operator: BinaryOp) -> Option<LangItemKind> {
+    Some(match operator {
+        BinaryOp::Add => LangItemKind::AddAssign,
+        BinaryOp::Sub => LangItemKind::SubAssign,
+        BinaryOp::Mul => LangItemKind::MulAssign,
+        BinaryOp::Div => LangItemKind::DivAssign,
+        BinaryOp::Rem => LangItemKind::RemAssign,
+        _ => return None,
+    })
+}
+
 #[derive(Debug, Clone)]
 struct TraitSchema {
     compile_parameters: Vec<CompileParam>,
@@ -8690,6 +8701,7 @@ impl Analyzer {
                 }
             }
             Expr::Assign(_, _)
+            | Expr::CompoundAssign(_, _, _)
             | Expr::Closure(_, _)
             | Expr::If { .. }
             | Expr::Return(_)
@@ -10472,6 +10484,9 @@ impl Analyzer {
                     },
                 }
             }
+            Expr::CompoundAssign(place, operator, value) => {
+                self.lower_compound_assign(place, *operator, value, context)
+            }
             Expr::Call(_, _) => self.lower_call(expression, expected, context),
             Expr::Member(base, field) => self.lower_member(base, field, expected, context),
             Expr::ChainMember(base, field) => {
@@ -11318,6 +11333,79 @@ impl Analyzer {
                 index,
                 length,
                 moves,
+            },
+        }
+    }
+
+    fn lower_compound_assign(
+        &mut self,
+        place: &Expr,
+        operator: BinaryOp,
+        value: &Expr,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let Some(lang_item) = assignment_operator_trait(operator) else {
+            self.error("unsupported compound assignment operator");
+            return error_expr();
+        };
+        match self.probe_expr_ty(place, None, context) {
+            TypeProbe::Known(Ty::Struct(_))
+            | TypeProbe::Known(Ty::Enum(_))
+            | TypeProbe::KnownSource(Ty::Struct(_), _)
+            | TypeProbe::KnownSource(Ty::Enum(_), _) => {
+                let arguments = [CallArg {
+                    label: None,
+                    value: value.clone(),
+                }];
+                return self.lower_bound_method_call(
+                    place,
+                    lang_item
+                        .assignment_operator_method()
+                        .expect("assignment lang item has a method"),
+                    &[arguments.as_slice()],
+                    BoundMethodConstraint::LangItem(lang_item),
+                    Some(&Ty::Unit),
+                    context,
+                );
+            }
+            _ => {}
+        }
+
+        let Some(place) = self.lower_place(place, context) else {
+            return error_expr();
+        };
+        self.ensure_writable(&place);
+        if !place.ty.is_integer() {
+            self.error(format!(
+                "compound assignment requires an integer or an implementation of `{}`, found `{}`",
+                lang_item.source_name(),
+                self.diagnostic_type_name(&place.ty),
+            ));
+            let _ = self.lower_expr(value, None, context);
+            return error_expr();
+        }
+        let left = self.access_place(place.clone(), AccessKind::Copy, context);
+        let right = self.lower_expr(value, Some(&place.ty), context);
+        self.require_same_type(&right.ty, &place.ty, "right operand of compound assignment");
+        let binary = HirExpr {
+            ty: place.ty.clone(),
+            kind: HirExprKind::Binary(Box::new(left), operator, Box::new(right)),
+        };
+        let assignment = self.mark_initialized(&place, context);
+        let mut root = place.clone();
+        root.projections.clear();
+        root.ty = root.root_ty.clone();
+        let root_initialized = context
+            .flow
+            .initialization_status(&self.place_leaf_keys(&root))
+            == InitializationStatus::Initialized;
+        HirExpr {
+            ty: Ty::Unit,
+            kind: HirExprKind::Assign {
+                place,
+                value: Box::new(binary),
+                assignment,
+                root_initialized,
             },
         }
     }
@@ -13529,7 +13617,8 @@ impl Analyzer {
             Expr::Return(None) | Expr::Break(None) | Expr::Continue => {}
             Expr::Binary(left, _, right)
             | Expr::Coalesce(left, right)
-            | Expr::Assign(left, right) => {
+            | Expr::Assign(left, right)
+            | Expr::CompoundAssign(left, _, right) => {
                 self.collect_escaping_throws(left, context, errors);
                 self.collect_escaping_throws(right, context, errors);
             }
@@ -16454,6 +16543,23 @@ impl Analyzer {
             if let Some(kind) = forced_trait {
                 let trait_name = self.lang_item_name(kind);
                 candidates.retain(|(key, _)| key.trait_ref.name == trait_name);
+                if kind.assignment_operator_method().is_some() {
+                    if let Some(argument) = match groups {
+                        [group] if group.len() == 1 => Some(&group[0]),
+                        _ => None,
+                    } {
+                        let rhs = match self.probe_expr_ty(&argument.value, None, context) {
+                            TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) => Some(ty),
+                            TypeProbe::Defaultable(ty) => Some(ty),
+                            TypeProbe::Unsupported => None,
+                        };
+                        if let Some(rhs) = rhs {
+                            candidates.retain(|(key, _)| {
+                                key.trait_ref.arguments.as_slice() == [rhs.clone()]
+                            });
+                        }
+                    }
+                }
             }
             if candidates.len() == 1 {
                 if self.is_drop_impl(&candidates[0].0) {
@@ -18226,7 +18332,10 @@ fn do_block_requires_function_boundary(expression: &Expr) -> bool {
         | Expr::Member(value, _)
         | Expr::ChainMember(value, _)
         | Expr::Loop { body: value } => do_block_requires_function_boundary(value),
-        Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
+        Expr::Binary(left, _, right)
+        | Expr::Coalesce(left, right)
+        | Expr::Assign(left, right)
+        | Expr::CompoundAssign(left, _, right) => {
             do_block_requires_function_boundary(left) || do_block_requires_function_boundary(right)
         }
         Expr::Call(callee, arguments) => {
@@ -24013,7 +24122,10 @@ fn substitute_self_expression_target(expression: &mut Expr, target: &str) {
         | Expr::Unsafe(operand) => substitute_self_expression_target(operand, target),
         Expr::DoBlock { body } => substitute_self_expression_target(body, target),
         Expr::Borrow { value, .. } => substitute_self_expression_target(value, target),
-        Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
+        Expr::Binary(left, _, right)
+        | Expr::Coalesce(left, right)
+        | Expr::Assign(left, right)
+        | Expr::CompoundAssign(left, _, right) => {
             substitute_self_expression_target(left, target);
             substitute_self_expression_target(right, target);
         }
@@ -24137,7 +24249,10 @@ fn rewrite_abstract_self_qualified_methods(expression: &mut Expr) {
         | Expr::Unsafe(operand) => rewrite_abstract_self_qualified_methods(operand),
         Expr::DoBlock { body } => rewrite_abstract_self_qualified_methods(body),
         Expr::Borrow { value, .. } => rewrite_abstract_self_qualified_methods(value),
-        Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
+        Expr::Binary(left, _, right)
+        | Expr::Coalesce(left, right)
+        | Expr::Assign(left, right)
+        | Expr::CompoundAssign(left, _, right) => {
             rewrite_abstract_self_qualified_methods(left);
             rewrite_abstract_self_qualified_methods(right);
         }
@@ -24243,7 +24358,10 @@ fn substitute_expr_types(expression: &mut Expr, substitutions: &HashMap<String, 
             }
             substitute_expr_types(value, substitutions)
         }
-        Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
+        Expr::Binary(left, _, right)
+        | Expr::Coalesce(left, right)
+        | Expr::Assign(left, right)
+        | Expr::CompoundAssign(left, _, right) => {
             substitute_expr_types(left, substitutions);
             substitute_expr_types(right, substitutions);
         }

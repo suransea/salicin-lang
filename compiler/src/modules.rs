@@ -300,6 +300,11 @@ const CORE_OPS_EXPORTS: &[&str] = &[
     "Mul",
     "Div",
     "Rem",
+    "AddAssign",
+    "SubAssign",
+    "MulAssign",
+    "DivAssign",
+    "RemAssign",
     "Eq",
     "PartialOrdering",
     "PartialOrd",
@@ -2189,7 +2194,8 @@ impl Resolver {
             }
             Expr::Binary(left, _, right)
             | Expr::Coalesce(left, right)
-            | Expr::Assign(left, right) => {
+            | Expr::Assign(left, right)
+            | Expr::CompoundAssign(left, _, right) => {
                 self.rewrite_expr(left, context, type_scope, value_scope);
                 self.rewrite_expr(right, context, type_scope, value_scope);
             }
@@ -4063,7 +4069,8 @@ let main(): i32 = { Option() }
                 Expr::DoBlock { body } => visit(body, names),
                 Expr::Binary(left, _, right)
                 | Expr::Coalesce(left, right)
-                | Expr::Assign(left, right) => {
+                | Expr::Assign(left, right)
+                | Expr::CompoundAssign(left, _, right) => {
                     visit(left, names);
                     visit(right, names);
                 }

@@ -2236,6 +2236,8 @@ fn arithmetic_trait_programs_run_with_expected_result() {
         "arithmetic_traits_nominal_dispatch.sc",
         "arithmetic_trait_operands_once.sc",
         "arithmetic_trait_expected_output.sc",
+        "compound_assign_builtin.sc",
+        "compound_assign_trait.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -2258,6 +2260,8 @@ fn arithmetic_trait_errors_report_their_cause() {
         ("arithmetic_trait_rhs_mismatch.sc", "Div"),
         ("arithmetic_trait_use_after_move.sc", "moved"),
         ("arithmetic_trait_scalar_rhs_use_after_move.sc", "moved"),
+        ("compound_assign_immutable.sc", "immutable"),
+        ("compound_assign_missing_impl.sc", "AddAssign"),
     ] {
         let output = salic()
             .arg("check")

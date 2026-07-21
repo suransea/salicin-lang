@@ -291,6 +291,7 @@ trait_argument = type_expr | IDENT, "=", type_expr ;
 ```ebnf
 expression       = assignment_expr ;
 assignment_expr  = match_expr, [ assign_op, assignment_expr ] ;
+assign_op        = "=" | "+=" | "-=" | "*=" | "/=" | "%=" ;
 match_expr       = coalesce_expr, [ "match", match_body ] ;
 coalesce_expr    = logical_or_expr, [ "??", coalesce_expr ] ;
 logical_or_expr  = logical_and_expr, { "||", logical_and_expr } ;

@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.107.0 - 2026-07-22
+
+- Added source-backed, edition-validated `AddAssign`, `SubAssign`, `MulAssign`, `DivAssign`, and
+  `RemAssign` traits to `core.ops`.
+- Implemented `+=`, `-=`, `*=`, `/=`, and `%=` for mutable integer places and nominal values that
+  implement the matching assignment trait.
+- Resolved the left place once, preserved integer division/remainder traps, and forced nominal
+  dispatch through the validated lang-item trait instead of same-named inherent methods.
+- Added native coverage for locals, fields, constant array places, and user-defined assignment
+  implementations, plus diagnostics for immutable places and missing implementations.
+
 ## 0.106.0 - 2026-07-22
 
 - Implemented `while let pattern = value { ... }` as a unit-producing loop whose scrutinee is

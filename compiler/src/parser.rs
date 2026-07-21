@@ -1481,11 +1481,29 @@ impl Parser {
 
     fn assignment(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
         let left = self.match_expression(allow_trailing_closure)?;
-        if self.take(&TokenKind::Equal) {
+        let compound = if self.take(&TokenKind::PlusEqual) {
+            Some(BinaryOp::Add)
+        } else if self.take(&TokenKind::MinusEqual) {
+            Some(BinaryOp::Sub)
+        } else if self.take(&TokenKind::StarEqual) {
+            Some(BinaryOp::Mul)
+        } else if self.take(&TokenKind::SlashEqual) {
+            Some(BinaryOp::Div)
+        } else if self.take(&TokenKind::PercentEqual) {
+            Some(BinaryOp::Rem)
+        } else {
+            None
+        };
+        if self.take(&TokenKind::Equal) || compound.is_some() {
             let equals = self.previous().clone();
             let right = self.assignment(allow_trailing_closure)?;
             if Self::is_assignable_place(&left) {
-                Ok(Expr::Assign(Box::new(left), Box::new(right)))
+                Ok(match compound {
+                    Some(operator) => {
+                        Expr::CompoundAssign(Box::new(left), operator, Box::new(right))
+                    }
+                    None => Expr::Assign(Box::new(left), Box::new(right)),
+                })
             } else {
                 Err(self.error_at(
                     &equals,
@@ -2964,7 +2982,10 @@ fn validate_expr_accesses(expression: &Expr, accesses: &HashSet<String>) -> Resu
             validate_expr_accesses(value, accesses)
         }
         Expr::DoBlock { body } => validate_expr_accesses(body, accesses),
-        Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
+        Expr::Binary(left, _, right)
+        | Expr::Coalesce(left, right)
+        | Expr::Assign(left, right)
+        | Expr::CompoundAssign(left, _, right) => {
             validate_expr_accesses(left, accesses)?;
             validate_expr_accesses(right, accesses)
         }
@@ -3115,7 +3136,10 @@ fn validate_expr_regions(expression: &Expr, regions: &HashSet<String>) -> Result
         | Expr::Unsafe(value)
         | Expr::Borrow { value, .. } => validate_expr_regions(value, regions),
         Expr::DoBlock { body } => validate_expr_regions(body, regions),
-        Expr::Binary(left, _, right) | Expr::Coalesce(left, right) | Expr::Assign(left, right) => {
+        Expr::Binary(left, _, right)
+        | Expr::Coalesce(left, right)
+        | Expr::Assign(left, right)
+        | Expr::CompoundAssign(left, _, right) => {
             validate_expr_regions(left, regions)?;
             validate_expr_regions(right, regions)
         }
@@ -3256,10 +3280,15 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::Bang => "`!`",
         TokenKind::BangEqual => "`!=`",
         TokenKind::Plus => "`+`",
+        TokenKind::PlusEqual => "`+=`",
         TokenKind::Minus => "`-`",
+        TokenKind::MinusEqual => "`-=`",
         TokenKind::Star => "`*`",
+        TokenKind::StarEqual => "`*=`",
         TokenKind::Slash => "`/`",
+        TokenKind::SlashEqual => "`/=`",
         TokenKind::Percent => "`%`",
+        TokenKind::PercentEqual => "`%=`",
         TokenKind::Less => "`<`",
         TokenKind::LessEqual => "`<=`",
         TokenKind::Greater => "`>`",
@@ -4078,6 +4107,41 @@ mod tests {
             panic!("expected function");
         };
         assert!(matches!(function.body, Some(Expr::Block(_, None))));
+    }
+
+    #[test]
+    fn parses_arithmetic_compound_assignments() {
+        let program = parse(
+            "let main(): () = {\n\
+               let mut value = 1\n\
+               value += 2\n\
+               value -= 3\n\
+               value *= 4\n\
+               value /= 5\n\
+               value %= 6\n\
+               ()\n\
+             }\n",
+        )
+        .unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        let Expr::Block(statements, Some(tail)) = function.body.as_ref().unwrap() else {
+            panic!("expected block");
+        };
+        assert_eq!(tail.as_ref(), &Expr::Unit);
+        for (statement, operator) in statements[1..].iter().zip([
+            BinaryOp::Add,
+            BinaryOp::Sub,
+            BinaryOp::Mul,
+            BinaryOp::Div,
+            BinaryOp::Rem,
+        ]) {
+            assert!(matches!(
+                statement,
+                Stmt::Expr(Expr::CompoundAssign(_, found, _)) if *found == operator
+            ));
+        }
     }
 
     #[test]

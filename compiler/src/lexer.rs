@@ -57,10 +57,15 @@ pub enum TokenKind {
     Bang,
     BangEqual,
     Plus,
+    PlusEqual,
     Minus,
+    MinusEqual,
     Star,
+    StarEqual,
     Slash,
+    SlashEqual,
     Percent,
+    PercentEqual,
     Less,
     LessEqual,
     Greater,
@@ -220,10 +225,14 @@ impl Lexer {
                     '.' => TokenKind::Dot,
                     ',' => TokenKind::Comma,
                     ';' => TokenKind::Semicolon,
+                    '+' if self.take('=') => TokenKind::PlusEqual,
                     '+' => TokenKind::Plus,
+                    '*' if self.take('=') => TokenKind::StarEqual,
                     '*' => TokenKind::Star,
+                    '%' if self.take('=') => TokenKind::PercentEqual,
                     '%' => TokenKind::Percent,
                     '-' if self.take('>') => TokenKind::Arrow,
+                    '-' if self.take('=') => TokenKind::MinusEqual,
                     '-' => TokenKind::Minus,
                     '=' if self.take('=') => TokenKind::EqualEqual,
                     '=' if self.take('>') => TokenKind::FatArrow,
@@ -243,6 +252,7 @@ impl Lexer {
                     '^' => TokenKind::Caret,
                     '?' if self.take('.') => TokenKind::QuestionDot,
                     '?' if self.take('?') => TokenKind::QuestionQuestion,
+                    '/' if self.take('=') => TokenKind::SlashEqual,
                     '/' => TokenKind::Slash,
                     _ => {
                         return Err(self.error(
@@ -281,10 +291,15 @@ impl Lexer {
                     | TokenKind::Bang
                     | TokenKind::BangEqual
                     | TokenKind::Plus
+                    | TokenKind::PlusEqual
                     | TokenKind::Minus
+                    | TokenKind::MinusEqual
                     | TokenKind::Star
+                    | TokenKind::StarEqual
                     | TokenKind::Slash
+                    | TokenKind::SlashEqual
                     | TokenKind::Percent
+                    | TokenKind::PercentEqual
                     | TokenKind::Less
                     | TokenKind::LessEqual
                     | TokenKind::Greater

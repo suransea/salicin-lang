@@ -22,6 +22,15 @@ const EDITION_2026_OPS: &str = include_str!("../../library/core/src/ops.sc");
 const EDITION_2026_CONTROL: &str = include_str!("../../library/core/src/control.sc");
 const EDITION_2026_ITER: &str = include_str!("../../library/core/src/iter.sc");
 
+#[cfg(test)]
+const TEST_ASSIGNMENT_OPS: &str = r#"
+pub let AddAssign(Rhs: type) = trait { let add_assign(borrow(mut) self)(move rhs: Rhs): () }
+pub let SubAssign(Rhs: type) = trait { let sub_assign(borrow(mut) self)(move rhs: Rhs): () }
+pub let MulAssign(Rhs: type) = trait { let mul_assign(borrow(mut) self)(move rhs: Rhs): () }
+pub let DivAssign(Rhs: type) = trait { let div_assign(borrow(mut) self)(move rhs: Rhs): () }
+pub let RemAssign(Rhs: type) = trait { let rem_assign(borrow(mut) self)(move rhs: Rhs): () }
+"#;
+
 /// A stable logical role fulfilled by one declaration in the edition's
 /// `core` bundle.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -36,6 +45,11 @@ pub enum LangItemKind {
     Mul,
     Div,
     Rem,
+    AddAssign,
+    SubAssign,
+    MulAssign,
+    DivAssign,
+    RemAssign,
     Eq,
     PartialOrdering,
     PartialOrd,
@@ -59,7 +73,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 30] = [
+    const ALL: [Self; 35] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -70,6 +84,11 @@ impl LangItemKind {
         Self::Mul,
         Self::Div,
         Self::Rem,
+        Self::AddAssign,
+        Self::SubAssign,
+        Self::MulAssign,
+        Self::DivAssign,
+        Self::RemAssign,
         Self::Eq,
         Self::PartialOrdering,
         Self::PartialOrd,
@@ -104,6 +123,11 @@ impl LangItemKind {
             Self::Mul => "Mul",
             Self::Div => "Div",
             Self::Rem => "Rem",
+            Self::AddAssign => "AddAssign",
+            Self::SubAssign => "SubAssign",
+            Self::MulAssign => "MulAssign",
+            Self::DivAssign => "DivAssign",
+            Self::RemAssign => "RemAssign",
             Self::Eq => "Eq",
             Self::PartialOrdering => "PartialOrdering",
             Self::PartialOrd => "PartialOrd",
@@ -140,6 +164,11 @@ impl LangItemKind {
             | Self::Mul
             | Self::Div
             | Self::Rem
+            | Self::AddAssign
+            | Self::SubAssign
+            | Self::MulAssign
+            | Self::DivAssign
+            | Self::RemAssign
             | Self::Eq
             | Self::PartialOrd
             | Self::Neg
@@ -176,6 +205,11 @@ impl LangItemKind {
             | Self::Copy
             | Self::Drop
             | Self::PartialOrdering
+            | Self::AddAssign
+            | Self::SubAssign
+            | Self::MulAssign
+            | Self::DivAssign
+            | Self::RemAssign
             | Self::UnsafeEffect
             | Self::ThrowsEffect
             | Self::SharedAccess
@@ -185,6 +219,17 @@ impl LangItemKind {
             | Self::Unsafe
             | Self::Loop => None,
             Self::Iterator | Self::IntoIterator => None,
+        }
+    }
+
+    pub(crate) const fn assignment_operator_method(self) -> Option<&'static str> {
+        match self {
+            Self::AddAssign => Some("add_assign"),
+            Self::SubAssign => Some("sub_assign"),
+            Self::MulAssign => Some("mul_assign"),
+            Self::DivAssign => Some("div_assign"),
+            Self::RemAssign => Some("rem_assign"),
+            _ => None,
         }
     }
 }
@@ -240,6 +285,11 @@ pub struct LangItems {
     mul: LangItem,
     div: LangItem,
     rem: LangItem,
+    add_assign: LangItem,
+    sub_assign: LangItem,
+    mul_assign: LangItem,
+    div_assign: LangItem,
+    rem_assign: LangItem,
     eq: LangItem,
     partial_ordering: LangItem,
     partial_ord: LangItem,
@@ -301,6 +351,21 @@ impl LangItems {
 
     pub const fn rem(&self) -> &LangItem {
         &self.rem
+    }
+    pub const fn add_assign(&self) -> &LangItem {
+        &self.add_assign
+    }
+    pub const fn sub_assign(&self) -> &LangItem {
+        &self.sub_assign
+    }
+    pub const fn mul_assign(&self) -> &LangItem {
+        &self.mul_assign
+    }
+    pub const fn div_assign(&self) -> &LangItem {
+        &self.div_assign
+    }
+    pub const fn rem_assign(&self) -> &LangItem {
+        &self.rem_assign
     }
 
     pub const fn eq(&self) -> &LangItem {
@@ -386,6 +451,11 @@ impl LangItems {
             LangItemKind::Mul => &self.mul,
             LangItemKind::Div => &self.div,
             LangItemKind::Rem => &self.rem,
+            LangItemKind::AddAssign => &self.add_assign,
+            LangItemKind::SubAssign => &self.sub_assign,
+            LangItemKind::MulAssign => &self.mul_assign,
+            LangItemKind::DivAssign => &self.div_assign,
+            LangItemKind::RemAssign => &self.rem_assign,
             LangItemKind::Eq => &self.eq,
             LangItemKind::PartialOrdering => &self.partial_ordering,
             LangItemKind::PartialOrd => &self.partial_ord,
@@ -450,7 +520,8 @@ impl CoreBundle {
     fn from_source(edition: Edition, source: &str) -> Result<Self, CoreBundleError> {
         // Most contract tests isolate one prelude/operator declaration. Keep
         // the independently tested control module present in those fixtures.
-        let source = format!("{source}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}");
+        let source =
+            format!("{source}\n{TEST_ASSIGNMENT_OPS}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}");
         let mut program = parser::parse(&source).map_err(|error| {
             CoreBundleError::new(
                 edition,
@@ -539,6 +610,11 @@ impl CoreBundle {
             &mut lang_items.mul,
             &mut lang_items.div,
             &mut lang_items.rem,
+            &mut lang_items.add_assign,
+            &mut lang_items.sub_assign,
+            &mut lang_items.mul_assign,
+            &mut lang_items.div_assign,
+            &mut lang_items.rem_assign,
             &mut lang_items.eq,
             &mut lang_items.partial_ordering,
             &mut lang_items.partial_ord,
@@ -732,6 +808,11 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         mul: item(LangItemKind::Mul),
         div: item(LangItemKind::Div),
         rem: item(LangItemKind::Rem),
+        add_assign: item(LangItemKind::AddAssign),
+        sub_assign: item(LangItemKind::SubAssign),
+        mul_assign: item(LangItemKind::MulAssign),
+        div_assign: item(LangItemKind::DivAssign),
+        rem_assign: item(LangItemKind::RemAssign),
         eq: item(LangItemKind::Eq),
         partial_ordering: item(LangItemKind::PartialOrdering),
         partial_ord: item(LangItemKind::PartialOrd),
@@ -816,6 +897,9 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         (kind @ (LangItemKind::Neg | LangItemKind::Not), Item::Trait(definition)) => {
             validate_unary_operator(kind, definition, diagnostics)
         }
+        (kind, Item::Trait(definition)) if kind.assignment_operator_method().is_some() => {
+            validate_assignment_operator(kind, definition, diagnostics)
+        }
         (kind, Item::Trait(definition)) if kind.operator_method().is_some() => {
             validate_operator(kind, definition, diagnostics)
         }
@@ -825,6 +909,51 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
             item_kind(item)
         )),
     }
+}
+
+fn validate_assignment_operator(
+    kind: LangItemKind,
+    definition: &TraitDef,
+    diagnostics: &mut Vec<String>,
+) {
+    let method = kind
+        .assignment_operator_method()
+        .expect("assignment operator lang item has a method");
+    let valid = definition.compile_groups == vec![vec![type_parameter("Rhs")]]
+        && matches!(
+            definition.members.as_slice(),
+            [TraitMember::Function(function)]
+                if valid_assignment_operator_method(function, method)
+        );
+    if !valid {
+        diagnostics.push(format!(
+            "lang item `{kind}` must have shape `pub let {kind}(Rhs: type) = trait {{ let {method}(borrow(mut) self)(move rhs: Rhs): () }}`"
+        ));
+    }
+}
+
+fn valid_assignment_operator_method(function: &Function, method: &str) -> bool {
+    let [receiver_group, rhs_group] = function.groups.as_slice() else {
+        return false;
+    };
+    let [receiver] = receiver_group.as_slice() else {
+        return false;
+    };
+    let [rhs] = rhs_group.as_slice() else {
+        return false;
+    };
+    function.name == method
+        && function.compile_groups.is_empty()
+        && function.return_type == Some(Type::Unit)
+        && function.effects == crate::ast::FunctionEffects::default()
+        && function.where_predicates.is_empty()
+        && function.body.is_none()
+        && receiver.name == "self"
+        && receiver.mode == PassMode::MutBorrow
+        && receiver.ty == named_type("Self")
+        && rhs.name == "rhs"
+        && rhs.mode == PassMode::Move
+        && rhs.ty == named_type("Rhs")
 }
 
 fn validate_iterator(definition: &TraitDef, diagnostics: &mut Vec<String>) {
@@ -1399,7 +1528,7 @@ pub let Shr(Rhs: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), 30);
+        assert_eq!(bundle.program().items.len(), 35);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -1414,6 +1543,11 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::Mul
                 | LangItemKind::Div
                 | LangItemKind::Rem
+                | LangItemKind::AddAssign
+                | LangItemKind::SubAssign
+                | LangItemKind::MulAssign
+                | LangItemKind::DivAssign
+                | LangItemKind::RemAssign
                 | LangItemKind::Eq
                 | LangItemKind::PartialOrdering
                 | LangItemKind::PartialOrd
@@ -1452,6 +1586,11 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::Mul
                 | LangItemKind::Div
                 | LangItemKind::Rem
+                | LangItemKind::AddAssign
+                | LangItemKind::SubAssign
+                | LangItemKind::MulAssign
+                | LangItemKind::DivAssign
+                | LangItemKind::RemAssign
                 | LangItemKind::Eq
                 | LangItemKind::PartialOrdering
                 | LangItemKind::PartialOrd
@@ -1524,6 +1663,28 @@ pub let Shr(Rhs: type) = trait {
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.contains("lang item `Iterator`")));
+    }
+
+    #[test]
+    fn rejects_malformed_assignment_operator_contracts() {
+        let malformed = EDITION_2026_OPS.replace(
+            "let add_assign(borrow(mut) self)(move rhs: Rhs): ()",
+            "let add_assign(borrow self)(move rhs: Rhs): ()",
+        );
+        let error = CoreBundle::from_modules(
+            Edition::Edition2026,
+            &[
+                ("prelude", EDITION_2026_PRELUDE),
+                ("ops", &malformed),
+                ("control", EDITION_2026_CONTROL),
+                ("iter", EDITION_2026_ITER),
+            ],
+        )
+        .unwrap_err();
+        assert!(error
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.contains("lang item `AddAssign`")));
     }
 
     #[test]

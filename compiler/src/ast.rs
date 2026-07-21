@@ -343,6 +343,7 @@ pub enum Expr {
     },
     Throw(Box<Expr>),
     Assign(Box<Expr>, Box<Expr>),
+    CompoundAssign(Box<Expr>, BinaryOp, Box<Expr>),
     Call(Box<Expr>, Vec<CallArg>),
     Member(Box<Expr>, String),
     ChainMember(Box<Expr>, String),
