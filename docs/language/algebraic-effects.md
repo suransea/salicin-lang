@@ -133,9 +133,11 @@ Marker-only `let UI = effect` remains valid and has no operations or derived han
 
 The current native slice performs selective CPS transformation for lexically visible operations,
 including one-shot resumption and abandonment. It propagates through fully applied, non-recursive
-ordinary named functions with owned parameters by hygienically specializing their source bodies.
+ordinary named functions by hygienically specializing their source bodies.
 Operation and ordinary call arguments are traversed in source order, `done:` may change the answer
 type, and nested handlers of the same identity select the nearest matching boundary.
-Borrow parameters, explicit returns, indirect or recursive calls, loop backedges, and the final
-typed continuation ABI remain implementation work; those cases are rejected rather than compiled
-with callback-only semantics.
+Each named-call specialization is a real local closure frame, so shared and mutable borrow
+parameters retain their capabilities, explicit returns target the callee frame, and its locals are
+cleaned before the caller continuation resumes. Indirect or recursive calls, loop backedges, and the
+final typed continuation ABI remain implementation work; those cases are rejected rather than
+compiled with callback-only semantics.

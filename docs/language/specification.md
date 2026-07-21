@@ -424,9 +424,10 @@ operation 没有函数体，完整调用产生所属的已实例化 effect。`St
 `with(...)` 要求按普通函数签名检查；部分应用本身仍是 pure。当前实现阶段已经提供声明、名义
 identity、传播和类型检查。派生的 `State(i32).handle(get: { (resume) -> ... }, ...) { action }`
 可处理 action 中词法可见的 operation；`resume` 是一次性 continuation，也可以不调用以中止剩余
-计算。普通具名、完整调用、非递归且只含 owned 参数的函数会在 handler 下进行 hygienic 特化；借用
-参数、显式 `return`、间接或递归调用以及循环回边的 typed CPS lowering 按
-[代数效应设计](algebraic-effects.md)继续实现。尚未覆盖的路径会被拒绝，不能让带 operation 的
+计算。普通具名、完整调用且非递归的函数会在 handler 下特化成真实的局部 closure frame；参数保留
+原本的 copy、move 或 borrow mode，显式 `return` 以该 frame 为边界，callee 局部值也会在调用者
+continuation 恢复前清理。间接或递归调用以及循环回边的 typed CPS lowering 按
+[代数效应设计](algebraic-effects.md)继续实现；尚未覆盖的路径会被拒绝，不能让带 operation 的
 effect 逃逸原生入口。
 
 `effect` kind 的实参是完整 row，包括 `pure`、`unsafe`、`throws(E)`、异步挂起、名义 marker 及其

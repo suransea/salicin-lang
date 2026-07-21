@@ -11862,26 +11862,31 @@ impl Analyzer {
         for source_group in source_groups {
             let mut group = Vec::new();
             for param in source_group {
-                if param.mode != PassMode::Inferred {
-                    self.error(format!(
-                        "closure parameter `{}` must use inferred passing mode for now",
-                        param.name
-                    ));
-                }
                 let ty = self.lower_source_type(&param.ty);
                 if context.scopes[0].names.contains_key(&param.name) {
                     self.error(format!("duplicate closure parameter `{}`", param.name));
                     continue;
                 }
                 let id = context.fresh_local();
+                if matches!(param.mode, PassMode::Borrow | PassMode::MutBorrow) {
+                    context.borrowed_parameter_regions.insert(
+                        id,
+                        (param.region.clone(), param.mode == PassMode::MutBorrow),
+                    );
+                }
+                let capability = match param.mode {
+                    PassMode::Borrow => LocalCapability::SharedParam,
+                    PassMode::MutBorrow => LocalCapability::MutParam,
+                    PassMode::Inferred | PassMode::Copy | PassMode::Move => LocalCapability::Owned,
+                };
                 context.scopes[0].locals.push(id);
                 context.scopes[0].names.insert(
                     param.name.clone(),
                     LocalInfo {
                         id,
                         ty: ty.clone(),
-                        mutable: false,
-                        capability: LocalCapability::Owned,
+                        mutable: param.mode == PassMode::MutBorrow,
+                        capability,
                         alias: None,
                         partial: None,
                         closure: None,
@@ -11890,13 +11895,13 @@ impl Analyzer {
                 group.push(ParamSig {
                     name: param.name.clone(),
                     ty: ty.clone(),
-                    mode: PassMode::Inferred,
+                    mode: param.mode,
                 });
                 hir_params.push(HirParam {
                     id,
                     name: param.name.clone(),
                     ty,
-                    mode: PassMode::Inferred,
+                    mode: param.mode,
                 });
             }
             groups.push(group);
@@ -12030,6 +12035,22 @@ impl Analyzer {
                 }
                 valid
             }
+            Expr::CompoundAssign(place, _, value) => {
+                let mut valid = self.scan_simple_closure_captures(value, bound, outer, captures);
+                if let Some(name) = place_root_name(place) {
+                    if !bound.contains(name) && outer.lookup(name).is_some() {
+                        if !matches!(place.as_ref(), Expr::Name(_)) {
+                            self.error(
+                                "FnMut closure compound assignment only supports a captured root local for now",
+                            );
+                            valid = false;
+                        } else {
+                            record_closure_capture(captures, name, ClosureCaptureMode::Mutable);
+                        }
+                    }
+                }
+                valid
+            }
             Expr::Member(base, _) | Expr::ChainMember(base, _) => {
                 self.scan_simple_closure_captures(base, bound, outer, captures)
             }
@@ -12071,6 +12092,19 @@ impl Analyzer {
                         );
                     }
                     valid
+                } else if matches!(root, Expr::Name(name) if self.struct_layouts.contains_key(name))
+                {
+                    groups
+                        .iter()
+                        .flat_map(|group| group.iter())
+                        .fold(true, |valid, argument| {
+                            self.scan_simple_closure_captures(
+                                &argument.value,
+                                bound,
+                                outer,
+                                captures,
+                            ) & valid
+                        })
                 } else {
                     self.scan_direct_move_closure_call(expression, bound, outer, captures)
                 }
@@ -12098,6 +12132,13 @@ impl Analyzer {
                 if let Some(tail) = tail {
                     valid &= self.scan_simple_closure_captures(tail, bound, outer, captures);
                 }
+                *bound = saved;
+                valid
+            }
+            Expr::Closure(parameters, body) => {
+                let saved = bound.clone();
+                bound.extend(parameters.iter().map(|parameter| parameter.name.clone()));
+                let valid = self.scan_simple_closure_captures(body, bound, outer, captures);
                 *bound = saved;
                 valid
             }
@@ -15494,6 +15535,11 @@ impl Analyzer {
         resume: Option<SourceResume>,
         continuation: SourceContinuation,
     ) -> Result<Expr, ()> {
+        if let Some(argument) = internal_handler_return_argument(&expression) {
+            let returned: SourceContinuation =
+                Rc::new(|_, value| Ok(Expr::Return(Some(Box::new(value)))));
+            return self.transform_handler_expr(argument, handler, resume, returned);
+        }
         if let Some((operation, arguments)) = handled_operation_call(&expression, &handler.identity)
         {
             let Some(clause) = handler.clauses.get(&operation).cloned() else {
@@ -15662,6 +15708,25 @@ impl Analyzer {
                     }),
                 )
             }
+            Expr::CompoundAssign(place, operator, value) => {
+                let place = *place;
+                let next = continuation.clone();
+                self.transform_handler_expr(
+                    *value,
+                    handler,
+                    resume,
+                    Rc::new(move |analyzer, value| {
+                        next(
+                            analyzer,
+                            Expr::CompoundAssign(
+                                Box::new(place.clone()),
+                                operator,
+                                Box::new(value),
+                            ),
+                        )
+                    }),
+                )
+            }
             Expr::If {
                 condition,
                 then_branch,
@@ -15781,23 +15846,6 @@ impl Analyzer {
             ));
             return Some(Err(()));
         }
-        if function
-            .groups
-            .iter()
-            .flatten()
-            .any(|parameter| matches!(parameter.mode, PassMode::Borrow | PassMode::MutBorrow))
-        {
-            self.error(format!(
-                "handler propagation through borrow-parameter function `{name}` is not implemented yet"
-            ));
-            return Some(Err(()));
-        }
-        if expression_contains_return(function.body.as_ref().expect("checked body")) {
-            self.error(format!(
-                "handler propagation through `{name}` does not yet support explicit `return`"
-            ));
-            return Some(Err(()));
-        }
         if !handler.inlining.borrow_mut().insert(name.clone()) {
             self.error(format!(
                 "recursive resumable call through `{name}` requires the typed continuation ABI"
@@ -15805,13 +15853,26 @@ impl Analyzer {
             return Some(Err(()));
         }
 
-        let prefix = format!("$handler$inline${}${}$", self.next_closure, name);
+        let specialization = self.next_closure;
+        let prefix = format!("$handler$frame${specialization}${name}$");
         self.next_closure += 1;
-        let (parameters, body) = hygienic_inline_function(&function, &prefix);
-        let mut bindings = Vec::new();
-        for ((arguments, declared), renamed) in groups.iter().zip(&function.groups).zip(&parameters)
-        {
-            for ((argument, declared), renamed) in arguments.iter().zip(declared).zip(renamed) {
+        let (parameters, mut body) = hygienic_inline_function(&function, &prefix);
+        let return_name = format!("$handler$return${specialization}");
+        rewrite_handler_returns(&mut body, &return_name);
+        let identity: SourceContinuation = Rc::new(|_, value| Ok(value));
+        let transformed_body =
+            match self.transform_handler_expr(body, handler.clone(), resume.clone(), identity) {
+                Ok(body) => body,
+                Err(()) => {
+                    handler.inlining.borrow_mut().remove(name);
+                    return Some(Err(()));
+                }
+            };
+
+        let flattened_parameters = parameters.iter().flatten().cloned().collect::<Vec<_>>();
+        let mut flattened_arguments = Vec::new();
+        for (arguments, declared) in groups.iter().zip(&function.groups) {
+            for (argument, declared) in arguments.iter().zip(declared) {
                 if argument
                     .label
                     .as_deref()
@@ -15824,16 +15885,22 @@ impl Analyzer {
                     handler.inlining.borrow_mut().remove(name);
                     return Some(Err(()));
                 }
-                bindings.push(Stmt::Let(Binding {
-                    mutable: false,
-                    name: renamed.name.clone(),
-                    annotation: Some(renamed.ty.clone()),
+                flattened_arguments.push(CallArg {
+                    label: None,
                     value: argument.value.clone(),
-                }));
+                });
             }
         }
-        let inline = Expr::Block(bindings, Some(Box::new(body)));
-        let result = self.transform_handler_expr(inline, handler.clone(), resume, continuation);
+        let frame_name = format!("$handler$frame${specialization}");
+        let frame = Binding {
+            mutable: false,
+            name: frame_name.clone(),
+            annotation: None,
+            value: Expr::Closure(flattened_parameters, Box::new(transformed_body)),
+        };
+        let call = Expr::Call(Box::new(Expr::Name(frame_name)), flattened_arguments);
+        let specialized = Expr::Block(vec![Stmt::Let(frame)], Some(Box::new(call)));
+        let result = continuation(self, specialized);
         handler.inlining.borrow_mut().remove(name);
         Some(result)
     }
@@ -19437,6 +19504,19 @@ fn resume_call_argument(expression: &Expr, resume: &str) -> Option<Expr> {
     Some(groups[0][0].value.clone())
 }
 
+fn internal_handler_return_argument(expression: &Expr) -> Option<Expr> {
+    let mut groups = Vec::new();
+    let root = flatten_call(expression, &mut groups);
+    if !matches!(root, Expr::Name(name) if name.starts_with("$handler$return$"))
+        || groups.len() != 1
+        || groups[0].len() != 1
+        || groups[0][0].label.is_some()
+    {
+        return None;
+    }
+    Some(groups[0][0].value.clone())
+}
+
 fn handled_operation_call(expression: &Expr, identity: &str) -> Option<(String, Vec<CallArg>)> {
     let mut groups = Vec::new();
     let root = flatten_call(expression, &mut groups);
@@ -19571,63 +19651,90 @@ fn expression_contains_effect(expression: &Expr, identity: &str) -> bool {
     }
 }
 
-fn expression_contains_return(expression: &Expr) -> bool {
+fn rewrite_handler_returns(expression: &mut Expr, return_name: &str) {
     match expression {
-        Expr::Return(_) => true,
-        Expr::Closure(_, _) => false,
+        Expr::Return(value) => {
+            let mut value = value.take().map_or(Expr::Unit, |value| *value);
+            rewrite_handler_returns(&mut value, return_name);
+            *expression = Expr::Call(
+                Box::new(Expr::Name(return_name.to_owned())),
+                vec![CallArg { label: None, value }],
+            );
+        }
+        Expr::Closure(_, _) => {}
         Expr::Unary(_, value)
         | Expr::Try(value)
         | Expr::DoBlock { body: value }
         | Expr::Throw(value)
-        | Expr::Unsafe(value) => expression_contains_return(value),
-        Expr::Borrow { value, .. } => expression_contains_return(value),
+        | Expr::Unsafe(value) => rewrite_handler_returns(value, return_name),
+        Expr::Borrow { value, .. } => rewrite_handler_returns(value, return_name),
         Expr::Binary(left, _, right)
         | Expr::Coalesce(left, right)
         | Expr::Assign(left, right)
         | Expr::CompoundAssign(left, _, right) => {
-            expression_contains_return(left) || expression_contains_return(right)
+            rewrite_handler_returns(left, return_name);
+            rewrite_handler_returns(right, return_name);
         }
         Expr::Call(callee, arguments) => {
-            expression_contains_return(callee)
-                || arguments
-                    .iter()
-                    .any(|argument| expression_contains_return(&argument.value))
+            rewrite_handler_returns(callee, return_name);
+            for argument in arguments {
+                rewrite_handler_returns(&mut argument.value, return_name);
+            }
         }
-        Expr::Member(base, _) | Expr::ChainMember(base, _) => expression_contains_return(base),
-        Expr::Array(elements) => elements.iter().any(expression_contains_return),
+        Expr::Member(base, _) | Expr::ChainMember(base, _) => {
+            rewrite_handler_returns(base, return_name)
+        }
+        Expr::Array(elements) => {
+            for element in elements {
+                rewrite_handler_returns(element, return_name);
+            }
+        }
         Expr::Index { base, index } => {
-            expression_contains_return(base) || expression_contains_return(index)
+            rewrite_handler_returns(base, return_name);
+            rewrite_handler_returns(index, return_name);
         }
         Expr::Block(statements, tail) => {
-            statements.iter().any(|statement| match statement {
-                Stmt::Let(binding) => expression_contains_return(&binding.value),
-                Stmt::Expr(expression) => expression_contains_return(expression),
-            }) || tail.as_deref().is_some_and(expression_contains_return)
+            for statement in statements {
+                match statement {
+                    Stmt::Let(binding) => rewrite_handler_returns(&mut binding.value, return_name),
+                    Stmt::Expr(expression) => rewrite_handler_returns(expression, return_name),
+                }
+            }
+            if let Some(tail) = tail {
+                rewrite_handler_returns(tail, return_name);
+            }
         }
         Expr::If {
             condition,
             then_branch,
             else_branch,
         } => {
-            expression_contains_return(condition)
-                || expression_contains_return(then_branch)
-                || else_branch
-                    .as_deref()
-                    .is_some_and(expression_contains_return)
+            rewrite_handler_returns(condition, return_name);
+            rewrite_handler_returns(then_branch, return_name);
+            if let Some(else_branch) = else_branch {
+                rewrite_handler_returns(else_branch, return_name);
+            }
         }
         Expr::While { condition, body } => {
-            expression_contains_return(condition) || expression_contains_return(body)
+            rewrite_handler_returns(condition, return_name);
+            rewrite_handler_returns(body, return_name);
         }
-        Expr::Loop { body } => expression_contains_return(body),
-        Expr::Break(value) => value.as_deref().is_some_and(expression_contains_return),
+        Expr::Loop { body } => rewrite_handler_returns(body, return_name),
+        Expr::Break(value) => {
+            if let Some(value) = value {
+                rewrite_handler_returns(value, return_name);
+            }
+        }
         Expr::Match { scrutinee, arms } => {
-            expression_contains_return(scrutinee)
-                || arms.iter().any(|arm| {
-                    arm.guard.as_ref().is_some_and(expression_contains_return)
-                        || expression_contains_return(&arm.body)
-                })
+            rewrite_handler_returns(scrutinee, return_name);
+            for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    rewrite_handler_returns(guard, return_name);
+                }
+                rewrite_handler_returns(&mut arm.body, return_name);
+            }
         }
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => false,
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => {}
     }
 }
 

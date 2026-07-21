@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.114.0 - 2026-07-22
+
+- Specialized handled named calls as real local closure frames rather than flattening callee scope
+  into the caller, preserving explicit-return boundaries and cleanup before caller continuation.
+- Allowed closure parameters to retain inferred, copy, move, shared-borrow, and mutable-borrow modes,
+  enabling resumable functions with ordinary borrow parameters.
+- Extended closure capture analysis through nested closures, compound assignment, and struct
+  construction needed by specialized continuation frames.
+- Added native coverage proving explicit-return resource cleanup order and shared/mutable borrow
+  behavior across handled operations.
+
 ## 0.113.0 - 2026-07-22
 
 - Extended selective CPS traversal through ordinary call and operation arguments while preserving
