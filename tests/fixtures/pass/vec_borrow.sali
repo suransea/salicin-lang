@@ -9,16 +9,24 @@ let main(): i32 = {
   values.push(Resource(20))
   values.push(Resource(0))
   let first = do {
-    let reference = values.at(0)
+    let reference = vec_at(values)(0)
+    reference.read()
+  }
+  do {
+    let reference = vec_at_mut(values)(1)
+    reference.value = 21
+  }
+  let second = do {
+    let reference = values.at(1)
     reference.read()
   }
   do {
     let reference = values.at_mut(1)
     reference.value = 22
   }
-  let second = do {
+  let third = do {
     let reference = values.at(1)
     reference.read()
   }
-  first + second
+  if second == 21 { first + third } else { 0 }
 }

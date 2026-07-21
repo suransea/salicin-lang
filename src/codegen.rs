@@ -1331,9 +1331,13 @@ impl Analyzer {
                 "unresolved `use` declarations reached semantic analysis; resolve source modules before code generation",
             );
         }
+        let mut core_program = core.program().clone();
+        let mut alloc_program = alloc.program().clone();
         let mut source_program = program.clone();
+        erase_region_parameters(&mut core_program);
+        erase_region_parameters(&mut alloc_program);
         erase_region_parameters(&mut source_program);
-        analyzer.collect_items(core.program(), alloc.program(), &source_program);
+        analyzer.collect_items(&core_program, &alloc_program, &source_program);
         Ok(analyzer)
     }
 
@@ -21961,12 +21965,26 @@ mod tests {
         assert!(analyzer.function_templates.contains_key("box_write"));
         assert!(analyzer.function_templates.contains_key("box_into_inner"));
         assert!(analyzer.function_templates.contains_key("box_replace"));
+        assert!(analyzer.function_templates.contains_key("box_as_ref"));
+        assert!(analyzer.function_templates.contains_key("box_as_mut"));
+        assert!(matches!(
+            analyzer.function_templates["box_as_ref"]
+                .compile_groups
+                .as_slice(),
+            [group] if matches!(group.as_slice(), [parameter]
+                if parameter.name == "T" && parameter.kind == CompileParamKind::Type)
+        ));
         assert!(analyzer.function_templates.contains_key("vec_new"));
         assert!(analyzer
             .function_templates
             .contains_key("vec_with_capacity"));
         assert!(analyzer.function_templates.contains_key("vec_at"));
         assert!(analyzer.function_templates.contains_key("vec_at_mut"));
+        assert!(matches!(
+            analyzer.function_templates["vec_at"].compile_groups.as_slice(),
+            [group] if matches!(group.as_slice(), [parameter]
+                if parameter.name == "T" && parameter.kind == CompileParamKind::Type)
+        ));
         assert!(analyzer.function_templates.contains_key("vec_reserve"));
         assert!(analyzer.function_templates.contains_key("vec_push"));
         assert!(analyzer.function_templates.contains_key("vec_replace"));

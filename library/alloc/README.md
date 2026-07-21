@@ -25,6 +25,11 @@ Since v0.32 the bundle also defines `extend(T: type) Box(T)` in source. This sup
 inherent-extension monomorphizer. Since v0.45 a second `where T: Copy` extension supplies `read` and `write`;
 the free functions remain the bootstrap and compatibility layer.
 
+Since v0.66 Box also exposes `as_ref` and `as_mut` in both method and free-function forms. These
+return references anchored to the Box borrow, work for resource pointees, and prevent replacement
+or ownership extraction while live. The internal raw-pointer conversion remains confined to the
+validated alloc source.
+
 Since v0.61 the bundle also defines a private three-field `Vec(T)` representation and safe APIs for
 `T: Copy`: `new`, `with_capacity`, `len`, `capacity`, `push`, `read`, and `write`. Growth doubles the
 capacity, copies initialized elements with `raw_offset`, and releases the old allocation. Both

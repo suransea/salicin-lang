@@ -433,6 +433,14 @@ v0.65.0 加入动态容器的安全元素借用：
   anchor)` 建立引用。anchor 决定静态 loan/region，unsafe 调用者负责证明 pointer 指向该 owner 的
   已初始化且对整个借用期有效的 storage。
 
+v0.66.0 将同一机制用于 Box：
+
+- `boxed.as_ref()` / `box_as_ref(boxed)` 返回 `borrow T`，`boxed.as_mut()` /
+  `box_as_mut(boxed)` 返回 `mut borrow T`，均支持非 Copy 资源 pointee。
+- 返回引用以 Box 借用为 region/loan 来源；引用存活期间不能 replace、into_inner 或建立冲突借用。
+- compiler-embedded core、alloc 与用户源码现在统一在收集前擦除纯编译期 region 参数，因此标准库中的
+  显式 `'a` 不会被误当成需要用户填写或推断的类型参数。
+
 v0.30.0 进入普通 Salicin `alloc` 源并提供首个 owning `Box(T)`：
 
 - `library/alloc/src/prelude.sali` 随 compiler 按 edition 嵌入，仍经过普通 parser、模块 provenance、

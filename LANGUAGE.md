@@ -1616,6 +1616,11 @@ let value = boxed.into_inner()
 也支持显式 `Box(i32).new(40)`、期望类型推断和 `boxed.as_mut_ptr()`。自由函数继续保留作为兼容与
 bootstrap 表面；方法只是普通 Salicin extension 单态化，不是 compiler hard-code dispatch。
 
+v0.66 增加 `box_as_ref`/`Box.as_ref(): borrow T` 和
+`box_as_mut`/`Box.as_mut(): mut borrow T`。引用的 region 与 Box receiver 相同，适用于非 Copy
+pointee；引用存活时 replace、into_inner 和冲突借用都会被普通借用规则拒绝。嵌入式 core/alloc 与
+用户源码也统一在 item 收集前擦除 region 编译期参数，region 不参与运行时或单态化 key。
+
 v0.61 加入首个连续存储容器：
 
 ```sali

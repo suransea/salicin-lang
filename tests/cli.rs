@@ -262,6 +262,7 @@ fn alloc_box_owns_copy_and_resource_payloads() {
         "box_read.sali",
         "box_into_inner_drop_once.sali",
         "box_replace_drop.sali",
+        "box_borrow.sali",
         "forget_resource.sali",
         "forget_temporary_resource.sali",
     ] {
@@ -288,6 +289,24 @@ fn alloc_box_owns_copy_and_resource_payloads() {
         "boxed resource destructor did not run: {}",
         output_text(&trapped)
     );
+
+    for name in [
+        "box_borrow_then_replace.sali",
+        "box_mut_borrow_conflict.sali",
+        "box_borrow_then_into_inner.sali",
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check Box pointee borrow conflict");
+        assert!(!output.status.success(), "{name} unexpectedly compiled");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("borrowed"),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
 }
 
 #[test]

@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.66.0 - 2026-07-21
+
+- Added `box_as_ref`/`Box.as_ref(): borrow T` and `box_as_mut`/`Box.as_mut(): mut borrow T`, giving
+  Copy and resource pointees safe lifetime-bound access without exposing raw pointers.
+- Tied Box pointee references to the Box receiver loan, rejecting replace, into-inner, mutation, or
+  conflicting access while a returned reference remains live.
+- Applied compile-time region erasure uniformly to embedded core, embedded alloc, and user source,
+  allowing region-generic bootstrap functions to infer ordinary type arguments at call sites.
+- Added native and diagnostic coverage for free and method borrow forms, resource field reads and
+  writes, region inference, consume/replace conflicts, and shared/mutable alias exclusion.
+
 ## 0.65.0 - 2026-07-21
 
 - Added unsafe `raw_borrow(pointer, borrow anchor)` and
