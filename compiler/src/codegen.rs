@@ -246,6 +246,12 @@ struct ReturnBoundary {
     error: Option<Ty>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TryProtocolInfo {
+    output: Ty,
+    residual: Ty,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReturnValueCandidate {
     Container,
@@ -6702,6 +6708,15 @@ impl Analyzer {
         .then_some(info)
     }
 
+    fn try_protocol_info_for_ty(&self, ty: &Ty) -> Option<TryProtocolInfo> {
+        let implementation =
+            self.trait_implementation(ty, self.lang_item_name(LangItemKind::Try), &[])?;
+        Some(TryProtocolInfo {
+            output: implementation.associated_types.get("Output")?.clone(),
+            residual: implementation.associated_types.get("Residual")?.clone(),
+        })
+    }
+
     fn trait_implementation(
         &self,
         self_ty: &Ty,
@@ -11697,13 +11712,35 @@ impl Analyzer {
         let operand_expected = boundary.as_ref().and_then(|boundary| {
             self.inferred_try_operand_expected(value, expected, boundary, context)
         });
-        let operand = self.lower_expr(value, operand_expected.as_ref(), context);
         let Some(boundary) = boundary else {
+            let _ = self.lower_expr(value, operand_expected.as_ref(), context);
             self.error(
                 "postfix `.try` requires a named function with an explicit `Option` or `Result` return type",
             );
             return error_expr();
         };
+        let operand_probe = self.probe_expr_ty(value, operand_expected.as_ref(), context);
+        let operand_ty = match &operand_probe {
+            TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) => Some(ty.clone()),
+            TypeProbe::Defaultable(_) | TypeProbe::Unsupported => None,
+        };
+        if let Some((operand_ty, protocol)) = operand_ty
+            .and_then(|ty| {
+                self.try_protocol_info_for_ty(&ty)
+                    .map(|protocol| (ty, protocol))
+            })
+            .filter(|(ty, _)| self.builtin_fallible_info_for_ty(ty).is_none())
+        {
+            return self.lower_protocol_try(
+                value,
+                &operand_ty,
+                &protocol,
+                expected,
+                &boundary,
+                context,
+            );
+        }
+        let operand = self.lower_expr(value, operand_expected.as_ref(), context);
         if operand.ty == Ty::Error {
             return error_expr();
         }
@@ -11793,6 +11830,87 @@ impl Analyzer {
             residual_arm,
         ];
         self.lower_match_with_scrutinee(operand, &arms, expected, context)
+    }
+
+    fn lower_protocol_try(
+        &mut self,
+        value: &Expr,
+        operand_ty: &Ty,
+        protocol: &TryProtocolInfo,
+        expected: Option<&Ty>,
+        boundary: &ReturnBoundary,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        if !self.has_conversion_impl(
+            &boundary.container,
+            LangItemKind::FromResidual,
+            &protocol.residual,
+        ) {
+            let _ = self.lower_expr(value, Some(operand_ty), context);
+            self.error(format!(
+                "postfix `.try` cannot convert residual type `{}` from `{operand_ty}` into `{}`",
+                protocol.residual, boundary.container
+            ));
+            return error_expr();
+        }
+        if expected.is_some_and(|expected| {
+            *expected != Ty::Error
+                && *expected != protocol.output
+                && !self.is_uninhabited_type(&protocol.output)
+        }) {
+            self.error(format!(
+                "postfix `.try` produces `{}`, but this context expects `{}`",
+                protocol.output,
+                expected.expect("checked expected type")
+            ));
+            return error_expr();
+        }
+        let empty_group: &[CallArg] = &[];
+        let branch =
+            self.lower_bound_method_call(value, "branch", &[empty_group], None, None, context);
+        if branch.ty == Ty::Error {
+            return branch;
+        }
+        let Ty::Enum(boundary_name) = &boundary.container else {
+            self.error("internal error: non-enum `.try` return boundary");
+            return error_expr();
+        };
+
+        const OUTPUT_BINDING: &str = "$try$protocol$output";
+        const RESIDUAL_BINDING: &str = "$try$protocol$residual";
+        let convert = Expr::Call(
+            Box::new(Expr::Member(
+                Box::new(Expr::Name(boundary_name.clone())),
+                "from_residual".to_owned(),
+            )),
+            vec![CallArg {
+                label: None,
+                value: Expr::Name(RESIDUAL_BINDING.to_owned()),
+            }],
+        );
+        let arms = vec![
+            MatchArm {
+                pattern: Pattern::Constructor {
+                    path: vec!["Continue".to_owned()],
+                    fields: PatternFields::Positional(vec![Pattern::Binding(
+                        OUTPUT_BINDING.to_owned(),
+                    )]),
+                },
+                guard: None,
+                body: Expr::Name(OUTPUT_BINDING.to_owned()),
+            },
+            MatchArm {
+                pattern: Pattern::Constructor {
+                    path: vec!["Break".to_owned()],
+                    fields: PatternFields::Positional(vec![Pattern::Binding(
+                        RESIDUAL_BINDING.to_owned(),
+                    )]),
+                },
+                guard: None,
+                body: Expr::Return(Some(Box::new(convert))),
+            },
+        ];
+        self.lower_match_with_scrutinee(branch, &arms, Some(&protocol.output), context)
     }
 
     fn lower_throw(&mut self, value: &Expr, context: &mut LowerCtx) -> HirExpr {
@@ -25713,6 +25831,32 @@ let main(): i32 = {
             .expect("core control associated functions must materialize for builtin containers");
 
         assert!(ir.contains("add i32"));
+    }
+
+    #[test]
+    fn custom_try_operands_branch_through_the_core_protocol() {
+        let ir = compile_resolved_text(
+            r#"
+use core.control.{ControlFlow, Try}
+let Step = enum { Value(i32), Stop(bool) }
+extend Step: Try {
+  let Output = i32
+  let Residual = bool
+  let branch(move self)(): ControlFlow(bool, i32) = self match {
+    Value(value) => Continue(value),
+    Stop(error) => Break(error),
+  }
+  let from_output(move output: i32): Step = Value(output)
+}
+let read(fail: bool): Step = if fail { Stop(true) } else { Value(40) }
+let run(fail: bool): Result(i32, bool) = read(fail).try + 2
+let main(): i32 = run(false) match { Ok(value) => value, Err(_) => 0 }
+"#,
+        )
+        .expect("custom Try operand must lower through branch and FromResidual");
+
+        assert!(ir.contains("add i32"));
+        assert!(ir.contains("switch i32"));
     }
 
     #[test]

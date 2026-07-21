@@ -36,8 +36,9 @@ use core.control.{Try, FromResidual}
 
 The compiler validates their complete edition-defined declaration shapes before compiling a
 package. `Option` and `Result` implement these protocols in ordinary generic core extensions.
-Postfix `.try` and `throw` validate those edition identities before using their currently supported
-`Option` and `Result` propagation lowering; custom `Try` lowering is the next implementation stage.
+Postfix `.try` and `throw` validate those edition identities. User-defined nominal types may already
+implement `Try` and propagate their residual through an enclosing `Option` or `Result` boundary;
+making a user-defined `Try` type itself the propagation boundary is the next implementation stage.
 
 Primitive implementations and the unit spelling `void` remain compiler-defined. A declaration only
 receives language-item behavior when its validated identity comes from this edition's embedded core;

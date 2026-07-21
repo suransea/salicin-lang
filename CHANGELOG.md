@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.76.0 - 2026-07-21
+
+- Allowed user-defined nominal types implementing the validated `core.control.Try` language trait
+  to serve as postfix `.try` operands.
+- Lowered custom propagation through the implementation's consuming `branch()` method and the
+  edition-pinned `ControlFlow.Continue` / `ControlFlow.Break` variants, evaluating the operand once.
+- Routed custom residuals through the enclosing `Option` or `Result` boundary's validated
+  `FromResidual` implementation and rejected unsupported residual conversions before lowering.
+- Checked custom `Try.Output` against the surrounding expected type and added end-to-end HIR/LLVM
+  coverage for a user enum propagating into `Result`.
+- Kept propagation boundaries deliberately limited to `Option` and `Result` in this release; custom
+  `Try` return boundaries remain the next generalization step.
+
 ## 0.75.0 - 2026-07-21
 
 - Implemented `Try`, `FromResidual`, and `FromError` for the edition-pinned generic `Option` and
