@@ -142,6 +142,7 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
         "algebraic_effect_capturing_closure.sc",
         "algebraic_effect_capturing_closure_drop.sc",
         "algebraic_effect_fn_mut_closure.sc",
+        "algebraic_effect_dynamic_callable.sc",
         "algebraic_effect_call_arguments.sc",
         "algebraic_effect_done.sc",
         "algebraic_effect_nearest_handler.sc",

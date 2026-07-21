@@ -68,12 +68,14 @@ computation after `resume` use explicit CPS continuation closures. Direct and mu
 frames share an erased call/drop-entry plus environment ABI with a runtime one-shot flag. Inferred
 immutable local aliases of statically known effectful functions are resolved through the same CPS
 path, including chained aliases. Statically known function arguments also specialize higher-order
-effectful frames and are erased from those frames' runtime parameter lists. Capturing and genuinely
-typed local closures now use a hidden erased continuation argument while lexically enclosed by the
+effectful frames and are erased from those frames' runtime parameter lists. Explicitly typed
+capturing local closures use a hidden erased continuation argument while lexically enclosed by the
 handler. Their ordinary capture environments preserve `Fn`, `FnMut`, and `FnOnce` behavior,
 including repeated mutable calls and exactly-once abandonment cleanup, and they may specialize a
-higher-order frame. Conditionally selected, escaping, and otherwise genuinely dynamic indirect
-calls remain implementation work and receive a dedicated handler-aware ABI diagnostic.
+higher-order frame. Two-way conditional selections between named targets use a binding-site boolean
+tag and call-time resumable branch dispatch, including forwarding through a higher-order frame.
+Escaping callables, conditional closure environments, and open-ended dynamic targets remain
+implementation work and receive dedicated diagnostics.
 Recursive-frame visibility is limited to callee-body
 transformation, so sequential calls to the same effectful named function remain independent.
 Abandonment invokes the armed environment's drop entry,

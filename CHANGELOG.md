@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.131.0 - 2026-07-22
+
+- Lowered two-way conditional selection between named effectful callables to a binding-site boolean
+  tag and call-time dispatch between resumable entries.
+- Forwarded tagged dynamic selections through statically specialized higher-order frames without
+  materializing unresolved ordinary function pointers.
+- Permitted function-valued conditionals during validation of source-only resumable functions while
+  keeping escaping dynamic callable values explicitly rejected.
+- Added native runtime-selection coverage whose chosen branch resumes through the active handler.
+
 ## 0.130.0 - 2026-07-22
 
 - Lowered explicitly typed local effectful closures to handler-answer CPS with a hidden erased

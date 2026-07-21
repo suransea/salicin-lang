@@ -153,9 +153,11 @@ functions by hygienically specializing their source bodies. Inferred immutable l
 statically known effectful function retain that identity through alias chains and enter the same
 specialization path. A statically known named function or such an alias may also fill an effectful
 callable parameter: the higher-order frame specializes that parameter to the source target, removes
-it from the runtime frame, and transforms the resulting direct call normally. A conditionally
-selected target, escaping closure, or other genuinely dynamic callable still requires the general
-handler-aware runtime ABI and is rejected explicitly.
+it from the runtime frame, and transforms the resulting direct call normally. A two-way conditional
+selection between named callable targets is represented by a boolean tag evaluated once at the
+binding, then dispatched at each call into the selected resumable entry with the same caller
+continuation. Escaping closures and open-ended callable values still require the general
+handler-aware runtime ABI and are rejected explicitly.
 
 An explicitly typed local closure whose row contains the handled effect is lowered to a resumable
 closure while it remains lexically visible to that handler. Its ordinary result becomes the input

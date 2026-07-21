@@ -391,6 +391,7 @@ struct AlgebraicHandler {
     operations: HashMap<String, Vec<AlgebraicHandlerOperation>>,
     function_aliases: Rc<RefCell<HashMap<String, String>>>,
     resumable_closures: Rc<RefCell<HashMap<String, SourceResumableClosure>>>,
+    dynamic_callables: Rc<RefCell<HashMap<String, SourceDynamicCallable>>>,
     done: Option<AlgebraicHandlerClause>,
     inlining: Rc<RefCell<HashMap<String, SourceInlineFrame>>>,
     loop_breaks: Rc<RefCell<HashMap<String, SourceContinuation>>>,
@@ -402,6 +403,13 @@ struct AlgebraicHandler {
 struct SourceResumableClosure {
     input: Type,
     answer: Type,
+    group_lengths: Vec<usize>,
+}
+
+#[derive(Clone)]
+struct SourceDynamicCallable {
+    then_target: String,
+    else_target: String,
     group_lengths: Vec<usize>,
 }
 
@@ -10948,6 +10956,10 @@ impl Analyzer {
                             if matches!(ty, Ty::Function(_))
                                 && partial.is_none()
                                 && closure.is_none()
+                                && !matches!(&ty, Ty::Function(function) if function.custom_effects.iter().any(|effect| {
+                                    context.active_custom_effects.contains(effect)
+                                        && self.effect_defs.get(effect.split('(').next().unwrap_or(effect)).is_some_and(|definition| !definition.operations.is_empty())
+                                }))
                             {
                                 self.error(format!(
                                     "function-valued local `{}` must be a direct partial application",
@@ -16491,6 +16503,7 @@ impl Analyzer {
             operations: handler_operations,
             function_aliases: Rc::new(RefCell::new(HashMap::new())),
             resumable_closures: Rc::new(RefCell::new(HashMap::new())),
+            dynamic_callables: Rc::new(RefCell::new(HashMap::new())),
             done,
             inlining: Rc::new(RefCell::new(HashMap::new())),
             loop_breaks: Rc::new(RefCell::new(HashMap::new())),
@@ -16543,6 +16556,12 @@ impl Analyzer {
             if handler.function_aliases.borrow().contains_key(name) {
                 self.error(format!(
                     "effectful function alias `{name}` cannot escape its handler or be used as a runtime value"
+                ));
+                return Err(());
+            }
+            if handler.dynamic_callables.borrow().contains_key(name) {
+                self.error(format!(
+                    "dynamic effectful callable `{name}` cannot escape its handler as a runtime value"
                 ));
                 return Err(());
             }
@@ -16739,6 +16758,14 @@ impl Analyzer {
                 return result;
             }
             if let Some(result) = self.transform_resumable_closure_call(
+                &expression,
+                handler.clone(),
+                resume.clone(),
+                continuation.clone(),
+            ) {
+                return result;
+            }
+            if let Some(result) = self.transform_dynamic_callable_call(
                 &expression,
                 handler.clone(),
                 resume.clone(),
@@ -17117,9 +17144,9 @@ impl Analyzer {
             }
             Expr::Match { scrutinee, arms } => {
                 let has_effectful_guard = arms.iter().any(|arm| {
-                    arm.guard.as_ref().is_some_and(|guard| {
-                        self.handler_expression_may_suspend(guard, &handler.identity)
-                    })
+                    arm.guard
+                        .as_ref()
+                        .is_some_and(|guard| self.handler_expression_may_suspend(guard, &handler))
                 });
                 if has_effectful_guard {
                     let handler_for_arms = handler.clone();
@@ -17207,14 +17234,11 @@ impl Analyzer {
         let Expr::ChainMember(base, member) = flatten_call(expression, &mut source_groups) else {
             return None;
         };
-        let base_may_suspend = self.handler_expression_may_suspend(base, &handler.identity);
-        let arguments_may_suspend =
-            source_groups
-                .iter()
-                .flat_map(|group| group.iter())
-                .any(|argument| {
-                    self.handler_expression_may_suspend(&argument.value, &handler.identity)
-                });
+        let base_may_suspend = self.handler_expression_may_suspend(base, &handler);
+        let arguments_may_suspend = source_groups
+            .iter()
+            .flat_map(|group| group.iter())
+            .any(|argument| self.handler_expression_may_suspend(&argument.value, &handler));
         if !base_may_suspend && !arguments_may_suspend {
             return None;
         }
@@ -17329,7 +17353,7 @@ impl Analyzer {
         let guard_is_effectful = arm
             .guard
             .as_ref()
-            .is_some_and(|guard| self.handler_expression_may_suspend(guard, &handler.identity));
+            .is_some_and(|guard| self.handler_expression_may_suspend(guard, &handler));
 
         let candidate = if let Some(guard) = &arm.guard {
             if guard_is_effectful {
@@ -17389,19 +17413,28 @@ impl Analyzer {
         })
     }
 
-    fn handler_expression_may_suspend(&self, expression: &Expr, identity: &str) -> bool {
-        if handled_operation_call(expression, identity).is_some() {
+    fn handler_expression_may_suspend(
+        &self,
+        expression: &Expr,
+        handler: &AlgebraicHandler,
+    ) -> bool {
+        if handled_operation_call(expression, &handler.identity).is_some() {
             return true;
         }
         if matches!(expression, Expr::Call(_, _)) {
             let mut groups = Vec::new();
             if let Expr::Name(name) = flatten_call(expression, &mut groups) {
+                if handler.resumable_closures.borrow().contains_key(name)
+                    || handler.dynamic_callables.borrow().contains_key(name)
+                {
+                    return true;
+                }
                 if self.functions.get(name).is_some_and(|function| {
                     function
                         .effects
                         .custom
                         .iter()
-                        .any(|effect| source_effect_identity(effect) == identity)
+                        .any(|effect| source_effect_identity(effect) == handler.identity)
                 }) {
                     return true;
                 }
@@ -17409,7 +17442,7 @@ impl Analyzer {
         }
         handler_expression_children(expression)
             .into_iter()
-            .any(|child| self.handler_expression_may_suspend(child, identity))
+            .any(|child| self.handler_expression_may_suspend(child, handler))
     }
 
     fn transform_nested_effect_handler(
@@ -17595,6 +17628,105 @@ impl Analyzer {
         ))
     }
 
+    fn transform_dynamic_callable_call(
+        &mut self,
+        expression: &Expr,
+        handler: Rc<AlgebraicHandler>,
+        resume: Option<SourceResume>,
+        continuation: SourceContinuation,
+    ) -> Option<Result<Expr, ()>> {
+        let mut groups = Vec::new();
+        let Expr::Name(name) = flatten_call(expression, &mut groups) else {
+            return None;
+        };
+        let callable = handler.dynamic_callables.borrow().get(name).cloned()?;
+        if groups.len() != callable.group_lengths.len()
+            || groups
+                .iter()
+                .zip(&callable.group_lengths)
+                .any(|(arguments, expected)| arguments.len() != *expected)
+        {
+            self.error(format!(
+                "dynamic effectful callable `{name}` must be fully applied under its handler"
+            ));
+            return Some(Err(()));
+        }
+        if groups
+            .iter()
+            .flat_map(|group| group.iter())
+            .any(|argument| self.handler_expression_may_suspend(&argument.value, &handler))
+        {
+            let group_lengths = callable.group_lengths.clone();
+            let arguments = groups
+                .iter()
+                .flat_map(|group| group.iter().cloned())
+                .collect::<Vec<_>>();
+            let callee = name.clone();
+            let next_handler = handler.clone();
+            let next_resume = resume.clone();
+            let next_continuation = continuation.clone();
+            let completed: SourceArgumentsContinuation = Rc::new(move |analyzer, arguments| {
+                let mut offset = 0;
+                let mut call = Expr::Name(callee.clone());
+                for length in &group_lengths {
+                    let end = offset + length;
+                    call = Expr::Call(Box::new(call), arguments[offset..end].to_vec());
+                    offset = end;
+                }
+                analyzer
+                    .transform_dynamic_callable_call(
+                        &call,
+                        next_handler.clone(),
+                        next_resume.clone(),
+                        next_continuation.clone(),
+                    )
+                    .unwrap_or_else(|| {
+                        analyzer.error(
+                            "internal handler lost its dynamic callable after argument lowering",
+                        );
+                        Err(())
+                    })
+            });
+            return Some(self.transform_handler_arguments(
+                arguments,
+                Vec::new(),
+                handler,
+                resume,
+                completed,
+            ));
+        }
+        let rebuild = |target: &str| {
+            let mut call = Expr::Name(target.to_owned());
+            for group in &groups {
+                call = Expr::Call(Box::new(call), group.to_vec());
+            }
+            call
+        };
+        let then_branch = match self.transform_handler_expr(
+            rebuild(&callable.then_target),
+            handler.clone(),
+            resume.clone(),
+            continuation.clone(),
+        ) {
+            Ok(branch) => branch,
+            Err(()) => return Some(Err(())),
+        };
+        let else_branch = match self.transform_handler_expr(
+            rebuild(&callable.else_target),
+            handler,
+            resume,
+            continuation,
+        ) {
+            Ok(branch) => branch,
+            Err(()) => return Some(Err(())),
+        };
+        Some(Ok(Expr::If {
+            condition: Box::new(Expr::Name(name.clone())),
+            then_branch: Box::new(then_branch),
+            else_branch: Some(Box::new(else_branch)),
+        }))
+    }
+
     fn transform_resumable_closure_call(
         &mut self,
         expression: &Expr,
@@ -17621,7 +17753,7 @@ impl Analyzer {
         if groups
             .iter()
             .flat_map(|group| group.iter())
-            .any(|argument| self.handler_expression_may_suspend(&argument.value, &handler.identity))
+            .any(|argument| self.handler_expression_may_suspend(&argument.value, &handler))
         {
             let group_lengths = closure.group_lengths.clone();
             let arguments = groups
@@ -17859,7 +17991,7 @@ impl Analyzer {
         if groups
             .iter()
             .flat_map(|group| group.iter())
-            .any(|argument| self.handler_expression_may_suspend(&argument.value, &handler.identity))
+            .any(|argument| self.handler_expression_may_suspend(&argument.value, &handler))
         {
             let group_lengths = groups.iter().map(|group| group.len()).collect::<Vec<_>>();
             let arguments = groups
@@ -18030,6 +18162,7 @@ impl Analyzer {
                 .unwrap_or_else(|| argument_name.clone());
             if self.functions.contains_key(&target)
                 || handler.resumable_closures.borrow().contains_key(&target)
+                || handler.dynamic_callables.borrow().contains_key(&target)
             {
                 omitted_parameters.insert(index);
                 static_function_values.insert(parameter.name.clone(), target);
@@ -18279,6 +18412,95 @@ impl Analyzer {
         let first = statements.remove(0);
         match first {
             Stmt::Let(mut binding) => {
+                if let Some(Type::Function {
+                    groups: callable_groups,
+                    effects,
+                    ..
+                }) = binding.annotation.as_ref()
+                {
+                    if effects
+                        .custom
+                        .iter()
+                        .any(|effect| source_effect_identity(effect) == handler.identity)
+                    {
+                        if let Expr::If {
+                            condition,
+                            then_branch,
+                            else_branch: Some(else_branch),
+                        } = &binding.value
+                        {
+                            let then_target = static_callable_branch_target(then_branch);
+                            let else_target = static_callable_branch_target(else_branch);
+                            if let (Some(then_target), Some(else_target)) =
+                                (then_target, else_target)
+                            {
+                                let resolve = |target: String| {
+                                    handler
+                                        .function_aliases
+                                        .borrow()
+                                        .get(&target)
+                                        .cloned()
+                                        .unwrap_or(target)
+                                };
+                                let then_target = resolve(then_target);
+                                let else_target = resolve(else_target);
+                                if self.functions.contains_key(&then_target)
+                                    && self.functions.contains_key(&else_target)
+                                {
+                                    let name = binding.name.clone();
+                                    let callable = SourceDynamicCallable {
+                                        then_target,
+                                        else_target,
+                                        group_lengths: callable_groups
+                                            .iter()
+                                            .map(Vec::len)
+                                            .collect(),
+                                    };
+                                    let condition = (**condition).clone();
+                                    let next_handler = handler.clone();
+                                    let next_resume = resume.clone();
+                                    let next_continuation = continuation.clone();
+                                    return self.transform_handler_expr(
+                                        condition,
+                                        handler,
+                                        resume,
+                                        Rc::new(move |analyzer, condition| {
+                                            let previous = next_handler
+                                                .dynamic_callables
+                                                .borrow_mut()
+                                                .insert(name.clone(), callable.clone());
+                                            let rest = analyzer.transform_handler_block(
+                                                statements.clone(),
+                                                tail.clone(),
+                                                next_handler.clone(),
+                                                next_resume.clone(),
+                                                next_continuation.clone(),
+                                            );
+                                            let mut callables =
+                                                next_handler.dynamic_callables.borrow_mut();
+                                            if let Some(previous) = previous {
+                                                callables.insert(name.clone(), previous);
+                                            } else {
+                                                callables.remove(&name);
+                                            }
+                                            drop(callables);
+                                            let rest = rest?;
+                                            Ok(Expr::Block(
+                                                vec![Stmt::Let(Binding {
+                                                    mutable: false,
+                                                    name: name.clone(),
+                                                    annotation: Some(Type::Bool),
+                                                    value: condition,
+                                                })],
+                                                Some(Box::new(rest)),
+                                            ))
+                                        }),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
                 if let Some(transformed) =
                     self.transform_resumable_closure_binding(&binding, handler.clone())
                 {
@@ -22402,6 +22624,16 @@ fn handler_alias_reference(expression: &Expr, aliases: &HashMap<String, String>)
     handler_expression_children(expression)
         .into_iter()
         .find_map(|child| handler_alias_reference(child, aliases))
+}
+
+fn static_callable_branch_target(expression: &Expr) -> Option<String> {
+    match expression {
+        Expr::Name(name) => Some(name.clone()),
+        Expr::Block(statements, Some(tail)) if statements.is_empty() => {
+            static_callable_branch_target(tail)
+        }
+        _ => None,
+    }
 }
 
 fn handler_expression_children(expression: &Expr) -> Vec<&Expr> {
@@ -34594,7 +34826,7 @@ let main(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) {
         )
         .expect("a known function argument should specialize a higher-order effectful frame");
 
-        let dynamic = compile_text(
+        compile_text(
             r#"
 let Ask = effect { let value(): i32 }
 let ask_left(): i32 with(Ask) = { Ask.value() }
@@ -34606,10 +34838,24 @@ let main(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) {
 } }
 "#,
         )
-        .expect_err("a genuinely dynamic target still needs the runtime callable ABI");
-        assert!(dynamic.iter().any(|error| error.message.contains(
-            "dynamic effectful callable parameter `action` requires the handler-aware runtime ABI"
-        )));
+        .expect("a conditional named target should lower through runtime tag dispatch");
+
+        let escaping = compile_text(
+            r#"
+let Ask = effect { let value(): i32 }
+let ask_left(): i32 with(Ask) = { Ask.value() }
+let ask_right(): i32 with(Ask) = { Ask.value() }
+let main(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) {
+  let action: (): i32 with(Ask) = if true { ask_left } else { ask_right }
+  let escaped = action
+  42
+} }
+"#,
+        )
+        .expect_err("a dynamic selection cannot escape as an ordinary function pointer");
+        assert!(escaping.iter().any(|error| error
+            .message
+            .contains("dynamic effectful callable `action` cannot escape its handler")));
     }
 
     #[test]
