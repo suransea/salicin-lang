@@ -422,8 +422,10 @@ let read(): i32 with(State(i32)) = { State(i32).get() }
 operation 没有函数体，完整调用产生所属的已实例化 effect。`State(i32)`、`State(i64)`以及其他
 模块中同名的 `State(i32)`都是不同的 row 成员。operation 的参数组、传递模式、返回类型和附加
 `with(...)` 要求按普通函数签名检查；部分应用本身仍是 pure。当前实现阶段已经提供声明、名义
-identity、传播和类型检查；可恢复 handler 与 continuation lowering 按
-[代数效应设计](algebraic-effects.md)继续实现，在完成前不能让带 operation 的 effect 逃逸原生入口。
+identity、传播和类型检查。派生的 `State(i32).handle(get: { (resume) -> ... }, ...) { action }`
+可处理 action 中词法可见的 operation；`resume` 是一次性 continuation，也可以不调用以中止剩余
+计算。跨独立函数和循环回边的 typed CPS lowering 按[代数效应设计](algebraic-effects.md)继续实现，
+尚未覆盖的路径会被拒绝，不能让带 operation 的 effect 逃逸原生入口。
 
 `effect` kind 的实参是完整 row，包括 `pure`、`unsafe`、`throws(E)`、异步挂起、名义 marker 及其
 组合。row 本身不作为运行时值，但其中的控制 effect 可以影响 lowering 和 ABI；`pure` 是省略且

@@ -1489,7 +1489,43 @@ impl Parser {
     }
 
     fn parameter_group(&mut self) -> Result<Vec<Param>, ParseError> {
+        if self.untyped_closure_parameter_group_follows() {
+            self.expect(&TokenKind::LParen, "`(`")?;
+            let mut parameters = Vec::new();
+            loop {
+                let name = self.expect_ident("a contextual closure parameter name")?;
+                parameters.push(Param {
+                    mode: PassMode::Inferred,
+                    access: None,
+                    passing: None,
+                    region: None,
+                    name,
+                    ty: Type::Named("$context$infer".into(), Vec::new()),
+                });
+                if self.take(&TokenKind::Comma) {
+                    if self.take(&TokenKind::RParen) {
+                        break;
+                    }
+                } else {
+                    self.expect(&TokenKind::RParen, "`)`")?;
+                    break;
+                }
+            }
+            return Ok(parameters);
+        }
         self.runtime_parameter_group(false, &HashSet::new())
+    }
+
+    fn untyped_closure_parameter_group_follows(&self) -> bool {
+        self.at(&TokenKind::LParen)
+            && matches!(
+                self.tokens.get(self.index + 1).map(|token| &token.kind),
+                Some(TokenKind::Ident(_))
+            )
+            && matches!(
+                self.tokens.get(self.index + 2).map(|token| &token.kind),
+                Some(TokenKind::Comma | TokenKind::RParen)
+            )
     }
 
     fn type_expr(&mut self) -> Result<Type, ParseError> {
@@ -5040,6 +5076,26 @@ mod tests {
             program.effects.custom,
             [Type::Named("State".into(), vec![Type::I32])]
         );
+    }
+
+    #[test]
+    fn parses_function_shaped_handlers_with_contextual_clause_parameters() {
+        let program = parse(
+            "let State(S: type) = effect { let get(): S }\n\
+             let main(): i32 = {\n\
+               State(i32).handle(get: { (resume) -> resume(42) }) {\n\
+                 State(i32).get()\n\
+               }\n\
+             }\n",
+        )
+        .unwrap();
+        let Item::Function(main) = &program.items[1] else {
+            panic!("expected main function");
+        };
+        let Expr::Call(_, trailing) = function_tail(main) else {
+            panic!("expected trailing handler call group");
+        };
+        assert_eq!(trailing.len(), 1);
     }
 
     #[test]

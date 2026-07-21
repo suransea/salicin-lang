@@ -6,6 +6,12 @@ pub let Throws(E: type) = effect
 pub let Shared = access
 pub let Mutable = access
 
+// A handler clause receives a compiler-created, one-shot value with this
+// logical type. It may be invoked once to resume the suspended computation;
+// dropping it aborts that continuation. The current lowering erases the value
+// after selective CPS transformation.
+pub let Continuation(Input: type, Output: type) = struct()
+
 // Control syntax uses trailing-closure call notation and lowers through these
 // signatures. Their bodies are supplied by the compiler because they delimit
 // or transform control flow rather than behaving like ordinary calls.

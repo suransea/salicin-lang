@@ -132,6 +132,42 @@ fn effect_generics_select_pure_and_unsafe_instances() {
 }
 
 #[test]
+fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
+    for fixture_name in ["algebraic_effect_handler.sc", "algebraic_effect_abort.sc"] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", fixture_name))
+            .output()
+            .expect("run algebraic-effect handler fixture");
+        assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+    }
+
+    let output = salic()
+        .arg("check")
+        .arg(fixture("fail", "algebraic_effect_resume_twice.sc"))
+        .output()
+        .expect("reject a continuation resumed twice");
+    assert!(!output.status.success(), "{}", output_text(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("one-shot"),
+        "{}",
+        output_text(&output)
+    );
+
+    let output = salic()
+        .arg("check")
+        .arg(fixture("fail", "algebraic_effect_missing_clause.sc"))
+        .output()
+        .expect("reject an incomplete handler");
+    assert!(!output.status.success(), "{}", output_text(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("missing handler clause `put`"),
+        "{}",
+        output_text(&output)
+    );
+}
+
+#[test]
 fn non_capturing_function_values_run_through_indirect_calls() {
     let output = salic()
         .arg("run")

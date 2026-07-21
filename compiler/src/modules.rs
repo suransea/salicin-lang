@@ -322,7 +322,15 @@ const CORE_OPS_EXPORTS: &[&str] = &[
     "Shr",
 ];
 const CORE_CONTROL_EXPORTS: &[&str] = &[
-    "Unsafe", "Throws", "Shared", "Mutable", "do", "try", "unsafe", "loop",
+    "Unsafe",
+    "Throws",
+    "Shared",
+    "Mutable",
+    "Continuation",
+    "do",
+    "try",
+    "unsafe",
+    "loop",
 ];
 const CORE_CONTROL_IMPORTS: &[&str] = &["Unsafe", "Throws", "Shared", "Mutable"];
 const CORE_ITER_EXPORTS: &[&str] = &["Iterator", "IntoIterator"];

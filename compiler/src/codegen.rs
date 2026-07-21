@@ -4,8 +4,10 @@
 //! it to a small typed representation.  No malformed program reaches the LLVM
 //! emitter, which keeps the generated IR simple enough to inspect in tests.
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::rc::Rc;
 
 use crate::alloc::AllocBundle;
 use crate::ast::{
@@ -366,6 +368,28 @@ struct InferredCoalesceLhs<'a> {
     type_groups: Vec<&'a [CallArg]>,
     variant: &'a str,
     value_groups: Vec<&'a [CallArg]>,
+}
+
+type SourceContinuation = Rc<dyn Fn(&mut Analyzer, Expr) -> Result<Expr, ()>>;
+#[derive(Clone)]
+struct AlgebraicHandlerClause {
+    parameters: Vec<Param>,
+    resume: Option<String>,
+    body: Expr,
+}
+
+#[derive(Clone)]
+struct AlgebraicHandler {
+    identity: String,
+    clauses: HashMap<String, AlgebraicHandlerClause>,
+    done: Option<AlgebraicHandlerClause>,
+}
+
+#[derive(Clone)]
+struct SourceResume {
+    name: String,
+    continuation: SourceContinuation,
+    uses: Rc<Cell<usize>>,
 }
 
 #[derive(Clone, Copy)]
@@ -14995,11 +15019,13 @@ impl Analyzer {
             match self.resolve_effect_application(base, context) {
                 Ok(Some((definition, instance))) => {
                     if variant_name == "handle" {
-                        self.error(format!(
-                            "handler lowering for `{}` is not implemented yet",
-                            source_effect_identity(&instance)
-                        ));
-                        return error_expr();
+                        return self.lower_effect_handler(
+                            &definition,
+                            &instance,
+                            &groups,
+                            expected,
+                            context,
+                        );
                     }
                     return self.lower_effect_operation_call(
                         &definition,
@@ -15291,6 +15317,421 @@ impl Analyzer {
             return Err(());
         }
         Ok(Some((definition, Type::Named(name, arguments))))
+    }
+
+    fn lower_effect_handler(
+        &mut self,
+        definition: &EffectDef,
+        instance: &Type,
+        groups: &[&[CallArg]],
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let diagnostic_count = self.diagnostics.len();
+        if groups.len() != 2 || groups[1].len() != 1 || groups[1][0].label.is_some() {
+            self.error(format!(
+                "`{}.handle` expects one labeled clause group followed by one trailing action closure",
+                source_effect_identity(instance)
+            ));
+            return error_expr();
+        }
+        let Expr::Closure(action_parameters, action_body) = &groups[1][0].value else {
+            self.error("an effect handler requires a trailing closure");
+            return error_expr();
+        };
+        if !action_parameters.is_empty() {
+            self.error("an effect handler action closure cannot take parameters");
+            return error_expr();
+        }
+
+        let Type::Named(_, arguments) = instance else {
+            unreachable!("resolved effect instances are nominal applications")
+        };
+        let substitutions = definition
+            .compile_groups
+            .iter()
+            .flatten()
+            .zip(arguments)
+            .map(|(parameter, argument)| (parameter.name.clone(), argument.clone()))
+            .collect::<HashMap<_, _>>();
+        let mut operations = definition.operations.clone();
+        for operation in &mut operations {
+            substitute_function_types(operation, &substitutions);
+        }
+
+        let mut clauses = HashMap::new();
+        let mut done = None;
+        for argument in groups[0] {
+            let Some(label) = &argument.label else {
+                self.error("effect handler clauses must use operation names as argument labels");
+                continue;
+            };
+            let Expr::Closure(parameters, body) = &argument.value else {
+                self.error(format!("handler clause `{label}` must be a closure"));
+                continue;
+            };
+            if label == "done" {
+                if done.is_some() {
+                    self.error("duplicate handler clause `done`");
+                    continue;
+                }
+                if parameters.len() != 1 {
+                    self.error("handler clause `done` expects one result parameter");
+                    continue;
+                }
+                done = Some(AlgebraicHandlerClause {
+                    parameters: parameters.clone(),
+                    resume: None,
+                    body: (**body).clone(),
+                });
+                continue;
+            }
+            let Some(operation) = operations.iter().find(|operation| operation.name == *label)
+            else {
+                self.error(format!(
+                    "unknown handler clause `{label}` for effect `{}`",
+                    source_effect_identity(instance)
+                ));
+                continue;
+            };
+            if clauses.contains_key(label) {
+                self.error(format!("duplicate handler clause `{label}`"));
+                continue;
+            }
+            let operation_parameters = operation.groups.iter().flatten().collect::<Vec<_>>();
+            if parameters.len() != operation_parameters.len() + 1 {
+                self.error(format!(
+                    "handler clause `{label}` expects {} operation parameter(s) followed by `resume`, found {} parameter(s)",
+                    operation_parameters.len(),
+                    parameters.len()
+                ));
+                continue;
+            }
+            let mut parameters = parameters.clone();
+            for (parameter, declared) in parameters.iter_mut().zip(operation_parameters) {
+                if parameter.ty == Type::Named("$context$infer".into(), Vec::new()) {
+                    parameter.ty = declared.ty.clone();
+                }
+            }
+            let resume = parameters.pop().expect("validated resume parameter").name;
+            clauses.insert(
+                label.clone(),
+                AlgebraicHandlerClause {
+                    parameters,
+                    resume: Some(resume),
+                    body: (**body).clone(),
+                },
+            );
+        }
+        for operation in &operations {
+            if !clauses.contains_key(&operation.name) {
+                self.error(format!(
+                    "missing handler clause `{}` for effect `{}`",
+                    operation.name,
+                    source_effect_identity(instance)
+                ));
+            }
+        }
+        if self.diagnostics.len() != diagnostic_count {
+            return error_expr();
+        }
+
+        let handler = Rc::new(AlgebraicHandler {
+            identity: source_effect_identity(instance),
+            clauses,
+            done,
+        });
+        let final_continuation: SourceContinuation = if let Some(done) = handler.done.clone() {
+            let handler = handler.clone();
+            Rc::new(move |analyzer, value| {
+                let binding = Binding {
+                    mutable: false,
+                    name: done.parameters[0].name.clone(),
+                    annotation: contextual_annotation(&done.parameters[0]),
+                    value,
+                };
+                let identity: SourceContinuation = Rc::new(|_, value| Ok(value));
+                let body = analyzer.transform_handler_expr(
+                    done.body.clone(),
+                    handler.clone(),
+                    None,
+                    identity,
+                )?;
+                Ok(Expr::Block(vec![Stmt::Let(binding)], Some(Box::new(body))))
+            })
+        } else {
+            Rc::new(|_, value| Ok(value))
+        };
+        let transformed = match self.transform_handler_expr(
+            (**action_body).clone(),
+            handler,
+            None,
+            final_continuation,
+        ) {
+            Ok(expression) => expression,
+            Err(()) => return error_expr(),
+        };
+        self.lower_expr(&transformed, expected, context)
+    }
+
+    fn transform_handler_expr(
+        &mut self,
+        expression: Expr,
+        handler: Rc<AlgebraicHandler>,
+        resume: Option<SourceResume>,
+        continuation: SourceContinuation,
+    ) -> Result<Expr, ()> {
+        if let Some((operation, arguments)) = handled_operation_call(&expression, &handler.identity)
+        {
+            let Some(clause) = handler.clauses.get(&operation).cloned() else {
+                self.error(format!("missing handler clause `{operation}`"));
+                return Err(());
+            };
+            if arguments.iter().any(|argument| argument.label.is_some()) {
+                self.error(format!(
+                    "effect operation `{operation}` currently requires positional arguments"
+                ));
+                return Err(());
+            }
+            if arguments.len() != clause.parameters.len() {
+                self.error(format!(
+                    "effect operation `{operation}` expects {} argument(s), found {}",
+                    clause.parameters.len(),
+                    arguments.len()
+                ));
+                return Err(());
+            }
+            let bindings = clause
+                .parameters
+                .iter()
+                .zip(arguments)
+                .map(|(parameter, argument)| {
+                    Stmt::Let(Binding {
+                        mutable: false,
+                        name: parameter.name.clone(),
+                        annotation: contextual_annotation(parameter),
+                        value: argument.value,
+                    })
+                })
+                .collect::<Vec<_>>();
+            let source_resume = SourceResume {
+                name: clause.resume.expect("operation clauses have resume"),
+                continuation,
+                uses: Rc::new(Cell::new(0)),
+            };
+            let identity: SourceContinuation = Rc::new(|_, value| Ok(value));
+            let body =
+                self.transform_handler_expr(clause.body, handler, Some(source_resume), identity)?;
+            return Ok(Expr::Block(bindings, Some(Box::new(body))));
+        }
+
+        if let Some(source_resume) = &resume {
+            if let Some(argument) = resume_call_argument(&expression, &source_resume.name) {
+                let uses = source_resume.uses.get() + 1;
+                source_resume.uses.set(uses);
+                if uses > 1 {
+                    self.error(format!(
+                        "continuation `{}` is one-shot and cannot be resumed more than once",
+                        source_resume.name
+                    ));
+                    return Err(());
+                }
+                let suspended = source_resume.continuation.clone();
+                let current = continuation.clone();
+                let chained: SourceContinuation = Rc::new(move |analyzer, value| {
+                    let resumed = suspended(analyzer, value)?;
+                    current(analyzer, resumed)
+                });
+                return self.transform_handler_expr(argument, handler, resume, chained);
+            }
+            if matches!(&expression, Expr::Name(name) if name == &source_resume.name) {
+                self.error(format!(
+                    "continuation `{}` cannot escape its handler clause",
+                    source_resume.name
+                ));
+                return Err(());
+            }
+        }
+
+        if matches!(&expression, Expr::While { .. } | Expr::Loop { .. })
+            && expression_contains_effect(&expression, &handler.identity)
+        {
+            self.error("handled operations inside loop backedges are not implemented yet");
+            return Err(());
+        }
+
+        match expression {
+            Expr::Block(statements, tail) => self.transform_handler_block(
+                statements,
+                tail.map(|tail| *tail),
+                handler,
+                resume,
+                continuation,
+            ),
+            Expr::Unary(operator, operand) => {
+                let next = continuation.clone();
+                self.transform_handler_expr(
+                    *operand,
+                    handler,
+                    resume,
+                    Rc::new(move |analyzer, value| {
+                        next(analyzer, Expr::Unary(operator, Box::new(value)))
+                    }),
+                )
+            }
+            Expr::Binary(left, operator, right) => {
+                let right = *right;
+                let handler_for_right = handler.clone();
+                let resume_for_right = resume.clone();
+                let next = continuation.clone();
+                self.transform_handler_expr(
+                    *left,
+                    handler,
+                    resume,
+                    Rc::new(move |analyzer, left| {
+                        let left = left.clone();
+                        let next = next.clone();
+                        analyzer.transform_handler_expr(
+                            right.clone(),
+                            handler_for_right.clone(),
+                            resume_for_right.clone(),
+                            Rc::new(move |analyzer, right| {
+                                next(
+                                    analyzer,
+                                    Expr::Binary(Box::new(left.clone()), operator, Box::new(right)),
+                                )
+                            }),
+                        )
+                    }),
+                )
+            }
+            Expr::Assign(place, value) => {
+                let place = *place;
+                let next = continuation.clone();
+                self.transform_handler_expr(
+                    *value,
+                    handler,
+                    resume,
+                    Rc::new(move |analyzer, value| {
+                        next(
+                            analyzer,
+                            Expr::Assign(Box::new(place.clone()), Box::new(value)),
+                        )
+                    }),
+                )
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let handler_for_branches = handler.clone();
+                let resume_for_branches = resume.clone();
+                let next = continuation.clone();
+                self.transform_handler_expr(
+                    *condition,
+                    handler,
+                    resume,
+                    Rc::new(move |analyzer, condition| {
+                        let then_branch = analyzer.transform_handler_expr(
+                            (*then_branch).clone(),
+                            handler_for_branches.clone(),
+                            resume_for_branches.clone(),
+                            next.clone(),
+                        )?;
+                        let else_branch = match &else_branch {
+                            Some(branch) => Some(Box::new(analyzer.transform_handler_expr(
+                                (**branch).clone(),
+                                handler_for_branches.clone(),
+                                resume_for_branches.clone(),
+                                next.clone(),
+                            )?)),
+                            None => Some(Box::new(next(analyzer, Expr::Unit)?)),
+                        };
+                        Ok(Expr::If {
+                            condition: Box::new(condition),
+                            then_branch: Box::new(then_branch),
+                            else_branch,
+                        })
+                    }),
+                )
+            }
+            Expr::Call(callee, arguments) => {
+                let rebuilt = Expr::Call(callee, arguments);
+                continuation(self, rebuilt)
+            }
+            other => continuation(self, other),
+        }
+    }
+
+    fn transform_handler_block(
+        &mut self,
+        mut statements: Vec<Stmt>,
+        tail: Option<Expr>,
+        handler: Rc<AlgebraicHandler>,
+        resume: Option<SourceResume>,
+        continuation: SourceContinuation,
+    ) -> Result<Expr, ()> {
+        if statements.is_empty() {
+            return self.transform_handler_expr(
+                tail.unwrap_or(Expr::Unit),
+                handler,
+                resume,
+                continuation,
+            );
+        }
+        let first = statements.remove(0);
+        match first {
+            Stmt::Let(binding) => {
+                let name = binding.name.clone();
+                let annotation = binding.annotation.clone();
+                let mutable = binding.mutable;
+                let next_handler = handler.clone();
+                let next_resume = resume.clone();
+                self.transform_handler_expr(
+                    binding.value,
+                    handler,
+                    resume,
+                    Rc::new(move |analyzer, value| {
+                        let rest = analyzer.transform_handler_block(
+                            statements.clone(),
+                            tail.clone(),
+                            next_handler.clone(),
+                            next_resume.clone(),
+                            continuation.clone(),
+                        )?;
+                        Ok(Expr::Block(
+                            vec![Stmt::Let(Binding {
+                                mutable,
+                                name: name.clone(),
+                                annotation: annotation.clone(),
+                                value,
+                            })],
+                            Some(Box::new(rest)),
+                        ))
+                    }),
+                )
+            }
+            Stmt::Expr(statement) => {
+                let next_handler = handler.clone();
+                let next_resume = resume.clone();
+                self.transform_handler_expr(
+                    statement,
+                    handler,
+                    resume,
+                    Rc::new(move |analyzer, value| {
+                        let rest = analyzer.transform_handler_block(
+                            statements.clone(),
+                            tail.clone(),
+                            next_handler.clone(),
+                            next_resume.clone(),
+                            continuation.clone(),
+                        )?;
+                        Ok(Expr::Block(vec![Stmt::Expr(value)], Some(Box::new(rest))))
+                    }),
+                )
+            }
+        }
     }
 
     fn lower_effect_operation_call(
@@ -18802,6 +19243,157 @@ fn flatten_call<'a>(expression: &'a Expr, groups: &mut Vec<&'a [CallArg]>) -> &'
             root
         }
         _ => expression,
+    }
+}
+
+fn contextual_annotation(parameter: &Param) -> Option<Type> {
+    (parameter.ty != Type::Named("$context$infer".into(), Vec::new())).then(|| parameter.ty.clone())
+}
+
+fn resume_call_argument(expression: &Expr, resume: &str) -> Option<Expr> {
+    let mut groups = Vec::new();
+    let root = flatten_call(expression, &mut groups);
+    if !matches!(root, Expr::Name(name) if name == resume)
+        || groups.len() != 1
+        || groups[0].len() != 1
+        || groups[0][0].label.is_some()
+    {
+        return None;
+    }
+    Some(groups[0][0].value.clone())
+}
+
+fn handled_operation_call(expression: &Expr, identity: &str) -> Option<(String, Vec<CallArg>)> {
+    let mut groups = Vec::new();
+    let root = flatten_call(expression, &mut groups);
+    let Expr::Member(effect, operation) = root else {
+        return None;
+    };
+    if source_effect_expression_identity(effect)? != identity || operation == "handle" {
+        return None;
+    }
+    Some((
+        operation.clone(),
+        groups
+            .into_iter()
+            .flat_map(|group| group.iter().cloned())
+            .collect(),
+    ))
+}
+
+fn source_effect_expression_identity(expression: &Expr) -> Option<String> {
+    match expression {
+        Expr::Name(name) => Some(name.clone()),
+        Expr::Call(callee, arguments) => {
+            let Expr::Name(name) = callee.as_ref() else {
+                return None;
+            };
+            let arguments = arguments
+                .iter()
+                .map(|argument| {
+                    if argument.label.is_some() {
+                        None
+                    } else {
+                        source_type_expression_name(&argument.value)
+                    }
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(format!("{name}({})", arguments.join(", ")))
+        }
+        _ => None,
+    }
+}
+
+fn source_type_expression_name(expression: &Expr) -> Option<String> {
+    match expression {
+        Expr::Name(name) => Some(name.clone()),
+        Expr::Call(callee, arguments) => {
+            let Expr::Name(name) = callee.as_ref() else {
+                return None;
+            };
+            let arguments = arguments
+                .iter()
+                .map(|argument| source_type_expression_name(&argument.value))
+                .collect::<Option<Vec<_>>>()?;
+            Some(format!("{name}({})", arguments.join(", ")))
+        }
+        Expr::Unit => Some("()".into()),
+        _ => None,
+    }
+}
+
+fn expression_contains_effect(expression: &Expr, identity: &str) -> bool {
+    if handled_operation_call(expression, identity).is_some() {
+        return true;
+    }
+    match expression {
+        Expr::Unary(_, value)
+        | Expr::Try(value)
+        | Expr::DoBlock { body: value }
+        | Expr::Throw(value)
+        | Expr::Unsafe(value)
+        | Expr::Closure(_, value) => expression_contains_effect(value, identity),
+        Expr::Borrow { value, .. } => expression_contains_effect(value, identity),
+        Expr::Binary(left, _, right)
+        | Expr::Coalesce(left, right)
+        | Expr::Assign(left, right)
+        | Expr::CompoundAssign(left, _, right) => {
+            expression_contains_effect(left, identity)
+                || expression_contains_effect(right, identity)
+        }
+        Expr::Call(callee, arguments) => {
+            expression_contains_effect(callee, identity)
+                || arguments
+                    .iter()
+                    .any(|argument| expression_contains_effect(&argument.value, identity))
+        }
+        Expr::Member(base, _) | Expr::ChainMember(base, _) => {
+            expression_contains_effect(base, identity)
+        }
+        Expr::Array(elements) => elements
+            .iter()
+            .any(|element| expression_contains_effect(element, identity)),
+        Expr::Index { base, index } => {
+            expression_contains_effect(base, identity)
+                || expression_contains_effect(index, identity)
+        }
+        Expr::Block(statements, tail) => {
+            statements.iter().any(|statement| match statement {
+                Stmt::Let(binding) => expression_contains_effect(&binding.value, identity),
+                Stmt::Expr(expression) => expression_contains_effect(expression, identity),
+            }) || tail
+                .as_deref()
+                .is_some_and(|tail| expression_contains_effect(tail, identity))
+        }
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            expression_contains_effect(condition, identity)
+                || expression_contains_effect(then_branch, identity)
+                || else_branch
+                    .as_deref()
+                    .is_some_and(|branch| expression_contains_effect(branch, identity))
+        }
+        Expr::Return(value) | Expr::Break(value) => value
+            .as_deref()
+            .is_some_and(|value| expression_contains_effect(value, identity)),
+        Expr::While { condition, body } => {
+            expression_contains_effect(condition, identity)
+                || expression_contains_effect(body, identity)
+        }
+        Expr::Loop { body } => expression_contains_effect(body, identity),
+        Expr::Match { scrutinee, arms } => {
+            expression_contains_effect(scrutinee, identity)
+                || arms.iter().any(|arm| {
+                    arm.guard
+                        .as_ref()
+                        .is_some_and(|guard| expression_contains_effect(guard, identity))
+                        || expression_contains_effect(&arm.body, identity)
+                })
+        }
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => false,
     }
 }
 

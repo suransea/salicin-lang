@@ -16,7 +16,7 @@ normative language specification while the compiler slice is being implemented.
 
 ## Declaration and operation calls
 
-```sali
+```sc
 let State(S: type) = effect {
   let get(): S
   let put(move value: S): ()
@@ -49,7 +49,7 @@ overload shape without ambiguity.
 
 Every effect declaration derives a compiler-lowered associated member named `handle`:
 
-```sali
+```sc
 let answer = State(i32).handle(
   get: { (resume) -> resume(41) },
   put: { (value, resume) -> resume(()) },
@@ -71,7 +71,7 @@ limited to handler clauses until general closure-parameter inference is specifie
 By default the action result and handler result are the same type. A `done:` clause permits an
 answer-type transformation:
 
-```sali
+```sc
 let text = State(i32).handle(
   done: { (value) -> format(value) },
   get: { (resume) -> resume(41) },
@@ -123,10 +123,15 @@ unification or silently discard duplicate nominal identities.
 
 Effect operations and derived handlers are justified by the source `effect { ... }` declaration in
 the same way enum constructors are justified by an `enum` declaration. Shared continuation behavior
-must also have an edition-pinned declaration in `core.control` when lowering lands; the compiler may
+has the edition-pinned `Continuation(Input, Output)` declaration in `core.control`; the compiler may
 not recognize a resumable runtime protocol that has no matching standard-library source contract.
 
 Lowering uses typed, one-shot continuation-passing IR for functions whose row contains a resumable
 user effect. Continuation environments contain values live across an operation. Cleanup planning
 must cover both resumption and abandonment before native code generation is considered complete.
 Marker-only `let UI = effect` remains valid and has no operations or derived handler clauses.
+
+The current native slice performs selective CPS transformation for lexically visible operations,
+including one-shot resumption and abandonment. Operation propagation through separately compiled
+functions, loop backedges, and the final typed continuation ABI remain implementation work; those
+cases are rejected rather than compiled with callback-only semantics.

@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.111.0 - 2026-07-22
+
+- Added the derived `Effect(...).handle(clauses...) { action }` member for lexically visible
+  operations, using labeled contextual closures and exact instantiated effect identities.
+- Implemented selective one-shot continuation transformation: a clause may resume once or omit
+  `resume` to abandon the suspended remainder, while duplicate use and escape are diagnosed.
+- Added the edition-validated `core.control.Continuation(Input, Output)` contract outside the
+  prelude, plus native state-handler and abort coverage.
+- Kept operation propagation through separately compiled effectful functions and loop backedges
+  explicitly unsupported until the typed CPS lowering is completed.
+
 ## 0.110.0 - 2026-07-22
 
 - Added parameterized user effect declarations with typed operation requirements.

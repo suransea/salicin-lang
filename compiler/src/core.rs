@@ -74,6 +74,7 @@ pub enum LangItemKind {
     ThrowsEffect,
     SharedAccess,
     MutableAccess,
+    Continuation,
     Do,
     Try,
     Unsafe,
@@ -83,7 +84,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 40] = [
+    const ALL: [Self; 41] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -118,6 +119,7 @@ impl LangItemKind {
         Self::ThrowsEffect,
         Self::SharedAccess,
         Self::MutableAccess,
+        Self::Continuation,
         Self::Do,
         Self::Try,
         Self::Unsafe,
@@ -162,6 +164,7 @@ impl LangItemKind {
             Self::ThrowsEffect => "Throws",
             Self::SharedAccess => "Shared",
             Self::MutableAccess => "Mutable",
+            Self::Continuation => "Continuation",
             Self::Do => "do",
             Self::Try => "try",
             Self::Unsafe => "unsafe",
@@ -174,6 +177,7 @@ impl LangItemKind {
     const fn expected_kind(self) -> &'static str {
         match self {
             Self::Option | Self::Result | Self::Never | Self::PartialOrdering => "enum",
+            Self::Continuation => "struct",
             Self::UnsafeEffect | Self::ThrowsEffect => "effect",
             Self::SharedAccess | Self::MutableAccess => "access",
             Self::Do | Self::Try | Self::Unsafe | Self::Loop => "function",
@@ -244,6 +248,7 @@ impl LangItemKind {
             | Self::ThrowsEffect
             | Self::SharedAccess
             | Self::MutableAccess
+            | Self::Continuation
             | Self::Do
             | Self::Try
             | Self::Unsafe
@@ -344,6 +349,7 @@ pub struct LangItems {
     throws_effect: LangItem,
     shared_access: LangItem,
     mutable_access: LangItem,
+    continuation: LangItem,
     do_function: LangItem,
     try_function: LangItem,
     unsafe_function: LangItem,
@@ -475,6 +481,9 @@ impl LangItems {
     pub const fn mutable_access(&self) -> &LangItem {
         &self.mutable_access
     }
+    pub const fn continuation(&self) -> &LangItem {
+        &self.continuation
+    }
     pub const fn do_function(&self) -> &LangItem {
         &self.do_function
     }
@@ -530,6 +539,7 @@ impl LangItems {
             LangItemKind::ThrowsEffect => &self.throws_effect,
             LangItemKind::SharedAccess => &self.shared_access,
             LangItemKind::MutableAccess => &self.mutable_access,
+            LangItemKind::Continuation => &self.continuation,
             LangItemKind::Do => &self.do_function,
             LangItemKind::Try => &self.try_function,
             LangItemKind::Unsafe => &self.unsafe_function,
@@ -897,6 +907,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         throws_effect: item(LangItemKind::ThrowsEffect),
         shared_access: item(LangItemKind::SharedAccess),
         mutable_access: item(LangItemKind::MutableAccess),
+        continuation: item(LangItemKind::Continuation),
         do_function: item(LangItemKind::Do),
         try_function: item(LangItemKind::Try),
         unsafe_function: item(LangItemKind::Unsafe),
@@ -956,6 +967,17 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
             validate_effect(kind, definition, diagnostics)
         }
         (LangItemKind::SharedAccess | LangItemKind::MutableAccess, Item::Access(_)) => {}
+        (LangItemKind::Continuation, Item::Struct(definition)) => {
+            let valid = definition.compile_groups
+                == vec![vec![type_parameter("Input"), type_parameter("Output")]]
+                && definition.fields.is_empty();
+            if !valid {
+                diagnostics.push(
+                    "lang item `Continuation` must have shape `pub let Continuation(Input: type, Output: type) = struct()`"
+                        .to_owned(),
+                );
+            }
+        }
         (
             LangItemKind::Do | LangItemKind::Try | LangItemKind::Unsafe | LangItemKind::Loop,
             Item::Function(function),
@@ -1605,7 +1627,7 @@ pub let Shr(Rhs: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), 40);
+        assert_eq!(bundle.program().items.len(), 41);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -1644,6 +1666,7 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::ThrowsEffect
                 | LangItemKind::SharedAccess
                 | LangItemKind::MutableAccess
+                | LangItemKind::Continuation
                 | LangItemKind::Do
                 | LangItemKind::Try
                 | LangItemKind::Unsafe
@@ -1656,7 +1679,12 @@ pub let Shr(Rhs: type) = trait {
                 item_name(&bundle.program().items[lang_item.item_index()]),
                 Some(canonical.as_str())
             );
-            assert_eq!(lang_item.canonical_name(), canonical);
+            let expected_lang_item_name = if kind == LangItemKind::Continuation {
+                kind.source_name()
+            } else {
+                canonical.as_str()
+            };
+            assert_eq!(lang_item.canonical_name(), expected_lang_item_name);
             let module = match kind {
                 LangItemKind::Option
                 | LangItemKind::Result
@@ -1692,6 +1720,7 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::ThrowsEffect
                 | LangItemKind::SharedAccess
                 | LangItemKind::MutableAccess
+                | LangItemKind::Continuation
                 | LangItemKind::Do
                 | LangItemKind::Try
                 | LangItemKind::Unsafe
