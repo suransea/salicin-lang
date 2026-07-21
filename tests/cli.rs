@@ -137,6 +137,8 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
         "algebraic_effect_handler.sc",
         "algebraic_effect_abort.sc",
         "algebraic_effect_function_propagation.sc",
+        "algebraic_effect_done.sc",
+        "algebraic_effect_nearest_handler.sc",
     ] {
         let output = salic()
             .arg("run")

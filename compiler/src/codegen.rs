@@ -371,6 +371,7 @@ struct InferredCoalesceLhs<'a> {
 }
 
 type SourceContinuation = Rc<dyn Fn(&mut Analyzer, Expr) -> Result<Expr, ()>>;
+type SourceArgumentsContinuation = Rc<dyn Fn(&mut Analyzer, Vec<CallArg>) -> Result<Expr, ()>>;
 #[derive(Clone)]
 struct AlgebraicHandlerClause {
     parameters: Vec<Param>,
@@ -15513,28 +15514,46 @@ impl Analyzer {
                 ));
                 return Err(());
             }
-            let bindings = clause
-                .parameters
-                .iter()
-                .zip(arguments)
-                .map(|(parameter, argument)| {
-                    Stmt::Let(Binding {
-                        mutable: false,
-                        name: parameter.name.clone(),
-                        annotation: contextual_annotation(parameter),
-                        value: argument.value,
+            let handler_for_clause = handler.clone();
+            let resume_for_arguments = resume.clone();
+            let completed: SourceArgumentsContinuation = Rc::new(move |analyzer, arguments| {
+                let bindings = clause
+                    .parameters
+                    .iter()
+                    .zip(arguments)
+                    .map(|(parameter, argument)| {
+                        Stmt::Let(Binding {
+                            mutable: false,
+                            name: parameter.name.clone(),
+                            annotation: contextual_annotation(parameter),
+                            value: argument.value,
+                        })
                     })
-                })
-                .collect::<Vec<_>>();
-            let source_resume = SourceResume {
-                name: clause.resume.expect("operation clauses have resume"),
-                continuation,
-                uses: Rc::new(Cell::new(0)),
-            };
-            let identity: SourceContinuation = Rc::new(|_, value| Ok(value));
-            let body =
-                self.transform_handler_expr(clause.body, handler, Some(source_resume), identity)?;
-            return Ok(Expr::Block(bindings, Some(Box::new(body))));
+                    .collect::<Vec<_>>();
+                let source_resume = SourceResume {
+                    name: clause
+                        .resume
+                        .clone()
+                        .expect("operation clauses have resume"),
+                    continuation: continuation.clone(),
+                    uses: Rc::new(Cell::new(0)),
+                };
+                let identity: SourceContinuation = Rc::new(|_, value| Ok(value));
+                let body = analyzer.transform_handler_expr(
+                    clause.body.clone(),
+                    handler_for_clause.clone(),
+                    Some(source_resume),
+                    identity,
+                )?;
+                Ok(Expr::Block(bindings, Some(Box::new(body))))
+            });
+            return self.transform_handler_arguments(
+                arguments,
+                Vec::new(),
+                handler,
+                resume_for_arguments,
+                completed,
+            );
         }
 
         if let Some(source_resume) = &resume {
@@ -15680,11 +15699,49 @@ impl Analyzer {
                 )
             }
             Expr::Call(callee, arguments) => {
-                let rebuilt = Expr::Call(callee, arguments);
-                continuation(self, rebuilt)
+                let completed: SourceArgumentsContinuation = Rc::new(move |analyzer, arguments| {
+                    continuation(analyzer, Expr::Call(callee.clone(), arguments))
+                });
+                self.transform_handler_arguments(arguments, Vec::new(), handler, resume, completed)
             }
             other => continuation(self, other),
         }
+    }
+
+    fn transform_handler_arguments(
+        &mut self,
+        mut remaining: Vec<CallArg>,
+        completed_arguments: Vec<CallArg>,
+        handler: Rc<AlgebraicHandler>,
+        resume: Option<SourceResume>,
+        completed: SourceArgumentsContinuation,
+    ) -> Result<Expr, ()> {
+        if remaining.is_empty() {
+            return completed(self, completed_arguments);
+        }
+        let argument = remaining.remove(0);
+        let label = argument.label.clone();
+        let next_handler = handler.clone();
+        let next_resume = resume.clone();
+        self.transform_handler_expr(
+            argument.value,
+            handler,
+            resume,
+            Rc::new(move |analyzer, value| {
+                let mut arguments = completed_arguments.clone();
+                arguments.push(CallArg {
+                    label: label.clone(),
+                    value,
+                });
+                analyzer.transform_handler_arguments(
+                    remaining.clone(),
+                    arguments,
+                    next_handler.clone(),
+                    next_resume.clone(),
+                    completed.clone(),
+                )
+            }),
+        )
     }
 
     fn transform_effectful_named_call(

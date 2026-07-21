@@ -6,6 +6,14 @@ subset.
 
 ## Unreleased
 
+## 0.113.0 - 2026-07-22
+
+- Extended selective CPS traversal through ordinary call and operation arguments while preserving
+  left-to-right evaluation, so handled operations can feed other calls and operations.
+- Added native coverage for `done:` answer-type transformation and nearest matching nested handlers.
+- Preserved one-shot resumption across nested argument continuations and exact effect-instance
+  selection without treating closure construction as effect execution.
+
 ## 0.112.0 - 2026-07-22
 
 - Propagated handled operations through fully applied ordinary named functions by selectively
