@@ -11553,13 +11553,71 @@ impl Analyzer {
             }
             if let Expr::Name(target_template) = base.as_ref() {
                 if !context.shadows_top_level_name(target_template) {
-                    if let Some(canonical) = self
-                        .generic_inherent_functions
-                        .get(&(target_template.clone(), variant_name.clone()))
-                        .cloned()
+                    let explicit_method = groups.first().is_some_and(|group| {
+                        matches!(*group, [CallArg { label: Some(label), .. }] if label == "self")
+                    });
+                    if !explicit_method {
+                        if let Some(canonical) = self
+                            .generic_inherent_functions
+                            .get(&(target_template.clone(), variant_name.clone()))
+                            .cloned()
+                        {
+                            return self.lower_generic_function_call(
+                                &canonical, &groups, expected, context,
+                            );
+                        }
+                    }
+                    if self.struct_templates.contains_key(target_template)
+                        || self.enum_templates.contains_key(target_template)
                     {
-                        return self
-                            .lower_generic_function_call(&canonical, &groups, expected, context);
+                        if let Some([receiver]) = groups.first().copied() {
+                            let receiver_ty =
+                                match self.probe_expr_ty(&receiver.value, None, context) {
+                                    TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) => {
+                                        Some(ty)
+                                    }
+                                    TypeProbe::Defaultable(_) | TypeProbe::Unsupported => None,
+                                };
+                            if let Some((canonical, kind)) = receiver_ty.and_then(|ty| match ty {
+                                Ty::Struct(name) => Some((name, NominalKind::Struct)),
+                                Ty::Enum(name) => Some((name, NominalKind::Enum)),
+                                _ => None,
+                            }) {
+                                let belongs_to_template = self
+                                    .nominal_instances
+                                    .get(&canonical)
+                                    .is_some_and(|instance| {
+                                        instance.key.template == *target_template
+                                            && instance.key.kind == kind
+                                    });
+                                let self_ty = match kind {
+                                    NominalKind::Struct => Ty::Struct(canonical.clone()),
+                                    NominalKind::Enum => Ty::Enum(canonical.clone()),
+                                };
+                                let has_method =
+                                    self.inherent_members
+                                        .get(&canonical)
+                                        .is_some_and(|members| {
+                                            members.methods.contains_key(variant_name)
+                                        })
+                                        || !self
+                                            .trait_method_candidates(
+                                                &self_ty,
+                                                variant_name,
+                                                &context.origin,
+                                            )
+                                            .is_empty();
+                                if belongs_to_template && has_method {
+                                    return self.lower_nominal_type_member_call(
+                                        &canonical,
+                                        kind,
+                                        variant_name,
+                                        &groups,
+                                        context,
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -11643,7 +11701,7 @@ impl Analyzer {
                     }
                 }
             }
-            return self.lower_bound_method_call(base, variant_name, &groups, context);
+            return self.lower_bound_method_call(base, variant_name, &groups, None, context);
         }
         self.error("calls require a named function, constructor, associated function, or method");
         error_expr()
@@ -12008,54 +12066,94 @@ impl Analyzer {
         groups: &[&[CallArg]],
         context: &mut LowerCtx,
     ) -> HirExpr {
-        if let Some(canonical) = self
-            .inherent_members
-            .get(target)
-            .and_then(|members| members.functions.get(member))
-            .cloned()
-        {
-            return self.lower_named_function_call(&canonical, groups, context);
-        }
-        if self
-            .inherent_members
-            .get(target)
-            .is_some_and(|members| members.constants.contains_key(member))
-        {
-            self.error(format!(
-                "associated constant `{target}.{member}` is not callable"
-            ));
-            return error_expr();
-        }
-        if kind == NominalKind::Enum {
-            let Some(layout) = self.enum_layout_or_diagnostic(target) else {
-                return error_expr();
-            };
-            if let Some(variant) = layout
-                .variants
-                .iter()
-                .position(|variant| variant.name == member)
+        let explicitly_qualified_method = groups.first().is_some_and(
+            |group| matches!(*group, [CallArg { label: Some(label), .. }] if label == "self"),
+        );
+        if !explicitly_qualified_method {
+            if let Some(canonical) = self
+                .inherent_members
+                .get(target)
+                .and_then(|members| members.functions.get(member))
+                .cloned()
             {
-                return self.lower_enum_constructor(target, variant, groups, context);
+                return self.lower_named_function_call(&canonical, groups, context);
+            }
+            if self
+                .inherent_members
+                .get(target)
+                .is_some_and(|members| members.constants.contains_key(member))
+            {
+                self.error(format!(
+                    "associated constant `{target}.{member}` is not callable"
+                ));
+                return error_expr();
+            }
+            if kind == NominalKind::Enum {
+                let Some(layout) = self.enum_layout_or_diagnostic(target) else {
+                    return error_expr();
+                };
+                if let Some(variant) = layout
+                    .variants
+                    .iter()
+                    .position(|variant| variant.name == member)
+                {
+                    return self.lower_enum_constructor(target, variant, groups, context);
+                }
             }
         }
-        if self
+        let self_ty = match kind {
+            NominalKind::Struct => Ty::Struct(target.to_owned()),
+            NominalKind::Enum => Ty::Enum(target.to_owned()),
+        };
+        let has_inherent_method = self
             .inherent_members
             .get(target)
-            .is_some_and(|members| members.methods.contains_key(member))
-        {
-            self.error(format!(
-                "inherent method `{target}.{member}` requires an instance receiver"
-            ));
+            .is_some_and(|members| members.methods.contains_key(member));
+        let has_trait_method = !self
+            .trait_method_candidates(&self_ty, member, &context.origin)
+            .is_empty()
+            || self.has_inaccessible_trait_method(&self_ty, member, &context.origin);
+        if has_inherent_method || has_trait_method {
+            let Some((receiver_group, remaining_groups)) = groups.split_first() else {
+                self.error(format!(
+                    "qualified method `{target}.{member}` requires a receiver argument group"
+                ));
+                return error_expr();
+            };
+            let [receiver] = *receiver_group else {
+                self.error(format!(
+                    "receiver group of qualified method `{target}.{member}` expects exactly one argument"
+                ));
+                return error_expr();
+            };
+            if receiver
+                .label
+                .as_deref()
+                .is_some_and(|label| label != "self")
+            {
+                self.error(format!(
+                    "receiver argument of qualified method `{target}.{member}` must be unlabeled or named `self`"
+                ));
+                return error_expr();
+            }
+            self.lower_bound_method_call(
+                &receiver.value,
+                member,
+                remaining_groups,
+                Some(target),
+                context,
+            )
         } else if kind == NominalKind::Enum {
             self.error(format!(
                 "unknown associated member or variant `{member}` on `{target}`"
             ));
+            error_expr()
         } else {
             self.error(format!(
                 "unknown associated member `{member}` on `{target}`"
             ));
+            error_expr()
         }
-        error_expr()
     }
 
     fn lower_generic_function_call(
@@ -12667,6 +12765,7 @@ impl Analyzer {
         receiver: &Expr,
         member: &str,
         groups: &[&[CallArg]],
+        qualified_target: Option<&str>,
         context: &mut LowerCtx,
     ) -> HirExpr {
         let (mut receiver_place, mut temporary_binding) =
@@ -12704,6 +12803,14 @@ impl Analyzer {
                 return error_expr();
             }
         };
+        if let Some(qualified_target) = qualified_target {
+            if qualified_target != target {
+                self.error(format!(
+                    "qualified method `{qualified_target}.{member}` requires receiver `{qualified_target}`, found `{target}`"
+                ));
+                return error_expr();
+            }
+        }
         let inherent = self
             .inherent_members
             .get(&target)

@@ -1426,6 +1426,8 @@ fn m1_inherent_members_run_with_expected_result() {
         "inherent_temporary_mut_resource_receiver.sali",
         "inherent_temporary_resource_receiver.sali",
         "inherent_disjoint_forward_extend.sali",
+        "qualified_inherent_method.sali",
+        "qualified_trait_generic_method.sali",
     ] {
         let output = salic()
             .arg("run")
@@ -1470,6 +1472,19 @@ fn m1_inherent_member_errors_report_their_cause() {
         ("inherent_borrowed_partial.sali", "partial application"),
         ("inherent_receiver_borrow_conflict.sali", "borrowed"),
         ("inherent_non_nominal_target.sali", "nominal"),
+        (
+            "qualified_method_bad_label.sali",
+            "unlabeled or named `self`",
+        ),
+        (
+            "qualified_method_missing_receiver.sali",
+            "exactly one argument",
+        ),
+        ("qualified_method_wrong_receiver.sali", "requires receiver"),
+        (
+            "qualified_method_borrowed_partial.sali",
+            "partial application",
+        ),
     ] {
         let output = salic()
             .arg("check")

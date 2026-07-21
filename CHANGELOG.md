@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.52.0 - 2026-07-21
+
+- Added type-qualified inherent and trait method calls such as `Number.read(number)()` while
+  reusing the same borrow, mutable-borrow, move, partial-application, and temporary-receiver rules
+  as instance syntax.
+- Allowed `self:` as a receiver argument label to select a method when an associated function has
+  the same name; unlabelled type calls continue to prefer associated functions and enum variants.
+- Inferred omitted generic nominal arguments from a concrete receiver, allowing
+  `Cell.read(cell)()` to resolve a `Cell(i32)` method without `_` syntax.
+
 ## 0.51.0 - 2026-07-21
 
 - Extended `match` to boolean and integer scrutinees with literal, binding, wildcard, and guarded
