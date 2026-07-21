@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.124.0 - 2026-07-22
+
+- Extended selective algebraic-effect CPS through fully applied optional method calls, evaluating
+  the receiver before arguments and skipping all arguments on `None` and `Err` paths.
+- Rewrapped successful calls and residual values into the original `Option` or `Result` family
+  before entering the surrounding continuation, including preservation of `Result` error payloads.
+- Moved owned non-Copy receivers into argument continuations so they remain valid across suspension
+  and are consumed or dropped exactly once.
+- Added native `Option` and `Result` coverage proving that effectful arguments execute only on the
+  two success paths.
+
 ## 0.123.0 - 2026-07-22
 
 - Extended selective algebraic-effect CPS through match guards, preserving both successful arm

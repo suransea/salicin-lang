@@ -2275,6 +2275,18 @@ impl Resolver {
                 self.rewrite_expr(success, context, type_scope, &success_scope);
                 self.rewrite_expr(fallback, context, type_scope, value_scope);
             }
+            Expr::HandlerChainCall(chain) => {
+                self.rewrite_expr(&mut chain.scrutinee, context, type_scope, value_scope);
+                for argument in chain.groups.iter_mut().flatten() {
+                    self.rewrite_expr(&mut argument.value, context, type_scope, value_scope);
+                }
+                let mut success_scope = value_scope.clone();
+                success_scope.insert(chain.payload.clone());
+                self.rewrite_expr(&mut chain.success, context, type_scope, &success_scope);
+                let mut residual_scope = value_scope.clone();
+                residual_scope.insert(chain.error.clone());
+                self.rewrite_expr(&mut chain.residual, context, type_scope, &residual_scope);
+            }
             Expr::Call(callee, arguments) => {
                 self.rewrite_expr(callee, context, type_scope, value_scope);
                 for argument in arguments {
@@ -4162,6 +4174,14 @@ let main(): i32 = { Option() }
                     visit(scrutinee, names);
                     visit(success, names);
                     visit(fallback, names);
+                }
+                Expr::HandlerChainCall(chain) => {
+                    visit(&chain.scrutinee, names);
+                    for argument in chain.groups.iter().flatten() {
+                        visit(&argument.value, names);
+                    }
+                    visit(&chain.success, names);
+                    visit(&chain.residual, names);
                 }
                 Expr::Call(callee, arguments) => {
                     visit(callee, names);

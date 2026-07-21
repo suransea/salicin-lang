@@ -69,7 +69,9 @@ whereas resumption transfers and disarms it; native resource regressions cover e
 on both paths. CPS traversal
 currently covers ordinary arguments, arrays, indexes, members, match bodies, immediate effect
 wrappers, lazy boolean branches, lazy `Option`/`Result` coalescing, and match guards over `Copy`
-inputs. Suspended guards over non-Copy match inputs are rejected until candidate continuations can
+inputs. Fully applied optional method calls preserve receiver-before-argument order and skip
+effectful arguments on residual paths for both builtin fallible families. Suspended guards over
+non-Copy match inputs are rejected until candidate continuations can
 retain speculative payload ownership directly.
 Different user-defined handlers compose lexically through action, clause, and generated-frame
 closure boundaries; nested handlers of the same identity retain nearest-boundary selection.

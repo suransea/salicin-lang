@@ -12,9 +12,9 @@ use std::rc::Rc;
 use crate::alloc::AllocBundle;
 use crate::ast::{
     BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EffectDef, EnumDef, Expr,
-    ExtendDef, ExtendMember, Field, Function, FunctionEffects, Item, ItemOrigin, MatchArm, Param,
-    PassMode, Pattern, PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember, Type,
-    UnaryOp, VariantFields, Visibility,
+    ExtendDef, ExtendMember, Field, Function, FunctionEffects, HandlerChainCall, Item, ItemOrigin,
+    MatchArm, Param, PassMode, Pattern, PatternFields, Program, Stmt, StructDef, TraitDef,
+    TraitMember, Type, UnaryOp, VariantFields, Visibility,
 };
 use crate::cleanup::{
     BasicBlockId as CleanupBlockId, CleanupEdge, CleanupOp, CleanupPlan, CleanupPlanBuilder,
@@ -8750,6 +8750,14 @@ impl Analyzer {
                     success
                 }
             }
+            Expr::HandlerChainCall(chain) => {
+                let success = self.probe_expr_ty(&chain.success, hint, context);
+                if matches!(success, TypeProbe::Unsupported) {
+                    self.probe_expr_ty(&chain.residual, hint, context)
+                } else {
+                    success
+                }
+            }
             Expr::Try(value) => {
                 let probe = self.probe_expr_ty(value, None, context);
                 let Some(info) = self.builtin_fallible_info_for_probe(&probe) else {
@@ -10662,6 +10670,17 @@ impl Analyzer {
                 fallback,
             } => self
                 .lower_handler_coalesce(scrutinee, payload, success, fallback, expected, context),
+            Expr::HandlerChainCall(chain) => self.lower_handler_chain_call(
+                &chain.scrutinee,
+                &chain.payload,
+                &chain.error,
+                &chain.member,
+                &chain.groups,
+                &chain.success,
+                &chain.residual,
+                expected,
+                context,
+            ),
             Expr::Try(value) => self.lower_try(value, expected, context),
             Expr::DoBlock { body } => self.lower_do_block(body, expected, context),
             Expr::Throw(value) => self.lower_throw(value, context),
@@ -12268,6 +12287,22 @@ impl Analyzer {
                 *bound = saved;
                 valid & self.scan_simple_closure_captures(fallback, bound, outer, captures)
             }
+            Expr::HandlerChainCall(chain) => {
+                let mut valid =
+                    self.scan_simple_closure_captures(&chain.scrutinee, bound, outer, captures);
+                for argument in chain.groups.iter().flatten() {
+                    valid &=
+                        self.scan_simple_closure_captures(&argument.value, bound, outer, captures);
+                }
+                let saved = bound.clone();
+                bound.insert(chain.payload.clone());
+                valid &= self.scan_simple_closure_captures(&chain.success, bound, outer, captures);
+                *bound = saved.clone();
+                bound.insert(chain.error.clone());
+                valid &= self.scan_simple_closure_captures(&chain.residual, bound, outer, captures);
+                *bound = saved;
+                valid
+            }
             Expr::Array(elements) => elements.iter().fold(true, |valid, element| {
                 self.scan_simple_closure_captures(element, bound, outer, captures) & valid
             }),
@@ -12314,6 +12349,27 @@ impl Analyzer {
                 let mut groups = Vec::new();
                 let root = flatten_call(expression, &mut groups);
                 if matches!(root, Expr::Name(name) if name.starts_with("$handler$tail$")) {
+                    return groups.iter().flat_map(|group| group.iter()).fold(
+                        true,
+                        |valid, argument| {
+                            self.scan_simple_closure_captures(
+                                &argument.value,
+                                bound,
+                                outer,
+                                captures,
+                            ) & valid
+                        },
+                    );
+                }
+                if matches!(
+                    root,
+                    Expr::Name(name)
+                        if matches!(
+                            name.as_str(),
+                            "$handler$chain$wrap$success"
+                                | "$handler$chain$wrap$residual"
+                        )
+                ) {
                     return groups.iter().flat_map(|group| group.iter()).fold(
                         true,
                         |valid, argument| {
@@ -12490,7 +12546,37 @@ impl Analyzer {
                                 captures,
                             ) & valid
                         })
-                } else if let Expr::Member(base, _) | Expr::ChainMember(base, _) = root {
+                } else if let Expr::Member(base, _) = root {
+                    if let Expr::Name(name) = base.as_ref() {
+                        if name.starts_with("$handler$chain$payload$")
+                            && !bound.contains(name)
+                            && outer.lookup(name).is_some()
+                        {
+                            record_closure_capture(captures, name, ClosureCaptureMode::Move);
+                            return groups.iter().flat_map(|group| group.iter()).fold(
+                                true,
+                                |valid, argument| {
+                                    self.scan_simple_closure_captures(
+                                        &argument.value,
+                                        bound,
+                                        outer,
+                                        captures,
+                                    ) & valid
+                                },
+                            );
+                        }
+                    }
+                    let mut valid = self.scan_simple_closure_captures(base, bound, outer, captures);
+                    for argument in groups.iter().flat_map(|group| group.iter()) {
+                        valid &= self.scan_simple_closure_captures(
+                            &argument.value,
+                            bound,
+                            outer,
+                            captures,
+                        );
+                    }
+                    valid
+                } else if let Expr::ChainMember(base, _) = root {
                     let mut valid = self.scan_simple_closure_captures(base, bound, outer, captures);
                     for argument in groups.iter().flat_map(|group| group.iter()) {
                         valid &= self.scan_simple_closure_captures(
@@ -13701,6 +13787,121 @@ impl Analyzer {
         self.lower_match_with_scrutinee(scrutinee, &arms, expected, context)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn lower_handler_chain_call(
+        &mut self,
+        source_scrutinee: &Expr,
+        payload: &str,
+        error: &str,
+        member: &str,
+        source_groups: &[Vec<CallArg>],
+        source_success: &Expr,
+        source_residual: &Expr,
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let borrowed = matches!(source_scrutinee, Expr::Borrow { .. })
+            || place_root_name(source_scrutinee)
+                .and_then(|name| context.lookup(name))
+                .is_some_and(|local| local.capability != LocalCapability::Owned);
+        let scrutinee = self.lower_expr(source_scrutinee, None, context);
+        if borrowed {
+            self.error("optional chaining requires an owned `Option` or `Result` value");
+            return error_expr();
+        }
+        if scrutinee.ty == Ty::Error {
+            return error_expr();
+        }
+        let Some(info) = self.builtin_fallible_info_for_ty(&scrutinee.ty) else {
+            self.error(format!(
+                "operator `?.` requires an owned `Option(T)` or `Result(T, E)`, found `{}`",
+                scrutinee.ty
+            ));
+            return error_expr();
+        };
+        let groups = source_groups.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        let Some(output) =
+            self.chain_access_ty(&info.payload, member, Some(&groups), &context.origin)
+        else {
+            return error_expr();
+        };
+        if matches!(output, Ty::Function(_)) {
+            self.error(
+                "optional chaining does not support partial applications or callable fields",
+            );
+            return error_expr();
+        }
+        let template = self.fallible_type_name(info.kind).to_owned();
+        let mut arguments = vec![output];
+        if info.kind == BuiltinFallibleKind::Result {
+            arguments.push(info.error.clone().expect("Result has an error type"));
+        }
+        let Some(source_arguments) = arguments
+            .iter()
+            .map(|argument| self.source_type_for_ty(argument))
+            .collect::<Option<Vec<_>>>()
+        else {
+            self.error("optional chaining result cannot be represented as a builtin container");
+            return error_expr();
+        };
+        let Some(canonical) =
+            self.ensure_nominal_instance(NominalKind::Enum, &template, source_arguments, arguments)
+        else {
+            return error_expr();
+        };
+        let success_variant = match info.kind {
+            BuiltinFallibleKind::Option => "Some",
+            BuiltinFallibleKind::Result => "Ok",
+        };
+        let mut success = source_success.clone();
+        rewrite_handler_chain_wrappers(
+            &mut success,
+            &canonical,
+            success_variant,
+            match info.kind {
+                BuiltinFallibleKind::Option => "None",
+                BuiltinFallibleKind::Result => "Err",
+            },
+        );
+        let mut residual = source_residual.clone();
+        rewrite_handler_chain_wrappers(
+            &mut residual,
+            &canonical,
+            success_variant,
+            match info.kind {
+                BuiltinFallibleKind::Option => "None",
+                BuiltinFallibleKind::Result => "Err",
+            },
+        );
+        let mut arms = vec![MatchArm {
+            pattern: Pattern::Constructor {
+                path: vec![success_variant.to_owned()],
+                fields: PatternFields::Positional(vec![Pattern::Binding(payload.to_owned())]),
+            },
+            guard: None,
+            body: success,
+        }];
+        arms.push(match info.kind {
+            BuiltinFallibleKind::Option => MatchArm {
+                pattern: Pattern::Constructor {
+                    path: vec!["None".to_owned()],
+                    fields: PatternFields::Unit,
+                },
+                guard: None,
+                body: residual,
+            },
+            BuiltinFallibleKind::Result => MatchArm {
+                pattern: Pattern::Constructor {
+                    path: vec!["Err".to_owned()],
+                    fields: PatternFields::Positional(vec![Pattern::Binding(error.to_owned())]),
+                },
+                guard: None,
+                body: residual,
+            },
+        });
+        self.lower_match_with_scrutinee(scrutinee, &arms, expected, context)
+    }
+
     fn chain_access_ty(
         &mut self,
         payload: &Ty,
@@ -14252,6 +14453,14 @@ impl Analyzer {
                 self.collect_escaping_throws(scrutinee, context, errors);
                 self.collect_escaping_throws(success, context, errors);
                 self.collect_escaping_throws(fallback, context, errors);
+            }
+            Expr::HandlerChainCall(chain) => {
+                self.collect_escaping_throws(&chain.scrutinee, context, errors);
+                for argument in chain.groups.iter().flatten() {
+                    self.collect_escaping_throws(&argument.value, context, errors);
+                }
+                self.collect_escaping_throws(&chain.success, context, errors);
+                self.collect_escaping_throws(&chain.residual, context, errors);
             }
             Expr::Call(_, _) => {
                 if let Some((_, error)) = self.call_throws_info(expression, context) {
@@ -16386,6 +16595,14 @@ impl Analyzer {
         }
 
         if matches!(&expression, Expr::Call(_, _)) {
+            if let Some(result) = self.transform_effectful_chain_call(
+                &expression,
+                handler.clone(),
+                resume.clone(),
+                continuation.clone(),
+            ) {
+                return result;
+            }
             if let Some(result) = self.transform_nested_effect_handler(
                 &expression,
                 handler.clone(),
@@ -16545,6 +16762,48 @@ impl Analyzer {
                             success: Box::new(success),
                             fallback: Box::new(fallback),
                         })
+                    }),
+                )
+            }
+            Expr::HandlerChainCall(chain) => {
+                let HandlerChainCall {
+                    scrutinee,
+                    payload,
+                    error,
+                    member,
+                    groups,
+                    success,
+                    residual,
+                } = *chain;
+                let handler_for_branches = handler.clone();
+                let resume_for_branches = resume.clone();
+                let next = continuation.clone();
+                self.transform_handler_expr(
+                    *scrutinee,
+                    handler,
+                    resume,
+                    Rc::new(move |analyzer, scrutinee| {
+                        let success = analyzer.transform_handler_expr(
+                            (*success).clone(),
+                            handler_for_branches.clone(),
+                            resume_for_branches.clone(),
+                            next.clone(),
+                        )?;
+                        let residual = analyzer.transform_handler_expr(
+                            (*residual).clone(),
+                            handler_for_branches.clone(),
+                            resume_for_branches.clone(),
+                            next.clone(),
+                        )?;
+                        Ok(Expr::HandlerChainCall(Box::new(HandlerChainCall {
+                            scrutinee: Box::new(scrutinee),
+                            payload: payload.clone(),
+                            error: error.clone(),
+                            member: member.clone(),
+                            groups: groups.clone(),
+                            success: Box::new(success),
+                            residual: Box::new(residual),
+                        })))
                     }),
                 )
             }
@@ -16800,6 +17059,116 @@ impl Analyzer {
             }
             other => continuation(self, other),
         }
+    }
+
+    fn transform_effectful_chain_call(
+        &mut self,
+        expression: &Expr,
+        handler: Rc<AlgebraicHandler>,
+        resume: Option<SourceResume>,
+        continuation: SourceContinuation,
+    ) -> Option<Result<Expr, ()>> {
+        let mut source_groups = Vec::new();
+        let Expr::ChainMember(base, member) = flatten_call(expression, &mut source_groups) else {
+            return None;
+        };
+        let base_may_suspend = self.handler_expression_may_suspend(base, &handler.identity);
+        let arguments_may_suspend =
+            source_groups
+                .iter()
+                .flat_map(|group| group.iter())
+                .any(|argument| {
+                    self.handler_expression_may_suspend(&argument.value, &handler.identity)
+                });
+        if !base_may_suspend && !arguments_may_suspend {
+            return None;
+        }
+        let groups = source_groups
+            .iter()
+            .map(|group| group.to_vec())
+            .collect::<Vec<_>>();
+        let member = member.clone();
+        let handler_for_call = handler.clone();
+        let resume_for_call = resume.clone();
+        Some(self.transform_handler_expr(
+            (**base).clone(),
+            handler,
+            resume,
+            Rc::new(move |analyzer, scrutinee| {
+                let id = analyzer.next_closure;
+                analyzer.next_closure += 1;
+                let payload = format!("$handler$chain$payload${id}");
+                let error = format!("$handler$chain$error${id}");
+                let success_wrap = |value| {
+                    Expr::Call(
+                        Box::new(Expr::Name("$handler$chain$wrap$success".to_owned())),
+                        vec![CallArg { label: None, value }],
+                    )
+                };
+                let residual_wrap = Expr::Call(
+                    Box::new(Expr::Name("$handler$chain$wrap$residual".to_owned())),
+                    vec![CallArg {
+                        label: None,
+                        value: Expr::Name(error.clone()),
+                    }],
+                );
+                let residual = continuation(analyzer, residual_wrap)?;
+                let completed = {
+                    let continuation = continuation.clone();
+                    Rc::new(move |analyzer: &mut Analyzer, value: Expr| {
+                        continuation(analyzer, success_wrap(value))
+                    }) as SourceContinuation
+                };
+                let callee = Expr::Member(Box::new(Expr::Name(payload.clone())), member.clone());
+                let success = analyzer.transform_handler_call_groups(
+                    callee,
+                    groups.clone(),
+                    handler_for_call.clone(),
+                    resume_for_call.clone(),
+                    completed,
+                )?;
+                Ok(Expr::HandlerChainCall(Box::new(HandlerChainCall {
+                    scrutinee: Box::new(scrutinee),
+                    payload,
+                    error,
+                    member: member.clone(),
+                    groups: groups.clone(),
+                    success: Box::new(success),
+                    residual: Box::new(residual),
+                })))
+            }),
+        ))
+    }
+
+    fn transform_handler_call_groups(
+        &mut self,
+        callee: Expr,
+        mut groups: Vec<Vec<CallArg>>,
+        handler: Rc<AlgebraicHandler>,
+        resume: Option<SourceResume>,
+        continuation: SourceContinuation,
+    ) -> Result<Expr, ()> {
+        if groups.is_empty() {
+            return continuation(self, callee);
+        }
+        let arguments = groups.remove(0);
+        let next_handler = handler.clone();
+        let next_resume = resume.clone();
+        self.transform_handler_arguments(
+            arguments,
+            Vec::new(),
+            handler,
+            resume,
+            Rc::new(move |analyzer, arguments| {
+                analyzer.transform_handler_call_groups(
+                    Expr::Call(Box::new(callee.clone()), arguments),
+                    groups.clone(),
+                    next_handler.clone(),
+                    next_resume.clone(),
+                    continuation.clone(),
+                )
+            }),
+        )
     }
 
     fn transform_handler_match_candidates(
@@ -20772,6 +21141,16 @@ fn do_block_requires_function_boundary(expression: &Expr) -> bool {
                 || do_block_requires_function_boundary(success)
                 || do_block_requires_function_boundary(fallback)
         }
+        Expr::HandlerChainCall(chain) => {
+            do_block_requires_function_boundary(&chain.scrutinee)
+                || chain
+                    .groups
+                    .iter()
+                    .flatten()
+                    .any(|argument| do_block_requires_function_boundary(&argument.value))
+                || do_block_requires_function_boundary(&chain.success)
+                || do_block_requires_function_boundary(&chain.residual)
+        }
         Expr::Call(callee, arguments) => {
             do_block_requires_function_boundary(callee)
                 || arguments
@@ -21134,6 +21513,34 @@ fn rewrite_handler_loop_control(
             rewrite_handler_loop_control(success, recursive_name, break_name, nested_loop_depth);
             rewrite_handler_loop_control(fallback, recursive_name, break_name, nested_loop_depth);
         }
+        Expr::HandlerChainCall(chain) => {
+            rewrite_handler_loop_control(
+                &mut chain.scrutinee,
+                recursive_name,
+                break_name,
+                nested_loop_depth,
+            );
+            for argument in chain.groups.iter_mut().flatten() {
+                rewrite_handler_loop_control(
+                    &mut argument.value,
+                    recursive_name,
+                    break_name,
+                    nested_loop_depth,
+                );
+            }
+            rewrite_handler_loop_control(
+                &mut chain.success,
+                recursive_name,
+                break_name,
+                nested_loop_depth,
+            );
+            rewrite_handler_loop_control(
+                &mut chain.residual,
+                recursive_name,
+                break_name,
+                nested_loop_depth,
+            );
+        }
         Expr::Call(callee, arguments) => {
             rewrite_handler_loop_control(callee, recursive_name, break_name, nested_loop_depth);
             for argument in arguments {
@@ -21251,6 +21658,14 @@ fn collect_internal_recursion_tokens(expression: &Expr, tokens: &mut HashSet<Str
             collect_internal_recursion_tokens(success, tokens);
             collect_internal_recursion_tokens(fallback, tokens);
         }
+        Expr::HandlerChainCall(chain) => {
+            collect_internal_recursion_tokens(&chain.scrutinee, tokens);
+            for argument in chain.groups.iter().flatten() {
+                collect_internal_recursion_tokens(&argument.value, tokens);
+            }
+            collect_internal_recursion_tokens(&chain.success, tokens);
+            collect_internal_recursion_tokens(&chain.residual, tokens);
+        }
         Expr::Call(callee, arguments) => {
             collect_internal_recursion_tokens(callee, tokens);
             for argument in arguments {
@@ -21354,6 +21769,19 @@ fn handler_expression_children(expression: &Expr) -> Vec<&Expr> {
             fallback,
             ..
         } => vec![scrutinee, success, fallback],
+        Expr::HandlerChainCall(chain) => {
+            let mut children = vec![chain.scrutinee.as_ref()];
+            children.extend(
+                chain
+                    .groups
+                    .iter()
+                    .flatten()
+                    .map(|argument| &argument.value),
+            );
+            children.push(&chain.success);
+            children.push(&chain.residual);
+            children
+        }
         Expr::Call(callee, arguments) => {
             let mut children = Vec::with_capacity(arguments.len() + 1);
             children.push(callee.as_ref());
@@ -21400,6 +21828,195 @@ fn handler_expression_children(expression: &Expr) -> Vec<&Expr> {
         | Expr::Name(_)
         | Expr::Closure(_, _)
         | Expr::Continue => Vec::new(),
+    }
+}
+
+fn rewrite_handler_chain_wrappers(
+    expression: &mut Expr,
+    canonical: &str,
+    success_variant: &str,
+    residual_variant: &str,
+) {
+    if let Expr::Call(callee, arguments) = expression {
+        if let Expr::Name(wrapper) = callee.as_ref() {
+            if matches!(
+                wrapper.as_str(),
+                "$handler$chain$wrap$success" | "$handler$chain$wrap$residual"
+            ) && arguments.len() == 1
+                && arguments[0].label.is_none()
+            {
+                let mut value = arguments.remove(0).value;
+                rewrite_handler_chain_wrappers(
+                    &mut value,
+                    canonical,
+                    success_variant,
+                    residual_variant,
+                );
+                let variant = if wrapper == "$handler$chain$wrap$success" {
+                    success_variant
+                } else {
+                    residual_variant
+                };
+                let member = Expr::Member(
+                    Box::new(Expr::Name(canonical.to_owned())),
+                    variant.to_owned(),
+                );
+                *expression = if variant == "None" {
+                    member
+                } else {
+                    Expr::Call(Box::new(member), vec![CallArg { label: None, value }])
+                };
+                return;
+            }
+        }
+    }
+    match expression {
+        Expr::Unary(_, value)
+        | Expr::Try(value)
+        | Expr::DoBlock { body: value }
+        | Expr::Throw(value)
+        | Expr::Unsafe(value)
+        | Expr::Borrow { value, .. }
+        | Expr::Member(value, _)
+        | Expr::ChainMember(value, _)
+        | Expr::Loop { body: value } => {
+            rewrite_handler_chain_wrappers(value, canonical, success_variant, residual_variant)
+        }
+        Expr::Binary(left, _, right)
+        | Expr::Coalesce(left, right)
+        | Expr::Assign(left, right)
+        | Expr::CompoundAssign(left, _, right) => {
+            rewrite_handler_chain_wrappers(left, canonical, success_variant, residual_variant);
+            rewrite_handler_chain_wrappers(right, canonical, success_variant, residual_variant);
+        }
+        Expr::HandlerCoalesce {
+            scrutinee,
+            success,
+            fallback,
+            ..
+        } => {
+            rewrite_handler_chain_wrappers(scrutinee, canonical, success_variant, residual_variant);
+            rewrite_handler_chain_wrappers(success, canonical, success_variant, residual_variant);
+            rewrite_handler_chain_wrappers(fallback, canonical, success_variant, residual_variant);
+        }
+        Expr::HandlerChainCall(chain) => {
+            rewrite_handler_chain_wrappers(
+                &mut chain.scrutinee,
+                canonical,
+                success_variant,
+                residual_variant,
+            );
+            for argument in chain.groups.iter_mut().flatten() {
+                rewrite_handler_chain_wrappers(
+                    &mut argument.value,
+                    canonical,
+                    success_variant,
+                    residual_variant,
+                );
+            }
+            rewrite_handler_chain_wrappers(
+                &mut chain.success,
+                canonical,
+                success_variant,
+                residual_variant,
+            );
+            rewrite_handler_chain_wrappers(
+                &mut chain.residual,
+                canonical,
+                success_variant,
+                residual_variant,
+            );
+        }
+        Expr::Call(callee, arguments) => {
+            rewrite_handler_chain_wrappers(callee, canonical, success_variant, residual_variant);
+            for argument in arguments {
+                rewrite_handler_chain_wrappers(
+                    &mut argument.value,
+                    canonical,
+                    success_variant,
+                    residual_variant,
+                );
+            }
+        }
+        Expr::Array(elements) => {
+            for element in elements {
+                rewrite_handler_chain_wrappers(
+                    element,
+                    canonical,
+                    success_variant,
+                    residual_variant,
+                );
+            }
+        }
+        Expr::Index { base, index } => {
+            rewrite_handler_chain_wrappers(base, canonical, success_variant, residual_variant);
+            rewrite_handler_chain_wrappers(index, canonical, success_variant, residual_variant);
+        }
+        Expr::Block(statements, tail) => {
+            for statement in statements {
+                let value = match statement {
+                    Stmt::Let(binding) => &mut binding.value,
+                    Stmt::Expr(value) => value,
+                };
+                rewrite_handler_chain_wrappers(value, canonical, success_variant, residual_variant);
+            }
+            if let Some(tail) = tail {
+                rewrite_handler_chain_wrappers(tail, canonical, success_variant, residual_variant);
+            }
+        }
+        Expr::Closure(_, body) => {
+            rewrite_handler_chain_wrappers(body, canonical, success_variant, residual_variant)
+        }
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            rewrite_handler_chain_wrappers(condition, canonical, success_variant, residual_variant);
+            rewrite_handler_chain_wrappers(
+                then_branch,
+                canonical,
+                success_variant,
+                residual_variant,
+            );
+            if let Some(else_branch) = else_branch {
+                rewrite_handler_chain_wrappers(
+                    else_branch,
+                    canonical,
+                    success_variant,
+                    residual_variant,
+                );
+            }
+        }
+        Expr::Return(value) | Expr::Break(value) => {
+            if let Some(value) = value {
+                rewrite_handler_chain_wrappers(value, canonical, success_variant, residual_variant);
+            }
+        }
+        Expr::While { condition, body } => {
+            rewrite_handler_chain_wrappers(condition, canonical, success_variant, residual_variant);
+            rewrite_handler_chain_wrappers(body, canonical, success_variant, residual_variant);
+        }
+        Expr::Match { scrutinee, arms } => {
+            rewrite_handler_chain_wrappers(scrutinee, canonical, success_variant, residual_variant);
+            for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    rewrite_handler_chain_wrappers(
+                        guard,
+                        canonical,
+                        success_variant,
+                        residual_variant,
+                    );
+                }
+                rewrite_handler_chain_wrappers(
+                    &mut arm.body,
+                    canonical,
+                    success_variant,
+                    residual_variant,
+                );
+            }
+        }
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => {}
     }
 }
 
@@ -21504,6 +22121,14 @@ fn rewrite_handler_returns(expression: &mut Expr, return_name: &str) {
             rewrite_handler_returns(scrutinee, return_name);
             rewrite_handler_returns(success, return_name);
             rewrite_handler_returns(fallback, return_name);
+        }
+        Expr::HandlerChainCall(chain) => {
+            rewrite_handler_returns(&mut chain.scrutinee, return_name);
+            for argument in chain.groups.iter_mut().flatten() {
+                rewrite_handler_returns(&mut argument.value, return_name);
+            }
+            rewrite_handler_returns(&mut chain.success, return_name);
+            rewrite_handler_returns(&mut chain.residual, return_name);
         }
         Expr::Call(callee, arguments) => {
             rewrite_handler_returns(callee, return_name);
@@ -21626,6 +22251,32 @@ fn hygienic_rename_expr(
             hygienic_rename_expr(success, prefix, next, scopes);
             scopes.pop();
             hygienic_rename_expr(fallback, prefix, next, scopes);
+        }
+        Expr::HandlerChainCall(chain) => {
+            hygienic_rename_expr(&mut chain.scrutinee, prefix, next, scopes);
+            for argument in chain.groups.iter_mut().flatten() {
+                hygienic_rename_expr(&mut argument.value, prefix, next, scopes);
+            }
+            scopes.push(HashMap::new());
+            let renamed_payload = format!("{prefix}{}${}", *next, chain.payload);
+            *next += 1;
+            scopes
+                .last_mut()
+                .expect("handler chain success scope")
+                .insert(chain.payload.clone(), renamed_payload.clone());
+            chain.payload = renamed_payload;
+            hygienic_rename_expr(&mut chain.success, prefix, next, scopes);
+            scopes.pop();
+            scopes.push(HashMap::new());
+            let renamed_error = format!("{prefix}{}${}", *next, chain.error);
+            *next += 1;
+            scopes
+                .last_mut()
+                .expect("handler chain residual scope")
+                .insert(chain.error.clone(), renamed_error.clone());
+            chain.error = renamed_error;
+            hygienic_rename_expr(&mut chain.residual, prefix, next, scopes);
+            scopes.pop();
         }
         Expr::Call(callee, arguments) => {
             hygienic_rename_expr(callee, prefix, next, scopes);
@@ -28169,6 +28820,14 @@ fn expand_expr_aliases(
             expand_expr_aliases(success, aliases, diagnostics);
             expand_expr_aliases(fallback, aliases, diagnostics);
         }
+        Expr::HandlerChainCall(chain) => {
+            expand_expr_aliases(&mut chain.scrutinee, aliases, diagnostics);
+            for argument in chain.groups.iter_mut().flatten() {
+                expand_expr_aliases(&mut argument.value, aliases, diagnostics);
+            }
+            expand_expr_aliases(&mut chain.success, aliases, diagnostics);
+            expand_expr_aliases(&mut chain.residual, aliases, diagnostics);
+        }
         Expr::Call(callee, arguments) => {
             expand_expr_aliases(callee, aliases, diagnostics);
             for argument in arguments {
@@ -28426,6 +29085,14 @@ fn substitute_self_expression_target(expression: &mut Expr, target: &str) {
             substitute_self_expression_target(success, target);
             substitute_self_expression_target(fallback, target);
         }
+        Expr::HandlerChainCall(chain) => {
+            substitute_self_expression_target(&mut chain.scrutinee, target);
+            for argument in chain.groups.iter_mut().flatten() {
+                substitute_self_expression_target(&mut argument.value, target);
+            }
+            substitute_self_expression_target(&mut chain.success, target);
+            substitute_self_expression_target(&mut chain.residual, target);
+        }
         Expr::Call(callee, arguments) => {
             substitute_self_expression_target(callee, target);
             for argument in arguments {
@@ -28563,6 +29230,14 @@ fn rewrite_abstract_self_qualified_methods(expression: &mut Expr) {
             rewrite_abstract_self_qualified_methods(success);
             rewrite_abstract_self_qualified_methods(fallback);
         }
+        Expr::HandlerChainCall(chain) => {
+            rewrite_abstract_self_qualified_methods(&mut chain.scrutinee);
+            for argument in chain.groups.iter_mut().flatten() {
+                rewrite_abstract_self_qualified_methods(&mut argument.value);
+            }
+            rewrite_abstract_self_qualified_methods(&mut chain.success);
+            rewrite_abstract_self_qualified_methods(&mut chain.residual);
+        }
         Expr::Member(base, _) | Expr::ChainMember(base, _) => {
             rewrite_abstract_self_qualified_methods(base)
         }
@@ -28681,6 +29356,14 @@ fn substitute_expr_types(expression: &mut Expr, substitutions: &HashMap<String, 
             substitute_expr_types(scrutinee, substitutions);
             substitute_expr_types(success, substitutions);
             substitute_expr_types(fallback, substitutions);
+        }
+        Expr::HandlerChainCall(chain) => {
+            substitute_expr_types(&mut chain.scrutinee, substitutions);
+            for argument in chain.groups.iter_mut().flatten() {
+                substitute_expr_types(&mut argument.value, substitutions);
+            }
+            substitute_expr_types(&mut chain.success, substitutions);
+            substitute_expr_types(&mut chain.residual, substitutions);
         }
         Expr::Call(callee, arguments) => {
             substitute_expr_types(callee, substitutions);

@@ -3264,6 +3264,14 @@ fn validate_expr_accesses(expression: &Expr, accesses: &HashSet<String>) -> Resu
             validate_expr_accesses(success, accesses)?;
             validate_expr_accesses(fallback, accesses)
         }
+        Expr::HandlerChainCall(chain) => {
+            validate_expr_accesses(&chain.scrutinee, accesses)?;
+            for argument in chain.groups.iter().flatten() {
+                validate_expr_accesses(&argument.value, accesses)?;
+            }
+            validate_expr_accesses(&chain.success, accesses)?;
+            validate_expr_accesses(&chain.residual, accesses)
+        }
         Expr::Call(callee, arguments) => {
             validate_expr_accesses(callee, accesses)?;
             for argument in arguments {
@@ -3427,6 +3435,14 @@ fn validate_expr_regions(expression: &Expr, regions: &HashSet<String>) -> Result
             validate_expr_regions(scrutinee, regions)?;
             validate_expr_regions(success, regions)?;
             validate_expr_regions(fallback, regions)
+        }
+        Expr::HandlerChainCall(chain) => {
+            validate_expr_regions(&chain.scrutinee, regions)?;
+            for argument in chain.groups.iter().flatten() {
+                validate_expr_regions(&argument.value, regions)?;
+            }
+            validate_expr_regions(&chain.success, regions)?;
+            validate_expr_regions(&chain.residual, regions)
         }
         Expr::Call(callee, arguments) => {
             validate_expr_regions(callee, regions)?;

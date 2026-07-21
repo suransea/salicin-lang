@@ -146,6 +146,7 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
         "algebraic_effect_short_circuit.sc",
         "algebraic_effect_coalesce.sc",
         "algebraic_effect_match_guard.sc",
+        "algebraic_effect_optional_call.sc",
         "algebraic_effect_cross_function_answer.sc",
         "algebraic_effect_composition.sc",
         "algebraic_effect_recursion.sc",

@@ -307,6 +307,17 @@ pub struct MatchArm {
     pub body: Expr,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct HandlerChainCall {
+    pub scrutinee: Box<Expr>,
+    pub payload: String,
+    pub error: String,
+    pub member: String,
+    pub groups: Vec<Vec<CallArg>>,
+    pub success: Box<Expr>,
+    pub residual: Box<Expr>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pattern {
     Wildcard,
@@ -354,6 +365,10 @@ pub enum Expr {
         success: Box<Expr>,
         fallback: Box<Expr>,
     },
+    /// Selective-CPS form of a fully applied optional method call. The
+    /// typed lowering chooses `Option` or `Result` wrapping after the lazy
+    /// success and residual branches have already been transformed.
+    HandlerChainCall(Box<HandlerChainCall>),
     Try(Box<Expr>),
     DoBlock {
         body: Box<Expr>,
