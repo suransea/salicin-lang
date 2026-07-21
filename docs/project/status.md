@@ -12,16 +12,19 @@ this path. Mutable borrowing has one source spelling, `borrow(mut)`; separately 
 aliases and the former prefix spelling are intentionally absent before 1.0.
 Passing keyword generics are also implemented for functions and generic inherent members:
 `P: passing` accepts `auto`, `copy`, or `move` and can be referenced directly in parameter keyword
-position. Functions and trait methods place a signature effect group before the result colon:
-`(unsafe): T` adds the checked unsafe call requirement, `(try): T` normalizes to `Option(T)`, and
-`(try(E)): T` normalizes to `Result(T, E)`. Callable source types use the same shape, such as
-`(i32)(unsafe): i32`; the effect group is not a runtime or currying group. Complete direct, method,
+position. Functions and trait methods place a contextual `with(...)` clause after the result type:
+`: T with(unsafe)` adds the checked unsafe call requirement, `: T with(try)` normalizes to `Option(T)`, and
+`: T with(try(E))` normalizes to `Result(T, E)`. Callable source types use the same shape, such as
+`(i32): i32 with(unsafe)`; the clause is not a runtime or currying group. Complete direct, method,
 aliased, and partially applied unsafe calls require an
 enclosing unsafe function or `unsafe { ... }` handler. `do` forwards the implemented unsafe effect
-into nested immediate calls. Function and generic inherent-member `E: effect` parameters accept
-`pure` or `unsafe`, default to pure, participate in monomorphization, and forward through ordinary
-compile-time calls such as `callee(E)(value)`. Higher-order callable effect inference, generic trait
-methods, and async color polymorphism remain design work.
+into nested immediate calls. `let UI = effect` declares a nominal, module-visible marker effect.
+Function and generic inherent-member `E: effect` parameters represent complete rows, default to pure,
+participate in monomorphization, forward through ordinary compile-time calls such as
+`callee(E)(value)`, and infer pure, unsafe, or custom rows from higher-order callable arguments.
+Named non-capturing functions can be passed and invoked through the native function-pointer ABI.
+User-defined handlers/context lowering, capturing closure values, generic trait methods, and async
+color polymorphism remain design work.
 
 `core` and `alloc` are mounted in ordinary module resolution. `core.ops` traits and alloc containers
 are not part of the prelude. `Box`, `Vec`, and their free functions require

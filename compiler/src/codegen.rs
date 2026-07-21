@@ -150,18 +150,52 @@ const PASSING_COPY_MARKER: &str = "$passing$copy";
 const PASSING_MOVE_MARKER: &str = "$passing$move";
 const EFFECT_PURE_MARKER: &str = "$effect$pure";
 const EFFECT_UNSAFE_MARKER: &str = "$effect$unsafe";
+const EFFECT_ROW_MARKER_PREFIX: &str = "$effect$row$";
+
+fn effect_row_marker(unsafe_effect: bool, custom: &[String]) -> String {
+    let mut custom = custom.to_vec();
+    custom.sort();
+    custom.dedup();
+    format!(
+        "{EFFECT_ROW_MARKER_PREFIX}{}|{}",
+        if unsafe_effect { "unsafe" } else { "pure" },
+        custom.join("|")
+    )
+}
+
+fn effect_row_from_marker(marker: &str) -> Option<(bool, Vec<String>)> {
+    match marker {
+        EFFECT_PURE_MARKER => return Some((false, Vec::new())),
+        EFFECT_UNSAFE_MARKER => return Some((true, Vec::new())),
+        _ => {}
+    }
+    let row = marker.strip_prefix(EFFECT_ROW_MARKER_PREFIX)?;
+    let (head, tail) = row.split_once('|')?;
+    let unsafe_effect = match head {
+        "pure" => false,
+        "unsafe" => true,
+        _ => return None,
+    };
+    let custom = if tail.is_empty() {
+        Vec::new()
+    } else {
+        tail.split('|').map(str::to_owned).collect()
+    };
+    Some((unsafe_effect, custom))
+}
 
 fn is_compile_value_marker(name: &str) -> bool {
-    matches!(
-        name,
-        ACCESS_SHARED_MARKER
-            | ACCESS_MUT_MARKER
-            | PASSING_AUTO_MARKER
-            | PASSING_COPY_MARKER
-            | PASSING_MOVE_MARKER
-            | EFFECT_PURE_MARKER
-            | EFFECT_UNSAFE_MARKER
-    )
+    name.starts_with(EFFECT_ROW_MARKER_PREFIX)
+        || matches!(
+            name,
+            ACCESS_SHARED_MARKER
+                | ACCESS_MUT_MARKER
+                | PASSING_AUTO_MARKER
+                | PASSING_COPY_MARKER
+                | PASSING_MOVE_MARKER
+                | EFFECT_PURE_MARKER
+                | EFFECT_UNSAFE_MARKER
+        )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -295,6 +329,7 @@ enum NominalInstanceState {
 struct FunctionTy {
     groups: Vec<Vec<Ty>>,
     unsafe_effect: bool,
+    custom_effects: Vec<String>,
     result: Box<Ty>,
 }
 
@@ -374,11 +409,16 @@ impl fmt::Display for Ty {
                     }
                     f.write_str(")")?;
                 }
-                if function.unsafe_effect {
-                    f.write_str("(unsafe)")?;
-                }
                 f.write_str(": ")?;
-                write!(f, "{}", function.result)
+                write!(f, "{}", function.result)?;
+                let mut effects = function.custom_effects.clone();
+                if function.unsafe_effect {
+                    effects.insert(0, "unsafe".to_owned());
+                }
+                if !effects.is_empty() {
+                    write!(f, " with({})", effects.join(", "))?;
+                }
+                Ok(())
             }
             Self::Callable(callable) => write!(f, "{}", Ty::Function(callable.signature.clone())),
         }
@@ -465,7 +505,7 @@ impl HirProgram {
                         })
                     })
             }
-            Ty::Function(_) => true,
+            Ty::Function(_) => false,
             Ty::Callable(callable) => callable.captures.iter().any(|capture| {
                 !matches!(capture.mode, PassMode::Borrow | PassMode::MutBorrow)
                     && self.needs_drop(&capture.ty)
@@ -636,6 +676,11 @@ enum HirExprKind {
         /// coercion gives the enclosing expression a different type.
         diverges: bool,
     },
+    IndirectCall {
+        callee: Box<HirExpr>,
+        arguments: Vec<HirArgument>,
+        diverges: bool,
+    },
     Partial {
         function: String,
         consumed_groups: usize,
@@ -739,6 +784,7 @@ struct ParamSig {
 struct FunctionSig {
     groups: Vec<Vec<ParamSig>>,
     unsafe_effect: bool,
+    custom_effects: Vec<String>,
     result: Option<Ty>,
 }
 
@@ -751,6 +797,7 @@ impl FunctionSig {
                 .map(|group| group.iter().map(|param| param.ty.clone()).collect())
                 .collect(),
             unsafe_effect: self.unsafe_effect,
+            custom_effects: self.custom_effects.clone(),
             result: Box::new(self.result.clone()?),
         }))
     }
@@ -982,6 +1029,7 @@ struct LowerCtx {
     reference_loans: HashMap<LocalId, Vec<LoanId>>,
     reference_value_depth: usize,
     unsafe_depth: usize,
+    active_custom_effects: HashSet<String>,
 }
 
 impl LowerCtx {
@@ -1003,6 +1051,7 @@ impl LowerCtx {
             reference_loans: HashMap::new(),
             reference_value_depth: 0,
             unsafe_depth: 0,
+            active_custom_effects: HashSet::new(),
         }
     }
 
@@ -1024,6 +1073,7 @@ impl LowerCtx {
             reference_loans: HashMap::new(),
             reference_value_depth: 0,
             unsafe_depth: 0,
+            active_custom_effects: HashSet::new(),
         }
     }
 
@@ -1444,6 +1494,7 @@ struct Analyzer {
     generic_inherent_functions: HashMap<(String, String), String>,
     suppress_generic_inherent_instantiation: usize,
     traits: HashMap<String, TraitSchema>,
+    effects: HashSet<String>,
     trait_impl_headers: HashSet<TraitImplKey>,
     trait_impls: HashMap<TraitImplKey, TraitImplInfo>,
     trait_methods_by_receiver: HashMap<(Ty, String), Vec<TraitImplKey>>,
@@ -1506,6 +1557,7 @@ impl Analyzer {
             generic_inherent_functions: HashMap::new(),
             suppress_generic_inherent_instantiation: 0,
             traits: HashMap::new(),
+            effects: HashSet::new(),
             trait_impl_headers: HashSet::new(),
             trait_impls: HashMap::new(),
             trait_methods_by_receiver: HashMap::new(),
@@ -1607,6 +1659,7 @@ impl Analyzer {
                 Item::Global(binding) => &binding.name,
                 Item::Struct(definition) => &definition.name,
                 Item::Enum(definition) => &definition.name,
+                Item::Effect(definition) => &definition.name,
                 Item::Trait(definition) => &definition.name,
                 Item::Extend(extension) => {
                     extensions.push((extension.clone(), origin));
@@ -1741,12 +1794,19 @@ impl Analyzer {
                             .insert(definition.name.clone(), definition.clone());
                     }
                 }
+                Item::Effect(definition) => {
+                    self.effects.insert(definition.name.clone());
+                }
                 Item::Trait(definition) => {
                     self.collect_trait_schema(definition.clone(), visibility, origin)
                 }
                 Item::Extend(_) => unreachable!("extensions were collected separately"),
             }
         }
+
+        self.validate_program_effects(core);
+        self.validate_program_effects(alloc);
+        self.validate_program_effects(program);
 
         self.validate_generic_nominal_cycles();
         self.collect_nominal_layouts();
@@ -1797,6 +1857,7 @@ impl Analyzer {
                 FunctionSig {
                     groups,
                     unsafe_effect: function.effects.unsafe_effect,
+                    custom_effects: function.effects.custom.clone(),
                     result,
                 },
             );
@@ -1812,6 +1873,42 @@ impl Analyzer {
 
         self.validate_nominal_templates();
         self.validate_function_templates();
+    }
+
+    fn validate_program_effects(&mut self, program: &Program) {
+        fn functions(item: &Item) -> Vec<&Function> {
+            match item {
+                Item::Function(function) => vec![function],
+                Item::Trait(definition) => definition
+                    .members
+                    .iter()
+                    .filter_map(|member| match member {
+                        TraitMember::Function(function) => Some(function),
+                        TraitMember::AssociatedType { .. } => None,
+                    })
+                    .collect(),
+                Item::Extend(extension) => extension
+                    .members
+                    .iter()
+                    .filter_map(|member| match member {
+                        ExtendMember::Function(function) => Some(function),
+                        ExtendMember::Const(_) => None,
+                    })
+                    .collect(),
+                Item::Global(_) | Item::Struct(_) | Item::Enum(_) | Item::Effect(_) => Vec::new(),
+            }
+        }
+
+        for function in program.items.iter().flat_map(functions) {
+            for effect in &function.effects.custom {
+                if !self.effects.contains(effect) {
+                    self.error(format!(
+                        "unknown custom effect `{effect}` in function `{}`",
+                        function.name
+                    ));
+                }
+            }
+        }
     }
 
     fn is_core_copy_extension(&self, extension: &ExtendDef) -> bool {
@@ -2100,13 +2197,14 @@ impl Analyzer {
             | Ty::Bool
             | Ty::Unit
             | Ty::Pointer { .. }
+            | Ty::Function(_)
             | Ty::Never
             | Ty::Error => true,
             Ty::Reference { mutable, .. } => !mutable,
             Ty::Array(element, _) => self.type_is_copy_with_nominals(element, valid),
             Ty::Enum(name) if name == self.lang_item_name(LangItemKind::Never) => true,
             Ty::Struct(_) | Ty::Enum(_) => valid.contains(ty),
-            Ty::Function(_) | Ty::Callable(_) => false,
+            Ty::Callable(_) => false,
         }
     }
 
@@ -3148,6 +3246,7 @@ impl Analyzer {
                 FunctionSig {
                     groups,
                     unsafe_effect: function.effects.unsafe_effect,
+                    custom_effects: function.effects.custom.clone(),
                     result,
                 },
             );
@@ -3329,6 +3428,7 @@ impl Analyzer {
                             FunctionSig {
                                 groups,
                                 unsafe_effect: function.effects.unsafe_effect,
+                                custom_effects: function.effects.custom.clone(),
                                 result,
                             },
                         );
@@ -5083,6 +5183,7 @@ impl Analyzer {
                 .as_ref()
                 .map(|ty| self.lower_source_type(ty));
             let unsafe_effect = function.effects.unsafe_effect;
+            let custom_effects = function.effects.custom.clone();
             self.functions.insert(validation_name.clone(), function);
             self.function_origins.insert(
                 validation_name.clone(),
@@ -5093,6 +5194,7 @@ impl Analyzer {
                 FunctionSig {
                     groups,
                     unsafe_effect,
+                    custom_effects,
                     result,
                 },
             );
@@ -5206,6 +5308,7 @@ impl Analyzer {
                     FunctionSig {
                         groups,
                         unsafe_effect: method.effects.unsafe_effect,
+                        custom_effects: method.effects.custom.clone(),
                         result,
                     },
                 );
@@ -5464,6 +5567,7 @@ impl Analyzer {
                         .map(|group| group.iter().map(|ty| self.lower_source_type(ty)).collect())
                         .collect(),
                     unsafe_effect: effects.unsafe_effect,
+                    custom_effects: effects.custom.clone(),
                     result: Box::new(self.lower_source_type(result)),
                 })
             }
@@ -5744,6 +5848,7 @@ impl Analyzer {
                     .collect::<Option<Vec<_>>>()?,
                 effects: FunctionEffects {
                     unsafe_effect: function.unsafe_effect,
+                    custom: function.custom_effects.clone(),
                     parameters: Vec::new(),
                 },
                 result: Box::new(self.source_type_for_ty(&function.result)?),
@@ -5821,11 +5926,17 @@ impl Analyzer {
                     );
                     rendered.push(')');
                 }
-                if function.unsafe_effect {
-                    rendered.push_str("(unsafe)");
-                }
                 rendered.push_str(": ");
                 rendered.push_str(&self.diagnostic_type_name(&function.result));
+                let mut effects = function.custom_effects.clone();
+                if function.unsafe_effect {
+                    effects.insert(0, "unsafe".to_owned());
+                }
+                if !effects.is_empty() {
+                    rendered.push_str(" with(");
+                    rendered.push_str(&effects.join(", "));
+                    rendered.push(')');
+                }
                 rendered
             }
             Ty::Callable(callable) => {
@@ -5910,6 +6021,7 @@ impl Analyzer {
                         })
                         .collect::<Option<Vec<_>>>()?,
                     unsafe_effect: effects.unsafe_effect,
+                    custom_effects: effects.custom.clone(),
                     result: Box::new(self.probe_source_ty(result)?),
                 }))
             }
@@ -6237,24 +6349,32 @@ impl Analyzer {
                         .zip(&actual_function.groups)
                         .any(|(left, right)| left.len() != right.len())
                     || (effects.unsafe_effect && !actual_function.unsafe_effect)
+                    || effects
+                        .custom
+                        .iter()
+                        .any(|effect| !actual_function.custom_effects.contains(effect))
                 {
                     return Err(mismatch());
                 }
                 if effects.parameters.is_empty()
-                    && effects.unsafe_effect != actual_function.unsafe_effect
+                    && (effects.unsafe_effect != actual_function.unsafe_effect
+                        || effects.custom != actual_function.custom_effects)
                 {
                     return Err(mismatch());
                 }
                 let mut changed = false;
+                let selected_unsafe = actual_function.unsafe_effect && !effects.unsafe_effect;
+                let selected_custom = actual_function
+                    .custom_effects
+                    .iter()
+                    .filter(|effect| !effects.custom.contains(*effect))
+                    .cloned()
+                    .collect::<Vec<_>>();
                 for parameter in &effects.parameters {
-                    let marker = if actual_function.unsafe_effect {
-                        EFFECT_UNSAFE_MARKER
-                    } else {
-                        EFFECT_PURE_MARKER
-                    };
+                    let marker = effect_row_marker(selected_unsafe, &selected_custom);
                     let selected = InferredTypeArgument {
-                        ty: Ty::Struct(marker.to_owned()),
-                        source: Some(Type::Named(marker.to_owned(), Vec::new())),
+                        ty: Ty::Struct(marker.clone()),
+                        source: Some(Type::Named(marker, Vec::new())),
                         origin: origin.to_owned(),
                     };
                     match inferred.get(parameter) {
@@ -6431,17 +6551,22 @@ impl Analyzer {
                 result,
             } => {
                 let mut unsafe_effect = effects.unsafe_effect;
+                let mut custom_effects = effects.custom.clone();
                 for parameter in &effects.parameters {
-                    unsafe_effect |= substituted_unsafe_effect(
-                        parameter,
-                        &inferred
-                            .iter()
-                            .filter_map(|(name, argument)| {
-                                argument.source.clone().map(|source| (name.clone(), source))
-                            })
-                            .collect(),
-                    )?;
+                    let Type::Named(marker, arguments) =
+                        inferred.get(parameter)?.source.as_ref()?
+                    else {
+                        return None;
+                    };
+                    if !arguments.is_empty() {
+                        return None;
+                    }
+                    let (selected_unsafe, selected_custom) = effect_row_from_marker(marker)?;
+                    unsafe_effect |= selected_unsafe;
+                    custom_effects.extend(selected_custom);
                 }
+                custom_effects.sort();
+                custom_effects.dedup();
                 Some(Ty::Function(FunctionTy {
                     groups: groups
                         .iter()
@@ -6455,6 +6580,7 @@ impl Analyzer {
                         })
                         .collect::<Option<Vec<_>>>()?,
                     unsafe_effect,
+                    custom_effects,
                     result: Box::new(self.resolved_template_ty(
                         result,
                         compile_parameters,
@@ -8288,6 +8414,7 @@ impl Analyzer {
                         return TypeProbe::Known(Ty::Function(FunctionTy {
                             groups,
                             unsafe_effect: template.effects.unsafe_effect,
+                            custom_effects: template.effects.custom.clone(),
                             result: Box::new(result),
                         }));
                     }
@@ -8318,6 +8445,7 @@ impl Analyzer {
                     .map(|group| group.iter().map(|parameter| parameter.ty.clone()).collect())
                     .collect(),
                 unsafe_effect: signature.unsafe_effect,
+                custom_effects: signature.custom_effects.clone(),
                 result: Box::new(result),
             }));
         }
@@ -8454,9 +8582,16 @@ impl Analyzer {
                         Expr::Name(name) if name == "unsafe" => {
                             Type::Named(EFFECT_UNSAFE_MARKER.to_owned(), Vec::new())
                         }
+                        Expr::Name(name) if self.effects.contains(name) => Type::Named(
+                            effect_row_marker(false, std::slice::from_ref(name)),
+                            Vec::new(),
+                        ),
+                        Expr::Name(name) if effect_row_from_marker(name).is_some() => {
+                            Type::Named(name.clone(), Vec::new())
+                        }
                         _ => {
                             self.error(format!(
-                                "invalid effect argument for `{}` in `{owner}`; expected `pure` or `unsafe`",
+                                "invalid effect argument for `{}` in `{owner}`; expected `pure`, `unsafe`, or a declared custom effect",
                                 parameter.name
                             ));
                             return None;
@@ -8555,7 +8690,9 @@ impl Analyzer {
         {
             return arguments.iter().all(|argument| {
                 matches!(&argument.value, Expr::Name(name)
-                    if matches!(name.as_str(), "pure" | "unsafe"))
+                    if matches!(name.as_str(), "pure" | "unsafe")
+                        || self.effects.contains(name)
+                        || effect_row_from_marker(name).is_some())
             });
         }
         parameters.len() == arguments.len()
@@ -8637,7 +8774,9 @@ impl Analyzer {
             }
             CompileParamKind::Effect => {
                 matches!(expression, Expr::Name(name)
-                    if matches!(name.as_str(), "pure" | "unsafe"))
+                    if matches!(name.as_str(), "pure" | "unsafe")
+                        || self.effects.contains(name)
+                        || effect_row_from_marker(name).is_some())
             }
             CompileParamKind::Region => false,
         }
@@ -8920,6 +9059,7 @@ impl Analyzer {
             FunctionSig {
                 groups,
                 unsafe_effect: function.effects.unsafe_effect,
+                custom_effects: function.effects.custom.clone(),
                 result,
             },
         );
@@ -9093,6 +9233,7 @@ impl Analyzer {
                 .expect("every registered function has source provenance"),
         );
         context.unsafe_depth = usize::from(function.effects.unsafe_effect);
+        context.active_custom_effects = function.effects.custom.iter().cloned().collect();
         if function.return_type.is_some() {
             context.return_boundary = signature
                 .result
@@ -9298,7 +9439,7 @@ impl Analyzer {
                             .any(|field| self.type_needs_drop_inner(&field.ty, visiting))
                     })
                 }),
-                Ty::Function(_) => true,
+                Ty::Function(_) => false,
                 Ty::Callable(callable) => callable.captures.iter().any(|capture| {
                     !matches!(capture.mode, PassMode::Borrow | PassMode::MutBorrow)
                         && self.type_needs_drop_inner(&capture.ty, visiting)
@@ -10419,6 +10560,16 @@ impl Analyzer {
                     }
                 }
             }
+            HirExprKind::IndirectCall {
+                callee, arguments, ..
+            } => {
+                self.validate_explicit_reference_returns(callee, expected, context);
+                for argument in arguments {
+                    if let HirArgument::Copy(value) | HirArgument::Move(value) = argument {
+                        self.validate_explicit_reference_returns(value, expected, context);
+                    }
+                }
+            }
             HirExprKind::LocalClosure(closure) => {
                 for capture in &closure.captures {
                     if let Some(value) = &capture.value {
@@ -10990,6 +11141,7 @@ impl Analyzer {
                     .map(|group| group.iter().map(|param| param.ty.clone()).collect())
                     .collect(),
                 unsafe_effect: forwarded_unsafe_depth > 0,
+                custom_effects: Vec::new(),
                 result: Box::new(result.clone()),
             },
             captures: captures
@@ -13661,6 +13813,9 @@ impl Analyzer {
                 if local.partial.is_some() {
                     return self.lower_local_partial_call(name, &local, &groups, context);
                 }
+                if matches!(local.ty, Ty::Function(_)) {
+                    return self.lower_indirect_function_call(name, &local, &groups, context);
+                }
                 self.error(format!("local value `{name}` is not callable"));
                 return error_expr();
             }
@@ -15488,6 +15643,7 @@ impl Analyzer {
                 FunctionTy {
                     groups: function_ty.groups[consumed_groups..].to_vec(),
                     unsafe_effect: function_ty.unsafe_effect,
+                    custom_effects: function_ty.custom_effects.clone(),
                     result: function_ty.result.clone(),
                 },
                 &arguments,
@@ -15643,6 +15799,113 @@ impl Analyzer {
         )
     }
 
+    fn lower_indirect_function_call(
+        &mut self,
+        local_name: &str,
+        local: &LocalInfo,
+        groups: &[&[CallArg]],
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let Ty::Function(function_ty) = &local.ty else {
+            return error_expr();
+        };
+        let function_ty = function_ty.clone();
+        if groups.len() != function_ty.groups.len() {
+            self.error(format!(
+                "indirect call `{local_name}` must supply all {} runtime parameter groups; found {}",
+                function_ty.groups.len(),
+                groups.len()
+            ));
+            return error_expr();
+        }
+        if groups
+            .iter()
+            .flat_map(|group| group.iter())
+            .any(|argument| argument.label.is_some())
+        {
+            self.error(format!(
+                "indirect call `{local_name}` uses a callable type without parameter labels"
+            ));
+            return error_expr();
+        }
+        if function_ty.unsafe_effect && context.unsafe_depth == 0 {
+            self.error(format!(
+                "indirect call to unsafe callable `{local_name}` requires an `unsafe` handler"
+            ));
+        }
+        let missing = function_ty
+            .custom_effects
+            .iter()
+            .filter(|effect| !context.active_custom_effects.contains(*effect))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            self.error(format!(
+                "indirect call `{local_name}` requires custom effect{} `{}`",
+                if missing.len() == 1 { "" } else { "s" },
+                missing.join(", ")
+            ));
+        }
+
+        let mut temporary_loans = Vec::new();
+        let mut temporary_bindings = Vec::new();
+        let mut lowered_arguments = Vec::new();
+        for (arguments, parameters) in groups.iter().zip(&function_ty.groups) {
+            if arguments.len() != parameters.len() {
+                self.error(format!(
+                    "argument count mismatch in indirect call `{local_name}`: expected {}, found {}",
+                    parameters.len(),
+                    arguments.len()
+                ));
+                return error_expr();
+            }
+            for (argument, parameter) in arguments.iter().zip(parameters) {
+                lowered_arguments.push(self.lower_call_argument(
+                    &argument.value,
+                    &ParamSig {
+                        name: String::new(),
+                        ty: parameter.clone(),
+                        mode: PassMode::Inferred,
+                    },
+                    context,
+                    &mut temporary_loans,
+                    &mut temporary_bindings,
+                ));
+            }
+        }
+        self.release_loans(&temporary_loans, context);
+        let place = HirPlace {
+            local: local.id,
+            root_ty: local.ty.clone(),
+            projections: Vec::new(),
+            ty: local.ty.clone(),
+            capability: local.capability,
+            root_mutable: local.mutable,
+            loan: None,
+            indirect: false,
+        };
+        let call = HirExpr {
+            ty: (*function_ty.result).clone(),
+            kind: HirExprKind::IndirectCall {
+                callee: Box::new(HirExpr {
+                    ty: local.ty.clone(),
+                    kind: HirExprKind::Read {
+                        place,
+                        kind: HirReadKind::Copy,
+                    },
+                }),
+                arguments: lowered_arguments.clone(),
+                diverges: self.is_uninhabited_type(&function_ty.result),
+            },
+        };
+        self.wrap_call_argument_temporaries(
+            call,
+            &mut lowered_arguments,
+            temporary_bindings,
+            context,
+        )
+    }
+
     fn lower_named_function_call(
         &mut self,
         name: &str,
@@ -15735,6 +15998,7 @@ impl Analyzer {
                 FunctionTy {
                     groups: remaining,
                     unsafe_effect: function_ty.unsafe_effect,
+                    custom_effects: function_ty.custom_effects.clone(),
                     result: function_ty.result.clone(),
                 },
                 &arguments,
@@ -16099,6 +16363,7 @@ impl Analyzer {
                 FunctionTy {
                     groups: function_ty.groups[consumed_groups..].to_vec(),
                     unsafe_effect: function_ty.unsafe_effect,
+                    custom_effects: function_ty.custom_effects.clone(),
                     result: function_ty.result.clone(),
                 },
                 &arguments,
@@ -16571,14 +16836,29 @@ impl Analyzer {
     }
 
     fn require_function_effects(&mut self, name: &str, context: &LowerCtx) {
-        if self
+        let Some(effects) = self
             .functions
             .get(name)
-            .is_some_and(|function| function.effects.unsafe_effect)
-            && context.unsafe_depth == 0
-        {
+            .map(|function| function.effects.clone())
+        else {
+            return;
+        };
+        if effects.unsafe_effect && context.unsafe_depth == 0 {
             self.error(format!(
                 "call to unsafe function `{name}` requires an `unsafe` handler"
+            ));
+        }
+        let missing = effects
+            .custom
+            .iter()
+            .filter(|effect| !context.active_custom_effects.contains(*effect))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            self.error(format!(
+                "call to `{name}` requires custom effect{} `{}`",
+                if missing.len() == 1 { "" } else { "s" },
+                missing.join(", ")
             ));
         }
     }
@@ -16622,6 +16902,9 @@ impl Analyzer {
         }
         if self.functions["main"].effects.unsafe_effect {
             self.error("`main` cannot expose an unhandled `unsafe` effect");
+        }
+        if !self.functions["main"].effects.custom.is_empty() {
+            self.error("`main` cannot expose unhandled custom effects");
         }
         if !matches!(result, Ty::Unit | Ty::I32 | Ty::Error) {
             self.error(format!(
@@ -18183,6 +18466,42 @@ impl<'a> HirCleanupPlanner<'a> {
                     None
                 }
             }
+            HirExprKind::IndirectCall {
+                callee,
+                arguments,
+                diverges,
+            } => {
+                let Some(mut cursor) = self.walk_expr(callee, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                let mut by_value = Vec::new();
+                for argument in arguments {
+                    match argument {
+                        HirArgument::Copy(value) | HirArgument::Move(value) => {
+                            let (_, stage) =
+                                self.prepare_temporary_destination(cursor, &value.ty)?;
+                            let Some(next) =
+                                self.walk_expr(value, cursor, ResultUse::Store(stage.clone()))?
+                            else {
+                                return Ok(None);
+                            };
+                            cursor = next;
+                            by_value.push(stage);
+                        }
+                        HirArgument::SharedBorrow(_) | HirArgument::MutBorrow(_) => {}
+                    }
+                }
+                for argument in by_value {
+                    self.move_out(cursor, argument.path)?;
+                }
+                if *diverges {
+                    self.terminate(cursor.block, CleanupTerminator::Unreachable)?;
+                    None
+                } else {
+                    self.initialize_result(cursor, &result_use)?;
+                    Some(cursor)
+                }
+            }
             HirExprKind::Partial { captures, .. } => {
                 let mut current = Some(cursor);
                 for (index, capture) in captures.iter().enumerate() {
@@ -19255,6 +19574,7 @@ impl ConstantEvaluator<'_> {
             | HirExprKind::RawAlloc { .. }
             | HirExprKind::RawDealloc { .. }
             | HirExprKind::Call { .. }
+            | HirExprKind::IndirectCall { .. }
             | HirExprKind::Partial { .. }
             | HirExprKind::PartialCapture { .. }
             | HirExprKind::LocalClosure(_)
@@ -20487,9 +20807,10 @@ impl<'a> FunctionEmitter<'a> {
                     value: Some(register),
                 })
             }
-            HirExprKind::Function(name) => Err(Diagnostic::new(format!(
-                "function value `{name}` reached LLVM emission"
-            ))),
+            HirExprKind::Function(name) => Ok(Operand {
+                ty: expression.ty.clone(),
+                value: Some(format!("@{}", function_symbol(name))),
+            }),
             HirExprKind::ConstructStruct { name, fields } => {
                 let cleanup_depth = self.drop_slots.len();
                 let aggregate_ty = llvm_value_type(&Ty::Struct(name.clone()))?;
@@ -20766,6 +21087,65 @@ impl<'a> FunctionEmitter<'a> {
                     "call {} @{}({})",
                     llvm_return_type(&expression.ty)?,
                     function_symbol(function),
+                    emitted_arguments.join(", ")
+                );
+                if expression.ty == Ty::Unit {
+                    self.instruction(call);
+                    Ok(Operand::unit())
+                } else {
+                    let register = self.fresh_register();
+                    self.instruction(format!("{register} = {call}"));
+                    if self.program.is_uninhabited(&expression.ty) {
+                        self.terminate("unreachable");
+                        return Ok(Operand::never());
+                    }
+                    Ok(Operand {
+                        ty: expression.ty.clone(),
+                        value: Some(register),
+                    })
+                }
+            }
+            HirExprKind::IndirectCall {
+                callee, arguments, ..
+            } => {
+                let cleanup_depth = self.drop_slots.len();
+                let callee = self.emit_expr(callee)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                let mut emitted_arguments = Vec::new();
+                for argument in arguments {
+                    match argument {
+                        HirArgument::Copy(argument) | HirArgument::Move(argument) => {
+                            let argument = self.emit_expr(argument)?;
+                            if self.terminated {
+                                self.drop_slots.truncate(cleanup_depth);
+                                return Ok(Operand::never());
+                            }
+                            if argument.ty == Ty::Unit {
+                                continue;
+                            }
+                            emitted_arguments.push(format!(
+                                "{} {}",
+                                llvm_value_type(&argument.ty)?,
+                                argument.value()?
+                            ));
+                            self.hold_operand_for_early_exit(&argument)?;
+                        }
+                        HirArgument::SharedBorrow(place) | HirArgument::MutBorrow(place) => {
+                            if place.ty == Ty::Unit {
+                                continue;
+                            }
+                            let pointer = self.emit_place_address(place)?;
+                            emitted_arguments.push(format!("ptr {pointer}"));
+                        }
+                    }
+                }
+                self.release_drop_slots(cleanup_depth);
+                let call = format!(
+                    "call {} {}({})",
+                    llvm_return_type(&expression.ty)?,
+                    callee.value()?,
                     emitted_arguments.join(", ")
                 );
                 if expression.ty == Ty::Unit {
@@ -21965,10 +22345,10 @@ fn llvm_value_type(ty: &Ty) -> Result<String, Diagnostic> {
         Ty::I64 | Ty::U64 => Ok("i64".to_owned()),
         Ty::Bool => Ok("i1".to_owned()),
         Ty::Array(element, length) => Ok(format!("[{length} x {}]", llvm_value_type(element)?)),
-        Ty::Pointer { .. } | Ty::Reference { .. } => Ok("ptr".to_owned()),
+        Ty::Pointer { .. } | Ty::Reference { .. } | Ty::Function(_) => Ok("ptr".to_owned()),
         Ty::Struct(name) | Ty::Enum(name) => Ok(format!("%{}", type_symbol(name))),
         Ty::Callable(_) => Ok(format!("%{}", type_symbol(&canonical_type_encoding(ty)))),
-        Ty::Unit | Ty::Never | Ty::Function(_) | Ty::Error => Err(Diagnostic::new(format!(
+        Ty::Unit | Ty::Never | Ty::Error => Err(Diagnostic::new(format!(
             "internal error: `{ty}` has no first-class LLVM representation"
         ))),
     }
@@ -22168,6 +22548,7 @@ fn erase_region_parameters(program: &mut Program) {
         match item {
             Item::Function(function) => erase_function(function),
             Item::Global(_) => {}
+            Item::Effect(_) => {}
             Item::Struct(definition) => erase_groups(&mut definition.compile_groups),
             Item::Enum(definition) => erase_groups(&mut definition.compile_groups),
             Item::Trait(definition) => {
@@ -22222,11 +22603,16 @@ fn substitute_function_types(function: &mut Function, substitutions: &HashMap<St
     }
     let mut remaining_effect_parameters = Vec::new();
     for parameter in function.effects.parameters.drain(..) {
-        match substituted_unsafe_effect(&parameter, substitutions) {
-            Some(selected) => function.effects.unsafe_effect |= selected,
+        match substituted_effect_row(&parameter, substitutions) {
+            Some((unsafe_effect, custom)) => {
+                function.effects.unsafe_effect |= unsafe_effect;
+                function.effects.custom.extend(custom);
+            }
             None => remaining_effect_parameters.push(parameter),
         }
     }
+    function.effects.custom.sort();
+    function.effects.custom.dedup();
     function.effects.parameters = remaining_effect_parameters;
     for predicate in &mut function.where_predicates {
         substitute_type_parameters(&mut predicate.subject, substitutions);
@@ -22662,12 +23048,17 @@ fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<String, Typ
             substitute_type_parameters(result, substitutions);
             let mut remaining = Vec::new();
             for parameter in effects.parameters.drain(..) {
-                match substituted_unsafe_effect(&parameter, substitutions) {
-                    Some(selected) => effects.unsafe_effect |= selected,
+                match substituted_effect_row(&parameter, substitutions) {
+                    Some((unsafe_effect, custom)) => {
+                        effects.unsafe_effect |= unsafe_effect;
+                        effects.custom.extend(custom);
+                    }
                     None => remaining.push(parameter),
                 }
             }
             effects.parameters = remaining;
+            effects.custom.sort();
+            effects.custom.dedup();
         }
         Type::Named(_, arguments) => {
             for argument in arguments {
@@ -22710,18 +23101,17 @@ fn substituted_passing_mode(name: &str, substitutions: &HashMap<String, Type>) -
     }
 }
 
-fn substituted_unsafe_effect(name: &str, substitutions: &HashMap<String, Type>) -> Option<bool> {
+fn substituted_effect_row(
+    name: &str,
+    substitutions: &HashMap<String, Type>,
+) -> Option<(bool, Vec<String>)> {
     let Type::Named(marker, arguments) = substitutions.get(name)? else {
         return None;
     };
     if !arguments.is_empty() {
         return None;
     }
-    match marker.as_str() {
-        EFFECT_PURE_MARKER => Some(false),
-        EFFECT_UNSAFE_MARKER => Some(true),
-        _ => None,
-    }
+    effect_row_from_marker(marker)
 }
 
 fn trait_reference_patterns_overlap(
@@ -23060,6 +23450,11 @@ fn canonical_type_encoding(ty: &Ty) -> String {
                 }
             }
             encoded.push_str(if function.unsafe_effect { "u:" } else { "p:" });
+            encoded.push_str(&function.custom_effects.len().to_string());
+            encoded.push(':');
+            for effect in &function.custom_effects {
+                push_canonical_component(&mut encoded, effect);
+            }
             push_canonical_component(&mut encoded, &canonical_type_encoding(&function.result));
             encoded
         }
@@ -26260,11 +26655,74 @@ let main(): i32 = loop {
     }
 
     #[test]
+    fn passes_and_invokes_a_non_capturing_function_value_indirectly() {
+        let ir = compile_text(
+            r#"
+let increment(value: i32): i32 = value + 1
+let apply(action: (i32): i32)(value: i32): i32 = action(value)
+let main(): i32 = apply(increment)(41)
+"#,
+        )
+        .expect("a named function should pass through a callable parameter");
+        assert!(ir.contains("call i32 %"));
+        assert!(ir.contains("ptr @sali.fn.696e6372656d656e74"));
+    }
+
+    #[test]
+    fn custom_marker_effects_are_nominal_and_checked_at_calls() {
+        compile_text(
+            r#"
+let UI = effect
+let render(): i32 with(UI) = 42
+let invoke(E: effect)(action: (): i32 with(E))(): i32 with(E) = action()
+let screen(): i32 with(UI) = invoke(render)()
+let main(): i32 = 0
+"#,
+        )
+        .expect("a function may forward a declared marker effect");
+
+        let missing = compile_text(
+            r#"
+let UI = effect
+let render(): i32 with(UI) = 42
+let screen(): i32 = render()
+let main(): i32 = screen()
+"#,
+        )
+        .expect_err("a pure caller cannot invoke a custom-effect function");
+        assert!(missing
+            .iter()
+            .any(|error| error.message.contains("requires custom effect `UI`")));
+
+        let unknown = compile_text(
+            r#"
+let render(): i32 with(UI) = 42
+let main(): i32 = 0
+"#,
+        )
+        .expect_err("custom effects are nominal declarations");
+        assert!(unknown
+            .iter()
+            .any(|error| error.message.contains("unknown custom effect `UI`")));
+
+        let entry = compile_text(
+            r#"
+let UI = effect
+let main(): i32 with(UI) = 0
+"#,
+        )
+        .expect_err("the native entry point cannot leave a custom effect unhandled");
+        assert!(entry.iter().any(|error| error
+            .message
+            .contains("cannot expose unhandled custom effects")));
+    }
+
+    #[test]
     fn unsafe_effects_are_declared_forwarded_and_handled_at_calls() {
         let ir = compile_text(
             r#"
-let read(pointer: Ptr(i32))(unsafe): i32 = *pointer
-let forward(pointer: Ptr(i32))(unsafe): i32 = read(pointer)
+let read(pointer: Ptr(i32)): i32 with(unsafe) = *pointer
+let forward(pointer: Ptr(i32)): i32 with(unsafe) = read(pointer)
 let main(): i32 = {
   let value = 42
   unsafe { forward(Ptr(borrow value)) }
@@ -26276,7 +26734,7 @@ let main(): i32 = {
 
         let errors = compile_text(
             r#"
-let read(pointer: Ptr(i32))(unsafe): i32 = *pointer
+let read(pointer: Ptr(i32)): i32 with(unsafe) = *pointer
 let main(): i32 = {
   let value = 42
   read(Ptr(borrow value))
@@ -26295,7 +26753,7 @@ let main(): i32 = {
     fn unsafe_effect_checks_survive_aliasing_and_partial_application() {
         let errors = compile_text(
             r#"
-let read(pointer: Ptr(i32))(offset: i32)(unsafe): i32 = *pointer + offset
+let read(pointer: Ptr(i32))(offset: i32): i32 with(unsafe) = *pointer + offset
 let main(): i32 = {
   let value = 40
   let named = read
@@ -26311,7 +26769,7 @@ let main(): i32 = {
 
         compile_text(
             r#"
-let read(pointer: Ptr(i32))(offset: i32)(unsafe): i32 = *pointer + offset
+let read(pointer: Ptr(i32))(offset: i32): i32 with(unsafe) = *pointer + offset
 let main(): i32 = {
   let value = 40
   let pending = read(Ptr(borrow value))
@@ -26328,10 +26786,10 @@ let main(): i32 = {
             r#"
 let Reader = struct(pointer: Ptr(i32))
 let Read = trait {
-  let read(borrow self)()(unsafe): i32
+  let read(borrow self)(): i32 with(unsafe)
 }
 extend Reader: Read {
-  let read(borrow self)()(unsafe): i32 = *self.pointer
+  let read(borrow self)(): i32 with(unsafe) = *self.pointer
 }
 let main(): i32 = {
   let value = 42
@@ -26346,7 +26804,7 @@ let main(): i32 = {
             r#"
 let Reader = struct(pointer: Ptr(i32))
 let Read = trait {
-  let read(borrow self)()(unsafe): i32
+  let read(borrow self)(): i32 with(unsafe)
 }
 extend Reader: Read {
   let read(borrow self)(): i32 = unsafe { *self.pointer }
@@ -26362,7 +26820,7 @@ let main(): i32 = 0
 
     #[test]
     fn entry_point_cannot_export_an_unsafe_effect() {
-        let errors = compile_text("let main()(unsafe): i32 = 42\n").unwrap_err();
+        let errors = compile_text("let main(): i32 with(unsafe) = 42\n").unwrap_err();
         assert!(errors.iter().any(|error| {
             error
                 .message
@@ -26374,8 +26832,8 @@ let main(): i32 = 0
     fn effect_compile_parameters_select_pure_or_unsafe_instances() {
         compile_text(
             r#"
-let tagged(E: effect)(value: i32)(E): i32 = value
-let forward(E: effect)(value: i32)(E): i32 = tagged(E)(value)
+let tagged(E: effect)(value: i32): i32 with(E) = value
+let forward(E: effect)(value: i32): i32 with(E) = tagged(E)(value)
 let main(): i32 = forward(20) + forward(pure)(20) + unsafe { forward(E: unsafe)(2) }
 "#,
         )
@@ -26383,7 +26841,7 @@ let main(): i32 = forward(20) + forward(pure)(20) + unsafe { forward(E: unsafe)(
 
         compile_text(
             r#"
-let identity(E: effect, T: type)(value: T)(E): T = value
+let identity(E: effect, T: type)(value: T): T with(E) = value
 let main(): i32 = identity(20) + unsafe { identity(E: unsafe, T: i32)(22) }
 "#,
         )
@@ -26391,8 +26849,8 @@ let main(): i32 = identity(20) + unsafe { identity(E: unsafe, T: i32)(22) }
 
         let errors = compile_text(
             r#"
-let tagged(E: effect)(value: i32)(E): i32 = value
-let forward(E: effect)(value: i32)(E): i32 = tagged(E)(value)
+let tagged(E: effect)(value: i32): i32 with(E) = value
+let forward(E: effect)(value: i32): i32 with(E) = tagged(E)(value)
 let main(): i32 = forward(unsafe)(42)
 "#,
         )
@@ -26406,7 +26864,7 @@ let main(): i32 = forward(unsafe)(42)
 
         compile_text(
             r#"
-let read(E: effect)(pointer: Ptr(i32))(E): i32 = *pointer
+let read(E: effect)(pointer: Ptr(i32)): i32 with(E) = *pointer
 let main(): i32 = {
   let value = 42
   unsafe { read(unsafe)(Ptr(borrow value)) }
@@ -26417,7 +26875,7 @@ let main(): i32 = {
 
         let errors = compile_text(
             r#"
-let read(E: effect)(pointer: Ptr(i32))(E): i32 = *pointer
+let read(E: effect)(pointer: Ptr(i32)): i32 with(E) = *pointer
 let main(): i32 = {
   let value = 42
   read(Ptr(borrow value))
@@ -26434,7 +26892,7 @@ let main(): i32 = {
 
         let errors = compile_text(
             r#"
-let tagged(E: effect)(value: i32)(E): i32 = value
+let tagged(E: effect)(value: i32): i32 with(E) = value
 let main(): i32 = tagged(E: copy)(42)
 "#,
         )
@@ -26445,7 +26903,7 @@ let main(): i32 = tagged(E: copy)(42)
 
         let errors = compile_text(
             r#"
-let always(E: effect)(value: i32)(unsafe, E): i32 = value
+let always(E: effect)(value: i32): i32 with(unsafe, E) = value
 let main(): i32 = always(pure)(42)
 "#,
         )
@@ -26461,7 +26919,7 @@ let main(): i32 = always(pure)(42)
             r#"
 let Value = struct(value: i32)
 extend Value {
-  let tagged(E: effect)(borrow self)()(E): i32 = self.value
+  let tagged(E: effect)(borrow self)(): i32 with(E) = self.value
 }
 let main(): i32 = {
   let value = Value(42)
@@ -26476,8 +26934,8 @@ let main(): i32 = {
     fn return_type_try_effect_groups_lower_to_option_and_result_boundaries() {
         let ir = compile_text(
             r#"
-let keep(move value: Option(i32))(try): i32 = value.try
-let fail(flag: bool)(try(bool)): i32 = if flag { throw true } else { 40 }
+let keep(move value: Option(i32)): i32 with(try) = value.try
+let fail(flag: bool): i32 with(try(bool)) = if flag { throw true } else { 40 }
 let main(): i32 = (keep(Option(i32).None) ?? 1) + (fail(false) ?? 0) + 1
 "#,
         )
@@ -26489,7 +26947,7 @@ let main(): i32 = (keep(Option(i32).None) ?? 1) + (fail(false) ?? 0) + 1
     fn try_and_unsafe_share_one_return_type_effect_group() {
         let ir = compile_text(
             r#"
-let read(pointer: Ptr(i32), fail: bool)(try(bool), unsafe): i32 = {
+let read(pointer: Ptr(i32), fail: bool): i32 with(try(bool), unsafe) = {
   if fail { throw true }
   *pointer
 }
@@ -26504,7 +26962,7 @@ let main(): i32 = {
 
         let errors = compile_text(
             r#"
-let read(pointer: Ptr(i32))(try(bool), unsafe): i32 = *pointer
+let read(pointer: Ptr(i32)): i32 with(try(bool), unsafe) = *pointer
 let main(): i32 = {
   let value = 42
   read(Ptr(borrow value)) ?? 0

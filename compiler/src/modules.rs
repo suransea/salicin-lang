@@ -1309,6 +1309,7 @@ fn validate_api_visibility(program: &Program, item_source_paths: &[String]) -> V
                 Item::Struct(definition) => &definition.name,
                 Item::Enum(definition) => &definition.name,
                 Item::Trait(definition) => &definition.name,
+                Item::Effect(definition) => &definition.name,
                 Item::Function(_) | Item::Global(_) | Item::Extend(_) => return None,
             };
             Some((
@@ -1378,6 +1379,7 @@ fn validate_item_api(
                 );
             }
         }
+        Item::Effect(_) => {}
         Item::Struct(definition) => {
             let bound_types = compile_parameter_names(&definition.compile_groups, &no_bound_types);
             for field in &definition.fields {
@@ -1580,6 +1582,16 @@ fn validate_function_api(
             diagnostics,
         );
     }
+    for effect in &function.effects.custom {
+        validate_exposed_effect(
+            effect,
+            boundary,
+            source_path,
+            description,
+            nominal_boundaries,
+            diagnostics,
+        );
+    }
     for (index, predicate) in function.where_predicates.iter().enumerate() {
         validate_exposed_type(
             &predicate.subject,
@@ -1645,7 +1657,11 @@ fn validate_exposed_type(
             nominal_boundaries,
             diagnostics,
         ),
-        Type::Function { groups, result, .. } => {
+        Type::Function {
+            groups,
+            effects,
+            result,
+        } => {
             for ty in groups.iter().flatten() {
                 validate_exposed_type(
                     ty,
@@ -1666,6 +1682,16 @@ fn validate_exposed_type(
                 nominal_boundaries,
                 diagnostics,
             );
+            for effect in &effects.custom {
+                validate_exposed_effect(
+                    effect,
+                    exposed,
+                    source_path,
+                    description,
+                    nominal_boundaries,
+                    diagnostics,
+                );
+            }
         }
         Type::Named(name, arguments) => {
             if !is_bound_api_type(name, bound_types) {
@@ -1693,6 +1719,27 @@ fn validate_exposed_type(
             }
         }
         Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => {}
+    }
+}
+
+fn validate_exposed_effect(
+    effect: &str,
+    exposed: &ApiBoundary,
+    source_path: &str,
+    description: &str,
+    nominal_boundaries: &HashMap<&str, ApiBoundary>,
+    diagnostics: &mut Vec<String>,
+) {
+    let Some(referenced) = nominal_boundaries.get(effect) else {
+        return;
+    };
+    if !api_audience_is_contained(exposed, referenced) {
+        diagnostics.push(format!(
+            "{source_path}: error: {description} with {} visibility exposes {} effect `{effect}` beyond its access boundary{}",
+            visibility_description(exposed.visibility),
+            visibility_description(referenced.visibility),
+            boundary_location(referenced),
+        ));
     }
 }
 
@@ -1757,6 +1804,7 @@ fn declaration_name(item: &Item) -> Option<&str> {
         Item::Struct(definition) => Some(&definition.name),
         Item::Enum(definition) => Some(&definition.name),
         Item::Trait(definition) => Some(&definition.name),
+        Item::Effect(definition) => Some(&definition.name),
         Item::Extend(_) => None,
     }
 }
@@ -1813,6 +1861,9 @@ impl Resolver {
             Item::Struct(definition) => self.rewrite_struct(definition, context),
             Item::Enum(definition) => self.rewrite_enum(definition, context),
             Item::Trait(definition) => self.rewrite_trait(definition, context),
+            Item::Effect(definition) => {
+                definition.name = canonical_name(context.module_path, &definition.name);
+            }
             Item::Extend(extension) => self.rewrite_extend(extension, context),
         }
     }
@@ -1929,6 +1980,14 @@ impl Resolver {
         }
         if let Some(return_type) = &mut function.return_type {
             self.rewrite_type(return_type, context, &type_scope);
+        }
+        for effect in &mut function.effects.custom {
+            let segments = effect.split('.').map(str::to_owned).collect::<Vec<_>>();
+            if let Some(canonical) = self.resolve_logical_path(&segments, context) {
+                *effect = canonical;
+            } else {
+                self.reject_bare_module(&segments, context, "an effect");
+            }
         }
         for predicate in &mut function.where_predicates {
             self.rewrite_type(&mut predicate.subject, context, &type_scope);
@@ -3534,6 +3593,44 @@ let main(): i32 = Option()
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("global `shared` type")
                 && diagnostic.contains("exposes private type `Hidden`")
+        }));
+    }
+
+    #[test]
+    fn canonicalizes_qualified_custom_effects_across_modules() {
+        let program = resolve_sources(&[
+            unit(
+                "src/main.sc",
+                &[],
+                "pub let screen(): i32 with(ui.UI) = 0\n",
+                true,
+            ),
+            unit("src/ui.sc", &["ui"], "pub let UI = effect\n", false),
+        ])
+        .unwrap();
+
+        assert_eq!(function(&program, "screen").effects.custom, ["ui::UI"]);
+    }
+
+    #[test]
+    fn rejects_private_effects_exposed_by_public_callable_apis() {
+        let errors = resolve_sources(&[unit(
+            "src/lib.sc",
+            &[],
+            "let UI = effect\n\
+             pub let expose(action: (): i32 with(UI)): i32 with(UI) = 0\n",
+            true,
+        )])
+        .unwrap_err();
+
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert!(errors.iter().any(|diagnostic| {
+            diagnostic.contains("function `expose` parameter `action`")
+                && diagnostic.contains("exposes private effect `UI`")
+        }));
+        assert!(errors.iter().any(|diagnostic| {
+            diagnostic.contains("function `expose` with public visibility")
+                && diagnostic.contains("exposes private effect `UI`")
         }));
     }
 

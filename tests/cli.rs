@@ -132,6 +132,26 @@ fn effect_generics_select_pure_and_unsafe_instances() {
 }
 
 #[test]
+fn non_capturing_function_values_run_through_indirect_calls() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "function_value_indirect.sc"))
+        .output()
+        .expect("run indirect function-value fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
+fn higher_order_effect_rows_infer_pure_and_unsafe_callables() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "function_value_effect_generic.sc"))
+        .output()
+        .expect("run higher-order effect-row fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn emit_ir_and_check_cover_the_frontend() {
     let emitted = salic()
         .args(["emit-ir"])

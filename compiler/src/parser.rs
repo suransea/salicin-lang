@@ -1,9 +1,9 @@
 use std::{collections::HashSet, fmt};
 
 use crate::ast::{
-    AssociatedTypeBinding, BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EnumDef,
-    Expr, ExtendDef, ExtendMember, Field, Function, FunctionEffects, Item, MatchArm, Param,
-    PassMode, Pattern, PatternField, PatternFields, Program, Stmt, StructDef, TraitDef,
+    AssociatedTypeBinding, BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EffectDef,
+    EnumDef, Expr, ExtendDef, ExtendMember, Field, Function, FunctionEffects, Item, MatchArm,
+    Param, PassMode, Pattern, PatternField, PatternFields, Program, Stmt, StructDef, TraitDef,
     TraitMember, Type, UnaryOp, UseDecl, VariantDef, VariantFields, Visibility, WherePredicate,
 };
 use crate::lexer::{lex, LexError, Token, TokenKind};
@@ -214,22 +214,28 @@ impl Parser {
             return Err(self.error_here("`let mut` cannot declare a function"));
         }
 
-        let (effects, try_effect, has_effect_group) = self.function_effect_group()?;
-        let annotation = if self.take(&TokenKind::Colon) {
-            Some(self.function_result_type(try_effect)?)
+        if self.effect_group_starts_here() {
+            return Err(self.error_here(
+                "bare function effect groups were removed; write the result type followed by `with(...)`",
+            ));
+        }
+        let logical_result = if self.take(&TokenKind::Colon) {
+            Some(self.function_result_type()?)
         } else {
-            if try_effect.is_some() {
-                return Err(
-                    self.error_here("`try` effect groups require an explicit logical return type")
-                );
-            }
             if self.at(&TokenKind::Bang) {
                 return Err(self.error_here(
-                    "`!` effect syntax was removed; add a function effect group before `:`",
+                    "`!` effect syntax was removed; use a trailing `with(...)` clause",
                 ));
             }
             None
         };
+        let (effects, try_effect, has_effect_group) = self.function_effect_clause()?;
+        if try_effect.is_some() && logical_result.is_none() {
+            return Err(self.error_here(
+                "`try` effects require an explicit logical return type before `with(...)`",
+            ));
+        }
+        let annotation = logical_result.map(|result| Self::apply_try_effect(result, try_effect));
         self.effect_parameters_in_scope.clear();
 
         if !compile_groups.is_empty() || !groups.is_empty() {
@@ -243,6 +249,22 @@ impl Parser {
         self.take_newlines_if_followed_by(&[TokenKind::Equal]);
 
         self.expect(&TokenKind::Equal, "`=`")?;
+
+        if self.at_context_ident("effect") {
+            if mutable
+                || annotation.is_some()
+                || has_effect_group
+                || !compile_groups.is_empty()
+                || !groups.is_empty()
+                || !where_predicates.is_empty()
+            {
+                return Err(self.error_here(
+                    "marker effect declarations cannot be mutable, generic, annotated, or have parameters",
+                ));
+            }
+            self.advance();
+            return Ok(Item::Effect(EffectDef { name }));
+        }
 
         if self.at(&TokenKind::Struct) || self.at(&TokenKind::Enum) || self.at(&TokenKind::Trait) {
             if mutable
@@ -358,22 +380,28 @@ impl Parser {
         let (compile_groups, groups) = self.declaration_groups(true)?;
         self.validate_receiver_groups(&groups)?;
 
-        let (effects, try_effect, has_effect_group) = self.function_effect_group()?;
-        let annotation = if self.take(&TokenKind::Colon) {
-            Some(self.function_result_type(try_effect)?)
+        if self.effect_group_starts_here() {
+            return Err(self.error_here(
+                "bare function effect groups were removed; write the result type followed by `with(...)`",
+            ));
+        }
+        let logical_result = if self.take(&TokenKind::Colon) {
+            Some(self.function_result_type()?)
         } else {
-            if try_effect.is_some() {
-                return Err(
-                    self.error_here("`try` effect groups require an explicit logical return type")
-                );
-            }
             if self.at(&TokenKind::Bang) {
                 return Err(self.error_here(
-                    "`!` effect syntax was removed; add a function effect group before `:`",
+                    "`!` effect syntax was removed; use a trailing `with(...)` clause",
                 ));
             }
             None
         };
+        let (effects, try_effect, has_effect_group) = self.function_effect_clause()?;
+        if try_effect.is_some() && logical_result.is_none() {
+            return Err(self.error_here(
+                "`try` effects require an explicit logical return type before `with(...)`",
+            ));
+        }
+        let annotation = logical_result.map(|result| Self::apply_try_effect(result, try_effect));
         self.effect_parameters_in_scope.clear();
         if !compile_groups.is_empty() || !groups.is_empty() {
             self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::Equal]);
@@ -966,14 +994,13 @@ impl Parser {
         let (compile_groups, groups) = self.declaration_groups(true)?;
         self.validate_receiver_groups(&groups)?;
 
-        let (effects, try_effect, has_effect_group) = self.function_effect_group()?;
-        let return_type = if self.take(&TokenKind::Colon) {
+        if self.effect_group_starts_here() {
+            return Err(self.error_here(
+                "bare function effect groups were removed; write the result type followed by `with(...)`",
+            ));
+        }
+        let logical_result = if self.take(&TokenKind::Colon) {
             if self.take(&TokenKind::Type) {
-                if has_effect_group {
-                    return Err(
-                        self.error_here("associated types cannot declare a function effect group")
-                    );
-                }
                 if !groups.is_empty() {
                     return Err(
                         self.error_here("associated types cannot have runtime parameter groups")
@@ -991,20 +1018,22 @@ impl Parser {
                     default,
                 });
             }
-            Some(self.function_result_type(try_effect)?)
+            Some(self.function_result_type()?)
         } else {
-            if try_effect.is_some() {
-                return Err(
-                    self.error_here("`try` effect groups require an explicit logical return type")
-                );
-            }
             if self.at(&TokenKind::Bang) {
                 return Err(self.error_here(
-                    "`!` effect syntax was removed; add a function effect group before `:`",
+                    "`!` effect syntax was removed; use a trailing `with(...)` clause",
                 ));
             }
             None
         };
+        let (effects, try_effect, _has_effect_group) = self.function_effect_clause()?;
+        if try_effect.is_some() && logical_result.is_none() {
+            return Err(self.error_here(
+                "`try` effects require an explicit logical return type before `with(...)`",
+            ));
+        }
+        let return_type = logical_result.map(|result| Self::apply_try_effect(result, try_effect));
         self.effect_parameters_in_scope.clear();
 
         if compile_groups.is_empty() && groups.is_empty() {
@@ -1040,26 +1069,28 @@ impl Parser {
         }))
     }
 
-    fn function_effect_group(
+    fn function_effect_clause(
         &mut self,
     ) -> Result<(FunctionEffects, Option<Option<Type>>, bool), ParseError> {
-        if !self.effect_group_starts_here() {
+        if !self.at_context_ident("with") {
             return Ok((FunctionEffects::default(), None, false));
         }
 
-        self.expect(&TokenKind::LParen, "`(` before function effects")?;
+        self.advance();
+        self.expect(&TokenKind::LParen, "`(` after `with`")?;
         let mut unsafe_effect = false;
         let mut try_effect: Option<Option<Type>> = None;
         let mut effect_parameters = Vec::new();
+        let mut custom = Vec::new();
         loop {
             if self.take(&TokenKind::Unsafe) {
                 if unsafe_effect {
-                    return Err(self.error_here("duplicate `unsafe` return-type effect"));
+                    return Err(self.error_here("duplicate `unsafe` effect in `with(...)`"));
                 }
                 unsafe_effect = true;
             } else if self.take(&TokenKind::Try) {
                 if try_effect.is_some() {
-                    return Err(self.error_here("duplicate `try` return-type effect"));
+                    return Err(self.error_here("duplicate `try` effect in `with(...)`"));
                 }
                 let error = if self.take(&TokenKind::LParen) {
                     let error = self.type_expr()?;
@@ -1071,21 +1102,32 @@ impl Parser {
                 try_effect = Some(error);
             } else if let TokenKind::Ident(name) = &self.current().kind {
                 let name = name.clone();
-                if !self.effect_parameters_in_scope.contains(&name) {
-                    return Err(self.error_here(format!(
-                        "undeclared effect parameter `{name}` in function effect group"
-                    )));
+                if self.effect_parameters_in_scope.contains(&name)
+                    && !self.at_offset(1, &TokenKind::Dot)
+                {
+                    self.advance();
+                    if effect_parameters.contains(&name) {
+                        return Err(self.error_here(format!(
+                            "duplicate effect parameter `{name}` in `with(...)`"
+                        )));
+                    }
+                    effect_parameters.push(name);
+                } else {
+                    let mut path = vec![self.expect_ident("an effect name")?];
+                    while self.take(&TokenKind::Dot) {
+                        path.push(self.expect_ident("an effect path segment")?);
+                    }
+                    let name = path.join(".");
+                    if custom.contains(&name) {
+                        return Err(self.error_here(format!(
+                            "duplicate custom effect `{name}` in `with(...)`"
+                        )));
+                    }
+                    custom.push(name);
                 }
-                self.advance();
-                if effect_parameters.contains(&name) {
-                    return Err(self.error_here(format!(
-                        "duplicate effect parameter `{name}` in return-type effect group"
-                    )));
-                }
-                effect_parameters.push(name);
             } else {
                 return Err(self.error_here(
-                    "expected `try`, `try(Error)`, `unsafe`, or a declared effect parameter in a return-type effect group",
+                    "expected `try`, `try(Error)`, `unsafe`, an effect parameter, or a custom effect name in `with(...)`",
                 ));
             }
 
@@ -1094,14 +1136,17 @@ impl Parser {
                     break;
                 }
             } else {
-                self.expect(&TokenKind::RParen, "`)` after return-type effects")?;
+                self.expect(&TokenKind::RParen, "`)` after function effects")?;
                 break;
             }
         }
 
+        custom.sort();
+        effect_parameters.sort();
         Ok((
             FunctionEffects {
                 unsafe_effect,
+                custom,
                 parameters: effect_parameters,
             },
             try_effect,
@@ -1117,22 +1162,19 @@ impl Parser {
         }
     }
 
-    fn function_result_type(
-        &mut self,
-        try_effect: Option<Option<Type>>,
-    ) -> Result<Type, ParseError> {
+    fn function_result_type(&mut self) -> Result<Type, ParseError> {
         let output = self.type_expr()?;
         if self.effect_group_starts_here() {
             return Err(self.error_here(
-                "return-type effect groups were removed; place the effect group before `:`",
+                "bare effect groups were removed; write `with(...)` after the result type",
             ));
         }
         if self.at(&TokenKind::Bang) {
-            return Err(self.error_here(
-                "`!` effect syntax was removed; add a function effect group before `:`",
-            ));
+            return Err(
+                self.error_here("`!` effect syntax was removed; use a trailing `with(...)` clause")
+            );
         }
-        Ok(Self::apply_try_effect(output, try_effect))
+        Ok(output)
     }
 
     fn effect_group_starts_here(&self) -> bool {
@@ -1356,14 +1398,20 @@ impl Parser {
             groups.push(group);
         }
 
-        let (effects, try_effect, has_effect_group) = self.function_effect_group()?;
+        if self.effect_group_starts_here() {
+            return Err(self.error_here(
+                "bare function effect groups were removed; write the result type followed by `with(...)`",
+            ));
+        }
         if !self.take(&TokenKind::Colon) {
-            if groups.len() == 1 && groups[0].is_empty() && !has_effect_group {
+            if groups.len() == 1 && groups[0].is_empty() {
                 return Ok(Type::Unit);
             }
             return Err(self.error_here("function types require `:` before the result type"));
         }
-        let result = self.function_result_type(try_effect)?;
+        let logical_result = self.function_result_type()?;
+        let (effects, try_effect, _has_effect_clause) = self.function_effect_clause()?;
+        let result = Self::apply_try_effect(logical_result, try_effect);
         Ok(Type::Function {
             groups,
             effects,
@@ -2163,6 +2211,10 @@ impl Parser {
         matches!(self.current().kind, TokenKind::Ident(_)) && self.at_offset(1, &TokenKind::Colon)
     }
 
+    fn at_context_ident(&self, expected: &str) -> bool {
+        matches!(&self.current().kind, TokenKind::Ident(name) if name == expected)
+    }
+
     fn at_offset(&self, offset: usize, kind: &TokenKind) -> bool {
         self.tokens.get(self.index + offset).is_some_and(|token| {
             std::mem::discriminant(&token.kind) == std::mem::discriminant(kind)
@@ -2322,6 +2374,7 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
         match item {
             Item::Function(function) => validate_function_scopes(function, &empty, &empty)?,
             Item::Global(binding) => validate_binding_scopes(binding, &empty, &empty)?,
+            Item::Effect(_) => {}
             Item::Struct(definition) => {
                 reject_passing_parameters(
                     &definition.compile_groups,
@@ -2975,7 +3028,7 @@ mod tests {
 
     #[test]
     fn parses_function_effects_and_rejects_them_on_values() {
-        let program = parse("let read(pointer: Ptr(i32))(unsafe): i32 = *pointer\n").unwrap();
+        let program = parse("let read(pointer: Ptr(i32)): i32 with(unsafe) = *pointer\n").unwrap();
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };
@@ -2984,19 +3037,19 @@ mod tests {
         let error = parse("let answer(unsafe): i32 = 42\n").unwrap_err();
         assert!(error
             .message
-            .contains("effect annotations require a function declaration"));
+            .contains("bare function effect groups were removed"));
 
         let error = parse("let answer(try): i32 = 42\n").unwrap_err();
         assert!(error
             .message
-            .contains("effect annotations require a function declaration"));
+            .contains("bare function effect groups were removed"));
 
         let error = parse("let f(): i32 ! unsafe = 42\n").unwrap_err();
         assert!(error.message.contains("`!` effect syntax was removed"));
 
         let program = parse(
-            "let optional()(try): i32 = 42\n\
-             let fallible()(try(bool), unsafe): i32 = throw true\n",
+            "let optional(): i32 with(try) = 42\n\
+             let fallible(): i32 with(try(bool), unsafe) = throw true\n",
         )
         .unwrap();
         let Item::Function(optional) = &program.items[0] else {
@@ -3019,8 +3072,8 @@ mod tests {
         assert!(fallible.effects.unsafe_effect);
 
         for source in [
-            "let f()(unsafe, unsafe): i32 = 0\n",
-            "let f()(try, try): i32 = 0\n",
+            "let f(): i32 with(unsafe, unsafe) = 0\n",
+            "let f(): i32 with(try, try) = 0\n",
         ] {
             let error = parse(source).unwrap_err();
             assert!(error.message.contains("duplicate"));
@@ -4223,10 +4276,10 @@ mod tests {
     }
 
     #[test]
-    fn parses_effect_parameters_in_function_effect_groups() {
+    fn parses_effect_parameters_in_with_clauses() {
         let program = parse(
-            "let tagged(E: effect)(value: i32)(E): i32 = value\n\
-             let combined(E: effect)(value: i32)(unsafe, E): i32 = value\n",
+            "let tagged(E: effect)(value: i32): i32 with(E) = value\n\
+             let combined(E: effect)(value: i32): i32 with(unsafe, E) = value\n",
         )
         .unwrap();
         let Item::Function(function) = &program.items[0] else {
@@ -4245,20 +4298,45 @@ mod tests {
             .message
             .contains("effect parameters belong to functions"));
 
-        let error = parse("let bad(E: effect)(value: E)(E): i32 = 0\n").unwrap_err();
+        let error = parse("let bad(E: effect)(value: E): i32 with(E) = 0\n").unwrap_err();
         assert!(error.message.contains("cannot be used as a runtime type"));
 
         let error = parse("let old(E: effect)(value: i32): i32(E) = value\n").unwrap_err();
-        assert!(error
-            .message
-            .contains("return-type effect groups were removed"));
+        assert!(error.message.contains("bare effect groups were removed"));
+    }
+
+    #[test]
+    fn parses_nominal_marker_effect_declarations_and_callable_rows() {
+        let program = parse(
+            "pub let UI = effect\n\
+             let render(): i32 with(UI) = 0\n\
+             let invoke(action: (): i32 with(UI)): i32 with(UI) = action()\n",
+        )
+        .unwrap();
+
+        assert!(matches!(&program.items[0], Item::Effect(effect) if effect.name == "UI"));
+        let Item::Function(render) = &program.items[1] else {
+            panic!("expected render function");
+        };
+        assert_eq!(render.effects.custom, ["UI"]);
+        let Item::Function(invoke) = &program.items[2] else {
+            panic!("expected invoke function");
+        };
+        assert!(matches!(
+            &invoke.groups[0][0].ty,
+            Type::Function { effects, .. } if effects.custom == ["UI"]
+        ));
+
+        let duplicate = parse("let f(): i32 with(UI, UI) = 0\n").unwrap_err();
+        assert!(duplicate.message.contains("duplicate custom effect `UI`"));
     }
 
     #[test]
     fn parses_effects_as_part_of_callable_signatures() {
-        let program =
-            parse("let apply(E: effect)(action: (i32)(E): i32)(value: i32)(E): i32 = value\n")
-                .unwrap();
+        let program = parse(
+            "let apply(E: effect)(action: (i32): i32 with(E))(value: i32): i32 with(E) = value\n",
+        )
+        .unwrap();
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };
@@ -4272,9 +4350,7 @@ mod tests {
 
         let old =
             parse("let apply(action: (i32): i32(unsafe))(value: i32): i32 = value\n").unwrap_err();
-        assert!(old
-            .message
-            .contains("return-type effect groups were removed"));
+        assert!(old.message.contains("bare effect groups were removed"));
     }
 
     #[test]

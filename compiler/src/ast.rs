@@ -88,8 +88,14 @@ pub enum Item {
     Global(Binding),
     Struct(StructDef),
     Enum(EnumDef),
+    Effect(EffectDef),
     Trait(TraitDef),
     Extend(ExtendDef),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectDef {
+    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -176,6 +182,8 @@ pub struct Function {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct FunctionEffects {
     pub unsafe_effect: bool,
+    /// Nominal user-defined marker effects, canonicalized by module lowering.
+    pub custom: Vec<String>,
     /// Compile-time effect-row parameters awaiting generic instantiation.
     pub parameters: Vec<String>,
 }

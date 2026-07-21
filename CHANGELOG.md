@@ -6,6 +6,23 @@ subset.
 
 ## Unreleased
 
+## 0.89.0 - 2026-07-21
+
+- Replaced the pre-result effect group with one contextual post-result spelling for declarations and
+  callable types: `let read(): T with(unsafe)` and `(): T with(unsafe)`. The removed
+  `(unsafe): T`, `(E): T`, `T(effect)`, and `T ! effect` forms have no compatibility aliases.
+- Added nominal marker effects declared by `let UI = effect`, including module qualification,
+  imports, visibility boundaries, duplicate/unknown diagnostics, callable identity, and static call
+  checking through `with(UI)`.
+- Generalized `E: effect` from the built-in pure/unsafe choice to a complete inferred effect row.
+  Higher-order functions can now infer and forward pure, unsafe, and custom rows from callable
+  arguments while keeping effect arguments compile-time-only.
+- Added the first native ABI for first-class non-capturing named functions. Function values are
+  `Copy`, lower to LLVM function pointers, and can be passed to and invoked by higher-order code;
+  effect requirements remain checked at indirect calls.
+- Kept `with(try)` and `with(try(Error))` as explicit Option/Result carrier normalization rather
+  than treating failure representation as a hidden runtime channel or a marker row.
+
 ## 0.88.0 - 2026-07-21
 
 - Moved effects from return-type arguments into a dedicated function-signature group after all

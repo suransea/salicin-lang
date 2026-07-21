@@ -85,25 +85,25 @@ visibility = "pub", [ "(", "package", ")" ] ;
 ```ebnf
 let_decl = "let", [ "mut" ], IDENT,
            { parameter_group },
-           [ effect_group ],
            [ ":", type_expr ],
+           [ with_clause ],
            [ where_clause ],
            [ "=", initializer ] ;
 
-effect_group = "(", effect, { ",", effect }, [ "," ], ")" ;
+with_clause = IDENT("with"), "(", effect, { ",", effect }, [ "," ], ")" ;
 effect = "unsafe" | "try", [ "(", type_expr, ")" ] | IDENT ;
 
-initializer = expression | struct_decl | enum_decl | trait_decl | module_decl ;
+initializer = expression | "effect" | struct_decl | enum_decl | trait_decl | module_decl ;
 ```
 
 语义限制：
 
 - 普通值、函数、类型和模块声明必须有 initializer；只有 trait 要求可以省略。
 - `let mut` 不能含参数组，且必须绑定运行时值。
-- effect 组属于函数签名，位于最后一个运行时参数组之后、返回类型的 `:` 之前；`(try)` 把
-  逻辑返回 `T` 规范化为 `Option(T)`，`(try(E))` 规范化为 `Result(T, E)`，`(unsafe)` 增加调用要求。
-- 当参数组首项为 `try`、`unsafe` 或当前声明的 `E: effect` 参数时，它是 effect 组，否则是普通
-  参数组。旧的返回类型附着形式 `T(effect)` 不属于语法。
+- `with(...)` 属于函数签名，位于返回类型之后；`with(try)` 把逻辑返回 `T` 规范化为
+  `Option(T)`，`with(try(E))` 规范化为 `Result(T, E)`，`with(unsafe)` 增加调用要求。
+- `with` 和 marker 声明右侧的 `effect` 是上下文词，不是全局关键字。`let UI = effect` 声明名义
+  effect；旧的 `(effect): T`、`T(effect)` 与 `T ! effect` 都不属于语法。
 - `let f(x: T) = body` 是具名函数声明。
 - `let f: (x: T): R = { body }` 是带名签名函数声明：所有槽必须有名字，RHS 是函数体。
 - `let f: (T): R = { (x: T) -> body }` 是普通函数值绑定。
@@ -205,12 +205,12 @@ extern_function_decl = { attribute }, "let", IDENT, parameter_group,
 
 ## 5. 类型
 
-函数类型的 `:` 右结合。函数类型可有多个参数组以及一个位于 `:` 之前的 effect 组；effect 组
+函数类型的 `:` 右结合。函数类型可有多个参数组以及一个位于结果类型之后的 `with(...)` 子句；该子句
 不是运行时参数组，也不增加一层柯里化。解析器看到 parenthesized type group 后，仅当后续最终接
 `:` 时才把它解释为 callable group；否则它是括号类型或元组类型。
 
 ```ebnf
-type_expr = callable_group, { callable_group }, [ effect_group ], ":", type_expr
+type_expr = callable_group, { callable_group }, ":", type_expr, [ with_clause ]
           | type_atom ;
 
 callable_group = "(", [ signature_slot, { ",", signature_slot }, [ "," ] ], ")" ;
@@ -235,8 +235,9 @@ type_argument  = type_expr | INTEGER ;
 `borrow(A, 'a)` 分别携带 access 参数以及 access/region 参数组合。
 `passing` 是函数编译期 kind；其内建实参为 `auto`、`copy` 与 `move`，并在参数模式位置以
 已声明的参数名引用，例如 `(P value: T)`。
-`effect` 是函数编译期 kind；当前实参为 `pure` 与 `unsafe`，默认 `pure`。参数名只可出现在
-函数签名的 effect 组和其他 effect 编译期实参位置，例如 `(E): T` 与 `forward(E)(value)`。
+`effect` 是函数编译期 kind；实参是完整 effect row：`pure`、`unsafe`、名义 marker 或其组合。
+默认值为 `pure`。参数名只可出现在函数签名的 `with(...)` 子句和其他 effect 编译期实参位置，
+例如 `with(E)` 与 `forward(E)(value)`；它也可由 callable 实参或期望类型推断。
 
 `void` 和 `never` 按普通 prelude 名称解析，分别等价于 `let void = ()` 与
 `let never = enum {}`，不是 lexer 关键字。零 variant enum 合法；其值位置可以用空的

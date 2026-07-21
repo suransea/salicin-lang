@@ -692,6 +692,7 @@ fn item_name(item: &Item) -> Option<&str> {
         Item::Global(binding) => Some(&binding.name),
         Item::Struct(definition) => Some(&definition.name),
         Item::Enum(definition) => Some(&definition.name),
+        Item::Effect(definition) => Some(&definition.name),
         Item::Trait(definition) => Some(&definition.name),
         Item::Extend(_) => None,
     }
@@ -703,6 +704,7 @@ fn item_kind(item: &Item) -> &'static str {
         Item::Global(_) => "global",
         Item::Struct(_) => "struct",
         Item::Enum(_) => "enum",
+        Item::Effect(_) => "effect",
         Item::Trait(_) => "trait",
         Item::Extend(_) => "extension",
     }
