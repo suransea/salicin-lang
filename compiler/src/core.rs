@@ -38,6 +38,8 @@ pub enum LangItemKind {
     Eq,
     PartialOrdering,
     PartialOrd,
+    Neg,
+    Not,
     ControlFlow,
     Try,
     FromResidual,
@@ -45,7 +47,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 17] = [
+    const ALL: [Self; 19] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -59,6 +61,8 @@ impl LangItemKind {
         Self::Eq,
         Self::PartialOrdering,
         Self::PartialOrd,
+        Self::Neg,
+        Self::Not,
         Self::ControlFlow,
         Self::Try,
         Self::FromResidual,
@@ -80,6 +84,8 @@ impl LangItemKind {
             Self::Eq => "Eq",
             Self::PartialOrdering => "PartialOrdering",
             Self::PartialOrd => "PartialOrd",
+            Self::Neg => "Neg",
+            Self::Not => "Not",
             Self::ControlFlow => "ControlFlow",
             Self::Try => "Try",
             Self::FromResidual => "FromResidual",
@@ -103,6 +109,8 @@ impl LangItemKind {
             | Self::Rem
             | Self::Eq
             | Self::PartialOrd
+            | Self::Neg
+            | Self::Not
             | Self::Try
             | Self::FromResidual
             | Self::FromError => "trait",
@@ -118,6 +126,8 @@ impl LangItemKind {
             Self::Rem => Some("rem"),
             Self::Eq => Some("eq"),
             Self::PartialOrd => Some("partial_cmp"),
+            Self::Neg => Some("neg"),
+            Self::Not => Some("not"),
             Self::Option
             | Self::Result
             | Self::Never
@@ -186,6 +196,8 @@ pub struct LangItems {
     eq: LangItem,
     partial_ordering: LangItem,
     partial_ord: LangItem,
+    neg: LangItem,
+    not: LangItem,
     control_flow: LangItem,
     try_trait: LangItem,
     from_residual: LangItem,
@@ -245,6 +257,14 @@ impl LangItems {
         &self.partial_ord
     }
 
+    pub const fn neg(&self) -> &LangItem {
+        &self.neg
+    }
+
+    pub const fn not(&self) -> &LangItem {
+        &self.not
+    }
+
     pub const fn control_flow(&self) -> &LangItem {
         &self.control_flow
     }
@@ -276,6 +296,8 @@ impl LangItems {
             LangItemKind::Eq => &self.eq,
             LangItemKind::PartialOrdering => &self.partial_ordering,
             LangItemKind::PartialOrd => &self.partial_ord,
+            LangItemKind::Neg => &self.neg,
+            LangItemKind::Not => &self.not,
             LangItemKind::ControlFlow => &self.control_flow,
             LangItemKind::Try => &self.try_trait,
             LangItemKind::FromResidual => &self.from_residual,
@@ -415,6 +437,8 @@ impl CoreBundle {
             &mut lang_items.eq,
             &mut lang_items.partial_ordering,
             &mut lang_items.partial_ord,
+            &mut lang_items.neg,
+            &mut lang_items.not,
             &mut lang_items.control_flow,
             &mut lang_items.try_trait,
             &mut lang_items.from_residual,
@@ -588,6 +612,8 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         eq: item(LangItemKind::Eq),
         partial_ordering: item(LangItemKind::PartialOrdering),
         partial_ord: item(LangItemKind::PartialOrd),
+        neg: item(LangItemKind::Neg),
+        not: item(LangItemKind::Not),
         control_flow: item(LangItemKind::ControlFlow),
         try_trait: item(LangItemKind::Try),
         from_residual: item(LangItemKind::FromResidual),
@@ -644,6 +670,9 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         }
         (LangItemKind::FromError, Item::Trait(definition)) => {
             validate_conversion_trait(definition, "E", "error", "from_error", diagnostics)
+        }
+        (kind @ (LangItemKind::Neg | LangItemKind::Not), Item::Trait(definition)) => {
+            validate_unary_operator(kind, definition, diagnostics)
         }
         (kind, Item::Trait(definition)) if kind.operator_method().is_some() => {
             validate_operator(kind, definition, diagnostics)
@@ -888,6 +917,61 @@ fn validate_operator(kind: LangItemKind, definition: &TraitDef, diagnostics: &mu
     }
 }
 
+fn validate_unary_operator(
+    kind: LangItemKind,
+    definition: &TraitDef,
+    diagnostics: &mut Vec<String>,
+) {
+    let method = kind
+        .operator_method()
+        .expect("unary operator lang items have a method");
+    if !unary_operator_trait_has_required_shape(kind, definition) {
+        diagnostics.push(format!(
+            "lang item `{kind}` must have shape `pub let {kind} = trait {{ let Output: type; let {method}(move self)(): Output }}`"
+        ));
+    }
+}
+
+pub(crate) fn unary_operator_trait_has_required_shape(
+    kind: LangItemKind,
+    definition: &TraitDef,
+) -> bool {
+    if !matches!(kind, LangItemKind::Neg | LangItemKind::Not)
+        || !definition.compile_groups.is_empty()
+    {
+        return false;
+    }
+    let Some(method) = kind.operator_method() else {
+        return false;
+    };
+    matches!(
+        definition.members.as_slice(),
+        [
+            TraitMember::AssociatedType { name, compile_groups, default: None },
+            TraitMember::Function(function),
+        ] if name == "Output"
+            && compile_groups.is_empty()
+            && valid_unary_operator_method(function, method)
+    )
+}
+
+fn valid_unary_operator_method(function: &Function, method: &str) -> bool {
+    let [receiver_group, empty_group] = function.groups.as_slice() else {
+        return false;
+    };
+    let [receiver] = receiver_group.as_slice() else {
+        return false;
+    };
+    function.name == method
+        && function.compile_groups.is_empty()
+        && function.return_type == Some(named_type("Output"))
+        && function.body.is_none()
+        && receiver.name == "self"
+        && receiver.mode == PassMode::Move
+        && receiver.ty == named_type("Self")
+        && empty_group.is_empty()
+}
+
 /// Check the operator contract shared by core bootstrapping and HIR lowering.
 pub(crate) fn operator_trait_has_required_shape(kind: LangItemKind, definition: &TraitDef) -> bool {
     let Some(method) = kind.operator_method() else {
@@ -1014,6 +1098,14 @@ pub let PartialOrdering = enum { Less, Equal, Greater, Unordered }
 pub let PartialOrd(Rhs: type) = trait {
   let partial_cmp(borrow self)(borrow rhs: Rhs): PartialOrdering
 }
+pub let Neg = trait {
+  let Output: type
+  let neg(move self)(): Output
+}
+pub let Not = trait {
+  let Output: type
+  let not(move self)(): Output
+}
 "#,
         ]
         .concat()
@@ -1024,7 +1116,7 @@ pub let PartialOrd(Rhs: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), 22);
+        assert_eq!(bundle.program().items.len(), 24);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -1041,7 +1133,9 @@ pub let PartialOrd(Rhs: type) = trait {
                 | LangItemKind::Rem
                 | LangItemKind::Eq
                 | LangItemKind::PartialOrdering
-                | LangItemKind::PartialOrd => format!("core::ops::{}", kind.source_name()),
+                | LangItemKind::PartialOrd
+                | LangItemKind::Neg
+                | LangItemKind::Not => format!("core::ops::{}", kind.source_name()),
                 LangItemKind::ControlFlow
                 | LangItemKind::Try
                 | LangItemKind::FromResidual
@@ -1065,7 +1159,9 @@ pub let PartialOrd(Rhs: type) = trait {
                 | LangItemKind::Rem
                 | LangItemKind::Eq
                 | LangItemKind::PartialOrdering
-                | LangItemKind::PartialOrd => "ops",
+                | LangItemKind::PartialOrd
+                | LangItemKind::Neg
+                | LangItemKind::Not => "ops",
                 LangItemKind::ControlFlow
                 | LangItemKind::Try
                 | LangItemKind::FromResidual
@@ -1118,6 +1214,14 @@ pub let PartialOrdering = enum { Less, Equal, Greater, Unordered }
 pub let PartialOrd(Rhs: type) = trait {
   let partial_cmp(borrow self)(borrow rhs: Rhs): PartialOrdering
 }
+pub let Neg = trait {
+  let Output: type
+  let neg(move self)(): Output
+}
+pub let Not = trait {
+  let Output: type
+  let not(move self)(): Output
+}
 "#;
         let bundle = CoreBundle::from_source(Edition::Edition2026, source).unwrap();
 
@@ -1134,6 +1238,8 @@ pub let PartialOrd(Rhs: type) = trait {
         assert_eq!(bundle.lang_items().eq().item_index(), 10);
         assert_eq!(bundle.lang_items().partial_ordering().item_index(), 11);
         assert_eq!(bundle.lang_items().partial_ord().item_index(), 12);
+        assert_eq!(bundle.lang_items().neg().item_index(), 13);
+        assert_eq!(bundle.lang_items().not().item_index(), 14);
         for kind in LangItemKind::ALL {
             let item = bundle.lang_items().get(kind);
             assert_eq!(
@@ -1176,6 +1282,14 @@ pub let Eq(Rhs: type) = trait {
 pub let PartialOrdering = enum { Less, Equal, Greater, Unordered }
 pub let PartialOrd(Rhs: type) = trait {
   let partial_cmp(borrow self)(borrow rhs: Rhs): PartialOrdering
+}
+pub let Neg = trait {
+  let Output: type
+  let neg(move self)(): Output
+}
+pub let Not = trait {
+  let Output: type
+  let not(move self)(): Output
 }
 pub let Drop = trait {
   let drop(borrow(mut) self)(): ()
@@ -1232,6 +1346,14 @@ pub let Eq(Rhs: type) = trait {
 pub let PartialOrdering = enum { Less, Equal, Greater, Unordered }
 pub let PartialOrd(Rhs: type) = trait {
   let partial_cmp(borrow self)(borrow rhs: Rhs): PartialOrdering
+}
+pub let Neg = trait {
+  let Output: type
+  let neg(move self)(): Output
+}
+pub let Not = trait {
+  let Output: type
+  let not(move self)(): Output
 }
 "#;
         let error = CoreBundle::from_source(Edition::Edition2026, source).unwrap_err();
@@ -1327,6 +1449,14 @@ pub let PartialOrdering = enum { Less, Equal, Greater, Unordered }
 pub let PartialOrd(Rhs: type) = trait {
   let partial_cmp(move self)(move rhs: Rhs): PartialOrdering
 }
+pub let Neg = trait {
+  let Output: type
+  let neg(move self)(): Output
+}
+pub let Not = trait {
+  let Output: type
+  let not(move self)(): Output
+}
 "#;
         let error = CoreBundle::from_source(Edition::Edition2026, source).unwrap_err();
 
@@ -1361,6 +1491,30 @@ pub let PartialOrd(Rhs: type) = trait {
                 ["lang item `PartialOrdering` must have shape `pub let PartialOrdering = enum { Less, Equal, Greater, Unordered }`"],
                 "unexpected diagnostic for `{declaration}`"
             );
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_unary_operator_traits() {
+        for (original, malformed, expected) in [
+            (
+                "pub let Neg = trait {\n  let Output: type\n  let neg(move self)(): Output\n}",
+                "pub let Neg(Rhs: type) = trait { let neg(move self)(): i32 }",
+                "lang item `Neg` must have shape `pub let Neg = trait { let Output: type; let neg(move self)(): Output }`",
+            ),
+            (
+                "pub let Not = trait {\n  let Output: type\n  let not(move self)(): Output\n}",
+                "pub let Not = trait { let Output: type; let not(borrow self)(): Output }",
+                "lang item `Not` must have shape `pub let Not = trait { let Output: type; let not(move self)(): Output }`",
+            ),
+        ] {
+            let source = core_source_with_copy("pub let Copy = trait {}").replacen(
+                original,
+                malformed,
+                1,
+            );
+            let error = CoreBundle::from_source(Edition::Edition2026, &source).unwrap_err();
+            assert_eq!(error.diagnostics(), [expected]);
         }
     }
 

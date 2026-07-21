@@ -23,7 +23,8 @@ use crate::cleanup::{
 };
 use crate::core::{
     copy_trait_has_required_shape, drop_trait_has_required_shape,
-    operator_trait_has_required_shape, CoreBundle, LangItemKind, LangItems,
+    operator_trait_has_required_shape, unary_operator_trait_has_required_shape, CoreBundle,
+    LangItemKind, LangItems,
 };
 use crate::manifest::Edition;
 use crate::modules::PackageId;
@@ -1163,6 +1164,38 @@ struct BinaryOperatorTrait {
     result_transform: OperatorResultTransform,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct UnaryOperatorTrait {
+    operator: UnaryOp,
+    lang_item: LangItemKind,
+}
+
+impl UnaryOperatorTrait {
+    fn method(self) -> &'static str {
+        self.lang_item
+            .operator_method()
+            .expect("unary operator lang items have a method")
+    }
+}
+
+const UNARY_OPERATOR_TRAITS: [UnaryOperatorTrait; 2] = [
+    UnaryOperatorTrait {
+        operator: UnaryOp::Neg,
+        lang_item: LangItemKind::Neg,
+    },
+    UnaryOperatorTrait {
+        operator: UnaryOp::Not,
+        lang_item: LangItemKind::Not,
+    },
+];
+
+fn unary_operator_trait(operator: UnaryOp) -> Option<UnaryOperatorTrait> {
+    UNARY_OPERATOR_TRAITS
+        .iter()
+        .copied()
+        .find(|candidate| candidate.operator == operator)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OperatorMethodOutput {
     Associated,
@@ -2064,6 +2097,20 @@ impl Analyzer {
                 };
                 self.error(format!(
                     "`{trait_name}` language trait must have shape `{shape}`"
+                ));
+                valid = false;
+            }
+        }
+        let unary_operator = UNARY_OPERATOR_TRAITS
+            .iter()
+            .copied()
+            .find(|candidate| definition.name == self.lang_item_name(candidate.lang_item));
+        if let Some(operator) = unary_operator {
+            if !unary_operator_trait_has_required_shape(operator.lang_item, &definition) {
+                let trait_name = operator.lang_item.source_name();
+                let method = operator.method();
+                self.error(format!(
+                    "`{trait_name}` language trait must have shape `let {trait_name} = trait {{ let Output: type; let {method}(move self)(): Output }}`"
                 ));
                 valid = false;
             }
@@ -5135,6 +5182,12 @@ impl Analyzer {
                     associated_types
                         .get("Output")
                         .is_none_or(|output| output == &subject)
+                } else if let Some(output) =
+                    self.builtin_unary_operator_output(name, &subject, &arguments)
+                {
+                    associated_types
+                        .get("Output")
+                        .is_none_or(|expected| expected == &output)
                 } else {
                     self.trait_impls
                         .get(&TraitImplKey {
@@ -5195,6 +5248,11 @@ impl Analyzer {
                 .get("Output")
                 .is_none_or(|output| output == &subject);
         }
+        if let Some(output) = self.builtin_unary_operator_output(name, &subject, &arguments) {
+            return associated_types
+                .get("Output")
+                .is_none_or(|expected| expected == &output);
+        }
         self.trait_impls
             .get(&TraitImplKey {
                 self_ty: subject,
@@ -5208,6 +5266,27 @@ impl Analyzer {
                     implementation.associated_types.get(name) == Some(expected)
                 })
             })
+    }
+
+    fn builtin_unary_operator_output(
+        &self,
+        trait_name: &str,
+        subject: &Ty,
+        arguments: &[Ty],
+    ) -> Option<Ty> {
+        if !arguments.is_empty() {
+            return None;
+        }
+        if trait_name == self.lang_item_name(LangItemKind::Neg)
+            && subject.is_integer()
+            && subject.is_signed()
+        {
+            Some(subject.clone())
+        } else if trait_name == self.lang_item_name(LangItemKind::Not) && *subject == Ty::Bool {
+            Some(Ty::Bool)
+        } else {
+            None
+        }
     }
 
     fn lower_source_type(&mut self, source: &Type) -> Ty {
@@ -6734,6 +6813,54 @@ impl Analyzer {
         candidates
     }
 
+    fn unary_operator_candidate(
+        &self,
+        operator: UnaryOperatorTrait,
+        receiver: &Ty,
+        expected: Option<&Ty>,
+        origin: &ItemOrigin,
+    ) -> Option<(String, Ty)> {
+        let trait_name = self.lang_item_name(operator.lang_item);
+        let implementation = self.trait_impls.values().find(|implementation| {
+            implementation.key.self_ty == *receiver
+                && implementation.key.trait_ref.name == trait_name
+                && implementation.key.trait_ref.arguments.is_empty()
+                && Self::access_boundary_allows(origin, &implementation.access)
+        })?;
+        let method = implementation.methods.get(operator.method())?.clone();
+        let output = implementation.associated_types.get("Output")?.clone();
+        expected
+            .filter(|expected| **expected != Ty::Error)
+            .is_none_or(|expected| output == *expected || self.is_uninhabited_type(&output))
+            .then_some((method, output))
+    }
+
+    fn probe_unary_ty(
+        &self,
+        operator: UnaryOp,
+        operand: &Expr,
+        expected: Option<&Ty>,
+        context: &LowerCtx,
+    ) -> TypeProbe {
+        let operand_probe = self.probe_expr_ty(operand, None, context);
+        if let Some(receiver) = Self::nominal_ty_from_probe(&operand_probe) {
+            let operator = unary_operator_trait(operator)
+                .expect("overloadable unary operators have a core trait specification");
+            return self
+                .unary_operator_candidate(operator, &receiver, expected, &context.origin)
+                .map_or(TypeProbe::Unsupported, |(_, output)| {
+                    TypeProbe::Known(output)
+                });
+        }
+        match operator {
+            UnaryOp::Neg => {
+                self.probe_expr_ty(operand, expected.filter(|ty| ty.is_signed()), context)
+            }
+            UnaryOp::Not => TypeProbe::Known(Ty::Bool),
+            UnaryOp::Deref => TypeProbe::Unsupported,
+        }
+    }
+
     fn probe_numeric_binary_ty(
         &self,
         left: &Expr,
@@ -7447,10 +7574,9 @@ impl Analyzer {
                 })
             }
             Expr::Unsafe(body) => self.probe_expr_ty(body, hint, context),
-            Expr::Unary(UnaryOp::Neg, operand) => {
-                self.probe_expr_ty(operand, hint.filter(|ty| ty.is_signed()), context)
+            Expr::Unary(operator @ (UnaryOp::Neg | UnaryOp::Not), operand) => {
+                self.probe_unary_ty(*operator, operand, hint, context)
             }
-            Expr::Unary(UnaryOp::Not, _) => TypeProbe::Known(Ty::Bool),
             Expr::Unary(UnaryOp::Deref, operand) => {
                 match self.probe_expr_ty(operand, None, context) {
                     TypeProbe::Known(Ty::Pointer { pointee, .. })
@@ -9140,6 +9266,18 @@ impl Analyzer {
                         ty: pointee,
                         kind: HirExprKind::RawLoad(Box::new(pointer)),
                     };
+                }
+                if let Some(operator_trait) = unary_operator_trait(*operator) {
+                    let operand_probe = self.probe_expr_ty(operand, None, context);
+                    if let Some(receiver) = Self::nominal_ty_from_probe(&operand_probe) {
+                        return self.lower_trait_unary(
+                            operator_trait,
+                            operand,
+                            &receiver,
+                            expected,
+                            context,
+                        );
+                    }
                 }
                 if *operator == UnaryOp::Neg {
                     if let Expr::Integer(value) = operand.as_ref() {
@@ -12843,6 +12981,67 @@ impl Analyzer {
         }
     }
 
+    fn lower_trait_unary(
+        &mut self,
+        operator: UnaryOperatorTrait,
+        operand: &Expr,
+        receiver: &Ty,
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let trait_name = operator.lang_item.source_name();
+        let spelling = unary_spelling(operator.operator);
+        let Some((method, output)) =
+            self.unary_operator_candidate(operator, receiver, expected, &context.origin)
+        else {
+            self.error(format!(
+                "no matching `{trait_name}` implementation for unary `{spelling}` on `{receiver}`"
+            ));
+            return error_expr();
+        };
+        let Some(signature) = self.signatures.get(&method).cloned() else {
+            self.error(format!(
+                "internal error: `{trait_name}.{}` implementation has no function signature",
+                operator.method()
+            ));
+            return error_expr();
+        };
+        let valid_signature = signature.groups.len() == 2
+            && signature.groups[0].len() == 1
+            && signature.groups[1].is_empty()
+            && signature.groups[0][0].ty == *receiver
+            && signature.groups[0][0].mode == PassMode::Move
+            && signature.result.as_ref() == Some(&output);
+        if !valid_signature {
+            self.error(format!(
+                "internal error: invalid registered `{trait_name}.{}` signature",
+                operator.method()
+            ));
+            return error_expr();
+        }
+        let mut temporary_loans = Vec::new();
+        let mut temporary_bindings = Vec::new();
+        let argument = self.lower_call_argument(
+            operand,
+            &signature.groups[0][0],
+            context,
+            &mut temporary_loans,
+            &mut temporary_bindings,
+        );
+        self.release_loans(&temporary_loans, context);
+        let mut arguments = vec![argument];
+        let call = HirExpr {
+            ty: output.clone(),
+            kind: HirExprKind::Call {
+                function: method,
+                arguments: arguments.clone(),
+                consumed_callable: None,
+                diverges: self.is_uninhabited_type(&output),
+            },
+        };
+        self.wrap_call_argument_temporaries(call, &mut arguments, temporary_bindings, context)
+    }
+
     fn lower_binary(
         &mut self,
         left: &Expr,
@@ -16410,6 +16609,14 @@ fn binary_spelling(operator: BinaryOp) -> &'static str {
         BinaryOp::Ge => ">=",
         BinaryOp::And => "&&",
         BinaryOp::Or => "||",
+    }
+}
+
+fn unary_spelling(operator: UnaryOp) -> &'static str {
+    match operator {
+        UnaryOp::Neg => "-",
+        UnaryOp::Not => "!",
+        UnaryOp::Deref => "*",
     }
 }
 
@@ -23016,6 +23223,17 @@ mod tests {
                     .canonical_name()
             );
         }
+        for operator_trait in UNARY_OPERATOR_TRAITS {
+            let name = analyzer.lang_item_name(operator_trait.lang_item).to_owned();
+            assert!(analyzer.traits[&name].valid);
+            assert_eq!(
+                analyzer.lang_item_name(operator_trait.lang_item),
+                analyzer
+                    .lang_items
+                    .get(operator_trait.lang_item)
+                    .canonical_name()
+            );
+        }
         assert_eq!(analyzer.nominal_instances.len(), 2);
         assert_eq!(analyzer.nominal_instance_names.len(), 2);
         let partial_ordering = analyzer.lang_item_name(LangItemKind::PartialOrdering);
@@ -25913,6 +26131,93 @@ let main(): i32 = {
             8
         );
         assert!(ir.contains("switch i32"));
+    }
+
+    #[test]
+    fn lowers_unary_operator_traits_to_consuming_static_calls() {
+        let program = resolve_text(
+            r#"
+use core.ops.{Neg, Not}
+let Number = struct(value: i32)
+let Flag = struct(value: bool)
+extend Number: Neg {
+  let Output = i32
+  let neg(move self)(): i32 = -self.value
+}
+extend Flag: Not {
+  let Output = i32
+  let not(move self)(): i32 = if self.value { 0 } else { 42 }
+}
+let negate(T: type)(move value: T): T where T: Neg(Output = T) = -value
+let invert(T: type)(move value: T): T where T: Not(Output = T) = !value
+let main(): i32 = if invert(false) {
+  !Flag(false) + -Number(0) + negate(0)
+} else { 0 }
+"#,
+        );
+        let ir = compile(&program).expect("core unary operator source must compile");
+        for (ty, trait_name, method) in [("Number", "Neg", "neg"), ("Flag", "Not", "not")] {
+            let key = TraitImplKey {
+                self_ty: Ty::Struct(ty.into()),
+                trait_ref: TraitRefKey {
+                    name: format!("core::ops::{trait_name}"),
+                    arguments: Vec::new(),
+                },
+            };
+            let symbol = function_symbol(&trait_method_name(&key, method));
+            assert_eq!(ir.matches(&format!("call i32 @{symbol}(")).count(), 1);
+        }
+    }
+
+    #[test]
+    fn unary_operator_traits_report_missing_output_and_move_errors() {
+        let missing = compile_resolved_text(
+            "let Number = struct(value: i32)\nlet main(): i32 = (-Number(1)).value\n",
+        )
+        .unwrap_err();
+        assert!(missing.iter().any(|error| {
+            error
+                .message
+                .contains("no matching `Neg` implementation for unary `-`")
+        }));
+
+        let mismatch = compile_resolved_text(
+            r#"
+use core.ops.Neg
+let Number = struct(value: i32)
+extend Number: Neg {
+  let Output = i32
+  let neg(move self)(): i32 = -self.value
+}
+let main(): bool = -Number(1)
+"#,
+        )
+        .unwrap_err();
+        assert!(mismatch.iter().any(|error| {
+            error
+                .message
+                .contains("no matching `Neg` implementation for unary `-`")
+        }));
+
+        let moved = compile_resolved_text(
+            r#"
+use core.ops.Neg
+let Resource = struct(value: i32)
+extend Resource: Neg {
+  let Output = Resource
+  let neg(move self)(): Resource = self
+}
+let main(): i32 = {
+  let value = Resource(42)
+  let negated = -value
+  negated.value + value.value
+}
+"#,
+        )
+        .unwrap_err();
+        assert!(moved
+            .iter()
+            .any(|error| error.message.contains("moved or uninitialized value")));
     }
 
     #[test]

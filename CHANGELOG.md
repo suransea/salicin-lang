@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.81.0 - 2026-07-21
+
+- Added edition-validated `core.ops.Neg` and `core.ops.Not` protocols with consuming operands and
+  associated `Output` types.
+- Lowered unary `-` and `!` on user-defined nominal types to statically selected protocol methods,
+  including non-boolean overloaded `!` results and checked temporary consumption.
+- Recognized built-in signed-integer `Neg` and boolean `Not` implementations in generic where
+  predicates while preserving their direct LLVM lowering.
+- Added exact malformed-core rejection, missing-import and missing-implementation diagnostics,
+  output-context checking, move-after-use coverage, and native generic execution tests.
+
 ## 0.80.0 - 2026-07-21
 
 - Added the edition-validated `PartialOrdering` four-state enum and borrowing

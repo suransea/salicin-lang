@@ -2396,6 +2396,16 @@ fn partial_ord_protocol_preserves_unordered_comparisons() {
 }
 
 #[test]
+fn unary_operator_protocols_run_with_associated_outputs() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "unary_operator_traits.sali"))
+        .output()
+        .expect("run unary operator fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn m2_optional_chain_programs_run_with_expected_result() {
     for name in [
         "chain_option_some_field.sali",

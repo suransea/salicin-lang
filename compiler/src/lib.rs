@@ -254,6 +254,24 @@ mod tests {
         compile_source(&imported_order)
             .expect("imported PartialOrd should define ordering operators");
 
+        let missing_unary = "let Number = struct(value: i32)\n\
+                             extend Number: Neg {\n\
+                               let Output = Number\n\
+                               let neg(move self)(): Number = self\n\
+                             }\n\
+                             let main(): i32 = 0\n";
+        let errors = compile_source(missing_unary).unwrap_err();
+        assert!(errors.iter().any(|diagnostic| {
+            diagnostic.contains("standard-library item `Neg` is not in the prelude")
+                && diagnostic.contains("use core.ops.Neg")
+        }));
+
+        let imported_unary = format!("use core.ops.Neg\n{missing_unary}").replace(
+            "let main(): i32 = 0",
+            "let main(): i32 = (-Number(42)).value",
+        );
+        compile_source(&imported_unary).expect("imported Neg should define unary `-`");
+
         let local = "let Add = struct(value: i32)\n\
                      let main(): i32 = Add(value: 42).value\n";
         compile_source(local).expect("unimported operator names should remain available to users");

@@ -303,6 +303,8 @@ const CORE_OPS_EXPORTS: &[&str] = &[
     "Eq",
     "PartialOrdering",
     "PartialOrd",
+    "Neg",
+    "Not",
 ];
 const CORE_CONTROL_EXPORTS: &[&str] = &["ControlFlow", "Try", "FromResidual", "FromError"];
 

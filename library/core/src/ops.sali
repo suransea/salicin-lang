@@ -37,3 +37,13 @@ pub let PartialOrdering = enum {
 pub let PartialOrd(Rhs: type) = trait {
   let partial_cmp(borrow self)(borrow rhs: Rhs): PartialOrdering
 }
+
+pub let Neg = trait {
+  let Output: type
+  let neg(move self)(): Output
+}
+
+pub let Not = trait {
+  let Output: type
+  let not(move self)(): Output
+}

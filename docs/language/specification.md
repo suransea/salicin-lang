@@ -919,6 +919,23 @@ let PartialOrd(Rhs: type) = trait {
 `Equal | Greater`；`Unordered` 对四种运算都得到 `false`。每个表达式只调用一次
 `partial_cmp`，并只求值一次左右操作数。
 
+一元协议没有右操作数；它们消费 `self`，并允许通过关联类型改变结果类型：
+
+```sali
+let Neg = trait {
+  let Output: type
+  let neg(move self)(): Output
+}
+
+let Not = trait {
+  let Output: type
+  let not(move self)(): Output
+}
+```
+
+因此用户类型的 `!value` 不被限制为返回 `bool`。内建 `!bool` 仍返回 `bool`，内建负号只接受
+有符号整数。泛型代码可使用 `T: Neg(Output = T)` 或 `T: Not(Output = U)` 约束。
+
 ## 11. 模块
 
 ```sali
