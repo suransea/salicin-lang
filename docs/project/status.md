@@ -24,6 +24,9 @@ the ordinary loop machinery.
 `if let pattern = value { ... }` supports conditional enum destructuring with optional `else` or
 `else if`. It evaluates the scrutinee once and lowers through ordinary `match`, so successful-arm
 bindings stay scoped to that arm and share the same ownership and cleanup analysis.
+`while let pattern = value { ... }` reevaluates the scrutinee each iteration and exits when the
+pattern fails. It lowers to the same `match` and unit-loop machinery, including normal `break`,
+`continue`, ownership backedges, and lexical cleanup.
 
 Access keyword generics are implemented for functions and generic inherent members: `A: access` accepts `shared` or `mut`,
 defaults to shared when omitted, participates in monomorphization, and can drive parameter modes,

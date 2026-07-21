@@ -1726,6 +1726,7 @@ fn every_pass_fixture_checks_successfully() {
 fn m1_loops_and_arrays_run_with_expected_result() {
     for name in [
         "while_mutation.sc",
+        "while_let.sc",
         "continue.sc",
         "continue_cleanup.sc",
         "loop_break_value.sc",
@@ -1820,6 +1821,7 @@ fn m1_loop_errors_report_their_cause() {
         ("while_break_value.sc", "while"),
         ("loop_break_type_mismatch.sc", "type mismatch"),
         ("loop_backedge_move.sc", "move"),
+        ("while_let_binding_scope.sc", "unknown"),
         ("for_missing_into_iterator.sc", "IntoIterator"),
         ("for_missing_iterator.sc", "Iterator"),
         ("for_break_value.sc", "type mismatch"),

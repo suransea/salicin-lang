@@ -45,7 +45,7 @@ pub fn parse_tokens(tokens: Vec<Token>) -> Result<Program, ParseError> {
         tokens,
         index: 0,
         effect_parameters_in_scope: HashSet::new(),
-        next_for_binding: 0,
+        next_control_binding: 0,
     }
     .program()
 }
@@ -54,7 +54,7 @@ struct Parser {
     tokens: Vec<Token>,
     index: usize,
     effect_parameters_in_scope: HashSet<String>,
-    next_for_binding: usize,
+    next_control_binding: usize,
 }
 
 enum HeaderGroup {
@@ -2146,6 +2146,43 @@ impl Parser {
 
     fn while_expression(&mut self) -> Result<Expr, ParseError> {
         self.expect(&TokenKind::While, "`while`")?;
+        if self.take(&TokenKind::Let) {
+            let pattern = self.pattern()?;
+            self.expect(&TokenKind::Equal, "`=` after the while-let pattern")?;
+            let scrutinee = self.expression(false)?;
+            if !self.at(&TokenKind::LBrace) {
+                return Err(self.error_here("expected `{` after `while let` scrutinee"));
+            }
+            let body = self.block()?;
+            let loop_body = Expr::Match {
+                scrutinee: Box::new(scrutinee),
+                arms: vec![
+                    MatchArm {
+                        pattern,
+                        guard: None,
+                        body,
+                    },
+                    MatchArm {
+                        pattern: Pattern::Wildcard,
+                        guard: None,
+                        body: Expr::Break(None),
+                    },
+                ],
+            };
+            let id = self.next_control_binding;
+            self.next_control_binding += 1;
+            return Ok(Expr::Block(
+                vec![Stmt::Let(Binding {
+                    mutable: false,
+                    name: format!("$while$let$result${id}"),
+                    annotation: Some(Type::Unit),
+                    value: Expr::Loop {
+                        body: Box::new(loop_body),
+                    },
+                })],
+                None,
+            ));
+        }
         let condition = self.expression(false)?;
         if !self.at(&TokenKind::LBrace) {
             return Err(self.error_here("expected `{` after `while` condition"));
@@ -2172,8 +2209,8 @@ impl Parser {
         }
         let body = self.block()?;
 
-        let id = self.next_for_binding;
-        self.next_for_binding += 1;
+        let id = self.next_control_binding;
+        self.next_control_binding += 1;
         let iterator = format!("$for$iterator${id}");
         let loop_result = format!("$for$result${id}");
         let into_iter = Expr::Call(
@@ -4722,6 +4759,30 @@ mod tests {
             Stmt::Expr(Expr::While { condition, body })
                 if matches!(condition.as_ref(), Expr::Call(_, arguments) if arguments.is_empty())
                     && matches!(body.as_ref(), Expr::Block(_, _))
+        ));
+    }
+
+    #[test]
+    fn desugars_while_let_to_a_unit_loop_match() {
+        let program =
+            parse("let main(): () = { while let Some(value) = next() { consume(value) } }\n")
+                .unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        let Expr::Block(_, Some(while_let)) = function.body.as_ref().unwrap() else {
+            panic!("expected function block");
+        };
+        let Expr::Block(statements, None) = while_let.as_ref() else {
+            panic!("expected desugared while-let block");
+        };
+        assert!(matches!(
+            &statements[0],
+            Stmt::Let(Binding {
+                annotation: Some(Type::Unit),
+                value: Expr::Loop { body },
+                ..
+            }) if matches!(body.as_ref(), Expr::Match { arms, .. } if arms.len() == 2)
         ));
     }
 

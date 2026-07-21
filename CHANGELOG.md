@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.106.0 - 2026-07-22
+
+- Implemented `while let pattern = value { ... }` as a unit-producing loop whose scrutinee is
+  reevaluated on every iteration.
+- Lowered each iteration through ordinary `match`, preserving pattern binding scope, ownership,
+  mutable receiver calls, and cleanup behavior.
+- Routed `break` and `continue` through the generated ordinary loop and added native coverage for
+  repeated `Option` extraction with `continue`.
+
 ## 0.105.0 - 2026-07-22
 
 - Implemented `if let pattern = value { ... }` with optional `else` and `else if` branches.
