@@ -6,6 +6,14 @@ subset.
 
 ## Unreleased
 
+## 0.121.0 - 2026-07-22
+
+- Verified the erased continuation ownership contract on both terminal paths: abandoning a
+  continuation runs its environment drop entry, while invoking it transfers the environment and
+  prevents a second drop.
+- Added native regressions using a move-captured `Drop` resource to require exactly one destructor
+  call after either handler abandonment or one-shot resumption.
+
 ## 0.120.0 - 2026-07-22
 
 - Added the internal erased continuation ABI `{ call_entry, drop_entry, environment, one_shot_flag }`

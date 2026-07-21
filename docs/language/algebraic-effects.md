@@ -147,8 +147,10 @@ backedges use these CPS frames. Concrete continuation closures erase to a unifor
 containing call and drop entries, an environment pointer, and a one-shot flag. Named frames receive
 that value as an explicit hidden parameter; each direct or mutually recursive call site creates a
 fresh node for its remaining computation, so recursive function result and handler answer types may
-differ. Selective CPS preserves source order
-through operation and ordinary-call arguments, arrays, indexes, members, `match` scrutinees and arm
+differ. Invoking a node transfers its environment to the call entry and disarms the erased value;
+abandoning an armed node calls its drop entry. Thus either terminal path destroys every move-captured
+value exactly once. Selective CPS preserves source order through operation and ordinary-call
+arguments, arrays, indexes, members, `match` scrutinees and arm
 bodies, and immediate `do`, `unsafe`, and `try` wrappers. Effectful `&&` and `||` operands retain
 their lazy branch semantics. Effectful coalescing fallbacks, optional-call arguments, match guards,
 capturing indirect calls and effectful lazy fallback/guard paths remain implementation work;

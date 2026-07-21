@@ -431,7 +431,8 @@ identity、传播和类型检查。派生的 `State(i32).handle(get: { (resume) 
 effectful `while`、`loop` backedge 使用 CPS lifted frame。具体 continuation closure 会擦除成包含
 call entry、drop entry、environment pointer 与 one-shot flag 的统一隐藏值；named frame 显式接收该
 隐藏参数，每个直接或互递归调用点为自己的剩余计算创建新 node，因此递归函数结果类型可以不同于
-完整 handler answer。捕获型
+完整 handler answer。调用 node 会把 environment 移交给 call entry 并解除其 armed 状态；放弃
+armed node 则调用 drop entry，所以两条终止路径都会让 move 捕获值恰好析构一次。
 数组元素、索引、普通与可空成员、`match` scrutinee/arm body 以及 `do`、`unsafe`、`try` 中的
 operation 按源顺序进入 selective CPS，`&&` 与 `||` 保持短路。带 effect 的 `??` fallback、可空调用
 参数和 match guard 尚未覆盖。捕获型间接调用和最终通用 continuation ABI 按
