@@ -16,6 +16,12 @@ let same('a: region, T: type)(borrow('a) value: T): borrow('a) T = borrow value
 
 let forwarded_method('a: region)(borrow('a) pair: Pair): borrow('a) i32 = pair.right_method()
 
+let inferred_left(borrow pair: Pair): borrow i32 = borrow pair.left
+
+let inferred_same(T: type)(borrow value: T): borrow T = borrow value
+
+let inferred_forward('a: region)(borrow('a) pair: Pair): borrow('a) i32 = inferred_left(pair)
+
 extend Pair {
   let right_ref('a: region)(borrow('a) pair: Pair): borrow('a) i32 = borrow pair.right
 
@@ -23,6 +29,10 @@ extend Pair {
 
   let left_mut_method('a: region)
     (mut borrow('a) self)(): mut borrow('a) i32 = mut borrow self.left
+
+  let inferred_right(borrow self)(): borrow i32 = borrow self.right
+
+  let inferred_left_mut(mut borrow self)(): mut borrow i32 = mut borrow self.left
 }
 
 extend(T: type) Holder(T) {
@@ -45,11 +55,15 @@ let main(): i32 = {
     let forwarded = forwarded_method(pair)
     let generic_method = holder.get()
     let trait_method = pair.view()
+    let inferred = inferred_left(pair)
+    let inferred_generic = inferred_same(value: pair)
+    let inferred_forwarded = inferred_forward(pair)
+    let inferred_method = pair.inferred_right()
     reference + generic.right + associated + method + qualified + forwarded + generic_method +
-      trait_method
+      trait_method + inferred + inferred_generic.right + inferred_forwarded + inferred_method - 40
   }
   do {
-    let reference = pair.left_mut_method()
+    let reference = pair.inferred_left_mut()
     reference = 22
   }
   before + pair.left

@@ -807,7 +807,10 @@ fn returned_borrow_errors_report_their_cause() {
             "shared borrow as a mutable borrow",
         ),
         ("returned_borrow_conflicting_write.sali", "already borrowed"),
-        ("returned_borrow_missing_region.sali", "must name a region"),
+        (
+            "returned_borrow_missing_region.sali",
+            "cannot infer the returned borrow region",
+        ),
         (
             "borrow_type_signature.sali",
             "cannot use a borrow value type yet",

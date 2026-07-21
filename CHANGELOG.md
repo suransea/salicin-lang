@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.58.0 - 2026-07-21
+
+- Inferred an omitted returned-borrow region when a function or method has exactly one borrow
+  parameter, covering shared, mutable, generic, inherent-method, and forwarding cases.
+- Contextualized an inferred-region call result to an explicit expected return region, allowing a
+  concise helper to forward safely through an explicitly region-bound public API.
+- Diagnosed omitted result regions with zero or multiple borrow sources and continued to require an
+  explicit region for those ambiguous signatures.
+
 ## 0.57.0 - 2026-07-21
 
 - Added returned borrows from inherent and trait methods, including instance syntax,

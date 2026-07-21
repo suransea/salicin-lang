@@ -8037,22 +8037,20 @@ impl Analyzer {
         }
 
         if let Some(Ty::Reference { region, .. }) = &signature.result {
-            let Some(region) = region else {
+            if let Some(region) = region {
+                if !context
+                    .borrowed_parameter_regions
+                    .values()
+                    .any(|(parameter_region, _)| parameter_region.as_ref() == Some(region))
+                {
+                    self.error(format!(
+                        "function `{name}` returns region `'{region}` but has no borrow parameter with that region"
+                    ));
+                }
+            } else if context.borrowed_parameter_regions.len() != 1 {
                 self.error(format!(
-                    "function `{name}` must name a region on its returned borrow type"
-                ));
-                self.set_function_result(name, Ty::Error);
-                self.function_states
-                    .insert(name.to_owned(), ResolutionState::Resolved);
-                return Ty::Error;
-            };
-            if !context
-                .borrowed_parameter_regions
-                .values()
-                .any(|(parameter_region, _)| parameter_region.as_ref() == Some(region))
-            {
-                self.error(format!(
-                    "function `{name}` returns region `'{region}` but has no borrow parameter with that region"
+                    "cannot infer the returned borrow region of function `{name}`; expected exactly one borrow parameter, found {}",
+                    context.borrowed_parameter_regions.len()
                 ));
             }
         }
@@ -8432,7 +8430,7 @@ impl Analyzer {
                     }
                     match context.borrowed_parameter_regions.get(&place.local) {
                         Some((source_region, source_mutable)) => {
-                            if source_region != expected_region {
+                            if expected_region.is_some() && source_region != expected_region {
                                 self.error(format!(
                                     "returned borrow region mismatch: expected {}, found {}",
                                     display_region(expected_region.as_deref()),
@@ -13357,7 +13355,7 @@ impl Analyzer {
         self.release_loans(&temporary_loans, context);
         let call = if complete {
             HirExpr {
-                ty: (*function_ty.result).clone(),
+                ty: contextual_reference_result(&function_ty.result, expected),
                 kind: HirExprKind::Call {
                     function: canonical,
                     arguments: arguments.clone(),
@@ -13594,7 +13592,7 @@ impl Analyzer {
 
         let call = if complete {
             HirExpr {
-                ty: (*function_ty.result).clone(),
+                ty: contextual_reference_result(&function_ty.result, expected),
                 kind: HirExprKind::Call {
                     function: name.to_owned(),
                     arguments: arguments.clone(),
@@ -13663,8 +13661,8 @@ impl Analyzer {
             .collect::<HashSet<_>>();
         let mut sources = Vec::new();
         for (parameter, argument) in source_parameters.into_iter().zip(arguments) {
-            if parameter.region.as_ref() != result_region.as_ref()
-                || !matches!(parameter.mode, PassMode::Borrow | PassMode::MutBorrow)
+            if !matches!(parameter.mode, PassMode::Borrow | PassMode::MutBorrow)
+                || (result_region.is_some() && parameter.region.as_ref() != result_region.as_ref())
             {
                 continue;
             }
@@ -13701,7 +13699,7 @@ impl Analyzer {
             ..
         }) = expected
         {
-            if expected_region != result_region {
+            if result_region.is_some() && expected_region != result_region {
                 self.error(format!(
                     "returned call region mismatch: expected {}, found {}",
                     display_region(expected_region.as_deref()),
@@ -13714,7 +13712,7 @@ impl Analyzer {
             for source in sources {
                 match context.borrowed_parameter_regions.get(&source.local) {
                     Some((source_region, source_mutable)) => {
-                        if source_region != expected_region {
+                        if expected_region.is_some() && source_region != expected_region {
                             self.error(format!(
                                 "returned call argument region mismatch: expected {}, found {}",
                                 display_region(expected_region.as_deref()),
@@ -14565,6 +14563,26 @@ fn display_region(region: Option<&str>) -> String {
         || "an inferred region".to_owned(),
         |region| format!("'{region}"),
     )
+}
+
+fn contextual_reference_result(result: &Ty, expected: Option<&Ty>) -> Ty {
+    match (result, expected) {
+        (
+            Ty::Reference {
+                pointee,
+                mutable,
+                region: None,
+            },
+            Some(
+                expected @ Ty::Reference {
+                    pointee: expected_pointee,
+                    mutable: expected_mutable,
+                    ..
+                },
+            ),
+        ) if pointee == expected_pointee && mutable == expected_mutable => expected.clone(),
+        _ => result.clone(),
+    }
 }
 
 fn flatten_call<'a>(expression: &'a Expr, groups: &mut Vec<&'a [CallArg]>) -> &'a Expr {
