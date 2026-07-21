@@ -1974,7 +1974,7 @@ impl Analyzer {
                     }
                     associated_types.push(name);
                 }
-                TraitMember::Function(mut function) => {
+                TraitMember::Function(function) => {
                     let name = function.name.clone();
                     if !member_names.insert(name.clone()) {
                         self.error(format!(
@@ -1990,14 +1990,6 @@ impl Analyzer {
                             definition.name
                         ));
                         valid = false;
-                    }
-                    if function.body.is_some() {
-                        self.error(format!(
-                            "default trait method `{}.{name}` is not supported",
-                            definition.name
-                        ));
-                        valid = false;
-                        function.body = None;
                     }
                     if function.return_type.is_none() {
                         self.error(format!(
@@ -2089,6 +2081,67 @@ impl Analyzer {
                 .get_mut(&trait_name)
                 .expect("trait schema exists")
                 .valid = valid;
+            if valid {
+                self.register_trait_default_validation_templates(&trait_name, &schema);
+            }
+        }
+    }
+
+    fn register_trait_default_validation_templates(
+        &mut self,
+        trait_name: &str,
+        schema: &TraitSchema,
+    ) {
+        let self_parameter = "$default$Self".to_owned();
+        let mut compile_parameters = schema.compile_parameters.clone();
+        compile_parameters.push(CompileParam {
+            name: self_parameter.clone(),
+            kind: crate::ast::CompileParamKind::Type,
+        });
+        compile_parameters.extend(schema.associated_types.iter().map(|name| CompileParam {
+            name: name.clone(),
+            kind: crate::ast::CompileParamKind::Type,
+        }));
+        let trait_arguments = schema
+            .compile_parameters
+            .iter()
+            .map(|parameter| Type::Named(parameter.name.clone(), Vec::new()))
+            .collect();
+        let associated_types = schema
+            .associated_types
+            .iter()
+            .map(|name| crate::ast::AssociatedTypeBinding {
+                name: name.clone(),
+                ty: Type::Named(name.clone(), Vec::new()),
+            })
+            .collect();
+        let predicate = crate::ast::WherePredicate {
+            subject: Type::Named(self_parameter.clone(), Vec::new()),
+            trait_ref: Type::Named(trait_name.to_owned(), trait_arguments),
+            associated_types,
+        };
+        let mut self_substitution = HashMap::new();
+        self_substitution.insert("Self".to_owned(), Type::Named(self_parameter, Vec::new()));
+        for method_name in &schema.method_order {
+            let method = &schema.methods[method_name];
+            if method.body.is_none() {
+                continue;
+            }
+            let canonical = format!(
+                "$trait$default$validation${trait_name}${method_name}${}",
+                self.function_template_order.len()
+            );
+            let mut template = method.clone();
+            template.name = canonical.clone();
+            template.compile_groups = vec![compile_parameters.clone()];
+            template.where_predicates = vec![predicate.clone()];
+            substitute_function_types(&mut template, &self_substitution);
+            self.function_template_order.push(canonical.clone());
+            self.function_templates.insert(canonical.clone(), template);
+            self.function_template_origins
+                .insert(canonical.clone(), schema.access.origin.clone());
+            self.function_accesses
+                .insert(canonical, schema.access.clone());
         }
     }
 
@@ -2584,7 +2637,7 @@ impl Analyzer {
             }
         }
         for method in &schema.method_order {
-            if !supplied_methods.contains_key(method) {
+            if !supplied_methods.contains_key(method) && schema.methods[method].body.is_none() {
                 self.error(format!(
                     "missing trait method `{}.{method}` in implementation for `{target}`",
                     key.trait_ref.name
@@ -2660,7 +2713,16 @@ impl Analyzer {
                 continue;
             };
 
-            let mut function = supplied_methods[method_name].clone();
+            let (mut function, function_origin) = supplied_methods
+                .get(method_name)
+                .cloned()
+                .map(|function| (function, origin.clone()))
+                .unwrap_or_else(|| {
+                    (
+                        schema.methods[method_name].clone(),
+                        schema.access.origin.clone(),
+                    )
+                });
             if !function.compile_groups.is_empty() {
                 self.error(format!(
                     "generic trait implementation method `{}.{method_name}` is not supported",
@@ -2708,14 +2770,14 @@ impl Analyzer {
             }
             let canonical = trait_method_name(&key, method_name);
             function.name = canonical.clone();
-            registered.push((method_name.clone(), canonical, function));
+            registered.push((method_name.clone(), canonical, function, function_origin));
         }
         if !valid {
             return;
         }
 
         let mut methods = HashMap::new();
-        for (method_name, canonical, function) in registered {
+        for (method_name, canonical, function, function_origin) in registered {
             let groups = function
                 .groups
                 .iter()
@@ -2739,7 +2801,7 @@ impl Analyzer {
             self.function_order.push(canonical.clone());
             self.functions.insert(canonical.clone(), function);
             self.function_origins
-                .insert(canonical.clone(), origin.clone());
+                .insert(canonical.clone(), function_origin);
             self.function_accesses
                 .insert(canonical.clone(), implementation_access.clone());
             self.function_type_substitutions
@@ -3341,7 +3403,7 @@ impl Analyzer {
             }
         }
         for name in &schema.method_order {
-            if !methods.contains(name) {
+            if !methods.contains(name) && schema.methods[name].body.is_none() {
                 self.error(format!(
                     "missing trait method `{trait_name}.{name}` in generic trait implementation"
                 ));
@@ -22834,17 +22896,8 @@ let main(): i32 = {
     }
 
     #[test]
-    fn rejects_unsupported_trait_defaults_gats_and_associated_cycles() {
+    fn rejects_unsupported_gats_and_associated_cycles() {
         let cases = [
-            (
-                r#"
-let Defaulted = trait {
-  let value(borrow self)(): i32 = 42
-}
-let main(): i32 = 0
-"#,
-                "default trait method",
-            ),
             (
                 r#"
 let Generic = trait {
@@ -22934,6 +22987,22 @@ let main(): i32 = 0
                 "missing `{expected}` in {diagnostics:?}"
             );
         }
+    }
+
+    #[test]
+    fn validates_unused_default_trait_method_bodies() {
+        let errors = compile_text(
+            r#"
+let Broken = trait {
+  let value(borrow self)(): i32 = missing
+}
+let main(): i32 = 42
+"#,
+        )
+        .expect_err("unused default methods must be checked at the trait definition");
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("unknown name `missing`")));
     }
 
     #[test]

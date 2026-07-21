@@ -1610,6 +1610,7 @@ fn m2_concrete_trait_programs_run_with_expected_result() {
         "trait_generic_nominal_impl.sali",
         "trait_generic_blanket_impl.sali",
         "trait_disjoint_blanket_impls.sali",
+        "trait_default_method.sali",
         "trait_inherent_precedence.sali",
         "trait_declaration_order.sali",
     ] {

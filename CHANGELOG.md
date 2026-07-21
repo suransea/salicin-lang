@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.41.0 - 2026-07-21
+
+- Enabled source-backed default trait methods for concrete and blanket implementations; omitted
+  methods now use the trait body while explicitly supplied methods override it.
+- Substituted `Self`, trait parameters, and associated types into each concrete default method and
+  retained the trait definition's source provenance for name and visibility resolution.
+- Added abstract definition-time checking for default bodies using an assumed `Self: Trait` proof,
+  including all associated-type equalities, even when the trait has no implementations.
+- Verified default methods that call required methods, consume `self`, return associated types, and
+  dispatch through nested blanket implementations.
+
 ## 0.40.0 - 2026-07-21
 
 - Added definition-time signature checking for every blanket trait method, including trait type
