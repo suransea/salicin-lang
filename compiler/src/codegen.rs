@@ -17577,18 +17577,6 @@ impl Analyzer {
         {
             return None;
         }
-        if let Some(alias) = groups
-            .iter()
-            .flat_map(|group| group.iter())
-            .find_map(|argument| {
-                handler_alias_reference(&argument.value, &handler.function_aliases.borrow())
-            })
-        {
-            self.error(format!(
-                "effectful function alias `{alias}` cannot escape its handler or be used as a runtime value"
-            ));
-            return Some(Err(()));
-        }
         if groups
             .iter()
             .flat_map(|group| group.iter())
@@ -17721,6 +17709,98 @@ impl Analyzer {
         let prefix = format!("$handler$frame${specialization}${name}$");
         self.next_closure += 1;
         let (parameters, mut body) = hygienic_inline_function(&function, &prefix);
+        let mut source_arguments = Vec::new();
+        for (arguments, declared) in groups.iter().zip(&function.groups) {
+            for (argument, declared) in arguments.iter().zip(declared) {
+                if argument
+                    .label
+                    .as_deref()
+                    .is_some_and(|label| label != declared.name)
+                {
+                    self.error(format!(
+                        "unknown argument label on effectful call `{name}`: expected `{}`",
+                        declared.name
+                    ));
+                    return Some(Err(()));
+                }
+                source_arguments.push(CallArg {
+                    label: None,
+                    value: argument.value.clone(),
+                });
+            }
+        }
+        let mut omitted_parameters = HashSet::new();
+        let mut static_function_values = HashMap::new();
+        for (index, (parameter, argument)) in parameters
+            .iter()
+            .flatten()
+            .zip(&source_arguments)
+            .enumerate()
+        {
+            if !matches!(parameter.ty, Type::Function { .. }) {
+                continue;
+            }
+            let Expr::Name(argument_name) = &argument.value else {
+                continue;
+            };
+            let target = handler
+                .function_aliases
+                .borrow()
+                .get(argument_name)
+                .cloned()
+                .unwrap_or_else(|| argument_name.clone());
+            if self.functions.contains_key(&target) {
+                omitted_parameters.insert(index);
+                static_function_values.insert(parameter.name.clone(), target);
+            }
+        }
+        if !static_function_values.is_empty() {
+            rewrite_static_function_values(&mut body, &static_function_values);
+        }
+        if let Some(parameter_index) =
+            parameters
+                .iter()
+                .flatten()
+                .enumerate()
+                .find_map(|(index, parameter)| {
+                    if omitted_parameters.contains(&index) {
+                        return None;
+                    }
+                    let Type::Function { effects, .. } = &parameter.ty else {
+                        return None;
+                    };
+                    effects
+                        .custom
+                        .iter()
+                        .any(|effect| source_effect_identity(effect) == handler.identity)
+                        .then_some(index)
+                })
+        {
+            let parameter = function
+                .groups
+                .iter()
+                .flatten()
+                .nth(parameter_index)
+                .expect("hygienic and source parameter lists have identical shapes");
+            self.error(format!(
+                "dynamic effectful callable parameter `{}` requires the handler-aware runtime ABI",
+                parameter.name
+            ));
+            return Some(Err(()));
+        }
+        if let Some(alias) = source_arguments
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !omitted_parameters.contains(index))
+            .find_map(|(_, argument)| {
+                handler_alias_reference(&argument.value, &handler.function_aliases.borrow())
+            })
+        {
+            self.error(format!(
+                "effectful function alias `{alias}` cannot escape its handler or be used as a runtime value"
+            ));
+            return Some(Err(()));
+        }
         let Some(input) = function.return_type.clone() else {
             self.error(format!(
                 "resumable function `{name}` requires an explicit return type"
@@ -17833,7 +17913,15 @@ impl Analyzer {
             .borrow_mut()
             .remove(&return_name);
 
-        let mut flattened_parameters = parameters.iter().flatten().cloned().collect::<Vec<_>>();
+        let mut flattened_parameters = parameters
+            .iter()
+            .flatten()
+            .cloned()
+            .enumerate()
+            .filter_map(|(index, parameter)| {
+                (!omitted_parameters.contains(&index)).then_some(parameter)
+            })
+            .collect::<Vec<_>>();
         flattened_parameters.push(Param {
             mode: PassMode::Move,
             access: None,
@@ -17845,27 +17933,13 @@ impl Analyzer {
                 vec![input.clone(), answer.clone()],
             ),
         });
-        let mut flattened_arguments = Vec::new();
-        for (arguments, declared) in groups.iter().zip(&function.groups) {
-            for (argument, declared) in arguments.iter().zip(declared) {
-                if argument
-                    .label
-                    .as_deref()
-                    .is_some_and(|label| label != declared.name)
-                {
-                    self.error(format!(
-                        "unknown argument label on effectful call `{name}`: expected `{}`",
-                        declared.name
-                    ));
-                    handler.inlining.borrow_mut().remove(name);
-                    return Some(Err(()));
-                }
-                flattened_arguments.push(CallArg {
-                    label: None,
-                    value: argument.value.clone(),
-                });
-            }
-        }
+        let mut flattened_arguments = source_arguments
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, argument)| {
+                (!omitted_parameters.contains(&index)).then_some(argument)
+            })
+            .collect::<Vec<_>>();
         flattened_arguments.push(CallArg {
             label: None,
             value: Expr::Name(erased_continuation_name),
@@ -22473,6 +22547,117 @@ fn rewrite_handler_returns(expression: &mut Expr, return_name: &str) {
             }
         }
         Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => {}
+    }
+}
+
+fn rewrite_static_function_values(expression: &mut Expr, replacements: &HashMap<String, String>) {
+    match expression {
+        Expr::Name(name) => {
+            if let Some(replacement) = replacements.get(name) {
+                *name = replacement.clone();
+            }
+        }
+        Expr::Unary(_, value)
+        | Expr::Try(value)
+        | Expr::DoBlock { body: value }
+        | Expr::Throw(value)
+        | Expr::Unsafe(value)
+        | Expr::Borrow { value, .. }
+        | Expr::Member(value, _)
+        | Expr::ChainMember(value, _)
+        | Expr::Loop { body: value } => rewrite_static_function_values(value, replacements),
+        Expr::Binary(left, _, right)
+        | Expr::Coalesce(left, right)
+        | Expr::Assign(left, right)
+        | Expr::CompoundAssign(left, _, right) => {
+            rewrite_static_function_values(left, replacements);
+            rewrite_static_function_values(right, replacements);
+        }
+        Expr::HandlerCoalesce {
+            scrutinee,
+            success,
+            fallback,
+            ..
+        } => {
+            rewrite_static_function_values(scrutinee, replacements);
+            rewrite_static_function_values(success, replacements);
+            rewrite_static_function_values(fallback, replacements);
+        }
+        Expr::HandlerChainCall(chain) => {
+            rewrite_static_function_values(&mut chain.scrutinee, replacements);
+            for argument in chain.groups.iter_mut().flatten() {
+                rewrite_static_function_values(&mut argument.value, replacements);
+            }
+            rewrite_static_function_values(&mut chain.success, replacements);
+            rewrite_static_function_values(&mut chain.residual, replacements);
+        }
+        Expr::Call(callee, arguments) => {
+            rewrite_static_function_values(callee, replacements);
+            for argument in arguments {
+                rewrite_static_function_values(&mut argument.value, replacements);
+            }
+        }
+        Expr::Array(elements) => {
+            for element in elements {
+                rewrite_static_function_values(element, replacements);
+            }
+        }
+        Expr::Index { base, index } => {
+            rewrite_static_function_values(base, replacements);
+            rewrite_static_function_values(index, replacements);
+        }
+        Expr::Block(statements, tail) => {
+            for statement in statements {
+                match statement {
+                    Stmt::Let(binding) => {
+                        rewrite_static_function_values(&mut binding.value, replacements)
+                    }
+                    Stmt::Expr(expression) => {
+                        rewrite_static_function_values(expression, replacements)
+                    }
+                }
+            }
+            if let Some(tail) = tail {
+                rewrite_static_function_values(tail, replacements);
+            }
+        }
+        Expr::Closure(parameters, body) => {
+            let mut visible = replacements.clone();
+            for parameter in parameters {
+                visible.remove(&parameter.name);
+            }
+            rewrite_static_function_values(body, &visible);
+        }
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            rewrite_static_function_values(condition, replacements);
+            rewrite_static_function_values(then_branch, replacements);
+            if let Some(else_branch) = else_branch {
+                rewrite_static_function_values(else_branch, replacements);
+            }
+        }
+        Expr::Return(value) | Expr::Break(value) => {
+            if let Some(value) = value {
+                rewrite_static_function_values(value, replacements);
+            }
+        }
+        Expr::While { condition, body } => {
+            rewrite_static_function_values(condition, replacements);
+            rewrite_static_function_values(body, replacements);
+        }
+        Expr::Match { scrutinee, arms } => {
+            rewrite_static_function_values(scrutinee, replacements);
+            for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    rewrite_static_function_values(guard, replacements);
+                }
+                rewrite_static_function_values(&mut arm.body, replacements);
+            }
+        }
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
     }
 }
 
@@ -34047,7 +34232,7 @@ let main(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) {
         )
         .expect("a chained local alias should retain its statically known effectful target");
 
-        let escaping = compile_text(
+        compile_text(
             r#"
 let Ask = effect { let value(): i32 }
 let ask(): i32 with(Ask) = { Ask.value() }
@@ -34058,10 +34243,24 @@ let main(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) {
 } }
 "#,
         )
-        .expect_err("the static alias path must not pretend to implement a dynamic callable ABI");
-        assert!(escaping.iter().any(|error| error
-            .message
-            .contains("cannot escape its handler or be used as a runtime value")));
+        .expect("a known function argument should specialize a higher-order effectful frame");
+
+        let dynamic = compile_text(
+            r#"
+let Ask = effect { let value(): i32 }
+let ask_left(): i32 with(Ask) = { Ask.value() }
+let ask_right(): i32 with(Ask) = { Ask.value() }
+let consume(action: (): i32 with(Ask)): i32 with(Ask) = { action() }
+let main(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) {
+  let action: (): i32 with(Ask) = if true { ask_left } else { ask_right }
+  consume(action)
+} }
+"#,
+        )
+        .expect_err("a genuinely dynamic target still needs the runtime callable ABI");
+        assert!(dynamic.iter().any(|error| error.message.contains(
+            "dynamic effectful callable parameter `action` requires the handler-aware runtime ABI"
+        )));
     }
 
     #[test]

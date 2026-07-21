@@ -151,7 +151,11 @@ The current native slice performs selective CPS transformation for lexically vis
 including one-shot resumption and abandonment. It propagates through fully applied ordinary named
 functions by hygienically specializing their source bodies. Inferred immutable local aliases of a
 statically known effectful function retain that identity through alias chains and enter the same
-specialization path; the alias itself has no runtime callable ABI or escaping identity.
+specialization path. A statically known named function or such an alias may also fill an effectful
+callable parameter: the higher-order frame specializes that parameter to the source target, removes
+it from the runtime frame, and transforms the resulting direct call normally. A conditionally
+selected target, capturing closure, or other genuinely dynamic callable still requires the general
+handler-aware runtime ABI and is rejected explicitly.
 Operation and ordinary call arguments are traversed in source order, `done:` may change the answer
 type, and nested handlers of the same identity select the nearest matching boundary. Arguments of
 an effect-propagating named call enter CPS before its callee frame is built, so multiple suspended

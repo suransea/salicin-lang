@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.129.0 - 2026-07-22
+
+- Specialized higher-order effectful frames when callable arguments resolve to named functions or
+  statically tracked aliases.
+- Rewrote uses of those callable parameters to direct resumable calls and erased the specialized
+  parameters from the runtime frame ABI.
+- Added native higher-order resumption coverage and a dedicated diagnostic for genuinely dynamic
+  effectful callable targets that still require the handler-aware runtime ABI.
+
 ## 0.128.0 - 2026-07-22
 
 - Extended selective CPS into arguments of effect-propagating named calls before constructing the
