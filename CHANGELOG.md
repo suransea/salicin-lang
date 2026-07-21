@@ -6,6 +6,20 @@ subset.
 
 ## Unreleased
 
+## 0.72.0 - 2026-07-21
+
+- Mounted the compiler-owned `alloc.boxed` and `alloc.vec` modules in ordinary package name
+  resolution, including grouped imports, renaming, module aliases, qualified paths, and re-exports.
+- Removed `Box`, `Vec`, and all alloc free functions from implicit prelude visibility; a bare use now
+  reports the exact `use alloc...` declaration required.
+- Gave embedded alloc declarations qualified internal identities so user packages may define their
+  own unimported `Box` or `Vec` without colliding with the standard library.
+- Reserved the top-level `alloc` namespace against file modules, declarations, and dependency
+  aliases, and migrated all native ownership, borrow, bounds, and allocator fixtures to explicit
+  imports.
+- Removed the obsolete failure fixture that treated a user-defined `Box` as a forbidden prelude
+  redefinition.
+
 ## 0.71.0 - 2026-07-21
 
 - Added the contextual compile-time `passing` kind with `auto`, `copy`, and `move` values.

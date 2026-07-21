@@ -1,3 +1,5 @@
+use alloc.boxed.{Box, box_read, box_write}
+
 let read_box(T: type)(borrow boxed: Box(T)): T
 where T: Copy = boxed.read()
 

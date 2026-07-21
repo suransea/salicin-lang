@@ -1,3 +1,5 @@
+use alloc.boxed.box_new
+
 let Resource = struct(value: i32)
 
 extend Resource: Drop {

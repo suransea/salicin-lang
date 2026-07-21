@@ -4690,7 +4690,7 @@ impl Analyzer {
                 .iter()
                 .filter(|(_, instance)| {
                     instance.key.kind == NominalKind::Struct
-                        && instance.key.template == "Box"
+                        && instance.key.template == "alloc::boxed::Box"
                         && instance.key.arguments.len() == 1
                 })
                 .map(|(name, instance)| (name.clone(), instance.key.arguments[0].clone()))
@@ -8487,7 +8487,7 @@ impl Analyzer {
     fn box_pointee_type(&self, name: &str) -> Option<&Ty> {
         self.nominal_instances.get(name).and_then(|instance| {
             (instance.key.kind == NominalKind::Struct
-                && instance.key.template == "Box"
+                && instance.key.template == "alloc::boxed::Box"
                 && instance.key.arguments.len() == 1)
                 .then(|| &instance.key.arguments[0])
         })
@@ -22372,59 +22372,77 @@ mod tests {
         assert_eq!(analyzer.nominal_instances.len(), 1);
         assert_eq!(analyzer.nominal_instance_names.len(), 1);
         assert!(analyzer.functions.is_empty());
-        assert!(analyzer.function_templates.contains_key("box_new"));
-        assert!(analyzer.function_templates.contains_key("box_ptr"));
-        assert!(analyzer.function_templates.contains_key("box_read"));
-        assert!(analyzer.function_templates.contains_key("box_write"));
-        assert!(analyzer.function_templates.contains_key("box_into_inner"));
-        assert!(analyzer.function_templates.contains_key("box_replace"));
-        assert!(analyzer.function_templates.contains_key("box_as_ref"));
-        assert!(!analyzer.function_templates.contains_key("box_as_mut"));
+        let boxed = |name: &str| format!("alloc::boxed::{name}");
+        let vec = |name: &str| format!("alloc::vec::{name}");
+        assert!(analyzer.function_templates.contains_key(&boxed("box_new")));
+        assert!(analyzer.function_templates.contains_key(&boxed("box_ptr")));
+        assert!(analyzer.function_templates.contains_key(&boxed("box_read")));
+        assert!(analyzer
+            .function_templates
+            .contains_key(&boxed("box_write")));
+        assert!(analyzer
+            .function_templates
+            .contains_key(&boxed("box_into_inner")));
+        assert!(analyzer
+            .function_templates
+            .contains_key(&boxed("box_replace")));
+        assert!(analyzer
+            .function_templates
+            .contains_key(&boxed("box_as_ref")));
+        assert!(!analyzer
+            .function_templates
+            .contains_key(&boxed("box_as_mut")));
         assert!(matches!(
-            analyzer.function_templates["box_as_ref"]
+            analyzer.function_templates[&boxed("box_as_ref")]
                 .compile_groups
                 .as_slice(),
             [group] if matches!(group.as_slice(), [access, ty]
                 if access.name == "A" && access.kind == CompileParamKind::Access
                     && ty.name == "T" && ty.kind == CompileParamKind::Type)
         ));
-        assert!(analyzer.function_templates.contains_key("vec_new"));
+        assert!(analyzer.function_templates.contains_key(&vec("vec_new")));
         assert!(analyzer
             .function_templates
-            .contains_key("vec_with_capacity"));
-        assert!(analyzer.function_templates.contains_key("vec_at"));
-        assert!(!analyzer.function_templates.contains_key("vec_at_mut"));
+            .contains_key(&vec("vec_with_capacity")));
+        assert!(analyzer.function_templates.contains_key(&vec("vec_at")));
+        assert!(!analyzer.function_templates.contains_key(&vec("vec_at_mut")));
         assert!(matches!(
-            analyzer.function_templates["vec_at"].compile_groups.as_slice(),
+            analyzer.function_templates[&vec("vec_at")]
+                .compile_groups
+                .as_slice(),
             [group] if matches!(group.as_slice(), [access, ty]
                 if access.name == "A" && access.kind == CompileParamKind::Access
                     && ty.name == "T" && ty.kind == CompileParamKind::Type)
         ));
-        assert!(analyzer.function_templates.contains_key("vec_reserve"));
-        assert!(analyzer.function_templates.contains_key("vec_push"));
-        assert!(analyzer.function_templates.contains_key("vec_replace"));
-        assert!(analyzer.function_templates.contains_key("vec_pop"));
-        assert!(analyzer.function_templates.contains_key("vec_truncate"));
-        assert!(analyzer.function_templates.contains_key("vec_clear"));
-        assert!(analyzer.function_templates.contains_key("vec_is_empty"));
-        assert!(analyzer.function_templates.contains_key("vec_swap_remove"));
-        assert!(analyzer.function_templates.contains_key("vec_swap"));
-        assert!(analyzer.function_templates.contains_key("vec_reverse"));
-        assert!(analyzer.function_templates.contains_key("vec_insert"));
-        assert!(analyzer.function_templates.contains_key("vec_remove"));
-        assert!(analyzer.function_templates.contains_key("vec_append"));
+        for name in [
+            "vec_reserve",
+            "vec_push",
+            "vec_replace",
+            "vec_pop",
+            "vec_truncate",
+            "vec_clear",
+            "vec_is_empty",
+            "vec_swap_remove",
+            "vec_swap",
+            "vec_reverse",
+            "vec_insert",
+            "vec_remove",
+            "vec_append",
+        ] {
+            assert!(analyzer.function_templates.contains_key(&vec(name)));
+        }
         assert!(analyzer
             .function_templates
-            .contains_key("vec_shrink_to_fit"));
-        assert!(analyzer.function_templates.contains_key("vec_read"));
-        assert!(analyzer.function_templates.contains_key("vec_write"));
+            .contains_key(&vec("vec_shrink_to_fit")));
+        assert!(analyzer.function_templates.contains_key(&vec("vec_read")));
+        assert!(analyzer.function_templates.contains_key(&vec("vec_write")));
         assert!(analyzer
             .generic_inherent_functions
-            .contains_key(&("Box".to_owned(), "new".to_owned())));
+            .contains_key(&("alloc::boxed::Box".to_owned(), "new".to_owned())));
         assert!(analyzer
             .generic_inherent_functions
-            .contains_key(&("Vec".to_owned(), "new".to_owned())));
-        assert!(analyzer.generic_inherent_extensions["Vec"]
+            .contains_key(&("alloc::vec::Vec".to_owned(), "new".to_owned())));
+        assert!(analyzer.generic_inherent_extensions["alloc::vec::Vec"]
             .iter()
             .flat_map(|extension| &extension.members)
             .any(|member| matches!(member, ExtendMember::Function(function) if function.name == "push")));

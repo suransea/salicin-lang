@@ -1,3 +1,5 @@
+use alloc.vec.Vec
+
 let Resource = struct(value: i32)
 
 let main(): i32 = {

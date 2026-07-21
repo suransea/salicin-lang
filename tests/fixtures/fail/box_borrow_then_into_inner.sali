@@ -1,3 +1,5 @@
+use alloc.boxed.Box
+
 let Resource = struct(value: i32)
 
 let main(): i32 = {

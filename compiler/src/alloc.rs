@@ -7,7 +7,7 @@ use crate::ast::{
     CompileParamKind, Function, Item, ItemOrigin, PassMode, Program, StructDef, Type, Visibility,
 };
 use crate::manifest::Edition;
-use crate::modules::PackageId;
+use crate::modules::{self, PackageId, SourceUnit};
 use crate::parser;
 
 const EDITION_2026_BOXED: &str = include_str!("../../library/alloc/src/boxed.sali");
@@ -24,7 +24,7 @@ impl AllocBundle {
             Edition::Edition2026 => [("boxed", EDITION_2026_BOXED), ("vec", EDITION_2026_VEC)],
         };
         let mut combined = Program::new(Vec::new());
-        for (module, source) in modules {
+        for &(module, source) in &modules {
             let mut program = parser::parse(source).map_err(|error| {
                 AllocBundleError::new(
                     edition,
@@ -48,7 +48,32 @@ impl AllocBundle {
             combined.uses.append(&mut program.uses);
         }
         validate_program(edition, &combined)?;
-        Ok(Self { program: combined })
+
+        let mut sources = vec![SourceUnit {
+            path: "<alloc>".to_owned(),
+            module_path: Vec::new(),
+            source: String::new(),
+            is_root: true,
+        }];
+        sources.extend(modules.map(|(module, source)| SourceUnit {
+            path: format!("<alloc/{module}>"),
+            module_path: vec!["alloc".to_owned(), module.to_owned()],
+            source: source.to_owned(),
+            is_root: false,
+        }));
+        let mut program = modules::resolve_embedded_sources(&sources)
+            .map_err(|diagnostics| AllocBundleError::new(edition, diagnostics))?;
+        for origin in &mut program.item_origins {
+            origin.package = PackageId::ALLOC.0;
+            if origin
+                .module_path
+                .first()
+                .is_some_and(|name| name == "alloc")
+            {
+                origin.module_path[0] = "@alloc".to_owned();
+            }
+        }
+        Ok(Self { program })
     }
 
     pub const fn program(&self) -> &Program {

@@ -1,3 +1,5 @@
+use alloc.vec.Vec
+
 let Bomb = struct()
 
 extend Bomb: Drop {

@@ -3,6 +3,16 @@
 `library/alloc` contains owning types built on Salicin's raw allocation intrinsics and the
 replaceable allocator ABI. It is split by public module and is not part of the intended prelude.
 
+Alloc names are not implicitly visible. Import only the declarations a module uses:
+
+```sali
+use alloc.boxed.{Box, box_as_ref}
+use alloc.vec.Vec
+```
+
+Qualified paths such as `alloc.boxed.Box` are also valid. `alloc` is supplied by the toolchain and
+does not need to appear in `salicin.toml`.
+
 ## `alloc.boxed`
 
 `Box(T)` owns one heap allocation. `box_as_ref(A: access, 'a: region, T: type)` is the canonical free
@@ -23,4 +33,4 @@ mutable alias. Bounds and allocation-layout failures trap.
 Container fields remain private so safe code cannot forge ownership metadata. Allocation operations
 ultimately use the ABI documented in [runtime.md](../runtime.md).
 
-See [standard-library organization](README.md) for the current import policy and compatibility note.
+See [standard-library organization](README.md) for the prelude and import policy.

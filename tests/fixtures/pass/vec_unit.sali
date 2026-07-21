@@ -1,3 +1,5 @@
+use alloc.vec.Vec
+
 let main(): i32 = {
   let mut values: Vec(()) = Vec(()).new()
   let mut index: u64 = 0

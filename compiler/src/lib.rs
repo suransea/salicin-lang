@@ -169,7 +169,9 @@ mod tests {
 
     #[test]
     fn alloc_accessors_use_the_access_generic_entry_points() {
-        let source = "let main(): i32 = {\n\
+        let source = "use alloc.boxed.{Box, box_as_ref}\n\
+                      use alloc.vec.{Vec, vec_at}\n\
+                      let main(): i32 = {\n\
                         let mut boxed = Box.new(20)\n\
                         do {\n\
                           let value = box_as_ref(A: mut, T: i32)(boxed)\n\
@@ -184,6 +186,27 @@ mod tests {
                         boxed.read() + values.read(0)\n\
                       }\n";
         compile_source(source).expect("alloc accessors should instantiate mutable access");
+    }
+
+    #[test]
+    fn alloc_items_require_imports_and_may_be_renamed() {
+        let errors = compile_source("let main(): i32 = Box.new(42).read()\n").unwrap_err();
+        assert!(errors.iter().any(|diagnostic| {
+            diagnostic.contains("alloc item `Box` is not in the prelude")
+                && diagnostic.contains("use alloc.boxed.Box")
+        }));
+
+        let source = "use alloc.boxed.Box as HeapBox\n\
+                      let main(): i32 = HeapBox.new(42).read()\n";
+        compile_source(source).expect("renamed alloc import should compile");
+    }
+
+    #[test]
+    fn local_names_may_shadow_unimported_alloc_items() {
+        let source = "let Box = struct(value: i32)\n\
+                      let Vec = struct(value: i32)\n\
+                      let main(): i32 = Box(value: 20).value + Vec(value: 22).value\n";
+        compile_source(source).expect("alloc names should not be reserved without an import");
     }
 
     #[test]

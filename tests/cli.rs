@@ -773,7 +773,7 @@ fn vec_drop_releases_its_allocation_through_the_allocator_abi() {
     let directory = TestDirectory::new();
     let source = directory.write(
         "main.sali",
-        "let main(): i32 = {\n  let values: Vec(i32) = Vec(i32).new()\n  values.len()\n  0\n}\n",
+        "use alloc.vec.Vec\n\nlet main(): i32 = {\n  let values: Vec(i32) = Vec(i32).new()\n  values.len()\n  0\n}\n",
     );
     let ir = directory.join("main.ll");
     let executable = directory.join("main");

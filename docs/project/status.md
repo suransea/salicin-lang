@@ -15,10 +15,14 @@ Passing keyword generics are also implemented for functions and generic inherent
 position. General effect rows and effect polymorphism remain design work rather than source-language
 features.
 
+`alloc` is mounted in ordinary module resolution and is not part of the prelude. `Box`, `Vec`, and
+their free functions require `use alloc.boxed...` / `use alloc.vec...` (or a qualified path), while
+their internal identities remain isolated from same-named user declarations.
+
 The implementation is broad but not stable. Important incomplete boundaries include:
 
-- compiler-owned `core` and `alloc` modules are tracked separately, but normal `use core...` and
-  `use alloc...` resolution has not replaced compatibility injection yet;
+- `core.ops` is tracked separately but its operator traits still use bootstrap visibility rather
+  than ordinary `use core.ops...` resolution;
 - `std` host APIs have not been started;
 - registry dependencies, workspaces, stable ABI guarantees, and a package distribution format are
   not defined;

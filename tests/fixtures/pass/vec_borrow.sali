@@ -1,3 +1,5 @@
+use alloc.vec.{Vec, vec_at}
+
 let Resource = struct(value: i32)
 
 extend Resource {

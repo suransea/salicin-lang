@@ -22,14 +22,19 @@ library/
 
 The edition prelude must stay small. It is intended for universally useful language-level names,
 currently `Option`, `Result`, `never`, `Copy`, and `Drop`. Operator traits belong to `core.ops`;
-owning containers belong to `alloc.boxed` and `alloc.vec`. Those non-prelude modules are intended to
-be imported explicitly with `use`.
+owning containers belong to `alloc.boxed` and `alloc.vec`. Alloc declarations must be named through
+their module or imported explicitly with ordinary `use`; for example:
 
-The source tree and provenance metadata already follow this boundary. The current bootstrap analyzer
-still injects all validated `core` and `alloc` declarations for compatibility, so explicit standard
-package imports are not enforced yet. Mounting compiler-owned packages in normal module resolution,
-then removing those compatibility aliases, is the remaining semantic migration; see
-[implementation status](../project/status.md).
+```sali
+use alloc.boxed.Box
+use alloc.vec.{Vec, vec_at}
+```
+
+The compiler mounts `alloc` as a reserved standard-library namespace in every package. Its
+declarations have qualified internal identities, so an unimported user declaration may still be
+named `Box` or `Vec`. A project dependency or top-level file module cannot claim the name `alloc`.
+`core.ops` still has a bootstrap visibility migration remaining before its traits require ordinary
+imports; see [implementation status](../project/status.md).
 
 The compiler, library sources, and edition form one toolchain unit. Compiler-matched language items
 must come from the matching `core`, while user declarations with the same spelling remain ordinary
