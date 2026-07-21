@@ -12,9 +12,11 @@ this path. Mutable borrowing has one source spelling, `borrow(mut)`; separately 
 aliases and the former prefix spelling are intentionally absent before 1.0.
 Passing keyword generics are also implemented for functions and generic inherent members:
 `P: passing` accepts `auto`, `copy`, or `move` and can be referenced directly in parameter keyword
-position. Functions and trait methods attach effects to the logical return type: `T(unsafe)` adds
-the checked unsafe call requirement, `T(try)` normalizes to `Option(T)`, and `T(try(E))` normalizes
-to `Result(T, E)`. Complete direct, method, aliased, and partially applied unsafe calls require an
+position. Functions and trait methods place a signature effect group before the result colon:
+`(unsafe): T` adds the checked unsafe call requirement, `(try): T` normalizes to `Option(T)`, and
+`(try(E)): T` normalizes to `Result(T, E)`. Callable source types use the same shape, such as
+`(i32)(unsafe): i32`; the effect group is not a runtime or currying group. Complete direct, method,
+aliased, and partially applied unsafe calls require an
 enclosing unsafe function or `unsafe { ... }` handler. `do` forwards the implemented unsafe effect
 into nested immediate calls. Function and generic inherent-member `E: effect` parameters accept
 `pure` or `unsafe`, default to pure, participate in monomorphization, and forward through ordinary

@@ -246,6 +246,11 @@ pub enum Type {
         pointee: Box<Type>,
     },
     Array(Box<Type>, u64),
+    Function {
+        groups: Vec<Vec<Type>>,
+        effects: FunctionEffects,
+        result: Box<Type>,
+    },
     Named(String, Vec<Type>),
 }
 

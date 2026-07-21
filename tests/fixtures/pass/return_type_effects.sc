@@ -1,6 +1,6 @@
-let keep(move value: Option(i32)): i32(try) = value.try
+let keep(move value: Option(i32))(try): i32 = value.try
 
-let read(pointer: Ptr(i32), fail: bool): i32(try(bool), unsafe) = {
+let read(pointer: Ptr(i32), fail: bool)(try(bool), unsafe): i32 = {
   if fail { throw true }
   *pointer
 }

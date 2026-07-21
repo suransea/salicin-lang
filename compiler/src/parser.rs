@@ -43,7 +43,7 @@ pub fn parse_tokens(tokens: Vec<Token>) -> Result<Program, ParseError> {
     Parser {
         tokens,
         index: 0,
-        return_effect_parameters: HashSet::new(),
+        effect_parameters_in_scope: HashSet::new(),
     }
     .program()
 }
@@ -51,7 +51,7 @@ pub fn parse_tokens(tokens: Vec<Token>) -> Result<Program, ParseError> {
 struct Parser {
     tokens: Vec<Token>,
     index: usize,
-    return_effect_parameters: HashSet<String>,
+    effect_parameters_in_scope: HashSet<String>,
 }
 
 enum HeaderGroup {
@@ -214,18 +214,23 @@ impl Parser {
             return Err(self.error_here("`let mut` cannot declare a function"));
         }
 
-        let (annotation, effects, has_effect_group) = if self.take(&TokenKind::Colon) {
-            let (return_type, effects, has_effect_group) =
-                self.function_return_type(&compile_groups)?;
-            (Some(return_type), effects, has_effect_group)
+        let (effects, try_effect, has_effect_group) = self.function_effect_group()?;
+        let annotation = if self.take(&TokenKind::Colon) {
+            Some(self.function_result_type(try_effect)?)
         } else {
+            if try_effect.is_some() {
+                return Err(
+                    self.error_here("`try` effect groups require an explicit logical return type")
+                );
+            }
             if self.at(&TokenKind::Bang) {
                 return Err(self.error_here(
-                    "`!` effect syntax was removed; attach an effect group to the return type",
+                    "`!` effect syntax was removed; add a function effect group before `:`",
                 ));
             }
-            (None, FunctionEffects::default(), false)
+            None
         };
+        self.effect_parameters_in_scope.clear();
 
         if !compile_groups.is_empty() || !groups.is_empty() {
             self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::Equal]);
@@ -353,18 +358,23 @@ impl Parser {
         let (compile_groups, groups) = self.declaration_groups(true)?;
         self.validate_receiver_groups(&groups)?;
 
-        let (annotation, effects, has_effect_group) = if self.take(&TokenKind::Colon) {
-            let (return_type, effects, has_effect_group) =
-                self.function_return_type(&compile_groups)?;
-            (Some(return_type), effects, has_effect_group)
+        let (effects, try_effect, has_effect_group) = self.function_effect_group()?;
+        let annotation = if self.take(&TokenKind::Colon) {
+            Some(self.function_result_type(try_effect)?)
         } else {
+            if try_effect.is_some() {
+                return Err(
+                    self.error_here("`try` effect groups require an explicit logical return type")
+                );
+            }
             if self.at(&TokenKind::Bang) {
                 return Err(self.error_here(
-                    "`!` effect syntax was removed; attach an effect group to the return type",
+                    "`!` effect syntax was removed; add a function effect group before `:`",
                 ));
             }
-            (None, FunctionEffects::default(), false)
+            None
         };
+        self.effect_parameters_in_scope.clear();
         if !compile_groups.is_empty() || !groups.is_empty() {
             self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::Equal]);
         }
@@ -478,11 +488,12 @@ impl Parser {
         &mut self,
         allow_receiver: bool,
     ) -> Result<DeclarationGroups, ParseError> {
+        self.effect_parameters_in_scope.clear();
         let mut compile_groups: Vec<Vec<CompileParam>> = Vec::new();
         let mut runtime_groups = Vec::new();
         let mut saw_runtime_group = false;
 
-        while self.at(&TokenKind::LParen) {
+        while self.at(&TokenKind::LParen) && !self.effect_group_starts_here() {
             if saw_runtime_group && self.group_starts_with_compile_parameter() {
                 return Err(self.error_here(
                     "compile-time parameter groups must precede runtime parameter groups",
@@ -503,6 +514,12 @@ impl Parser {
             };
             match group {
                 HeaderGroup::Compile(params) => {
+                    self.effect_parameters_in_scope.extend(
+                        params
+                            .iter()
+                            .filter(|parameter| parameter.kind == CompileParamKind::Effect)
+                            .map(|parameter| parameter.name.clone()),
+                    );
                     compile_groups.push(params);
                 }
                 HeaderGroup::Runtime(params) => {
@@ -949,8 +966,14 @@ impl Parser {
         let (compile_groups, groups) = self.declaration_groups(true)?;
         self.validate_receiver_groups(&groups)?;
 
-        let (return_type, effects) = if self.take(&TokenKind::Colon) {
+        let (effects, try_effect, has_effect_group) = self.function_effect_group()?;
+        let return_type = if self.take(&TokenKind::Colon) {
             if self.take(&TokenKind::Type) {
+                if has_effect_group {
+                    return Err(
+                        self.error_here("associated types cannot declare a function effect group")
+                    );
+                }
                 if !groups.is_empty() {
                     return Err(
                         self.error_here("associated types cannot have runtime parameter groups")
@@ -968,16 +991,21 @@ impl Parser {
                     default,
                 });
             }
-            let (return_type, effects, _) = self.function_return_type(&compile_groups)?;
-            (Some(return_type), effects)
+            Some(self.function_result_type(try_effect)?)
         } else {
+            if try_effect.is_some() {
+                return Err(
+                    self.error_here("`try` effect groups require an explicit logical return type")
+                );
+            }
             if self.at(&TokenKind::Bang) {
                 return Err(self.error_here(
-                    "`!` effect syntax was removed; attach an effect group to the return type",
+                    "`!` effect syntax was removed; add a function effect group before `:`",
                 ));
             }
-            (None, FunctionEffects::default())
+            None
         };
+        self.effect_parameters_in_scope.clear();
 
         if compile_groups.is_empty() && groups.is_empty() {
             return Err(
@@ -1012,28 +1040,14 @@ impl Parser {
         }))
     }
 
-    fn function_return_type(
+    fn function_effect_group(
         &mut self,
-        compile_groups: &[Vec<CompileParam>],
-    ) -> Result<(Type, FunctionEffects, bool), ParseError> {
-        self.return_effect_parameters = compile_groups
-            .iter()
-            .flatten()
-            .filter(|parameter| parameter.kind == CompileParamKind::Effect)
-            .map(|parameter| parameter.name.clone())
-            .collect();
-        let output = self.type_expr()?;
+    ) -> Result<(FunctionEffects, Option<Option<Type>>, bool), ParseError> {
         if !self.effect_group_starts_here() {
-            self.return_effect_parameters.clear();
-            if self.at(&TokenKind::Bang) {
-                return Err(self.error_here(
-                    "`!` effect syntax was removed; write a return type such as `i32(unsafe)`",
-                ));
-            }
-            return Ok((output, FunctionEffects::default(), false));
+            return Ok((FunctionEffects::default(), None, false));
         }
 
-        self.expect(&TokenKind::LParen, "`(` before return-type effects")?;
+        self.expect(&TokenKind::LParen, "`(` before function effects")?;
         let mut unsafe_effect = false;
         let mut try_effect: Option<Option<Type>> = None;
         let mut effect_parameters = Vec::new();
@@ -1057,9 +1071,9 @@ impl Parser {
                 try_effect = Some(error);
             } else if let TokenKind::Ident(name) = &self.current().kind {
                 let name = name.clone();
-                if !self.return_effect_parameters.contains(&name) {
+                if !self.effect_parameters_in_scope.contains(&name) {
                     return Err(self.error_here(format!(
-                        "undeclared effect parameter `{name}` in return-type effect group"
+                        "undeclared effect parameter `{name}` in function effect group"
                     )));
                 }
                 self.advance();
@@ -1085,20 +1099,40 @@ impl Parser {
             }
         }
 
-        let return_type = match try_effect {
-            None => output,
-            Some(None) => Type::Named("Option".to_owned(), vec![output]),
-            Some(Some(error)) => Type::Named("Result".to_owned(), vec![output, error]),
-        };
-        self.return_effect_parameters.clear();
         Ok((
-            return_type,
             FunctionEffects {
                 unsafe_effect,
                 parameters: effect_parameters,
             },
+            try_effect,
             true,
         ))
+    }
+
+    fn apply_try_effect(output: Type, try_effect: Option<Option<Type>>) -> Type {
+        match try_effect {
+            None => output,
+            Some(None) => Type::Named("Option".to_owned(), vec![output]),
+            Some(Some(error)) => Type::Named("Result".to_owned(), vec![output, error]),
+        }
+    }
+
+    fn function_result_type(
+        &mut self,
+        try_effect: Option<Option<Type>>,
+    ) -> Result<Type, ParseError> {
+        let output = self.type_expr()?;
+        if self.effect_group_starts_here() {
+            return Err(self.error_here(
+                "return-type effect groups were removed; place the effect group before `:`",
+            ));
+        }
+        if self.at(&TokenKind::Bang) {
+            return Err(self.error_here(
+                "`!` effect syntax was removed; add a function effect group before `:`",
+            ));
+        }
+        Ok(Self::apply_try_effect(output, try_effect))
     }
 
     fn effect_group_starts_here(&self) -> bool {
@@ -1110,7 +1144,7 @@ impl Parser {
             || self.at(&TokenKind::LParen)
                 && matches!(
                     self.tokens.get(self.index + 1).map(|token| &token.kind),
-                    Some(TokenKind::Ident(name)) if self.return_effect_parameters.contains(name)
+                    Some(TokenKind::Ident(name)) if self.effect_parameters_in_scope.contains(name)
                 )
     }
 
@@ -1177,8 +1211,7 @@ impl Parser {
 
     fn type_expr(&mut self) -> Result<Type, ParseError> {
         if self.take(&TokenKind::LParen) {
-            self.expect(&TokenKind::RParen, "`)` in unit type")?;
-            return Ok(Type::Unit);
+            return self.function_type_or_unit();
         }
 
         let borrow_qualifier = if self.take(&TokenKind::Borrow) {
@@ -1267,6 +1300,75 @@ impl Parser {
         } else {
             Ok(Type::Named(name, arguments))
         }
+    }
+
+    fn function_type_or_unit(&mut self) -> Result<Type, ParseError> {
+        let mut groups = Vec::new();
+        let mut group = Vec::new();
+        if !self.take(&TokenKind::RParen) {
+            loop {
+                if self.ident_followed_by_colon() {
+                    self.expect_ident("a function type parameter name")?;
+                    self.expect(&TokenKind::Colon, "`:` after function type parameter name")?;
+                }
+                group.push(self.type_expr()?);
+                if self.take(&TokenKind::Comma) {
+                    if self.take(&TokenKind::RParen) {
+                        break;
+                    }
+                } else {
+                    self.expect(
+                        &TokenKind::RParen,
+                        "`)` after function type parameter group",
+                    )?;
+                    break;
+                }
+            }
+        }
+        groups.push(group);
+
+        while self.at(&TokenKind::LParen) && !self.effect_group_starts_here() {
+            self.expect(
+                &TokenKind::LParen,
+                "`(` before function type parameter group",
+            )?;
+            let mut group = Vec::new();
+            if !self.take(&TokenKind::RParen) {
+                loop {
+                    if self.ident_followed_by_colon() {
+                        self.expect_ident("a function type parameter name")?;
+                        self.expect(&TokenKind::Colon, "`:` after function type parameter name")?;
+                    }
+                    group.push(self.type_expr()?);
+                    if self.take(&TokenKind::Comma) {
+                        if self.take(&TokenKind::RParen) {
+                            break;
+                        }
+                    } else {
+                        self.expect(
+                            &TokenKind::RParen,
+                            "`)` after function type parameter group",
+                        )?;
+                        break;
+                    }
+                }
+            }
+            groups.push(group);
+        }
+
+        let (effects, try_effect, has_effect_group) = self.function_effect_group()?;
+        if !self.take(&TokenKind::Colon) {
+            if groups.len() == 1 && groups[0].is_empty() && !has_effect_group {
+                return Ok(Type::Unit);
+            }
+            return Err(self.error_here("function types require `:` before the result type"));
+        }
+        let result = self.function_result_type(try_effect)?;
+        Ok(Type::Function {
+            groups,
+            effects,
+            result: Box::new(result),
+        })
     }
 
     fn expression(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
@@ -2474,6 +2576,21 @@ fn validate_type_effects(ty: &Type, effects: &HashSet<String>) -> Result<(), Str
         Type::Borrow { pointee, .. } | Type::Array(pointee, _) => {
             validate_type_effects(pointee, effects)
         }
+        Type::Function {
+            groups,
+            effects: function_effects,
+            result,
+        } => {
+            for parameter in &function_effects.parameters {
+                if !effects.contains(parameter) {
+                    return Err(format!("use of undeclared effect parameter `{parameter}`"));
+                }
+            }
+            for ty in groups.iter().flatten() {
+                validate_type_effects(ty, effects)?;
+            }
+            validate_type_effects(result, effects)
+        }
         Type::Named(_, arguments) => {
             for argument in arguments {
                 validate_type_effects(argument, effects)?;
@@ -2503,6 +2620,12 @@ fn validate_type_accesses(ty: &Type, accesses: &HashSet<String>) -> Result<(), S
             validate_type_accesses(pointee, accesses)
         }
         Type::Array(element, _) => validate_type_accesses(element, accesses),
+        Type::Function { groups, result, .. } => {
+            for ty in groups.iter().flatten() {
+                validate_type_accesses(ty, accesses)?;
+            }
+            validate_type_accesses(result, accesses)
+        }
         Type::Named(_, arguments) => {
             for argument in arguments {
                 validate_type_accesses(argument, accesses)?;
@@ -2636,6 +2759,12 @@ fn validate_type_regions(ty: &Type, regions: &HashSet<String>) -> Result<(), Str
             validate_type_regions(pointee, regions)
         }
         Type::Array(element, _) => validate_type_regions(element, regions),
+        Type::Function { groups, result, .. } => {
+            for ty in groups.iter().flatten() {
+                validate_type_regions(ty, regions)?;
+            }
+            validate_type_regions(result, regions)
+        }
         Type::Named(_, arguments) => {
             for argument in arguments {
                 validate_type_regions(argument, regions)?;
@@ -2846,18 +2975,18 @@ mod tests {
 
     #[test]
     fn parses_function_effects_and_rejects_them_on_values() {
-        let program = parse("let read(pointer: Ptr(i32)): i32(unsafe) = *pointer\n").unwrap();
+        let program = parse("let read(pointer: Ptr(i32))(unsafe): i32 = *pointer\n").unwrap();
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };
         assert!(function.effects.unsafe_effect);
 
-        let error = parse("let answer: i32(unsafe) = 42\n").unwrap_err();
+        let error = parse("let answer(unsafe): i32 = 42\n").unwrap_err();
         assert!(error
             .message
             .contains("effect annotations require a function declaration"));
 
-        let error = parse("let answer: i32(try) = 42\n").unwrap_err();
+        let error = parse("let answer(try): i32 = 42\n").unwrap_err();
         assert!(error
             .message
             .contains("effect annotations require a function declaration"));
@@ -2866,8 +2995,8 @@ mod tests {
         assert!(error.message.contains("`!` effect syntax was removed"));
 
         let program = parse(
-            "let optional(): i32(try) = 42\n\
-             let fallible(): i32(try(bool), unsafe) = throw true\n",
+            "let optional()(try): i32 = 42\n\
+             let fallible()(try(bool), unsafe): i32 = throw true\n",
         )
         .unwrap();
         let Item::Function(optional) = &program.items[0] else {
@@ -2890,8 +3019,8 @@ mod tests {
         assert!(fallible.effects.unsafe_effect);
 
         for source in [
-            "let f(): i32(unsafe, unsafe) = 0\n",
-            "let f(): i32(try, try) = 0\n",
+            "let f()(unsafe, unsafe): i32 = 0\n",
+            "let f()(try, try): i32 = 0\n",
         ] {
             let error = parse(source).unwrap_err();
             assert!(error.message.contains("duplicate"));
@@ -4094,10 +4223,10 @@ mod tests {
     }
 
     #[test]
-    fn parses_effect_parameters_in_return_effect_groups() {
+    fn parses_effect_parameters_in_function_effect_groups() {
         let program = parse(
-            "let tagged(E: effect)(value: i32): i32(E) = value\n\
-             let combined(E: effect)(value: i32): i32(unsafe, E) = value\n",
+            "let tagged(E: effect)(value: i32)(E): i32 = value\n\
+             let combined(E: effect)(value: i32)(unsafe, E): i32 = value\n",
         )
         .unwrap();
         let Item::Function(function) = &program.items[0] else {
@@ -4116,8 +4245,36 @@ mod tests {
             .message
             .contains("effect parameters belong to functions"));
 
-        let error = parse("let bad(E: effect)(value: E): i32(E) = 0\n").unwrap_err();
+        let error = parse("let bad(E: effect)(value: E)(E): i32 = 0\n").unwrap_err();
         assert!(error.message.contains("cannot be used as a runtime type"));
+
+        let error = parse("let old(E: effect)(value: i32): i32(E) = value\n").unwrap_err();
+        assert!(error
+            .message
+            .contains("return-type effect groups were removed"));
+    }
+
+    #[test]
+    fn parses_effects_as_part_of_callable_signatures() {
+        let program =
+            parse("let apply(E: effect)(action: (i32)(E): i32)(value: i32)(E): i32 = value\n")
+                .unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        assert!(matches!(
+            &function.groups[0][0].ty,
+            Type::Function { groups, effects, result }
+                if groups == &vec![vec![Type::I32]]
+                    && effects.parameters == vec!["E"]
+                    && result.as_ref() == &Type::I32
+        ));
+
+        let old =
+            parse("let apply(action: (i32): i32(unsafe))(value: i32): i32 = value\n").unwrap_err();
+        assert!(old
+            .message
+            .contains("return-type effect groups were removed"));
     }
 
     #[test]

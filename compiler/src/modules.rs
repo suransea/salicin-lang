@@ -1645,6 +1645,28 @@ fn validate_exposed_type(
             nominal_boundaries,
             diagnostics,
         ),
+        Type::Function { groups, result, .. } => {
+            for ty in groups.iter().flatten() {
+                validate_exposed_type(
+                    ty,
+                    exposed,
+                    source_path,
+                    bound_types,
+                    description,
+                    nominal_boundaries,
+                    diagnostics,
+                );
+            }
+            validate_exposed_type(
+                result,
+                exposed,
+                source_path,
+                bound_types,
+                description,
+                nominal_boundaries,
+                diagnostics,
+            );
+        }
         Type::Named(name, arguments) => {
             if !is_bound_api_type(name, bound_types) {
                 if let Some(referenced) = nominal_boundaries.get(name.as_str()) {
@@ -1960,6 +1982,12 @@ impl Resolver {
         match ty {
             Type::Borrow { pointee, .. } => self.rewrite_type(pointee, context, type_scope),
             Type::Array(element, _) => self.rewrite_type(element, context, type_scope),
+            Type::Function { groups, result, .. } => {
+                for ty in groups.iter_mut().flatten() {
+                    self.rewrite_type(ty, context, type_scope);
+                }
+                self.rewrite_type(result, context, type_scope);
+            }
             Type::Named(name, arguments) => {
                 for argument in arguments {
                     self.rewrite_type(argument, context, type_scope);

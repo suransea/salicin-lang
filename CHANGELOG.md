@@ -6,6 +6,20 @@ subset.
 
 ## Unreleased
 
+## 0.88.0 - 2026-07-21
+
+- Moved effects from return-type arguments into a dedicated function-signature group after all
+  runtime parameter groups and before the result colon, such as `(value: T)(unsafe): U`.
+- Removed the pre-1.0 `T(effect)` spelling in declarations and callable types, with a direct
+  migration diagnostic instead of a compatibility alias.
+- Defined effect groups as compile-time signature metadata rather than runtime or currying groups;
+  partial application still produces the effect only when the final runtime group is applied.
+- Added source callable types with the same shape, such as `(i32)(unsafe): i32`, and made unsafe
+  color part of their internal identity, substitution, generic constraints, diagnostics, and
+  canonical encoding.
+- Preserved `try` carrier normalization in the new position: `(try): T` returns `Option(T)` and
+  `(try(E)): T` returns `Result(T, E)`.
+
 ## 0.87.0 - 2026-07-21
 
 - Added the contextual `effect` compile-time kind for functions and generic inherent members, with

@@ -10,9 +10,9 @@ use std::fmt;
 use crate::alloc::AllocBundle;
 use crate::ast::{
     BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EnumDef, Expr, ExtendDef,
-    ExtendMember, Field, Function, Item, ItemOrigin, MatchArm, Param, PassMode, Pattern,
-    PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantFields,
-    Visibility,
+    ExtendMember, Field, Function, FunctionEffects, Item, ItemOrigin, MatchArm, Param, PassMode,
+    Pattern, PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp,
+    VariantFields, Visibility,
 };
 use crate::cleanup::{
     BasicBlockId as CleanupBlockId, CleanupEdge, CleanupOp, CleanupPlan, CleanupPlanBuilder,
@@ -294,6 +294,7 @@ enum NominalInstanceState {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct FunctionTy {
     groups: Vec<Vec<Ty>>,
+    unsafe_effect: bool,
     result: Box<Ty>,
 }
 
@@ -371,8 +372,12 @@ impl fmt::Display for Ty {
                         }
                         write!(f, "{ty}")?;
                     }
-                    f.write_str("): ")?;
+                    f.write_str(")")?;
                 }
+                if function.unsafe_effect {
+                    f.write_str("(unsafe)")?;
+                }
+                f.write_str(": ")?;
                 write!(f, "{}", function.result)
             }
             Self::Callable(callable) => write!(f, "{}", Ty::Function(callable.signature.clone())),
@@ -733,6 +738,7 @@ struct ParamSig {
 #[derive(Debug, Clone)]
 struct FunctionSig {
     groups: Vec<Vec<ParamSig>>,
+    unsafe_effect: bool,
     result: Option<Ty>,
 }
 
@@ -744,6 +750,7 @@ impl FunctionSig {
                 .iter()
                 .map(|group| group.iter().map(|param| param.ty.clone()).collect())
                 .collect(),
+            unsafe_effect: self.unsafe_effect,
             result: Box::new(self.result.clone()?),
         }))
     }
@@ -922,6 +929,7 @@ struct PartialInfo {
 struct ClosureInfo {
     function: String,
     groups: Vec<Vec<ParamSig>>,
+    unsafe_effect: bool,
     result: Ty,
     captures: Vec<ClosureCapture>,
     is_fn_mut: bool,
@@ -1784,7 +1792,14 @@ impl Analyzer {
                 .return_type
                 .as_ref()
                 .map(|ty| self.lower_source_type(ty));
-            self.signatures.insert(name, FunctionSig { groups, result });
+            self.signatures.insert(
+                name,
+                FunctionSig {
+                    groups,
+                    unsafe_effect: function.effects.unsafe_effect,
+                    result,
+                },
+            );
         }
         for name in self.global_order.clone() {
             let binding = self.globals[&name].clone();
@@ -2419,6 +2434,11 @@ impl Analyzer {
                     self.validate_trait_source_type(trait_name, member_name, element, type_names);
                 valid
             }
+            Type::Function { groups, result, .. } => {
+                groups.iter().flatten().all(|ty| {
+                    self.validate_trait_source_type(trait_name, member_name, ty, type_names)
+                }) && self.validate_trait_source_type(trait_name, member_name, result, type_names)
+            }
             Type::Named(name, arguments) if type_names.contains(name) => {
                 if arguments.is_empty() {
                     true
@@ -2495,6 +2515,18 @@ impl Analyzer {
             Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => true,
             Type::Borrow { pointee, .. } => self.source_type_is_concrete(pointee),
             Type::Array(element, _) => self.source_type_is_concrete(element),
+            Type::Function {
+                groups,
+                effects,
+                result,
+            } => {
+                effects.parameters.is_empty()
+                    && groups
+                        .iter()
+                        .flatten()
+                        .all(|ty| self.source_type_is_concrete(ty))
+                    && self.source_type_is_concrete(result)
+            }
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => true,
             Type::Named(name, arguments) if arguments.is_empty() => {
                 self.struct_defs.contains_key(name) || self.enum_defs.contains_key(name)
@@ -2522,6 +2554,13 @@ impl Analyzer {
             Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => true,
             Type::Borrow { pointee, .. } => self.source_type_is_abstract_or_concrete(pointee),
             Type::Array(element, _) => self.source_type_is_abstract_or_concrete(element),
+            Type::Function { groups, result, .. } => {
+                groups
+                    .iter()
+                    .flatten()
+                    .all(|ty| self.source_type_is_abstract_or_concrete(ty))
+                    && self.source_type_is_abstract_or_concrete(result)
+            }
             Type::Named(name, arguments) if arguments.is_empty() => {
                 self.abstract_type_parameters.contains_key(name)
                     || self.struct_defs.contains_key(name)
@@ -2716,6 +2755,39 @@ impl Analyzer {
                 )?),
                 *length,
             )),
+            Type::Function {
+                groups,
+                effects,
+                result,
+            } => Some(Type::Function {
+                groups: groups
+                    .iter()
+                    .map(|group| {
+                        group
+                            .iter()
+                            .map(|ty| {
+                                self.normalize_trait_impl_type(
+                                    trait_name,
+                                    ty,
+                                    raw,
+                                    base_substitutions,
+                                    normalized,
+                                    visiting,
+                                )
+                            })
+                            .collect::<Option<Vec<_>>>()
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+                effects: effects.clone(),
+                result: Box::new(self.normalize_trait_impl_type(
+                    trait_name,
+                    result,
+                    raw,
+                    base_substitutions,
+                    normalized,
+                    visiting,
+                )?),
+            }),
             Type::Named(name, arguments) => Some(Type::Named(
                 name.clone(),
                 arguments
@@ -3071,8 +3143,14 @@ impl Analyzer {
                 .return_type
                 .as_ref()
                 .map(|result| self.lower_source_type(result));
-            self.signatures
-                .insert(canonical.clone(), FunctionSig { groups, result });
+            self.signatures.insert(
+                canonical.clone(),
+                FunctionSig {
+                    groups,
+                    unsafe_effect: function.effects.unsafe_effect,
+                    result,
+                },
+            );
             self.function_order.push(canonical.clone());
             self.functions.insert(canonical.clone(), function);
             self.function_origins
@@ -3246,8 +3324,14 @@ impl Analyzer {
                             .return_type
                             .as_ref()
                             .map(|result| self.lower_source_type(result));
-                        self.signatures
-                            .insert(canonical.clone(), FunctionSig { groups, result });
+                        self.signatures.insert(
+                            canonical.clone(),
+                            FunctionSig {
+                                groups,
+                                unsafe_effect: function.effects.unsafe_effect,
+                                result,
+                            },
+                        );
                         self.function_order.push(canonical.clone());
                         self.functions.insert(canonical.clone(), function);
                         self.function_origins
@@ -4998,13 +5082,20 @@ impl Analyzer {
                 .return_type
                 .as_ref()
                 .map(|ty| self.lower_source_type(ty));
+            let unsafe_effect = function.effects.unsafe_effect;
             self.functions.insert(validation_name.clone(), function);
             self.function_origins.insert(
                 validation_name.clone(),
                 self.function_template_origins[&template_name].clone(),
             );
-            self.signatures
-                .insert(validation_name.clone(), FunctionSig { groups, result });
+            self.signatures.insert(
+                validation_name.clone(),
+                FunctionSig {
+                    groups,
+                    unsafe_effect,
+                    result,
+                },
+            );
             self.function_type_substitutions
                 .insert(validation_name.clone(), substitutions);
             self.lower_function(&validation_name);
@@ -5110,8 +5201,14 @@ impl Analyzer {
                     .return_type
                     .as_ref()
                     .map(|result| self.lower_source_type(result));
-                self.signatures
-                    .insert(canonical.clone(), FunctionSig { groups, result });
+                self.signatures.insert(
+                    canonical.clone(),
+                    FunctionSig {
+                        groups,
+                        unsafe_effect: method.effects.unsafe_effect,
+                        result,
+                    },
+                );
                 methods.insert(method_name.clone(), canonical);
                 if schema_function_has_receiver(&schema.methods[method_name]) {
                     self.trait_methods_by_receiver
@@ -5344,6 +5441,32 @@ impl Analyzer {
             Type::U64 => Ty::U64,
             Type::Bool => Ty::Bool,
             Type::Unit => Ty::Unit,
+            Type::Function {
+                groups,
+                effects,
+                result,
+            } => {
+                if !effects.parameters.is_empty() {
+                    self.error(format!(
+                        "unresolved effect parameter{} `{}` in function type",
+                        if effects.parameters.len() == 1 {
+                            ""
+                        } else {
+                            "s"
+                        },
+                        effects.parameters.join(", ")
+                    ));
+                    return Ty::Error;
+                }
+                Ty::Function(FunctionTy {
+                    groups: groups
+                        .iter()
+                        .map(|group| group.iter().map(|ty| self.lower_source_type(ty)).collect())
+                        .collect(),
+                    unsafe_effect: effects.unsafe_effect,
+                    result: Box::new(self.lower_source_type(result)),
+                })
+            }
             Type::Borrow {
                 mutable,
                 region,
@@ -5608,7 +5731,27 @@ impl Analyzer {
                     None
                 }
             }
-            Ty::Never | Ty::Function(_) | Ty::Callable(_) | Ty::Error => None,
+            Ty::Function(function) => Some(Type::Function {
+                groups: function
+                    .groups
+                    .iter()
+                    .map(|group| {
+                        group
+                            .iter()
+                            .map(|ty| self.source_type_for_ty(ty))
+                            .collect::<Option<Vec<_>>>()
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+                effects: FunctionEffects {
+                    unsafe_effect: function.unsafe_effect,
+                    parameters: Vec::new(),
+                },
+                result: Box::new(self.source_type_for_ty(&function.result)?),
+            }),
+            Ty::Callable(callable) => {
+                self.source_type_for_ty(&Ty::Function(callable.signature.clone()))
+            }
+            Ty::Never | Ty::Error => None,
         }
     }
 
@@ -5676,8 +5819,12 @@ impl Analyzer {
                             .collect::<Vec<_>>()
                             .join(", "),
                     );
-                    rendered.push_str("): ");
+                    rendered.push(')');
                 }
+                if function.unsafe_effect {
+                    rendered.push_str("(unsafe)");
+                }
+                rendered.push_str(": ");
                 rendered.push_str(&self.diagnostic_type_name(&function.result));
                 rendered
             }
@@ -5744,6 +5891,28 @@ impl Analyzer {
             Type::U64 => Some(Ty::U64),
             Type::Bool => Some(Ty::Bool),
             Type::Unit => Some(Ty::Unit),
+            Type::Function {
+                groups,
+                effects,
+                result,
+            } => {
+                if !effects.parameters.is_empty() {
+                    return None;
+                }
+                Some(Ty::Function(FunctionTy {
+                    groups: groups
+                        .iter()
+                        .map(|group| {
+                            group
+                                .iter()
+                                .map(|ty| self.probe_source_ty(ty))
+                                .collect::<Option<Vec<_>>>()
+                        })
+                        .collect::<Option<Vec<_>>>()?,
+                    unsafe_effect: effects.unsafe_effect,
+                    result: Box::new(self.probe_source_ty(result)?),
+                }))
+            }
             Type::Borrow {
                 mutable,
                 region,
@@ -6052,6 +6221,92 @@ impl Analyzer {
                     origin,
                 )
             }
+            Type::Function {
+                groups,
+                effects,
+                result,
+            } => {
+                let actual_function = match actual {
+                    Ty::Function(function) => function,
+                    Ty::Callable(callable) => &callable.signature,
+                    _ => return Err(mismatch()),
+                };
+                if groups.len() != actual_function.groups.len()
+                    || groups
+                        .iter()
+                        .zip(&actual_function.groups)
+                        .any(|(left, right)| left.len() != right.len())
+                    || (effects.unsafe_effect && !actual_function.unsafe_effect)
+                {
+                    return Err(mismatch());
+                }
+                if effects.parameters.is_empty()
+                    && effects.unsafe_effect != actual_function.unsafe_effect
+                {
+                    return Err(mismatch());
+                }
+                let mut changed = false;
+                for parameter in &effects.parameters {
+                    let marker = if actual_function.unsafe_effect {
+                        EFFECT_UNSAFE_MARKER
+                    } else {
+                        EFFECT_PURE_MARKER
+                    };
+                    let selected = InferredTypeArgument {
+                        ty: Ty::Struct(marker.to_owned()),
+                        source: Some(Type::Named(marker.to_owned(), Vec::new())),
+                        origin: origin.to_owned(),
+                    };
+                    match inferred.get(parameter) {
+                        Some(previous)
+                            if previous.origin != "default pure effect"
+                                && previous.ty != selected.ty =>
+                        {
+                            return Err(format!(
+                                "conflicting inference for effect parameter `{parameter}` from {} and {origin}",
+                                previous.origin
+                            ));
+                        }
+                        Some(previous) if previous.ty == selected.ty => {}
+                        _ => {
+                            inferred.insert(parameter.clone(), selected);
+                            changed = true;
+                        }
+                    }
+                }
+                let actual_source_function = match actual_source {
+                    Some(Type::Function { groups, result, .. }) => Some((groups, result.as_ref())),
+                    _ => None,
+                };
+                for (group_index, (templates, actuals)) in
+                    groups.iter().zip(&actual_function.groups).enumerate()
+                {
+                    for (parameter_index, (template, actual)) in
+                        templates.iter().zip(actuals).enumerate()
+                    {
+                        let source = actual_source_function
+                            .and_then(|(groups, _)| groups.get(group_index))
+                            .and_then(|group| group.get(parameter_index));
+                        changed |= self.unify_template_ty(
+                            template,
+                            actual,
+                            source,
+                            compile_parameters,
+                            inferred,
+                            origin,
+                        )?;
+                    }
+                }
+                changed |= self.unify_template_ty(
+                    result,
+                    &actual_function.result,
+                    actual_source_function.map(|(_, result)| result),
+                    compile_parameters,
+                    inferred,
+                    origin,
+                )?;
+                Ok(changed)
+            }
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => {
                 if *actual == Ty::Unit {
                     Ok(false)
@@ -6170,6 +6425,43 @@ impl Analyzer {
                 Box::new(self.resolved_template_ty(element, compile_parameters, inferred)?),
                 *length,
             )),
+            Type::Function {
+                groups,
+                effects,
+                result,
+            } => {
+                let mut unsafe_effect = effects.unsafe_effect;
+                for parameter in &effects.parameters {
+                    unsafe_effect |= substituted_unsafe_effect(
+                        parameter,
+                        &inferred
+                            .iter()
+                            .filter_map(|(name, argument)| {
+                                argument.source.clone().map(|source| (name.clone(), source))
+                            })
+                            .collect(),
+                    )?;
+                }
+                Some(Ty::Function(FunctionTy {
+                    groups: groups
+                        .iter()
+                        .map(|group| {
+                            group
+                                .iter()
+                                .map(|ty| {
+                                    self.resolved_template_ty(ty, compile_parameters, inferred)
+                                })
+                                .collect::<Option<Vec<_>>>()
+                        })
+                        .collect::<Option<Vec<_>>>()?,
+                    unsafe_effect,
+                    result: Box::new(self.resolved_template_ty(
+                        result,
+                        compile_parameters,
+                        inferred,
+                    )?),
+                }))
+            }
             Type::Named(name, arguments)
                 if arguments.is_empty() && compile_parameters.contains(name) =>
             {
@@ -7995,6 +8287,7 @@ impl Analyzer {
                     if let Some(groups) = remaining {
                         return TypeProbe::Known(Ty::Function(FunctionTy {
                             groups,
+                            unsafe_effect: template.effects.unsafe_effect,
                             result: Box::new(result),
                         }));
                     }
@@ -8024,6 +8317,7 @@ impl Analyzer {
                     .iter()
                     .map(|group| group.iter().map(|parameter| parameter.ty.clone()).collect())
                     .collect(),
+                unsafe_effect: signature.unsafe_effect,
                 result: Box::new(result),
             }));
         }
@@ -8621,8 +8915,14 @@ impl Analyzer {
             .return_type
             .as_ref()
             .map(|ty| self.lower_source_type(ty));
-        self.signatures
-            .insert(canonical.clone(), FunctionSig { groups, result });
+        self.signatures.insert(
+            canonical.clone(),
+            FunctionSig {
+                groups,
+                unsafe_effect: function.effects.unsafe_effect,
+                result,
+            },
+        );
         self.functions.insert(canonical.clone(), function);
         self.function_origins.insert(
             canonical.clone(),
@@ -10689,6 +10989,7 @@ impl Analyzer {
                     .iter()
                     .map(|group| group.iter().map(|param| param.ty.clone()).collect())
                     .collect(),
+                unsafe_effect: forwarded_unsafe_depth > 0,
                 result: Box::new(result.clone()),
             },
             captures: captures
@@ -10711,6 +11012,7 @@ impl Analyzer {
         let info = ClosureInfo {
             function,
             groups: groups.clone(),
+            unsafe_effect: forwarded_unsafe_depth > 0,
             result: result.clone(),
             captures,
             is_fn_mut,
@@ -15185,6 +15487,7 @@ impl Analyzer {
                 consumed_groups,
                 FunctionTy {
                     groups: function_ty.groups[consumed_groups..].to_vec(),
+                    unsafe_effect: function_ty.unsafe_effect,
                     result: function_ty.result.clone(),
                 },
                 &arguments,
@@ -15236,6 +15539,11 @@ impl Analyzer {
                     arguments.len()
                 ));
             }
+        }
+        if closure.unsafe_effect && context.unsafe_depth == 0 {
+            self.error(format!(
+                "call to unsafe closure `{local_name}` requires an `unsafe` handler"
+            ));
         }
 
         let callable = HirPlace {
@@ -15426,6 +15734,7 @@ impl Analyzer {
                 groups.len(),
                 FunctionTy {
                     groups: remaining,
+                    unsafe_effect: function_ty.unsafe_effect,
                     result: function_ty.result.clone(),
                 },
                 &arguments,
@@ -15789,6 +16098,7 @@ impl Analyzer {
                 consumed_groups,
                 FunctionTy {
                     groups: function_ty.groups[consumed_groups..].to_vec(),
+                    unsafe_effect: function_ty.unsafe_effect,
                     result: function_ty.result.clone(),
                 },
                 &arguments,
@@ -16500,6 +16810,7 @@ fn closure_info_for_callable(ty: &Ty) -> Option<ClosureInfo> {
     Some(ClosureInfo {
         function: function.clone(),
         groups,
+        unsafe_effect: callable.signature.unsafe_effect,
         result: (*callable.signature.result).clone(),
         captures,
         is_fn_mut: *is_fn_mut,
@@ -21814,6 +22125,12 @@ fn collect_nominal_type_dependencies(
         Type::Array(element, _) => {
             collect_nominal_type_dependencies(element, nominal_names, bound, output)
         }
+        Type::Function { groups, result, .. } => {
+            for ty in groups.iter().flatten() {
+                collect_nominal_type_dependencies(ty, nominal_names, bound, output);
+            }
+            collect_nominal_type_dependencies(result, nominal_names, bound, output);
+        }
         Type::Named(name, _) if !bound.contains(name.as_str()) && nominal_names.contains(name) => {
             if !output.contains(name) {
                 output.push(name.clone());
@@ -22284,6 +22601,7 @@ fn source_type_expression(source: &Type) -> Expr {
         Type::U64 => Expr::Name("u64".to_owned()),
         Type::Bool => Expr::Name("bool".to_owned()),
         Type::Borrow { .. } => Expr::Name("<borrow-type>".to_owned()),
+        Type::Function { .. } => Expr::Name("<function-type>".to_owned()),
         Type::Array(element, length) => Expr::Call(
             Box::new(Expr::Name("Array".to_owned())),
             vec![
@@ -22333,6 +22651,24 @@ fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<String, Typ
             substitute_type_parameters(pointee, substitutions)
         }
         Type::Array(element, _) => substitute_type_parameters(element, substitutions),
+        Type::Function {
+            groups,
+            effects,
+            result,
+        } => {
+            for ty in groups.iter_mut().flatten() {
+                substitute_type_parameters(ty, substitutions);
+            }
+            substitute_type_parameters(result, substitutions);
+            let mut remaining = Vec::new();
+            for parameter in effects.parameters.drain(..) {
+                match substituted_unsafe_effect(&parameter, substitutions) {
+                    Some(selected) => effects.unsafe_effect |= selected,
+                    None => remaining.push(parameter),
+                }
+            }
+            effects.parameters = remaining;
+        }
         Type::Named(_, arguments) => {
             for argument in arguments {
                 substitute_type_parameters(argument, substitutions);
@@ -22495,6 +22831,35 @@ fn impl_type_pattern(
             Box::new(impl_type_pattern(element, variables, side)),
             *length,
         ),
+        Type::Function {
+            groups,
+            effects,
+            result,
+        } => {
+            let mut arguments = groups
+                .iter()
+                .flatten()
+                .map(|ty| impl_type_pattern(ty, variables, side))
+                .collect::<Vec<_>>();
+            arguments.push(impl_type_pattern(result, variables, side));
+            ImplTypePattern::Named(
+                format!(
+                    "$function${}${}",
+                    groups
+                        .iter()
+                        .map(Vec::len)
+                        .map(|length| length.to_string())
+                        .collect::<Vec<_>>()
+                        .join("_"),
+                    if effects.unsafe_effect {
+                        "$unsafe"
+                    } else {
+                        "$pure"
+                    }
+                ),
+                arguments,
+            )
+        }
         Type::Named(name, arguments) if arguments.is_empty() && variables.contains_key(name) => {
             ImplTypePattern::Variable(side, variables[name])
         }
@@ -22694,6 +23059,7 @@ fn canonical_type_encoding(ty: &Ty) -> String {
                     push_canonical_component(&mut encoded, &canonical_type_encoding(parameter));
                 }
             }
+            encoded.push_str(if function.unsafe_effect { "u:" } else { "p:" });
             push_canonical_component(&mut encoded, &canonical_type_encoding(&function.result));
             encoded
         }
@@ -22747,6 +23113,12 @@ fn substitute_self_type(ty: &mut Type, target: &str) {
     match ty {
         Type::Borrow { pointee, .. } => substitute_self_type(pointee, target),
         Type::Array(element, _) => substitute_self_type(element, target),
+        Type::Function { groups, result, .. } => {
+            for ty in groups.iter_mut().flatten() {
+                substitute_self_type(ty, target);
+            }
+            substitute_self_type(result, target);
+        }
         Type::Named(name, arguments) if name == "Self" && arguments.is_empty() => {
             *ty = Type::Named(target.to_owned(), Vec::new());
         }
@@ -25891,8 +26263,8 @@ let main(): i32 = loop {
     fn unsafe_effects_are_declared_forwarded_and_handled_at_calls() {
         let ir = compile_text(
             r#"
-let read(pointer: Ptr(i32)): i32(unsafe) = *pointer
-let forward(pointer: Ptr(i32)): i32(unsafe) = read(pointer)
+let read(pointer: Ptr(i32))(unsafe): i32 = *pointer
+let forward(pointer: Ptr(i32))(unsafe): i32 = read(pointer)
 let main(): i32 = {
   let value = 42
   unsafe { forward(Ptr(borrow value)) }
@@ -25904,7 +26276,7 @@ let main(): i32 = {
 
         let errors = compile_text(
             r#"
-let read(pointer: Ptr(i32)): i32(unsafe) = *pointer
+let read(pointer: Ptr(i32))(unsafe): i32 = *pointer
 let main(): i32 = {
   let value = 42
   read(Ptr(borrow value))
@@ -25923,7 +26295,7 @@ let main(): i32 = {
     fn unsafe_effect_checks_survive_aliasing_and_partial_application() {
         let errors = compile_text(
             r#"
-let read(pointer: Ptr(i32))(offset: i32): i32(unsafe) = *pointer + offset
+let read(pointer: Ptr(i32))(offset: i32)(unsafe): i32 = *pointer + offset
 let main(): i32 = {
   let value = 40
   let named = read
@@ -25939,7 +26311,7 @@ let main(): i32 = {
 
         compile_text(
             r#"
-let read(pointer: Ptr(i32))(offset: i32): i32(unsafe) = *pointer + offset
+let read(pointer: Ptr(i32))(offset: i32)(unsafe): i32 = *pointer + offset
 let main(): i32 = {
   let value = 40
   let pending = read(Ptr(borrow value))
@@ -25956,10 +26328,10 @@ let main(): i32 = {
             r#"
 let Reader = struct(pointer: Ptr(i32))
 let Read = trait {
-  let read(borrow self)(): i32(unsafe)
+  let read(borrow self)()(unsafe): i32
 }
 extend Reader: Read {
-  let read(borrow self)(): i32(unsafe) = *self.pointer
+  let read(borrow self)()(unsafe): i32 = *self.pointer
 }
 let main(): i32 = {
   let value = 42
@@ -25974,7 +26346,7 @@ let main(): i32 = {
             r#"
 let Reader = struct(pointer: Ptr(i32))
 let Read = trait {
-  let read(borrow self)(): i32(unsafe)
+  let read(borrow self)()(unsafe): i32
 }
 extend Reader: Read {
   let read(borrow self)(): i32 = unsafe { *self.pointer }
@@ -25990,7 +26362,7 @@ let main(): i32 = 0
 
     #[test]
     fn entry_point_cannot_export_an_unsafe_effect() {
-        let errors = compile_text("let main(): i32(unsafe) = 42\n").unwrap_err();
+        let errors = compile_text("let main()(unsafe): i32 = 42\n").unwrap_err();
         assert!(errors.iter().any(|error| {
             error
                 .message
@@ -26002,8 +26374,8 @@ let main(): i32 = 0
     fn effect_compile_parameters_select_pure_or_unsafe_instances() {
         compile_text(
             r#"
-let tagged(E: effect)(value: i32): i32(E) = value
-let forward(E: effect)(value: i32): i32(E) = tagged(E)(value)
+let tagged(E: effect)(value: i32)(E): i32 = value
+let forward(E: effect)(value: i32)(E): i32 = tagged(E)(value)
 let main(): i32 = forward(20) + forward(pure)(20) + unsafe { forward(E: unsafe)(2) }
 "#,
         )
@@ -26011,7 +26383,7 @@ let main(): i32 = forward(20) + forward(pure)(20) + unsafe { forward(E: unsafe)(
 
         compile_text(
             r#"
-let identity(E: effect, T: type)(value: T): T(E) = value
+let identity(E: effect, T: type)(value: T)(E): T = value
 let main(): i32 = identity(20) + unsafe { identity(E: unsafe, T: i32)(22) }
 "#,
         )
@@ -26019,8 +26391,8 @@ let main(): i32 = identity(20) + unsafe { identity(E: unsafe, T: i32)(22) }
 
         let errors = compile_text(
             r#"
-let tagged(E: effect)(value: i32): i32(E) = value
-let forward(E: effect)(value: i32): i32(E) = tagged(E)(value)
+let tagged(E: effect)(value: i32)(E): i32 = value
+let forward(E: effect)(value: i32)(E): i32 = tagged(E)(value)
 let main(): i32 = forward(unsafe)(42)
 "#,
         )
@@ -26034,7 +26406,7 @@ let main(): i32 = forward(unsafe)(42)
 
         compile_text(
             r#"
-let read(E: effect)(pointer: Ptr(i32)): i32(E) = *pointer
+let read(E: effect)(pointer: Ptr(i32))(E): i32 = *pointer
 let main(): i32 = {
   let value = 42
   unsafe { read(unsafe)(Ptr(borrow value)) }
@@ -26045,7 +26417,7 @@ let main(): i32 = {
 
         let errors = compile_text(
             r#"
-let read(E: effect)(pointer: Ptr(i32)): i32(E) = *pointer
+let read(E: effect)(pointer: Ptr(i32))(E): i32 = *pointer
 let main(): i32 = {
   let value = 42
   read(Ptr(borrow value))
@@ -26062,7 +26434,7 @@ let main(): i32 = {
 
         let errors = compile_text(
             r#"
-let tagged(E: effect)(value: i32): i32(E) = value
+let tagged(E: effect)(value: i32)(E): i32 = value
 let main(): i32 = tagged(E: copy)(42)
 "#,
         )
@@ -26073,7 +26445,7 @@ let main(): i32 = tagged(E: copy)(42)
 
         let errors = compile_text(
             r#"
-let always(E: effect)(value: i32): i32(unsafe, E) = value
+let always(E: effect)(value: i32)(unsafe, E): i32 = value
 let main(): i32 = always(pure)(42)
 "#,
         )
@@ -26089,7 +26461,7 @@ let main(): i32 = always(pure)(42)
             r#"
 let Value = struct(value: i32)
 extend Value {
-  let tagged(E: effect)(borrow self)(): i32(E) = self.value
+  let tagged(E: effect)(borrow self)()(E): i32 = self.value
 }
 let main(): i32 = {
   let value = Value(42)
@@ -26104,8 +26476,8 @@ let main(): i32 = {
     fn return_type_try_effect_groups_lower_to_option_and_result_boundaries() {
         let ir = compile_text(
             r#"
-let keep(move value: Option(i32)): i32(try) = value.try
-let fail(flag: bool): i32(try(bool)) = if flag { throw true } else { 40 }
+let keep(move value: Option(i32))(try): i32 = value.try
+let fail(flag: bool)(try(bool)): i32 = if flag { throw true } else { 40 }
 let main(): i32 = (keep(Option(i32).None) ?? 1) + (fail(false) ?? 0) + 1
 "#,
         )
@@ -26117,7 +26489,7 @@ let main(): i32 = (keep(Option(i32).None) ?? 1) + (fail(false) ?? 0) + 1
     fn try_and_unsafe_share_one_return_type_effect_group() {
         let ir = compile_text(
             r#"
-let read(pointer: Ptr(i32), fail: bool): i32(try(bool), unsafe) = {
+let read(pointer: Ptr(i32), fail: bool)(try(bool), unsafe): i32 = {
   if fail { throw true }
   *pointer
 }
@@ -26132,7 +26504,7 @@ let main(): i32 = {
 
         let errors = compile_text(
             r#"
-let read(pointer: Ptr(i32)): i32(try(bool), unsafe) = *pointer
+let read(pointer: Ptr(i32))(try(bool), unsafe): i32 = *pointer
 let main(): i32 = {
   let value = 42
   read(Ptr(borrow value)) ?? 0
