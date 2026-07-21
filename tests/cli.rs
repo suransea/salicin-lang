@@ -133,7 +133,11 @@ fn effect_generics_select_pure_and_unsafe_instances() {
 
 #[test]
 fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
-    for fixture_name in ["algebraic_effect_handler.sc", "algebraic_effect_abort.sc"] {
+    for fixture_name in [
+        "algebraic_effect_handler.sc",
+        "algebraic_effect_abort.sc",
+        "algebraic_effect_function_propagation.sc",
+    ] {
         let output = salic()
             .arg("run")
             .arg(fixture("pass", fixture_name))

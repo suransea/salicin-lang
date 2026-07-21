@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.112.0 - 2026-07-22
+
+- Propagated handled operations through fully applied ordinary named functions by selectively
+  specializing their source bodies under the active handler.
+- Added hygienic renaming for parameters, locals, closure parameters, and match bindings so inlined
+  handler continuations preserve caller and callee lexical scope even when names collide.
+- Stopped emitting unspecialized resumable source functions into native modules, preventing
+  unreachable operation placeholders from becoming linker references.
+- Added native cross-function state-handler coverage; recursion, borrow parameters, explicit
+  returns, indirect calls, and loop backedges remain reserved for the typed continuation ABI.
+
 ## 0.111.0 - 2026-07-22
 
 - Added the derived `Effect(...).handle(clauses...) { action }` member for lexically visible

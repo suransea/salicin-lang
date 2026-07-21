@@ -4,7 +4,7 @@
 //! it to a small typed representation.  No malformed program reaches the LLVM
 //! emitter, which keeps the generated IR simple enough to inspect in tests.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
@@ -383,6 +383,7 @@ struct AlgebraicHandler {
     identity: String,
     clauses: HashMap<String, AlgebraicHandlerClause>,
     done: Option<AlgebraicHandlerClause>,
+    inlining: Rc<RefCell<HashSet<String>>>,
 }
 
 #[derive(Clone)]
@@ -5581,7 +5582,7 @@ impl Analyzer {
         let mut functions: Vec<_> = self
             .function_order
             .iter()
-            .map(|name| self.hir_functions[name].clone())
+            .filter_map(|name| self.hir_functions.get(name).cloned())
             .collect();
         functions.extend(self.lifted_functions.clone());
         Some(HirProgram {
@@ -10007,15 +10008,25 @@ impl Analyzer {
         };
 
         self.set_function_result(name, result.clone());
-        self.hir_functions.insert(
-            name.to_owned(),
-            HirFunction {
-                name: name.to_owned(),
-                params,
-                result: result.clone(),
-                body: lowered_body,
-            },
-        );
+        let requires_resumable_lowering = function.effects.custom.iter().any(|effect| {
+            let Type::Named(effect_name, _) = effect else {
+                return false;
+            };
+            self.effect_defs
+                .get(effect_name)
+                .is_some_and(|definition| !definition.operations.is_empty())
+        });
+        if !requires_resumable_lowering {
+            self.hir_functions.insert(
+                name.to_owned(),
+                HirFunction {
+                    name: name.to_owned(),
+                    params,
+                    result: result.clone(),
+                    body: lowered_body,
+                },
+            );
+        }
         self.function_states
             .insert(name.to_owned(), ResolutionState::Resolved);
         result
@@ -15440,6 +15451,7 @@ impl Analyzer {
             identity: source_effect_identity(instance),
             clauses,
             done,
+            inlining: Rc::new(RefCell::new(HashSet::new())),
         });
         let final_continuation: SourceContinuation = if let Some(done) = handler.done.clone() {
             let handler = handler.clone();
@@ -15560,6 +15572,17 @@ impl Analyzer {
             return Err(());
         }
 
+        if matches!(&expression, Expr::Call(_, _)) {
+            if let Some(result) = self.transform_effectful_named_call(
+                &expression,
+                handler.clone(),
+                resume.clone(),
+                continuation.clone(),
+            ) {
+                return result;
+            }
+        }
+
         match expression {
             Expr::Block(statements, tail) => self.transform_handler_block(
                 statements,
@@ -15662,6 +15685,100 @@ impl Analyzer {
             }
             other => continuation(self, other),
         }
+    }
+
+    fn transform_effectful_named_call(
+        &mut self,
+        expression: &Expr,
+        handler: Rc<AlgebraicHandler>,
+        resume: Option<SourceResume>,
+        continuation: SourceContinuation,
+    ) -> Option<Result<Expr, ()>> {
+        let mut groups = Vec::new();
+        let Expr::Name(name) = flatten_call(expression, &mut groups) else {
+            return None;
+        };
+        let function = self.functions.get(name)?.clone();
+        if !function
+            .effects
+            .custom
+            .iter()
+            .any(|effect| source_effect_identity(effect) == handler.identity)
+        {
+            return None;
+        }
+        let Some(_) = function.body else {
+            self.error(format!(
+                "effectful function `{name}` has no source body available for handler lowering"
+            ));
+            return Some(Err(()));
+        };
+        if groups.len() != function.groups.len()
+            || groups
+                .iter()
+                .zip(&function.groups)
+                .any(|(arguments, parameters)| arguments.len() != parameters.len())
+        {
+            self.error(format!(
+                "effectful function `{name}` must be fully applied before it can run under a handler"
+            ));
+            return Some(Err(()));
+        }
+        if function
+            .groups
+            .iter()
+            .flatten()
+            .any(|parameter| matches!(parameter.mode, PassMode::Borrow | PassMode::MutBorrow))
+        {
+            self.error(format!(
+                "handler propagation through borrow-parameter function `{name}` is not implemented yet"
+            ));
+            return Some(Err(()));
+        }
+        if expression_contains_return(function.body.as_ref().expect("checked body")) {
+            self.error(format!(
+                "handler propagation through `{name}` does not yet support explicit `return`"
+            ));
+            return Some(Err(()));
+        }
+        if !handler.inlining.borrow_mut().insert(name.clone()) {
+            self.error(format!(
+                "recursive resumable call through `{name}` requires the typed continuation ABI"
+            ));
+            return Some(Err(()));
+        }
+
+        let prefix = format!("$handler$inline${}${}$", self.next_closure, name);
+        self.next_closure += 1;
+        let (parameters, body) = hygienic_inline_function(&function, &prefix);
+        let mut bindings = Vec::new();
+        for ((arguments, declared), renamed) in groups.iter().zip(&function.groups).zip(&parameters)
+        {
+            for ((argument, declared), renamed) in arguments.iter().zip(declared).zip(renamed) {
+                if argument
+                    .label
+                    .as_deref()
+                    .is_some_and(|label| label != declared.name)
+                {
+                    self.error(format!(
+                        "unknown argument label on effectful call `{name}`: expected `{}`",
+                        declared.name
+                    ));
+                    handler.inlining.borrow_mut().remove(name);
+                    return Some(Err(()));
+                }
+                bindings.push(Stmt::Let(Binding {
+                    mutable: false,
+                    name: renamed.name.clone(),
+                    annotation: Some(renamed.ty.clone()),
+                    value: argument.value.clone(),
+                }));
+            }
+        }
+        let inline = Expr::Block(bindings, Some(Box::new(body)));
+        let result = self.transform_handler_expr(inline, handler.clone(), resume, continuation);
+        handler.inlining.borrow_mut().remove(name);
+        Some(result)
     }
 
     fn transform_handler_block(
@@ -19394,6 +19511,232 @@ fn expression_contains_effect(expression: &Expr, identity: &str) -> bool {
                 })
         }
         Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => false,
+    }
+}
+
+fn expression_contains_return(expression: &Expr) -> bool {
+    match expression {
+        Expr::Return(_) => true,
+        Expr::Closure(_, _) => false,
+        Expr::Unary(_, value)
+        | Expr::Try(value)
+        | Expr::DoBlock { body: value }
+        | Expr::Throw(value)
+        | Expr::Unsafe(value) => expression_contains_return(value),
+        Expr::Borrow { value, .. } => expression_contains_return(value),
+        Expr::Binary(left, _, right)
+        | Expr::Coalesce(left, right)
+        | Expr::Assign(left, right)
+        | Expr::CompoundAssign(left, _, right) => {
+            expression_contains_return(left) || expression_contains_return(right)
+        }
+        Expr::Call(callee, arguments) => {
+            expression_contains_return(callee)
+                || arguments
+                    .iter()
+                    .any(|argument| expression_contains_return(&argument.value))
+        }
+        Expr::Member(base, _) | Expr::ChainMember(base, _) => expression_contains_return(base),
+        Expr::Array(elements) => elements.iter().any(expression_contains_return),
+        Expr::Index { base, index } => {
+            expression_contains_return(base) || expression_contains_return(index)
+        }
+        Expr::Block(statements, tail) => {
+            statements.iter().any(|statement| match statement {
+                Stmt::Let(binding) => expression_contains_return(&binding.value),
+                Stmt::Expr(expression) => expression_contains_return(expression),
+            }) || tail.as_deref().is_some_and(expression_contains_return)
+        }
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            expression_contains_return(condition)
+                || expression_contains_return(then_branch)
+                || else_branch
+                    .as_deref()
+                    .is_some_and(expression_contains_return)
+        }
+        Expr::While { condition, body } => {
+            expression_contains_return(condition) || expression_contains_return(body)
+        }
+        Expr::Loop { body } => expression_contains_return(body),
+        Expr::Break(value) => value.as_deref().is_some_and(expression_contains_return),
+        Expr::Match { scrutinee, arms } => {
+            expression_contains_return(scrutinee)
+                || arms.iter().any(|arm| {
+                    arm.guard.as_ref().is_some_and(expression_contains_return)
+                        || expression_contains_return(&arm.body)
+                })
+        }
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => false,
+    }
+}
+
+fn hygienic_inline_function(function: &Function, prefix: &str) -> (Vec<Vec<Param>>, Expr) {
+    let mut groups = function.groups.clone();
+    let mut scopes = vec![HashMap::new()];
+    let mut next = 0usize;
+    for parameter in groups.iter_mut().flatten() {
+        let renamed = format!("{prefix}{}${}", next, parameter.name);
+        next += 1;
+        scopes[0].insert(parameter.name.clone(), renamed.clone());
+        parameter.name = renamed;
+    }
+    let mut body = function.body.clone().expect("inlined function has a body");
+    hygienic_rename_expr(&mut body, prefix, &mut next, &mut scopes);
+    (groups, body)
+}
+
+fn hygienic_rename_expr(
+    expression: &mut Expr,
+    prefix: &str,
+    next: &mut usize,
+    scopes: &mut Vec<HashMap<String, String>>,
+) {
+    match expression {
+        Expr::Name(name) => {
+            if let Some(renamed) = scopes.iter().rev().find_map(|scope| scope.get(name)) {
+                *name = renamed.clone();
+            }
+        }
+        Expr::Unary(_, value)
+        | Expr::Try(value)
+        | Expr::DoBlock { body: value }
+        | Expr::Throw(value)
+        | Expr::Unsafe(value) => hygienic_rename_expr(value, prefix, next, scopes),
+        Expr::Borrow { value, .. } => hygienic_rename_expr(value, prefix, next, scopes),
+        Expr::Binary(left, _, right)
+        | Expr::Coalesce(left, right)
+        | Expr::Assign(left, right)
+        | Expr::CompoundAssign(left, _, right) => {
+            hygienic_rename_expr(left, prefix, next, scopes);
+            hygienic_rename_expr(right, prefix, next, scopes);
+        }
+        Expr::Call(callee, arguments) => {
+            hygienic_rename_expr(callee, prefix, next, scopes);
+            for argument in arguments {
+                hygienic_rename_expr(&mut argument.value, prefix, next, scopes);
+            }
+        }
+        Expr::Member(base, _) | Expr::ChainMember(base, _) => {
+            hygienic_rename_expr(base, prefix, next, scopes)
+        }
+        Expr::Array(elements) => {
+            for element in elements {
+                hygienic_rename_expr(element, prefix, next, scopes);
+            }
+        }
+        Expr::Index { base, index } => {
+            hygienic_rename_expr(base, prefix, next, scopes);
+            hygienic_rename_expr(index, prefix, next, scopes);
+        }
+        Expr::Block(statements, tail) => {
+            scopes.push(HashMap::new());
+            for statement in statements {
+                match statement {
+                    Stmt::Let(binding) => {
+                        hygienic_rename_expr(&mut binding.value, prefix, next, scopes);
+                        let renamed = format!("{prefix}{}${}", *next, binding.name);
+                        *next += 1;
+                        scopes
+                            .last_mut()
+                            .expect("block scope")
+                            .insert(binding.name.clone(), renamed.clone());
+                        binding.name = renamed;
+                    }
+                    Stmt::Expr(expression) => {
+                        hygienic_rename_expr(expression, prefix, next, scopes)
+                    }
+                }
+            }
+            if let Some(tail) = tail {
+                hygienic_rename_expr(tail, prefix, next, scopes);
+            }
+            scopes.pop();
+        }
+        Expr::Closure(parameters, body) => {
+            scopes.push(HashMap::new());
+            for parameter in parameters {
+                let renamed = format!("{prefix}{}${}", *next, parameter.name);
+                *next += 1;
+                scopes
+                    .last_mut()
+                    .expect("closure scope")
+                    .insert(parameter.name.clone(), renamed.clone());
+                parameter.name = renamed;
+            }
+            hygienic_rename_expr(body, prefix, next, scopes);
+            scopes.pop();
+        }
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            hygienic_rename_expr(condition, prefix, next, scopes);
+            hygienic_rename_expr(then_branch, prefix, next, scopes);
+            if let Some(else_branch) = else_branch {
+                hygienic_rename_expr(else_branch, prefix, next, scopes);
+            }
+        }
+        Expr::Return(value) | Expr::Break(value) => {
+            if let Some(value) = value {
+                hygienic_rename_expr(value, prefix, next, scopes);
+            }
+        }
+        Expr::While { condition, body } => {
+            hygienic_rename_expr(condition, prefix, next, scopes);
+            hygienic_rename_expr(body, prefix, next, scopes);
+        }
+        Expr::Loop { body } => hygienic_rename_expr(body, prefix, next, scopes),
+        Expr::Match { scrutinee, arms } => {
+            hygienic_rename_expr(scrutinee, prefix, next, scopes);
+            for arm in arms {
+                scopes.push(HashMap::new());
+                hygienic_rename_pattern(&mut arm.pattern, prefix, next, scopes);
+                if let Some(guard) = &mut arm.guard {
+                    hygienic_rename_expr(guard, prefix, next, scopes);
+                }
+                hygienic_rename_expr(&mut arm.body, prefix, next, scopes);
+                scopes.pop();
+            }
+        }
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
+    }
+}
+
+fn hygienic_rename_pattern(
+    pattern: &mut Pattern,
+    prefix: &str,
+    next: &mut usize,
+    scopes: &mut [HashMap<String, String>],
+) {
+    match pattern {
+        Pattern::Binding(name) => {
+            let renamed = format!("{prefix}{}${}", *next, name);
+            *next += 1;
+            scopes
+                .last_mut()
+                .expect("match arm scope")
+                .insert(name.clone(), renamed.clone());
+            *name = renamed;
+        }
+        Pattern::Constructor { fields, .. } => match fields {
+            PatternFields::Unit => {}
+            PatternFields::Positional(patterns) => {
+                for pattern in patterns {
+                    hygienic_rename_pattern(pattern, prefix, next, scopes);
+                }
+            }
+            PatternFields::Named(fields) => {
+                for field in fields {
+                    hygienic_rename_pattern(&mut field.pattern, prefix, next, scopes);
+                }
+            }
+        },
+        Pattern::Wildcard | Pattern::Integer(_) | Pattern::Bool(_) => {}
     }
 }
 

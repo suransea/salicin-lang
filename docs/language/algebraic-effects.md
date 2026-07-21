@@ -132,6 +132,8 @@ must cover both resumption and abandonment before native code generation is cons
 Marker-only `let UI = effect` remains valid and has no operations or derived handler clauses.
 
 The current native slice performs selective CPS transformation for lexically visible operations,
-including one-shot resumption and abandonment. Operation propagation through separately compiled
-functions, loop backedges, and the final typed continuation ABI remain implementation work; those
-cases are rejected rather than compiled with callback-only semantics.
+including one-shot resumption and abandonment. It propagates through fully applied, non-recursive
+ordinary named functions with owned parameters by hygienically specializing their source bodies.
+Borrow parameters, explicit returns, indirect or recursive calls, loop backedges, and the final
+typed continuation ABI remain implementation work; those cases are rejected rather than compiled
+with callback-only semantics.
