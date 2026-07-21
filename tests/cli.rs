@@ -141,6 +141,8 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
         "algebraic_effect_nearest_handler.sc",
         "algebraic_effect_explicit_return.sc",
         "algebraic_effect_borrow_parameters.sc",
+        "algebraic_effect_recursion.sc",
+        "algebraic_effect_mutual_recursion.sc",
     ] {
         let output = salic()
             .arg("run")

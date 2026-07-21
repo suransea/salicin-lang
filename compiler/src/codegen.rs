@@ -384,7 +384,7 @@ struct AlgebraicHandler {
     identity: String,
     clauses: HashMap<String, AlgebraicHandlerClause>,
     done: Option<AlgebraicHandlerClause>,
-    inlining: Rc<RefCell<HashSet<String>>>,
+    inlining: Rc<RefCell<HashMap<String, String>>>,
 }
 
 #[derive(Clone)]
@@ -1158,6 +1158,14 @@ struct ClosureCaptureUse {
 }
 
 #[derive(Clone)]
+struct RecursiveFrameCall {
+    function: String,
+    captures: Vec<ParamSig>,
+    parameters: Vec<ParamSig>,
+    result: Ty,
+}
+
+#[derive(Clone)]
 struct LoopFrame {
     result_ty: Option<Ty>,
     unit_only: bool,
@@ -1186,6 +1194,7 @@ struct LowerCtx {
     unsafe_depth: usize,
     active_throws_error: Option<Ty>,
     active_custom_effects: HashSet<String>,
+    recursive_frame_calls: HashMap<String, RecursiveFrameCall>,
 }
 
 impl LowerCtx {
@@ -1209,6 +1218,7 @@ impl LowerCtx {
             unsafe_depth: 0,
             active_throws_error: None,
             active_custom_effects: HashSet::new(),
+            recursive_frame_calls: HashMap::new(),
         }
     }
 
@@ -1232,6 +1242,7 @@ impl LowerCtx {
             unsafe_depth: 0,
             active_throws_error: None,
             active_custom_effects: HashSet::new(),
+            recursive_frame_calls: HashMap::new(),
         }
     }
 
@@ -10643,17 +10654,36 @@ impl Analyzer {
                             };
                             let value = match &binding.value {
                                 Expr::Closure(params, body) => {
-                                    if annotation.is_some() {
-                                        self.error(format!(
-                                            "closure binding `{}` cannot have a type annotation yet",
-                                            binding.name
-                                        ));
-                                    }
+                                    let (declared_result, effects) = match annotation.as_ref() {
+                                        Some(Ty::Function(function)) => (
+                                            Some((*function.result).clone()),
+                                            ClosureEffectContext {
+                                                unsafe_depth: usize::from(function.unsafe_effect),
+                                                throws_error: function
+                                                    .throws_error
+                                                    .as_deref()
+                                                    .cloned(),
+                                                custom_effects: function
+                                                    .custom_effects
+                                                    .iter()
+                                                    .cloned()
+                                                    .collect(),
+                                            },
+                                        ),
+                                        Some(other) => {
+                                            self.error(format!(
+                                                "closure binding `{}` requires a function type annotation, found `{other}`",
+                                                binding.name
+                                            ));
+                                            (None, ClosureEffectContext::default())
+                                        }
+                                        None => (None, ClosureEffectContext::default()),
+                                    };
                                     self.lower_local_closure(
                                         params,
                                         body,
-                                        None,
-                                        ClosureEffectContext::default(),
+                                        declared_result,
+                                        effects,
                                         context,
                                     )
                                 }
@@ -10690,7 +10720,11 @@ impl Analyzer {
                                     format_args!("borrow value of local `{}`", binding.name),
                                 );
                             }
-                            let ty = annotation.unwrap_or_else(|| value.ty.clone());
+                            let ty = if matches!(value.kind, HirExprKind::LocalClosure(_)) {
+                                value.ty.clone()
+                            } else {
+                                annotation.unwrap_or_else(|| value.ty.clone())
+                            };
                             let partial = match &value.kind {
                                 HirExprKind::Partial {
                                     function,
@@ -11725,6 +11759,7 @@ impl Analyzer {
         context.unsafe_depth = effects.unsafe_depth;
         context.active_throws_error = effects.throws_error.clone();
         context.active_custom_effects = effects.custom_effects.clone();
+        context.recursive_frame_calls = outer.recursive_frame_calls.clone();
         context.return_boundary = effects.throws_error.as_ref().and_then(|error| {
             declared_result
                 .as_ref()
@@ -11733,6 +11768,7 @@ impl Analyzer {
         context.type_substitutions = outer.type_substitutions.clone();
         let mut hir_params = Vec::new();
         let mut captures = Vec::new();
+        let mut recursive_capture_params = Vec::new();
 
         let is_fn_once = capture_uses
             .iter()
@@ -11776,9 +11812,17 @@ impl Analyzer {
                 self.error(format!("closure cannot capture local callable `{name}`"));
                 continue;
             }
-            if local.alias.is_some() || local.capability != LocalCapability::Owned {
+            let compatible_reborrow = matches!(
+                (local.capability, capture.mode),
+                (LocalCapability::SharedParam, ClosureCaptureMode::Shared)
+                    | (LocalCapability::MutParam, ClosureCaptureMode::Shared)
+                    | (LocalCapability::MutParam, ClosureCaptureMode::Mutable)
+            );
+            if local.alias.is_some()
+                || (local.capability != LocalCapability::Owned && !compatible_reborrow)
+            {
                 self.error(format!(
-                    "closure capture of borrowed local `{name}` is not supported yet"
+                    "closure capture mode is incompatible with borrowed local `{name}`"
                 ));
                 continue;
             }
@@ -11856,6 +11900,11 @@ impl Analyzer {
                 ty: local.ty,
                 mode: parameter_mode,
             });
+            recursive_capture_params.push(ParamSig {
+                name,
+                ty: hir_params.last().expect("capture parameter").ty.clone(),
+                mode: parameter_mode,
+            });
         }
 
         let mut groups = Vec::new();
@@ -11905,6 +11954,23 @@ impl Analyzer {
                 });
             }
             groups.push(group);
+        }
+
+        if let Some(result) = declared_result.clone() {
+            let mut tokens = HashSet::new();
+            collect_internal_recursion_tokens(body, &mut tokens);
+            let parameters = groups.iter().flatten().cloned().collect::<Vec<_>>();
+            for token in tokens {
+                context
+                    .recursive_frame_calls
+                    .entry(token)
+                    .or_insert_with(|| RecursiveFrameCall {
+                        function: function.clone(),
+                        captures: recursive_capture_params.clone(),
+                        parameters: parameters.clone(),
+                        result: result.clone(),
+                    });
+            }
         }
 
         let boundary = context.return_boundary.clone();
@@ -12057,6 +12123,51 @@ impl Analyzer {
             Expr::Call(_, _) => {
                 let mut groups = Vec::new();
                 let root = flatten_call(expression, &mut groups);
+                if matches!(root, Expr::Name(name) if name.starts_with("$handler$recursive$")) {
+                    if let Expr::Name(name) = root {
+                        if let Some(frame) = outer.recursive_frame_calls.get(name) {
+                            for capture in &frame.captures {
+                                if outer.lookup(&capture.name).is_some()
+                                    && !bound.contains(&capture.name)
+                                {
+                                    let mode = match capture.mode {
+                                        PassMode::Borrow => ClosureCaptureMode::Shared,
+                                        PassMode::MutBorrow => ClosureCaptureMode::Mutable,
+                                        PassMode::Move => ClosureCaptureMode::Move,
+                                        PassMode::Inferred | PassMode::Copy => {
+                                            ClosureCaptureMode::Shared
+                                        }
+                                    };
+                                    record_closure_capture(captures, &capture.name, mode);
+                                }
+                            }
+                        }
+                    }
+                    return groups.iter().flat_map(|group| group.iter()).fold(
+                        true,
+                        |valid, argument| {
+                            self.scan_simple_closure_captures(
+                                &argument.value,
+                                bound,
+                                outer,
+                                captures,
+                            ) & valid
+                        },
+                    );
+                }
+                if matches!(root, Expr::Name(name) if bound.contains(name)) {
+                    return groups.iter().flat_map(|group| group.iter()).fold(
+                        true,
+                        |valid, argument| {
+                            self.scan_simple_closure_captures(
+                                &argument.value,
+                                bound,
+                                outer,
+                                captures,
+                            ) & valid
+                        },
+                    );
+                }
                 let captured_function = match root {
                     Expr::Name(function)
                         if !bound.contains(function)
@@ -14968,6 +15079,11 @@ impl Analyzer {
     ) -> HirExpr {
         let mut groups = Vec::new();
         let root = flatten_call(expression, &mut groups);
+        if let Expr::Name(name) = root {
+            if let Some(frame) = context.recursive_frame_calls.get(name).cloned() {
+                return self.lower_recursive_frame_call(&frame, &groups, context);
+            }
+        }
         if let Expr::ChainMember(base, member) = root {
             return self.lower_chain(base, member, Some(&groups), expected, context);
         }
@@ -15318,6 +15434,54 @@ impl Analyzer {
         error_expr()
     }
 
+    fn lower_recursive_frame_call(
+        &mut self,
+        frame: &RecursiveFrameCall,
+        groups: &[&[CallArg]],
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        if groups.len() != 1 || groups[0].len() != frame.parameters.len() {
+            self.error(format!(
+                "recursive continuation frame expects {} argument(s), found {}",
+                frame.parameters.len(),
+                groups.first().map_or(0, |group| group.len())
+            ));
+            return error_expr();
+        }
+        let mut lowered = Vec::new();
+        let mut loans = Vec::new();
+        let mut temporaries = Vec::new();
+        for capture in &frame.captures {
+            lowered.push(self.lower_call_argument(
+                &Expr::Name(capture.name.clone()),
+                capture,
+                context,
+                &mut loans,
+                &mut temporaries,
+            ));
+        }
+        for (argument, parameter) in groups[0].iter().zip(&frame.parameters) {
+            lowered.push(self.lower_call_argument(
+                &argument.value,
+                parameter,
+                context,
+                &mut loans,
+                &mut temporaries,
+            ));
+        }
+        self.release_loans(&loans, context);
+        let call = HirExpr {
+            ty: frame.result.clone(),
+            kind: HirExprKind::Call {
+                function: frame.function.clone(),
+                arguments: lowered.clone(),
+                consumed_callable: None,
+                diverges: self.is_uninhabited_type(&frame.result),
+            },
+        };
+        self.wrap_call_argument_temporaries(call, &mut lowered, temporaries, context)
+    }
+
     fn resolve_effect_application(
         &mut self,
         expression: &Expr,
@@ -15493,7 +15657,7 @@ impl Analyzer {
             identity: source_effect_identity(instance),
             clauses,
             done,
-            inlining: Rc::new(RefCell::new(HashSet::new())),
+            inlining: Rc::new(RefCell::new(HashMap::new())),
         });
         let final_continuation: SourceContinuation = if let Some(done) = handler.done.clone() {
             let handler = handler.clone();
@@ -15829,6 +15993,11 @@ impl Analyzer {
         {
             return None;
         }
+        if let Some(recursive_name) = handler.inlining.borrow().get(name).cloned() {
+            let mut recursive_call = expression.clone();
+            replace_call_root_name(&mut recursive_call, &recursive_name);
+            return Some(continuation(self, recursive_call));
+        }
         let Some(_) = function.body else {
             self.error(format!(
                 "effectful function `{name}` has no source body available for handler lowering"
@@ -15846,14 +16015,12 @@ impl Analyzer {
             ));
             return Some(Err(()));
         }
-        if !handler.inlining.borrow_mut().insert(name.clone()) {
-            self.error(format!(
-                "recursive resumable call through `{name}` requires the typed continuation ABI"
-            ));
-            return Some(Err(()));
-        }
-
         let specialization = self.next_closure;
+        let recursive_name = format!("$handler$recursive${specialization}");
+        handler
+            .inlining
+            .borrow_mut()
+            .insert(name.clone(), recursive_name);
         let prefix = format!("$handler$frame${specialization}${name}$");
         self.next_closure += 1;
         let (parameters, mut body) = hygienic_inline_function(&function, &prefix);
@@ -15892,10 +16059,18 @@ impl Analyzer {
             }
         }
         let frame_name = format!("$handler$frame${specialization}");
+        let frame_annotation = function.return_type.clone().map(|result| Type::Function {
+            groups: vec![flattened_parameters
+                .iter()
+                .map(|parameter| parameter.ty.clone())
+                .collect()],
+            effects: FunctionEffects::default(),
+            result: Box::new(result),
+        });
         let frame = Binding {
             mutable: false,
             name: frame_name.clone(),
-            annotation: None,
+            annotation: frame_annotation,
             value: Expr::Closure(flattened_parameters, Box::new(transformed_body)),
         };
         let call = Expr::Call(Box::new(Expr::Name(frame_name)), flattened_arguments);
@@ -19515,6 +19690,96 @@ fn internal_handler_return_argument(expression: &Expr) -> Option<Expr> {
         return None;
     }
     Some(groups[0][0].value.clone())
+}
+
+fn replace_call_root_name(expression: &mut Expr, replacement: &str) {
+    match expression {
+        Expr::Call(callee, _) => replace_call_root_name(callee, replacement),
+        Expr::Name(name) => *name = replacement.to_owned(),
+        _ => {}
+    }
+}
+
+fn collect_internal_recursion_tokens(expression: &Expr, tokens: &mut HashSet<String>) {
+    match expression {
+        Expr::Name(name) if name.starts_with("$handler$recursive$") => {
+            tokens.insert(name.clone());
+        }
+        Expr::Unary(_, value)
+        | Expr::Try(value)
+        | Expr::DoBlock { body: value }
+        | Expr::Throw(value)
+        | Expr::Unsafe(value) => collect_internal_recursion_tokens(value, tokens),
+        Expr::Borrow { value, .. } => collect_internal_recursion_tokens(value, tokens),
+        Expr::Binary(left, _, right)
+        | Expr::Coalesce(left, right)
+        | Expr::Assign(left, right)
+        | Expr::CompoundAssign(left, _, right) => {
+            collect_internal_recursion_tokens(left, tokens);
+            collect_internal_recursion_tokens(right, tokens);
+        }
+        Expr::Call(callee, arguments) => {
+            collect_internal_recursion_tokens(callee, tokens);
+            for argument in arguments {
+                collect_internal_recursion_tokens(&argument.value, tokens);
+            }
+        }
+        Expr::Member(base, _) | Expr::ChainMember(base, _) => {
+            collect_internal_recursion_tokens(base, tokens)
+        }
+        Expr::Array(elements) => {
+            for element in elements {
+                collect_internal_recursion_tokens(element, tokens);
+            }
+        }
+        Expr::Index { base, index } => {
+            collect_internal_recursion_tokens(base, tokens);
+            collect_internal_recursion_tokens(index, tokens);
+        }
+        Expr::Block(statements, tail) => {
+            for statement in statements {
+                match statement {
+                    Stmt::Let(binding) => collect_internal_recursion_tokens(&binding.value, tokens),
+                    Stmt::Expr(expression) => collect_internal_recursion_tokens(expression, tokens),
+                }
+            }
+            if let Some(tail) = tail {
+                collect_internal_recursion_tokens(tail, tokens);
+            }
+        }
+        Expr::Closure(_, _) => {}
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_internal_recursion_tokens(condition, tokens);
+            collect_internal_recursion_tokens(then_branch, tokens);
+            if let Some(branch) = else_branch {
+                collect_internal_recursion_tokens(branch, tokens);
+            }
+        }
+        Expr::Return(value) | Expr::Break(value) => {
+            if let Some(value) = value {
+                collect_internal_recursion_tokens(value, tokens);
+            }
+        }
+        Expr::While { condition, body } => {
+            collect_internal_recursion_tokens(condition, tokens);
+            collect_internal_recursion_tokens(body, tokens);
+        }
+        Expr::Loop { body } => collect_internal_recursion_tokens(body, tokens),
+        Expr::Match { scrutinee, arms } => {
+            collect_internal_recursion_tokens(scrutinee, tokens);
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    collect_internal_recursion_tokens(guard, tokens);
+                }
+                collect_internal_recursion_tokens(&arm.body, tokens);
+            }
+        }
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => {}
+    }
 }
 
 fn handled_operation_call(expression: &Expr, identity: &str) -> Option<(String, Vec<CallArg>)> {

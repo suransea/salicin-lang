@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.115.0 - 2026-07-22
+
+- Lowered direct and mutually recursive resumable calls to direct calls between lifted handler
+  frame functions instead of compile-time unfolding or self-referential callable values.
+- Forwarded captured handler environments explicitly across recursive frame calls, including
+  compatible shared and mutable reborrows through nested closure frames.
+- Added function-type annotations for local closures to establish recursive frame result boundaries
+  while retaining the concrete callable environment type internally.
+- Added native direct- and mutual-recursion coverage with captured handler state.
+
 ## 0.114.0 - 2026-07-22
 
 - Specialized handled named calls as real local closure frames rather than flattening callee scope
