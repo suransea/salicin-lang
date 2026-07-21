@@ -11049,6 +11049,7 @@ impl Analyzer {
         let receiver_parameter = signature.groups[0][0].clone();
         let rhs_parameter = signature.groups[1][0].clone();
         let mut temporary_loans = Vec::new();
+        let mut temporary_bindings = Vec::new();
         let left = match left {
             BinaryOperatorLeft::Lowered(left) => {
                 self.require_same_type(
@@ -11058,21 +11059,33 @@ impl Analyzer {
                 );
                 HirArgument::Move(*left)
             }
-            BinaryOperatorLeft::Source(left) => {
-                self.lower_call_argument(left, &receiver_parameter, context, &mut temporary_loans)
-            }
+            BinaryOperatorLeft::Source(left) => self.lower_call_argument(
+                left,
+                &receiver_parameter,
+                context,
+                &mut temporary_loans,
+                &mut temporary_bindings,
+            ),
         };
-        let right = self.lower_call_argument(right, &rhs_parameter, context, &mut temporary_loans);
+        let right = self.lower_call_argument(
+            right,
+            &rhs_parameter,
+            context,
+            &mut temporary_loans,
+            &mut temporary_bindings,
+        );
         self.release_loans(&temporary_loans, context);
-        HirExpr {
+        let mut arguments = vec![left, right];
+        let call = HirExpr {
             ty: candidate.output.clone(),
             kind: HirExprKind::Call {
                 function: candidate.method,
-                arguments: vec![left, right],
+                arguments: arguments.clone(),
                 consumed_callable: None,
                 diverges: self.is_uninhabited_type(&candidate.output),
             },
-        }
+        };
+        self.wrap_call_argument_temporaries(call, &mut arguments, temporary_bindings, context)
     }
 
     fn lower_binary(
@@ -11649,6 +11662,7 @@ impl Analyzer {
         };
         let pointee = (**pointee).clone();
         let mut temporary_loans = Vec::new();
+        let mut temporary_bindings = Vec::new();
         let value = self.lower_call_argument(
             &arguments[1].value,
             &ParamSig {
@@ -11658,7 +11672,9 @@ impl Analyzer {
             },
             context,
             &mut temporary_loans,
+            &mut temporary_bindings,
         );
+        debug_assert!(temporary_bindings.is_empty());
         self.release_loans(&temporary_loans, context);
         let HirArgument::Move(value) = value else {
             unreachable!("an explicit move parameter lowers to a move argument")
@@ -12601,8 +12617,15 @@ impl Analyzer {
         }
 
         let mut temporary_loans = Vec::new();
+        let mut argument_temporary_bindings = Vec::new();
         let receiver_argument = if temporary_binding.is_none() {
-            self.lower_call_argument(receiver, receiver_parameter, context, &mut temporary_loans)
+            self.lower_call_argument(
+                receiver,
+                receiver_parameter,
+                context,
+                &mut temporary_loans,
+                &mut argument_temporary_bindings,
+            )
         } else {
             self.require_same_type(
                 &receiver_place.ty,
@@ -12678,6 +12701,7 @@ impl Analyzer {
                     parameter,
                     context,
                     &mut temporary_loans,
+                    &mut argument_temporary_bindings,
                 ));
             }
         }
@@ -12701,7 +12725,7 @@ impl Analyzer {
                 ty: (*function_ty.result).clone(),
                 kind: HirExprKind::Call {
                     function: canonical,
-                    arguments,
+                    arguments: arguments.clone(),
                     consumed_callable: None,
                     diverges: self.is_uninhabited_type(&function_ty.result),
                 },
@@ -12721,18 +12745,13 @@ impl Analyzer {
                 kind: HirExprKind::Partial {
                     function: canonical,
                     consumed_groups,
-                    captures: arguments,
+                    captures: arguments.clone(),
                 },
             }
         };
-        if let Some(binding) = temporary_binding {
-            HirExpr {
-                ty: call.ty.clone(),
-                kind: HirExprKind::Block(vec![HirStmt::Let(binding)], Some(Box::new(call))),
-            }
-        } else {
-            call
-        }
+        let mut temporary_bindings = temporary_binding.into_iter().collect::<Vec<_>>();
+        temporary_bindings.extend(argument_temporary_bindings);
+        self.wrap_call_argument_temporaries(call, &mut arguments, temporary_bindings, context)
     }
 
     fn lower_local_closure_call(
@@ -12824,6 +12843,7 @@ impl Analyzer {
             })
             .collect();
         let mut temporary_loans = Vec::new();
+        let mut temporary_bindings = Vec::new();
         for (group_index, (argument_group, parameters)) in
             groups.iter().zip(&closure.groups).enumerate()
         {
@@ -12845,19 +12865,26 @@ impl Analyzer {
                     parameter,
                     context,
                     &mut temporary_loans,
+                    &mut temporary_bindings,
                 ));
             }
         }
         self.release_loans(&temporary_loans, context);
-        HirExpr {
+        let call = HirExpr {
             ty: closure.result.clone(),
             kind: HirExprKind::Call {
                 function: closure.function.clone(),
-                arguments: lowered_arguments,
+                arguments: lowered_arguments.clone(),
                 consumed_callable: closure.is_fn_once.then_some(local.id),
                 diverges: self.is_uninhabited_type(&closure.result),
             },
-        }
+        };
+        self.wrap_call_argument_temporaries(
+            call,
+            &mut lowered_arguments,
+            temporary_bindings,
+            context,
+        )
     }
 
     fn lower_named_function_call(
@@ -12882,6 +12909,7 @@ impl Analyzer {
 
         let mut arguments = Vec::new();
         let mut temporary_loans = Vec::new();
+        let mut temporary_bindings = Vec::new();
         for (group_index, (arguments_ast, params)) in
             groups.iter().zip(&signature.groups).enumerate()
         {
@@ -12900,6 +12928,7 @@ impl Analyzer {
                     parameter,
                     context,
                     &mut temporary_loans,
+                    &mut temporary_bindings,
                 ));
             }
         }
@@ -12917,12 +12946,12 @@ impl Analyzer {
         }
         self.release_loans(&temporary_loans, context);
 
-        if complete {
+        let call = if complete {
             HirExpr {
                 ty: (*function_ty.result).clone(),
                 kind: HirExprKind::Call {
                     function: name.to_owned(),
-                    arguments,
+                    arguments: arguments.clone(),
                     consumed_callable: None,
                     diverges: self.is_uninhabited_type(&function_ty.result),
                 },
@@ -12943,10 +12972,11 @@ impl Analyzer {
                 kind: HirExprKind::Partial {
                     function: name.to_owned(),
                     consumed_groups: groups.len(),
-                    captures: arguments,
+                    captures: arguments.clone(),
                 },
             }
-        }
+        };
+        self.wrap_call_argument_temporaries(call, &mut arguments, temporary_bindings, context)
     }
 
     fn ordered_call_arguments<'a>(
@@ -13104,6 +13134,7 @@ impl Analyzer {
             .collect();
 
         let mut temporary_loans = Vec::new();
+        let mut temporary_bindings = Vec::new();
         for (relative_group, arguments_ast) in groups.iter().enumerate() {
             let group_index = partial.consumed_groups + relative_group;
             let params = &signature.groups[group_index];
@@ -13125,6 +13156,7 @@ impl Analyzer {
                     parameter,
                     context,
                     &mut temporary_loans,
+                    &mut temporary_bindings,
                 ));
             }
         }
@@ -13141,12 +13173,12 @@ impl Analyzer {
             self.error("partial application cannot capture borrowed arguments");
         }
         self.release_loans(&temporary_loans, context);
-        if consumed_groups == function_ty.groups.len() {
+        let call = if consumed_groups == function_ty.groups.len() {
             HirExpr {
                 ty: (*function_ty.result).clone(),
                 kind: HirExprKind::Call {
                     function: partial.function.clone(),
-                    arguments,
+                    arguments: arguments.clone(),
                     consumed_callable: partial.is_fn_once.then_some(local.id),
                     diverges: self.is_uninhabited_type(&function_ty.result),
                 },
@@ -13166,10 +13198,11 @@ impl Analyzer {
                 kind: HirExprKind::Partial {
                     function: partial.function.clone(),
                     consumed_groups,
-                    captures: arguments,
+                    captures: arguments.clone(),
                 },
             }
-        }
+        };
+        self.wrap_call_argument_temporaries(call, &mut arguments, temporary_bindings, context)
     }
 
     fn lower_call_argument(
@@ -13178,6 +13211,7 @@ impl Analyzer {
         parameter: &ParamSig,
         context: &mut LowerCtx,
         temporary_loans: &mut Vec<LoanId>,
+        temporary_bindings: &mut Vec<HirBinding>,
     ) -> HirArgument {
         let mode = self.effective_pass_mode(parameter.mode, &parameter.ty);
         match mode {
@@ -13212,19 +13246,36 @@ impl Analyzer {
                 }
             }
             PassMode::Borrow | PassMode::MutBorrow => {
-                let Some(place) = self.lower_place_without_diagnostic(argument, context) else {
-                    self.error(format!(
-                        "borrowed argument for parameter `{}` must be a local place",
-                        parameter.name
-                    ));
-                    return HirArgument::Copy(error_expr());
-                };
+                let mutable = mode == PassMode::MutBorrow;
+                let place =
+                    if let Some(place) = self.lower_place_without_diagnostic(argument, context) {
+                        place
+                    } else {
+                        let value = self.lower_expr(argument, Some(&parameter.ty), context);
+                        let id = context.fresh_local();
+                        let ty = value.ty.clone();
+                        temporary_bindings.push(HirBinding {
+                            id,
+                            name: format!("$temporary argument for {}", parameter.name),
+                            ty: ty.clone(),
+                            mutable,
+                            value,
+                        });
+                        HirPlace {
+                            local: id,
+                            root_ty: ty.clone(),
+                            projections: Vec::new(),
+                            ty,
+                            capability: LocalCapability::Owned,
+                            root_mutable: mutable,
+                            loan: None,
+                        }
+                    };
                 self.require_same_type(
                     &place.ty,
                     &parameter.ty,
                     format!("argument for parameter `{}`", parameter.name),
                 );
-                let mutable = mode == PassMode::MutBorrow;
                 if mutable {
                     self.ensure_writable(&place);
                 }
@@ -13243,6 +13294,91 @@ impl Analyzer {
                 }
             }
             PassMode::Inferred => unreachable!("effective mode is explicit"),
+        }
+    }
+
+    fn wrap_call_argument_temporaries(
+        &mut self,
+        mut expression: HirExpr,
+        arguments: &mut [HirArgument],
+        temporary_bindings: Vec<HirBinding>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        if temporary_bindings.is_empty() {
+            return expression;
+        }
+        let mut borrowed_temporaries = temporary_bindings
+            .into_iter()
+            .map(|binding| (binding.id, binding))
+            .collect::<HashMap<_, _>>();
+        let mut statements = Vec::new();
+        for argument in &mut *arguments {
+            let moves = matches!(&*argument, HirArgument::Move(_));
+            match argument {
+                HirArgument::Copy(value) | HirArgument::Move(value) => {
+                    let id = context.fresh_local();
+                    let ty = value.ty.clone();
+                    statements.push(HirStmt::Let(HirBinding {
+                        id,
+                        name: "$staged call argument".to_owned(),
+                        ty: ty.clone(),
+                        mutable: false,
+                        value: value.clone(),
+                    }));
+                    *value = HirExpr {
+                        ty: ty.clone(),
+                        kind: HirExprKind::Read {
+                            place: HirPlace {
+                                local: id,
+                                root_ty: ty.clone(),
+                                projections: Vec::new(),
+                                ty,
+                                capability: LocalCapability::Owned,
+                                root_mutable: false,
+                                loan: None,
+                            },
+                            kind: if moves {
+                                HirReadKind::Move
+                            } else {
+                                HirReadKind::Copy
+                            },
+                        },
+                    };
+                }
+                HirArgument::SharedBorrow(place) | HirArgument::MutBorrow(place) => {
+                    if let Some(binding) = borrowed_temporaries.remove(&place.local) {
+                        statements.push(HirStmt::Let(binding));
+                    }
+                }
+            }
+        }
+        debug_assert!(borrowed_temporaries.is_empty());
+        expression.kind = match expression.kind {
+            HirExprKind::Call {
+                function,
+                consumed_callable,
+                diverges,
+                ..
+            } => HirExprKind::Call {
+                function,
+                arguments: arguments.to_vec(),
+                consumed_callable,
+                diverges,
+            },
+            HirExprKind::Partial {
+                function,
+                consumed_groups,
+                ..
+            } => HirExprKind::Partial {
+                function,
+                consumed_groups,
+                captures: arguments.to_vec(),
+            },
+            _ => unreachable!("call temporary wrapper requires a call or partial expression"),
+        };
+        HirExpr {
+            ty: expression.ty.clone(),
+            kind: HirExprKind::Block(statements, Some(Box::new(expression))),
         }
     }
 

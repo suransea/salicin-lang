@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.46.0 - 2026-07-21
+
+- Allowed complete calls to pass temporary values directly to shared and mutable borrow
+  parameters, matching the temporary receiver behavior from v0.42-v0.43.
+- Staged every value argument in source order whenever a call contains a borrowed temporary,
+  preserving left-to-right effects, stable addresses, early-exit cleanup, and exactly-once drop.
+- Applied the same lowering to named and inferred generic functions, bound-method argument groups,
+  and local partial calls while continuing to reject partial applications that capture borrows.
+
 ## 0.45.0 - 2026-07-21
 
 - Added safe source-backed `box_write(boxed)(value)` and `boxed.write(value)` APIs for `Box(T)`

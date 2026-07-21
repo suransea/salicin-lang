@@ -631,6 +631,7 @@ fn m1_match_and_partial_errors_report_their_cause() {
     for (name, expected) in [
         ("non_exhaustive_match.sali", "exhaustive"),
         ("pattern_type_mismatch.sali", "pattern"),
+        ("temporary_borrow_partial.sali", "partial application"),
     ] {
         let output = salic()
             .arg("check")
@@ -660,6 +661,11 @@ fn m1_ownership_programs_run_with_expected_result() {
         "disjoint_mut_field_borrows.sali",
         "inferred_copy_i32.sali",
         "move_then_return_preserves_other_branch.sali",
+        "temporary_borrow_argument_order.sali",
+        "temporary_mut_borrow_argument.sali",
+        "temporary_borrow_argument_drop.sali",
+        "temporary_borrow_method_argument.sali",
+        "temporary_borrow_partial_call.sali",
     ] {
         let output = salic()
             .arg("run")
@@ -1566,6 +1572,7 @@ fn m2_inferred_type_arguments_run_with_expected_result() {
         "infer_fresh_constructor.sali",
         "infer_named_arguments.sali",
         "infer_nonempty_block.sali",
+        "infer_borrow_temporary.sali",
     ] {
         let output = salic()
             .arg("run")
@@ -1590,7 +1597,6 @@ fn m2_inferred_type_argument_errors_report_their_cause() {
         ("infer_incomplete_application.sali", "requires explicit"),
         ("infer_nested_hole.sali", "not an expression"),
         ("infer_moved_argument.sali", "moved"),
-        ("infer_borrow_temporary.sali", "place"),
     ] {
         let output = salic()
             .arg("check")
