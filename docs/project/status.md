@@ -30,13 +30,14 @@ participate in monomorphization, forward through ordinary compile-time calls suc
 arguments. A selected `throws(Error)` row preserves both its error type and the current `Result`
 carrier ABI through forwarding and specialization.
 Named non-capturing functions can be passed and invoked through the native function-pointer ABI.
-Concrete top-level functions, inherent members, and trait requirements may form label-directed
+Concrete and generic top-level functions, concrete-nominal inherent members, and trait requirements may form label-directed
 overload sets. Their runtime parameter-label shapes must differ, and at least one explicit named
 call argument must select a unique candidate; a method's implicit receiver is not disambiguating
 evidence. Trait conformance, default and blanket implementations, where-bound assumptions, curried
 groups, module resolution, imports, type and optional-chain probing, closure lowering, effects, and
-native mangling preserve that choice. Generic function and generic inherent-member overload sets
-remain to be added.
+native mangling preserve that choice. Generic templates are selected by runtime labels before their
+compile-time groups are inferred or consumed. Overloads spread across blanket generic inherent
+extensions remain to be added.
 Callable effect rows support requirement subtyping: a pure function value can fill an unsafe or
 custom-effect slot, while a value requiring additional effects cannot fill a narrower slot. The
 slot's widened requirements remain checked at indirect calls, and generic row inference retains the

@@ -1838,12 +1838,6 @@ impl Analyzer {
                             self.error("entry point `main` cannot be overloaded");
                             continue;
                         }
-                        if !function.compile_groups.is_empty() {
-                            self.error(format!(
-                                "generic function `{source_name}` cannot be overloaded yet"
-                            ));
-                            continue;
-                        }
                         if overload_visibilities
                             .get(&source_name)
                             .is_some_and(|previous| previous != &visibility)
@@ -3681,12 +3675,6 @@ impl Analyzer {
                     }
 
                     let overload_shape = if overloaded {
-                        if generic_member {
-                            self.error(format!(
-                                "generic inherent member `{target}.{short_name}` cannot be overloaded yet"
-                            ));
-                            continue;
-                        }
                         let shape = function_parameter_labels(&function);
                         if !self
                             .inherent_overload_shapes
@@ -11823,25 +11811,29 @@ impl Analyzer {
             return false;
         }
         let resolved_function = selected_overload.as_deref().unwrap_or(function);
-        let (signature, runtime_groups) =
-            if let Some(signature) = self.signatures.get(resolved_function) {
-                (signature.clone(), groups.as_slice())
-            } else if self.function_templates.contains_key(function) {
-                let Some((canonical, runtime_start)) =
-                    self.resolve_inferred_generic_function_instance(function, &groups, None, outer)
-                else {
-                    return false;
-                };
-                (
-                    self.signatures[&canonical].clone(),
-                    &groups[runtime_start..],
-                )
-            } else {
-                self.error(format!(
-                    "closure call `{function}` is not a top-level named function"
-                ));
+        let (signature, runtime_groups) = if let Some(signature) =
+            self.signatures.get(resolved_function)
+        {
+            (signature.clone(), groups.as_slice())
+        } else if self.function_templates.contains_key(resolved_function) {
+            let Some((canonical, runtime_start)) = self.resolve_inferred_generic_function_instance(
+                resolved_function,
+                &groups,
+                None,
+                outer,
+            ) else {
                 return false;
             };
+            (
+                self.signatures[&canonical].clone(),
+                &groups[runtime_start..],
+            )
+        } else {
+            self.error(format!(
+                "closure call `{function}` is not a top-level named function"
+            ));
+            return false;
+        };
         if runtime_groups.len() != signature.groups.len() {
             self.error(format!(
                 "named function `{function}` must be fully applied inside a closure"
@@ -14664,6 +14656,9 @@ impl Analyzer {
                 let Some(selected) = self.resolve_function_overload(name, &groups) else {
                     return error_expr();
                 };
+                if self.function_templates.contains_key(&selected) {
+                    return self.lower_generic_function_call(&selected, &groups, expected, context);
+                }
                 return self.lower_named_function_call(&selected, &groups, expected, context);
             }
             if self.function_templates.contains_key(name) {
@@ -15431,6 +15426,9 @@ impl Analyzer {
                 else {
                     return error_expr();
                 };
+                if self.function_templates.contains_key(&canonical) {
+                    return self.lower_generic_function_call(&canonical, groups, expected, context);
+                }
                 return self.lower_named_function_call(&canonical, groups, expected, context);
             }
             if let Some(canonical) = self
@@ -17160,37 +17158,71 @@ impl Analyzer {
         candidates
             .iter()
             .filter(|candidate| {
-                let Some(signature) = self.signatures.get(*candidate) else {
+                let parameter_names = if let Some(signature) = self.signatures.get(*candidate) {
+                    signature.groups[parameter_group_offset..]
+                        .iter()
+                        .map(|group| {
+                            group
+                                .iter()
+                                .map(|parameter| parameter.name.clone())
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>()
+                } else if let Some(template) = self.function_templates.get(*candidate) {
+                    template.groups[parameter_group_offset..]
+                        .iter()
+                        .map(|group| {
+                            group
+                                .iter()
+                                .map(|parameter| parameter.name.clone())
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>()
+                } else {
                     return false;
                 };
-                let parameters = &signature.groups[parameter_group_offset..];
-                if groups.len() > parameters.len() {
-                    return false;
-                }
-                groups
-                    .iter()
-                    .zip(parameters)
-                    .all(|(arguments, parameters)| {
-                        if arguments.len() != parameters.len() {
-                            return false;
-                        }
-                        let labeled = arguments
+                let matches_runtime = |runtime_groups: &[&[CallArg]]| {
+                    if runtime_groups.len() > parameter_names.len() {
+                        return false;
+                    }
+                    runtime_groups
+                        .iter()
+                        .zip(&parameter_names)
+                        .all(|(arguments, parameters)| {
+                            if arguments.len() != parameters.len() {
+                                return false;
+                            }
+                            let labeled = arguments
+                                .iter()
+                                .filter(|argument| argument.label.is_some())
+                                .count();
+                            labeled == 0
+                                || labeled == arguments.len()
+                                    && parameters.iter().all(|parameter| {
+                                        arguments
+                                            .iter()
+                                            .filter(|argument| {
+                                                argument.label.as_deref()
+                                                    == Some(parameter.as_str())
+                                            })
+                                            .count()
+                                            == 1
+                                    })
+                        })
+                };
+                if self.signatures.contains_key(*candidate) {
+                    matches_runtime(groups)
+                } else {
+                    let compile_group_count =
+                        self.function_templates[*candidate].compile_groups.len();
+                    (0..=compile_group_count.min(groups.len())).any(|runtime_start| {
+                        groups[runtime_start..]
                             .iter()
-                            .filter(|argument| argument.label.is_some())
-                            .count();
-                        labeled == 0
-                            || labeled == arguments.len()
-                                && parameters.iter().all(|parameter| {
-                                    arguments
-                                        .iter()
-                                        .filter(|argument| {
-                                            argument.label.as_deref()
-                                                == Some(parameter.name.as_str())
-                                        })
-                                        .count()
-                                        == 1
-                                })
+                            .flat_map(|group| group.iter())
+                            .any(|argument| argument.label.is_some())
+                            && matches_runtime(&groups[runtime_start..])
                     })
+                }
             })
             .cloned()
             .collect()
@@ -25711,6 +25743,24 @@ let main(): i32 = {
 "#,
         )
         .expect("a selected overload should preserve throws inference and lowering");
+
+        compile_text(
+            r#"
+let choose(T: type)(left: T): T = { left }
+let choose(T: type)(right: T): T = { right }
+let main(): i32 = { choose(left: 20) + choose(i32)(right: 22) }
+"#,
+        )
+        .expect("generic overload selection should precede inferred or explicit type arguments");
+
+        compile_text(
+            r#"
+let choose(left: i32): i32 = { left }
+let choose(T: type)(right: T): T = { right }
+let main(): i32 = { choose(left: 20) + choose(right: 22) }
+"#,
+        )
+        .expect("concrete and generic functions may share one label-directed overload set");
     }
 
     #[test]
@@ -25770,6 +25820,22 @@ let main(): i32 = {
 "#,
         )
         .expect("a selected method overload should preserve throws inference");
+
+        compile_text(
+            r#"
+let Counter = struct(value: i32)
+extend Counter {
+  let choose(T: type)(left: T): T = { left }
+  let choose(T: type)(right: T): T = { right }
+  let add(T: type)(borrow self)(left: T): T = { left }
+  let add(T: type)(borrow self)(right: T): T = { right }
+}
+let main(): i32 = {
+  Counter.choose(left: 20) + Counter(0).add(i32)(right: 22)
+}
+"#,
+        )
+        .expect("generic inherent overloads should infer or explicitly consume compile arguments");
     }
 
     #[test]

@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.99.0 - 2026-07-22
+
+- Allowed generic and concrete top-level functions to coexist in one label-directed overload set.
+- Selected a generic template from explicit runtime argument labels before inferring or consuming
+  its compile-time argument groups, keeping types and compile-time values out of overload choice.
+- Extended the same ordering to generic members declared on concrete inherent extensions, for both
+  methods and associated functions.
+- Kept named compile-time arguments from serving as overload evidence; a runtime parameter label is
+  still required, whether compile-time arguments are inferred or explicit.
+
 ## 0.98.0 - 2026-07-22
 
 - Extended label-directed overloads to trait requirements, concrete implementations, default

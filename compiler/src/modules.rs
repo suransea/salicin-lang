@@ -668,11 +668,6 @@ fn collect_symbols(
                             "{}: error: overloads of `{name}` must use the same visibility as the declaration in {}",
                             unit.source.path, previous.source_path
                         ));
-                    } else if !function.compile_groups.is_empty() {
-                        diagnostics.push(format!(
-                            "{}: error: generic function `{name}` cannot be overloaded yet",
-                            unit.source.path
-                        ));
                     } else if !overloads.insert(shape) {
                         diagnostics.push(format!(
                             "{}: error: duplicate overload `{name}` has the same parameter labels as the declaration in {}",
