@@ -1379,6 +1379,7 @@ fn schema_function_has_receiver(function: &Function) -> bool {
 struct FunctionShape {
     groups: Vec<Vec<(PassMode, Ty)>>,
     result: Ty,
+    effects: crate::ast::FunctionEffects,
 }
 
 #[derive(Clone)]
@@ -2749,7 +2750,11 @@ impl Analyzer {
             .collect::<Option<Vec<_>>>()?;
         let result_source = function.return_type.as_ref()?;
         let result = self.lower_source_type(result_source);
-        (result != Ty::Error).then_some(FunctionShape { groups, result })
+        (result != Ty::Error).then_some(FunctionShape {
+            groups,
+            result,
+            effects: function.effects,
+        })
     }
 
     fn collect_trait_extension(&mut self, extension: ExtendDef, origin: ItemOrigin) {
@@ -8744,6 +8749,7 @@ impl Analyzer {
                 .cloned()
                 .expect("every registered function has source provenance"),
         );
+        context.unsafe_depth = usize::from(function.effects.unsafe_effect);
         if function.return_type.is_some() {
             context.return_boundary = signature
                 .result
@@ -15091,6 +15097,9 @@ impl Analyzer {
         }
 
         let complete = consumed_groups == signature.groups.len();
+        if complete {
+            self.require_function_effects(&canonical, context);
+        }
         if !complete
             && arguments.iter().any(|argument| {
                 matches!(
@@ -15331,6 +15340,9 @@ impl Analyzer {
         }
 
         let complete = groups.len() == function_ty.groups.len();
+        if complete {
+            self.require_function_effects(name, context);
+        }
         if !complete
             && arguments.iter().any(|argument| {
                 matches!(
@@ -15704,6 +15716,9 @@ impl Analyzer {
         }
 
         let consumed_groups = partial.consumed_groups + groups.len();
+        if consumed_groups == function_ty.groups.len() {
+            self.require_function_effects(&partial.function, context);
+        }
         if consumed_groups != function_ty.groups.len()
             && arguments.iter().any(|argument| {
                 matches!(
@@ -16202,6 +16217,19 @@ impl Analyzer {
         ));
     }
 
+    fn require_function_effects(&mut self, name: &str, context: &LowerCtx) {
+        if self
+            .functions
+            .get(name)
+            .is_some_and(|function| function.effects.unsafe_effect)
+            && context.unsafe_depth == 0
+        {
+            self.error(format!(
+                "call to unsafe function `{name}` requires an `unsafe` handler"
+            ));
+        }
+    }
+
     fn unify_types(&mut self, left: &Ty, right: &Ty, context: impl fmt::Display) -> Ty {
         if left == right {
             return left.clone();
@@ -16238,6 +16266,9 @@ impl Analyzer {
         let signature = &self.signatures["main"];
         if signature.groups.len() != 1 || !signature.groups[0].is_empty() {
             self.error("`main` must have exactly one empty parameter group: `main()`");
+        }
+        if self.functions["main"].effects.unsafe_effect {
+            self.error("`main` cannot expose an unhandled `unsafe` effect");
         }
         if !matches!(result, Ty::Unit | Ty::I32 | Ty::Error) {
             self.error(format!(
@@ -22340,6 +22371,7 @@ fn source_function_shapes_match(expected: &Function, actual: &Function) -> bool 
                         .all(|(left, right)| left.mode == right.mode && left.ty == right.ty)
             })
         && expected.return_type == actual.return_type
+        && expected.effects == actual.effects
 }
 
 fn generic_trait_pattern_overlaps_concrete(
@@ -22801,6 +22833,7 @@ mod tests {
             compile_groups: Vec::new(),
             groups,
             return_type: Some(result),
+            effects: crate::ast::FunctionEffects::default(),
             where_predicates: Vec::new(),
             body: Some(body),
         })
@@ -25785,6 +25818,117 @@ let main(): i32 = loop {
         assert!(errors
             .iter()
             .any(|error| error.message.contains("`break` cannot be used outside")));
+    }
+
+    #[test]
+    fn unsafe_effects_are_declared_forwarded_and_handled_at_calls() {
+        let ir = compile_text(
+            r#"
+let read(pointer: Ptr(i32)): i32 ! unsafe = *pointer
+let forward(pointer: Ptr(i32)): i32 ! unsafe = read(pointer)
+let main(): i32 = {
+  let value = 42
+  unsafe { forward(Ptr(borrow value)) }
+}
+"#,
+        )
+        .expect("an unsafe handler should discharge the declared effect");
+        assert!(ir.contains(&format!("call i32 @{}(", function_symbol("forward"))));
+
+        let errors = compile_text(
+            r#"
+let read(pointer: Ptr(i32)): i32 ! unsafe = *pointer
+let main(): i32 = {
+  let value = 42
+  read(Ptr(borrow value))
+}
+"#,
+        )
+        .unwrap_err();
+        assert!(errors.iter().any(|error| {
+            error
+                .message
+                .contains("call to unsafe function `read` requires an `unsafe` handler")
+        }));
+    }
+
+    #[test]
+    fn unsafe_effect_checks_survive_aliasing_and_partial_application() {
+        let errors = compile_text(
+            r#"
+let read(pointer: Ptr(i32))(offset: i32): i32 ! unsafe = *pointer + offset
+let main(): i32 = {
+  let value = 40
+  let named = read
+  let pending = named(Ptr(borrow value))
+  pending(2)
+}
+"#,
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| { error.message.contains("requires an `unsafe` handler") }));
+
+        compile_text(
+            r#"
+let read(pointer: Ptr(i32))(offset: i32): i32 ! unsafe = *pointer + offset
+let main(): i32 = {
+  let value = 40
+  let pending = read(Ptr(borrow value))
+  unsafe { pending(2) }
+}
+"#,
+        )
+        .expect("the effect is required only when the final parameter group is applied");
+    }
+
+    #[test]
+    fn unsafe_effects_participate_in_method_and_trait_signatures() {
+        compile_text(
+            r#"
+let Reader = struct(pointer: Ptr(i32))
+let Read = trait {
+  let read(borrow self)(): i32 ! unsafe
+}
+extend Reader: Read {
+  let read(borrow self)(): i32 ! unsafe = *self.pointer
+}
+let main(): i32 = {
+  let value = 42
+  let reader = Reader(Ptr(borrow value))
+  unsafe { reader.read() }
+}
+"#,
+        )
+        .expect("methods should carry their declared unsafe effect");
+
+        let errors = compile_text(
+            r#"
+let Reader = struct(pointer: Ptr(i32))
+let Read = trait {
+  let read(borrow self)(): i32 ! unsafe
+}
+extend Reader: Read {
+  let read(borrow self)(): i32 = unsafe { *self.pointer }
+}
+let main(): i32 = 0
+"#,
+        )
+        .unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("signature mismatch")));
+    }
+
+    #[test]
+    fn entry_point_cannot_export_an_unsafe_effect() {
+        let errors = compile_text("let main(): i32 ! unsafe = 42\n").unwrap_err();
+        assert!(errors.iter().any(|error| {
+            error
+                .message
+                .contains("`main` cannot expose an unhandled `unsafe` effect")
+        }));
     }
 
     #[test]

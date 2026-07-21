@@ -2,9 +2,9 @@ use std::{collections::HashSet, fmt};
 
 use crate::ast::{
     AssociatedTypeBinding, BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EnumDef,
-    Expr, ExtendDef, ExtendMember, Field, Function, Item, MatchArm, Param, PassMode, Pattern,
-    PatternField, PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp,
-    UseDecl, VariantDef, VariantFields, Visibility, WherePredicate,
+    Expr, ExtendDef, ExtendMember, Field, Function, FunctionEffects, Item, MatchArm, Param,
+    PassMode, Pattern, PatternField, PatternFields, Program, Stmt, StructDef, TraitDef,
+    TraitMember, Type, UnaryOp, UseDecl, VariantDef, VariantFields, Visibility, WherePredicate,
 };
 use crate::lexer::{lex, LexError, Token, TokenKind};
 
@@ -213,6 +213,7 @@ impl Parser {
         } else {
             None
         };
+        let effects = self.function_effects()?;
 
         if !compile_groups.is_empty() || !groups.is_empty() {
             self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::Equal]);
@@ -227,7 +228,11 @@ impl Parser {
         self.expect(&TokenKind::Equal, "`=`")?;
 
         if self.at(&TokenKind::Struct) || self.at(&TokenKind::Enum) || self.at(&TokenKind::Trait) {
-            if mutable || annotation.is_some() || !groups.is_empty() || !where_predicates.is_empty()
+            if mutable
+                || annotation.is_some()
+                || effects != FunctionEffects::default()
+                || !groups.is_empty()
+                || !where_predicates.is_empty()
             {
                 return Err(self.error_here(
                     "data declarations cannot be mutable, annotated, or have runtime parameters",
@@ -244,6 +249,9 @@ impl Parser {
         }
 
         if compile_groups.is_empty() && groups.is_empty() {
+            if effects != FunctionEffects::default() {
+                return Err(self.error_here("effect annotations require a function declaration"));
+            }
             let value = self.expression(true)?;
             Ok(Item::Global(Binding {
                 mutable,
@@ -262,6 +270,7 @@ impl Parser {
                 compile_groups,
                 groups,
                 return_type: annotation,
+                effects,
                 where_predicates,
                 body: Some(body),
             }))
@@ -337,6 +346,7 @@ impl Parser {
         } else {
             None
         };
+        let effects = self.function_effects()?;
         if !compile_groups.is_empty() || !groups.is_empty() {
             self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::Equal]);
         }
@@ -352,6 +362,9 @@ impl Parser {
         }
 
         if compile_groups.is_empty() && groups.is_empty() {
+            if effects != FunctionEffects::default() {
+                return Err(self.error_here("effect annotations require a function member"));
+            }
             Ok(ExtendMember::Const(Binding {
                 mutable: false,
                 name,
@@ -369,6 +382,7 @@ impl Parser {
                 compile_groups,
                 groups,
                 return_type: annotation,
+                effects,
                 where_predicates,
                 body: Some(body),
             }))
@@ -931,6 +945,7 @@ impl Parser {
         } else {
             None
         };
+        let effects = self.function_effects()?;
 
         if compile_groups.is_empty() && groups.is_empty() {
             return Err(
@@ -959,9 +974,24 @@ impl Parser {
             compile_groups,
             groups,
             return_type,
+            effects,
             where_predicates,
             body,
         }))
+    }
+
+    fn function_effects(&mut self) -> Result<FunctionEffects, ParseError> {
+        if !self.take(&TokenKind::Bang) {
+            return Ok(FunctionEffects::default());
+        }
+        if !self.take(&TokenKind::Unsafe) {
+            return Err(self.error_here(
+                "expected `unsafe` after `!`; additional effect rows are not implemented yet",
+            ));
+        }
+        Ok(FunctionEffects {
+            unsafe_effect: true,
+        })
     }
 
     fn named_type_fields(&mut self) -> Result<Vec<Field>, ParseError> {
@@ -2625,6 +2655,23 @@ mod tests {
         assert_eq!(function.groups.len(), 2);
         assert_eq!(function.groups[0][0].mode, PassMode::Copy);
         assert_eq!(function.return_type, Some(Type::I32));
+    }
+
+    #[test]
+    fn parses_function_effects_and_rejects_them_on_values() {
+        let program = parse("let read(pointer: Ptr(i32)): i32 ! unsafe = *pointer\n").unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        assert!(function.effects.unsafe_effect);
+
+        let error = parse("let answer: i32 ! unsafe = 42\n").unwrap_err();
+        assert!(error
+            .message
+            .contains("effect annotations require a function declaration"));
+
+        let error = parse("let f(): i32 ! copy = 42\n").unwrap_err();
+        assert!(error.message.contains("expected `unsafe` after `!`"));
     }
 
     #[test]

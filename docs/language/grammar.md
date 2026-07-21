@@ -73,7 +73,7 @@ separators = { separator } ;
 ```ebnf
 source_file = separators, { item, separators }, EOF ;
 
-item = { attribute }, [ visibility ], [ "unsafe" ],
+item = { attribute }, [ visibility ],
        ( use_decl | let_decl | extend_decl | extern_decl ) ;
 
 attribute  = "@", IDENT, [ "(", [ attribute_args ], ")" ] ;
@@ -86,8 +86,11 @@ visibility = "pub", [ "(", "package", ")" ] ;
 let_decl = "let", [ "mut" ], IDENT,
            { parameter_group },
            [ ":", type_expr ],
+           [ effect_annotation ],
            [ where_clause ],
            [ "=", initializer ] ;
+
+effect_annotation = "!", "unsafe" ;
 
 initializer = expression | struct_decl | enum_decl | trait_decl | module_decl ;
 ```
@@ -96,6 +99,7 @@ initializer = expression | struct_decl | enum_decl | trait_decl | module_decl ;
 
 - 普通值、函数、类型和模块声明必须有 initializer；只有 trait 要求可以省略。
 - `let mut` 不能含参数组，且必须绑定运行时值。
+- effect 标注只能用于函数声明；当前实现的非空 effect 行只有 `! unsafe`。
 - `let f(x: T) = body` 是具名函数声明。
 - `let f: (x: T): R = { body }` 是带名签名函数声明：所有槽必须有名字，RHS 是函数体。
 - `let f: (T): R = { (x: T) -> body }` 是普通函数值绑定。

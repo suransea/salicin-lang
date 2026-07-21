@@ -12,9 +12,11 @@ this path. Mutable borrowing has one source spelling, `borrow(mut)`; separately 
 aliases and the former prefix spelling are intentionally absent before 1.0.
 Passing keyword generics are also implemented for functions and generic inherent members:
 `P: passing` accepts `auto`, `copy`, or `move` and can be referenced directly in parameter keyword
-position. `do` now models an effect-polymorphic immediate trailing-closure call and forwards the
-implemented `unsafe` color into nested immediate calls. General source-level effect rows and async
-color polymorphism remain design work.
+position. Functions and trait methods can declare the first typed effect with a `! unsafe` suffix;
+complete direct, method, aliased, and partially applied calls require an enclosing `! unsafe`
+function or `unsafe { ... }` handler. `do` models an effect-polymorphic immediate trailing-closure
+call and forwards the implemented `unsafe` effect into nested immediate calls. General `E: effect`
+rows, typed Try forwarding, and async color polymorphism remain design work.
 
 `core` and `alloc` are mounted in ordinary module resolution. `core.ops` traits and alloc containers
 are not part of the prelude. `Box`, `Vec`, and their free functions require

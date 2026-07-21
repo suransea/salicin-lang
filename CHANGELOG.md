@@ -6,6 +6,21 @@ subset.
 
 ## Unreleased
 
+## 0.84.0 - 2026-07-21
+
+- Added `! unsafe` to function and method signatures as the first statically checked source-level
+  effect annotation.
+- Allowed declared unsafe functions to perform unsafe operations and call one another without an
+  inner handler, while requiring pure callers to use `unsafe { ... }`.
+- Preserved the effect requirement through complete direct calls, methods, named callable aliases,
+  and curried partial applications; partial application itself remains effect-free until the final
+  parameter group is applied.
+- Made unsafe color part of concrete and generic trait method signature matching, and rejected an
+  effectful `main` whose native caller could not discharge the effect.
+- Specified the intended `effect` row kind, the distinction between `access` and effects, and the
+  initial `unsafe`, `try(R)`, and async effect/handler model without prematurely treating IO,
+  allocation, or ordinary state as built-in effects.
+
 ## 0.83.0 - 2026-07-21
 
 - Redefined `do { ... }` as an immediately invoked zero-parameter trailing closure whose `return`

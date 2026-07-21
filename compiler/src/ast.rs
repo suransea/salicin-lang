@@ -168,8 +168,14 @@ pub struct Function {
     /// partial application without changing the parser.
     pub groups: Vec<Vec<Param>>,
     pub return_type: Option<Type>,
+    pub effects: FunctionEffects,
     pub where_predicates: Vec<WherePredicate>,
     pub body: Option<Expr>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct FunctionEffects {
+    pub unsafe_effect: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
