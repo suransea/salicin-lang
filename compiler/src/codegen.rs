@@ -8740,6 +8740,16 @@ impl Analyzer {
                 | BinaryOp::Shr => self.probe_arithmetic_ty(*operator, left, right, hint, context),
             },
             Expr::Coalesce(left, right) => self.probe_coalesce_ty(left, right, hint, context),
+            Expr::HandlerCoalesce {
+                success, fallback, ..
+            } => {
+                let success = self.probe_expr_ty(success, hint, context);
+                if matches!(success, TypeProbe::Unsupported) {
+                    self.probe_expr_ty(fallback, hint, context)
+                } else {
+                    success
+                }
+            }
             Expr::Try(value) => {
                 let probe = self.probe_expr_ty(value, None, context);
                 let Some(info) = self.builtin_fallible_info_for_probe(&probe) else {
@@ -10645,6 +10655,13 @@ impl Analyzer {
                 self.lower_binary(left, *operator, right, expected, context)
             }
             Expr::Coalesce(left, right) => self.lower_coalesce(left, right, expected, context),
+            Expr::HandlerCoalesce {
+                scrutinee,
+                payload,
+                success,
+                fallback,
+            } => self
+                .lower_handler_coalesce(scrutinee, payload, success, fallback, expected, context),
             Expr::Try(value) => self.lower_try(value, expected, context),
             Expr::DoBlock { body } => self.lower_do_block(body, expected, context),
             Expr::Throw(value) => self.lower_throw(value, context),
@@ -12231,6 +12248,20 @@ impl Analyzer {
                 self.scan_simple_closure_captures(left, bound, outer, captures)
                     & self.scan_simple_closure_captures(right, bound, outer, captures)
             }
+            Expr::HandlerCoalesce {
+                scrutinee,
+                payload,
+                success,
+                fallback,
+            } => {
+                let mut valid =
+                    self.scan_simple_closure_captures(scrutinee, bound, outer, captures);
+                let saved = bound.clone();
+                bound.insert(payload.clone());
+                valid &= self.scan_simple_closure_captures(success, bound, outer, captures);
+                *bound = saved;
+                valid & self.scan_simple_closure_captures(fallback, bound, outer, captures)
+            }
             Expr::Array(elements) => elements.iter().fold(true, |valid, element| {
                 self.scan_simple_closure_captures(element, bound, outer, captures) & valid
             }),
@@ -13615,6 +13646,55 @@ impl Analyzer {
         self.lower_match_with_scrutinee(scrutinee, &arms, Some(&info.payload), context)
     }
 
+    fn lower_handler_coalesce(
+        &mut self,
+        source_scrutinee: &Expr,
+        payload: &str,
+        success: &Expr,
+        fallback: &Expr,
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let scrutinee = self.lower_expr(source_scrutinee, None, context);
+        if scrutinee.ty == Ty::Error {
+            return error_expr();
+        }
+        let Some(info) = self.builtin_fallible_info_for_ty(&scrutinee.ty) else {
+            self.error(format!(
+                "operator `??` requires `Option(T)` or `Result(T, E)` on the left, found `{}`",
+                scrutinee.ty
+            ));
+            return error_expr();
+        };
+        let payload_arm = |variant: &str| MatchArm {
+            pattern: Pattern::Constructor {
+                path: vec![variant.to_owned()],
+                fields: PatternFields::Positional(vec![Pattern::Binding(payload.to_owned())]),
+            },
+            guard: None,
+            body: success.clone(),
+        };
+        let fallback_arm = |variant: &str, fields: PatternFields| MatchArm {
+            pattern: Pattern::Constructor {
+                path: vec![variant.to_owned()],
+                fields,
+            },
+            guard: None,
+            body: fallback.clone(),
+        };
+        let arms = match info.kind {
+            BuiltinFallibleKind::Option => vec![
+                payload_arm("Some"),
+                fallback_arm("None", PatternFields::Unit),
+            ],
+            BuiltinFallibleKind::Result => vec![
+                payload_arm("Ok"),
+                fallback_arm("Err", PatternFields::Positional(vec![Pattern::Wildcard])),
+            ],
+        };
+        self.lower_match_with_scrutinee(scrutinee, &arms, expected, context)
+    }
+
     fn chain_access_ty(
         &mut self,
         payload: &Ty,
@@ -14156,6 +14236,16 @@ impl Analyzer {
             | Expr::CompoundAssign(left, _, right) => {
                 self.collect_escaping_throws(left, context, errors);
                 self.collect_escaping_throws(right, context, errors);
+            }
+            Expr::HandlerCoalesce {
+                scrutinee,
+                success,
+                fallback,
+                ..
+            } => {
+                self.collect_escaping_throws(scrutinee, context, errors);
+                self.collect_escaping_throws(success, context, errors);
+                self.collect_escaping_throws(fallback, context, errors);
             }
             Expr::Call(_, _) => {
                 if let Some((_, error)) = self.call_throws_info(expression, context) {
@@ -16385,6 +16475,70 @@ impl Analyzer {
                                 )
                             }),
                         )
+                    }),
+                )
+            }
+            Expr::Coalesce(left, right) => {
+                let right = *right;
+                let handler_for_fallback = handler.clone();
+                let resume_for_fallback = resume.clone();
+                let next = continuation.clone();
+                self.transform_handler_expr(
+                    *left,
+                    handler,
+                    resume,
+                    Rc::new(move |analyzer, scrutinee| {
+                        let payload_id = analyzer.next_closure;
+                        analyzer.next_closure += 1;
+                        let payload = format!("$handler$coalesce$payload${payload_id}");
+                        let success = next(analyzer, Expr::Name(payload.clone()))?;
+                        let fallback = analyzer.transform_handler_expr(
+                            right.clone(),
+                            handler_for_fallback.clone(),
+                            resume_for_fallback.clone(),
+                            next.clone(),
+                        )?;
+                        Ok(Expr::HandlerCoalesce {
+                            scrutinee: Box::new(scrutinee),
+                            payload,
+                            success: Box::new(success),
+                            fallback: Box::new(fallback),
+                        })
+                    }),
+                )
+            }
+            Expr::HandlerCoalesce {
+                scrutinee,
+                payload,
+                success,
+                fallback,
+            } => {
+                let handler_for_branches = handler.clone();
+                let resume_for_branches = resume.clone();
+                let next = continuation.clone();
+                self.transform_handler_expr(
+                    *scrutinee,
+                    handler,
+                    resume,
+                    Rc::new(move |analyzer, scrutinee| {
+                        let success = analyzer.transform_handler_expr(
+                            (*success).clone(),
+                            handler_for_branches.clone(),
+                            resume_for_branches.clone(),
+                            next.clone(),
+                        )?;
+                        let fallback = analyzer.transform_handler_expr(
+                            (*fallback).clone(),
+                            handler_for_branches.clone(),
+                            resume_for_branches.clone(),
+                            next.clone(),
+                        )?;
+                        Ok(Expr::HandlerCoalesce {
+                            scrutinee: Box::new(scrutinee),
+                            payload: payload.clone(),
+                            success: Box::new(success),
+                            fallback: Box::new(fallback),
+                        })
                     }),
                 )
             }
@@ -20460,6 +20614,16 @@ fn do_block_requires_function_boundary(expression: &Expr) -> bool {
         | Expr::CompoundAssign(left, _, right) => {
             do_block_requires_function_boundary(left) || do_block_requires_function_boundary(right)
         }
+        Expr::HandlerCoalesce {
+            scrutinee,
+            success,
+            fallback,
+            ..
+        } => {
+            do_block_requires_function_boundary(scrutinee)
+                || do_block_requires_function_boundary(success)
+                || do_block_requires_function_boundary(fallback)
+        }
         Expr::Call(callee, arguments) => {
             do_block_requires_function_boundary(callee)
                 || arguments
@@ -20812,6 +20976,16 @@ fn rewrite_handler_loop_control(
             rewrite_handler_loop_control(left, recursive_name, break_name, nested_loop_depth);
             rewrite_handler_loop_control(right, recursive_name, break_name, nested_loop_depth);
         }
+        Expr::HandlerCoalesce {
+            scrutinee,
+            success,
+            fallback,
+            ..
+        } => {
+            rewrite_handler_loop_control(scrutinee, recursive_name, break_name, nested_loop_depth);
+            rewrite_handler_loop_control(success, recursive_name, break_name, nested_loop_depth);
+            rewrite_handler_loop_control(fallback, recursive_name, break_name, nested_loop_depth);
+        }
         Expr::Call(callee, arguments) => {
             rewrite_handler_loop_control(callee, recursive_name, break_name, nested_loop_depth);
             for argument in arguments {
@@ -20918,6 +21092,16 @@ fn collect_internal_recursion_tokens(expression: &Expr, tokens: &mut HashSet<Str
         | Expr::CompoundAssign(left, _, right) => {
             collect_internal_recursion_tokens(left, tokens);
             collect_internal_recursion_tokens(right, tokens);
+        }
+        Expr::HandlerCoalesce {
+            scrutinee,
+            success,
+            fallback,
+            ..
+        } => {
+            collect_internal_recursion_tokens(scrutinee, tokens);
+            collect_internal_recursion_tokens(success, tokens);
+            collect_internal_recursion_tokens(fallback, tokens);
         }
         Expr::Call(callee, arguments) => {
             collect_internal_recursion_tokens(callee, tokens);
@@ -21093,6 +21277,16 @@ fn rewrite_handler_returns(expression: &mut Expr, return_name: &str) {
             rewrite_handler_returns(left, return_name);
             rewrite_handler_returns(right, return_name);
         }
+        Expr::HandlerCoalesce {
+            scrutinee,
+            success,
+            fallback,
+            ..
+        } => {
+            rewrite_handler_returns(scrutinee, return_name);
+            rewrite_handler_returns(success, return_name);
+            rewrite_handler_returns(fallback, return_name);
+        }
         Expr::Call(callee, arguments) => {
             rewrite_handler_returns(callee, return_name);
             for argument in arguments {
@@ -21195,6 +21389,25 @@ fn hygienic_rename_expr(
         | Expr::CompoundAssign(left, _, right) => {
             hygienic_rename_expr(left, prefix, next, scopes);
             hygienic_rename_expr(right, prefix, next, scopes);
+        }
+        Expr::HandlerCoalesce {
+            scrutinee,
+            payload,
+            success,
+            fallback,
+        } => {
+            hygienic_rename_expr(scrutinee, prefix, next, scopes);
+            scopes.push(HashMap::new());
+            let renamed = format!("{prefix}{}${}", *next, payload);
+            *next += 1;
+            scopes
+                .last_mut()
+                .expect("handler coalesce success scope")
+                .insert(payload.clone(), renamed.clone());
+            *payload = renamed;
+            hygienic_rename_expr(success, prefix, next, scopes);
+            scopes.pop();
+            hygienic_rename_expr(fallback, prefix, next, scopes);
         }
         Expr::Call(callee, arguments) => {
             hygienic_rename_expr(callee, prefix, next, scopes);
@@ -27728,6 +27941,16 @@ fn expand_expr_aliases(
             expand_expr_aliases(left, aliases, diagnostics);
             expand_expr_aliases(right, aliases, diagnostics);
         }
+        Expr::HandlerCoalesce {
+            scrutinee,
+            success,
+            fallback,
+            ..
+        } => {
+            expand_expr_aliases(scrutinee, aliases, diagnostics);
+            expand_expr_aliases(success, aliases, diagnostics);
+            expand_expr_aliases(fallback, aliases, diagnostics);
+        }
         Expr::Call(callee, arguments) => {
             expand_expr_aliases(callee, aliases, diagnostics);
             for argument in arguments {
@@ -27975,6 +28198,16 @@ fn substitute_self_expression_target(expression: &mut Expr, target: &str) {
             substitute_self_expression_target(left, target);
             substitute_self_expression_target(right, target);
         }
+        Expr::HandlerCoalesce {
+            scrutinee,
+            success,
+            fallback,
+            ..
+        } => {
+            substitute_self_expression_target(scrutinee, target);
+            substitute_self_expression_target(success, target);
+            substitute_self_expression_target(fallback, target);
+        }
         Expr::Call(callee, arguments) => {
             substitute_self_expression_target(callee, target);
             for argument in arguments {
@@ -28102,6 +28335,16 @@ fn rewrite_abstract_self_qualified_methods(expression: &mut Expr) {
             rewrite_abstract_self_qualified_methods(left);
             rewrite_abstract_self_qualified_methods(right);
         }
+        Expr::HandlerCoalesce {
+            scrutinee,
+            success,
+            fallback,
+            ..
+        } => {
+            rewrite_abstract_self_qualified_methods(scrutinee);
+            rewrite_abstract_self_qualified_methods(success);
+            rewrite_abstract_self_qualified_methods(fallback);
+        }
         Expr::Member(base, _) | Expr::ChainMember(base, _) => {
             rewrite_abstract_self_qualified_methods(base)
         }
@@ -28210,6 +28453,16 @@ fn substitute_expr_types(expression: &mut Expr, substitutions: &HashMap<String, 
         | Expr::CompoundAssign(left, _, right) => {
             substitute_expr_types(left, substitutions);
             substitute_expr_types(right, substitutions);
+        }
+        Expr::HandlerCoalesce {
+            scrutinee,
+            success,
+            fallback,
+            ..
+        } => {
+            substitute_expr_types(scrutinee, substitutions);
+            substitute_expr_types(success, substitutions);
+            substitute_expr_types(fallback, substitutions);
         }
         Expr::Call(callee, arguments) => {
             substitute_expr_types(callee, substitutions);

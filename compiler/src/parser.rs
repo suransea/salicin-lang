@@ -3254,6 +3254,16 @@ fn validate_expr_accesses(expression: &Expr, accesses: &HashSet<String>) -> Resu
             validate_expr_accesses(left, accesses)?;
             validate_expr_accesses(right, accesses)
         }
+        Expr::HandlerCoalesce {
+            scrutinee,
+            success,
+            fallback,
+            ..
+        } => {
+            validate_expr_accesses(scrutinee, accesses)?;
+            validate_expr_accesses(success, accesses)?;
+            validate_expr_accesses(fallback, accesses)
+        }
         Expr::Call(callee, arguments) => {
             validate_expr_accesses(callee, accesses)?;
             for argument in arguments {
@@ -3407,6 +3417,16 @@ fn validate_expr_regions(expression: &Expr, regions: &HashSet<String>) -> Result
         | Expr::CompoundAssign(left, _, right) => {
             validate_expr_regions(left, regions)?;
             validate_expr_regions(right, regions)
+        }
+        Expr::HandlerCoalesce {
+            scrutinee,
+            success,
+            fallback,
+            ..
+        } => {
+            validate_expr_regions(scrutinee, regions)?;
+            validate_expr_regions(success, regions)?;
+            validate_expr_regions(fallback, regions)
         }
         Expr::Call(callee, arguments) => {
             validate_expr_regions(callee, regions)?;

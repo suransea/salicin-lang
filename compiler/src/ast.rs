@@ -346,6 +346,14 @@ pub enum Expr {
     },
     Binary(Box<Expr>, BinaryOp, Box<Expr>),
     Coalesce(Box<Expr>, Box<Expr>),
+    /// Selective-CPS form of `??`; produced after parsing so the typed
+    /// lowering can choose the `Option` or `Result` success pattern.
+    HandlerCoalesce {
+        scrutinee: Box<Expr>,
+        payload: String,
+        success: Box<Expr>,
+        fallback: Box<Expr>,
+    },
     Try(Box<Expr>),
     DoBlock {
         body: Box<Expr>,

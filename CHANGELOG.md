@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.122.0 - 2026-07-22
+
+- Extended selective algebraic-effect CPS through `??` while preserving its lazy fallback and
+  left-to-right evaluation semantics.
+- Added an internal typed coalescing node that defers `Option` versus `Result` pattern selection
+  until the scrutinee type is known, without exposing compiler machinery in source syntax.
+- Added native coverage for effectful `Option` and `Result` coalescing across both success and
+  residual paths, including a `bool` payload under an `i32` handler answer type.
+
 ## 0.121.0 - 2026-07-22
 
 - Verified the erased continuation ownership contract on both terminal paths: abandoning a

@@ -68,7 +68,7 @@ indirect calls remain implementation work. Abandonment invokes the armed environ
 whereas resumption transfers and disarms it; native resource regressions cover exactly-once cleanup
 on both paths. CPS traversal
 currently covers ordinary arguments, arrays, indexes, members, match bodies, immediate effect
-wrappers, and lazy boolean branches; effectful coalescing fallbacks and match guards remain reserved.
+wrappers, lazy boolean branches, and lazy `Option`/`Result` coalescing; match guards remain reserved.
 Different user-defined handlers compose lexically through action, clause, and generated-frame
 closure boundaries; nested handlers of the same identity retain nearest-boundary selection.
 Function and generic inherent-member `E: effect` parameters represent complete rows, default to pure,

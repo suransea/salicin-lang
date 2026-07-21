@@ -2263,6 +2263,18 @@ impl Resolver {
                 self.rewrite_expr(left, context, type_scope, value_scope);
                 self.rewrite_expr(right, context, type_scope, value_scope);
             }
+            Expr::HandlerCoalesce {
+                scrutinee,
+                payload,
+                success,
+                fallback,
+            } => {
+                self.rewrite_expr(scrutinee, context, type_scope, value_scope);
+                let mut success_scope = value_scope.clone();
+                success_scope.insert(payload.clone());
+                self.rewrite_expr(success, context, type_scope, &success_scope);
+                self.rewrite_expr(fallback, context, type_scope, value_scope);
+            }
             Expr::Call(callee, arguments) => {
                 self.rewrite_expr(callee, context, type_scope, value_scope);
                 for argument in arguments {
@@ -4140,6 +4152,16 @@ let main(): i32 = { Option() }
                 | Expr::CompoundAssign(left, _, right) => {
                     visit(left, names);
                     visit(right, names);
+                }
+                Expr::HandlerCoalesce {
+                    scrutinee,
+                    success,
+                    fallback,
+                    ..
+                } => {
+                    visit(scrutinee, names);
+                    visit(success, names);
+                    visit(fallback, names);
                 }
                 Expr::Call(callee, arguments) => {
                     visit(callee, names);

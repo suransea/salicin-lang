@@ -152,8 +152,9 @@ abandoning an armed node calls its drop entry. Thus either terminal path destroy
 value exactly once. Selective CPS preserves source order through operation and ordinary-call
 arguments, arrays, indexes, members, `match` scrutinees and arm
 bodies, and immediate `do`, `unsafe`, and `try` wrappers. Effectful `&&` and `||` operands retain
-their lazy branch semantics. Effectful coalescing fallbacks, optional-call arguments, match guards,
-capturing indirect calls and effectful lazy fallback/guard paths remain implementation work;
+their lazy branch semantics. Effectful `??` evaluates its fallback only on `None` or `Err`, and both
+the scrutinee and fallback may suspend independently. Optional-call arguments, match guards, and
+capturing indirect calls remain implementation work;
 unsupported cases are rejected rather than compiled with callback-only semantics.
 
 Lexically nested handlers of different effect identities compose in source order. The outer
