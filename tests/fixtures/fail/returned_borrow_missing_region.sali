@@ -1,0 +1,2 @@
+let bad(borrow value: i32): borrow i32 = borrow value
+let main(): i32 = 42

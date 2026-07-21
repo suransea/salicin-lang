@@ -680,6 +680,7 @@ fn m1_ownership_programs_run_with_expected_result() {
         "temporary_borrow_partial_call.sali",
         "explicit_borrow_types.sali",
         "region_scoped_borrow.sali",
+        "returned_borrow.sali",
     ] {
         let output = salic()
             .arg("run")
@@ -752,7 +753,7 @@ fn explicit_borrow_type_errors_report_their_cause() {
         ("borrow_type_pointee_mismatch.sali", "borrow pointee"),
         (
             "borrow_type_signature.sali",
-            "function and data type signatures require explicit region support",
+            "cannot use a borrow value type yet",
         ),
     ] {
         let output = salic()
@@ -784,6 +785,41 @@ fn region_frontend_errors_report_their_cause() {
             .arg(fixture("fail", name))
             .output()
             .expect("check invalid region fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn returned_borrow_errors_report_their_cause() {
+    for (name, expected) in [
+        ("returned_borrow_local.sali", "borrow of a local value"),
+        (
+            "returned_borrow_temporary.sali",
+            "cannot originate from a temporary",
+        ),
+        (
+            "returned_borrow_shared_as_mut.sali",
+            "shared borrow as a mutable borrow",
+        ),
+        ("returned_borrow_conflicting_write.sali", "already borrowed"),
+        ("returned_borrow_missing_region.sali", "must name a region"),
+        (
+            "borrow_type_signature.sali",
+            "cannot use a borrow value type yet",
+        ),
+        ("returned_borrow_field.sali", "borrow-typed field"),
+        ("returned_borrow_method.sali", "reference-returning method"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid returned borrow fixture");
         assert!(!output.status.success(), "{name} unexpectedly passed");
         assert!(
             String::from_utf8_lossy(&output.stderr).contains(expected),

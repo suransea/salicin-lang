@@ -1,0 +1,29 @@
+let Pair = struct(left: i32, right: i32)
+
+let left('a: region)(borrow('a) pair: Pair): borrow('a) i32 = borrow pair.left
+
+let left_mut('a: region)
+  (mut borrow('a) pair: Pair): mut borrow('a) i32 = mut borrow pair.left
+
+let forward('a: region)(borrow('a) pair: Pair): borrow('a) i32 = left(pair)
+
+let same('a: region, T: type)(borrow('a) value: T): borrow('a) T = borrow value
+
+extend Pair {
+  let right_ref('a: region)(borrow('a) pair: Pair): borrow('a) i32 = borrow pair.right
+}
+
+let main(): i32 = {
+  let mut pair = Pair(20, 0)
+  let before = do {
+    let reference = forward(pair)
+    let generic = same(value: pair)
+    let associated = Pair.right_ref(pair)
+    reference + generic.right + associated
+  }
+  do {
+    let reference = left_mut(pair)
+    reference = 22
+  }
+  before + pair.left
+}

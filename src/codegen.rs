@@ -108,7 +108,15 @@ enum Ty {
     U64,
     Bool,
     Unit,
-    Pointer { pointee: Box<Ty>, mutable: bool },
+    Pointer {
+        pointee: Box<Ty>,
+        mutable: bool,
+    },
+    Reference {
+        pointee: Box<Ty>,
+        mutable: bool,
+        region: Option<String>,
+    },
     Array(Box<Ty>, u64),
     Struct(String),
     Enum(String),
@@ -308,6 +316,18 @@ impl fmt::Display for Ty {
             Self::Pointer { pointee, mutable } => {
                 write!(f, "{}({pointee})", if *mutable { "MutPtr" } else { "Ptr" })
             }
+            Self::Reference {
+                pointee,
+                mutable,
+                region,
+            } => {
+                let qualifier = if *mutable { "mut borrow" } else { "borrow" };
+                if let Some(region) = region {
+                    write!(f, "{qualifier}('{region}) {pointee}")
+                } else {
+                    write!(f, "{qualifier} {pointee}")
+                }
+            }
             Self::Array(element, length) => write!(f, "Array({element}, {length})"),
             Self::Struct(name) | Self::Enum(name) => f.write_str(name),
             Self::Never => f.write_str("never"),
@@ -391,7 +411,7 @@ impl HirProgram {
     fn needs_drop(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Array(element, _) => self.needs_drop(element),
-            Ty::Pointer { .. } => false,
+            Ty::Pointer { .. } | Ty::Reference { .. } => false,
             Ty::Struct(name) => {
                 self.box_pointee(name).is_some()
                     || self.drop_methods.contains_key(ty)
@@ -475,6 +495,7 @@ struct HirPlace {
     capability: LocalCapability,
     root_mutable: bool,
     loan: Option<LoanId>,
+    indirect: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -905,6 +926,7 @@ struct LowerCtx {
     type_substitutions: HashMap<String, Type>,
     loops: Vec<LoopFrame>,
     guard_move_restricted: HashSet<LocalId>,
+    borrowed_parameter_regions: HashMap<LocalId, (Option<String>, bool)>,
     unsafe_depth: usize,
 }
 
@@ -923,6 +945,7 @@ impl LowerCtx {
             type_substitutions: HashMap::new(),
             loops: Vec::new(),
             guard_move_restricted: HashSet::new(),
+            borrowed_parameter_regions: HashMap::new(),
             unsafe_depth: 0,
         }
     }
@@ -941,6 +964,7 @@ impl LowerCtx {
             type_substitutions: HashMap::new(),
             loops: Vec::new(),
             guard_move_restricted: HashSet::new(),
+            borrowed_parameter_regions: HashMap::new(),
             unsafe_depth: 0,
         }
     }
@@ -1823,6 +1847,7 @@ impl Analyzer {
             | Ty::Pointer { .. }
             | Ty::Never
             | Ty::Error => true,
+            Ty::Reference { mutable, .. } => !mutable,
             Ty::Array(element, _) => self.type_is_copy_with_nominals(element, valid),
             Ty::Enum(name) if name == self.lang_item_name(LangItemKind::Never) => true,
             Ty::Struct(_) | Ty::Enum(_) => valid.contains(ty),
@@ -3940,9 +3965,17 @@ impl Analyzer {
                 ));
                 continue;
             }
+            let mut ty = self.lower_source_type(&field.ty);
+            if matches!(ty, Ty::Reference { .. }) {
+                self.error(format!(
+                    "borrow-typed field `{}.{}` is not supported until stored-reference drop and variance rules are implemented",
+                    name, field.name
+                ));
+                ty = Ty::Error;
+            }
             fields.push(FieldLayout {
                 name: field.name,
-                ty: self.lower_source_type(&field.ty),
+                ty,
                 access: Self::effective_member_access(&owner_access, field.visibility),
             });
         }
@@ -4000,9 +4033,17 @@ impl Analyzer {
                     ));
                     continue;
                 }
+                let mut ty = self.lower_source_type(&source_ty);
+                if matches!(ty, Ty::Reference { .. }) {
+                    self.error(format!(
+                        "borrow-typed enum field `{name}.{}.{field_name}` is not supported until stored-reference drop and variance rules are implemented",
+                        variant.name
+                    ));
+                    ty = Ty::Error;
+                }
                 fields.push(FieldLayout {
                     name: field_name,
-                    ty: self.lower_source_type(&source_ty),
+                    ty,
                     access: Self::effective_member_access(&owner_access, visibility),
                 });
             }
@@ -4978,12 +5019,15 @@ impl Analyzer {
             Type::U64 => Ty::U64,
             Type::Bool => Ty::Bool,
             Type::Unit => Ty::Unit,
-            Type::Borrow { .. } => {
-                self.error(
-                    "borrow types are currently supported only as local `let` annotations; function and data type signatures require explicit region support",
-                );
-                Ty::Error
-            }
+            Type::Borrow {
+                mutable,
+                region,
+                pointee,
+            } => Ty::Reference {
+                pointee: Box::new(self.lower_source_type(pointee)),
+                mutable: *mutable,
+                region: region.clone(),
+            },
             Type::Array(element, length) => {
                 let element = self.lower_source_type(element);
                 if *length > i32::MAX as u64 {
@@ -5202,6 +5246,15 @@ impl Analyzer {
                 if *mutable { "MutPtr" } else { "Ptr" }.to_owned(),
                 vec![self.source_type_for_ty(pointee)?],
             )),
+            Ty::Reference {
+                pointee,
+                mutable,
+                region,
+            } => Some(Type::Borrow {
+                mutable: *mutable,
+                region: region.clone(),
+                pointee: Box::new(self.source_type_for_ty(pointee)?),
+            }),
             Ty::Struct(name) | Ty::Enum(name) => {
                 if let Some(instance) = self.nominal_instances.get(name) {
                     let arguments = instance
@@ -5245,6 +5298,17 @@ impl Analyzer {
                 if *mutable { "MutPtr" } else { "Ptr" },
                 self.diagnostic_type_name(pointee)
             ),
+            Ty::Reference {
+                pointee,
+                mutable,
+                region,
+            } => {
+                let mode = if *mutable { "mut borrow" } else { "borrow" };
+                let region = region
+                    .as_ref()
+                    .map_or_else(String::new, |region| format!("('{region})"));
+                format!("{mode}{region} {}", self.diagnostic_type_name(pointee))
+            }
             Ty::Struct(name) | Ty::Enum(name) => {
                 if let Some(parameter) = self.abstract_type_parameters.get(name) {
                     return parameter.clone();
@@ -5345,7 +5409,15 @@ impl Analyzer {
             Type::U64 => Some(Ty::U64),
             Type::Bool => Some(Ty::Bool),
             Type::Unit => Some(Ty::Unit),
-            Type::Borrow { .. } => None,
+            Type::Borrow {
+                mutable,
+                region,
+                pointee,
+            } => Some(Ty::Reference {
+                pointee: Box::new(self.probe_source_ty(pointee)?),
+                mutable: *mutable,
+                region: region.clone(),
+            }),
             Type::Array(element, length) => {
                 Some(Ty::Array(Box::new(self.probe_source_ty(element)?), *length))
             }
@@ -5551,7 +5623,34 @@ impl Analyzer {
             Type::U64 => (*actual == Ty::U64).then_some(false).ok_or_else(mismatch),
             Type::Bool => (*actual == Ty::Bool).then_some(false).ok_or_else(mismatch),
             Type::Unit => (*actual == Ty::Unit).then_some(false).ok_or_else(mismatch),
-            Type::Borrow { .. } => Err(mismatch()),
+            Type::Borrow {
+                mutable,
+                region,
+                pointee,
+            } => {
+                let Ty::Reference {
+                    pointee: actual_pointee,
+                    mutable: actual_mutable,
+                    region: actual_region,
+                } = actual
+                else {
+                    return Err(mismatch());
+                };
+                if mutable != actual_mutable || region != actual_region {
+                    return Err(mismatch());
+                }
+                self.unify_template_ty(
+                    pointee,
+                    actual_pointee,
+                    match actual_source {
+                        Some(Type::Borrow { pointee, .. }) => Some(pointee),
+                        _ => None,
+                    },
+                    compile_parameters,
+                    inferred,
+                    origin,
+                )
+            }
             Type::Array(element, length) => {
                 let Ty::Array(actual_element, actual_length) = actual else {
                     return Err(mismatch());
@@ -5670,7 +5769,19 @@ impl Analyzer {
             Type::U64 => Some(Ty::U64),
             Type::Bool => Some(Ty::Bool),
             Type::Unit => Some(Ty::Unit),
-            Type::Borrow { .. } => None,
+            Type::Borrow {
+                mutable,
+                region,
+                pointee,
+            } => Some(Ty::Reference {
+                pointee: Box::new(self.resolved_template_ty(
+                    pointee,
+                    compile_parameters,
+                    inferred,
+                )?),
+                mutable: *mutable,
+                region: region.clone(),
+            }),
             Type::Array(element, length) => Some(Ty::Array(
                 Box::new(self.resolved_template_ty(element, compile_parameters, inferred)?),
                 *length,
@@ -5992,6 +6103,9 @@ impl Analyzer {
                 Ty::Pointer { pointee, .. } => {
                     visit(analyzer, access, pointee, fallback_origin, visited)
                 }
+                Ty::Reference { pointee, .. } => {
+                    visit(analyzer, access, pointee, fallback_origin, visited)
+                }
                 Ty::Function(function) => {
                     let mut restricted = access;
                     for parameter in function.groups.iter().flatten() {
@@ -6075,6 +6189,9 @@ impl Analyzer {
                 self.collect_type_api_leaks(element, exposed, description, visited, diagnostics)
             }
             Ty::Pointer { pointee, .. } => {
+                self.collect_type_api_leaks(pointee, exposed, description, visited, diagnostics)
+            }
+            Ty::Reference { pointee, .. } => {
                 self.collect_type_api_leaks(pointee, exposed, description, visited, diagnostics)
             }
             Ty::Function(function) => {
@@ -7850,6 +7967,17 @@ impl Analyzer {
             .insert(name.to_owned(), ResolutionState::Resolving);
         let function = self.functions[name].clone();
         let signature = self.signatures[name].clone();
+        if matches!(signature.result, Some(Ty::Reference { .. }))
+            && function
+                .groups
+                .first()
+                .and_then(|group| group.first())
+                .is_some_and(|parameter| parameter.name == "self")
+        {
+            self.error(format!(
+                "reference-returning method `{name}` is not supported yet; use a free or associated function"
+            ));
+        }
         let mut context = LowerCtx::for_function(
             name,
             signature.result.clone(),
@@ -7871,8 +7999,8 @@ impl Analyzer {
             .unwrap_or_default();
         let mut params = Vec::new();
 
-        for group in &signature.groups {
-            for param in group {
+        for (group_index, group) in signature.groups.iter().enumerate() {
+            for (parameter_index, param) in group.iter().enumerate() {
                 self.validate_parameter_mode(name, param);
                 if context.scopes[0].names.contains_key(&param.name) {
                     self.error(format!(
@@ -7882,6 +8010,16 @@ impl Analyzer {
                     continue;
                 }
                 let id = context.fresh_local();
+                let source_parameter = &function.groups[group_index][parameter_index];
+                if matches!(param.mode, PassMode::Borrow | PassMode::MutBorrow) {
+                    context.borrowed_parameter_regions.insert(
+                        id,
+                        (
+                            source_parameter.region.clone(),
+                            param.mode == PassMode::MutBorrow,
+                        ),
+                    );
+                }
                 let capability = match param.mode {
                     PassMode::Borrow => LocalCapability::SharedParam,
                     PassMode::MutBorrow => LocalCapability::MutParam,
@@ -7906,6 +8044,27 @@ impl Analyzer {
                     ty: param.ty.clone(),
                     mode: param.mode,
                 });
+            }
+        }
+
+        if let Some(Ty::Reference { region, .. }) = &signature.result {
+            let Some(region) = region else {
+                self.error(format!(
+                    "function `{name}` must name a region on its returned borrow type"
+                ));
+                self.set_function_result(name, Ty::Error);
+                self.function_states
+                    .insert(name.to_owned(), ResolutionState::Resolved);
+                return Ty::Error;
+            };
+            if !context
+                .borrowed_parameter_regions
+                .values()
+                .any(|(parameter_region, _)| parameter_region.as_ref() == Some(region))
+            {
+                self.error(format!(
+                    "function `{name}` returns region `'{region}` but has no borrow parameter with that region"
+                ));
             }
         }
 
@@ -7967,6 +8126,12 @@ impl Analyzer {
     }
 
     fn validate_parameter_mode(&mut self, function: &str, param: &ParamSig) {
+        if matches!(param.ty, Ty::Reference { .. }) {
+            self.error(format!(
+                "parameter `{}` in function `{function}` cannot use a borrow value type yet; use borrow pass-mode syntax",
+                param.name
+            ));
+        }
         if param.mode == PassMode::Copy && !self.is_copy_type(&param.ty) {
             let ty = self.diagnostic_type_name(&param.ty);
             self.error(format!(
@@ -8005,7 +8170,7 @@ impl Analyzer {
         let result = has_custom_drop
             || match ty {
                 Ty::Array(element, _) => self.type_needs_drop_inner(element, visiting),
-                Ty::Pointer { .. } => false,
+                Ty::Pointer { .. } | Ty::Reference { .. } => false,
                 Ty::Struct(name) => {
                     self.box_pointee_type(name).is_some()
                         || self.struct_layouts.get(name).is_some_and(|layout| {
@@ -8202,6 +8367,7 @@ impl Analyzer {
                                 capability: local.capability,
                                 root_mutable: local.mutable,
                                 loan: None,
+                                indirect: false,
                             };
                             self.access_place(place, AccessKind::Auto, context)
                         }
@@ -8262,6 +8428,39 @@ impl Analyzer {
                 let Some(mut place) = self.lower_place(value, context) else {
                     return error_expr();
                 };
+                let returned_reference = expected.and_then(|expected| match expected {
+                    Ty::Reference {
+                        pointee,
+                        mutable,
+                        region,
+                    } => Some(((**pointee).clone(), *mutable, region.clone())),
+                    _ => None,
+                });
+                if let Some((pointee, expected_mutable, expected_region)) = &returned_reference {
+                    self.require_same_type(&place.ty, pointee, "returned borrow pointee");
+                    if *expected_mutable && !*mutable {
+                        self.error("cannot return a shared borrow as a mutable borrow");
+                    }
+                    match context.borrowed_parameter_regions.get(&place.local) {
+                        Some((source_region, source_mutable)) => {
+                            if source_region != expected_region {
+                                self.error(format!(
+                                    "returned borrow region mismatch: expected {}, found {}",
+                                    display_region(expected_region.as_deref()),
+                                    display_region(source_region.as_deref())
+                                ));
+                            }
+                            if *expected_mutable && !source_mutable {
+                                self.error(
+                                    "cannot return a mutable borrow through a shared borrow parameter",
+                                );
+                            }
+                        }
+                        None => self.error(
+                            "cannot return a borrow of a local value; returned borrows must originate from a region-bound borrow parameter",
+                        ),
+                    }
+                }
                 if *mutable {
                     self.ensure_writable(&place);
                 }
@@ -8278,7 +8477,14 @@ impl Analyzer {
                 };
                 place.loan = loan;
                 HirExpr {
-                    ty: place.ty.clone(),
+                    ty: returned_reference.map_or_else(
+                        || place.ty.clone(),
+                        |(pointee, mutable, region)| Ty::Reference {
+                            pointee: Box::new(pointee),
+                            mutable,
+                            region,
+                        },
+                    ),
                     kind: HirExprKind::Borrow {
                         place,
                         mutable: *mutable,
@@ -8520,6 +8726,7 @@ impl Analyzer {
                                         capability: source.capability,
                                         root_mutable: source.mutable,
                                         loan: None,
+                                        indirect: false,
                                     };
                                     self.access_place(place, AccessKind::Move, context)
                                 }
@@ -8593,6 +8800,12 @@ impl Analyzer {
                                     },
                                     Some(place.clone()),
                                 ),
+                                _ if matches!(value.ty, Ty::Reference { mutable: true, .. }) => {
+                                    (LocalCapability::MutParam, None)
+                                }
+                                _ if matches!(value.ty, Ty::Reference { mutable: false, .. }) => {
+                                    (LocalCapability::SharedParam, None)
+                                }
                                 _ => (LocalCapability::Owned, None),
                             };
                             if matches!(ty, Ty::Function(_))
@@ -9140,6 +9353,7 @@ impl Analyzer {
                 capability: local.capability,
                 root_mutable: local.mutable,
                 loan: None,
+                indirect: false,
             };
             let (parameter_mode, capability, mutable, value) = match capture.mode {
                 ClosureCaptureMode::Shared => {
@@ -9515,6 +9729,25 @@ impl Analyzer {
                 if let Some(alias) = local.alias {
                     return Some(alias);
                 }
+                if let Ty::Reference {
+                    pointee, mutable, ..
+                } = &local.ty
+                {
+                    return Some(HirPlace {
+                        local: local.id,
+                        root_ty: (**pointee).clone(),
+                        projections: Vec::new(),
+                        ty: (**pointee).clone(),
+                        capability: if *mutable {
+                            LocalCapability::MutParam
+                        } else {
+                            LocalCapability::SharedParam
+                        },
+                        root_mutable: *mutable,
+                        loan: None,
+                        indirect: true,
+                    });
+                }
                 Some(HirPlace {
                     local: local.id,
                     root_ty: local.ty.clone(),
@@ -9523,6 +9756,7 @@ impl Analyzer {
                     capability: local.capability,
                     root_mutable: local.mutable,
                     loan: None,
+                    indirect: false,
                 })
             }
             Expr::Member(base, field_name) => {
@@ -10371,6 +10605,7 @@ impl Analyzer {
                     NominalKind::Enum,
                     inferred.variant,
                     &inferred.value_groups,
+                    None,
                     context,
                 )
             }
@@ -11612,7 +11847,7 @@ impl Analyzer {
                 return self.lower_generic_function_call(name, &groups, expected, context);
             }
             if self.functions.contains_key(name) {
-                return self.lower_named_function_call(name, &groups, context);
+                return self.lower_named_function_call(name, &groups, expected, context);
             }
             if let Some((enum_name, variant)) =
                 self.resolve_short_variant(name, expected, &context.origin)
@@ -11642,6 +11877,7 @@ impl Analyzer {
                     NominalKind::Enum,
                     variant_name,
                     &groups,
+                    expected,
                     context,
                 );
             }
@@ -11707,6 +11943,7 @@ impl Analyzer {
                                         kind,
                                         variant_name,
                                         &groups,
+                                        expected,
                                         context,
                                     );
                                 }
@@ -11722,6 +11959,7 @@ impl Analyzer {
                         kind,
                         variant_name,
                         &groups,
+                        expected,
                         context,
                     );
                 }
@@ -11739,7 +11977,8 @@ impl Analyzer {
                         .and_then(|members| members.functions.get(variant_name))
                         .cloned()
                     {
-                        return self.lower_named_function_call(&canonical, &groups, context);
+                        return self
+                            .lower_named_function_call(&canonical, &groups, expected, context);
                     }
                     if self
                         .inherent_members
@@ -12158,6 +12397,7 @@ impl Analyzer {
         kind: NominalKind,
         member: &str,
         groups: &[&[CallArg]],
+        expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
         let explicitly_qualified_method = groups.first().is_some_and(
@@ -12170,7 +12410,7 @@ impl Analyzer {
                 .and_then(|members| members.functions.get(member))
                 .cloned()
             {
-                return self.lower_named_function_call(&canonical, groups, context);
+                return self.lower_named_function_call(&canonical, groups, expected, context);
             }
             if self
                 .inherent_members
@@ -12262,7 +12502,7 @@ impl Analyzer {
         else {
             return error_expr();
         };
-        self.lower_named_function_call(&canonical, &groups[runtime_start..], context)
+        self.lower_named_function_call(&canonical, &groups[runtime_start..], expected, context)
     }
 
     fn inferred_generic_enum_type_head<'a>(
@@ -12878,6 +13118,7 @@ impl Analyzer {
                         capability: LocalCapability::Owned,
                         root_mutable: false,
                         loan: None,
+                        indirect: false,
                     },
                     Some(HirBinding {
                         id,
@@ -13180,6 +13421,7 @@ impl Analyzer {
             capability: LocalCapability::Owned,
             root_mutable: local.mutable,
             loan: None,
+            indirect: false,
         };
         let leaves = self.place_leaf_keys(&callable);
         let callable_kind = if closure.is_fn_once {
@@ -13272,6 +13514,7 @@ impl Analyzer {
         &mut self,
         name: &str,
         groups: &[&[CallArg]],
+        expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
         let function_ty = self.function_type(name);
@@ -13325,6 +13568,17 @@ impl Analyzer {
         {
             self.error("partial application cannot capture borrowed arguments");
         }
+        if complete {
+            self.promote_returned_reference_loans(
+                name,
+                &function_ty.result,
+                &arguments,
+                &temporary_bindings,
+                &mut temporary_loans,
+                expected,
+                context,
+            );
+        }
         self.release_loans(&temporary_loans, context);
 
         let call = if complete {
@@ -13358,6 +13612,116 @@ impl Analyzer {
             }
         };
         self.wrap_call_argument_temporaries(call, &mut arguments, temporary_bindings, context)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn promote_returned_reference_loans(
+        &mut self,
+        function: &str,
+        result: &Ty,
+        arguments: &[HirArgument],
+        temporary_bindings: &[HirBinding],
+        temporary_loans: &mut Vec<LoanId>,
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) {
+        let Ty::Reference {
+            mutable: result_mutable,
+            region: result_region,
+            ..
+        } = result
+        else {
+            return;
+        };
+        let Some(source) = self.functions.get(function) else {
+            self.error(format!(
+                "internal error: reference-returning function `{function}` has no source signature"
+            ));
+            return;
+        };
+        let source_parameters = source.groups.iter().flatten().cloned().collect::<Vec<_>>();
+        if source_parameters.len() != arguments.len() {
+            self.error(format!(
+                "internal error: reference-returning call `{function}` lost parameter alignment"
+            ));
+            return;
+        }
+        let temporary_ids = temporary_bindings
+            .iter()
+            .map(|binding| binding.id)
+            .collect::<HashSet<_>>();
+        let mut sources = Vec::new();
+        for (parameter, argument) in source_parameters.into_iter().zip(arguments) {
+            if parameter.region.as_ref() != result_region.as_ref()
+                || !matches!(parameter.mode, PassMode::Borrow | PassMode::MutBorrow)
+            {
+                continue;
+            }
+            let place = match argument {
+                HirArgument::SharedBorrow(place) | HirArgument::MutBorrow(place) => place,
+                HirArgument::Copy(_) | HirArgument::Move(_) => continue,
+            };
+            if temporary_ids.contains(&place.local) {
+                self.error("a returned borrow cannot originate from a temporary call argument");
+            }
+            if let Some(loan) = place.loan {
+                temporary_loans.retain(|candidate| *candidate != loan);
+                let lexical_loans = &mut context
+                    .scopes
+                    .last_mut()
+                    .expect("call lowering has a lexical scope")
+                    .lexical_loans;
+                if !lexical_loans.contains(&loan) {
+                    lexical_loans.push(loan);
+                }
+            }
+            sources.push(place.clone());
+        }
+        if sources.is_empty() {
+            self.error(format!(
+                "reference-returning call `{function}` has no argument for {}",
+                display_region(result_region.as_deref())
+            ));
+        }
+
+        if let Some(Ty::Reference {
+            mutable: expected_mutable,
+            region: expected_region,
+            ..
+        }) = expected
+        {
+            if expected_region != result_region {
+                self.error(format!(
+                    "returned call region mismatch: expected {}, found {}",
+                    display_region(expected_region.as_deref()),
+                    display_region(result_region.as_deref())
+                ));
+            }
+            if *expected_mutable && !result_mutable {
+                self.error("cannot return a shared call result as a mutable borrow");
+            }
+            for source in sources {
+                match context.borrowed_parameter_regions.get(&source.local) {
+                    Some((source_region, source_mutable)) => {
+                        if source_region != expected_region {
+                            self.error(format!(
+                                "returned call argument region mismatch: expected {}, found {}",
+                                display_region(expected_region.as_deref()),
+                                display_region(source_region.as_deref())
+                            ));
+                        }
+                        if *expected_mutable && !source_mutable {
+                            self.error(
+                                "cannot return a mutable call result through a shared borrow parameter",
+                            );
+                        }
+                    }
+                    None => self.error(
+                        "cannot return a call result borrowing a local value; its source must be a region-bound borrow parameter",
+                    ),
+                }
+            }
+        }
     }
 
     fn ordered_call_arguments<'a>(
@@ -13466,6 +13830,7 @@ impl Analyzer {
             capability: LocalCapability::Owned,
             root_mutable: local.mutable,
             loan: None,
+            indirect: false,
         };
         let leaves = self.place_leaf_keys(&callable);
         let callable_kind = if partial.is_fn_once {
@@ -13628,7 +13993,7 @@ impl Analyzer {
             }
             PassMode::Borrow | PassMode::MutBorrow => {
                 let mutable = mode == PassMode::MutBorrow;
-                let place =
+                let mut place =
                     if let Some(place) = self.lower_place_without_diagnostic(argument, context) {
                         place
                     } else {
@@ -13650,6 +14015,7 @@ impl Analyzer {
                             capability: LocalCapability::Owned,
                             root_mutable: mutable,
                             loan: None,
+                            indirect: false,
                         }
                     };
                 self.require_same_type(
@@ -13666,6 +14032,7 @@ impl Analyzer {
                     LoanKind::Shared
                 };
                 if let Some(loan) = self.acquire_loan(&place, kind, false, context) {
+                    place.loan = Some(loan);
                     temporary_loans.push(loan);
                 }
                 if mutable {
@@ -13722,6 +14089,7 @@ impl Analyzer {
                                 capability: LocalCapability::Owned,
                                 root_mutable: false,
                                 loan: None,
+                                indirect: false,
                             },
                             kind: if moves {
                                 HirReadKind::Move
@@ -14137,6 +14505,7 @@ fn closure_info_for_callable(ty: &Ty) -> Option<ClosureInfo> {
                 capability: LocalCapability::Owned,
                 root_mutable: false,
                 loan: None,
+                indirect: false,
             },
             mode: match capture.mode {
                 PassMode::Borrow => ClosureCaptureMode::Shared,
@@ -14178,6 +14547,13 @@ fn error_expr() -> HirExpr {
         ty: Ty::Error,
         kind: HirExprKind::Unit,
     }
+}
+
+fn display_region(region: Option<&str>) -> String {
+    region.map_or_else(
+        || "an inferred region".to_owned(),
+        |region| format!("'{region}"),
+    )
 }
 
 fn flatten_call<'a>(expression: &'a Expr, groups: &mut Vec<&'a [CallArg]>) -> &'a Expr {
@@ -14869,6 +15245,7 @@ impl<'a> HirCleanupPlanner<'a> {
             | Ty::Bool
             | Ty::Unit
             | Ty::Pointer { .. }
+            | Ty::Reference { .. }
             | Ty::Never
             | Ty::Function(_)
             | Ty::Error => {}
@@ -15763,6 +16140,12 @@ impl<'a> HirCleanupPlanner<'a> {
         let ownership = match &binding.value.kind {
             HirExprKind::Borrow { mutable: true, .. } => CleanupLocalOwnership::MutableBorrow,
             HirExprKind::Borrow { mutable: false, .. } => CleanupLocalOwnership::SharedBorrow,
+            _ if matches!(binding.ty, Ty::Reference { mutable: true, .. }) => {
+                CleanupLocalOwnership::MutableBorrow
+            }
+            _ if matches!(binding.ty, Ty::Reference { mutable: false, .. }) => {
+                CleanupLocalOwnership::SharedBorrow
+            }
             _ => CleanupLocalOwnership::Owned,
         };
         let local = self.declare_source_local(
@@ -16792,6 +17175,7 @@ impl<'a> Emitter<'a> {
                 | Ty::Bool
                 | Ty::Unit
                 | Ty::Pointer { .. }
+                | Ty::Reference { .. }
                 | Ty::Struct(_)
                 | Ty::Enum(_)
                 | Ty::Never
@@ -16890,6 +17274,7 @@ impl<'a> Emitter<'a> {
             | Ty::Bool
             | Ty::Unit
             | Ty::Pointer { .. }
+            | Ty::Reference { .. }
             | Ty::Never
             | Ty::Function(_)
             | Ty::Error => {}
@@ -17968,6 +18353,12 @@ impl<'a> FunctionEmitter<'a> {
             HirExprKind::Partial { captures, .. } => {
                 self.emit_callable_environment(expression, captures)
             }
+            HirExprKind::Borrow { place, .. } if matches!(expression.ty, Ty::Reference { .. }) => {
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: Some(self.emit_place_address(place)?),
+                })
+            }
             HirExprKind::Borrow { .. } => Err(Diagnostic::new(
                 "borrow value escaped the local binding that owns its loan",
             )),
@@ -18155,7 +18546,9 @@ impl<'a> FunctionEmitter<'a> {
                                 }
                                 continue;
                             }
-                            if matches!(binding.value.kind, HirExprKind::Borrow { .. }) {
+                            if matches!(binding.value.kind, HirExprKind::Borrow { .. })
+                                && !matches!(binding.ty, Ty::Reference { .. })
+                            {
                                 continue;
                             }
                             let value = self.emit_expr(&binding.value)?;
@@ -18172,7 +18565,9 @@ impl<'a> FunctionEmitter<'a> {
                                 value.value()?
                             ));
                             self.locals.insert(binding.id, pointer);
-                            if self.source_local_needs_drop(binding.id)? {
+                            if self.program.needs_drop(&binding.ty)
+                                && self.source_local_needs_drop(binding.id)?
+                            {
                                 self.register_drop_slot(
                                     Some(binding.id),
                                     binding.ty.clone(),
@@ -18884,9 +19279,14 @@ impl<'a> FunctionEmitter<'a> {
     }
 
     fn emit_place_address(&mut self, place: &HirPlace) -> Result<String, Diagnostic> {
-        let root_pointer = self.locals.get(&place.local).cloned().ok_or_else(|| {
+        let mut root_pointer = self.locals.get(&place.local).cloned().ok_or_else(|| {
             Diagnostic::new(format!("internal error: unknown local id {}", place.local))
         })?;
+        if place.indirect {
+            let loaded = self.fresh_register();
+            self.instruction(format!("{loaded} = load ptr, ptr {root_pointer}"));
+            root_pointer = loaded;
+        }
         if place.projections.is_empty() {
             return Ok(root_pointer);
         }
@@ -19111,7 +19511,7 @@ fn llvm_value_type(ty: &Ty) -> Result<String, Diagnostic> {
         Ty::I64 | Ty::U64 => Ok("i64".to_owned()),
         Ty::Bool => Ok("i1".to_owned()),
         Ty::Array(element, length) => Ok(format!("[{length} x {}]", llvm_value_type(element)?)),
-        Ty::Pointer { .. } => Ok("ptr".to_owned()),
+        Ty::Pointer { .. } | Ty::Reference { .. } => Ok("ptr".to_owned()),
         Ty::Struct(name) | Ty::Enum(name) => Ok(format!("%{}", type_symbol(name))),
         Ty::Callable(_) => Ok(format!("%{}", type_symbol(&canonical_type_encoding(ty)))),
         Ty::Unit | Ty::Never | Ty::Function(_) | Ty::Error => Err(Diagnostic::new(format!(
@@ -19152,7 +19552,7 @@ fn zero_const(ty: &Ty, program: &HirProgram) -> Option<ConstValue> {
         Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 => Some(ConstValue::Integer(0)),
         Ty::Bool => Some(ConstValue::Bool(false)),
         Ty::Unit => Some(ConstValue::Unit),
-        Ty::Pointer { .. } => None,
+        Ty::Pointer { .. } | Ty::Reference { .. } => None,
         Ty::Array(element, length) => {
             let length = usize::try_from(*length).ok()?;
             Some(ConstValue::Aggregate(
@@ -19987,6 +20387,20 @@ fn canonical_type_encoding(ty: &Ty) -> String {
         Ty::Unit => "unit".to_owned(),
         Ty::Pointer { pointee, mutable } => {
             let mut encoded = if *mutable { "mutptr" } else { "ptr" }.to_owned();
+            push_canonical_component(&mut encoded, &canonical_type_encoding(pointee));
+            encoded
+        }
+        Ty::Reference {
+            pointee,
+            mutable,
+            region,
+        } => {
+            let mut encoded = if *mutable { "mutref" } else { "ref" }.to_owned();
+            if let Some(region) = region {
+                push_canonical_component(&mut encoded, region);
+            } else {
+                encoded.push_str("0:");
+            }
             push_canonical_component(&mut encoded, &canonical_type_encoding(pointee));
             encoded
         }

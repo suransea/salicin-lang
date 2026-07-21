@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.56.0 - 2026-07-21
+
+- Added reference-returning free and associated functions whose result is tied to an explicit
+  region on one or more borrow parameters, including field projections, generic identities, and
+  forwarding calls.
+- Lowered returned references through the LLVM pointer ABI and added indirect reference locals
+  with automatic reads, field access, and mutable assignment.
+- Promoted source loans into the caller's lexical scope and diagnosed local or temporary escape,
+  mutable escalation, conflicting access, missing source regions, by-value reference parameters,
+  and reference fields. Reference-returning methods remain deferred until receiver-loan promotion
+  is implemented.
+
 ## 0.55.0 - 2026-07-21
 
 - Added the `region` compile-time kind and apostrophe-prefixed region names, including predefined

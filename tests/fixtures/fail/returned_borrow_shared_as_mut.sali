@@ -1,0 +1,2 @@
+let bad('a: region)(borrow('a) value: i32): mut borrow('a) i32 = borrow value
+let main(): i32 = 42
