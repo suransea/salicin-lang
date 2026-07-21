@@ -10,7 +10,7 @@ let second(borrow(mut) order: i32): Number = {
   Number(22)
 }
 
-let combine(move left: Number, borrow right: Number): i32 = left.value + right.value
+let combine(move left: Number, borrow right: Number): i32 = { left.value + right.value }
 
 let main(): i32 = {
   let mut order = 0

@@ -4,12 +4,12 @@ let Number = struct(value: i32)
 
 extend Number: Sub(i32) {
   let Output = i32
-  let sub(move self)(move rhs: i32): i32 = self.value - rhs
+  let sub(move self)(move rhs: i32): i32 = { self.value - rhs }
 }
 
 extend Number: Sub(i64) {
   let Output = i64
-  let sub(move self)(move rhs: i64): i64 = 44 - rhs
+  let sub(move self)(move rhs: i64): i64 = { 44 - rhs }
 }
 
 let main(): i32 = {

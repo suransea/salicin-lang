@@ -1,6 +1,6 @@
 let Boxed = struct(value: i32)
 
-let consume(move boxed: Boxed): i32 = boxed.value
+let consume(move boxed: Boxed): i32 = { boxed.value }
 
 let main(): i32 = {
   let mut boxed = Boxed(0)

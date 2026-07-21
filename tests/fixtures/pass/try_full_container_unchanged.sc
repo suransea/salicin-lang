@@ -1,10 +1,10 @@
-let option_tail(): Option(i32) = Option(i32).Some(10)
+let option_tail(): Option(i32) = { Option(i32).Some(10) }
 
 let option_return(): Option(i32) = {
   return Option(i32).Some(10)
 }
 
-let result_tail(): Result(i32, bool) = Result(i32, bool).Ok(11)
+let result_tail(): Result(i32, bool) = { Result(i32, bool).Ok(11) }
 
 let result_return(): Result(i32, bool) = {
   return Result(i32, bool).Ok(11)

@@ -3,4 +3,4 @@ let Result(T: type, E: type) = enum {
   Err(E),
 }
 
-let main(): i32 = 42
+let main(): i32 = { 42 }

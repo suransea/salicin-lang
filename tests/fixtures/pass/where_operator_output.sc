@@ -8,4 +8,4 @@ where T: Add(T, Output = T),
   left + right
 }
 
-let main(): i32 = twice(21)
+let main(): i32 = { twice(21) }

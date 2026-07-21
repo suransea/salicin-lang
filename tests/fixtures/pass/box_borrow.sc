@@ -3,7 +3,7 @@ use alloc.boxed.{Box, box_as_ref}
 let Resource = struct(value: i32)
 
 extend Resource {
-  let read(borrow self)(): i32 = self.value
+  let read(borrow self)(): i32 = { self.value }
 }
 
 let main(): i32 = {

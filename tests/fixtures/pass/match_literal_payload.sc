@@ -7,7 +7,7 @@ let Input = enum {
   Empty,
 }
 
-let classify(value: Input): i32 = value match {
+let classify(value: Input): i32 = { value match {
   Number(40) => 1,
   Number(42) if true => 20,
   Number(_) => 0,
@@ -17,6 +17,7 @@ let classify(value: Input): i32 = value match {
   Pair(Pair(left: 10, flag: true)) => 11,
   Pair(_) => 0,
   Empty => 0,
+}
 }
 
 let main(): i32 = {

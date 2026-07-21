@@ -2570,20 +2570,27 @@ mod tests {
             .unwrap_or_else(|| panic!("missing function `{name}`"))
     }
 
+    fn function_tail(function: &Function) -> &Expr {
+        let Some(Expr::Block(_, Some(tail))) = &function.body else {
+            panic!("expected function body block with a tail value");
+        };
+        tail
+    }
+
     #[test]
     fn flattens_modules_and_rewrites_calls_and_dotted_types() {
         let program = resolve_sources(&[
             unit(
                 "src/main.sc",
                 &[],
-                "let main(): geometry.Point = geometry.make()\n",
+                "let main(): geometry.Point = { geometry.make() }\n",
                 true,
             ),
             unit(
                 "src/geometry.sc",
                 &["geometry"],
                 "pub(package) let Point = struct(x: i32, y: i32)\n\
-                 pub(package) let make(): Point = Point(x: 1, y: 2)\n",
+                 pub(package) let make(): Point = { Point(x: 1, y: 2) }\n",
                 false,
             ),
         ])
@@ -2598,8 +2605,8 @@ mod tests {
             Some(Type::Named("geometry::Point".into(), Vec::new()))
         );
         assert!(matches!(
-            main.body,
-            Some(Expr::Call(ref callee, ref arguments))
+            function_tail(main),
+            Expr::Call(callee, arguments)
                 if arguments.is_empty()
                     && callee.as_ref() == &Expr::Name("geometry::make".into())
         ));
@@ -2610,8 +2617,8 @@ mod tests {
             Some(Type::Named("geometry::Point".into(), Vec::new()))
         );
         assert!(matches!(
-            make.body,
-            Some(Expr::Call(ref callee, _))
+            function_tail(make),
+            Expr::Call(callee, _)
                 if callee.as_ref() == &Expr::Name("geometry::Point".into())
         ));
     }
@@ -2622,7 +2629,7 @@ mod tests {
             unit(
                 "src/main.sc",
                 &[],
-                "let main(): i32 = data.origin.x\n",
+                "let main(): i32 = { data.origin.x }\n",
                 true,
             ),
             unit(
@@ -2636,8 +2643,8 @@ mod tests {
         .unwrap();
 
         assert!(matches!(
-            function(&program, "main").body,
-            Some(Expr::Member(ref base, ref field))
+            function_tail(function(&program, "main")),
+            Expr::Member(base, field)
                 if field == "x" && base.as_ref() == &Expr::Name("data::origin".into())
         ));
     }
@@ -2689,18 +2696,18 @@ mod tests {
     #[test]
     fn reports_private_sibling_access_but_allows_descendants() {
         let error = resolve_sources(&[
-            unit("src/main.sc", &[], "let main(): i32 = b.read()\n", true),
-            unit("src/a.sc", &["a"], "let secret(): i32 = 1\n", false),
+            unit("src/main.sc", &[], "let main(): i32 = { b.read() }\n", true),
+            unit("src/a.sc", &["a"], "let secret(): i32 = { 1 }\n", false),
             unit(
                 "src/a/child.sc",
                 &["a", "child"],
-                "pub(package) let read(): i32 = secret()\n",
+                "pub(package) let read(): i32 = { secret() }\n",
                 false,
             ),
             unit(
                 "src/b.sc",
                 &["b"],
-                "pub(package) let read(): i32 = a.secret()\n",
+                "pub(package) let read(): i32 = { a.secret() }\n",
                 false,
             ),
         ])
@@ -2713,7 +2720,7 @@ mod tests {
     #[test]
     fn preserves_self_and_associated_types_inside_traits_and_extensions() {
         let program = resolve_sources(&[
-            unit("src/main.sc", &[], "let main(): i32 = 0\n", true),
+            unit("src/main.sc", &[], "let main(): i32 = { 0 }\n", true),
             unit(
                 "src/api.sc",
                 &["api"],
@@ -2731,7 +2738,7 @@ mod tests {
                    let Output = i32\n\
                    let A = Self\n\
                    let B = A\n\
-                   let convert(borrow self)(value: Self): Output = value.value\n\
+                   let convert(borrow self)(value: Self): Output = { value.value }\n\
                  }\n",
                 false,
             ),
@@ -2815,7 +2822,7 @@ mod tests {
             unit(
                 "src/main.sc",
                 &[],
-                "let main(): i32 = api.Cell.new(42).take()\n",
+                "let main(): i32 = { api.Cell.new(42).take() }\n",
                 true,
             ),
             unit(
@@ -2823,8 +2830,8 @@ mod tests {
                 &["api"],
                 "pub(package) let Cell(T: type) = struct(value: T)\n\
                  extend(T: type) Cell(T) {\n\
-                   let new(move value: T): Cell(T) = Cell(value)\n\
-                   let take(move self)(): T = self.value\n\
+                   let new(move value: T): Cell(T) = { Cell(value) }\n\
+                   let take(move self)(): T = { self.value }\n\
                  }\n",
                 false,
             ),
@@ -2864,14 +2871,14 @@ mod tests {
         let program = resolve_sources(&[unit(
             "src/main.sc",
             &[],
-            "let main(): i32 = missing.value()\n",
+            "let main(): i32 = { missing.value() }\n",
             true,
         )])
         .unwrap();
 
         assert!(matches!(
-            function(&program, "main").body,
-            Some(Expr::Call(ref callee, _))
+            function_tail(function(&program, "main")),
+            Expr::Call(callee, _)
                 if matches!(callee.as_ref(), Expr::Member(base, field)
                     if base.as_ref() == &Expr::Name("missing".into()) && field == "value")
         ));
@@ -2926,7 +2933,7 @@ mod tests {
     fn rejects_module_segments_that_are_unspellable_or_canonicalize_ambiguously() {
         for segment in ["", "_", "let", "Upper", "has-dash", "a.b", "a::b"] {
             let error = resolve_sources(&[
-                unit("root.sc", &[], "let main(): i32 = 0\n", true),
+                unit("root.sc", &[], "let main(): i32 = { 0 }\n", true),
                 unit("bad.sc", &[segment], "let value = 1\n", false),
             ])
             .unwrap_err();
@@ -2945,7 +2952,7 @@ mod tests {
             unit(
                 "root.sc",
                 &[],
-                "use root.facade.answer as selected\nlet main(): i32 = selected()\n",
+                "use root.facade.answer as selected\nlet main(): i32 = { selected() }\n",
                 true,
             ),
             unit(
@@ -2957,7 +2964,7 @@ mod tests {
             unit(
                 "implementation.sc",
                 &["implementation"],
-                "pub let answer(): i32 = 42\n",
+                "pub let answer(): i32 = { 42 }\n",
                 false,
             ),
         ])
@@ -2965,8 +2972,8 @@ mod tests {
 
         assert!(program.uses.is_empty());
         assert!(matches!(
-            function(&program, "main").body,
-            Some(Expr::Call(ref callee, _))
+            function_tail(function(&program, "main")),
+            Expr::Call(callee, _)
                 if callee.as_ref() == &Expr::Name("implementation::answer".into())
         ));
     }
@@ -2983,11 +2990,11 @@ use root.fake as Add
 let Number = struct(value: i32)
 extend Number: Add(Number) {
   let Output = i32
-  let add(move self)(move rhs: Number): i32 = self.value + rhs.value
+  let add(move self)(move rhs: Number): i32 = { self.value + rhs.value }
 }
 
-let stop(): never = loop {}
-let main(): i32 = Option()
+let stop(): never = { loop {} }
+let main(): i32 = { Option() }
 "#,
                 true,
             ),
@@ -3016,13 +3023,13 @@ let main(): i32 = Option()
             unit(
                 "root.sc",
                 &[],
-                "let root_value(): i32 = 10\nlet main(): i32 = nested.deep.answer()\n",
+                "let root_value(): i32 = { 10 }\nlet main(): i32 = { nested.deep.answer() }\n",
                 true,
             ),
             unit(
                 "nested.sc",
                 &["nested"],
-                "let parent_value(): i32 = 20\n",
+                "let parent_value(): i32 = { 20 }\n",
                 false,
             ),
             unit(
@@ -3031,8 +3038,8 @@ let main(): i32 = Option()
                 "use root as pkg\n\
                  use self.local_value as local\n\
                  use super.parent_value as parent\n\
-                 let local_value(): i32 = 12\n\
-                 pub(package) let answer(): i32 = pkg.root_value() + parent() + local()\n",
+                 let local_value(): i32 = { 12 }\n\
+                 pub(package) let answer(): i32 = { pkg.root_value() + parent() + local() }\n",
                 false,
             ),
         ])
@@ -3049,7 +3056,7 @@ let main(): i32 = Option()
         let cycle = resolve_sources(&[unit(
             "root.sc",
             &[],
-            "use root.second as first\nuse root.first as second\nlet main(): i32 = 0\n",
+            "use root.second as first\nuse root.first as second\nlet main(): i32 = { 0 }\n",
             true,
         )])
         .unwrap_err();
@@ -3063,10 +3070,15 @@ let main(): i32 = Option()
             unit(
                 "root.sc",
                 &[],
-                "use root.sibling.secret\nlet main(): i32 = secret()\n",
+                "use root.sibling.secret\nlet main(): i32 = { secret() }\n",
                 true,
             ),
-            unit("sibling.sc", &["sibling"], "let secret(): i32 = 1\n", false),
+            unit(
+                "sibling.sc",
+                &["sibling"],
+                "let secret(): i32 = { 1 }\n",
+                false,
+            ),
         ])
         .unwrap_err();
         assert!(private.iter().any(|diagnostic| {
@@ -3074,11 +3086,11 @@ let main(): i32 = Option()
         }));
 
         let promotion = resolve_sources(&[
-            unit("root.sc", &[], "let main(): i32 = 0\n", true),
+            unit("root.sc", &[], "let main(): i32 = { 0 }\n", true),
             unit(
                 "facade.sc",
                 &["facade"],
-                "pub(package) let internal(): i32 = 1\npub use self.internal as exposed\n",
+                "pub(package) let internal(): i32 = { 1 }\npub use self.internal as exposed\n",
                 false,
             ),
         ])
@@ -3096,41 +3108,41 @@ let main(): i32 = Option()
             unit(
                 "root.sc",
                 &[],
-                "pub(package) let answer(): i32 = 42\nlet main(): i32 = child.read()\n",
+                "pub(package) let answer(): i32 = { 42 }\nlet main(): i32 = { child.read() }\n",
                 true,
             ),
             unit(
                 "child.sc",
                 &["child"],
-                "use answer\npub(package) let read(): i32 = answer()\n",
+                "use answer\npub(package) let read(): i32 = { answer() }\n",
                 false,
             ),
         ])
         .unwrap();
         assert!(matches!(
-            function(&program, "child::read").body,
-            Some(Expr::Call(ref callee, _))
+            function_tail(function(&program, "child::read")),
+            Expr::Call(callee, _)
                 if callee.as_ref() == &Expr::Name("answer".into())
         ));
 
         let bypass = resolve_sources(&[
-            unit("root.sc", &[], "let main(): i32 = 0\n", true),
+            unit("root.sc", &[], "let main(): i32 = { 0 }\n", true),
             unit(
                 "net.sc",
                 &["net"],
-                "pub(package) let value(): i32 = 1\n",
+                "pub(package) let value(): i32 = { 1 }\n",
                 false,
             ),
             unit(
                 "owner.sc",
                 &["owner"],
-                "use root.net as hidden\nlet local(): i32 = hidden.value()\n",
+                "use root.net as hidden\nlet local(): i32 = { hidden.value() }\n",
                 false,
             ),
             unit(
                 "sibling.sc",
                 &["sibling"],
-                "use root.owner.hidden.value as stolen\nlet read(): i32 = stolen()\n",
+                "use root.owner.hidden.value as stolen\nlet read(): i32 = { stolen() }\n",
                 false,
             ),
         ])
@@ -3142,7 +3154,7 @@ let main(): i32 = Option()
         let unknown = resolve_sources(&[unit(
             "root.sc",
             &[],
-            "use missing as value\nlet main(): i32 = 0\n",
+            "use missing as value\nlet main(): i32 = { 0 }\n",
             true,
         )])
         .unwrap_err();
@@ -3166,7 +3178,7 @@ let main(): i32 = Option()
                 vec![unit(
                     "app/src/main.sc",
                     &[],
-                    "use math.answer as selected\nlet main(): i32 = selected()\n",
+                    "use math.answer as selected\nlet main(): i32 = { selected() }\n",
                     true,
                 )],
             ),
@@ -3179,7 +3191,7 @@ let main(): i32 = Option()
                     unit(
                         "math/src/inner.sc",
                         &["inner"],
-                        "pub let answer(): i32 = 42\n",
+                        "pub let answer(): i32 = { 42 }\n",
                         false,
                     ),
                 ],
@@ -3189,8 +3201,8 @@ let main(): i32 = Option()
 
         assert!(function(&program, "@1::inner::answer").body.is_some());
         assert!(matches!(
-            function(&program, "main").body,
-            Some(Expr::Call(ref callee, _))
+            function_tail(function(&program, "main")),
+            Expr::Call(callee, _)
                 if callee.as_ref() == &Expr::Name("@1::inner::answer".into())
         ));
     }
@@ -3206,7 +3218,7 @@ let main(): i32 = Option()
                     vec![unit(
                         "app/src/main.sc",
                         &[],
-                        "let main(): i32 = dep.hidden()\n",
+                        "let main(): i32 = { dep.hidden() }\n",
                         true,
                     )],
                 ),
@@ -3217,7 +3229,7 @@ let main(): i32 = Option()
                     vec![unit(
                         "dep/src/lib.sc",
                         &[],
-                        &format!("{visibility} let hidden(): i32 = 1\n"),
+                        &format!("{visibility} let hidden(): i32 = {{ 1 }}\n"),
                         true,
                     )],
                 ),
@@ -3240,7 +3252,7 @@ let main(): i32 = Option()
                 vec![unit(
                     "app/src/main.sc",
                     &[],
-                    "pub let root_value(): i32 = 1\nlet main(): i32 = 0\n",
+                    "pub let root_value(): i32 = { 1 }\nlet main(): i32 = { 0 }\n",
                     true,
                 )],
             ),
@@ -3251,7 +3263,7 @@ let main(): i32 = Option()
                 vec![unit(
                     "dep/src/lib.sc",
                     &[],
-                    "use root.root_value\npub let answer(): i32 = root_value()\n",
+                    "use root.root_value\npub let answer(): i32 = { root_value() }\n",
                     true,
                 )],
             ),
@@ -3269,7 +3281,12 @@ let main(): i32 = Option()
                 0,
                 true,
                 &[("dep", 1)],
-                vec![unit("app/src/main.sc", &[], "let main(): i32 = 0\n", true)],
+                vec![unit(
+                    "app/src/main.sc",
+                    &[],
+                    "let main(): i32 = { 0 }\n",
+                    true,
+                )],
             ),
             package(
                 1,
@@ -3278,7 +3295,7 @@ let main(): i32 = Option()
                 vec![unit(
                     "dep/src/lib.sc",
                     &[],
-                    "use super.outside as value\npub let answer(): i32 = 0\n",
+                    "use super.outside as value\npub let answer(): i32 = { 0 }\n",
                     true,
                 )],
             ),
@@ -3297,7 +3314,7 @@ let main(): i32 = Option()
                 true,
                 &[("dep", 1)],
                 vec![
-                    unit("app/src/main.sc", &[], "let main(): i32 = 0\n", true),
+                    unit("app/src/main.sc", &[], "let main(): i32 = { 0 }\n", true),
                     unit(
                         "app/src/dep/internal.sc",
                         &["dep", "internal"],
@@ -3313,7 +3330,7 @@ let main(): i32 = Option()
                 vec![unit(
                     "dep/src/lib.sc",
                     &[],
-                    "pub let answer(): i32 = 1\n",
+                    "pub let answer(): i32 = { 1 }\n",
                     true,
                 )],
             ),
@@ -3335,7 +3352,7 @@ let main(): i32 = Option()
                 vec![unit(
                     "app/src/main.sc",
                     &[],
-                    "use middle.leaf.answer\nlet main(): i32 = answer()\n",
+                    "use middle.leaf.answer\nlet main(): i32 = { answer() }\n",
                     true,
                 )],
             ),
@@ -3346,7 +3363,7 @@ let main(): i32 = Option()
                 vec![unit(
                     "middle/src/lib.sc",
                     &[],
-                    "pub let middle_value(): i32 = leaf.answer()\n",
+                    "pub let middle_value(): i32 = { leaf.answer() }\n",
                     true,
                 )],
             ),
@@ -3357,7 +3374,7 @@ let main(): i32 = Option()
                 vec![unit(
                     "leaf/src/lib.sc",
                     &[],
-                    "pub let answer(): i32 = 42\n",
+                    "pub let answer(): i32 = { 42 }\n",
                     true,
                 )],
             ),
@@ -3375,7 +3392,7 @@ let main(): i32 = Option()
                 vec![unit(
                     "app/src/main.sc",
                     &[],
-                    "use middle.answer as selected\nlet main(): i32 = selected()\n",
+                    "use middle.answer as selected\nlet main(): i32 = { selected() }\n",
                     true,
                 )],
             ),
@@ -3397,15 +3414,15 @@ let main(): i32 = Option()
                 vec![unit(
                     "leaf/src/lib.sc",
                     &[],
-                    "pub let answer(): i32 = 42\n",
+                    "pub let answer(): i32 = { 42 }\n",
                     true,
                 )],
             ),
         ])
         .unwrap();
         assert!(matches!(
-            function(&exposed, "main").body,
-            Some(Expr::Call(ref callee, _))
+            function_tail(function(&exposed, "main")),
+            Expr::Call(callee, _)
                 if callee.as_ref() == &Expr::Name("@2::answer".into())
         ));
     }
@@ -3420,7 +3437,7 @@ let main(): i32 = Option()
                 vec![unit(
                     "app/src/main.sc",
                     &[],
-                    "let same(value: left.Token): right.Token = value\nlet main(): i32 = 0\n",
+                    "let same(value: left.Token): right.Token = { value }\nlet main(): i32 = { 0 }\n",
                     true,
                 )],
             ),
@@ -3477,8 +3494,8 @@ let main(): i32 = Option()
     #[test]
     fn dependency_aliases_conflict_with_root_declarations_and_imports() {
         for source in [
-            "let dep = 1\nlet main(): i32 = 0\n",
-            "use root.answer as dep\nlet answer(): i32 = 1\nlet main(): i32 = 0\n",
+            "let dep = 1\nlet main(): i32 = { 0 }\n",
+            "use root.answer as dep\nlet answer(): i32 = { 1 }\nlet main(): i32 = { 0 }\n",
         ] {
             let error = resolve_packages(&[
                 package(
@@ -3494,7 +3511,7 @@ let main(): i32 = Option()
                     vec![unit(
                         "dep/src/lib.sc",
                         &[],
-                        "pub let answer(): i32 = 1\n",
+                        "pub let answer(): i32 = { 1 }\n",
                         true,
                     )],
                 ),
@@ -3513,7 +3530,7 @@ let main(): i32 = Option()
                 0,
                 true,
                 &[("next", 1)],
-                vec![unit("root.sc", &[], "let main(): i32 = 0\n", true)],
+                vec![unit("root.sc", &[], "let main(): i32 = { 0 }\n", true)],
             ),
             package(
                 1,
@@ -3532,7 +3549,7 @@ let main(): i32 = Option()
                 0,
                 true,
                 &[("missing", 99)],
-                vec![unit("root.sc", &[], "let main(): i32 = 0\n", true)],
+                vec![unit("root.sc", &[], "let main(): i32 = { 0 }\n", true)],
             ),
             package(
                 1,
@@ -3553,7 +3570,7 @@ let main(): i32 = Option()
             PackageId::CORE.0,
             true,
             &[],
-            vec![unit("root.sc", &[], "let main(): i32 = 0\n", true)],
+            vec![unit("root.sc", &[], "let main(): i32 = { 0 }\n", true)],
         )])
         .unwrap_err();
         assert!(reserved
@@ -3567,7 +3584,7 @@ let main(): i32 = Option()
             PackageId::ALLOC.0,
             true,
             &[],
-            vec![unit("root.sc", &[], "let main(): i32 = 0\n", true)],
+            vec![unit("root.sc", &[], "let main(): i32 = { 0 }\n", true)],
         )])
         .unwrap_err();
         assert!(reserved_alloc
@@ -3585,7 +3602,7 @@ let main(): i32 = Option()
             &[],
             "let Hidden = struct()\n\
              pub let Wrapper(T: type) = struct()\n\
-             pub let expose(value: Wrapper(Hidden)): Hidden = value\n\
+             pub let expose(value: Wrapper(Hidden)): Hidden = { value }\n\
              pub let shared: Hidden = Hidden()\n",
             true,
         )])
@@ -3612,7 +3629,7 @@ let main(): i32 = Option()
             unit(
                 "src/main.sc",
                 &[],
-                "pub let screen(): i32 with(ui.UI) = 0\n",
+                "pub let screen(): i32 with(ui.UI) = { 0 }\n",
                 true,
             ),
             unit("src/ui.sc", &["ui"], "pub let UI = effect\n", false),
@@ -3628,7 +3645,7 @@ let main(): i32 = Option()
             "src/lib.sc",
             &[],
             "let UI = effect\n\
-             pub let expose(action: (): i32 with(UI)): i32 with(UI) = 0\n",
+             pub let expose(action: (): i32 with(UI)): i32 with(UI) = { 0 }\n",
             true,
         )])
         .unwrap_err();
@@ -3650,7 +3667,7 @@ let main(): i32 = Option()
             "src/lib.sc",
             &[],
             "let Hidden = trait {}\n\
-             pub let expose(T: type)(value: T): T where T: Hidden = value\n",
+             pub let expose(T: type)(value: T): T where T: Hidden = { value }\n",
             true,
         )])
         .unwrap_err();
@@ -3672,7 +3689,7 @@ let main(): i32 = Option()
             "let Hidden = trait {}\n\
              pub let Cell(T: type) = struct(pub value: T)\n\
              extend(T: type) Cell(T) where T: Hidden {\n\
-               let take(move self)(): T = self.value\n\
+               let take(move self)(): T = { self.value }\n\
              }\n",
             true,
         )])
@@ -3695,17 +3712,17 @@ let main(): i32 = Option()
                 &[],
                 "let RootSecret = struct()\n\
                  pub(package) let PackageSecret = struct()\n\
-                 let main(): i32 = 0\n",
+                 let main(): i32 = { 0 }\n",
                 true,
             ),
             unit(
                 "src/child.sc",
                 &["child"],
                 "let ChildSecret = struct()\n\
-                 pub(package) let package_ok(value: RootSecret): RootSecret = value\n\
-                 let private_ok(value: RootSecret): RootSecret = value\n\
-                 pub(package) let package_bad(value: ChildSecret): i32 = 0\n\
-                 pub let public_bad(value: PackageSecret): i32 = 0\n",
+                 pub(package) let package_ok(value: RootSecret): RootSecret = { value }\n\
+                 let private_ok(value: RootSecret): RootSecret = { value }\n\
+                 pub(package) let package_bad(value: ChildSecret): i32 = { 0 }\n\
+                 pub let public_bad(value: PackageSecret): i32 = { 0 }\n",
                 false,
             ),
         ])
@@ -3802,8 +3819,8 @@ let main(): i32 = Option()
             "main.sc",
             &[],
             "use alloc.boxed.Box as HeapBox\nuse alloc.vec.Vec\n\
-             let keep(move boxed: HeapBox(i32)): HeapBox(i32) = boxed\n\
-             let empty(): Vec(i32) = Vec(i32).new()\n",
+             let keep(move boxed: HeapBox(i32)): HeapBox(i32) = { boxed }\n\
+             let empty(): Vec(i32) = { Vec(i32).new() }\n",
             true,
         )])
         .unwrap();
@@ -3823,7 +3840,7 @@ let main(): i32 = Option()
              let Number = struct(value: i32)\n\
              extend Number: Plus(Number) {\n\
                let Output = Number\n\
-               let add(move self)(move rhs: Number): Number = Number(self.value + rhs.value)\n\
+               let add(move self)(move rhs: Number): Number = { Number(self.value + rhs.value) }\n\
              }\n",
             true,
         )])
@@ -3837,7 +3854,7 @@ let main(): i32 = Option()
         let bare = resolve_sources(&[unit(
             "main.sc",
             &[],
-            "let make(): Box(i32) = Box.new(1)\n",
+            "let make(): Box(i32) = { Box.new(1) }\n",
             true,
         )])
         .unwrap_err();
@@ -3852,7 +3869,7 @@ let main(): i32 = Option()
             "let Number = struct(value: i32)\n\
              extend Number: Add(Number) {\n\
                let Output = Number\n\
-               let add(move self)(move rhs: Number): Number = self\n\
+               let add(move self)(move rhs: Number): Number = { self }\n\
              }\n",
             true,
         )])
@@ -3864,7 +3881,7 @@ let main(): i32 = Option()
 
         for namespace in ["core", "alloc"] {
             let module = resolve_sources(&[
-                unit("main.sc", &[], "let main(): i32 = 0\n", true),
+                unit("main.sc", &[], "let main(): i32 = { 0 }\n", true),
                 unit(
                     &format!("{namespace}.sc"),
                     &[namespace],
@@ -3884,7 +3901,7 @@ let main(): i32 = Option()
                     0,
                     true,
                     &[(namespace, 1)],
-                    vec![unit("main.sc", &[], "let main(): i32 = 0\n", true)],
+                    vec![unit("main.sc", &[], "let main(): i32 = { 0 }\n", true)],
                 ),
                 package(
                     1,

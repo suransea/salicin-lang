@@ -1,13 +1,13 @@
-let read(value: borrow i32): i32 = value
+let read(value: borrow i32): i32 = { value }
 
-let forward('a: region)(value: borrow('a) i32): borrow('a) i32 = value
+let forward('a: region)(value: borrow('a) i32): borrow('a) i32 = { value }
 
-let inferred_forward(value: borrow i32): borrow i32 = value
+let inferred_forward(value: borrow i32): borrow i32 = { value }
 
 let generic_read(T: type)(value: borrow T): T
-where T: Copy = value
+where T: Copy = { value }
 
-let forward_mut(value: borrow(mut) i32): borrow(mut) i32 = value
+let forward_mut(value: borrow(mut) i32): borrow(mut) i32 = { value }
 
 let write(value: borrow(mut) i32)(replacement: i32): i32 = {
   value = replacement

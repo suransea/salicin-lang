@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.94.0 - 2026-07-22
+
+- Defined named functions as closure-declaration sugar: their parameter groups are lifted beside
+  the binding name and every implementation body must use `= { ... }`; direct `= expression`
+  function, method, and trait-default bodies were removed before 1.0.
+- Made every brace expression a closure, including non-empty zero-parameter closures such as
+  `{ expensive_work() }`; `do { ... }` remains the effect-polymorphic immediate invocation form.
+- Removed the redundant `{ -> expression }` zero-parameter closure spelling while preserving
+  `->` for explicit closure parameter groups, including curried groups.
+- Migrated the standard library, examples, compiler suites, fixtures, and language documentation,
+  with focused diagnostics for both removed spellings.
+
 ## 0.93.0 - 2026-07-21
 
 - Made `do { ... }` transparently forward the complete active effect row through its immediate

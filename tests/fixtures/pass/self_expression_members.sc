@@ -2,32 +2,33 @@ let Point = struct(raw: i32)
 
 extend Point {
   let origin: Self = Self(40)
-  let new(value: i32): Self = Self(value)
-  let shifted(move self)(delta: i32): Self = Self(self.raw + delta)
-  let read(borrow self)(): i32 = self.raw
-  let read(value: Self): i32 = Self.read(self: value)()
+  let new(value: i32): Self = { Self(value) }
+  let shifted(move self)(delta: i32): Self = { Self(self.raw + delta) }
+  let read(borrow self)(): i32 = { self.raw }
+  let read(value: Self): i32 = { Self.read(self: value)() }
 }
 
 let Choice = enum { Some(i32), None }
 
 extend Choice {
-  let unwrap(move self)(): i32 = self match {
+  let unwrap(move self)(): i32 = { self match {
     Self.Some(value) => value,
     Self.None => 0,
+  }
   }
 }
 
 let Rebuild = trait {
   let rebuild(move self)(): Self
   let read(borrow self)(): i32
-  let twice(borrow self)(): i32 = Self.read(self: self)() + Self.read(self: self)()
+  let twice(borrow self)(): i32 = { Self.read(self: self)() + Self.read(self: self)() }
 }
 
 let Wrapper = struct(raw: i32)
 
 extend Wrapper: Rebuild {
-  let rebuild(move self)(): Self = Self(self.raw)
-  let read(borrow self)(): i32 = self.raw
+  let rebuild(move self)(): Self = { Self(self.raw) }
+  let read(borrow self)(): i32 = { self.raw }
 }
 
 let main(): i32 = {

@@ -8,4 +8,4 @@ let with_or(flag: bool): i32 = {
   1
 }
 
-let main(): i32 = with_and(true) + with_or(false)
+let main(): i32 = { with_and(true) + with_or(false) }

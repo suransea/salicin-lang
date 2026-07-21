@@ -1,12 +1,14 @@
 let shared('a: region)
-  (borrow('a) anchor: i32)(pointer: MutPtr(i32)): borrow('a) i32 = unsafe {
+  (borrow('a) anchor: i32)(pointer: MutPtr(i32)): borrow('a) i32 = { unsafe {
   raw_borrow(pointer, borrow anchor)
 }
+  }
 
 let mutable('a: region)
-  (borrow(mut, 'a) anchor: i32)(pointer: MutPtr(i32)): borrow(mut, 'a) i32 = unsafe {
+  (borrow(mut, 'a) anchor: i32)(pointer: MutPtr(i32)): borrow(mut, 'a) i32 = { unsafe {
   raw_borrow(mut)(pointer, borrow(mut) anchor)
 }
+  }
 
 let main(): i32 = {
   let pointer = unsafe {

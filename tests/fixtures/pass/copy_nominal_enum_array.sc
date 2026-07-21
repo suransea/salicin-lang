@@ -9,9 +9,10 @@ let Pixel = struct(value: i32)
 
 extend Pixel: Copy {}
 
-let score(mark: Mark): i32 = mark match {
+let score(mark: Mark): i32 = { mark match {
   Mark.Value(value) => value,
   Mark.Empty => 0,
+}
 }
 
 let main(): i32 = {

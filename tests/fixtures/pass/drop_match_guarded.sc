@@ -8,9 +8,9 @@ extend Resource: Drop {
   }
 }
 
-let consume(move value: Resource): () = ()
+let consume(move value: Resource): () = { () }
 
-let guard_false(move choice: Choice): i32 = choice match {
+let guard_false(move choice: Choice): i32 = { choice match {
   Pair(left, _) if left.value == 0 => do {
     consume(left)
     0
@@ -21,8 +21,9 @@ let guard_false(move choice: Choice): i32 = choice match {
   },
   None => 0
 }
+}
 
-let guard_true(move choice: Choice): i32 = choice match {
+let guard_true(move choice: Choice): i32 = { choice match {
   Pair(left, _) if left.value == 1 => do {
     consume(left)
     21
@@ -33,14 +34,16 @@ let guard_true(move choice: Choice): i32 = choice match {
   },
   None => 0
 }
+}
 
-let guard_return(move choice: Choice): i32 = choice match {
+let guard_return(move choice: Choice): i32 = { choice match {
   Pair(left, _) if return 42 => 0,
   Pair(left, _) => do {
     consume(left)
     0
   },
   None => 0
+}
 }
 
 let main(): i32 = {

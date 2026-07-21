@@ -8,7 +8,7 @@ compact nod to “successor C” or “super C”—and the compiler executable 
 > Salicin is under active development. Its syntax, semantics, and standard library are not stable.
 
 ```sali
-let add(x: i32)(y: i32): i32 = x + y
+let add(x: i32)(y: i32): i32 = { x + y }
 
 let main(): i32 = {
   let add_two = add(2)

@@ -7,7 +7,7 @@ extend Resource: Drop {
   }
 }
 
-let consume(move value: Resource): () = ()
+let consume(move value: Resource): () = { () }
 
 let main(): i32 = {
   let pair = Pair(Resource(1), Resource(0))

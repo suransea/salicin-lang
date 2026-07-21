@@ -9,16 +9,18 @@ extend Resource: Drop {
   }
 }
 
-let consume(move value: Resource): () = ()
+let consume(move value: Resource): () = { () }
 
-let inspect(move choice: Choice): i32 = choice match {
+let inspect(move choice: Choice): i32 = { choice match {
   Some(Bundle(left, _), _) => do {
     consume(left)
     return 42
   },
   None => 0
 }
+}
 
-let main(): i32 = inspect(
+let main(): i32 = { inspect(
   Choice.Some(Bundle(Resource(1), Resource(1)), Resource(1))
 )
+}

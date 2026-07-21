@@ -1,8 +1,9 @@
-let reject(): i32 with(throws(bool)) = throw true
+let reject(): i32 with(throws(bool)) = { throw true }
 
-let choose(flag: bool): i32 with(throws(bool)) = do {
+let choose(flag: bool): i32 with(throws(bool)) = { do {
   if flag { return reject() }
   42
+}
 }
 
 let main(): i32 = {

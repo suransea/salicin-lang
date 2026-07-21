@@ -1,8 +1,8 @@
 let Number = struct(value: i32)
 
 extend Number {
-  let read(borrow self)(): i32 = self.value
-  let take(move self)(): i32 = self.value
+  let read(borrow self)(): i32 = { self.value }
+  let take(move self)(): i32 = { self.value }
 }
 
 let main(): i32 = {

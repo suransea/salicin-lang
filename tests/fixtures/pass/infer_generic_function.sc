@@ -1,3 +1,3 @@
-let identity(T: type)(move value: T): T = value
+let identity(T: type)(move value: T): T = { value }
 
-let main(): i32 = identity(42)
+let main(): i32 = { identity(42) }

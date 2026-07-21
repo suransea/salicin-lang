@@ -1084,7 +1084,7 @@ mod tests {
 
     #[test]
     fn rejects_box_read_without_its_copy_proof() {
-        let source = alloc_source().replacen("where T: Copy = unsafe {", "= unsafe {", 1);
+        let source = alloc_source().replacen("where T: Copy = {\n  unsafe {", "= {\n  unsafe {", 1);
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
             .expect_err("box_read without Copy must fail bootstrap validation");
         assert!(error.to_string().contains("box_read"));
@@ -1093,8 +1093,8 @@ mod tests {
     #[test]
     fn rejects_box_write_without_its_copy_proof() {
         let source = alloc_source().replacen(
-            "pub let box_write(T: type)(borrow(mut) boxed: Box(T))(copy value: T): ()\nwhere T: Copy = unsafe {",
-            "pub let box_write(T: type)(borrow(mut) boxed: Box(T))(copy value: T): ()\n= unsafe {",
+            "pub let box_write(T: type)(borrow(mut) boxed: Box(T))(copy value: T): ()\nwhere T: Copy = {\n  unsafe {",
+            "pub let box_write(T: type)(borrow(mut) boxed: Box(T))(copy value: T): ()\n= {\n  unsafe {",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
@@ -1105,8 +1105,8 @@ mod tests {
     #[test]
     fn rejects_a_malformed_copy_box_extension() {
         let source = alloc_source().replacen(
-            "let read(borrow self)(): T = box_read(self)",
-            "let peek(borrow self)(): T = box_read(self)",
+            "let read(borrow self)(): T = { box_read(self) }",
+            "let peek(borrow self)(): T = { box_read(self) }",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
@@ -1138,8 +1138,8 @@ mod tests {
     #[test]
     fn rejects_a_malformed_vec_owning_extension() {
         let source = alloc_source().replacen(
-            "let pop(borrow(mut) self)(): Option(T) = vec_pop(self)",
-            "let take(borrow(mut) self)(): Option(T) = vec_pop(self)",
+            "let pop(borrow(mut) self)(): Option(T) = { vec_pop(self) }",
+            "let take(borrow(mut) self)(): Option(T) = { vec_pop(self) }",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
@@ -1150,8 +1150,8 @@ mod tests {
     #[test]
     fn rejects_a_malformed_copy_vec_extension() {
         let source = alloc_source().replacen(
-            "let read(borrow self)(index: u64): T = vec_read(self)(index)",
-            "let peek(borrow self)(index: u64): T = vec_read(self)(index)",
+            "let read(borrow self)(index: u64): T = { vec_read(self)(index) }",
+            "let peek(borrow self)(index: u64): T = { vec_read(self)(index) }",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))

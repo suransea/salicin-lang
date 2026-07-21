@@ -1,7 +1,7 @@
 let Boxed = struct(value: i32)
 
-let read(borrow boxed: Boxed): i32 = boxed.value
-let consume(move boxed: Boxed): i32 = boxed.value
+let read(borrow boxed: Boxed): i32 = { boxed.value }
+let consume(move boxed: Boxed): i32 = { boxed.value }
 
 let main(): i32 = {
   let boxed = Boxed(value: 42)

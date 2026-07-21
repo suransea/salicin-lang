@@ -7,12 +7,13 @@ extend Resource: Drop {
   }
 }
 
-let consume(move value: Resource): () = ()
+let consume(move value: Resource): () = { () }
 
-let main(): i32 = Choice.Pair(Resource(1), Resource(0)) match {
+let main(): i32 = { Choice.Pair(Resource(1), Resource(0)) match {
   Pair(left, _) => do {
     consume(left)
     0
   },
   None => 0
+}
 }

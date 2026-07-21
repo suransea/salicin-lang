@@ -6,10 +6,10 @@ extend Resource: Drop {
   }
 }
 
-let consume(move value: Resource): () = ()
+let consume(move value: Resource): () = { () }
 
 let main(): i32 = {
   let resource = Resource(0)
-  let once = { -> consume(resource) }
+  let once = { consume(resource) }
   0
 }

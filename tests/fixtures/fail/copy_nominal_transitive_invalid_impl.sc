@@ -8,4 +8,4 @@ extend Branch: Copy {}
 
 extend Tree: Copy {}
 
-let main(): i32 = 42
+let main(): i32 = { 42 }

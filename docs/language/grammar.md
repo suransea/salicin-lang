@@ -105,8 +105,8 @@ initializer = expression | "effect" | struct_decl | enum_decl | trait_decl | mod
   `with(unsafe)` 增加调用要求。
 - `with` 和 marker 声明右侧的 `effect` 是上下文词，不是全局关键字。`let UI = effect` 声明名义
   effect；旧的 `(effect): T`、`T(effect)` 与 `T ! effect` 都不属于语法。
-- `let f(x: T) = body` 是具名函数声明。
-- `let f: (x: T): R = { body }` 是带名签名函数声明：所有槽必须有名字，RHS 是函数体。
+- `let f(x: T) = { body }` 是把参数提升到名称旁边的具名闭包声明；RHS 必须有花括号。
+- `let f: (x: T): R = { body }` 是带名签名的具名闭包声明：所有槽必须有名字。
 - `let f: (T): R = { (x: T) -> body }` 是普通函数值绑定。
 - 具名函数的参数类型必须显式；首版 `let` 名称位置不接受解构 pattern。
 - trait 声明体中的无 initializer `let` 是 requirement。
@@ -182,7 +182,7 @@ compile_parameter = IDENT, ":", ( "type" | "access" | "passing" | "effect" )
 ```sali
 extend(T: type) Box(T): Display
 where T: Display {
-  let display(borrow self)(): String = ...
+  let display(borrow self)(): String = { ... }
 }
 ```
 
@@ -350,8 +350,8 @@ try_block = "try", block ;
 unsafe_block = "unsafe", block ;
 
 closure_literal = [ "move" ], "{",
-                  ( "}" | parameter_group, { parameter_group }, "->",
-                    block_contents, "}" | "->", block_contents, "}" ) ;
+                  [ parameter_group, { parameter_group }, "->" ],
+                  block_contents, "}" ;
 
 async_expr = "async", closure_literal ;
 ```
@@ -370,8 +370,10 @@ async_expr = "async", closure_literal ;
 `size_of(T)` 与 `align_of(T)` 同样使用普通单组调用外形，但该组只接受一个类型实参；结果为 `u64`，
 布局由最终 LLVM target 决定。
 
-非空闭包必须有 `->`。`{}` 是零参空闭包；`{ -> expression }` 是非空零参闭包；
-`{ (x: T)(y: U) -> expression }` 是多组闭包。
+每个花括号表达式都是闭包。`{}` 是零参空闭包，`{ expression }` 是非空零参闭包，
+`{ (x: T)(y: U) -> expression }` 是带多组参数的闭包。只有显式参数前缀需要 `->`；
+已经删除 `{ -> expression }` 拼法。以括号表达式开头的零参闭包（例如 `{ (40 + 2) }`）通过
+闭合参数组后是否紧跟 `->` 消歧。
 
 ## 7. 块和控制流
 
@@ -415,8 +417,8 @@ continue_expr = "continue" ;
 | 上下文 | AST |
 |---|---|
 | `let f = {}` | 零参闭包 |
-| `let f(x: T) = { ... }` | 函数体 |
-| `if`/`else`/`loop`/`while`/`for` 后 | 控制流块 |
+| `let f(x: T) = { ... }` | 参数提升后的具名闭包体 |
+| `if`/`else`/`loop`/`while`/`for` 后 | 控制构造消费的主体闭包 |
 | `struct`/`enum`/`trait`/`extend` 后 | 声明体 |
 | `value match { ... }` | match arm 列表 |
 | 其他表达式位置 | 闭包 |
@@ -469,7 +471,7 @@ path_head = IDENT | "root" | "self" | "super" | "Self" ;
 
 ```sali
 let f = {}                         // 零参闭包
-let f(x: i32) = {}                 // 空函数体
+let f(x: i32) = {}                 // 返回 () 的具名闭包
 let x = do {}                      // 单元值
 let add = { (x: i32)(y: i32) -> x + y }
 

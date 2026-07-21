@@ -1,1 +1,1 @@
-let main(): i32 = true
+let main(): i32 = { true }

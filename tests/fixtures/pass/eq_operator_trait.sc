@@ -3,7 +3,7 @@ use core.ops.Eq
 let Token = struct(value: i32)
 
 extend Token: Eq(Token) {
-  let eq(borrow self)(borrow rhs: Token): bool = self.value == rhs.value
+  let eq(borrow self)(borrow rhs: Token): bool = { self.value == rhs.value }
 }
 
 let main(): i32 = {

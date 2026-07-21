@@ -3,10 +3,10 @@ let Pair = struct(left: i32, right: i32)
 extend Pair: Copy {}
 
 extend Pair {
-  let combine(self)(left: i32)(right: i32): i32 = self.left + self.right + left + right
+  let combine(self)(left: i32)(right: i32): i32 = { self.left + self.right + left + right }
 }
 
-let add(pair: Pair)(increment: i32): i32 = pair.left + pair.right + increment
+let add(pair: Pair)(increment: i32): i32 = { pair.left + pair.right + increment }
 
 let main(): i32 = {
   let pair = Pair(left: 10, right: 1)

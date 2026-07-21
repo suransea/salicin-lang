@@ -1,7 +1,7 @@
 use alloc.boxed.{Box, box_read, box_write}
 
 let read_box(T: type)(borrow boxed: Box(T)): T
-where T: Copy = boxed.read()
+where T: Copy = { boxed.read() }
 
 let main(): i32 = {
   let mut boxed = Box.new(0)

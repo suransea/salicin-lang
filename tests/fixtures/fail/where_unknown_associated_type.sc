@@ -1,6 +1,6 @@
 let Marker = trait {}
 
 let identity(T: type)(value: T): T
-where T: Marker(Item = T) = value
+where T: Marker(Item = T) = { value }
 
-let main(): i32 = identity(42)
+let main(): i32 = { identity(42) }

@@ -1,7 +1,7 @@
 let Boxed = struct(value: i32)
 
 extend Boxed {
-  let checked(move self)(): Result(i32, bool) = Result(i32, bool).Ok(self.value)
+  let checked(move self)(): Result(i32, bool) = { Result(i32, bool).Ok(self.value) }
 }
 
 let main(): i32 = {

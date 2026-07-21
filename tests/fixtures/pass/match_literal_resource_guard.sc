@@ -8,9 +8,9 @@ extend Resource: Drop {
   }
 }
 
-let consume(move value: Resource): () = ()
+let consume(move value: Resource): () = { () }
 
-let choose(move choice: Choice): i32 = choice match {
+let choose(move choice: Choice): i32 = { choice match {
   Pair(resource, 42) => do {
     consume(resource)
     21
@@ -20,6 +20,7 @@ let choose(move choice: Choice): i32 = choice match {
     21
   },
   None => 0,
+}
 }
 
 let main(): i32 = {

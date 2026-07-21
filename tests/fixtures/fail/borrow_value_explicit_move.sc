@@ -1,4 +1,4 @@
-let consume(move value: borrow i32): i32 = value
+let consume(move value: borrow i32): i32 = { value }
 
 let main(): i32 = {
   let number = 21

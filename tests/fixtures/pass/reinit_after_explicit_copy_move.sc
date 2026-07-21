@@ -2,7 +2,7 @@ let Number = struct(value: i32)
 
 extend Number: Copy {}
 
-let consume(move number: Number): i32 = number.value
+let consume(move number: Number): i32 = { number.value }
 
 let main(): i32 = {
   let mut number = Number(20)

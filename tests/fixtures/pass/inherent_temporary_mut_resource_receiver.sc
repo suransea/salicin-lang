@@ -14,4 +14,4 @@ extend Resource: Drop {
   }
 }
 
-let main(): i32 = Resource(41).increment()
+let main(): i32 = { Resource(41).increment() }

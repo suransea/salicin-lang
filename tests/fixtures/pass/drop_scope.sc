@@ -11,16 +11,17 @@ extend Resource: Drop {
   }
 }
 
-let consume(move value: Resource): () = ()
+let consume(move value: Resource): () = { () }
 
 let conditional(flag: bool): () = {
   let value = Resource(1)
   if flag { consume(value) }
 }
 
-let inspect(move choice: Choice): i32 = choice match {
+let inspect(move choice: Choice): i32 = { choice match {
   Some(_) => 1,
   None => 0,
+}
 }
 
 let early(): i32 = {
@@ -28,9 +29,10 @@ let early(): i32 = {
   return 1
 }
 
-let looped(): i32 = loop {
+let looped(): i32 = { loop {
   let value = Resource(1)
   break 1
+}
 }
 
 let main(): i32 = {

@@ -1,8 +1,8 @@
 let Payload = struct(value: i32)
 let Pair = struct(left: Payload, right: i32)
 
-let consume_payload(move payload: Payload): i32 = payload.value
-let consume_pair(move pair: Pair): i32 = pair.left.value
+let consume_payload(move payload: Payload): i32 = { payload.value }
+let consume_pair(move pair: Pair): i32 = { pair.left.value }
 
 let main(): i32 = {
   let mut pair = Pair(left: Payload(10), right: 11)

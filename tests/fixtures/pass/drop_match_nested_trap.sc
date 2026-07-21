@@ -8,9 +8,9 @@ extend Resource: Drop {
   }
 }
 
-let consume(move value: Resource): () = ()
+let consume(move value: Resource): () = { () }
 
-let main(): i32 = Choice.Some(
+let main(): i32 = { Choice.Some(
   Bundle(Resource(1), Resource(0)),
   Resource(1)
 ) match {
@@ -19,4 +19,5 @@ let main(): i32 = Choice.Some(
     0
   },
   None => 0
+}
 }

@@ -2,11 +2,11 @@ let Token = struct(value: i32)
 let Holder(T: type) = struct(value: T)
 
 extend(T: type) Holder(T) {
-  let into(P: passing)(P self)(): T = self.value
+  let into(P: passing)(P self)(): T = { self.value }
 }
 
-let identity(P: passing, T: type)(P value: T): T = value
-let forward(P: passing, T: type)(P value: T): T = identity(P, T)(value)
+let identity(P: passing, T: type)(P value: T): T = { value }
+let forward(P: passing, T: type)(P value: T): T = { identity(P, T)(value) }
 
 let main(): i32 = {
   let number = 20

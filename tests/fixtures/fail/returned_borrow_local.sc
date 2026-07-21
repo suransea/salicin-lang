@@ -3,4 +3,4 @@ let bad('a: region)(borrow('a) seed: i32): borrow('a) i32 = {
   borrow local
 }
 
-let main(): i32 = 42
+let main(): i32 = { 42 }

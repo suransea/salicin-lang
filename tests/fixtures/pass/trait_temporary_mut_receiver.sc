@@ -11,4 +11,4 @@ extend Counter: Reset {
   }
 }
 
-let main(): i32 = Counter(0).reset()
+let main(): i32 = { Counter(0).reset() }

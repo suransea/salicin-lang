@@ -4,29 +4,29 @@ let Bits = struct(value: i32)
 
 extend Bits: BitAnd(Bits) {
   let Output = Bits
-  let bit_and(move self)(move rhs: Bits): Bits = Bits(self.value & rhs.value)
+  let bit_and(move self)(move rhs: Bits): Bits = { Bits(self.value & rhs.value) }
 }
 extend Bits: BitOr(Bits) {
   let Output = Bits
-  let bit_or(move self)(move rhs: Bits): Bits = Bits(self.value | rhs.value)
+  let bit_or(move self)(move rhs: Bits): Bits = { Bits(self.value | rhs.value) }
 }
 extend Bits: BitXor(Bits) {
   let Output = Bits
-  let bit_xor(move self)(move rhs: Bits): Bits = Bits(self.value ^ rhs.value)
+  let bit_xor(move self)(move rhs: Bits): Bits = { Bits(self.value ^ rhs.value) }
 }
 extend Bits: Shl(Bits) {
   let Output = Bits
-  let shl(move self)(move rhs: Bits): Bits = Bits(self.value << rhs.value)
+  let shl(move self)(move rhs: Bits): Bits = { Bits(self.value << rhs.value) }
 }
 extend Bits: Shr(Bits) {
   let Output = Bits
-  let shr(move self)(move rhs: Bits): Bits = Bits(self.value >> rhs.value)
+  let shr(move self)(move rhs: Bits): Bits = { Bits(self.value >> rhs.value) }
 }
 
 let mask(T: type)(move left: T)(move right: T): T
-where T: BitAnd(T, Output = T) = left & right
+where T: BitAnd(T, Output = T) = { left & right }
 
-let unsigned_shift(value: u32): u32 = value >> 2
+let unsigned_shift(value: u32): u32 = { value >> 2 }
 
 let main(): i32 = {
   let value = ((((mask(Bits(6))(Bits(3)) | Bits(8)) ^ Bits(3)) << Bits(1)) >> Bits(1)).value

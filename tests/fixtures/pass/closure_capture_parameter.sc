@@ -3,4 +3,4 @@ let run(base: i32): i32 = {
   add_base(2)
 }
 
-let main(): i32 = run(40)
+let main(): i32 = { run(40) }

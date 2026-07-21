@@ -1,6 +1,6 @@
 let Boxed = struct(value: i32)
 
-let consume(move boxed: Boxed): () = ()
+let consume(move boxed: Boxed): () = { () }
 
 let use_value(restore: bool): i32 = {
   let mut boxed = Boxed(0)
@@ -11,4 +11,4 @@ let use_value(restore: bool): i32 = {
   boxed.value
 }
 
-let main(): i32 = use_value(true)
+let main(): i32 = { use_value(true) }

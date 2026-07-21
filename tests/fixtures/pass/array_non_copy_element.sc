@@ -1,6 +1,6 @@
 let Boxed = struct(value: i32)
 
-let unwrap(move value: Boxed): i32 = value.value
+let unwrap(move value: Boxed): i32 = { value.value }
 
 let main(): i32 = {
   let mut values = [Boxed(20), Boxed(2)]

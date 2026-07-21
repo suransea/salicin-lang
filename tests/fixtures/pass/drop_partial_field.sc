@@ -9,7 +9,7 @@ extend Resource: Drop {
   }
 }
 
-let consume(move value: Resource): () = ()
+let consume(move value: Resource): () = { () }
 
 let conditional(flag: bool): () = {
   let pair = Pair(Resource(1), Resource(1))

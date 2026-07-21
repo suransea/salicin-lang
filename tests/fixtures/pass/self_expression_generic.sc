@@ -5,12 +5,12 @@ let Rewrap = trait {
 let Cell(T: type) = struct(value: T)
 
 extend(T: type) Cell(T) {
-  let wrap(move value: T): Self = Self(value)
-  let replace(move self)(move value: T): Self = Self(value)
+  let wrap(move value: T): Self = { Self(value) }
+  let replace(move self)(move value: T): Self = { Self(value) }
 }
 
 extend(T: type) Cell(T): Rewrap {
-  let rewrap(move self)(): Self = Self(self.value)
+  let rewrap(move self)(): Self = { Self(self.value) }
 }
 
 let main(): i32 = {

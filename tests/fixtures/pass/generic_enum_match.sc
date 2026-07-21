@@ -3,9 +3,10 @@ let Maybe(T: type) = enum {
   None,
 }
 
-let unwrap(move value: Maybe(i32)): i32 = value match {
+let unwrap(move value: Maybe(i32)): i32 = { value match {
   Some(item) => item,
   None => 0,
 }
+}
 
-let main(): i32 = unwrap(Maybe(i32).Some(42))
+let main(): i32 = { unwrap(Maybe(i32).Some(42)) }

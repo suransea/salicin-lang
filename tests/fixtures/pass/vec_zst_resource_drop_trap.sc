@@ -3,8 +3,9 @@ use alloc.vec.Vec
 let Bomb = struct()
 
 extend Bomb: Drop {
-  let drop(borrow(mut) self)(): () = unsafe {
+  let drop(borrow(mut) self)(): () = { unsafe {
     raw_trap()
+  }
   }
 }
 

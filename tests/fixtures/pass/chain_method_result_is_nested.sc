@@ -1,7 +1,7 @@
 let Boxed = struct(value: i32)
 
 extend Boxed {
-  let optional(move self)(): Option(i32) = Option(i32).Some(self.value)
+  let optional(move self)(): Option(i32) = { Option(i32).Some(self.value) }
 }
 
 let main(): i32 = {

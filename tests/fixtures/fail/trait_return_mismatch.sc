@@ -5,7 +5,7 @@ let Check = trait {
 let Number = struct(value: i32)
 
 extend Number: Check {
-  let check(borrow self)(): bool = true
+  let check(borrow self)(): bool = { true }
 }
 
-let main(): i32 = 0
+let main(): i32 = { 0 }

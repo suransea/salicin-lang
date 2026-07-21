@@ -85,7 +85,7 @@ fn help_and_version_identify_salic() {
 #[test]
 fn source_extension_is_sc_without_a_legacy_alias() {
     let temporary = TestDirectory::new();
-    let legacy = temporary.write("legacy.sali", "let main(): i32 = 42\n");
+    let legacy = temporary.write("legacy.sali", "let main(): i32 = { 42 }\n");
     let output = salic()
         .arg("check")
         .arg(legacy)
@@ -721,8 +721,8 @@ edition = "2026"
         "src/api.sc",
         "pub(package) let Cell(T: type) = struct(value: T)\n\
          extend(T: type) Cell(T) {\n\
-           let new(move value: T): Cell(T) = Cell(value)\n\
-           let take(move self)(): T = self.value\n\
+           let new(move value: T): Cell(T) = { Cell(value) }\n\
+           let take(move self)(): T = { self.value }\n\
          }\n",
     );
 
@@ -766,9 +766,9 @@ dep = { path = "../dep" }
     project.write(
         "app/src/main.sc",
         "extend(T: type) dep.Cell(T) {\n\
-           let take(move self)(): T = self.value\n\
+           let take(move self)(): T = { self.value }\n\
          }\n\
-         let main(): i32 = 0\n",
+         let main(): i32 = { 0 }\n",
     );
 
     let output = salic()
@@ -2569,7 +2569,7 @@ fn throws_errors_report_their_cause() {
 fn output_must_not_overwrite_the_source() {
     let temporary = TestDirectory::new();
     let source = temporary.join("keep.sc");
-    let original = b"let main(): i32 = 0\n";
+    let original = b"let main(): i32 = { 0 }\n";
     fs::write(&source, original).expect("write source fixture");
 
     for command in ["build", "emit-ir"] {
@@ -2590,7 +2590,7 @@ fn output_must_not_overwrite_a_source_hardlink() {
     let temporary = TestDirectory::new();
     let source = temporary.join("keep.sc");
     let output_path = temporary.join("keep.ll");
-    let original = b"let main(): i32 = 0\n";
+    let original = b"let main(): i32 = { 0 }\n";
     fs::write(&source, original).expect("write source fixture");
     fs::hard_link(&source, &output_path).expect("create source hardlink");
 
@@ -2620,7 +2620,7 @@ version = "0.1.0"
 edition = "2026"
 "#,
     );
-    project.write("src/main.sc", "let main(): i32 = 42\n");
+    project.write("src/main.sc", "let main(): i32 = { 42 }\n");
 
     let checked = salic()
         .arg("check")
@@ -2688,9 +2688,9 @@ name = "answer"
 path = "src/answer.sc"
 "#,
     );
-    project.write("src/toolbox.sc", "let answer(): i32 = 42\n");
-    project.write("src/main.sc", "let main(): i32 = 1\n");
-    project.write("src/answer.sc", "let main(): i32 = 42\n");
+    project.write("src/toolbox.sc", "let answer(): i32 = { 42 }\n");
+    project.write("src/main.sc", "let main(): i32 = { 1 }\n");
+    project.write("src/answer.sc", "let main(): i32 = { 42 }\n");
 
     let checked = salic()
         .arg("check")
@@ -2741,8 +2741,8 @@ name = "right"
 path = "src/right.sc"
 "#,
     );
-    multiple_bins.write("src/left.sc", "let main(): i32 = 1\n");
-    multiple_bins.write("src/right.sc", "let main(): i32 = 2\n");
+    multiple_bins.write("src/left.sc", "let main(): i32 = { 1 }\n");
+    multiple_bins.write("src/right.sc", "let main(): i32 = { 2 }\n");
 
     let ambiguous = salic()
         .arg("run")
@@ -2773,7 +2773,7 @@ edition = "2026"
 path = "src/lib.sc"
 "#,
     );
-    library_only.write("src/lib.sc", "let answer(): i32 = 42\n");
+    library_only.write("src/lib.sc", "let answer(): i32 = { 42 }\n");
 
     let no_binary = salic()
         .arg("run")
@@ -2828,7 +2828,7 @@ edition = "2026"
 broken = 42
 "#,
     );
-    invalid_dependency.write("src/main.sc", "let main(): i32 = 0\n");
+    invalid_dependency.write("src/main.sc", "let main(): i32 = { 0 }\n");
 
     let dependency = salic()
         .arg("check")
@@ -2857,10 +2857,10 @@ edition = "2026"
 math = { path = "../math" }
 "#,
     );
-    workspace.write("app/src/main.sc", "let main(): i32 = math.answer()\n");
+    workspace.write("app/src/main.sc", "let main(): i32 = { math.answer() }\n");
     workspace.write(
         "app/src/lib.sc",
-        "pub let library_answer(): i32 = math.answer()\n",
+        "pub let library_answer(): i32 = { math.answer() }\n",
     );
     workspace.write(
         "math/salicin.toml",
@@ -2874,11 +2874,11 @@ name = "broken-tool"
 path = "src/broken.sc"
 "#,
     );
-    let dependency_library = "pub let answer(): i32 = internal.value()\n";
+    let dependency_library = "pub let answer(): i32 = { internal.value() }\n";
     let dependency_library_path = workspace.write("math/src/lib.sc", dependency_library);
     workspace.write(
         "math/src/internal.sc",
-        "pub(package) let value(): i32 = 42\n",
+        "pub(package) let value(): i32 = { 42 }\n",
     );
     workspace.write(
         "math/src/broken.sc",
@@ -2968,7 +2968,7 @@ secret = { path = "../secret" }
     );
     workspace.write(
         "app/src/main.sc",
-        "let main(): i32 = restricted.hidden() + secret.hidden()\n",
+        "let main(): i32 = { restricted.hidden() + secret.hidden() }\n",
     );
     workspace.write(
         "restricted/salicin.toml",
@@ -2976,13 +2976,13 @@ secret = { path = "../secret" }
     );
     workspace.write(
         "restricted/src/lib.sc",
-        "pub(package) let hidden(): i32 = 20\n",
+        "pub(package) let hidden(): i32 = { 20 }\n",
     );
     workspace.write(
         "secret/salicin.toml",
         "[package]\nname = \"secret\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
     );
-    workspace.write("secret/src/lib.sc", "let hidden(): i32 = 22\n");
+    workspace.write("secret/src/lib.sc", "let hidden(): i32 = { 22 }\n");
 
     let output = salic()
         .arg("check")
@@ -3021,11 +3021,11 @@ let Secret = trait {
   let reveal(borrow self)(): i32
 }
 extend Number: Secret {
-  let reveal(borrow self)(): i32 = self.value
+  let reveal(borrow self)(): i32 = { self.value }
 }
-pub let make(): Number = Number(value: 21)
-pub let maybe(): Option(Number) = Option(Number).Some(make())
-pub let reveal(T: type)(move number: Number): i32 = number.reveal()
+pub let make(): Number = { Number(value: 21) }
+pub let maybe(): Option(Number) = { Option(Number).Some(make()) }
+pub let reveal(T: type)(move number: Number): i32 = { number.reveal() }
 pub let answer(): i32 = {
   let number = make()
   number.reveal()
@@ -3057,7 +3057,7 @@ pub let answer(): i32 = {
 
     workspace.write(
         "app/src/main.sc",
-        "let main(): i32 = dep.maybe()?.reveal() ?? 0\n",
+        "let main(): i32 = { dep.maybe()?.reveal() ?? 0 }\n",
     );
     let optional = salic()
         .arg("check")
@@ -3080,7 +3080,7 @@ pub let answer(): i32 = {
 
     workspace.write(
         "app/src/main.sc",
-        "let main(): i32 = dep.reveal(i32)(dep.make()) + dep.answer()\n",
+        "let main(): i32 = { dep.reveal(i32)(dep.make()) + dep.answer() }\n",
     );
     let internal = salic()
         .arg("run")
@@ -3120,11 +3120,11 @@ dep = { path = "../dep" }
 pub let Number = struct(value: i32)
 extend Number: Add(Number) {
   let Output = Number
-  let add(move self)(move rhs: Number): Number = Number(self.value + rhs.value)
+  let add(move self)(move rhs: Number): Number = { Number(self.value + rhs.value) }
 }
-pub let make(value: i32): Number = Number(value)
-pub let value(move number: Number): i32 = number.value
-pub let maybe(value: i32): Option(i32) = Option(i32).Some(value)
+pub let make(value: i32): Number = { Number(value) }
+pub let value(move number: Number): i32 = { number.value }
+pub let maybe(value: i32): Option(i32) = { Option(i32).Some(value) }
 "#,
     );
     workspace.write(
@@ -3147,7 +3147,7 @@ pub let maybe(value: i32): Option(i32) = Option(i32).Some(value)
     workspace.write(
         "app/src/fake.sc",
         r#"pub let Option(T: type) = enum { Some(T), None }
-pub let make_option(): Option(i32) = Option(i32).Some(42)
+pub let make_option(): Option(i32) = { Option(i32).Some(42) }
 
 pub let Add(Rhs: type) = trait {
   let Output: type
@@ -3160,18 +3160,18 @@ pub let Sub(Rhs: type) = trait {
 pub let Number = struct(value: i32)
 extend Number: Add(Number) {
   let Output = Number
-  let add(move self)(move rhs: Number): Number = Number(self.value + rhs.value)
+  let add(move self)(move rhs: Number): Number = { Number(self.value + rhs.value) }
 }
 extend Number: Sub(Number) {
   let Output = Number
-  let sub(move self)(move rhs: Number): Number = Number(self.value - rhs.value)
+  let sub(move self)(move rhs: Number): Number = { Number(self.value - rhs.value) }
 }
-pub let make_number(value: i32): Number = Number(value)
+pub let make_number(value: i32): Number = { Number(value) }
 "#,
     );
     workspace.write(
         "app/src/main.sc",
-        "let main(): i32 = fake.make_option() ?? 0\n",
+        "let main(): i32 = { fake.make_option() ?? 0 }\n",
     );
     let fake_option = salic()
         .arg("check")
@@ -3193,7 +3193,7 @@ pub let make_number(value: i32): Number = Number(value)
 
     workspace.write(
         "app/src/main.sc",
-        "let main(): i32 = fake.make_number(20) + fake.make_number(22)\n",
+        "let main(): i32 = { fake.make_number(20) + fake.make_number(22) }\n",
     );
     let fake_add = salic()
         .arg("check")
@@ -3214,7 +3214,7 @@ pub let make_number(value: i32): Number = Number(value)
 
     workspace.write(
         "app/src/main.sc",
-        "let main(): i32 = fake.make_number(44) - fake.make_number(2)\n",
+        "let main(): i32 = { fake.make_number(44) - fake.make_number(2) }\n",
     );
     let fake_sub = salic()
         .arg("check")
@@ -3235,7 +3235,7 @@ pub let make_number(value: i32): Number = Number(value)
 
     workspace.write(
         "app/src/main.sc",
-        "use root.fake as Option\nlet main(): i32 = Option()\n",
+        "use root.fake as Option\nlet main(): i32 = { Option() }\n",
     );
     let module_option = salic()
         .arg("check")
@@ -3261,9 +3261,9 @@ pub let make_number(value: i32): Number = Number(value)
 let Number = struct(value: i32)
 extend Number: Add(Number) {
   let Output = i32
-  let add(move self)(move rhs: Number): i32 = self.value + rhs.value
+  let add(move self)(move rhs: Number): i32 = { self.value + rhs.value }
 }
-let main(): i32 = Number(20) + Number(22)
+let main(): i32 = { Number(20) + Number(22) }
 "#,
     );
     let module_add = salic()
@@ -3287,7 +3287,7 @@ let main(): i32 = Number(20) + Number(22)
     workspace.write("app/src/never.sc", "let marker = 0\n");
     workspace.write(
         "app/src/main.sc",
-        "let stop(): never = loop {}\nlet main(): i32 = 42\n",
+        "let stop(): never = { loop {} }\nlet main(): i32 = { 42 }\n",
     );
     let module_never = salic()
         .arg("check")
@@ -3329,13 +3329,13 @@ dep = { path = "../dep" }
     workspace.write(
         "dep/src/lib.sc",
         r#"pub let Token = struct(value: i32)
-pub let make(value: i32): Token = Token(value)
+pub let make(value: i32): Token = { Token(value) }
 "#,
     );
     workspace.write(
         "app/src/main.sc",
         r#"extend dep.Token: Copy {}
-let main(): i32 = 42
+let main(): i32 = { 42 }
 "#,
     );
 
@@ -3357,8 +3357,8 @@ let main(): i32 = 42
         "dep/src/lib.sc",
         r#"pub let Token = struct(value: i32)
 extend Token: Copy {}
-pub let make(value: i32): Token = Token(value)
-pub let read(copy token: Token): i32 = token.value
+pub let make(value: i32): Token = { Token(value) }
+pub let read(copy token: Token): i32 = { token.value }
 "#,
     );
     workspace.write(
@@ -3389,8 +3389,8 @@ pub let read(copy token: Token): i32 = token.value
         r#"use root.fake.Copy as FakeCopy
 let Local = struct(value: i32)
 extend Local: FakeCopy {}
-let read(copy local: Local): i32 = local.value
-let main(): i32 = read(Local(42))
+let read(copy local: Local): i32 = { local.value }
+let main(): i32 = { read(Local(42)) }
 "#,
     );
 
@@ -3419,13 +3419,13 @@ pub let Token = struct(value: i32)
 
 extend Token: Copy {}
 
-pub let make(value: i32): Token = Token(value)
-pub let read(copy token: Token): i32 = token.value
+pub let make(value: i32): Token = { Token(value) }
+pub let read(copy token: Token): i32 = { token.value }
 "#,
     );
     workspace.write(
         "app/src/main.sc",
-        "let main(): i32 = fake.read(fake.make(42))\n",
+        "let main(): i32 = { fake.read(fake.make(42)) }\n",
     );
 
     let spoof = salic()
@@ -3451,7 +3451,7 @@ fn transitive_diamond_dependencies_share_nominal_identity() {
     );
     workspace.write(
         "shared/src/lib.sc",
-        "pub let Token = struct(pub value: i32)\npub let make(value: i32): Token = Token(value: value)\n",
+        "pub let Token = struct(pub value: i32)\npub let make(value: i32): Token = { Token(value: value) }\n",
     );
     for side in ["left", "right"] {
         workspace.write(
@@ -3462,7 +3462,7 @@ fn transitive_diamond_dependencies_share_nominal_identity() {
         );
         workspace.write(
             &format!("{side}/src/lib.sc"),
-            "pub use shared.Token\npub let make(value: i32): Token = shared.make(value)\n",
+            "pub use shared.Token\npub let make(value: i32): Token = { shared.make(value) }\n",
         );
     }
     workspace.write(
@@ -3479,8 +3479,8 @@ right = { path = "../right" }
     );
     workspace.write(
         "app/src/main.sc",
-        r#"let bridge(move value: left.Token): right.Token = value
-let main(): i32 = bridge(left.make(42)).value
+        r#"let bridge(move value: left.Token): right.Token = { value }
+let main(): i32 = { bridge(left.make(42)).value }
 "#,
     );
 
@@ -3504,13 +3504,13 @@ fn dependency_cycles_and_binary_only_dependencies_fail_before_writing_a_lockfile
         "app/salicin.toml",
         "[package]\nname = \"cycle-app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nb = { path = \"../b\" }\n",
     );
-    cycle.write("app/src/lib.sc", "pub let value(): i32 = 1\n");
-    cycle.write("app/src/main.sc", "let main(): i32 = 0\n");
+    cycle.write("app/src/lib.sc", "pub let value(): i32 = { 1 }\n");
+    cycle.write("app/src/main.sc", "let main(): i32 = { 0 }\n");
     cycle.write(
         "b/salicin.toml",
         "[package]\nname = \"cycle-b\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\napp = { path = \"../app\" }\n",
     );
-    cycle.write("b/src/lib.sc", "pub let value(): i32 = 2\n");
+    cycle.write("b/src/lib.sc", "pub let value(): i32 = { 2 }\n");
 
     let cyclic = salic()
         .arg("check")
@@ -3532,12 +3532,12 @@ fn dependency_cycles_and_binary_only_dependencies_fail_before_writing_a_lockfile
         "app/salicin.toml",
         "[package]\nname = \"missing-lib-app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\ntool = { path = \"../tool\" }\n",
     );
-    missing.write("app/src/main.sc", "let main(): i32 = 0\n");
+    missing.write("app/src/main.sc", "let main(): i32 = { 0 }\n");
     missing.write(
         "tool/salicin.toml",
         "[package]\nname = \"binary-tool\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
     );
-    missing.write("tool/src/main.sc", "let main(): i32 = 0\n");
+    missing.write("tool/src/main.sc", "let main(): i32 = { 0 }\n");
 
     let no_library = salic()
         .arg("check")
@@ -3575,8 +3575,8 @@ path = "src/main.sc"
 name = "other"
 path = "src/other.sc"
 "#;
-    let main_text = "let main(): i32 = 0\n";
-    let other_text = "let main(): i32 = 1\n";
+    let main_text = "let main(): i32 = { 0 }\n";
+    let other_text = "let main(): i32 = { 1 }\n";
     let manifest = project.write("salicin.toml", manifest_text);
     project.write("src/main.sc", main_text);
     let other = project.write("src/other.sc", other_text);
@@ -3607,15 +3607,15 @@ fn prelude_never_coerces_through_diverging_calls() {
     let temporary = TestDirectory::new();
     let source = temporary.write(
         "never.sc",
-        r#"let stop(): never = loop {}
-let absurd(move value: never): i32 = value
-let propagate(move value: never): Result(i32, ()) = value
+        r#"let stop(): never = { loop {} }
+let absurd(move value: never): i32 = { value }
+let propagate(move value: never): Result(i32, ()) = { value }
 let throw_never(move value: never): i32 with(throws(())) = { throw value }
 let Empty = enum {}
 let Holder = struct(value: Empty)
-let project(move holder: Holder): i32 = holder.value
-let choose(flag: bool): i32 = if flag { 42 } else { stop() }
-let main(): i32 = choose(true)
+let project(move holder: Holder): i32 = { holder.value }
+let choose(flag: bool): i32 = { if flag { 42 } else { stop() } }
+let main(): i32 = { choose(true) }
 "#,
     );
 
@@ -3658,7 +3658,7 @@ let Read = trait {
   let read(borrow self)(): i32
 }
 extend Number: Read {
-  let read(borrow self)(): i32 = self.value
+  let read(borrow self)(): i32 = { self.value }
 }
 pub(package) let answer(): i32 = {
   let number = Number(value: 40)
@@ -3673,7 +3673,7 @@ pub(package) let Status = enum {
   Ok(i32),
   Err,
 }
-pub(package) let reply(): Reply = Reply(value: 0)
+pub(package) let reply(): Reply = { Reply(value: 0) }
 "#,
     );
 
@@ -3696,19 +3696,19 @@ fn field_visibility_controls_cross_module_and_cross_package_data_access() {
         "src/data.sc",
         r#"pub(package) let Record = struct(secret: i32, pub(package) open: i32)
 pub(package) let Event = enum { Named(secret: i32), Empty }
-pub(package) let record(): Record = Record(secret: 20, open: 22)
-pub(package) let event(): Event = Event.Named(secret: 42)
+pub(package) let record(): Record = { Record(secret: 20, open: 22) }
+pub(package) let event(): Event = { Event.Named(secret: 42) }
 "#,
     );
     private_project.write(
         "src/main.sc",
-        r#"let read(): i32 = data.record().secret
-let build(): data.Record = data.Record(secret: 20, open: 22)
-let unpack(): i32 = data.event() match {
+        r#"let read(): i32 = { data.record().secret }
+let build(): data.Record = { data.Record(secret: 20, open: 22) }
+let unpack(): i32 = { data.event() match {
   data.Event.Named(secret: value) => value,
   data.Event.Empty => 0,
-}
-let main(): i32 = 0
+} }
+let main(): i32 = { 0 }
 "#,
     );
     let denied = salic()
@@ -3778,8 +3778,8 @@ version = "0.1.0"
 edition = "2026"
 "#,
     );
-    private_member.write("src/main.sc", "let main(): i32 = sibling.secret()\n");
-    private_member.write("src/sibling.sc", "let secret(): i32 = 42\n");
+    private_member.write("src/main.sc", "let main(): i32 = { sibling.secret() }\n");
+    private_member.write("src/sibling.sc", "let secret(): i32 = { 42 }\n");
 
     let private = salic()
         .arg("check")
@@ -3806,8 +3806,11 @@ version = "0.1.0"
 edition = "2026"
 "#,
     );
-    unknown_nested_member.write("src/main.sc", "let main(): i32 = net.http.missing()\n");
-    unknown_nested_member.write("src/net/http.sc", "pub(package) let answer(): i32 = 42\n");
+    unknown_nested_member.write("src/main.sc", "let main(): i32 = { net.http.missing() }\n");
+    unknown_nested_member.write(
+        "src/net/http.sc",
+        "pub(package) let answer(): i32 = { 42 }\n",
+    );
 
     let unknown = salic()
         .arg("check")
@@ -3845,7 +3848,7 @@ name = "tool"
 path = "src/tool.sc"
 "#,
     );
-    project.write("src/main.sc", "let main(): i32 = 42\n");
+    project.write("src/main.sc", "let main(): i32 = { 42 }\n");
     project.write("src/tool.sc", "this is deliberately not Salicin\n");
 
     let output = salic()
@@ -3865,7 +3868,7 @@ fn file_module_paths_reject_keywords_and_the_underscore_segment() {
             "salicin.toml",
             "[package]\nname = \"reserved-module\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
         );
-        project.write("src/main.sc", "let main(): i32 = 42\n");
+        project.write("src/main.sc", "let main(): i32 = { 42 }\n");
         project.write(&format!("src/{segment}.sc"), "let value = 0\n");
 
         let output = salic()
@@ -3896,8 +3899,8 @@ edition = "2026"
     );
     project.write(
         "src/main.sc",
-        r#"let root_bonus(): i32 = 3
-let main(): i32 = nested.deep.answer()
+        r#"let root_bonus(): i32 = { 3 }
+let main(): i32 = { nested.deep.answer() }
 "#,
     );
     project.write(
@@ -3907,12 +3910,12 @@ pub(package) let Outcome = enum {
   Ready(i32),
   Empty,
 }
-pub(package) let zero(): i32 = 0
-pub(package) let increment(value: i32): i32 = value + 1
-pub(package) let make_number(value: i32): Number = Number(value: value)
+pub(package) let zero(): i32 = { 0 }
+pub(package) let increment(value: i32): i32 = { value + 1 }
+pub(package) let make_number(value: i32): Number = { Number(value: value) }
 "#,
     );
-    project.write("src/nested.sc", "let parent_bonus(): i32 = 2\n");
+    project.write("src/nested.sc", "let parent_bonus(): i32 = { 2 }\n");
     project.write(
         "src/nested/deep.sc",
         r#"use root.kit.{Number, Outcome, increment}
@@ -3922,7 +3925,7 @@ use self.local_bonus as local
 use super.parent_bonus as parent
 use root.root_bonus as from_root
 
-let local_bonus(): i32 = 1
+let local_bonus(): i32 = { 1 }
 
 pub(package) let answer(): i32 = {
   let number: Number = make(35)
@@ -3957,12 +3960,12 @@ edition = "2026"
     );
     project.write(
         "src/main.sc",
-        "let main(): i32 = facade.answer() + package_facade.extra()\n",
+        "let main(): i32 = { facade.answer() + package_facade.extra() }\n",
     );
-    project.write("src/implementation.sc", "pub let answer(): i32 = 40\n");
+    project.write("src/implementation.sc", "pub let answer(): i32 = { 40 }\n");
     project.write(
         "src/package_implementation.sc",
-        "pub(package) let extra(): i32 = 2\n",
+        "pub(package) let extra(): i32 = { 2 }\n",
     );
     project.write("src/facade.sc", "pub use root.implementation.answer\n");
     project.write(
@@ -4003,7 +4006,10 @@ let main(): i32 = {
 }
 "#,
     );
-    project.write("src/numbers.sc", "pub(package) let answer(): i32 = 40\n");
+    project.write(
+        "src/numbers.sc",
+        "pub(package) let answer(): i32 = { 40 }\n",
+    );
 
     let output = salic()
         .arg("run")
@@ -4027,49 +4033,49 @@ fn invalid_imports_report_alias_paths_and_visibility() {
             name: "duplicate-alias",
             root: r#"use root.first.answer as selected
 use root.second.answer as selected
-let main(): i32 = selected()
+let main(): i32 = { selected() }
 "#,
             modules: &[
-                ("src/first.sc", "pub(package) let answer(): i32 = 1\n"),
-                ("src/second.sc", "pub(package) let answer(): i32 = 2\n"),
+                ("src/first.sc", "pub(package) let answer(): i32 = { 1 }\n"),
+                ("src/second.sc", "pub(package) let answer(): i32 = { 2 }\n"),
             ],
             expected: &["duplicate", "selected", "first.answer", "second.answer"],
         },
         Case {
             name: "unknown-import",
-            root: "use root.net.missing as answer\nlet main(): i32 = answer()\n",
-            modules: &[("src/net.sc", "pub(package) let present(): i32 = 42\n")],
+            root: "use root.net.missing as answer\nlet main(): i32 = { answer() }\n",
+            modules: &[("src/net.sc", "pub(package) let present(): i32 = { 42 }\n")],
             expected: &["unknown", "net.missing"],
         },
         Case {
             name: "private-sibling-import",
-            root: "use root.sibling.secret\nlet main(): i32 = secret()\n",
-            modules: &[("src/sibling.sc", "let secret(): i32 = 42\n")],
+            root: "use root.sibling.secret\nlet main(): i32 = { secret() }\n",
+            modules: &[("src/sibling.sc", "let secret(): i32 = { 42 }\n")],
             expected: &["private", "sibling.secret"],
         },
         Case {
             name: "public-private-promotion",
-            root: "let main(): i32 = 0\n",
+            root: "let main(): i32 = { 0 }\n",
             modules: &[(
                 "src/facade.sc",
-                "let secret(): i32 = 1\npub use self.secret as exposed\n",
+                "let secret(): i32 = { 1 }\npub use self.secret as exposed\n",
             )],
             expected: &["pub use", "private", "facade.secret"],
         },
         Case {
             name: "public-package-promotion",
-            root: "let main(): i32 = 0\n",
+            root: "let main(): i32 = { 0 }\n",
             modules: &[(
                 "src/facade.sc",
-                "pub(package) let internal(): i32 = 1\npub use self.internal as exposed\n",
+                "pub(package) let internal(): i32 = { 1 }\npub use self.internal as exposed\n",
             )],
             expected: &["pub use", "pub(package)", "facade.internal"],
         },
         Case {
             name: "private-module-alias",
-            root: "let main(): i32 = 0\n",
+            root: "let main(): i32 = { 0 }\n",
             modules: &[
-                ("src/secret.sc", "pub let open(): i32 = 1\n"),
+                ("src/secret.sc", "pub let open(): i32 = { 1 }\n"),
                 ("src/a.sc", "use root.secret as hidden\n"),
                 ("src/b.sc", "use root.a.hidden.open as leak\n"),
             ],

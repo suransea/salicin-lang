@@ -10,4 +10,4 @@ let use_value(take: bool): i32 = {
   boxed.value
 }
 
-let main(): i32 = use_value(false)
+let main(): i32 = { use_value(false) }

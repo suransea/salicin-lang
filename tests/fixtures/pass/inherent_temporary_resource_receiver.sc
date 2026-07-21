@@ -1,7 +1,7 @@
 let Resource = struct(value: i32)
 
 extend Resource {
-  let read(borrow self)(): i32 = self.value
+  let read(borrow self)(): i32 = { self.value }
 }
 
 extend Resource: Drop {
@@ -11,4 +11,4 @@ extend Resource: Drop {
   }
 }
 
-let main(): i32 = Resource(42).read()
+let main(): i32 = { Resource(42).read() }

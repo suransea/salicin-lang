@@ -3,4 +3,4 @@ let Option(T: type) = enum {
   None,
 }
 
-let main(): i32 = 42
+let main(): i32 = { 42 }

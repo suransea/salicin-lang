@@ -7,31 +7,31 @@ extend Resource: Drop {
   }
 }
 
-let consume(move value: Resource): () = ()
-let consume_pair(move left: Resource, move right: Resource): () = ()
+let consume(move value: Resource): () = { () }
+let consume_pair(move left: Resource, move right: Resource): () = { () }
 
 let invoke(): i32 = {
   let resource = Resource(1)
-  let once = { -> consume(resource) }
+  let once = { consume(resource) }
   once()
   42
 }
 
 let abandon(): () = {
   let resource = Resource(1)
-  let once = { -> consume(resource) }
+  let once = { consume(resource) }
 }
 
 let invoke_pair(): () = {
   let left = Resource(1)
   let right = Resource(1)
-  let once = { -> consume_pair(left, right) }
+  let once = { consume_pair(left, right) }
   once()
 }
 
 let conditional(flag: bool): () = {
   let resource = Resource(1)
-  let once = { -> consume(resource) }
+  let once = { consume(resource) }
   if flag { once() }
 }
 

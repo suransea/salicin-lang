@@ -6,4 +6,4 @@ where T: Copy = {
   value
 }
 
-let main(): i32 = duplicate(Resource(42)).value
+let main(): i32 = { duplicate(Resource(42)).value }

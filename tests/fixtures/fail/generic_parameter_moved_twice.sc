@@ -3,4 +3,4 @@ let invalid(T: type)(value: T): T = {
   value
 }
 
-let main(): i32 = 42
+let main(): i32 = { 42 }

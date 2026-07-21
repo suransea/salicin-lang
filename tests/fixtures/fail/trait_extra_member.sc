@@ -5,8 +5,8 @@ let Read = trait {
 let Number = struct(value: i32)
 
 extend Number: Read {
-  let read(borrow self)(): i32 = self.value
-  let extra(borrow self)(): i32 = 0
+  let read(borrow self)(): i32 = { self.value }
+  let extra(borrow self)(): i32 = { 0 }
 }
 
-let main(): i32 = 0
+let main(): i32 = { 0 }

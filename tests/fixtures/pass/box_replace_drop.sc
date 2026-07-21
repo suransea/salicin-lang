@@ -3,8 +3,9 @@ use alloc.boxed.{box_new, box_replace}
 let Resource = struct(counter: MutPtr(i32), value: i32)
 
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = unsafe {
+  let drop(borrow(mut) self)(): () = { unsafe {
     *self.counter = *self.counter + 1
+  }
   }
 }
 

@@ -1,5 +1,5 @@
-let accept_same(T: type)(left: T, right: T): i32 = 21
-let accept(T: type)(value: T): i32 = 21
+let accept_same(T: type)(left: T, right: T): i32 = { 21 }
+let accept(T: type)(value: T): i32 = { 21 }
 
 let main(): i32 = {
   let wide: i64 = 7

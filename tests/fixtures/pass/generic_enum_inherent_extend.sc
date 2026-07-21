@@ -4,9 +4,10 @@ let Maybe(T: type) = enum {
 }
 
 extend(T: type) Maybe(T) {
-  let unwrap_or(move self)(move fallback: T): T = self match {
+  let unwrap_or(move self)(move fallback: T): T = { self match {
     Some(value) => value,
     None => fallback,
+  }
   }
 }
 

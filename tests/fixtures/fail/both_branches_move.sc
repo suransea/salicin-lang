@@ -12,4 +12,4 @@ let use_value(take_first: bool): i32 = {
   boxed.value
 }
 
-let main(): i32 = use_value(false)
+let main(): i32 = { use_value(false) }

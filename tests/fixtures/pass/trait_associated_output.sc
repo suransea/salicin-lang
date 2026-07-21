@@ -7,7 +7,7 @@ let Number = struct(value: i32)
 
 extend Number: Convert {
   let Output = i32
-  let convert(borrow self)(): i32 = self.value
+  let convert(borrow self)(): i32 = { self.value }
 }
 
 let main(): i32 = {

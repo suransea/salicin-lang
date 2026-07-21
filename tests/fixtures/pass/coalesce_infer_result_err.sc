@@ -1,1 +1,1 @@
-let main(): i32 = Result(E: bool).Err(false) ?? 42
+let main(): i32 = { Result(E: bool).Err(false) ?? 42 }

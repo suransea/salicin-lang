@@ -4,9 +4,9 @@ extend Number {
   let reset(borrow(mut) self)(value: i32): () = {
     self.raw = value
   }
-  let add(borrow self)(amount: i32): i32 = self.raw + amount
-  let value(borrow self)(): i32 = self.raw
-  let value(): i32 = 2
+  let add(borrow self)(amount: i32): i32 = { self.raw + amount }
+  let value(borrow self)(): i32 = { self.raw }
+  let value(): i32 = { 2 }
 }
 
 let main(): i32 = {

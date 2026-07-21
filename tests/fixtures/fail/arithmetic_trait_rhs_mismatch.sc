@@ -5,7 +5,7 @@ let Divisor = struct(value: i32)
 
 extend Number: Div(i32) {
   let Output = i32
-  let div(move self)(move rhs: i32): i32 = self.value / rhs
+  let div(move self)(move rhs: i32): i32 = { self.value / rhs }
 }
 
-let main(): i32 = Number(84) / Divisor(2)
+let main(): i32 = { Number(84) / Divisor(2) }

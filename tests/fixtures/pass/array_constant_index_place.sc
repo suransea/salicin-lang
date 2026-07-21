@@ -1,4 +1,4 @@
-let read(borrow value: i32): i32 = value
+let read(borrow value: i32): i32 = { value }
 
 let set(borrow(mut) value: i32): () = {
   value = 22

@@ -1,4 +1,4 @@
-let pass('a: region)(value: borrow('a) i32): borrow('a) i32 = value
+let pass('a: region)(value: borrow('a) i32): borrow('a) i32 = { value }
 
 let bad('a: region)(borrow('a) seed: i32): borrow('a) i32 = {
   let local = seed
@@ -6,4 +6,4 @@ let bad('a: region)(borrow('a) seed: i32): borrow('a) i32 = {
   pass(reference)
 }
 
-let main(): i32 = 42
+let main(): i32 = { 42 }

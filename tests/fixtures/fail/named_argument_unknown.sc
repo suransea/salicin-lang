@@ -1,3 +1,3 @@
-let make(value: i32): i32 = value
+let make(value: i32): i32 = { value }
 
-let main(): i32 = make(item: 42)
+let main(): i32 = { make(item: 42) }

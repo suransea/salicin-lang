@@ -3,9 +3,10 @@ let Answer = enum {
   Empty,
 }
 
-let read(value: Answer): i32 = value match {
+let read(value: Answer): i32 = { value match {
   Answer.Value(number) => number,
   Answer.Empty => 0,
 }
+}
 
-let main(): i32 = read(Answer.Value(42))
+let main(): i32 = { read(Answer.Value(42)) }

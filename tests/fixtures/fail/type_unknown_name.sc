@@ -1,1 +1,1 @@
-let main(): i32 = missing
+let main(): i32 = { missing }

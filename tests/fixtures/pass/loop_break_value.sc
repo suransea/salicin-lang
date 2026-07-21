@@ -1,3 +1,4 @@
-let main(): i32 = loop {
+let main(): i32 = { loop {
   break 42
+}
 }

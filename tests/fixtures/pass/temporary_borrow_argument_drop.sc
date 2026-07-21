@@ -7,6 +7,6 @@ extend Resource: Drop {
   }
 }
 
-let inspect(borrow resource: Resource): i32 = resource.value
+let inspect(borrow resource: Resource): i32 = { resource.value }
 
-let main(): i32 = inspect(Resource(42))
+let main(): i32 = { inspect(Resource(42)) }

@@ -10,4 +10,4 @@ where T: Copy,
   value
 }
 
-let main(): i32 = duplicate(Value(42)).value
+let main(): i32 = { duplicate(Value(42)).value }

@@ -1,7 +1,7 @@
 let Adder = struct(base: i32)
 
 extend Adder {
-  let add(move self)(value: i32): i32 = self.base + value
+  let add(move self)(value: i32): i32 = { self.base + value }
 }
 
 let side_effect(borrow(mut) count: i32): i32 = {

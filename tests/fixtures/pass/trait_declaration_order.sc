@@ -1,5 +1,5 @@
 extend Number: Read {
-  let read(borrow self)(): i32 = self.value
+  let read(borrow self)(): i32 = { self.value }
 }
 
 let Read = trait {

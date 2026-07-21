@@ -2,8 +2,9 @@ let Resource = struct(counter: MutPtr(i32))
 let Batch = struct(values: Array(Resource, 2))
 
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = unsafe {
+  let drop(borrow(mut) self)(): () = { unsafe {
     *self.counter = *self.counter + 1
+  }
   }
 }
 

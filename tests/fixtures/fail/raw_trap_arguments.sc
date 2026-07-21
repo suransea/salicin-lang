@@ -1,3 +1,4 @@
-let main(): i32 = unsafe {
+let main(): i32 = { unsafe {
   raw_trap(1)
+}
 }

@@ -5,4 +5,4 @@ let reset(borrow(mut) counter: Counter): i32 = {
   counter.value
 }
 
-let main(): i32 = reset(Counter(0))
+let main(): i32 = { reset(Counter(0)) }

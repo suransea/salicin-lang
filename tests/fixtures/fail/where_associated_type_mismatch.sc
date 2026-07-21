@@ -7,11 +7,11 @@ let Value = struct(value: i32)
 
 extend Value: Produce {
   let Item = i32
-  let produce(borrow self)(): i32 = self.value
+  let produce(borrow self)(): i32 = { self.value }
 }
 
 let require_bool(T: type)(borrow value: T): bool
-where T: Produce(Item = bool) = value.produce()
+where T: Produce(Item = bool) = { value.produce() }
 
 let main(): i32 = {
   let value = Value(42)

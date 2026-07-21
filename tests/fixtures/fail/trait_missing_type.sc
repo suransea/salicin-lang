@@ -7,4 +7,4 @@ let Number = struct(value: i32)
 extend Number: Convert {
 }
 
-let main(): i32 = 0
+let main(): i32 = { 0 }

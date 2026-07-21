@@ -7,7 +7,7 @@ extend Resource: Drop {
   }
 }
 
-let finish(move resource: Resource)(value: i32): i32 = value
+let finish(move resource: Resource)(value: i32): i32 = { value }
 
 let make() = {
   let pending = finish(Resource(0))

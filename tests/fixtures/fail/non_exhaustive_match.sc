@@ -3,8 +3,9 @@ let Choice = enum {
   No,
 }
 
-let choose(value: Choice): i32 = value match {
+let choose(value: Choice): i32 = { value match {
   Choice.Yes => 42,
 }
+}
 
-let main(): i32 = choose(Choice.Yes)
+let main(): i32 = { choose(Choice.Yes) }

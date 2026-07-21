@@ -4,7 +4,7 @@ let Number = struct(value: i32)
 
 extend Number: Mul(Number) {
   let Output = Number
-  let mul(move self)(move rhs: Number): Number = Number(self.value * rhs.value)
+  let mul(move self)(move rhs: Number): Number = { Number(self.value * rhs.value) }
 }
 
 let tick(borrow(mut) count: i32)(value: i32): Number = {

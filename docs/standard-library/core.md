@@ -22,7 +22,7 @@ use core.ops.Add
 
 extend Number: Add(Number) {
   let Output = Number
-  let add(move self)(move rhs: Number): Number = ...
+  let add(move self)(move rhs: Number): Number = { ... }
 }
 ```
 
@@ -33,7 +33,7 @@ negates its result:
 use core.ops.Eq
 
 extend Number: Eq(Number) {
-  let eq(borrow self)(borrow rhs: Number): bool = self.value == rhs.value
+  let eq(borrow self)(borrow rhs: Number): bool = { self.value == rhs.value }
 }
 ```
 
@@ -45,7 +45,7 @@ the method once; an `Unordered` result makes each operator false:
 use core.ops.{PartialOrd, PartialOrdering}
 
 extend Number: PartialOrd(Number) {
-  let partial_cmp(borrow self)(borrow rhs: Number): PartialOrdering = ...
+  let partial_cmp(borrow self)(borrow rhs: Number): PartialOrdering = { ... }
 }
 ```
 

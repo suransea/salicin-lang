@@ -7,7 +7,7 @@ extend Resource: Drop {
   }
 }
 
-let add(left: i32)(right: i32): i32 = left + right
+let add(left: i32)(right: i32): i32 = { left + right }
 
 let consume(move resource: Resource)(value: i32): i32 = {
   let observed = resource.value

@@ -4,12 +4,12 @@ let Number = struct(value: i32)
 
 extend Number: Mul(i32) {
   let Output = i32
-  let mul(move self)(move rhs: i32): i32 = self.value * rhs
+  let mul(move self)(move rhs: i32): i32 = { self.value * rhs }
 }
 
 extend Number: Mul(i64) {
   let Output = i64
-  let mul(move self)(move rhs: i64): i64 = rhs * 21
+  let mul(move self)(move rhs: i64): i64 = { rhs * 21 }
 }
 
 let main(): i32 = {

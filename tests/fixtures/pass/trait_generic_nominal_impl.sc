@@ -5,7 +5,7 @@ let Read = trait {
 let Cell(T: type) = struct(value: T)
 
 extend Cell(i32): Read {
-  let read(borrow self)(): i32 = self.value
+  let read(borrow self)(): i32 = { self.value }
 }
 
 let main(): i32 = {

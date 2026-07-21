@@ -4,4 +4,4 @@ let Container = struct(payload: Payload)
 
 extend Container: Copy {}
 
-let main(): i32 = 42
+let main(): i32 = { 42 }

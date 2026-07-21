@@ -4,7 +4,7 @@ let Number = struct(value: i32)
 
 extend Number: Add(i32) {
   let Output = Number
-  let add(move self)(move rhs: i32): Number = Number(self.value + rhs)
+  let add(move self)(move rhs: i32): Number = { Number(self.value + rhs) }
 }
 
 let main(): i32 = {

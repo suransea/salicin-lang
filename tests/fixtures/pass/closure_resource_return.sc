@@ -7,7 +7,7 @@ extend Resource: Drop {
   }
 }
 
-let consume(move resource: Resource): i32 = resource.value
+let consume(move resource: Resource): i32 = { resource.value }
 
 let make() = {
   let resource = Resource(1)

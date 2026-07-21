@@ -3,12 +3,13 @@ use alloc.vec.Vec
 let Resource = struct(counter: MutPtr(i32), value: i32)
 
 extend Resource {
-  let read(borrow self)(): i32 = self.value
+  let read(borrow self)(): i32 = { self.value }
 }
 
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = unsafe {
+  let drop(borrow(mut) self)(): () = { unsafe {
     *self.counter = *self.counter + 1
+  }
   }
 }
 

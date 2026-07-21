@@ -1433,7 +1433,7 @@ pub let Div(Rhs: type) = trait {
 }
 pub let Rem(Rhs: type) = trait {
   let Output: type
-  let rem(move self)(move rhs: Rhs): Output = rhs
+  let rem(move self)(move rhs: Rhs): Output = { rhs }
 }
 pub let Eq(Rhs: type) = trait {
   let eq(move self)(move rhs: Rhs): bool

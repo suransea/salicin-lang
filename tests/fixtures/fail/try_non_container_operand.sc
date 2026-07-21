@@ -1,3 +1,3 @@
-let answer(): i32 = 42.try
+let answer(): i32 = { 42.try }
 
-let main(): i32 = answer()
+let main(): i32 = { answer() }

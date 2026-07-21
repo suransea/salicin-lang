@@ -7,7 +7,7 @@ extend Resource: Drop {
   }
 }
 
-let consume(move resource: Resource): () = ()
+let consume(move resource: Resource): () = { () }
 
 let finish(move resource: Resource)(value: i32): i32 = {
   consume(resource)

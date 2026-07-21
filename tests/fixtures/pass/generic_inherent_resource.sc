@@ -1,16 +1,17 @@
 let Resource = struct(counter: MutPtr(i32))
 
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = unsafe {
+  let drop(borrow(mut) self)(): () = { unsafe {
     *self.counter = *self.counter + 1
+  }
   }
 }
 
 let Cell(T: type) = struct(value: T)
 
 extend(T: type) Cell(T) {
-  let new(move value: T): Cell(T) = Cell(value)
-  let take(move self)(): T = self.value
+  let new(move value: T): Cell(T) = { Cell(value) }
+  let take(move self)(): T = { self.value }
 }
 
 let main(): i32 = {

@@ -1,4 +1,4 @@
-let choose(T: type)(first: T)(second: T): T = second
+let choose(T: type)(first: T)(second: T): T = { second }
 
 let main(): i32 = {
   let choose_after_zero = choose(0)

@@ -1,1 +1,1 @@
-let answer(): i32 = 42
+let answer(): i32 = { 42 }

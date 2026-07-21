@@ -1,4 +1,4 @@
-let consume(move value: i32): () = ()
+let consume(move value: i32): () = { () }
 
 let main(): i32 = {
   let mut values = [20, 2]

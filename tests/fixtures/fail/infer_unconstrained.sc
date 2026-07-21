@@ -1,3 +1,3 @@
-let make(T: type)(): i32 = 42
+let make(T: type)(): i32 = { 42 }
 
-let main(): i32 = make()
+let main(): i32 = { make() }
