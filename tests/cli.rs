@@ -2356,13 +2356,9 @@ fn m2_coalesce_errors_report_their_cause() {
 }
 
 #[test]
-fn result_wrapping_and_throws_handlers_run_with_expected_result() {
+fn explicit_result_values_and_throws_handlers_run_with_expected_result() {
     for name in [
-        "try_auto_wrap_tail.sc",
-        "try_auto_wrap_return.sc",
-        "try_auto_wrap_shadowing.sc",
         "try_full_container_unchanged.sc",
-        "try_nested_auto_wrap.sc",
         "do_try_boundary.sc",
         "do_function_boundary.sc",
     ] {
@@ -2384,7 +2380,11 @@ fn result_wrapping_and_throws_handlers_run_with_expected_result() {
 fn removed_postfix_try_reports_a_migration_diagnostic() {
     for (name, expected) in [
         ("try_non_container_operand.sc", "postfix `.try` was removed"),
-        ("try_auto_wrap_type_mismatch.sc", "type mismatch"),
+        ("result_return_type_mismatch.sc", "type mismatch"),
+        (
+            "result_requires_explicit_constructor.sc",
+            "integer literal cannot be used where",
+        ),
     ] {
         let output = salic()
             .arg("check")

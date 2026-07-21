@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.92.0 - 2026-07-21
+
+- Removed the edition language items `Try`, `FromResidual`, `FromError`, and their supporting
+  `ControlFlow` type; automatic error propagation is now defined solely by `throws(Error)`.
+- Removed implicit normal-tail and `return` wrapping for `Option` and `Result`; ordinary container
+  return types now require explicit `Some`, `None`, `Ok`, or `Err` construction.
+- Extended `E: effect` rows to carry `throws(Error)`, including error-type inference from
+  higher-order callable arguments, explicit effect arguments, forwarding, monomorphization, and the
+  current `Result(T, Error)` ABI specialization.
+- Updated core validation, fixtures, implementation status, and standard-library documentation to
+  remove the obsolete control-container protocol model.
+
 ## 0.91.0 - 2026-07-21
 
 - Replaced `with(try)` / `with(try(Error))` with the explicit error effect

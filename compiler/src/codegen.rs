@@ -126,6 +126,11 @@ enum Ty {
     Never,
     Function(FunctionTy),
     Callable(CallableTy),
+    EffectRow {
+        unsafe_effect: bool,
+        throws_error: Option<Box<Ty>>,
+        custom_effects: Vec<String>,
+    },
     Error,
 }
 
@@ -182,6 +187,30 @@ fn effect_row_from_marker(marker: &str) -> Option<(bool, Vec<String>)> {
         tail.split('|').map(str::to_owned).collect()
     };
     Some((unsafe_effect, custom))
+}
+
+fn effect_row_source(
+    unsafe_effect: bool,
+    throws_error: Option<Type>,
+    custom_effects: &[String],
+) -> Type {
+    Type::Named(
+        effect_row_marker(unsafe_effect, custom_effects),
+        throws_error.into_iter().collect(),
+    )
+}
+
+fn effect_row_from_source(source: &Type) -> Option<(bool, Option<Type>, Vec<String>)> {
+    let Type::Named(marker, arguments) = source else {
+        return None;
+    };
+    let (unsafe_effect, custom_effects) = effect_row_from_marker(marker)?;
+    let throws_error = match arguments.as_slice() {
+        [] => None,
+        [error] => Some(error.clone()),
+        _ => return None,
+    };
+    Some((unsafe_effect, throws_error, custom_effects))
 }
 
 fn is_compile_value_marker(name: &str) -> bool {
@@ -282,21 +311,7 @@ struct ReturnBoundary {
     kind: Option<BuiltinFallibleKind>,
     container: Ty,
     success: Ty,
-    residual: Ty,
     error: Option<Ty>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct TryProtocolInfo {
-    output: Ty,
-    residual: Ty,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReturnValueCandidate {
-    Container,
-    Success,
-    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -464,6 +479,24 @@ impl fmt::Display for Ty {
                 Ok(())
             }
             Self::Callable(callable) => write!(f, "{}", Ty::Function(callable.signature.clone())),
+            Self::EffectRow {
+                unsafe_effect,
+                throws_error,
+                custom_effects,
+            } => {
+                let mut effects = custom_effects.clone();
+                if *unsafe_effect {
+                    effects.insert(0, "unsafe".to_owned());
+                }
+                if let Some(error) = throws_error {
+                    effects.push(format!("throws({error})"));
+                }
+                if effects.is_empty() {
+                    f.write_str("pure")
+                } else {
+                    write!(f, "with({})", effects.join(", "))
+                }
+            }
         }
     }
 }
@@ -548,7 +581,7 @@ impl HirProgram {
                         })
                     })
             }
-            Ty::Function(_) => false,
+            Ty::Function(_) | Ty::EffectRow { .. } => false,
             Ty::Callable(callable) => callable.captures.iter().any(|capture| {
                 !matches!(capture.mode, PassMode::Borrow | PassMode::MutBorrow)
                     && self.needs_drop(&capture.ty)
@@ -2252,6 +2285,7 @@ impl Analyzer {
             | Ty::Unit
             | Ty::Pointer { .. }
             | Ty::Function(_)
+            | Ty::EffectRow { .. }
             | Ty::Never
             | Ty::Error => true,
             Ty::Reference { mutable, .. } => !mutable,
@@ -5681,6 +5715,21 @@ impl Analyzer {
                 }
             }
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => Ty::Unit,
+            Type::Named(name, _) if effect_row_from_marker(name).is_some() => {
+                let Some((unsafe_effect, throws_error, custom_effects)) =
+                    effect_row_from_source(source)
+                else {
+                    self.error("effect row carries more than one thrown error type");
+                    return Ty::Error;
+                };
+                Ty::EffectRow {
+                    unsafe_effect,
+                    throws_error: throws_error
+                        .as_ref()
+                        .map(|error| Box::new(self.lower_source_type(error))),
+                    custom_effects,
+                }
+            }
             Type::Named(name, arguments)
                 if arguments.is_empty() && is_compile_value_marker(name) =>
             {
@@ -5943,6 +5992,17 @@ impl Analyzer {
             Ty::Callable(callable) => {
                 self.source_type_for_ty(&Ty::Function(callable.signature.clone()))
             }
+            Ty::EffectRow {
+                unsafe_effect,
+                throws_error,
+                custom_effects,
+            } => Some(effect_row_source(
+                *unsafe_effect,
+                throws_error
+                    .as_deref()
+                    .and_then(|error| self.source_type_for_ty(error)),
+                custom_effects,
+            )),
             Ty::Never | Ty::Error => None,
         }
     }
@@ -6029,6 +6089,7 @@ impl Analyzer {
             Ty::Callable(callable) => {
                 self.diagnostic_type_name(&Ty::Function(callable.signature.clone()))
             }
+            Ty::EffectRow { .. } => ty.to_string(),
         }
     }
 
@@ -6130,6 +6191,17 @@ impl Analyzer {
                 Some(Ty::Array(Box::new(self.probe_source_ty(element)?), *length))
             }
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => Some(Ty::Unit),
+            Type::Named(name, _) if effect_row_from_marker(name).is_some() => {
+                let (unsafe_effect, throws_error, custom_effects) = effect_row_from_source(source)?;
+                Some(Ty::EffectRow {
+                    unsafe_effect,
+                    throws_error: match throws_error.as_ref() {
+                        Some(error) => Some(Box::new(self.probe_source_ty(error)?)),
+                        None => None,
+                    },
+                    custom_effects,
+                })
+            }
             Type::Named(name, arguments)
                 if arguments.is_empty() && is_compile_value_marker(name) =>
             {
@@ -6442,25 +6514,25 @@ impl Analyzer {
                 {
                     return Err(mismatch());
                 }
-                let throws_changed = match (
+                let (throws_changed, selected_throws) = match (
                     effects.throws.as_deref(),
                     actual_function.throws_error.as_deref(),
                 ) {
-                    (None, Some(_)) if !effects.parameters.is_empty() => {
-                        return Err(
-                            "inferring `throws(Error)` through an `E: effect` row is not implemented yet"
-                                .to_owned(),
-                        );
+                    (None, None) => (false, None),
+                    (None, Some(actual_error)) if !effects.parameters.is_empty() => {
+                        (false, Some(actual_error.clone()))
                     }
-                    (None, None) => false,
-                    (Some(template_error), Some(actual_error)) => self.unify_template_ty(
-                        template_error,
-                        actual_error,
+                    (Some(template_error), Some(actual_error)) => (
+                        self.unify_template_ty(
+                            template_error,
+                            actual_error,
+                            None,
+                            compile_parameters,
+                            inferred,
+                            origin,
+                        )?,
                         None,
-                        compile_parameters,
-                        inferred,
-                        origin,
-                    )?,
+                    ),
                     _ => return Err(mismatch()),
                 };
                 if effects.parameters.is_empty()
@@ -6481,10 +6553,22 @@ impl Analyzer {
                     .cloned()
                     .collect::<Vec<_>>();
                 for parameter in &effects.parameters {
-                    let marker = effect_row_marker(selected_unsafe, &selected_custom);
+                    let source_error = selected_throws
+                        .as_ref()
+                        .and_then(|error| self.source_type_for_ty(error));
+                    if selected_throws.is_some() && source_error.is_none() {
+                        return Err(format!(
+                            "cannot preserve the thrown error type while inferring effect parameter `{parameter}` from {origin}"
+                        ));
+                    }
+                    let source = effect_row_source(selected_unsafe, source_error, &selected_custom);
                     let selected = InferredTypeArgument {
-                        ty: Ty::Struct(marker.clone()),
-                        source: Some(Type::Named(marker, Vec::new())),
+                        ty: Ty::EffectRow {
+                            unsafe_effect: selected_unsafe,
+                            throws_error: selected_throws.clone().map(Box::new),
+                            custom_effects: selected_custom.clone(),
+                        },
+                        source: Some(source),
                         origin: origin.to_owned(),
                     };
                     match inferred.get(parameter) {
@@ -6527,10 +6611,25 @@ impl Analyzer {
                         )?;
                     }
                 }
+                let actual_logical_result = if actual_function.throws_error.is_some() {
+                    self.builtin_fallible_info_for_ty(&actual_function.result)
+                        .map(|info| info.payload)
+                        .ok_or_else(mismatch)?
+                } else {
+                    (*actual_function.result).clone()
+                };
+                let actual_logical_source = if actual_function.throws_error.is_some() {
+                    actual_source_function.and_then(|(_, result)| match result {
+                        Type::Named(_, arguments) if arguments.len() == 2 => arguments.first(),
+                        _ => None,
+                    })
+                } else {
+                    actual_source_function.map(|(_, result)| result)
+                };
                 changed |= self.unify_template_ty(
                     result,
-                    &actual_function.result,
-                    actual_source_function.map(|(_, result)| result),
+                    &actual_logical_result,
+                    actual_logical_source,
                     compile_parameters,
                     inferred,
                     origin,
@@ -6661,19 +6760,44 @@ impl Analyzer {
                 result,
             } => {
                 let mut unsafe_effect = effects.unsafe_effect;
+                let mut throws_error = match effects.throws.as_deref() {
+                    Some(error) => Some(Box::new(self.resolved_template_ty(
+                        error,
+                        compile_parameters,
+                        inferred,
+                    )?)),
+                    None => None,
+                };
                 let mut custom_effects = effects.custom.clone();
                 for parameter in &effects.parameters {
-                    let Type::Named(marker, arguments) =
-                        inferred.get(parameter)?.source.as_ref()?
+                    let Ty::EffectRow {
+                        unsafe_effect: selected_unsafe,
+                        throws_error: selected_throws,
+                        custom_effects: selected_custom,
+                    } = &inferred.get(parameter)?.ty
                     else {
                         return None;
                     };
-                    if !arguments.is_empty() {
+                    if let Some(selected_throws) = selected_throws {
+                        if throws_error
+                            .as_ref()
+                            .is_some_and(|fixed| **fixed != **selected_throws)
+                        {
+                            return None;
+                        }
+                        throws_error = Some(selected_throws.clone());
+                    }
+                    if custom_effects
+                        .iter()
+                        .any(|effect| selected_custom.contains(effect))
+                    {
+                        // Duplicate row members are normalized below.
+                    }
+                    if selected_custom.iter().any(|effect| effect.is_empty()) {
                         return None;
                     }
-                    let (selected_unsafe, selected_custom) = effect_row_from_marker(marker)?;
-                    unsafe_effect |= selected_unsafe;
-                    custom_effects.extend(selected_custom);
+                    unsafe_effect |= *selected_unsafe;
+                    custom_effects.extend(selected_custom.clone());
                 }
                 custom_effects.sort();
                 custom_effects.dedup();
@@ -6690,14 +6814,7 @@ impl Analyzer {
                         })
                         .collect::<Option<Vec<_>>>()?,
                     unsafe_effect,
-                    throws_error: match effects.throws.as_deref() {
-                        Some(error) => Some(Box::new(self.resolved_template_ty(
-                            error,
-                            compile_parameters,
-                            inferred,
-                        )?)),
-                        None => None,
-                    },
+                    throws_error,
                     custom_effects,
                     result: Box::new(self.resolved_template_ty(
                         result,
@@ -7054,6 +7171,11 @@ impl Analyzer {
                     }
                     restricted
                 }
+                Ty::EffectRow { throws_error, .. } => {
+                    throws_error.as_deref().map_or(access.clone(), |error| {
+                        visit(analyzer, access, error, fallback_origin, visited)
+                    })
+                }
                 Ty::Struct(name) | Ty::Enum(name) => {
                     let mut restricted =
                         analyzer
@@ -7148,6 +7270,11 @@ impl Analyzer {
                         visited,
                         diagnostics,
                     );
+                }
+            }
+            Ty::EffectRow { throws_error, .. } => {
+                if let Some(error) = throws_error {
+                    self.collect_type_api_leaks(error, exposed, description, visited, diagnostics);
                 }
             }
             Ty::Struct(name) | Ty::Enum(name) => {
@@ -7528,38 +7655,6 @@ impl Analyzer {
         }
     }
 
-    fn builtin_try_info_for_ty(&self, ty: &Ty) -> Option<BuiltinFallibleInfo> {
-        let info = self.builtin_fallible_info_for_ty(ty)?;
-        let implementation =
-            self.trait_implementation(ty, self.lang_item_name(LangItemKind::Try), &[])?;
-        let residual = info.error.clone().unwrap_or(Ty::Unit);
-        (implementation.associated_types.get("Output") == Some(&info.payload)
-            && implementation.associated_types.get("Residual") == Some(&residual))
-        .then_some(info)
-    }
-
-    fn try_protocol_info_for_ty(&self, ty: &Ty) -> Option<TryProtocolInfo> {
-        let implementation =
-            self.trait_implementation(ty, self.lang_item_name(LangItemKind::Try), &[])?;
-        Some(TryProtocolInfo {
-            output: implementation.associated_types.get("Output")?.clone(),
-            residual: implementation.associated_types.get("Residual")?.clone(),
-        })
-    }
-
-    fn trait_implementation(
-        &self,
-        self_ty: &Ty,
-        trait_name: &str,
-        arguments: &[Ty],
-    ) -> Option<&TraitImplInfo> {
-        self.trait_impls.values().find(|implementation| {
-            implementation.key.self_ty == *self_ty
-                && implementation.key.trait_ref.name == trait_name
-                && implementation.key.trait_ref.arguments == arguments
-        })
-    }
-
     fn builtin_fallible_info_for_probe(&self, probe: &TypeProbe) -> Option<BuiltinFallibleInfo> {
         let ty = match probe {
             TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) => ty,
@@ -7712,15 +7807,16 @@ impl Analyzer {
         )
     }
 
-    fn return_boundary_for_ty(&self, ty: &Ty) -> Option<ReturnBoundary> {
-        let protocol = self.try_protocol_info_for_ty(ty)?;
-        let builtin = self.builtin_try_info_for_ty(ty);
+    fn throws_boundary_for_ty(&self, ty: &Ty, error: &Ty) -> Option<ReturnBoundary> {
+        let builtin = self.builtin_fallible_info_for_ty(ty)?;
+        if builtin.kind != BuiltinFallibleKind::Result || builtin.error.as_ref() != Some(error) {
+            return None;
+        }
         Some(ReturnBoundary {
-            kind: builtin.as_ref().map(|info| info.kind),
+            kind: Some(BuiltinFallibleKind::Result),
             container: ty.clone(),
-            success: protocol.output,
-            residual: protocol.residual,
-            error: builtin.and_then(|info| info.error),
+            success: builtin.payload,
+            error: Some(error.clone()),
         })
     }
 
@@ -7773,187 +7869,6 @@ impl Analyzer {
                 Some(ty)
             }
             TypeProbe::Unsupported => None,
-        }
-    }
-
-    fn return_value_candidate(
-        &self,
-        expression: &Expr,
-        boundary: &ReturnBoundary,
-        context: &LowerCtx,
-    ) -> ReturnValueCandidate {
-        self.return_value_candidate_with_shadowing(expression, boundary, context, &HashSet::new())
-    }
-
-    fn return_value_candidate_with_shadowing(
-        &self,
-        expression: &Expr,
-        boundary: &ReturnBoundary,
-        context: &LowerCtx,
-        shadowed_short_variants: &HashSet<String>,
-    ) -> ReturnValueCandidate {
-        match expression {
-            Expr::Block(statements, Some(tail)) => {
-                let mut nested_shadowing = shadowed_short_variants.clone();
-                for statement in statements {
-                    if let Stmt::Let(binding) = statement {
-                        nested_shadowing.insert(binding.name.clone());
-                    }
-                }
-                return self.return_value_candidate_with_shadowing(
-                    tail,
-                    boundary,
-                    context,
-                    &nested_shadowing,
-                );
-            }
-            Expr::If {
-                then_branch,
-                else_branch: Some(else_branch),
-                ..
-            } => {
-                let then_candidate = self.return_value_candidate_with_shadowing(
-                    then_branch,
-                    boundary,
-                    context,
-                    shadowed_short_variants,
-                );
-                let else_candidate = self.return_value_candidate_with_shadowing(
-                    else_branch,
-                    boundary,
-                    context,
-                    shadowed_short_variants,
-                );
-                if then_candidate == else_candidate {
-                    return then_candidate;
-                }
-            }
-            Expr::Match { arms, .. } if !arms.is_empty() => {
-                let first = self.return_value_candidate_with_shadowing(
-                    &arms[0].body,
-                    boundary,
-                    context,
-                    shadowed_short_variants,
-                );
-                if arms.iter().skip(1).all(|arm| {
-                    self.return_value_candidate_with_shadowing(
-                        &arm.body,
-                        boundary,
-                        context,
-                        shadowed_short_variants,
-                    ) == first
-                }) {
-                    return first;
-                }
-            }
-            _ => {}
-        }
-
-        let container_probe = self.probe_expr_ty(expression, Some(&boundary.container), context);
-        if Self::probe_matches_type(&container_probe, &boundary.container)
-            && matches!(
-                container_probe,
-                TypeProbe::Known(_) | TypeProbe::KnownSource(_, _)
-            )
-        {
-            return ReturnValueCandidate::Container;
-        }
-        if let Some(inferred) = self.inferred_builtin_coalesce_lhs(expression, context) {
-            if Some(inferred.kind) == boundary.kind {
-                return ReturnValueCandidate::Container;
-            }
-            if self
-                .builtin_fallible_info_for_ty(&boundary.success)
-                .is_some_and(|success| success.kind == inferred.kind)
-            {
-                return ReturnValueCandidate::Success;
-            }
-        }
-        if self.is_short_boundary_variant(expression, boundary, context, shadowed_short_variants) {
-            return ReturnValueCandidate::Container;
-        }
-
-        let success_probe = self.probe_expr_ty(expression, Some(&boundary.success), context);
-        if Self::probe_matches_type(&success_probe, &boundary.success)
-            && !matches!(success_probe, TypeProbe::Unsupported)
-        {
-            ReturnValueCandidate::Success
-        } else {
-            ReturnValueCandidate::Unknown
-        }
-    }
-
-    fn is_short_boundary_variant(
-        &self,
-        expression: &Expr,
-        boundary: &ReturnBoundary,
-        context: &LowerCtx,
-        shadowed_short_variants: &HashSet<String>,
-    ) -> bool {
-        let mut groups = Vec::new();
-        let Expr::Name(name) = flatten_call(expression, &mut groups) else {
-            return false;
-        };
-        if context.shadows_top_level_name(name) || shadowed_short_variants.contains(name) {
-            return false;
-        }
-        if self.functions.contains_key(name)
-            || self.function_templates.contains_key(name)
-            || self.globals.contains_key(name)
-            || self.struct_defs.contains_key(name)
-            || self.struct_templates.contains_key(name)
-        {
-            return false;
-        }
-        match boundary.kind {
-            Some(BuiltinFallibleKind::Option) => matches!(name.as_str(), "Some" | "None"),
-            Some(BuiltinFallibleKind::Result) => matches!(name.as_str(), "Ok" | "Err"),
-            None => false,
-        }
-    }
-
-    fn unknown_return_value_prefers_success(expression: &Expr) -> bool {
-        match expression {
-            Expr::Block(_, Some(tail)) => Self::unknown_return_value_prefers_success(tail),
-            Expr::Unsafe(body) => Self::unknown_return_value_prefers_success(body),
-            Expr::If {
-                then_branch,
-                else_branch: Some(else_branch),
-                ..
-            } => {
-                Self::unknown_return_value_prefers_success(then_branch)
-                    && Self::unknown_return_value_prefers_success(else_branch)
-            }
-            Expr::Match { arms, .. } => {
-                !arms.is_empty()
-                    && arms
-                        .iter()
-                        .all(|arm| Self::unknown_return_value_prefers_success(&arm.body))
-            }
-            Expr::Unit
-            | Expr::Integer(_)
-            | Expr::Bool(_)
-            | Expr::Unary(_, _)
-            | Expr::Borrow { .. }
-            | Expr::Binary(_, _, _)
-            | Expr::Coalesce(_, _)
-            | Expr::Try(_)
-            | Expr::Throw(_)
-            | Expr::Array(_)
-            | Expr::Index { .. } => true,
-            Expr::Name(_)
-            | Expr::Assign(_, _)
-            | Expr::Call(_, _)
-            | Expr::Member(_, _)
-            | Expr::ChainMember(_, _)
-            | Expr::Block(_, _)
-            | Expr::Closure(_, _)
-            | Expr::If { .. }
-            | Expr::Return(_)
-            | Expr::While { .. }
-            | Expr::Loop { .. }
-            | Expr::DoBlock { .. }
-            | Expr::Break(_) => false,
         }
     }
 
@@ -8676,22 +8591,45 @@ impl Analyzer {
                         }
                     },
                     CompileParamKind::Effect => match &argument.value {
-                        Expr::Name(name) if name == "pure" => {
-                            Type::Named(EFFECT_PURE_MARKER.to_owned(), Vec::new())
+                        Expr::Name(name) if name == "pure" => effect_row_source(false, None, &[]),
+                        Expr::Name(name) if name == "unsafe" => effect_row_source(true, None, &[]),
+                        Expr::Name(name) if self.effects.contains(name) => {
+                            effect_row_source(false, None, std::slice::from_ref(name))
                         }
-                        Expr::Name(name) if name == "unsafe" => {
-                            Type::Named(EFFECT_UNSAFE_MARKER.to_owned(), Vec::new())
-                        }
-                        Expr::Name(name) if self.effects.contains(name) => Type::Named(
-                            effect_row_marker(false, std::slice::from_ref(name)),
-                            Vec::new(),
-                        ),
                         Expr::Name(name) if effect_row_from_marker(name).is_some() => {
                             Type::Named(name.clone(), Vec::new())
                         }
+                        Expr::Call(callee, arguments)
+                            if matches!(callee.as_ref(), Expr::Name(name) if name == "throws")
+                                && arguments.len() == 1
+                                && arguments[0].label.is_none() =>
+                        {
+                            let error = self.type_argument_from_expr(
+                                &arguments[0].value,
+                                &context.type_substitutions,
+                            )?;
+                            effect_row_source(false, Some(error), &[])
+                        }
+                        Expr::Call(callee, arguments)
+                            if matches!(callee.as_ref(), Expr::Name(name) if effect_row_from_marker(name).is_some())
+                                && arguments.len() <= 1
+                                && arguments.iter().all(|argument| argument.label.is_none()) =>
+                        {
+                            let Expr::Name(marker) = callee.as_ref() else {
+                                unreachable!()
+                            };
+                            let error = match arguments.first() {
+                                Some(argument) => Some(self.type_argument_from_expr(
+                                    &argument.value,
+                                    &context.type_substitutions,
+                                )?),
+                                None => None,
+                            };
+                            Type::Named(marker.clone(), error.into_iter().collect())
+                        }
                         _ => {
                             self.error(format!(
-                                "invalid effect argument for `{}` in `{owner}`; expected `pure`, `unsafe`, or a declared custom effect",
+                                "invalid effect argument for `{}` in `{owner}`; expected `pure`, `unsafe`, `throws(Error)`, or a declared custom effect",
                                 parameter.name
                             ));
                             return None;
@@ -8742,8 +8680,12 @@ impl Analyzer {
                 inferred
                     .entry(parameter.name.clone())
                     .or_insert_with(|| InferredTypeArgument {
-                        ty: Ty::Struct(EFFECT_PURE_MARKER.to_owned()),
-                        source: Some(Type::Named(EFFECT_PURE_MARKER.to_owned(), Vec::new())),
+                        ty: Ty::EffectRow {
+                            unsafe_effect: false,
+                            throws_error: None,
+                            custom_effects: Vec::new(),
+                        },
+                        source: Some(effect_row_source(false, None, &[])),
                         origin: "default pure effect".to_owned(),
                     });
             }
@@ -8788,12 +8730,9 @@ impl Analyzer {
             .iter()
             .all(|parameter| parameter.kind == CompileParamKind::Effect)
         {
-            return arguments.iter().all(|argument| {
-                matches!(&argument.value, Expr::Name(name)
-                    if matches!(name.as_str(), "pure" | "unsafe")
-                        || self.effects.contains(name)
-                        || effect_row_from_marker(name).is_some())
-            });
+            return arguments
+                .iter()
+                .all(|argument| self.expression_is_explicit_effect_argument(&argument.value));
         }
         parameters.len() == arguments.len()
             && parameters
@@ -8872,13 +8811,25 @@ impl Analyzer {
                 matches!(expression, Expr::Name(name)
                     if matches!(name.as_str(), "auto" | "copy" | "move"))
             }
-            CompileParamKind::Effect => {
-                matches!(expression, Expr::Name(name)
-                    if matches!(name.as_str(), "pure" | "unsafe")
-                        || self.effects.contains(name)
-                        || effect_row_from_marker(name).is_some())
-            }
+            CompileParamKind::Effect => self.expression_is_explicit_effect_argument(expression),
             CompileParamKind::Region => false,
+        }
+    }
+
+    fn expression_is_explicit_effect_argument(&self, expression: &Expr) -> bool {
+        match expression {
+            Expr::Name(name) => {
+                matches!(name.as_str(), "pure" | "unsafe")
+                    || self.effects.contains(name)
+                    || effect_row_from_marker(name).is_some()
+            }
+            Expr::Call(callee, arguments) => {
+                matches!(callee.as_ref(), Expr::Name(name)
+                    if name == "throws" || effect_row_from_marker(name).is_some())
+                    && arguments.len() == 1
+                    && arguments[0].label.is_none()
+            }
+            _ => false,
         }
     }
 
@@ -9184,44 +9135,20 @@ impl Analyzer {
         boundary: &ReturnBoundary,
         context: &mut LowerCtx,
     ) -> HirExpr {
-        let candidate = self.return_value_candidate(expression, boundary, context);
-        let expected = match candidate {
-            ReturnValueCandidate::Container => Some(&boundary.container),
-            ReturnValueCandidate::Success => Some(&boundary.success),
-            ReturnValueCandidate::Unknown
-                if Self::unknown_return_value_prefers_success(expression) =>
-            {
-                Some(&boundary.success)
-            }
-            ReturnValueCandidate::Unknown => None,
-        };
-        let value = self.lower_expr(expression, expected, context);
+        let value = self.lower_expr(expression, Some(&boundary.success), context);
         self.finish_return_value(value, boundary)
     }
 
     fn finish_return_value(&mut self, value: HirExpr, boundary: &ReturnBoundary) -> HirExpr {
-        if value.ty == Ty::Error
-            || self.is_uninhabited_type(&value.ty)
-            || value.ty == boundary.container
-        {
+        if value.ty == Ty::Error || self.is_uninhabited_type(&value.ty) {
             return value;
         }
         if value.ty == boundary.success {
-            return if boundary.kind.is_some() {
-                self.construct_boundary_variant(boundary, true, Some(value))
-            } else {
-                self.call_boundary_conversion(
-                    boundary,
-                    LangItemKind::Try,
-                    &[],
-                    "from_output",
-                    value,
-                )
-            };
+            return self.construct_boundary_variant(boundary, true, Some(value));
         }
         self.error(format!(
-            "return value must be `{}` or its success value `{}`, found `{}`",
-            boundary.container, boundary.success, value.ty
+            "throws function has logical result `{}`, found `{}`",
+            boundary.success, value.ty
         ));
         error_expr()
     }
@@ -9273,45 +9200,6 @@ impl Analyzer {
         }
     }
 
-    fn call_boundary_conversion(
-        &mut self,
-        boundary: &ReturnBoundary,
-        trait_kind: LangItemKind,
-        trait_arguments: &[Ty],
-        method: &str,
-        value: HirExpr,
-    ) -> HirExpr {
-        let Some(implementation) = self.trait_implementation(
-            &boundary.container,
-            self.lang_item_name(trait_kind),
-            trait_arguments,
-        ) else {
-            self.error(format!(
-                "`{}` does not implement `{}` for `{}`",
-                boundary.container,
-                trait_kind.source_name(),
-                value.ty
-            ));
-            return error_expr();
-        };
-        let Some(function) = implementation.methods.get(method).cloned() else {
-            self.error(format!(
-                "internal error: `{}` implementation has no `{method}` function",
-                trait_kind.source_name()
-            ));
-            return error_expr();
-        };
-        HirExpr {
-            ty: boundary.container.clone(),
-            kind: HirExprKind::Call {
-                function,
-                arguments: vec![HirArgument::Move(value)],
-                consumed_callable: None,
-                diverges: false,
-            },
-        }
-    }
-
     fn lower_function(&mut self, name: &str) -> Ty {
         if self.function_states.get(name) == Some(&ResolutionState::Resolved) {
             return self.signatures[name].result.clone().unwrap_or(Ty::Error);
@@ -9342,10 +9230,12 @@ impl Analyzer {
         context.active_throws_error = signature.throws_error.clone();
         context.active_custom_effects = function.effects.custom.iter().cloned().collect();
         if function.return_type.is_some() {
-            context.return_boundary = signature
-                .result
-                .as_ref()
-                .and_then(|result| self.return_boundary_for_ty(result));
+            context.return_boundary = signature.throws_error.as_ref().and_then(|error| {
+                signature
+                    .result
+                    .as_ref()
+                    .and_then(|result| self.throws_boundary_for_ty(result, error))
+            });
         }
         context.type_substitutions = self
             .function_type_substitutions
@@ -9546,7 +9436,7 @@ impl Analyzer {
                             .any(|field| self.type_needs_drop_inner(&field.ty, visiting))
                     })
                 }),
-                Ty::Function(_) => false,
+                Ty::Function(_) | Ty::EffectRow { .. } => false,
                 Ty::Callable(callable) => callable.captures.iter().any(|capture| {
                     !matches!(capture.mode, PassMode::Borrow | PassMode::MutBorrow)
                         && self.type_needs_drop_inner(&capture.ty, visiting)
@@ -11061,10 +10951,12 @@ impl Analyzer {
         let mut context =
             LowerCtx::for_function(&function, declared_result.clone(), outer.origin.clone());
         context.unsafe_depth = forwarded_unsafe_depth;
-        context.active_throws_error = active_throws_error;
-        context.return_boundary = declared_result
-            .as_ref()
-            .and_then(|result| self.return_boundary_for_ty(result));
+        context.active_throws_error = active_throws_error.clone();
+        context.return_boundary = active_throws_error.as_ref().and_then(|error| {
+            declared_result
+                .as_ref()
+                .and_then(|result| self.throws_boundary_for_ty(result, error))
+        });
         context.type_substitutions = outer.type_substitutions.clone();
         let mut hir_params = Vec::new();
         let mut captures = Vec::new();
@@ -12852,10 +12744,10 @@ impl Analyzer {
             ));
             return error_expr();
         }
-        let Some(boundary) = context.return_boundary.clone() else {
+        if context.return_boundary.is_none() {
             self.error("internal error: active throws effect has no Result return boundary");
             return error_expr();
-        };
+        }
         let Some(info) = self.builtin_fallible_info_for_ty(&operand.ty) else {
             self.error("internal error: throws call does not use a Result ABI");
             return error_expr();
@@ -12864,11 +12756,6 @@ impl Analyzer {
             self.error("internal error: throws call Result ABI does not match its error effect");
             return error_expr();
         }
-        let Some(boundary_name) = nominal_name(&boundary.container) else {
-            self.error("internal error: throws boundary is not a nominal Result type");
-            return error_expr();
-        };
-
         const OUTPUT_BINDING: &str = "$throws$output";
         const ERROR_BINDING: &str = "$throws$error";
         let arms = vec![
@@ -12890,16 +12777,7 @@ impl Analyzer {
                     )]),
                 },
                 guard: None,
-                body: Expr::Return(Some(Box::new(Expr::Call(
-                    Box::new(Expr::Member(
-                        Box::new(Expr::Name(boundary_name.to_owned())),
-                        "Err".to_owned(),
-                    )),
-                    vec![CallArg {
-                        label: None,
-                        value: Expr::Name(ERROR_BINDING.to_owned()),
-                    }],
-                )))),
+                body: Expr::Throw(Box::new(Expr::Name(ERROR_BINDING.to_owned()))),
             },
         ];
         self.lower_match_with_scrutinee(operand, &arms, expected.or(Some(&info.payload)), context)
@@ -17911,6 +17789,7 @@ impl<'a> HirCleanupPlanner<'a> {
             | Ty::Reference { .. }
             | Ty::Never
             | Ty::Function(_)
+            | Ty::EffectRow { .. }
             | Ty::Error => {}
         }
         Ok(path)
@@ -19920,6 +19799,7 @@ impl<'a> Emitter<'a> {
                 | Ty::Reference { .. }
                 | Ty::Struct(_)
                 | Ty::Enum(_)
+                | Ty::EffectRow { .. }
                 | Ty::Never
                 | Ty::Error => {}
             }
@@ -20019,6 +19899,7 @@ impl<'a> Emitter<'a> {
             | Ty::Reference { .. }
             | Ty::Never
             | Ty::Function(_)
+            | Ty::EffectRow { .. }
             | Ty::Error => {}
         }
     }
@@ -22392,7 +22273,7 @@ fn llvm_value_type(ty: &Ty) -> Result<String, Diagnostic> {
         Ty::Pointer { .. } | Ty::Reference { .. } | Ty::Function(_) => Ok("ptr".to_owned()),
         Ty::Struct(name) | Ty::Enum(name) => Ok(format!("%{}", type_symbol(name))),
         Ty::Callable(_) => Ok(format!("%{}", type_symbol(&canonical_type_encoding(ty)))),
-        Ty::Unit | Ty::Never | Ty::Error => Err(Diagnostic::new(format!(
+        Ty::Unit | Ty::Never | Ty::EffectRow { .. } | Ty::Error => Err(Diagnostic::new(format!(
             "internal error: `{ty}` has no first-class LLVM representation"
         ))),
     }
@@ -22460,7 +22341,7 @@ fn zero_const(ty: &Ty, program: &HirProgram) -> Option<ConstValue> {
             );
             Some(ConstValue::Aggregate(fields))
         }
-        Ty::Never | Ty::Function(_) | Ty::Callable(_) | Ty::Error => None,
+        Ty::Never | Ty::Function(_) | Ty::Callable(_) | Ty::EffectRow { .. } | Ty::Error => None,
     }
 }
 
@@ -22637,6 +22518,7 @@ fn substitute_enum_types(definition: &mut EnumDef, substitutions: &HashMap<Strin
 }
 
 fn substitute_function_types(function: &mut Function, substitutions: &HashMap<String, Type>) {
+    let had_throws = function.effects.throws.is_some();
     for group in &mut function.groups {
         for parameter in group {
             substitute_parameter_types(parameter, substitutions);
@@ -22651,16 +22533,38 @@ fn substitute_function_types(function: &mut Function, substitutions: &HashMap<St
     let mut remaining_effect_parameters = Vec::new();
     for parameter in function.effects.parameters.drain(..) {
         match substituted_effect_row(&parameter, substitutions) {
-            Some((unsafe_effect, custom)) => {
+            Some((unsafe_effect, throws_error, custom))
+                if throws_error.as_ref().is_none_or(|selected| {
+                    function
+                        .effects
+                        .throws
+                        .as_deref()
+                        .is_none_or(|fixed| fixed == selected)
+                }) =>
+            {
                 function.effects.unsafe_effect |= unsafe_effect;
+                if function.effects.throws.is_none() {
+                    function.effects.throws = throws_error.map(Box::new);
+                }
                 function.effects.custom.extend(custom);
             }
-            None => remaining_effect_parameters.push(parameter),
+            Some(_) | None => remaining_effect_parameters.push(parameter),
         }
     }
     function.effects.custom.sort();
     function.effects.custom.dedup();
     function.effects.parameters = remaining_effect_parameters;
+    if !had_throws {
+        if let Some(error) = function.effects.throws.as_deref() {
+            let Some(result) = function.return_type.take() else {
+                return;
+            };
+            function.return_type = Some(Type::Named(
+                "Result".to_owned(),
+                vec![result, error.clone()],
+            ));
+        }
+    }
     for predicate in &mut function.where_predicates {
         substitute_type_parameters(&mut predicate.subject, substitutions);
         substitute_type_parameters(&mut predicate.trait_ref, substitutions);
@@ -22893,6 +22797,12 @@ fn rewrite_abstract_self_qualified_methods(expression: &mut Expr) {
 fn substitute_expr_types(expression: &mut Expr, substitutions: &HashMap<String, Type>) {
     match expression {
         Expr::Name(name) => {
+            if let Some(replacement) = substitutions.get(name) {
+                if effect_row_from_source(replacement).is_some() {
+                    *expression = source_type_expression(replacement);
+                    return;
+                }
+            }
             if let Some(Type::Named(marker, arguments)) = substitutions.get(name) {
                 if arguments.is_empty() {
                     match marker.as_str() {
@@ -23089,6 +22999,7 @@ fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<String, Typ
             effects,
             result,
         } => {
+            let had_throws = effects.throws.is_some();
             for ty in groups.iter_mut().flatten() {
                 substitute_type_parameters(ty, substitutions);
             }
@@ -23099,16 +23010,33 @@ fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<String, Typ
             let mut remaining = Vec::new();
             for parameter in effects.parameters.drain(..) {
                 match substituted_effect_row(&parameter, substitutions) {
-                    Some((unsafe_effect, custom)) => {
+                    Some((unsafe_effect, throws_error, custom))
+                        if throws_error.as_ref().is_none_or(|selected| {
+                            effects
+                                .throws
+                                .as_deref()
+                                .is_none_or(|fixed| fixed == selected)
+                        }) =>
+                    {
                         effects.unsafe_effect |= unsafe_effect;
+                        if effects.throws.is_none() {
+                            effects.throws = throws_error.map(Box::new);
+                        }
                         effects.custom.extend(custom);
                     }
-                    None => remaining.push(parameter),
+                    Some(_) | None => remaining.push(parameter),
                 }
             }
             effects.parameters = remaining;
             effects.custom.sort();
             effects.custom.dedup();
+            if !had_throws {
+                if let Some(error) = effects.throws.as_deref() {
+                    let logical_result = std::mem::replace(result.as_mut(), Type::Unit);
+                    **result =
+                        Type::Named("Result".to_owned(), vec![logical_result, error.clone()]);
+                }
+            }
         }
         Type::Named(_, arguments) => {
             for argument in arguments {
@@ -23154,14 +23082,8 @@ fn substituted_passing_mode(name: &str, substitutions: &HashMap<String, Type>) -
 fn substituted_effect_row(
     name: &str,
     substitutions: &HashMap<String, Type>,
-) -> Option<(bool, Vec<String>)> {
-    let Type::Named(marker, arguments) = substitutions.get(name)? else {
-        return None;
-    };
-    if !arguments.is_empty() {
-        return None;
-    }
-    effect_row_from_marker(marker)
+) -> Option<(bool, Option<Type>, Vec<String>)> {
+    effect_row_from_source(substitutions.get(name)?)
 }
 
 fn trait_reference_patterns_overlap(
@@ -23555,6 +23477,30 @@ fn canonical_type_encoding(ty: &Ty) -> String {
                 &mut encoded,
                 &canonical_type_encoding(&Ty::Function(callable.signature.clone())),
             );
+            encoded
+        }
+        Ty::EffectRow {
+            unsafe_effect,
+            throws_error,
+            custom_effects,
+        } => {
+            let mut encoded = if *unsafe_effect {
+                "effect-row-u".to_owned()
+            } else {
+                "effect-row-p".to_owned()
+            };
+            match throws_error {
+                Some(error) => {
+                    encoded.push_str("t:");
+                    push_canonical_component(&mut encoded, &canonical_type_encoding(error));
+                }
+                None => encoded.push_str("n:"),
+            }
+            encoded.push_str(&custom_effects.len().to_string());
+            encoded.push(':');
+            for effect in custom_effects {
+                push_canonical_component(&mut encoded, effect);
+            }
             encoded
         }
         Ty::Error => "error".to_owned(),
@@ -24486,6 +24432,25 @@ let main(): i32 = read()
         assert!(unhandled
             .iter()
             .any(|error| error.message.contains("handle it with `try { ... }`")));
+    }
+
+    #[test]
+    fn effect_parameters_infer_forward_and_explicitly_select_throws_rows() {
+        let ir = compile_text(
+            r#"
+let invoke(E: effect)(action: (): i32 with(E))(): i32 with(E) = action()
+let fail(): i32 with(throws(bool)) = throw true
+let forward(): i32 with(throws(bool)) = invoke(fail)()
+let explicit(): i32 with(throws(bool)) = invoke(throws(bool))(fail)()
+let main(): i32 = {
+  let inferred: Result(i32, bool) = try { forward() }
+  let selected: Result(i32, bool) = try { explicit() }
+  (inferred ?? 21) + (selected ?? 21)
+}
+"#,
+        )
+        .expect("effect parameters should carry throws rows through inference and forwarding");
+        assert!(ir.contains("switch"));
     }
 
     #[test]
@@ -28144,36 +28109,6 @@ let main(): i32 = Number.construct(42).value
         .expect("receiver-free trait function must dispatch through its implementing type");
 
         assert!(ir.contains("ret i32 42") || ir.contains("i32 42"));
-    }
-
-    #[test]
-    fn core_try_constructors_dispatch_through_generic_option_and_result_impls() {
-        let source = r#"
-let main(): i32 = {
-  let option = Option(i32).from_output(40)
-  let result: Result(i32, bool) = Result(i32, bool).from_error(false)
-  (option match { Some(value) => value, None => 0 }) + (result match { Ok(value) => value, Err(_) => 2 })
-}
-"#;
-        let program = crate::parser::parse(source).unwrap();
-        let mut analyzer = Analyzer::new(&program);
-        assert!(analyzer.generic_trait_extensions.contains_key("Option"));
-        let option = analyzer.lower_source_type(&Type::Named("Option".into(), vec![Type::I32]));
-        assert!(analyzer.trait_impls.keys().any(|key| key.self_ty == option));
-        assert!(
-            analyzer
-                .trait_associated_function_candidates(
-                    &option,
-                    "from_output",
-                    &ItemOrigin::default()
-                )
-                .len()
-                == 1
-        );
-        let ir = compile(&program)
-            .expect("core control associated functions must materialize for builtin containers");
-
-        assert!(ir.contains("add i32"));
     }
 
     #[test]

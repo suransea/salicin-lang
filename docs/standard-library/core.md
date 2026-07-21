@@ -62,19 +62,9 @@ Writing `left + right`, `left & right`, `left == right`, or `left < right` does 
 import is required when source names the protocol in an implementation, bound, type, or direct
 member access.
 
-`core.control` contains the error-control protocols `ControlFlow`, `Try`, `FromResidual`, and
-`FromError`. They are ordinary, explicitly imported names:
-
-```sali
-use core.control.{Try, FromResidual}
-```
-
-The compiler validates their complete edition-defined declaration shapes before compiling a
-package. `Option` and `Result` implement these protocols in ordinary generic core extensions, so
-libraries may use them for explicit container algorithms and normal function completion may use
-`Try.from_output` as value-construction sugar. They no longer control language error propagation:
-`throws(E)`, `throw`, and `try { ... }` are built-in effect semantics, and user-defined `Try`
-implementations cannot intercept them. `do` itself has no error-specific semantics.
+`ControlFlow`, `Try`, `FromResidual`, and `FromError` were removed together with postfix `.try`. `Option` and
+`Result` are ordinary enum values and require explicit constructors. Language error propagation is
+defined solely by `throws(E)`, `throw`, and `try { ... }`; `do` has no error-specific semantics.
 
 Primitive implementations and the unit spelling `void` remain compiler-defined. A declaration only
 receives language-item behavior when its validated identity comes from this edition's embedded core;

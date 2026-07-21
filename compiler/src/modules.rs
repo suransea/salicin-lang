@@ -311,7 +311,7 @@ const CORE_OPS_EXPORTS: &[&str] = &[
     "Shl",
     "Shr",
 ];
-const CORE_CONTROL_EXPORTS: &[&str] = &["ControlFlow", "Try", "FromResidual", "FromError"];
+const CORE_CONTROL_EXPORTS: &[&str] = &[];
 
 fn validate_package_layout(
     packages: &[SourcePackage],
@@ -3860,32 +3860,6 @@ let main(): i32 = Option()
         assert!(bare_operator.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `Add` is not in the prelude")
                 && diagnostic.contains("use core.ops.Add")
-        }));
-
-        let control = resolve_sources(&[unit(
-            "control.sc",
-            &[],
-            "use core.control.{Try, FromResidual as ConvertResidual}\n\
-             let accept(T: type)(move value: T): T where T: Try = value\n",
-            true,
-        )])
-        .unwrap();
-        assert!(control.items.iter().any(|item| {
-            matches!(item, Item::Function(function)
-                if function.where_predicates.iter().any(|predicate|
-                    matches!(&predicate.trait_ref, Type::Named(name, _) if name == "core::control::Try")))
-        }));
-
-        let bare_control = resolve_sources(&[unit(
-            "control.sc",
-            &[],
-            "let accept(T: type)(move value: T): T where T: Try = value\n",
-            true,
-        )])
-        .unwrap_err();
-        assert!(bare_control.iter().any(|diagnostic| {
-            diagnostic.contains("standard-library item `Try` is not in the prelude")
-                && diagnostic.contains("use core.control.Try")
         }));
 
         for namespace in ["core", "alloc"] {

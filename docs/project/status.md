@@ -23,16 +23,20 @@ enclosing unsafe function or `unsafe { ... }` handler. `do` forwards the impleme
 into nested immediate calls. `let UI = effect` declares a nominal, module-visible marker effect.
 Function and generic inherent-member `E: effect` parameters represent complete rows, default to pure,
 participate in monomorphization, forward through ordinary compile-time calls such as
-`callee(E)(value)`, and infer pure, unsafe, or custom rows from higher-order callable arguments.
+`callee(E)(value)`, and infer pure, unsafe, custom, or `throws(Error)` rows from higher-order callable
+arguments. A selected `throws(Error)` row preserves both its error type and the current `Result`
+carrier ABI through forwarding and specialization.
 Named non-capturing functions can be passed and invoked through the native function-pointer ABI.
 Callable effect rows support requirement subtyping: a pure function value can fill an unsafe or
 custom-effect slot, while a value requiring additional effects cannot fill a narrower slot. The
 slot's widened requirements remain checked at indirect calls, and generic row inference retains the
 callable's exact source row.
-Fixed `throws(E)` is implemented for direct, method, partial, and non-capturing indirect calls.
-Parameterizing `throws` through `E: effect`, inferring a handler without a contextual `Result`, fully
-effect-polymorphic `do`, user-defined handlers, capturing closure values, generic trait methods, and
-async color lowering remain design or implementation work.
+Fixed and effect-parameterized `throws(E)` are implemented for direct, method, partial, and
+non-capturing indirect calls. Ordinary `Option` and `Result` functions require explicit variant
+construction; the removed `Try`, `FromResidual`, `FromError`, and `ControlFlow` language protocols no
+longer participate in return completion or propagation. Inferring a handler without a contextual
+`Result`, fully effect-polymorphic `do`, user-defined handlers, capturing closure values, generic
+trait methods, and async color lowering remain design or implementation work.
 
 `core` and `alloc` are mounted in ordinary module resolution. `core.ops` traits and alloc containers
 are not part of the prelude. `Box`, `Vec`, and their free functions require
@@ -42,9 +46,9 @@ declarations; operator syntax continues to dispatch through validated lang items
 
 The implementation is broad but not stable. Important incomplete boundaries include:
 
-- `core` provides the initial prelude, arithmetic, bitwise, unary, equality, partial-ordering, and
-  ordinary control-container protocols; language error propagation is now the built-in `throws(E)` effect. Slices, iteration, indexing,
-  and `Future` remain to be implemented;
+- `core` provides the initial prelude and arithmetic, bitwise, unary, equality, and partial-ordering
+  protocols; language error propagation is the built-in `throws(E)` effect. Slices, iteration,
+  indexing, and `Future` remain to be implemented;
 - `std` host APIs have not been started;
 - registry dependencies, workspaces, stable ABI guarantees, and a package distribution format are
   not defined;
