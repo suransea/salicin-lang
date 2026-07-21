@@ -17580,6 +17580,13 @@ impl Analyzer {
             handler.inlining.borrow_mut().remove(name);
             return Some(Err(()));
         };
+        let continuation_name = format!("$handler$call$continuation${specialization}");
+        let continuation_value_name = format!("$handler$call$continuation$value${specialization}");
+        let continuation_body =
+            match continuation(self, Expr::Name(continuation_value_name.clone())) {
+                Ok(body) => body,
+                Err(()) => return Some(Err(())),
+            };
         handler.inlining.borrow_mut().insert(
             name.clone(),
             SourceInlineFrame {
@@ -17588,16 +17595,6 @@ impl Analyzer {
                 answer: answer.clone(),
             },
         );
-        let continuation_name = format!("$handler$call$continuation${specialization}");
-        let continuation_value_name = format!("$handler$call$continuation$value${specialization}");
-        let continuation_body =
-            match continuation(self, Expr::Name(continuation_value_name.clone())) {
-                Ok(body) => body,
-                Err(()) => {
-                    handler.inlining.borrow_mut().remove(name);
-                    return Some(Err(()));
-                }
-            };
         let continuation_binding = Binding {
             mutable: true,
             name: continuation_name.clone(),

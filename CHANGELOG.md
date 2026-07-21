@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.125.0 - 2026-07-22
+
+- Scoped recursive named-frame visibility to callee-body transformation instead of the caller's
+  remaining continuation.
+- Stopped misclassifying a later sequential call to the same effectful named function as a
+  recursive backedge with an extra hidden continuation argument.
+- Preserved direct and mutual recursion on the erased continuation ABI and added native sequential
+  repeated-call coverage.
+
 ## 0.124.0 - 2026-07-22
 
 - Extended selective algebraic-effect CPS through fully applied optional method calls, evaluating

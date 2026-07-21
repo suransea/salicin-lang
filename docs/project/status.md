@@ -64,7 +64,9 @@ handlers support typed one-shot resumption, abandonment, `done:` answer conversi
 propagation, direct recursion, and resumable loop backedges. Cross-function abandonment and
 computation after `resume` use explicit CPS continuation closures. Direct and mutually recursive
 frames share an erased call/drop-entry plus environment ABI with a runtime one-shot flag. Capturing
-indirect calls remain implementation work. Abandonment invokes the armed environment's drop entry,
+indirect calls remain implementation work. Recursive-frame visibility is limited to callee-body
+transformation, so sequential calls to the same effectful named function remain independent.
+Abandonment invokes the armed environment's drop entry,
 whereas resumption transfers and disarms it; native resource regressions cover exactly-once cleanup
 on both paths. CPS traversal
 currently covers ordinary arguments, arrays, indexes, members, match bodies, immediate effect

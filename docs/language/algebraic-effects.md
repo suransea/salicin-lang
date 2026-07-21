@@ -149,7 +149,9 @@ that value as an explicit hidden parameter; each direct or mutually recursive ca
 fresh node for its remaining computation, so recursive function result and handler answer types may
 differ. Invoking a node transfers its environment to the call entry and disarms the erased value;
 abandoning an armed node calls its drop entry. Thus either terminal path destroys every move-captured
-value exactly once. Selective CPS preserves source order through operation and ordinary-call
+value exactly once. A named recursive frame is visible only while transforming its own callee body;
+a later sequential call in the caller continuation creates an independent frame instead of a false
+recursive backedge. Selective CPS preserves source order through operation and ordinary-call
 arguments, arrays, indexes, members, `match` scrutinees and arm
 bodies, and immediate `do`, `unsafe`, and `try` wrappers. Effectful `&&` and `||` operands retain
 their lazy branch semantics. Effectful `??` evaluates its fallback only on `None` or `Err`, and both
