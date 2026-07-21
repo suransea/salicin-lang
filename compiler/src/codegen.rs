@@ -143,6 +143,20 @@ const MAX_FUNCTION_INSTANCES: usize = 256;
 const MAX_NOMINAL_INSTANCES: usize = 256;
 const ACCESS_SHARED_MARKER: &str = "$access$shared";
 const ACCESS_MUT_MARKER: &str = "$access$mut";
+const PASSING_AUTO_MARKER: &str = "$passing$auto";
+const PASSING_COPY_MARKER: &str = "$passing$copy";
+const PASSING_MOVE_MARKER: &str = "$passing$move";
+
+fn is_compile_value_marker(name: &str) -> bool {
+    matches!(
+        name,
+        ACCESS_SHARED_MARKER
+            | ACCESS_MUT_MARKER
+            | PASSING_AUTO_MARKER
+            | PASSING_COPY_MARKER
+            | PASSING_MOVE_MARKER
+    )
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum NominalKind {
@@ -4709,6 +4723,7 @@ impl Analyzer {
                         marker
                     }
                     CompileParamKind::Access => ACCESS_SHARED_MARKER.to_owned(),
+                    CompileParamKind::Passing => PASSING_AUTO_MARKER.to_owned(),
                     CompileParamKind::Region => continue,
                 };
                 if substitutions
@@ -5125,8 +5140,7 @@ impl Analyzer {
             }
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => Ty::Unit,
             Type::Named(name, arguments)
-                if arguments.is_empty()
-                    && matches!(name.as_str(), ACCESS_SHARED_MARKER | ACCESS_MUT_MARKER) =>
+                if arguments.is_empty() && is_compile_value_marker(name) =>
             {
                 Ty::Struct(name.clone())
             }
@@ -5341,7 +5355,7 @@ impl Analyzer {
                 pointee: Box::new(self.source_type_for_ty(pointee)?),
             }),
             Ty::Struct(name) | Ty::Enum(name) => {
-                if matches!(name.as_str(), ACCESS_SHARED_MARKER | ACCESS_MUT_MARKER) {
+                if is_compile_value_marker(name) {
                     return Some(Type::Named(name.clone(), Vec::new()));
                 }
                 if let Some(instance) = self.nominal_instances.get(name) {
@@ -5512,8 +5526,7 @@ impl Analyzer {
             }
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => Some(Ty::Unit),
             Type::Named(name, arguments)
-                if arguments.is_empty()
-                    && matches!(name.as_str(), ACCESS_SHARED_MARKER | ACCESS_MUT_MARKER) =>
+                if arguments.is_empty() && is_compile_value_marker(name) =>
             {
                 Some(Ty::Struct(name.clone()))
             }
@@ -7741,6 +7754,24 @@ impl Analyzer {
                             return None;
                         }
                     },
+                    CompileParamKind::Passing => match &argument.value {
+                        Expr::Name(name) if name == "auto" => {
+                            Type::Named(PASSING_AUTO_MARKER.to_owned(), Vec::new())
+                        }
+                        Expr::Name(name) if name == "copy" => {
+                            Type::Named(PASSING_COPY_MARKER.to_owned(), Vec::new())
+                        }
+                        Expr::Name(name) if name == "move" => {
+                            Type::Named(PASSING_MOVE_MARKER.to_owned(), Vec::new())
+                        }
+                        _ => {
+                            self.error(format!(
+                                "invalid passing argument for `{}` in `{owner}`; expected `auto`, `copy`, or `move`",
+                                parameter.name
+                            ));
+                            return None;
+                        }
+                    },
                     CompileParamKind::Region => {
                         self.error("region arguments are erased before semantic analysis");
                         return None;
@@ -7774,6 +7805,14 @@ impl Analyzer {
                         source: Some(Type::Named(ACCESS_SHARED_MARKER.to_owned(), Vec::new())),
                         origin: "default shared access".to_owned(),
                     });
+            } else if parameter.kind == CompileParamKind::Passing {
+                inferred
+                    .entry(parameter.name.clone())
+                    .or_insert_with(|| InferredTypeArgument {
+                        ty: Ty::Struct(PASSING_AUTO_MARKER.to_owned()),
+                        source: Some(Type::Named(PASSING_AUTO_MARKER.to_owned(), Vec::new())),
+                        origin: "default automatic passing".to_owned(),
+                    });
             }
         }
         Some((compile_parameters, inferred, source_index))
@@ -7801,6 +7840,15 @@ impl Analyzer {
         {
             return arguments.iter().all(|argument| {
                 matches!(&argument.value, Expr::Name(name) if name == "shared" || name == "mut")
+            });
+        }
+        if parameters
+            .iter()
+            .all(|parameter| parameter.kind == CompileParamKind::Passing)
+        {
+            return arguments.iter().all(|argument| {
+                matches!(&argument.value, Expr::Name(name)
+                    if matches!(name.as_str(), "auto" | "copy" | "move"))
             });
         }
         parameters.len() == arguments.len()
@@ -7875,6 +7923,10 @@ impl Analyzer {
             }
             CompileParamKind::Access => {
                 matches!(expression, Expr::Name(name) if name == "shared" || name == "mut")
+            }
+            CompileParamKind::Passing => {
+                matches!(expression, Expr::Name(name)
+                    if matches!(name.as_str(), "auto" | "copy" | "move"))
             }
             CompileParamKind::Region => false,
         }
@@ -20868,6 +20920,12 @@ fn substitute_parameter_types(parameter: &mut Param, substitutions: &HashMap<Str
             parameter.access = None;
         }
     }
+    if let Some(passing) = parameter.passing.as_deref() {
+        if let Some(mode) = substituted_passing_mode(passing, substitutions) {
+            parameter.mode = mode;
+            parameter.passing = None;
+        }
+    }
     substitute_type_parameters(&mut parameter.ty, substitutions);
 }
 
@@ -21074,6 +21132,9 @@ fn substitute_expr_types(expression: &mut Expr, substitutions: &HashMap<String, 
                     match marker.as_str() {
                         ACCESS_SHARED_MARKER => *name = "shared".to_owned(),
                         ACCESS_MUT_MARKER => *name = "mut".to_owned(),
+                        PASSING_AUTO_MARKER => *name = "auto".to_owned(),
+                        PASSING_COPY_MARKER => *name = "copy".to_owned(),
+                        PASSING_MOVE_MARKER => *name = "move".to_owned(),
                         _ => {}
                     }
                 }
@@ -21275,6 +21336,21 @@ fn substituted_access_mutability(
     match marker.as_str() {
         ACCESS_SHARED_MARKER => Some(false),
         ACCESS_MUT_MARKER => Some(true),
+        _ => None,
+    }
+}
+
+fn substituted_passing_mode(name: &str, substitutions: &HashMap<String, Type>) -> Option<PassMode> {
+    let Type::Named(marker, arguments) = substitutions.get(name)? else {
+        return None;
+    };
+    if !arguments.is_empty() {
+        return None;
+    }
+    match marker.as_str() {
+        PASSING_AUTO_MARKER => Some(PassMode::Inferred),
+        PASSING_COPY_MARKER => Some(PassMode::Copy),
+        PASSING_MOVE_MARKER => Some(PassMode::Move),
         _ => None,
     }
 }
@@ -21784,6 +21860,7 @@ mod tests {
         Param {
             mode: PassMode::Inferred,
             access: None,
+            passing: None,
             region: None,
             name: name.to_owned(),
             ty,
@@ -23737,6 +23814,7 @@ let main(): i32 = 0
             vec![vec![Param {
                 mode: PassMode::Move,
                 access: None,
+                passing: None,
                 region: None,
                 name: "value".into(),
                 ty: Type::I32,

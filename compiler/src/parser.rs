@@ -446,7 +446,7 @@ impl Parser {
         &mut self,
         allow_receiver: bool,
     ) -> Result<DeclarationGroups, ParseError> {
-        let mut compile_groups = Vec::new();
+        let mut compile_groups: Vec<Vec<CompileParam>> = Vec::new();
         let mut runtime_groups = Vec::new();
         let mut saw_runtime_group = false;
 
@@ -456,7 +456,19 @@ impl Parser {
                     "compile-time parameter groups must precede runtime parameter groups",
                 ));
             }
-            let group = self.header_parameter_group(allow_receiver)?;
+            let group = if self.group_starts_with_compile_parameter() {
+                self.compile_parameter_group().map(HeaderGroup::Compile)?
+            } else {
+                let passing_parameters = compile_groups
+                    .iter()
+                    .flatten()
+                    .filter(|parameter| parameter.kind == CompileParamKind::Passing)
+                    .map(|parameter| parameter.name.clone())
+                    .collect::<HashSet<_>>();
+                HeaderGroup::Runtime(
+                    self.runtime_parameter_group(allow_receiver, &passing_parameters)?,
+                )
+            };
             match group {
                 HeaderGroup::Compile(params) => {
                     compile_groups.push(params);
@@ -476,15 +488,6 @@ impl Parser {
         Ok((compile_groups, runtime_groups))
     }
 
-    fn header_parameter_group(&mut self, allow_receiver: bool) -> Result<HeaderGroup, ParseError> {
-        if self.group_starts_with_compile_parameter() {
-            self.compile_parameter_group().map(HeaderGroup::Compile)
-        } else {
-            self.runtime_parameter_group(allow_receiver)
-                .map(HeaderGroup::Runtime)
-        }
-    }
-
     fn group_starts_with_compile_parameter(&self) -> bool {
         self.at(&TokenKind::LParen)
             && matches!(
@@ -496,7 +499,7 @@ impl Parser {
                 || self.at_offset(3, &TokenKind::Region)
                 || matches!(
                     self.tokens.get(self.index + 3).map(|token| &token.kind),
-                    Some(TokenKind::Ident(name)) if name == "access"
+                    Some(TokenKind::Ident(name)) if matches!(name.as_str(), "access" | "passing")
                 ))
     }
 
@@ -509,7 +512,7 @@ impl Parser {
                 || self.at_offset(2, &TokenKind::Region)
                 || matches!(
                     self.tokens.get(self.index + 2).map(|token| &token.kind),
-                    Some(TokenKind::Ident(name)) if name == "access"
+                    Some(TokenKind::Ident(name)) if matches!(name.as_str(), "access" | "passing")
                 ))
     }
 
@@ -564,8 +567,20 @@ impl Parser {
                 }
                 self.advance();
                 CompileParamKind::Access
+            } else if matches!(&self.current().kind, TokenKind::Ident(name) if name == "passing") {
+                if region_name {
+                    return Err(self.error_at(
+                        &name_token,
+                        "passing parameter names must be ordinary identifiers",
+                    ));
+                }
+                self.advance();
+                CompileParamKind::Passing
             } else {
-                self.expect(&TokenKind::Region, "`type`, `access`, or `region`")?;
+                self.expect(
+                    &TokenKind::Region,
+                    "`type`, `access`, `passing`, or `region`",
+                )?;
                 if !region_name {
                     return Err(self.error_at(
                         &name_token,
@@ -589,7 +604,11 @@ impl Parser {
         Ok(params)
     }
 
-    fn runtime_parameter_group(&mut self, allow_receiver: bool) -> Result<Vec<Param>, ParseError> {
+    fn runtime_parameter_group(
+        &mut self,
+        allow_receiver: bool,
+        passing_parameters: &HashSet<String>,
+    ) -> Result<Vec<Param>, ParseError> {
         self.expect(&TokenKind::LParen, "`(`")?;
         let mut params = Vec::new();
         if self.take(&TokenKind::RParen) {
@@ -597,7 +616,23 @@ impl Parser {
         }
 
         loop {
-            let (mode, access, region) = if self.take(&TokenKind::Copy) {
+            let passing = match &self.current().kind {
+                TokenKind::Ident(name)
+                    if passing_parameters.contains(name)
+                        && matches!(
+                            self.tokens.get(self.index + 1).map(|token| &token.kind),
+                            Some(TokenKind::Ident(_))
+                        ) =>
+                {
+                    let name = name.clone();
+                    self.advance();
+                    Some(name)
+                }
+                _ => None,
+            };
+            let (mode, access, region) = if passing.is_some() {
+                (PassMode::Inferred, None, None)
+            } else if self.take(&TokenKind::Copy) {
                 (PassMode::Copy, None, None)
             } else if self.take(&TokenKind::Move) {
                 (PassMode::Move, None, None)
@@ -651,6 +686,7 @@ impl Parser {
             params.push(Param {
                 mode,
                 access,
+                passing,
                 region,
                 name,
                 ty,
@@ -991,7 +1027,7 @@ impl Parser {
     }
 
     fn parameter_group(&mut self) -> Result<Vec<Param>, ParseError> {
-        self.runtime_parameter_group(false)
+        self.runtime_parameter_group(false, &HashSet::new())
     }
 
     fn type_expr(&mut self) -> Result<Type, ParseError> {
@@ -1534,6 +1570,14 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Bool(false))
             }
+            TokenKind::Copy => {
+                self.advance();
+                Ok(Expr::Name("copy".to_owned()))
+            }
+            TokenKind::Move => {
+                self.advance();
+                Ok(Expr::Name("move".to_owned()))
+            }
             TokenKind::Ident(ref name) if name == "_" => Err(self.error_at(
                 &token,
                 "`_` is not an expression; omit an inferred compile-time argument group or use a named argument",
@@ -1976,6 +2020,10 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
             Item::Function(function) => validate_function_scopes(function, &empty, &empty)?,
             Item::Global(binding) => validate_binding_scopes(binding, &empty, &empty)?,
             Item::Struct(definition) => {
+                reject_passing_parameters(
+                    &definition.compile_groups,
+                    &format!("struct `{}`", definition.name),
+                )?;
                 let regions = declared_regions(&definition.compile_groups, &empty)?;
                 let accesses = declared_accesses(&definition.compile_groups, &empty)?;
                 for field in &definition.fields {
@@ -1984,6 +2032,10 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
                 }
             }
             Item::Enum(definition) => {
+                reject_passing_parameters(
+                    &definition.compile_groups,
+                    &format!("enum `{}`", definition.name),
+                )?;
                 let regions = declared_regions(&definition.compile_groups, &empty)?;
                 let accesses = declared_accesses(&definition.compile_groups, &empty)?;
                 for variant in &definition.variants {
@@ -2005,6 +2057,10 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
                 }
             }
             Item::Trait(definition) => {
+                reject_passing_parameters(
+                    &definition.compile_groups,
+                    &format!("trait `{}`", definition.name),
+                )?;
                 let regions = declared_regions(&definition.compile_groups, &empty)?;
                 let accesses = declared_accesses(&definition.compile_groups, &empty)?;
                 for member in &definition.members {
@@ -2013,10 +2069,14 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
                             validate_function_scopes(function, &regions, &accesses)?
                         }
                         TraitMember::AssociatedType {
+                            name,
                             compile_groups,
                             default,
-                            ..
                         } => {
+                            reject_passing_parameters(
+                                compile_groups,
+                                &format!("associated type `{}`", name),
+                            )?;
                             let member_regions = declared_regions(compile_groups, &regions)?;
                             let member_accesses = declared_accesses(compile_groups, &accesses)?;
                             if let Some(default) = default {
@@ -2028,6 +2088,7 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
                 }
             }
             Item::Extend(extension) => {
+                reject_passing_parameters(&extension.compile_groups, "extend header")?;
                 let regions = declared_regions(&extension.compile_groups, &empty)?;
                 let accesses = declared_accesses(&extension.compile_groups, &empty)?;
                 validate_type_regions(&extension.target, &regions)?;
@@ -2057,6 +2118,20 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn reject_passing_parameters(groups: &[Vec<CompileParam>], owner: &str) -> Result<(), String> {
+    if groups
+        .iter()
+        .flatten()
+        .any(|parameter| parameter.kind == CompileParamKind::Passing)
+    {
+        Err(format!(
+            "{owner} cannot declare a `passing` parameter; passing parameters belong to functions"
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 fn declared_accesses(
@@ -2098,6 +2173,13 @@ fn validate_function_scopes(
 ) -> Result<(), String> {
     let regions = declared_regions(&function.compile_groups, outer_regions)?;
     let accesses = declared_accesses(&function.compile_groups, outer_accesses)?;
+    let passings = function
+        .compile_groups
+        .iter()
+        .flatten()
+        .filter(|parameter| parameter.kind == CompileParamKind::Passing)
+        .map(|parameter| parameter.name.clone())
+        .collect::<HashSet<_>>();
     let mut compile_names = HashSet::new();
     for parameter in function.compile_groups.iter().flatten() {
         if !compile_names.insert(parameter.name.clone()) {
@@ -2108,6 +2190,11 @@ fn validate_function_scopes(
         }
     }
     for parameter in function.groups.iter().flatten() {
+        if let Some(passing) = &parameter.passing {
+            if !passings.contains(passing) {
+                return Err(format!("use of undeclared passing parameter `{passing}`"));
+            }
+        }
         if let Some(access) = &parameter.access {
             validate_access_name(access, &accesses)?;
         }
@@ -3603,6 +3690,28 @@ mod tests {
                 ..
             }) if access == "A"
         ));
+    }
+
+    #[test]
+    fn parses_passing_parameters_in_keyword_position() {
+        let program = parse("let identity(P: passing, T: type)(P value: T): T = value\n").unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        assert_eq!(
+            function.compile_groups[0][0].kind,
+            CompileParamKind::Passing
+        );
+        assert_eq!(function.groups[0][0].mode, PassMode::Inferred);
+        assert_eq!(function.groups[0][0].passing.as_deref(), Some("P"));
+    }
+
+    #[test]
+    fn rejects_passing_parameters_on_data_declarations() {
+        let error = parse("let Wrapper(P: passing) = struct(value: i32)\n").unwrap_err();
+        assert!(error
+            .message
+            .contains("passing parameters belong to functions"));
     }
 
     #[test]

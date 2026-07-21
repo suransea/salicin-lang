@@ -108,8 +108,8 @@ initializer = expression | struct_decl | enum_decl | trait_decl | module_decl ;
 parameter_group = "(", [ parameter_list ], ")" ;
 parameter_list  = parameter, { ",", parameter }, [ "," ] ;
 
-parameter = [ pass_mode ], IDENT, ":", type_expr
-          | [ pass_mode ], "self" ;
+parameter = [ pass_mode | IDENT ], IDENT, ":", type_expr
+          | [ pass_mode | IDENT ], "self" ;
 
 pass_mode = "copy" | "move"
           | "borrow", [ "(", access_or_region,
@@ -117,6 +117,9 @@ pass_mode = "copy" | "move"
 
 access_or_region = IDENT | "shared" | "mut" | REGION ;
 ```
+
+参数模式位置的 `IDENT` 只有在它引用当前函数已声明的 `P: passing` 参数时才合法；否则第一个
+`IDENT` 就是参数名。这是上下文语法，不把 `passing`、`auto` 或参数名加入全局保留字集合。
 
 一个编译期参数组只含 `T: type`、`A: access`、`'a: region` 等编译期参数，并位于所有运行时参数组之前；同一组
 不能混合编译期和运行时参数。忽略开头的编译期组后，实例方法的 `self` 独占第一个运行时组，
@@ -161,7 +164,7 @@ extend_decl = "extend", [ compile_parameter_group ], type_expr,
 
 compile_parameter_group = "(", compile_parameter,
                           { ",", compile_parameter }, [ "," ], ")" ;
-compile_parameter = IDENT, ":", ( "type" | "access" )
+compile_parameter = IDENT, ":", ( "type" | "access" | "passing" )
                   | REGION, ":", "region" ;
 ```
 
@@ -222,6 +225,8 @@ type_argument  = type_expr | INTEGER ;
 普通的 `IDENT ":" expression` 命名实参，不增加另一套括号或关键字。
 `access` 是编译期 kind；其内建实参为 `shared` 与 `mut`。`borrow(A)` 和
 `borrow(A, 'a)` 分别携带 access 参数以及 access/region 参数组合。
+`passing` 是函数编译期 kind；其内建实参为 `auto`、`copy` 与 `move`，并在参数模式位置以
+已声明的参数名引用，例如 `(P value: T)`。
 
 `void` 和 `never` 按普通 prelude 名称解析，分别等价于 `let void = ()` 与
 `let never = enum {}`，不是 lexer 关键字。零 variant enum 合法；其值位置可以用空的

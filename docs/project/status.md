@@ -10,8 +10,10 @@ defaults to shared when omitted, participates in monomorphization, and can drive
 borrow types, borrow expressions, and raw pointer borrows. The alloc free functions and methods use
 this path. Mutable borrowing has one source spelling, `borrow(mut)`; separately named mutable alloc
 aliases and the former prefix spelling are intentionally absent before 1.0.
-General effect rows, effect polymorphism, and a generalized `passing` kind remain design work rather
-than source-language features.
+Passing keyword generics are also implemented for functions and generic inherent members:
+`P: passing` accepts `auto`, `copy`, or `move` and can be referenced directly in parameter keyword
+position. General effect rows and effect polymorphism remain design work rather than source-language
+features.
 
 The implementation is broad but not stable. Important incomplete boundaries include:
 

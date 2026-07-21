@@ -196,6 +196,7 @@ pub enum CompileParamKind {
     Type,
     Region,
     Access,
+    Passing,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -204,6 +205,9 @@ pub struct Param {
     /// An access compile-time parameter used by `borrow(A)` until generic
     /// instantiation selects shared or mutable borrowing.
     pub access: Option<String>,
+    /// A `passing` compile-time parameter used in keyword position until
+    /// generic instantiation selects auto, copy, or move passing.
+    pub passing: Option<String>,
     pub region: Option<String>,
     pub name: String,
     pub ty: Type,

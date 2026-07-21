@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.71.0 - 2026-07-21
+
+- Added the contextual compile-time `passing` kind with `auto`, `copy`, and `move` values.
+- Allowed a declared passing parameter directly in parameter keyword position, as in
+  `let identity(P: passing, T: type)(P value: T): T = value`, without reserving parameter names.
+- Defaulted omitted passing arguments to `auto`, accepted positional and named explicit arguments,
+  and included the selected strategy in monomorphization keys and generic forwarding.
+- Enforced Copy constraints for `copy` instances and preserved explicit move semantics even for Copy
+  types, with native and diagnostic coverage for functions and generic inherent methods.
+- Kept borrowing orthogonal under `borrow(A)` and rejected `passing` parameters on data, trait, and
+  extend headers where a parameter keyword has no coherent meaning.
+
 ## 0.70.0 - 2026-07-21
 
 - Enabled generic methods and associated functions inside generic inherent extensions, combining

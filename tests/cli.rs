@@ -447,6 +447,45 @@ fn generic_inherent_extensions_infer_and_dispatch_concrete_instances() {
 }
 
 #[test]
+fn passing_keyword_generics_select_auto_copy_and_move() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "passing_generic.sali"))
+        .output()
+        .expect("run passing-generic fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+
+    let output = salic()
+        .arg("check")
+        .arg(fixture("fail", "passing_copy_resource.sali"))
+        .output()
+        .expect("reject copy passing for a resource");
+    assert!(!output.status.success(), "{}", output_text(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("does not implement Copy"),
+        "{}",
+        output_text(&output)
+    );
+
+    for (name, expected) in [
+        ("passing_move_copy_use_after.sali", "moved"),
+        ("passing_invalid_argument.sali", "invalid passing argument"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid passing-generic fixture");
+        assert!(!output.status.success(), "{name}: {}", output_text(&output));
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn where_copy_bounds_validate_generic_bodies_and_concrete_calls() {
     let output = salic()
         .arg("run")
