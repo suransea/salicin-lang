@@ -17,7 +17,8 @@ use crate::manifest::Edition;
 use crate::modules::PackageId;
 use crate::parser;
 
-const EDITION_2026_PRELUDE: &str = include_str!("../library/core/src/prelude.sali");
+const EDITION_2026_PRELUDE: &str = include_str!("../../library/core/src/prelude.sali");
+const EDITION_2026_OPS: &str = include_str!("../../library/core/src/ops.sali");
 
 /// A stable logical role fulfilled by one declaration in the edition's
 /// `core` bundle.
@@ -206,7 +207,12 @@ pub struct CoreBundle {
 impl CoreBundle {
     /// Load the compiler-embedded `core` declarations for `edition`.
     pub fn for_edition(edition: Edition) -> Result<Self, CoreBundleError> {
-        Self::from_source(edition, embedded_prelude_source(edition))
+        match edition {
+            Edition::Edition2026 => Self::from_modules(
+                edition,
+                &[("prelude", EDITION_2026_PRELUDE), ("ops", EDITION_2026_OPS)],
+            ),
+        }
     }
 
     pub const fn edition(&self) -> Edition {
@@ -221,6 +227,7 @@ impl CoreBundle {
         &self.lang_items
     }
 
+    #[cfg(test)]
     fn from_source(edition: Edition, source: &str) -> Result<Self, CoreBundleError> {
         let mut program = parser::parse(source).map_err(|error| {
             CoreBundleError::new(
@@ -239,6 +246,39 @@ impl CoreBundle {
         Ok(Self {
             edition,
             program,
+            lang_items,
+        })
+    }
+
+    fn from_modules(edition: Edition, modules: &[(&str, &str)]) -> Result<Self, CoreBundleError> {
+        let mut combined = Program::new(Vec::new());
+        for (module, source) in modules {
+            let mut program = parser::parse(source).map_err(|error| {
+                CoreBundleError::new(
+                    edition,
+                    vec![format!(
+                        "embedded core module `{module}` does not parse: {error}"
+                    )],
+                )
+            })?;
+            program.item_origins = vec![
+                ItemOrigin {
+                    package: PackageId::CORE.0,
+                    module_path: vec!["@core".to_owned(), (*module).to_owned()],
+                };
+                program.items.len()
+            ];
+            combined.items.append(&mut program.items);
+            combined
+                .item_visibilities
+                .append(&mut program.item_visibilities);
+            combined.item_origins.append(&mut program.item_origins);
+            combined.uses.append(&mut program.uses);
+        }
+        let lang_items = validate_program(edition, &combined)?;
+        Ok(Self {
+            edition,
+            program: combined,
             lang_items,
         })
     }
@@ -289,6 +329,13 @@ impl Error for CoreBundleError {}
 pub const fn embedded_prelude_source(edition: Edition) -> &'static str {
     match edition {
         Edition::Edition2026 => EDITION_2026_PRELUDE,
+    }
+}
+
+/// Return the operator protocol source compiled into this compiler.
+pub const fn embedded_ops_source(edition: Edition) -> &'static str {
+    match edition {
+        Edition::Edition2026 => EDITION_2026_OPS,
     }
 }
 
@@ -644,11 +691,23 @@ pub let Rem(Rhs: type) = trait {
                 Some(kind.source_name())
             );
             assert_eq!(lang_item.canonical_name(), kind.source_name());
+            let module = match kind {
+                LangItemKind::Option
+                | LangItemKind::Result
+                | LangItemKind::Never
+                | LangItemKind::Copy
+                | LangItemKind::Drop => "prelude",
+                LangItemKind::Add
+                | LangItemKind::Sub
+                | LangItemKind::Mul
+                | LangItemKind::Div
+                | LangItemKind::Rem => "ops",
+            };
             assert_eq!(
                 bundle.program().item_origins[lang_item.item_index()],
                 ItemOrigin {
                     package: PackageId::CORE.0,
-                    module_path: vec!["@core".to_owned()],
+                    module_path: vec!["@core".to_owned(), module.to_owned()],
                 }
             );
         }

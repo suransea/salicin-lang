@@ -1,0 +1,24 @@
+pub let Add(Rhs: type) = trait {
+  let Output: type
+  let add(move self)(move rhs: Rhs): Output
+}
+
+pub let Sub(Rhs: type) = trait {
+  let Output: type
+  let sub(move self)(move rhs: Rhs): Output
+}
+
+pub let Mul(Rhs: type) = trait {
+  let Output: type
+  let mul(move self)(move rhs: Rhs): Output
+}
+
+pub let Div(Rhs: type) = trait {
+  let Output: type
+  let div(move self)(move rhs: Rhs): Output
+}
+
+pub let Rem(Rhs: type) = trait {
+  let Output: type
+  let rem(move self)(move rhs: Rhs): Output
+}

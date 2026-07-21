@@ -1,14 +1,17 @@
 [package]
 name = "salicin-lang"
-version = "0.67.0"
+version = "0.68.0"
 edition = "2021"
 description = "The compiler and language specification for the Salicin programming language"
 license = "MIT"
 repository = "https://github.com/suransea/salicin-lang"
 
+[lib]
+path = "compiler/src/lib.rs"
+
 [[bin]]
 name = "salic"
-path = "src/main.rs"
+path = "compiler/src/main.rs"
 
 [dependencies]
 same-file = "1"

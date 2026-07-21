@@ -1,584 +1,69 @@
 # Salicin
 
-Salicin 是一个基于 LLVM 的静态编译语言实验。源码使用 `.sali` 后缀，编译器命令为 `salic`。
-语言设计稿见 [LANGUAGE.md](LANGUAGE.md)，语法骨架见 [GRAMMAR.md](GRAMMAR.md)。
-
-## 构建编译器
-
-```sh
-cargo build --release
-```
-
-生成的编译器位于 `target/release/salic`。生成本机可执行文件时，`salic` 需要能够从 `PATH` 找到
-`clang`；`check` 和 `emit-ir` 不需要链接器。
-
-## 使用
-
-```sh
-salic build main.sali -o main       # 编译并链接本机程序
-salic check main.sali               # 只做语法和类型检查
-salic emit-ir main.sali             # 将 LLVM IR 输出到 stdout
-salic emit-ir main.sali -o main.ll  # 将 LLVM IR 写入文件
-salic run main.sali                 # 临时编译并运行
-salic main.sali -o main             # build 的单文件简写
-
-salic build                         # 从当前目录向上发现 salicin.toml
-salic run ./my-project              # 运行项目的默认二进制 target
-salic run salicin.toml --bin tool   # 选择一个 [[bin]] target
-salic check --lib                   # 检查项目的 [lib] target
-```
-
-`build` 未指定 `-o` 时，默认输出为去掉 `.sali` 后缀的源码路径。`run` 可用 `--` 分隔并传递程序
-参数，例如 `salic run main.sali -- arg1`。项目构建默认写入 `build/<target-name>`；项目输入可以是
-目录或 `salicin.toml`，省略时会从当前目录逐级向上查找。项目清单支持 `[package]`、`[lib]`、
-`[[bin]]` 和本地路径 `[dependencies]`；非 target 的 `src/math.sali`、`src/net/http.sali` 会分别成为
-`math`、`net.http` 文件模块。包命令会确定性更新项目根的 `salicin.lock`。
-
-```toml
-[dependencies]
-math = { path = "../math" }
-```
-
-依赖 alias 是声明它的包内可见的路径首段；传递依赖不会自动暴露，需由中间包用 `pub use` 明确
-重导出。当前版本只接受本地 `path`，尚不解析 registry、版本范围或 Git 来源。
-
-## 当前能力
-
-v0.1.0 首版支持：
-
-- 单文件编译，以及 `i32`、`i64`、`u32`、`u64`、`bool` 和 `()`；
-- 顶层常量与非泛型具名函数；
-- 多参数组函数的完整调用；
-- 局部 `let`、`let mut` 和赋值；
-- 算术、比较、逻辑表达式，以及 `do`、`if` 和 `return`；
-- 生成 LLVM IR，并通过 `clang` 链接本机程序。
-
-v0.2.0（M1）在此基础上还支持：
-
-- 名义 `struct`、`enum`，位置或标签构造器，以及结构体字段读取和修改；
-- 带 payload binding、guard 和穷尽性检查的 `match`；
-- 多参数组函数的本地、非逃逸部分应用；
-- place 级 `copy` / `move` 检查、分支状态合流、共享/可变借用，以及借用参数的指针 ABI；
-- 直接局部绑定、非逃逸的闭包，支持共享/可变标量捕获和单次移动捕获，并通过 lambda lifting 静态生成代码。
-- `while`、`loop` 和带值 `break`，以及循环控制流的保守所有权检查；
-- 内联定长 `Array(T, N)`、数组字面量，以及带运行期越界检查的 `i32` 索引。
-- 固有 `extend`：支持带 `borrow self`、`mut borrow self` 或 `move self` 的静态分派实例方法，
-  以及类型命名空间中的关联函数和关联常量。
-
-v0.3.0（M2）在此基础上还支持：
-
-- `type` 编译期参数组与显式泛型具名函数调用；
-- 带稳定实例缓存的按需单态化，且类型应用后仍可使用既有的局部部分应用；
-- 对所有泛型函数体做定义期抽象检查，包括未被调用的模板。
-- 泛型 `struct` 与 `enum` 的显式类型应用、嵌套实例、构造器、variant 和模式匹配；
-- 结构化的名义类型实例元数据，以及定义期模板校验、递归值布局诊断和实例上限保护。
-- 函数、结构体和枚举构造可省略编译期参数组，并使用期望结果、运行时实参、字段和 variant
-  payload 约束推断类型实参；命名实参可显式消歧，并保持实参只求值一次。
-- 具体 trait 实现、必需关联类型和唯一候选的静态方法分发；支持普通名义类型与
-  `Cell(i32)` 这样的具体泛型实例，并完整校验参数组、传递模式和返回类型。
-- 基于 `Add(Rhs)` trait 的名义类型 `+` 运算符，关联类型 `Output` 参与期望类型推断；
-  内建整数加法仍直接生成 LLVM 整数指令。
-- 预导入的 `Option(T)` 与 `Result(T, E)` 泛型枚举，支持 `Some` / `None` / `Ok` / `Err`
-  构造、省略编译期组的实参推断、嵌套实例和模式匹配。
-- 拥有的 `Option(T)` / `Result(T, E)` 上的 `?.` 可选链，支持结构体字段和完整方法调用；成功值
-  可从 `T` 变为 `U`，`None` / `Err(E)` 保持原容器形状，方法实参只在成功分支求值，返回的
-  容器不会自动展平。
-- `Option(T) ?? T` 与 `Result(T, E) ?? T` 的右结合惰性合并；成功分支直接取出 payload，
-  只有 `None` / `Err` 分支才求值 fallback。
-- `Option(T)` 与 `Result(T, E)` 的后缀 `.try` 传播：操作数只求值一次，成功 payload 继续执行，
-  `None` 或同一错误类型的 `Err` 从当前显式返回边界提前返回；该边界中的普通尾值和 `return`
-  值会自动包装为 `Some` / `Ok`。
-- `throw error` 在显式 `Result(U, E)` 返回边界中把错误值包装成外层 `Err` 并立即返回；错误表达式
-  只求值一次，并按边界的精确 `E` 类型检查。
-
-v0.4.0（M3 的模块与本地包基础）在此基础上还支持：
-
-- 严格校验的 `salicin.toml`、默认 `src/lib.sali` / `src/main.sali` target 发现、自定义 `[lib]` /
-  `[[bin]]`、项目级 target 选择和 `build/` 输出目录；单文件命令保持兼容。
-- `void` 作为 `()` 的预导入类型别名，以及作为零 variant enum 预导入的 `never`；空 enum 是
-  uninhabited type，可通过空 `match {}` 消除并参与发散控制流的类型统一。
-- 自动发现 `src` 下的文件模块，通过两遍名称收集支持跨文件前向引用、嵌套限定路径、结构体与
-  trait/extend；子模块声明会降低为稳定的包内 canonical 名称。
-- 顶层声明支持默认私有、`pub(package)` 和 `pub`；私有名称可由声明模块及其子模块访问，兄弟
-  模块访问会得到可见性诊断。参数、局部 `let`、闭包参数和模式绑定均可正常遮蔽模块名。
-- `use` 支持单项、`as`、分组与模块 alias；`root`、`self` 和连续 `super` 可显式选择解析起点，
-  `pub use` / `pub(package) use` 可构造 facade，并禁止越权重导出或借私有 alias 绕过可见性。
-- 严格的本地 `{ path = "..." }` 依赖、规范路径循环检测、仅依赖库 target 的源码发现，以及
-  确定性、原子更新的 `salicin.lock`；依赖的其他二进制 target 不参与编译。
-- 稳定 `PackageId` 驱动的跨包名称与名义类型身份；`pub(package)` 和私有成员不能越过包边界，
-  传递依赖只能经拥有者显式重导出，同一个菱形共享依赖只实例化一次。
-
-v0.5.0 开始引导标准库：
-
-- edition 2026 的首份 `core` 源位于 `library/core/src/prelude.sali`，随编译器一起嵌入，不依赖
-  用户机器上的安装路径；它仍通过普通 Salicin lexer、parser 和语义分析。
-- `Option`、`Result` 与 `never` 已从 Rust 手工 AST 迁入这份 `.sali` 源，原本由各程序重复声明的
-  `Add` 也一并进入 core；编译器启动时严格校验四者的公开形状并登记 lang-item 身份。
-- `Add` 进入固定 edition prelude，实现重载时直接写 `extend Number: Add(Number)`，无需在每个
-  程序里重新声明 trait。
-- 整个依赖图共享同一份 `core` 身份；同名声明、模块或模块 alias 不会获得 `Option`、`Result`、
-  `never` 或 `Add` 的语言身份；允许同名的局部类型参数也会正常遮蔽而不触发特殊 lowering。
-
-v0.6.0 补齐数据与公开 API 的模块边界：
-
-- struct 字段和 enum 命名 payload 字段支持默认私有、`pub(package)` 与 `pub`；字段的有效可见性
-  不会宽于外层类型，位置 enum payload 继承 enum 的可见性。
-- 字段读取、写入、借用、普通与泛型构造、`?.`、类型推断和 `match` 解构使用同一访问检查；
-  隐藏字段使类型可以作为不透明值传递，但不能从边界外直接构造或完整解构。
-- 模块解析会递归检查函数签名、全局注解、struct/enum 字段和 trait API，禁止较宽 API 泄漏
-  较窄名义类型；省略返回类型或全局注解时，语义降低还会检查实际推断出的嵌套类型。
-- 固有 `extend` 成员暂时继承目标类型的边界；trait impl 的有效边界由 trait、目标类型及具体
-  trait 实参共同收窄，关联类型不能再从这个边界泄漏私有实现类型。
-- 检查保留 package identity 与模块祖先关系，因此包根私有类型可安全用于包级 API，而子模块
-  私有类型不能被兄弟模块、包级 API 或依赖包洗白。
-
-v0.7.0 扩展 source-backed core 运算协议：
-
-- `Sub(Rhs)`、`Mul(Rhs)`、`Div(Rhs)` 与 `Rem(Rhs)` 和既有 `Add(Rhs)` 一样由普通 core 源声明，
-  均带 `Output` 关联类型，并要求对应方法以 `move self`、`move rhs` 接收两个操作数。
-- 名义左操作数上的 `+`、`-`、`*`、`/`、`%` 通过编译器匹配的 core trait 唯一候选静态分派；
-  期望 `Output` 与整数字面量范围共同参与筛选，两个操作数仍各只求值一次。
-- 用户声明的同名 trait 不会伪造 lang-item 身份。整数的五种运算仍是内建 lowering；内建 `/`、
-  `%` 遇到除数为零或有符号 `MIN / -1`、`MIN % -1` 时在运行期 trap，对应非法常量在编译期拒绝。
-
-v0.8.0 把 `Copy` 接入 source-backed core 与所有权检查：
-
-- edition core 以普通源码声明 canonical `pub let Copy = trait {}`，编译器严格校验其形状和身份；
-  用户包中同名的 trait 不会获得语言语义。
-- 整数、`bool`、`()`、`never`、编译器内部错误恢复类型，以及元素为 `Copy` 的 `Array(T, N)`
-  由编译器内建为 `Copy`。名义 struct/enum 必须显式写 `extend T: Copy {}`，且所有字段和每个 enum
-  variant payload（包括私有表示）都必须递归为 `Copy`。
-- 名义 `Copy` 实现只能位于类型定义包。`extend Cell(i32): Copy {}` 只作用于该具体实例，不会泛化
-  到 `Cell(bool)` 或模板；v0.38 另行支持显式、结构可证明且可带 `where T: Copy` 的 blanket impl。
-- 未标注参数对 `Copy` 类型默认为复制，否则默认为移动；显式 `move` 始终优先并消费实参。相同判定
-  已用于普通读取、闭包捕获以及函数和 bound method 的部分应用。
-- 当前函数类型和闭包类型自身仍不是 `Copy`；`Drop` 已由 edition core 公开，但资源型全局仍未开放。
-
-v0.9.0 建立可继续演化的初始化与清理中间层：
-
-- 所有权流状态改为规范化的未初始化 move-path 叶子 alternatives，支持移动 root 或字段后通过
-  root 赋值、逐字段赋值恢复初始化，也能在分支 join 与循环回边保留必要的关联信息。
-- 精确 alternatives 上限为 64；超过后保守 widened 为“全初始化”与“所有可能未初始化叶子的并集”，
-  从而限制分析开销，并且只可能额外拒绝程序，不会错误接受不安全使用。
-- `match` guard 不得移动非 `Copy` 的 pattern binding，因为 guard 失败后还可能尝试后续 candidate；
-  `Copy` binding 的显式移动仍可用。
-- 编译和检查现在都会从真实 HIR 为每个函数建立并验证 `CleanupPlan`：记录作用域、local、move path、
-  storage/init/move/overwrite 事件，以及分支、循环、guard、`break` 和 `return` 边。
-- 这仍是析构 lowering 的结构基础，不会发出清理代码。未物化资源结果、move-state dataflow、临时值
-  liveness、`break` 值传递、借用位置写入、maybe-overwrite、match/pattern 传递、部分应用和闭包捕获
-  都以 `PendingCapability` 明确保留。
-- 当前没有 `needs_drop`、runtime drop flags、source-backed `Drop`、drop glue 或 LLVM 析构。顶层值仍是
-  编译期常量，每次使用独立物化且不进入 cleanup；含资源全局与 `Drop` 的关系会在公开 `Drop` 前定案。
-
-v0.10.0 把资源值的实际落点接入 cleanup CFG：
-
-- `CleanupPlan` 不再只记录“表达式是否有落点”，而是携带具体 destination place；资源型 binding、
-  丢弃表达式、赋值、函数尾、显式 `return` 和带值 `break` 都先写入稳定 storage。
-- 新的原子 `Transfer` 同时记录 source、destination 以及 initialize/overwrite/maybe-overwrite 状态。
-  source 与 destination 必须不同且不能互为投影前缀；每次消费和临时 storage 都由 verifier 双向要求
-  对应的 pending dataflow/liveness 标记。
-- struct、array、enum、部分应用和闭包按 field、constant index、downcast 与 capture move path 逐子值
-  构造；enum 先记录 discriminant，只有全部子值成功后才初始化 root。构造途中 `return`、`break` 或
-  发散调用只留下可清理的半成品，不会把 root 或最终返回位置误标为已初始化。
-- 调用的值参数、字段/索引 base 以及赋值/返回/`break` 值都经过 staging；旧的“资源结果未物化”和
-  “`break` 值尚未传递”两项 pending 已删除。LLVM 析构仍未启用，剩余 move-state dataflow、临时值
-  liveness、match/pattern、borrowed mutation 与 capture 细节继续显式 pending。
-
-v0.11.0 完成 cleanup 的静态 move-path forest 与初始化数据流：
-
-- 每个 owned 参数、返回槽、用户/pattern binding 和 planner temporary 都在分析前登记完整 forest；
-  struct 的全部字段、enum 的全部 downcast/payload、array 的全部 constant index、`Copy` 与空/ZST
-  聚合都保留路径，borrow alias 不建立路径。单函数最多 65,536 个 move path，超出会明确诊断。
-- 常量与动态 array index 都按 `Copy` extraction 处理：base 和动态 index 仍各求值一次，但不会消费
-  array element，也不会把运行时 index 伪装成有限静态路径。
-- cleanup verifier 现在缓存 CFG fixed point：所有路径节点分别维护 `may_init`/`must_init`，在 join
-  处取 union/intersection，忽略不可达前驱，并按 operation 位置重放；scope exit、`StorageLive` 和
-  `StorageDead` 会清除对应状态。
-- enum discriminant、active downcast、字段恢复后的 root 重组、overwrite 失效、Transfer forest 兼容、
-  branch condition 和 return place 完整性都进入验证。`MovePathStateDataflow` pending 因此删除。
-- Function 类型尚不携带环境布局，具体 callable capture forest 仍由表达式补登记并保持 pending。
-  `Init` 仍是幂等的初始化摘要，不表示一次真实写入或旧值析构。
-
-v0.12.0 完成 cleanup 的临时 storage 生命周期数据流：
-
-- 每个 local 现在和 move path 一样在 CFG fixed point 中维护 `may_live` / `must_live`；初始化、移动、
-  覆盖、Transfer、discriminant 写入、branch condition 与 return place 都必须位于确定 live 的 storage。
-- `StorageLive` 只能从确定 dead 开始；结构化 `StorageDead` 是幂等的作用域结束摘要，可将 live、
-  maybe-live 或 dead 统一收束为 dead。它仍不表示已执行析构。
-- `while` condition、`while` body 与 `loop` body 使用每轮求值 scope；condition 分支和 body 回边会先
-  结束本轮临时值，再进入下一轮，避免循环 fixed point 把同一个 temporary 判成重复开始生命周期。
-- `TemporaryStorageLiveness` pending 已删除。下一步是 `needs_drop` 与控制流敏感的 runtime drop
-  flags；完成后才从 core 开放 `Drop` 并生成 drop glue。
-
-v0.13.0 重做泛型调用推断语法：
-
-- 完全移除 `_` 类型推断占位符；调用通过省略编译期参数组，从运行时实参和期望结果推断。
-- 普通圆括号同时承载显式编译期组和运行时组：类型值组解释为编译期参数，其他组解释为运行时参数。
-- 编译期与运行时调用都支持命名实参；`Result(E: bool).Ok(22)` 可只指定部分编译期参数，
-  `make(value: 10)` 可明确选择运行时参数。
-- `_` 继续用于模式通配符和匿名函数类型槽，但在类型和表达式位置会直接报错。
-
-v0.14.0 完成析构需求与 drop-flag 规划：
-
-- HIR cleanup planner 为每个静态 move path 记录 `needs_drop`；内建 `Copy` 值不需要析构，非
-  `Copy` 名义聚合与 callable 先按保守规则保留析构义务。
-- cleanup fixed point 在每个 `StorageDead` 前生成树形 drop obligations：确定完整的值静态析构，
-  条件完整的值使用稳定编号的 flag，部分聚合只递归到仍可能初始化的字段，避免父子重复析构。
-- drop flags 带有随 `StorageLive`、初始化、移动、Transfer、discriminant 更新和 `StorageDead`
-  变化的 set/clear action；缓存分析会由 verifier 重算并校验。
-- 这一版只建立可执行 lowering 所需的准确计划；尚未公开 `Drop`，也未在 LLVM 中分配 flag 或调用
-  析构函数。下一步把 source-backed `Drop`、递归 drop glue 与这些 obligations 一起降到 LLVM。
-
-v0.15.0 开放 source-backed `Drop` 并生成递归 glue：
-
-- edition core 的普通 `.sali` 源声明 `Drop.drop(mut borrow self)(): ()`，编译器按 canonical lang-item
-  身份和精确形状登记；同名用户 trait 不会获得析构语义。
-- `Drop` 只能由名义类型所在包实现，不能与 `Copy` 同时实现；源码不能直接调用 `Drop.drop`，避免
-  自动清理前手工析构造成 double-drop。
-- `needs_drop` 现在精确递归：自定义 `Drop` 类型需要 glue，包含它的 struct/enum 只递归清理实际
-  需要的字段；enum glue 按运行期 discriminant 选择 active variant。
-- LLVM 已生成并验证 custom-drop、struct、enum 的递归 glue，且原生链接测试通过；scope-exit 调用、
-  flag storage/branch 和 unwind 仍在下一版接入，因此当前还不能依赖析构副作用发生。
-
-v0.16.0 执行结构化 scope cleanup：
-
-- LLVM emitter 消费每个函数已验证的 `CleanupPlan` move-path 分类，为拥有参数和局部 storage 物化
-  drop flag；root move 清 flag，重新初始化置 flag，overwrite 在写入前条件清理旧值。
-- 局部按声明逆序在普通块结束、显式/隐式 `return` 和 `break` 上清理；条件移动、match scrutinee、
-  丢弃表达式和拥有参数也会把所有权交给对应 glue。
-- 聚合字段和调用实参在后续求值完成前进入临时 cleanup storage；后续表达式提前 `return` 时清理
-  已求值资源，完整构造或成功调用时再原子转移所有权。
-- 原生 trap 测试覆盖实际执行、不重复析构、条件移动、overwrite、return、break、match、丢弃值和
-  部分构造提前退出。
-- 从需析构聚合中部分移动/重建、需析构 pattern binding、临时值字段提取和拥有资源的闭包环境暂时
-  明确拒绝，待 projection flags 完成后重新开放。
-
-v0.17.0 物化 struct projection drop flags：
-
-- 没有 custom `Drop` 的 struct 为每个递归需要析构的字段建立子 flag；字段移动会清 root、沿途父
-  projection 与目标子树，但保留未移动 sibling 的 flag。
-- scope exit 在 root 完整时调用一次 root glue；root 不完整时沿 `children_when_clear` 递归，只清理
-  仍初始化的字段，嵌套 struct 使用同一规则。
-- 字段重新初始化会恢复目标子树；所有字段重新完整时重新置 root flag。条件移动后的
-  maybe-overwrite 先按字段 flag 清理可能存在的旧值，再 store 新值并重组父级。
-- 原生测试覆盖直接/嵌套字段移动、条件移动、部分值清理、字段重建和条件重建，并用 sibling 内 trap
-  证明 fallback cleanup 没有漏掉未移动字段。
-- 类型自身实现 custom `Drop` 时仍必须保持完整，不能移动穿过它的字段；drop-bearing pattern
-  binding、enum payload transfer、临时 drop 值字段提取和资源闭包环境仍待后续 lowering。
-
-v0.18.0 接通 enum match payload 的所有权转移：
-
-- 无 guard 的直接 payload binding 可以接管带 `Drop` 的字段；转移时关闭完整 enum 的 root flag，
-  给移动后的 binding 建立独立清理槽，并为 active variant 中通配符留下的资源 sibling 建立清理槽。
-- 分支正常结束与显式 `return` 都按逆序清理这些槽；不同 match candidate 的编译期清理状态彼此隔离。
-  原生 trap 测试验证未绑定 sibling 一定析构，同时移动 binding 不会被 enum glue 再次析构。
-- 自身有 custom `Drop` 的 enum 仍不可拆分；带资源的嵌套 pattern move 与 guarded payload move 暂时
-  拒绝，分别等待 downcast 子树和 guard-failure rollback。
-
-v0.19.0 将 transfer 递归到嵌套结构 payload：
-
-- `Some(Bundle(left, _), _)` 这类 pattern 可把深层字段移入 binding；lowering 沿路径逐层拆分结构，
-  对内部和 active variant 同级的未移动资源分别建立 cleanup slot。
-- 嵌套 remainder 在分支正常结束和提前 `return` 上使用同一套逆序清理。穿过 custom-`Drop` 类型的
-  嵌套移动仍被拒绝，因为其 destructor 必须观察完整 `self`。
-- guarded resource move 仍等待 guard 失败时的所有权回滚；closure environment cleanup 随后处理。
-
-v0.20.0 为 guarded payload binding 加入延迟提交：
-
-- guard 求值期间，binding 只是指向暂存位模式的非拥有视图，可读取和借用，但不能移动非 `Copy` 值。
-- guard 成功后在 body 入口一次性关闭 enum root，并启用 moved binding 与 remainder 的 drop flags；
-  guard 失败时不改所有权，后续 candidate 继续从完整 enum 匹配。
-- guard 内提前 `return`/传播错误时也不提交 binding，由原 enum root 执行清理。custom-`Drop` enum 可做
-  guarded 整体 binding，但仍不能拆出 payload。
-
-v0.21.0 为本地 `FnOnce` 补齐资源型 capture cleanup：
-
-- nominal move capture 在闭包创建时进入稳定 environment storage，并各自获得递归 drop slot；闭包
-  未调用或只在某些分支调用时，作用域退出按实际 flag 清理仍拥有的 captures。
-- 调用时 capture 先进入与普通 owning argument 相同的 early-exit staging，再交给 lifted function；
-  后续实参提前返回不会泄漏，成功调用也不会让 environment 重复析构。
-- `LocalClosureCapture` 已从 cleanup pending 中删除。普通 partial application 仍限 Copy captures，
-  first-class callable environment layout 与 escaping closure 仍是后续范围。
-
-v0.22.0 把同一 environment ownership 扩展到本地 partial application：
-
-- `let pending = finish(resource)` 可以捕获 owning `move` 参数；包含任意 move capture 的 partial 为
-  `FnOnce`，重复调用或条件调用后再用会按 flow state 拒绝。
-- capture 可继续跨多个柯里化组转移，最终调用、未调用、条件调用和后续实参提前返回都使用稳定 flag，
-  与闭包 capture 一样保证恰好一次清理。
-- `PartialApplicationCapture` pending 已删除，callable capture 不再有 pending marker。borrow capture、
-  escaping/first-class callable 和统一公开 ABI 仍待后续。
-
-v0.23.0 执行 `mut borrow` referent 的覆盖清理：
-
-- 对需要 drop 的 borrowed root 或字段赋值时，RHS 先完整求值；随后直接对旧 referent 调用精确 glue，
-  再 store 新 owning 值。借用 storage 不创建伪造的 owned drop flag。
-- RHS 提前返回时旧 referent 保持不变；成功覆盖后 caller 最终只清理 replacement。root 与 field 的
-  原生 trap 测试证明旧值确实在覆盖点析构。
-- `BorrowedPlaceMutation` pending 已删除。
-
-v0.24.0 令 match cleanup plan 完全可执行、可验证：
-
-- enum arm 入口以正式 `AssumeDiscriminant` 精化 active variant；verifier 会拒绝非 enum、非法 variant、
-  dead storage 和尚未完整初始化的 enum root。
-- pattern binding 使用普通原子 `Transfer` 接管所有权。无 guard 的 arm 在入口提交；有 guard 的资源
-  binding 仅在 guard-success edge 提交，失败或提前返回仍保留完整 scrutinee。
-- `MatchDispatch`、`PatternBindingTransfer`、`MaybeOverwrite` 及整个 `PendingCapability` 基础设施均已删除。
-  move-state 与 drop-flag 验证现在只依赖正式 cleanup CFG，不再依赖“后续会 lowering”的旁路承诺。
-
-v0.25.0 开放 concrete callable 的局部移动别名：
-
-- 命名函数、闭包和部分应用都可以写成 `let alias = callable`；源 binding 按普通 move 规则失效，
-  `Fn` / `FnMut` / `FnOnce` 能力及可变性要求随目标 binding 保留。
-- owning capture 搬入新的稳定 environment storage，旧 drop flag 同步清除，目标环境接管递归 cleanup；
-  borrowed capture 仍受原有词法 loan 限制。资源型 partial/closure 的转移由原生测试验证。
-- `FnOnce` 调用会在实参 staging 完成后于 cleanup IR 中正式 `MoveOut` callable root，后续实参提前退出
-  时仍由 staging 精确清理。
-- 这不是隐式装箱或动态擦除。跨函数返回/传递 concrete callable 仍被拒绝，下一阶段将为匿名具体
-  callable 定义可单态化的返回与参数 ABI。
-
-v0.26.0 接通 concrete callable 的跨函数返回 ABI：
-
-- 每个 partial/closure 获得编译器生成的匿名具体环境类型；身份包含静态调用目标、剩余参数组、调用
-  能力及 capture 类型/模式，不同闭包不会因调用签名相同而被隐式擦除。
-- owning partial 与 `FnOnce` closure 可按值返回。LLVM 使用具名环境 struct，调用入口仍静态已知，
-  不需要 allocator、隐藏代码指针或动态分派。
-- 环境字段进入完整 move-path forest、drop flag tree 和递归 glue；调用方可继续移动、调用或放弃返回值。
-  Copy capture、资源 capture、返回后别名转移和放弃环境均有原生执行/trap 覆盖。
-- 捕获共享/可变借用的 closure 仍禁止逃逸。匿名 callable 作为参数将通过泛型
-  `Fn` / `FnMut` / `FnOnce` 约束开放，而不是要求用户拼写匿名类型。
-
-v0.27.0 建立 raw pointer 与最小 `unsafe` 边界：
-
-- `Ptr(T)` / `MutPtr(T)` 是 `Copy` 的 LLVM `ptr` 标量；`Ptr(borrow place)` 与
-  `MutPtr(mut borrow place)` 从现有 place 取址，并保留对应词法 loan。
-- `unsafe do { *pointer }` 读取，`unsafe do { *pointer = value }` 通过 `MutPtr` 写入；安全上下文中的
-  裸解引用和通过共享 `Ptr` 写入都会被拒绝。
-- 第一阶段只允许读写 `Copy` pointee，避免裸访问绕过资源 move/drop 规则。null、指针算术、allocator
-  与 C ABI 后续开放。
-- `_` 类型推断占位符保持完全移除；泛型推断只通过省略编译期参数组、运行时实参（包括命名实参）和
-  期望结果完成。
-
-v0.28.0 固定可替换 allocator ABI：
-
-- `raw_alloc(T)(size, align)` 与 `raw_dealloc(pointer, size, align)` 是 edition 保留 intrinsic，只能在
-  `unsafe do` 中调用；前者返回非空 `MutPtr(T)`，并支持从期望类型省略 `T`，后者从 pointer 推断。
-- LLVM 只依赖 `salicin_alloc(i64, i64) -> ptr` 和 `salicin_dealloc(ptr, i64, i64) -> void` 两个符号。
-  `salic build/run` 自动链接弱默认 C11 实现，`emit-ir` 保持未解析声明。
-- 默认实现校验非零二次幂 alignment、处理高于 `max_align_t` 的对齐、在 OOM/非法 layout 时 abort；
-  释放要求完全相同的 size/alignment。
-- 外部强符号可覆盖默认实现；原生链接测试用自定义 allocator 覆盖两个弱符号并验证实际分派。
-
-v0.29.0 提供 target-aware 类型布局查询：
-
-- `size_of(T)` / `align_of(T)` 返回 `u64`，覆盖标量、raw pointer、array、struct/enum、具体泛型实例与
-  concrete callable；无数据表示的类型会被拒绝。
-- lowering 使用 LLVM `getelementptr`/`ptrtoint` 常量表达式，从最终 target 获得 pointer width、padding
-  与 alignment，不在 Salicin 编译器或库中硬编码 LP64 假设。
-- 查询可参与函数中的普通整数表达式，也可单独初始化顶层常量；target-dependent 顶层符号运算暂时
-  明确拒绝。allocator 原生测试已经直接使用查询结果分配、访问并释放聚合。
-
-v0.60.0 增加按元素寻址的 raw pointer intrinsic：
-
-- `unsafe do { raw_offset(pointer, index) }` 接受 `Ptr(T)` 或 `MutPtr(T)` 与 `u64` index，返回相同
-  mutability 的 pointer。
-- LLVM lowering 使用具体 `T` 的 `getelementptr`，因此 index 按目标平台上的完整 pointee layout 缩放；
-  `T = ()` 时地址保持不变。
-- intrinsic 不做 allocation 边界或初始化状态检查；越界、悬空和错误 provenance 仍由 unsafe 调用者负责。
-
-v0.61.0 在这组基础上加入首个普通 Salicin `Vec(T)`：
-
-- 首版约束 `T: Copy`，提供 `Vec(T).new()`、`with_capacity`、`len`、`capacity`、`push`、`read` 和
-  `write`，自由函数表面同步保留。
-- 三字段表示保持私有；增长按容量翻倍，逐元素复制到新 allocation 后释放旧 allocation，最终
-  `Drop` 也通过既有 `salicin_dealloc` ABI 释放 storage。
-- 分配前检查容量翻倍及 `capacity * size_of(T)` 溢出，读写检查 index；失败路径使用 unsafe
-  `raw_trap()`，不会把未验证的 layout 交给 allocator。
-- `Vec(())` 保留真实的长度和容量语义；零大小元素无需地址递增。资源元素的逐元素 move/drop API
-  留给下一阶段，因此当前不会以 Copy 实现掩盖资源所有权。
-
-v0.62.0 补齐 `Vec(T)` 的资源所有权：
-
-- `new`、`with_capacity` 和 `push` 对任意有数据表示的 `T` 开放；未标注的 push 参数让 Copy 元素复制、
-  资源元素移动，与普通参数规则一致。
-- 扩容通过 `raw_take` 从旧 storage 逐元素 move，再以 `raw_init` 写入新 storage；释放旧 allocation
-  不会析构已经迁走的元素。
-- `replace(index)(value)` 返回旧 owner，`pop()` 返回 `Option(T)`；两者都只转移一次所有权，越界
-  replace 仍 trap，空 pop 返回 `None`。
-- Vec 的 source-backed `Drop` 会 move-out 并析构剩余的每个已初始化元素，再释放 allocation；
-  零大小资源也执行相同次数的析构。
-
-v0.63.0 补齐常用容量与收缩操作：
-
-- `reserve(additional)` 以 `len + additional` 为最低容量，并同时检查加法、增长和最终 layout；`push`
-  复用这一条扩容路径。
-- `swap_remove(index)` 返回被移除的 owner，并把末元素移动到空位，不复制资源。
-- `truncate(new_length)` 和 `clear()` 会立即且恰好一次析构被移除元素，同时保留 allocation；
-  `is_empty()` 提供零长度查询。
-
-v0.64.0 增加有序编辑和跨容器转移：
-
-- `insert(index)(value)` 与 `remove(index)` 通过逐元素 move 保持顺序，支持资源元素；insert 允许
-  `index == len`，其他越界会 trap。
-- `append(other)` 同时可变借用两个 Vec，把 source 的全部 owner 转移到 destination，source 变为空但
-  保留容量；借用规则禁止 self-append。
-- `shrink_to_fit()` 把元素移动到容量恰为 len 的新 allocation，不会提前析构资源。
-
-v0.65.0 加入动态容器的安全元素借用：
-
-- `values.at(index)` 返回绑定到 Vec 共享借用期的 `borrow T`；`values.at_mut(index)` 返回绑定到
-  可变借用期的 `mut borrow T`。两者都检查边界，并适用于非 Copy 资源。
-- 引用存活期间，普通借用规则会禁止 push、clear、重分配或冲突借用；可变引用可直接修改元素。
-- alloc 内部通过 unsafe `raw_borrow(pointer, borrow anchor)` / `raw_mut_borrow(pointer, mut borrow
-  anchor)` 建立引用。anchor 决定静态 loan/region，unsafe 调用者负责证明 pointer 指向该 owner 的
-  已初始化且对整个借用期有效的 storage。
-
-v0.66.0 将同一机制用于 Box：
-
-- `boxed.as_ref()` / `box_as_ref(boxed)` 返回 `borrow T`，`boxed.as_mut()` /
-  `box_as_mut(boxed)` 返回 `mut borrow T`，均支持非 Copy 资源 pointee。
-- 返回引用以 Box 借用为 region/loan 来源；引用存活期间不能 replace、into_inner 或建立冲突借用。
-- compiler-embedded core、alloc 与用户源码现在统一在收集前擦除纯编译期 region 参数，因此标准库中的
-  显式 `'a` 不会被误当成需要用户填写或推断的类型参数。
-
-v0.67.0 增加资源安全的 Vec 原地重排：`swap(left, right)` 检查两个索引，并以 move 交换不同槽位；
-相同索引不做任何 raw move。`reverse()` 复用同一实现，从两端向中间交换。两者都不要求 `Copy`，
-不会因存储位置变化而析构元素，空 Vec 反转也是安全 no-op。
-
-v0.30.0 进入普通 Salicin `alloc` 源并提供首个 owning `Box(T)`：
-
-- `library/alloc/src/prelude.sali` 随 compiler 按 edition 嵌入，仍经过普通 parser、模块 provenance、
-  API visibility、泛型单态化和所有权分析；bootstrap 会严格验证 `Box`、`box_new`、`box_ptr` 的公开形状。
-- `box_new(value)` 推断 `T`，使用 target layout 分配，并通过新的 `raw_init(pointer, move value)` 把资源
-  初始化进未初始化 heap storage；该操作区别于 Copy-only 的 raw overwrite。
-- `Box(T)` 字段对用户私有，owner 可普通移动但不可复制。最终 drop glue 递归析构 heap pointee，再用
-  原 layout 释放；custom Drop、exactly-once alias move、嵌套 Box 与 ZST 均有原生覆盖。
-- `box_ptr(boxed)` 通过共享借用返回 `MutPtr(T)`；pointee 访问仍是显式 unsafe。安全 Deref/into-inner API
-  等待泛型 inherent/trait 约束表面。
-
-v0.31.0 补齐首组安全 Box owning access：
-
-- `box_into_inner(boxed)` 消费唯一 owner，move 出 pointee，只释放 allocation，并把 `T` 的析构责任交给
-  返回值；资源原生测试证明 Box glue 不会重复析构。
-- `box_replace(boxed)(value)` 要求 mutable Box binding，返回旧 `T` 并让 Box 接管新 `T`；custom Drop
-  测试验证旧值和新值各析构一次。
-- 新的 unsafe `raw_take` 只负责从 `MutPtr(T)` move-out，安全 `forget` 明确消费但不析构 owner。
-  两者都进入 cleanup verifier；安全 alloc wrapper 封闭未初始化 storage 窗口。
-
-v0.32.0 落地 generic inherent extension：
-
-- `extend(T: type) Cell(T) { ... }` 会随每个 concrete struct/enum instance 单态化；target 参数可重排，
-  但必须完整决定 extension 参数。
-- 泛型关联函数支持 `Cell.new(42)` 的省略推断、期望结果类型和 `Cell.new(T: i64)(42)` 命名类型参数；
-  `_` 推断语法仍不存在。
-- module resolver 保留 header 参数作用域并限定到定义类型的 package；重复方法、自由参数、generic
-  member、associated constant 与尚无 where selection 的 generic trait impl 都给出确定错误。
-- alloc 现在公开 `Box.new`、`as_mut_ptr`、`into_inner`、`replace` 方法；它们来自普通
-  `extend(T: type) Box(T)` 源，原有自由函数继续兼容。
-
-v0.44.0 加入首个安全 Box 只读访问切片：
-
-- `box_read(boxed)` 与 `boxed.read()` 仅在 `T: Copy` 时存在，从堆中复制 pointee，不暴露裸指针也不
-  转移所有权；资源类型调用自由函数会在 where proof 处失败，方法则根本不会物化。
-- `read` 位于独立的 constrained generic inherent extension，普通 owning Box API 对所有 `T` 保持可用。
-- 这不是借用返回 API；显式引用类型和生命周期关系落地前，不会用值类型伪装从 Box 返回的引用。
-
-v0.45.0 补齐 Copy Box 的安全写侧：`box_write(boxed)(value)` 与 `boxed.write(value)` 通过可变借用
-复制更新堆值；非 `Copy` Box 不会获得这些成员，继续使用能正确转移并析构旧值的 `replace`。
-
-标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
-所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
-`Copy`，v0.9 建立 cleanup CFG，v0.10 补齐资源 storage/transfer，v0.11 完成完整 move-path forest 与
-初始化 fixed point，v0.12 再完成 temporary storage liveness，v0.14 已加入 `needs_drop` 与控制流敏感
-drop-flag 计划，v0.15 提供 `Drop` 与递归 glue，v0.16 完成第一阶段结构化 scope-exit lowering，
-v0.17 已物化 struct projection flags，v0.18 接通直接 enum payload binding，v0.19 补齐嵌套
-downcast remainder，v0.20 完成 guard rollback，v0.21 完成本地 `FnOnce` resource captures，v0.22
-开放 owning partial captures，v0.23 完成 borrowed overwrite cleanup，v0.24 完成 match planner 与
-正式 cleanup IR 的对齐，v0.25 开放 concrete callable 的局部移动，v0.26 接通拥有环境的跨函数返回，
-v0.27 建立 raw pointer 与最小 `unsafe` 边界，v0.28 固定可替换 allocator ABI，v0.29 提供 target-aware
-layout intrinsic，v0.30 以普通 alloc 源实现首个 owning `Box(T)`，v0.31 补齐 `into_inner` 与 replace
-所有权访问，v0.32 落地 blanket generic inherent extension 与 Box 方法表面，v0.33 落地泛型函数
-普通 `where T: Trait` 谓词、`Copy` 抽象证明与具体调用点检查，v0.34 接通不涉及关联类型的 bound
-method 静态分派和泛型间证明转交，v0.35 加入 `Output = T` 关联类型等式与受约束泛型运算符，
-v0.36 开放带 where 的 blanket inherent extension 和按实例条件成员，v0.37 又加入普通泛型 trait
-impl、关联类型替换、按 where 条件选择和跨包孤儿规则，v0.38 补齐 blanket `Copy` / `Drop` 的结构
-证明、固定点和析构一致性，v0.39 再以类型模式统一完成 blanket/concrete 重叠检查并允许不相交的
-trait 参数实现，v0.40 补上未实例化 blanket 方法的定义期签名与方法体检查，v0.41 开放可覆盖、
-定义期验证且支持关联类型替换的默认 trait 方法，v0.42 又让共享借用方法可直接作用于临时名义值，
-并由词法临时绑定保证完整调用期间的地址稳定和调用后的唯一析构，v0.43 将相同模型扩展到可变借用
-receiver，v0.44-v0.45 则先为 `T: Copy` 落地类型安全的 `Box.read` / `Box.write`，v0.46 再把相同
-调用期临时值模型推广到所有普通共享/可变借用参数，v0.47 又将固定数组的常量索引接入完整 place、
-借用冲突和 cleanup move-path，同时明确保留真正引用返回所需的生命周期类型边界。
-v0.48 随后解除数组元素的 `Copy` 限制，并补齐资源数组逐元素的 drop glue、运行时 drop slot、移动、
-重初始化和覆盖语义；v0.49 再允许用常量索引直接从数组字面量或函数返回的临时数组中移动资源元素，
-并只析构未被选中的其余元素。v0.50 将整数和布尔字面量模式接入 enum 载荷及嵌套 struct pattern，
-其候选回退、显式 guard 和资源 binding 提交共用同一条受验证的 guard 控制流；v0.51 又让 `match`
-直接接受布尔和整数 scrutinee，并保证带副作用的 scrutinee 只求值一次。v0.52 开放 `A.method(a)()`
-类型限定方法调用；同名关联函数存在时可用 `A.method(self: a)()` 明确选择方法，泛型类型实参还可由
-具体 receiver 推断。v0.53 又在具体、泛型及 trait `extend` 成员中开放表达式级 `Self`：可写
-`Self(value)`、`Self.CONSTANT`、`Self.method(self: value)()` 和 `Self.Some(payload)` 模式；默认 trait
-方法中的限定调用也会在具体实现上静态分派。v0.54 开始显式引用基础：局部别名可写
-`let r: borrow T = borrow value` 或 `let r: mut borrow T = mut borrow value`，编译器会核对借用种类和
-pointee 类型，并继续把别名排除在 owned cleanup 之外。v0.55 进一步加入 `'a: region` 编译期参数，
-以及 `borrow('a) value: T`、`borrow('a) T`；region 作用域会覆盖函数、局部注解、闭包、名义字段、
-trait、extend 与 where 类型，并在单态化前擦除，不会成为类型实参。
-v0.56 让显式 region 参与自由函数和关联函数的返回借用证明，并以 LLVM 指针 ABI 传递返回引用；
-调用者会把来源 loan 提升到引用所在的词法作用域，支持字段投影、泛型转发、自动读取和可变赋值。
-v0.57 将同一规则扩展到固有方法和 trait 方法，包括实例、类型限定及泛型方法调用，并拒绝从临时或
-局部接收者逃逸。v0.58 允许只有一个借用参数时省略返回 region；若没有来源或存在多个候选，仍需显式
-region 消歧。v0.59 开放 `value: borrow T` / `value: mut borrow T` 普通引用值参数：共享引用默认复制，
-可变引用默认移动，并支持泛型推断、返回转发和跨块 loan 保留。v0.60 增加 unsafe
-`raw_offset(pointer, index)`，按 LLVM pointee layout 计算元素地址；v0.61 建立检查式 Vec，v0.62 又
-补齐资源元素的增长搬迁、pop/replace 与逐元素析构，v0.65 加入带 region 的元素借用。下一步推进
-完整 slice view 与批量容器 API；泛型 callable
-参数将在正式的 `where` / `Fn` 约束语法落地后开放。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小
-运行时之后。
-
-最小示例：
+Salicin is an experimental, statically compiled programming language with an LLVM backend. It
+explores uniform `let` declarations, curried parameter groups, ownership-aware argument passing,
+traits, pattern matching, closures, and source-backed language items. Source files use `.sali`;
+the compiler executable is `salic`.
+
+> Salicin is under active development. Its syntax, semantics, and standard library are not stable.
 
 ```sali
 let add(x: i32)(y: i32): i32 = x + y
 
-let main(): i32 = add(1)(41)
+let main(): i32 = {
+  let add_two = add(2)
+  add_two(40)
+}
 ```
 
-捕获闭包目前采用保守子集：多参数组必须在一次调用链中完整应用，且只支持受限捕获形状和直接调用。
-当前借用期采用词法范围。固定数组可以包含资源元素；常量索引是可读取、借用、移动和赋值的完整 place，
-不同常量索引拥有独立的所有权与借用状态。动态索引暂时仍是带运行时边界检查的只读表达式，而且仅可
-复制 `Copy` 元素；资源元素既可从具名数组的常量索引 place 访问，也可通过常量索引从数组临时值中
-直接移出。循环回边禁止移动
-循环外部绑定，以保证下一轮仍拥有相同的可用值。完整调用中的普通 `borrow` / `mut borrow` 参数以及
-对应方法 receiver 都可直接借用临时值；编译器按源顺序 staging 同次调用的值参数，临时值存活到调用
-结束，需要可变借用时自动生成可变绑定。任何 partial application 仍不能捕获借用；其他 bound method
-捕获只允许 `Copy` receiver 和实参。名义 `Copy` 必须以具体、同包且结构合法的
-实现显式选择加入；blanket `Copy` 也必须显式声明并由字段布局和 where proofs 证明，泛型函数可用
-`where T: Copy` 消费该证明。
-载荷字面量模式支持整数和布尔值，并会校验字段类型与整数范围；穷尽性当前仍按 enum variant 保守
-计算，因此仅由字面量模式列举的 variant 还需要一个 `_` 载荷回退 arm。
-标量 `match` 支持字面量、binding、`_` 与 guard；无 guard 的 `true` 和 `false` 可共同覆盖 `bool`，
-整数匹配或带 guard 的布尔覆盖仍需无 guard 的 `_` / binding 回退。
-函数类型和闭包类型也不实现 `Copy`。
-`borrow T` / `mut borrow T` 可作为局部 `let` 的类型注解。带显式 region 的借用类型还可作为函数、
-关联函数、固有方法和 trait 方法的返回类型，但必须能追溯到同 region 的借用参数；调用者按返回引用
-的词法作用域保留来源 loan。借用值可以作为普通参数传递；共享引用实现 `Copy`，可变引用按 `move`
-传递，参数体内默认自动解引用。当前仍拒绝借用字段、局部或临时值逃逸，以及捕获引用值的部分应用；
-借用期暂未采用完整 NLL。返回借用只有一个输入来源时可省略 region；多个借用来源必须显式标注同一
-region。
-表达式级 `Self` 只在 `extend` 成员内部有效，并表示当前扩展目标。省略编译期组的嵌套推断仍受当前表达式类型探测能力限制；
-无法唯一推断时需用 `T: Concrete` 形式的命名编译期实参。普通泛型 trait impl 已按具体实例静态
-选择；默认方法已静态单态化，暂不支持泛型关联类型、带显式 trait 名的完全限定调用
-和 trait object；无约束的抽象类型
-不能声明为 `copy` 参数。`Add`、`Sub`、`Mul`、`Div` 与 `Rem` 已由 edition core 登记为 lang item，
-但重载路径目前仍要求左操作数能静态探测为具体名义类型；多个 `Rhs` 候选并存时，无法静态探测的
-复杂右操作数需要先绑定到带类型标注的局部量。`Option` / `Result` 构造器既可使用
-`Option(i32).Some(1)` 这样的显式类型头，也可在证据充分时写 `Option.Some(1)`；
-`??` 首版直接识别这两个预导入容器，尚未开放用户 `Coalesce` 实现。`.try` 首版只在显式标注
-`Option` / `Result` 返回类型的具名函数中建立传播边界；`Result` 错误类型必须完全相同，尚未开放
-`Try` / residual 转换、传播块或闭包传播。`throw` 复用同一具名 `Result` 边界且暂不执行错误类型
-转换。`?.` 首版直接识别拥有的预导入容器，尚未开放用户 `Chain` 实现、借用容器、可变借用
-receiver、方法部分应用或可调用字段。五个算术协议之外的其他运算符 trait 和异步也尚未开放。
+## Build and run
 
-文件模块当前尚未实现 glob import；固有 `extend` 成员还没有独立的显式可见性语法，当前继承
-目标类型的边界。
-解析期 API 诊断带 source path，降低后才发现的推断 API 或字段访问诊断还没有逐 item source map。
-依赖目前仅支持本地路径，没有 registry、Git、多版本求解或校验和。
+The compiler requires Rust. Building or running a native executable also requires `clang` on
+`PATH`.
+
+```sh
+cargo build --release
+target/release/salic run examples/basics.sali
+```
+
+Common commands:
+
+```sh
+salic check main.sali
+salic emit-ir main.sali -o main.ll
+salic build main.sali -o main
+salic run main.sali -- argument
+```
+
+Project builds use `salicin.toml`, discover `src/lib.sali` and `src/main.sali`, and place artifacts
+under `build/`. Local path dependencies are recorded in `salicin.lock`.
+
+## Repository layout
+
+```text
+compiler/   Rust implementation of salic
+library/    Salicin core and allocation libraries
+runtime/    Minimal native runtime support
+docs/       Language, compiler, library, runtime, and project documentation
+examples/   Small Salicin programs
+tests/      End-to-end compiler tests
+```
+
+Documentation starts at [docs/README.md](docs/README.md). In particular:
+
+- [language specification](docs/language/specification.md)
+- [grammar](docs/language/grammar.md)
+- [compiler architecture](docs/compiler/architecture.md)
+- [standard-library organization](docs/standard-library/README.md)
+- [implementation status](docs/project/status.md)
+- [release history](CHANGELOG.md)
+
+## Development
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
+
+Salicin is licensed under the [MIT License](LICENSE).

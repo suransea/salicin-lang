@@ -18,7 +18,7 @@ use salicin_lang::{
     compile_source_packages,
 };
 
-const DEFAULT_ALLOCATOR_RUNTIME: &str = include_str!("../runtime/allocator.c");
+const DEFAULT_ALLOCATOR_RUNTIME: &str = include_str!("../../runtime/allocator.c");
 
 const HELP: &str = "Salicin compiler
 

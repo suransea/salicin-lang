@@ -10,7 +10,8 @@ use crate::manifest::Edition;
 use crate::modules::PackageId;
 use crate::parser;
 
-const EDITION_2026_PRELUDE: &str = include_str!("../library/alloc/src/prelude.sali");
+const EDITION_2026_BOXED: &str = include_str!("../../library/alloc/src/boxed.sali");
+const EDITION_2026_VEC: &str = include_str!("../../library/alloc/src/vec.sali");
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AllocBundle {
@@ -19,24 +20,35 @@ pub struct AllocBundle {
 
 impl AllocBundle {
     pub fn for_edition(edition: Edition) -> Result<Self, AllocBundleError> {
-        let source = match edition {
-            Edition::Edition2026 => EDITION_2026_PRELUDE,
+        let modules = match edition {
+            Edition::Edition2026 => [("boxed", EDITION_2026_BOXED), ("vec", EDITION_2026_VEC)],
         };
-        let mut program = parser::parse(source).map_err(|error| {
-            AllocBundleError::new(
-                edition,
-                vec![format!("embedded alloc does not parse: {error}")],
-            )
-        })?;
-        program.item_origins = vec![
-            ItemOrigin {
-                package: PackageId::ALLOC.0,
-                module_path: vec!["@alloc".to_owned()],
-            };
-            program.items.len()
-        ];
-        validate_program(edition, &program)?;
-        Ok(Self { program })
+        let mut combined = Program::new(Vec::new());
+        for (module, source) in modules {
+            let mut program = parser::parse(source).map_err(|error| {
+                AllocBundleError::new(
+                    edition,
+                    vec![format!(
+                        "embedded alloc module `{module}` does not parse: {error}"
+                    )],
+                )
+            })?;
+            program.item_origins = vec![
+                ItemOrigin {
+                    package: PackageId::ALLOC.0,
+                    module_path: vec!["@alloc".to_owned(), module.to_owned()],
+                };
+                program.items.len()
+            ];
+            combined.items.append(&mut program.items);
+            combined
+                .item_visibilities
+                .append(&mut program.item_visibilities);
+            combined.item_origins.append(&mut program.item_origins);
+            combined.uses.append(&mut program.uses);
+        }
+        validate_program(edition, &combined)?;
+        Ok(Self { program: combined })
     }
 
     pub const fn program(&self) -> &Program {
@@ -984,6 +996,10 @@ mod tests {
         program
     }
 
+    fn alloc_source() -> String {
+        [EDITION_2026_BOXED, EDITION_2026_VEC].join("\n")
+    }
+
     #[test]
     fn edition_2026_alloc_bundle_parses_and_validates() {
         let bundle = AllocBundle::for_edition(Edition::Edition2026).unwrap();
@@ -993,12 +1009,17 @@ mod tests {
             .item_origins
             .iter()
             .all(|origin| origin.package == PackageId::ALLOC.0));
+        assert!(bundle.program.item_origins[..11]
+            .iter()
+            .all(|origin| origin.module_path == ["@alloc", "boxed"]));
+        assert!(bundle.program.item_origins[11..]
+            .iter()
+            .all(|origin| origin.module_path == ["@alloc", "vec"]));
     }
 
     #[test]
     fn rejects_box_read_without_its_copy_proof() {
-        let source =
-            EDITION_2026_PRELUDE.replacen("where T: Copy = unsafe do {", "= unsafe do {", 1);
+        let source = alloc_source().replacen("where T: Copy = unsafe do {", "= unsafe do {", 1);
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
             .expect_err("box_read without Copy must fail bootstrap validation");
         assert!(error.to_string().contains("box_read"));
@@ -1006,7 +1027,7 @@ mod tests {
 
     #[test]
     fn rejects_box_write_without_its_copy_proof() {
-        let source = EDITION_2026_PRELUDE.replacen(
+        let source = alloc_source().replacen(
             "pub let box_write(T: type)(mut borrow boxed: Box(T))(copy value: T): ()\nwhere T: Copy = unsafe do {",
             "pub let box_write(T: type)(mut borrow boxed: Box(T))(copy value: T): ()\n= unsafe do {",
             1,
@@ -1018,7 +1039,7 @@ mod tests {
 
     #[test]
     fn rejects_a_malformed_copy_box_extension() {
-        let source = EDITION_2026_PRELUDE.replacen(
+        let source = alloc_source().replacen(
             "let read(borrow self)(): T = box_read(self)",
             "let peek(borrow self)(): T = box_read(self)",
             1,
@@ -1030,11 +1051,8 @@ mod tests {
 
     #[test]
     fn rejects_a_malformed_vec_representation() {
-        let source = EDITION_2026_PRELUDE.replacen(
-            "  storage_capacity: u64,",
-            "  exposed_capacity: u64,",
-            1,
-        );
+        let source =
+            alloc_source().replacen("  storage_capacity: u64,", "  exposed_capacity: u64,", 1);
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
             .expect_err("malformed Vec representation must fail bootstrap validation");
         assert!(error.to_string().contains("alloc Vec"));
@@ -1042,7 +1060,7 @@ mod tests {
 
     #[test]
     fn rejects_a_malformed_vec_drop_extension() {
-        let source = EDITION_2026_PRELUDE.replacen(
+        let source = alloc_source().replacen(
             "let drop(mut borrow self)(): () = {",
             "let release(mut borrow self)(): () = {",
             1,
@@ -1054,7 +1072,7 @@ mod tests {
 
     #[test]
     fn rejects_a_malformed_vec_owning_extension() {
-        let source = EDITION_2026_PRELUDE.replacen(
+        let source = alloc_source().replacen(
             "let pop(mut borrow self)(): Option(T) = vec_pop(self)",
             "let take(mut borrow self)(): Option(T) = vec_pop(self)",
             1,
@@ -1066,7 +1084,7 @@ mod tests {
 
     #[test]
     fn rejects_a_malformed_copy_vec_extension() {
-        let source = EDITION_2026_PRELUDE.replacen(
+        let source = alloc_source().replacen(
             "let read(borrow self)(index: u64): T = vec_read(self)(index)",
             "let peek(borrow self)(index: u64): T = vec_read(self)(index)",
             1,

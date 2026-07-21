@@ -1,11 +1,11 @@
 # Salicin 语法骨架
 
-状态：Draft 0.3
+状态：演进中的语法参考
 源码后缀：`.sali`  
 源码编码：UTF-8
 
 本文给 lexer 和 parser 提供可实现的语法骨架。语义、类型与所有权规则以
-[LANGUAGE.md](LANGUAGE.md) 为准。这里的 EBNF 尚不是用于标准化的最终 grammar，但每项歧义都必须
+[语言规范](specification.md)为准。这里的 EBNF 尚不是用于标准化的最终 grammar，但每项歧义都必须
 在 parser 测试中得到唯一 AST。
 
 ## 1. 记号
@@ -167,18 +167,6 @@ where T: Display {
 }
 ```
 
-v0.32 首先实现其中不带 trait/where 的 blanket inherent 子集。每个声明参数必须在 target arguments 中
-作为裸类型参数恰好出现一次，因此 `extend(T: type) Box(T)` 与参数重排合法，自由参数、具体
-specialization、generic member 和 inherent associated constant 暂不合法。关联函数可写
-`Box.new(value)`，其参数通过实参、期望结果或命名参数推断，不使用 `_` placeholder。v0.33 已实现
-泛型函数上的普通 `where T: Trait` 谓词、多个谓词和尾逗号；v0.34 又允许 bound method
-静态分派，v0.35 加入关联类型等式，v0.36 将同一谓词系统用于 blanket generic inherent extension。
-v0.37 再加入 blanket generic trait implementation selection，包括 where 条件和关联类型替换；
-v0.38 又开放 blanket `Copy` / `Drop`：`Copy` 必须能由字段布局与 where proofs 在定义处证明，
-`Drop` 随 concrete instance 生成析构实现。重叠 specialization 仍保留为后续语义。
-v0.39 对 generic/concrete trait argument patterns 做统一检查，允许可证明不相交的实现并拒绝所有
-存在共同 concrete instance 的组合；where 暂不参与互斥证明。
-
 ### 4.4 导入与 FFI
 
 ```ebnf
@@ -223,22 +211,12 @@ type_arguments = "(", type_argument, { ",", type_argument }, [ "," ], ")" ;
 type_argument  = type_expr | INTEGER ;
 ```
 
-v0.54 已实现不带显式 region 的 `borrow T` / `mut borrow T` 解析及局部 `let` 注解。v0.55 已实现
-`REGION`、`'a: region` 编译期参数和 borrow pass mode/type 上的显式 region，并在单态化前擦除 region。
-v0.56 已开放带显式 region 的自由函数和关联函数返回借用，并要求来源是同 region 的借用参数。
-v0.57 又开放固有及 trait 方法的返回借用。借用值参数、借用字段以及无法证明来源的返回引用仍会得到
-语义诊断。v0.58 在恰有一个借用参数时推断省略的返回 region；零个或多个候选必须显式标注 region。
-v0.59 已实现 `(_: borrow T)` / `(_: mut borrow T)` 引用值参数；借用字段仍保留到存储 region 检查阶段。
-
 `_` 不是类型实参。调用中的编译期参数组可整体省略，并由运行时实参和期望类型推断；显式消歧使用
 普通的 `IDENT ":" expression` 命名实参，不增加另一套括号或关键字。
 
 `void` 和 `never` 按普通 prelude 名称解析，分别等价于 `let void = ()` 与
 `let never = enum {}`，不是 lexer 关键字。零 variant enum 合法；其值位置可以用空的
 `match {}` 消除。
-
-v0.5 的引导前端已经从 `core` 源加载 `never`；通用类型别名 item 尚未实现，因此 `void` 暂由
-parser 直接规范化为 `()`。
 
 匿名签名槽只有在模式为 `auto` 时可省略 `_:`：
 
@@ -258,9 +236,6 @@ trait_ref = path, [ "(", trait_argument,
                     { ",", trait_argument }, [ "," ], ")" ] ;
 trait_argument = type_expr | IDENT, "=", type_expr ;
 ```
-
-v0.35 已实现 `Output = T` 这类关联类型等式；它不是运行时命名实参。位置 trait 参数必须写在
-关联类型等式之前。
 
 ## 6. 表达式与优先级
 

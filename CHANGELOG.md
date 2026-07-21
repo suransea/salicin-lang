@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.68.0 - 2026-07-21
+
+- Reorganized the repository around explicit `compiler`, `library`, `runtime`, `docs`, `examples`,
+  and `tests` boundaries while preserving the `salic` crate and binary entry points.
+- Reduced the root README to project orientation and moved language, grammar, architecture,
+  standard-library, runtime, and implementation-status material under a single `docs` entry point.
+- Made this changelog the sole release-history document and removed release narratives from the
+  language specification and library documentation.
+- Split compiler-embedded `core` into `prelude` and `ops` modules and `alloc` into `boxed` and `vec`
+  modules, retaining precise module provenance during bootstrap validation.
+- Defined a narrow edition-prelude policy and documented the remaining compatibility-injection step
+  before non-prelude standard-library names are enforced through ordinary `use` declarations.
+
 ## 0.67.0 - 2026-07-21
 
 - Added checked `Vec.swap(left, right)` for all element types, exchanging distinct initialized
