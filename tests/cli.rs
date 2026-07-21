@@ -148,6 +148,7 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
         "algebraic_effect_composition.sc",
         "algebraic_effect_recursion.sc",
         "algebraic_effect_mutual_recursion.sc",
+        "algebraic_effect_mutual_answer.sc",
         "algebraic_effect_loops.sc",
         "algebraic_effect_cross_function_abort.sc",
     ] {

@@ -6,6 +6,20 @@ subset.
 
 ## Unreleased
 
+## 0.120.0 - 2026-07-22
+
+- Added the internal erased continuation ABI `{ call_entry, drop_entry, environment, one_shot_flag }`
+  behind the source-backed `core.control.Continuation(Input, Output)` contract.
+- Generated typed call and abandonment adapters for each concrete continuation closure, including
+  dynamic drop glue for owned environments and a runtime defense against repeated invocation.
+- Passed erased continuations as explicit hidden named-frame parameters and created a fresh
+  continuation node at every recursive call site, preserving the remaining computation without
+  duplicating a one-shot environment.
+- Unified direct and mutually recursive algebraic-effect frames on the CPS ABI and removed the
+  same-answer-type legacy selection path.
+- Added native mutual-recursion coverage where the recursive functions return `bool` and the
+  complete handler returns `i32`.
+
 ## 0.119.0 - 2026-07-22
 
 - Composed lexically nested handlers of different user-defined effects by carrying the outer

@@ -62,8 +62,9 @@ instantiated identity such as `State(i32)`, propagate through the existing row m
 checked for parameter modes, result types, arity, visibility, and missing row requirements. Derived
 handlers support typed one-shot resumption, abandonment, `done:` answer conversion, named-call
 propagation, direct recursion, and resumable loop backedges. Cross-function abandonment and
-computation after `resume` use explicit CPS continuation closures. Capturing indirect calls and the
-uniform continuation ABI for mutually recursive frames remain implementation work. CPS traversal
+computation after `resume` use explicit CPS continuation closures. Direct and mutually recursive
+frames share an erased call/drop-entry plus environment ABI with a runtime one-shot flag. Capturing
+indirect calls remain implementation work. CPS traversal
 currently covers ordinary arguments, arrays, indexes, members, match bodies, immediate effect
 wrappers, and lazy boolean branches; effectful coalescing fallbacks and match guards remain reserved.
 Different user-defined handlers compose lexically through action, clause, and generated-frame

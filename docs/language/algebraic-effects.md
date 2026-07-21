@@ -143,13 +143,15 @@ continuation closures and an explicit tail-continuation terminator. Consequently
 `resume` abandons the complete suspended cross-function computation, while a clause may continue
 computing after `resume` returns. Shared and mutable captures forwarded through a moved continuation
 are rebased to pointers in its new callable environment. Direct recursion and resumable loop
-backedges use these CPS frames. Mutually recursive SCCs temporarily retain the previous
-same-answer-type direct-frame lowering; an erased environment-plus-entry continuation ABI is needed
-to make their varying static continuation layouts uniform. Selective CPS preserves source order
+backedges use these CPS frames. Concrete continuation closures erase to a uniform internal value
+containing call and drop entries, an environment pointer, and a one-shot flag. Named frames receive
+that value as an explicit hidden parameter; each direct or mutually recursive call site creates a
+fresh node for its remaining computation, so recursive function result and handler answer types may
+differ. Selective CPS preserves source order
 through operation and ordinary-call arguments, arrays, indexes, members, `match` scrutinees and arm
 bodies, and immediate `do`, `unsafe`, and `try` wrappers. Effectful `&&` and `||` operands retain
 their lazy branch semantics. Effectful coalescing fallbacks, optional-call arguments, match guards,
-capturing indirect calls, and the final general continuation ABI remain implementation work;
+capturing indirect calls and effectful lazy fallback/guard paths remain implementation work;
 unsupported cases are rejected rather than compiled with callback-only semantics.
 
 Lexically nested handlers of different effect identities compose in source order. The outer

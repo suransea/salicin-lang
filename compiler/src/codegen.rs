@@ -128,6 +128,10 @@ enum Ty {
     Never,
     Function(FunctionTy),
     Callable(CallableTy),
+    Continuation {
+        input: Box<Ty>,
+        output: Box<Ty>,
+    },
     EffectRow {
         unsafe_effect: bool,
         throws_error: Option<Box<Ty>>,
@@ -385,10 +389,17 @@ struct AlgebraicHandler {
     identity: String,
     clauses: HashMap<String, AlgebraicHandlerClause>,
     done: Option<AlgebraicHandlerClause>,
-    inlining: Rc<RefCell<HashMap<String, String>>>,
+    inlining: Rc<RefCell<HashMap<String, SourceInlineFrame>>>,
     loop_breaks: Rc<RefCell<HashMap<String, SourceContinuation>>>,
     result_source: Option<Type>,
     return_continuations: Rc<RefCell<HashMap<String, SourceContinuation>>>,
+}
+
+#[derive(Clone)]
+struct SourceInlineFrame {
+    recursive_name: String,
+    input: Type,
+    answer: Type,
 }
 
 #[derive(Clone)]
@@ -549,6 +560,9 @@ impl fmt::Display for Ty {
                 Ok(())
             }
             Self::Callable(callable) => write!(f, "{}", Ty::Function(callable.signature.clone())),
+            Self::Continuation { input, output } => {
+                write!(f, "Continuation({input}, {output})")
+            }
             Self::EffectRow {
                 unsafe_effect,
                 throws_error,
@@ -609,6 +623,17 @@ struct HirProgram {
     drop_methods: HashMap<Ty, String>,
     box_pointees: HashMap<String, Ty>,
     array_types: HashSet<Ty>,
+    continuation_adapters: Vec<ContinuationAdapter>,
+}
+
+#[derive(Debug, Clone)]
+struct ContinuationAdapter {
+    name: String,
+    callable_ty: Ty,
+    function: String,
+    captures: Vec<CallableCaptureTy>,
+    input: Ty,
+    output: Ty,
 }
 
 impl HirProgram {
@@ -656,6 +681,7 @@ impl HirProgram {
                 !matches!(capture.mode, PassMode::Borrow | PassMode::MutBorrow)
                     && self.needs_drop(&capture.ty)
             }),
+            Ty::Continuation { .. } => true,
             Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool | Ty::Unit | Ty::Never | Ty::Error => {
                 false
             }
@@ -839,6 +865,20 @@ enum HirExprKind {
         arguments: Vec<HirArgument>,
         consumed_callable: Option<LocalId>,
         result: Ty,
+    },
+    TailInvokeContinuation {
+        continuation: Box<HirExpr>,
+        argument: Box<HirExpr>,
+        result: Ty,
+    },
+    EraseContinuation {
+        binding: LocalId,
+        callable_ty: Ty,
+        adapter: String,
+    },
+    InvokeContinuation {
+        continuation: Box<HirExpr>,
+        argument: Box<HirExpr>,
     },
     Partial {
         function: String,
@@ -1783,6 +1823,7 @@ struct Analyzer {
     handler_frame_parameter_modes: HashMap<String, Vec<PassMode>>,
     hir_globals: HashMap<String, HirGlobal>,
     array_types: HashSet<Ty>,
+    continuation_adapters: Vec<ContinuationAdapter>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -1852,6 +1893,7 @@ impl Analyzer {
             handler_frame_parameter_modes: HashMap::new(),
             hir_globals: HashMap::new(),
             array_types: HashSet::new(),
+            continuation_adapters: Vec::new(),
             diagnostics: Vec::new(),
         };
         if !program.uses.is_empty() {
@@ -2622,7 +2664,7 @@ impl Analyzer {
             Ty::Array(element, _) => self.type_is_copy_with_nominals(element, valid),
             Ty::Enum(name) if name == self.lang_item_name(LangItemKind::Never) => true,
             Ty::Struct(_) | Ty::Enum(_) => valid.contains(ty),
-            Ty::Callable(_) => false,
+            Ty::Callable(_) | Ty::Continuation { .. } => false,
         }
     }
 
@@ -5666,6 +5708,7 @@ impl Analyzer {
                 .map(|(name, instance)| (name.clone(), instance.key.arguments[0].clone()))
                 .collect(),
             array_types: self.array_types.clone(),
+            continuation_adapters: self.continuation_adapters.clone(),
         })
     }
 
@@ -6253,6 +6296,19 @@ impl Analyzer {
                 }
             }
             Type::Named(name, arguments)
+                if name == self.lang_item_name(LangItemKind::Continuation) =>
+            {
+                if arguments.len() != 2 {
+                    self.error("Continuation expects input and output type arguments");
+                    Ty::Error
+                } else {
+                    Ty::Continuation {
+                        input: Box::new(self.lower_source_type(&arguments[0])),
+                        output: Box::new(self.lower_source_type(&arguments[1])),
+                    }
+                }
+            }
+            Type::Named(name, arguments)
                 if arguments.is_empty() && self.abstract_type_parameters.contains_key(name) =>
             {
                 Ty::Struct(name.clone())
@@ -6497,6 +6553,13 @@ impl Analyzer {
             Ty::Callable(callable) => {
                 self.source_type_for_ty(&Ty::Function(callable.signature.clone()))
             }
+            Ty::Continuation { input, output } => Some(Type::Named(
+                self.lang_item_name(LangItemKind::Continuation).to_owned(),
+                vec![
+                    self.source_type_for_ty(input)?,
+                    self.source_type_for_ty(output)?,
+                ],
+            )),
             Ty::EffectRow {
                 unsafe_effect,
                 throws_error,
@@ -6594,6 +6657,11 @@ impl Analyzer {
             Ty::Callable(callable) => {
                 self.diagnostic_type_name(&Ty::Function(callable.signature.clone()))
             }
+            Ty::Continuation { input, output } => format!(
+                "Continuation({}, {})",
+                self.diagnostic_type_name(input),
+                self.diagnostic_type_name(output)
+            ),
             Ty::EffectRow { .. } => ty.to_string(),
         }
     }
@@ -7676,6 +7744,10 @@ impl Analyzer {
                     }
                     restricted
                 }
+                Ty::Continuation { input, output } => {
+                    let restricted = visit(analyzer, access, input, fallback_origin, visited);
+                    visit(analyzer, restricted, output, fallback_origin, visited)
+                }
                 Ty::EffectRow { throws_error, .. } => {
                     throws_error.as_deref().map_or(access.clone(), |error| {
                         visit(analyzer, access, error, fallback_origin, visited)
@@ -7776,6 +7848,10 @@ impl Analyzer {
                         diagnostics,
                     );
                 }
+            }
+            Ty::Continuation { input, output } => {
+                self.collect_type_api_leaks(input, exposed, description, visited, diagnostics);
+                self.collect_type_api_leaks(output, exposed, description, visited, diagnostics);
             }
             Ty::EffectRow { throws_error, .. } => {
                 if let Some(error) = throws_error {
@@ -10133,6 +10209,7 @@ impl Analyzer {
                     !matches!(capture.mode, PassMode::Borrow | PassMode::MutBorrow)
                         && self.type_needs_drop_inner(&capture.ty, visiting)
                 }),
+                Ty::Continuation { .. } => true,
                 Ty::I32
                 | Ty::I64
                 | Ty::U32
@@ -11274,6 +11351,18 @@ impl Analyzer {
                 self.validate_explicit_reference_returns(left, expected, context);
                 self.validate_explicit_reference_returns(right, expected, context);
             }
+            HirExprKind::InvokeContinuation {
+                continuation,
+                argument,
+            }
+            | HirExprKind::TailInvokeContinuation {
+                continuation,
+                argument,
+                ..
+            } => {
+                self.validate_explicit_reference_returns(continuation, expected, context);
+                self.validate_explicit_reference_returns(argument, expected, context);
+            }
             HirExprKind::Assign { value, .. } => {
                 self.validate_explicit_reference_returns(value, expected, context);
             }
@@ -11390,6 +11479,7 @@ impl Analyzer {
             | HirExprKind::Global(_)
             | HirExprKind::Function(_)
             | HirExprKind::PartialCapture { .. }
+            | HirExprKind::EraseContinuation { .. }
             | HirExprKind::Borrow { .. }
             | HirExprKind::RawAddress { .. }
             | HirExprKind::RawBorrow { .. }
@@ -11879,7 +11969,10 @@ impl Analyzer {
                     continue;
                 }
                 ClosureCaptureMode::Move
-                    if !matches!(local.ty, Ty::Struct(_) | Ty::Enum(_) | Ty::Callable(_)) =>
+                    if !matches!(
+                        local.ty,
+                        Ty::Struct(_) | Ty::Enum(_) | Ty::Callable(_) | Ty::Continuation { .. }
+                    ) =>
                 {
                     self.error(format!(
                         "FnOnce move capture `{name}` must be a nominal root local for now"
@@ -12195,6 +12288,37 @@ impl Analyzer {
                             ) & valid
                         },
                     );
+                }
+                if matches!(root, Expr::Name(name) if name == "$handler$invoke$continuation") {
+                    let arguments = groups
+                        .iter()
+                        .flat_map(|group| group.iter())
+                        .collect::<Vec<_>>();
+                    if let Some(CallArg {
+                        value: Expr::Name(name),
+                        ..
+                    }) = arguments.first()
+                    {
+                        if !bound.contains(name) && outer.lookup(name).is_some() {
+                            record_closure_capture(captures, name, ClosureCaptureMode::Move);
+                        }
+                    }
+                    return arguments.iter().skip(1).fold(true, |valid, argument| {
+                        self.scan_simple_closure_captures(&argument.value, bound, outer, captures)
+                            & valid
+                    });
+                }
+                if matches!(root, Expr::Name(name) if name == "$handler$erase$continuation") {
+                    if let Some(CallArg {
+                        value: Expr::Name(name),
+                        ..
+                    }) = groups.iter().flat_map(|group| group.iter()).next()
+                    {
+                        if !bound.contains(name) && outer.lookup(name).is_some() {
+                            record_closure_capture(captures, name, ClosureCaptureMode::Move);
+                        }
+                    }
+                    return true;
                 }
                 if matches!(root, Expr::Name(name) if name.starts_with("$handler$recursive$")) {
                     if let Expr::Name(name) = root {
@@ -15222,6 +15346,95 @@ impl Analyzer {
         let mut groups = Vec::new();
         let root = flatten_call(expression, &mut groups);
         if let Expr::Name(name) = root {
+            if name == "$handler$erase$continuation" {
+                if groups.len() != 1 || groups[0].len() != 1 {
+                    self.error("internal continuation erasure expects one callable argument");
+                    return error_expr();
+                }
+                let Expr::Name(local_name) = &groups[0][0].value else {
+                    self.error("internal continuation erasure requires a local closure");
+                    return error_expr();
+                };
+                let Some(local) = context.lookup(local_name).cloned() else {
+                    self.error("internal continuation erasure refers to an unknown closure");
+                    return error_expr();
+                };
+                let Some(closure) = local.closure.clone() else {
+                    self.error("internal continuation erasure requires closure metadata");
+                    return error_expr();
+                };
+                let [group] = closure.groups.as_slice() else {
+                    self.error("an erased continuation must have one parameter group");
+                    return error_expr();
+                };
+                let [parameter] = group.as_slice() else {
+                    self.error("an erased continuation must accept exactly one value");
+                    return error_expr();
+                };
+                let callable = HirPlace {
+                    local: local.id,
+                    root_ty: local.ty.clone(),
+                    projections: Vec::new(),
+                    ty: local.ty.clone(),
+                    capability: LocalCapability::Owned,
+                    root_mutable: local.mutable,
+                    loan: None,
+                    indirect: false,
+                };
+                self.ensure_available(&callable, context);
+                self.mark_moved(&callable, context);
+                let continuation_ty = Ty::Continuation {
+                    input: Box::new(parameter.ty.clone()),
+                    output: Box::new(closure.result.clone()),
+                };
+                let adapter = format!("$continuation$adapter${}", closure.function);
+                if !self
+                    .continuation_adapters
+                    .iter()
+                    .any(|existing| existing.name == adapter)
+                {
+                    let Ty::Callable(callable_ty) = &local.ty else {
+                        self.error("internal continuation closure has no callable type");
+                        return error_expr();
+                    };
+                    self.continuation_adapters.push(ContinuationAdapter {
+                        name: adapter.clone(),
+                        callable_ty: local.ty.clone(),
+                        function: closure.function,
+                        captures: callable_ty.captures.clone(),
+                        input: parameter.ty.clone(),
+                        output: closure.result,
+                    });
+                }
+                return HirExpr {
+                    ty: continuation_ty,
+                    kind: HirExprKind::EraseContinuation {
+                        binding: local.id,
+                        callable_ty: local.ty,
+                        adapter,
+                    },
+                };
+            }
+            if name == "$handler$invoke$continuation" {
+                if groups.len() != 1 || groups[0].len() != 2 {
+                    self.error("internal continuation invocation expects continuation and value");
+                    return error_expr();
+                }
+                let continuation = self.lower_expr(&groups[0][0].value, None, context);
+                let Ty::Continuation { input, output } = continuation.ty.clone() else {
+                    self.error("internal continuation invocation requires an erased continuation");
+                    return error_expr();
+                };
+                let argument = self.lower_expr(&groups[0][1].value, Some(&input), context);
+                self.require_same_type(&argument.ty, &input, "continuation input");
+                return HirExpr {
+                    ty: (*output).clone(),
+                    kind: HirExprKind::InvokeContinuation {
+                        continuation: Box::new(continuation),
+                        argument: Box::new(argument),
+                    },
+                };
+            }
             if name.starts_with("$handler$tail$") {
                 if groups.len() != 1 || groups[0].len() != 1 {
                     self.error("internal handler tail continuation has invalid arguments");
@@ -15230,31 +15443,43 @@ impl Analyzer {
                 let declared_result = context.declared_result.clone();
                 let call = self.lower_expr(&groups[0][0].value, declared_result.as_ref(), context);
                 let result = call.ty.clone();
-                let HirExprKind::Call {
-                    function,
-                    arguments,
-                    consumed_callable,
-                    ..
-                } = call.kind
-                else {
-                    self.error(
-                        "handler tail continuation must resolve to a direct local-closure call",
-                    );
-                    return error_expr();
-                };
                 if let Some(expected) = context.declared_result.clone() {
                     self.require_same_type(&result, &expected, "handler tail continuation result");
                 }
                 context.returned_types.push(result.clone());
                 context.flow.reachable = false;
-                return HirExpr {
-                    ty: Ty::Never,
-                    kind: HirExprKind::TailCall {
+                return match call.kind {
+                    HirExprKind::Call {
                         function,
                         arguments,
                         consumed_callable,
-                        result,
+                        ..
+                    } => HirExpr {
+                        ty: Ty::Never,
+                        kind: HirExprKind::TailCall {
+                            function,
+                            arguments,
+                            consumed_callable,
+                            result,
+                        },
                     },
+                    HirExprKind::InvokeContinuation {
+                        continuation,
+                        argument,
+                    } => HirExpr {
+                        ty: Ty::Never,
+                        kind: HirExprKind::TailInvokeContinuation {
+                            continuation,
+                            argument,
+                            result,
+                        },
+                    },
+                    _ => {
+                        self.error(
+                            "handler tail continuation must resolve to a direct or erased continuation call",
+                        );
+                        error_expr()
+                    }
                 };
             }
             if let Some(frame) = context.recursive_frame_calls.get(name).cloned() {
@@ -16584,10 +16809,71 @@ impl Analyzer {
         {
             return None;
         }
-        if let Some(recursive_name) = handler.inlining.borrow().get(name).cloned() {
-            let mut recursive_call = expression.clone();
-            replace_call_root_name(&mut recursive_call, &recursive_name);
-            return Some(continuation(self, recursive_call));
+        if let Some(frame) = handler.inlining.borrow().get(name).cloned() {
+            let specialization = self.next_closure;
+            self.next_closure += 1;
+            let value_name = format!("$handler$recursive$continuation$value${specialization}");
+            let continuation_name = format!("$handler$recursive$continuation${specialization}");
+            let erased_name = format!("$handler$erased$recursive$continuation${specialization}");
+            let continuation_body = match continuation(self, Expr::Name(value_name.clone())) {
+                Ok(body) => body,
+                Err(()) => return Some(Err(())),
+            };
+            let continuation_binding = Binding {
+                mutable: true,
+                name: continuation_name.clone(),
+                annotation: Some(Type::Function {
+                    groups: vec![vec![frame.input.clone()]],
+                    effects: FunctionEffects::default(),
+                    result: Box::new(frame.answer.clone()),
+                }),
+                value: Expr::Closure(
+                    vec![Param {
+                        mode: PassMode::Inferred,
+                        access: None,
+                        passing: None,
+                        region: None,
+                        name: value_name,
+                        ty: frame.input.clone(),
+                    }],
+                    Box::new(continuation_body),
+                ),
+            };
+            let erased_binding = Binding {
+                mutable: true,
+                name: erased_name.clone(),
+                annotation: Some(Type::Named(
+                    self.lang_item_name(LangItemKind::Continuation).to_owned(),
+                    vec![frame.input, frame.answer],
+                )),
+                value: Expr::Call(
+                    Box::new(Expr::Name("$handler$erase$continuation".to_owned())),
+                    vec![CallArg {
+                        label: None,
+                        value: Expr::Name(continuation_name),
+                    }],
+                ),
+            };
+            let mut recursive_arguments = groups
+                .iter()
+                .flat_map(|group| group.iter())
+                .map(|argument| CallArg {
+                    label: None,
+                    value: argument.value.clone(),
+                })
+                .collect::<Vec<_>>();
+            recursive_arguments.push(CallArg {
+                label: None,
+                value: Expr::Name(erased_name),
+            });
+            let recursive_call = Expr::Call(
+                Box::new(Expr::Name(frame.recursive_name)),
+                recursive_arguments,
+            );
+            return Some(Ok(Expr::Block(
+                vec![Stmt::Let(continuation_binding), Stmt::Let(erased_binding)],
+                Some(Box::new(recursive_call)),
+            )));
         }
         let Some(_) = function.body else {
             self.error(format!(
@@ -16606,22 +16892,8 @@ impl Analyzer {
             ));
             return Some(Err(()));
         }
-        if self.effect_function_is_in_mutual_cycle(name, &handler.identity) {
-            return Some(self.transform_legacy_effectful_named_call(
-                name,
-                &function,
-                &groups,
-                handler,
-                resume,
-                continuation,
-            ));
-        }
         let specialization = self.next_closure;
         let recursive_name = format!("$handler$recursive${specialization}");
-        handler
-            .inlining
-            .borrow_mut()
-            .insert(name.clone(), recursive_name);
         let prefix = format!("$handler$frame${specialization}${name}$");
         self.next_closure += 1;
         let (parameters, mut body) = hygienic_inline_function(&function, &prefix);
@@ -16637,6 +16909,14 @@ impl Analyzer {
             handler.inlining.borrow_mut().remove(name);
             return Some(Err(()));
         };
+        handler.inlining.borrow_mut().insert(
+            name.clone(),
+            SourceInlineFrame {
+                recursive_name,
+                input: input.clone(),
+                answer: answer.clone(),
+            },
+        );
         let continuation_name = format!("$handler$call$continuation${specialization}");
         let continuation_value_name = format!("$handler$call$continuation$value${specialization}");
         let continuation_body =
@@ -16667,16 +16947,40 @@ impl Analyzer {
                 Box::new(continuation_body),
             ),
         };
+        let erased_continuation_name =
+            format!("$handler$erased$call$continuation${specialization}");
+        let erased_continuation_binding = Binding {
+            mutable: true,
+            name: erased_continuation_name.clone(),
+            annotation: Some(Type::Named(
+                self.lang_item_name(LangItemKind::Continuation).to_owned(),
+                vec![input.clone(), answer.clone()],
+            )),
+            value: Expr::Call(
+                Box::new(Expr::Name("$handler$erase$continuation".to_owned())),
+                vec![CallArg {
+                    label: None,
+                    value: Expr::Name(continuation_name.clone()),
+                }],
+            ),
+        };
+        let frame_continuation_name = format!("$handler$frame$continuation${specialization}");
         let tail_name = format!("$handler$tail${specialization}");
-        let continuation_for_return = continuation_name.clone();
+        let continuation_for_return = frame_continuation_name.clone();
         let tail_continuation: SourceContinuation = Rc::new(move |_, value| {
             Ok(Expr::Call(
                 Box::new(Expr::Name(tail_name.clone())),
                 vec![CallArg {
                     label: None,
                     value: Expr::Call(
-                        Box::new(Expr::Name(continuation_for_return.clone())),
-                        vec![CallArg { label: None, value }],
+                        Box::new(Expr::Name("$handler$invoke$continuation".to_owned())),
+                        vec![
+                            CallArg {
+                                label: None,
+                                value: Expr::Name(continuation_for_return.clone()),
+                            },
+                            CallArg { label: None, value },
+                        ],
                     ),
                 }],
             ))
@@ -16708,7 +17012,18 @@ impl Analyzer {
             .borrow_mut()
             .remove(&return_name);
 
-        let flattened_parameters = parameters.iter().flatten().cloned().collect::<Vec<_>>();
+        let mut flattened_parameters = parameters.iter().flatten().cloned().collect::<Vec<_>>();
+        flattened_parameters.push(Param {
+            mode: PassMode::Move,
+            access: None,
+            passing: None,
+            region: None,
+            name: frame_continuation_name,
+            ty: Type::Named(
+                self.lang_item_name(LangItemKind::Continuation).to_owned(),
+                vec![input.clone(), answer.clone()],
+            ),
+        });
         let mut flattened_arguments = Vec::new();
         for (arguments, declared) in groups.iter().zip(&function.groups) {
             for (argument, declared) in arguments.iter().zip(declared) {
@@ -16730,6 +17045,10 @@ impl Analyzer {
                 });
             }
         }
+        flattened_arguments.push(CallArg {
+            label: None,
+            value: Expr::Name(erased_continuation_name),
+        });
         let frame_name = format!("$handler$frame${specialization}");
         self.handler_frame_parameter_modes.insert(
             frame_name.clone(),
@@ -16754,147 +17073,15 @@ impl Analyzer {
         };
         let call = Expr::Call(Box::new(Expr::Name(frame_name)), flattened_arguments);
         let result = Ok(Expr::Block(
-            vec![Stmt::Let(continuation_binding), Stmt::Let(frame)],
+            vec![
+                Stmt::Let(continuation_binding),
+                Stmt::Let(erased_continuation_binding),
+                Stmt::Let(frame),
+            ],
             Some(Box::new(call)),
         ));
         handler.inlining.borrow_mut().remove(name);
         Some(result)
-    }
-
-    fn effect_function_is_in_mutual_cycle(&self, start: &str, effect: &str) -> bool {
-        fn reaches(
-            analyzer: &Analyzer,
-            current: &str,
-            start: &str,
-            effect: &str,
-            depth: usize,
-            visited: &mut HashSet<String>,
-        ) -> bool {
-            if !visited.insert(current.to_owned()) {
-                return false;
-            }
-            let Some(body) = analyzer
-                .functions
-                .get(current)
-                .and_then(|function| function.body.as_ref())
-            else {
-                return false;
-            };
-            let mut calls = HashSet::new();
-            collect_named_source_calls(body, &mut calls);
-            calls.into_iter().any(|called| {
-                let Some(function) = analyzer.functions.get(&called) else {
-                    return false;
-                };
-                if !function
-                    .effects
-                    .custom
-                    .iter()
-                    .any(|candidate| source_effect_identity(candidate) == effect)
-                {
-                    return false;
-                }
-                (depth > 0 && called == start)
-                    || reaches(analyzer, &called, start, effect, depth + 1, visited)
-            })
-        }
-
-        let mut visited = HashSet::new();
-        reaches(self, start, start, effect, 0, &mut visited)
-            && self
-                .functions
-                .get(start)
-                .and_then(|function| function.body.as_ref())
-                .is_some_and(|body| {
-                    let mut calls = HashSet::new();
-                    collect_named_source_calls(body, &mut calls);
-                    calls.iter().any(|called| called != start)
-                })
-    }
-
-    fn transform_legacy_effectful_named_call(
-        &mut self,
-        name: &str,
-        function: &Function,
-        groups: &[&[CallArg]],
-        handler: Rc<AlgebraicHandler>,
-        resume: Option<SourceResume>,
-        continuation: SourceContinuation,
-    ) -> Result<Expr, ()> {
-        let specialization = self.next_closure;
-        let recursive_name = format!("$handler$recursive${specialization}");
-        handler
-            .inlining
-            .borrow_mut()
-            .insert(name.to_owned(), recursive_name);
-        let prefix = format!("$handler$frame${specialization}${name}$");
-        self.next_closure += 1;
-        let (parameters, mut body) = hygienic_inline_function(function, &prefix);
-        let return_name = format!("$handler$return${specialization}");
-        rewrite_handler_returns(&mut body, &return_name);
-        let identity: SourceContinuation = Rc::new(|_, value| Ok(value));
-        let transformed_body =
-            match self.transform_handler_expr(body, handler.clone(), resume, identity) {
-                Ok(body) => body,
-                Err(()) => {
-                    handler.inlining.borrow_mut().remove(name);
-                    return Err(());
-                }
-            };
-
-        let flattened_parameters = parameters.iter().flatten().cloned().collect::<Vec<_>>();
-        let mut flattened_arguments = Vec::new();
-        for (arguments, declared) in groups.iter().zip(&function.groups) {
-            for (argument, declared) in arguments.iter().zip(declared) {
-                if argument
-                    .label
-                    .as_deref()
-                    .is_some_and(|label| label != declared.name)
-                {
-                    self.error(format!(
-                        "unknown argument label on effectful call `{name}`: expected `{}`",
-                        declared.name
-                    ));
-                    handler.inlining.borrow_mut().remove(name);
-                    return Err(());
-                }
-                flattened_arguments.push(CallArg {
-                    label: None,
-                    value: argument.value.clone(),
-                });
-            }
-        }
-        let frame_name = format!("$handler$frame${specialization}");
-        self.handler_frame_parameter_modes.insert(
-            frame_name.clone(),
-            flattened_parameters
-                .iter()
-                .map(|parameter| parameter.mode)
-                .collect(),
-        );
-        let frame = Binding {
-            mutable: false,
-            name: frame_name.clone(),
-            annotation: function.return_type.clone().map(|result| Type::Function {
-                groups: vec![flattened_parameters
-                    .iter()
-                    .map(|parameter| parameter.ty.clone())
-                    .collect()],
-                effects: FunctionEffects::default(),
-                result: Box::new(result),
-            }),
-            value: Expr::Closure(flattened_parameters, Box::new(transformed_body)),
-        };
-        let specialized = Expr::Block(
-            vec![Stmt::Let(frame)],
-            Some(Box::new(Expr::Call(
-                Box::new(Expr::Name(frame_name)),
-                flattened_arguments,
-            ))),
-        );
-        let result = continuation(self, specialized);
-        handler.inlining.borrow_mut().remove(name);
-        result
     }
 
     fn transform_handler_block(
@@ -20570,14 +20757,6 @@ fn internal_handler_loop_break_argument(expression: &Expr) -> Option<(String, Ex
     Some((name.clone(), groups[0][0].value.clone()))
 }
 
-fn replace_call_root_name(expression: &mut Expr, replacement: &str) {
-    match expression {
-        Expr::Call(callee, _) => replace_call_root_name(callee, replacement),
-        Expr::Name(name) => *name = replacement.to_owned(),
-        _ => {}
-    }
-}
-
 fn rewrite_handler_loop_control(
     expression: &mut Expr,
     recursive_name: &str,
@@ -20798,89 +20977,6 @@ fn collect_internal_recursion_tokens(expression: &Expr, tokens: &mut HashSet<Str
                     collect_internal_recursion_tokens(guard, tokens);
                 }
                 collect_internal_recursion_tokens(&arm.body, tokens);
-            }
-        }
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => {}
-    }
-}
-
-fn collect_named_source_calls(expression: &Expr, calls: &mut HashSet<String>) {
-    match expression {
-        Expr::Call(_, arguments) => {
-            let mut groups = Vec::new();
-            let root = flatten_call(expression, &mut groups);
-            if let Expr::Name(name) = root {
-                calls.insert(name.clone());
-            }
-            for argument in arguments {
-                collect_named_source_calls(&argument.value, calls);
-            }
-        }
-        Expr::Unary(_, value)
-        | Expr::Try(value)
-        | Expr::DoBlock { body: value }
-        | Expr::Throw(value)
-        | Expr::Unsafe(value)
-        | Expr::Borrow { value, .. } => collect_named_source_calls(value, calls),
-        Expr::Binary(left, _, right)
-        | Expr::Coalesce(left, right)
-        | Expr::Assign(left, right)
-        | Expr::CompoundAssign(left, _, right) => {
-            collect_named_source_calls(left, calls);
-            collect_named_source_calls(right, calls);
-        }
-        Expr::Member(base, _) | Expr::ChainMember(base, _) => {
-            collect_named_source_calls(base, calls)
-        }
-        Expr::Array(elements) => {
-            for element in elements {
-                collect_named_source_calls(element, calls);
-            }
-        }
-        Expr::Index { base, index } => {
-            collect_named_source_calls(base, calls);
-            collect_named_source_calls(index, calls);
-        }
-        Expr::Block(statements, tail) => {
-            for statement in statements {
-                match statement {
-                    Stmt::Let(binding) => collect_named_source_calls(&binding.value, calls),
-                    Stmt::Expr(expression) => collect_named_source_calls(expression, calls),
-                }
-            }
-            if let Some(tail) = tail {
-                collect_named_source_calls(tail, calls);
-            }
-        }
-        Expr::Closure(_, body) => collect_named_source_calls(body, calls),
-        Expr::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            collect_named_source_calls(condition, calls);
-            collect_named_source_calls(then_branch, calls);
-            if let Some(branch) = else_branch {
-                collect_named_source_calls(branch, calls);
-            }
-        }
-        Expr::Return(value) | Expr::Break(value) => {
-            if let Some(value) = value {
-                collect_named_source_calls(value, calls);
-            }
-        }
-        Expr::While { condition, body } => {
-            collect_named_source_calls(condition, calls);
-            collect_named_source_calls(body, calls);
-        }
-        Expr::Loop { body } => collect_named_source_calls(body, calls),
-        Expr::Match { scrutinee, arms } => {
-            collect_named_source_calls(scrutinee, calls);
-            for arm in arms {
-                if let Some(guard) = &arm.guard {
-                    collect_named_source_calls(guard, calls);
-                }
-                collect_named_source_calls(&arm.body, calls);
             }
         }
         Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => {}
@@ -21943,6 +22039,7 @@ impl<'a> HirCleanupPlanner<'a> {
                     }
                 }
             }
+            Ty::Continuation { .. } => {}
             Ty::I32
             | Ty::I64
             | Ty::U32
@@ -22245,6 +22342,42 @@ impl<'a> HirCleanupPlanner<'a> {
                 let Some(cursor) = self.walk_expr(pointer, cursor, ResultUse::Discard)? else {
                     return Ok(None);
                 };
+                self.initialize_result(cursor, &result_use)?;
+                Some(cursor)
+            }
+            HirExprKind::EraseContinuation { binding, .. } => {
+                let cleanup_local = self.hir_locals.get(binding).copied().ok_or_else(|| {
+                    self.diagnostic(format!(
+                        "erased continuation refers to unmapped callable local {binding}"
+                    ))
+                })?;
+                self.move_out(cursor, self.root_move_path(cleanup_local)?)?;
+                self.initialize_result(cursor, &result_use)?;
+                Some(cursor)
+            }
+            HirExprKind::InvokeContinuation {
+                continuation,
+                argument,
+            } => {
+                let (_, continuation_stage) =
+                    self.prepare_temporary_destination(cursor, &continuation.ty)?;
+                let Some(cursor) = self.walk_expr(
+                    continuation,
+                    cursor,
+                    ResultUse::Store(continuation_stage.clone()),
+                )?
+                else {
+                    return Ok(None);
+                };
+                let (_, argument_stage) =
+                    self.prepare_temporary_destination(cursor, &argument.ty)?;
+                let Some(cursor) =
+                    self.walk_expr(argument, cursor, ResultUse::Store(argument_stage.clone()))?
+                else {
+                    return Ok(None);
+                };
+                self.move_out(cursor, continuation_stage.path)?;
+                self.move_out(cursor, argument_stage.path)?;
                 self.initialize_result(cursor, &result_use)?;
                 Some(cursor)
             }
@@ -22602,6 +22735,38 @@ impl<'a> HirCleanupPlanner<'a> {
                     let exited_scopes = self.exit_chain(cursor.scope, self.root_scope)?;
                     self.terminate(cursor.block, CleanupTerminator::Return { exited_scopes })?;
                 }
+                None
+            }
+            HirExprKind::TailInvokeContinuation {
+                continuation,
+                argument,
+                ..
+            } => {
+                let (_, continuation_stage) =
+                    self.prepare_temporary_destination(cursor, &continuation.ty)?;
+                let Some(cursor) = self.walk_expr(
+                    continuation,
+                    cursor,
+                    ResultUse::Store(continuation_stage.clone()),
+                )?
+                else {
+                    return Ok(None);
+                };
+                let (_, argument_stage) =
+                    self.prepare_temporary_destination(cursor, &argument.ty)?;
+                let Some(cursor) =
+                    self.walk_expr(argument, cursor, ResultUse::Store(argument_stage.clone()))?
+                else {
+                    return Ok(None);
+                };
+                self.move_out(cursor, continuation_stage.path)?;
+                self.move_out(cursor, argument_stage.path)?;
+                if let Some(destination) = self.return_destination.clone() {
+                    self.operation(cursor.block, CleanupOp::Init(destination.path))?;
+                }
+                self.emit_storage_dead_to(cursor.block, cursor.scope, self.root_scope)?;
+                let exited_scopes = self.exit_chain(cursor.scope, self.root_scope)?;
+                self.terminate(cursor.block, CleanupTerminator::Return { exited_scopes })?;
                 None
             }
             HirExprKind::IndirectCall {
@@ -23730,6 +23895,9 @@ impl ConstantEvaluator<'_> {
             | HirExprKind::RawDealloc { .. }
             | HirExprKind::Call { .. }
             | HirExprKind::TailCall { .. }
+            | HirExprKind::TailInvokeContinuation { .. }
+            | HirExprKind::EraseContinuation { .. }
+            | HirExprKind::InvokeContinuation { .. }
             | HirExprKind::IndirectCall { .. }
             | HirExprKind::Partial { .. }
             | HirExprKind::PartialCapture { .. }
@@ -23885,7 +24053,7 @@ impl<'a> Emitter<'a> {
     fn emit_module(&self, include_entry_point: bool) -> Result<String, Diagnostic> {
         let mut output = String::new();
         output.push_str(
-            "; ModuleID = 'salicin'\nsource_filename = \"salicin\"\n\ndeclare void @llvm.trap()\ndeclare ptr @salicin_alloc(i64, i64)\ndeclare void @salicin_dealloc(ptr, i64, i64)\n\n",
+            "; ModuleID = 'salicin'\nsource_filename = \"salicin\"\n\n%salicin.continuation = type { ptr, ptr, ptr, ptr }\n\ndeclare void @llvm.trap()\ndeclare ptr @salicin_alloc(i64, i64)\ndeclare void @salicin_dealloc(ptr, i64, i64)\n\n",
         );
 
         for layout in &self.program.structs {
@@ -23970,6 +24138,13 @@ impl<'a> Emitter<'a> {
             output.push('\n');
         }
 
+        for adapter in &self.program.continuation_adapters {
+            output.push_str(&self.emit_continuation_adapter(adapter)?);
+            output.push('\n');
+            output.push_str(&self.emit_continuation_drop_adapter(adapter)?);
+            output.push('\n');
+        }
+
         for ty in self.drop_glue_types() {
             output.push_str(&self.emit_drop_glue(&ty)?);
             output.push('\n');
@@ -24023,6 +24198,10 @@ impl<'a> Emitter<'a> {
                     }
                     collect(&Ty::Function(callable.signature.clone()), types);
                 }
+                Ty::Continuation { input, output } => {
+                    collect(input, types);
+                    collect(output, types);
+                }
                 Ty::I32
                 | Ty::I64
                 | Ty::U32
@@ -24054,6 +24233,9 @@ impl<'a> Emitter<'a> {
                 collect(&field.ty, &mut types);
             }
         }
+        for adapter in &self.program.continuation_adapters {
+            collect(&adapter.callable_ty, &mut types);
+        }
         for layout in &self.program.enums {
             for field in layout.variants.iter().flat_map(|variant| &variant.fields) {
                 collect(&field.ty, &mut types);
@@ -24066,6 +24248,15 @@ impl<'a> Emitter<'a> {
 
     fn drop_glue_types(&self) -> Vec<Ty> {
         let mut types = HashSet::new();
+        for global in &self.program.globals {
+            self.collect_drop_glue_type(&global.ty, &mut types);
+        }
+        for function in &self.program.functions {
+            self.collect_drop_glue_type(&function.result, &mut types);
+            for parameter in &function.params {
+                self.collect_drop_glue_type(&parameter.ty, &mut types);
+            }
+        }
         for ty in &self.program.array_types {
             self.collect_drop_glue_type(ty, &mut types);
         }
@@ -24123,6 +24314,7 @@ impl<'a> Emitter<'a> {
                     self.collect_drop_glue_type(&capture.ty, types);
                 }
             }
+            Ty::Continuation { .. } => {}
             Ty::I32
             | Ty::I64
             | Ty::U32
@@ -24186,6 +24378,11 @@ impl<'a> Emitter<'a> {
                 }
                 output.push_str("  ret void\n}\n");
             }
+            Ty::Continuation { .. } => {
+                output.push_str(
+                    "  %drop.addr = getelementptr inbounds %salicin.continuation, ptr %value, i32 0, i32 1\n  %drop = load ptr, ptr %drop.addr\n  %environment.addr = getelementptr inbounds %salicin.continuation, ptr %value, i32 0, i32 2\n  %environment = load ptr, ptr %environment.addr\n  %flag.addr = getelementptr inbounds %salicin.continuation, ptr %value, i32 0, i32 3\n  %flag = load ptr, ptr %flag.addr\n  %active = load i1, ptr %flag\n  br i1 %active, label %drop.active, label %drop.done\ndrop.active:\n  store i1 false, ptr %flag\n  call void %drop(ptr %environment)\n  br label %drop.done\ndrop.done:\n  ret void\n}\n",
+                );
+            }
             Ty::Enum(name) => {
                 let layout = self.program.enum_layout(name).ok_or_else(|| {
                     Diagnostic::new(format!("internal error: missing enum layout `{name}`"))
@@ -24245,6 +24442,77 @@ impl<'a> Emitter<'a> {
                 )));
             }
         }
+        Ok(output)
+    }
+
+    fn emit_continuation_adapter(
+        &self,
+        adapter: &ContinuationAdapter,
+    ) -> Result<String, Diagnostic> {
+        let result_ty = llvm_return_type(&adapter.output)?;
+        let input_parameter = if adapter.input == Ty::Unit {
+            String::new()
+        } else {
+            format!(", {} %input", llvm_value_type(&adapter.input)?)
+        };
+        let mut output = format!(
+            "define internal {result_ty} @{}(ptr %environment{input_parameter}) {{\nentry:\n",
+            function_symbol(&adapter.name)
+        );
+        let callable_ty = llvm_value_type(&adapter.callable_ty)?;
+        output.push_str(&format!(
+            "  %callable = load {callable_ty}, ptr %environment\n"
+        ));
+        let mut arguments = Vec::new();
+        for (index, capture) in adapter.captures.iter().enumerate() {
+            if capture.ty == Ty::Unit {
+                continue;
+            }
+            let field_ty = if matches!(capture.mode, PassMode::Borrow | PassMode::MutBorrow) {
+                "ptr".to_owned()
+            } else {
+                llvm_value_type(&capture.ty)?
+            };
+            output.push_str(&format!(
+                "  %capture.{index} = extractvalue {callable_ty} %callable, {index}\n"
+            ));
+            arguments.push(format!("{field_ty} %capture.{index}"));
+        }
+        if adapter.input != Ty::Unit {
+            arguments.push(format!("{} %input", llvm_value_type(&adapter.input)?));
+        }
+        let call = format!(
+            "call {result_ty} @{}({})",
+            function_symbol(&adapter.function),
+            arguments.join(", ")
+        );
+        if adapter.output == Ty::Unit {
+            output.push_str(&format!("  {call}\n  ret void\n}}\n"));
+        } else {
+            output.push_str(&format!(
+                "  %result = {call}\n  ret {} %result\n}}\n",
+                llvm_value_type(&adapter.output)?
+            ));
+        }
+        Ok(output)
+    }
+
+    fn emit_continuation_drop_adapter(
+        &self,
+        adapter: &ContinuationAdapter,
+    ) -> Result<String, Diagnostic> {
+        let name = format!("{}$drop", adapter.name);
+        let mut output = format!(
+            "define internal void @{}(ptr %environment) {{\nentry:\n",
+            function_symbol(&name)
+        );
+        if self.program.needs_drop(&adapter.callable_ty) {
+            output.push_str(&format!(
+                "  call void @{}(ptr %environment)\n",
+                drop_glue_symbol(&adapter.callable_ty)
+            ));
+        }
+        output.push_str("  ret void\n}\n");
         Ok(output)
     }
 }
@@ -25349,6 +25617,76 @@ impl<'a> FunctionEmitter<'a> {
                 }
                 Ok(Operand::never())
             }
+            HirExprKind::TailInvokeContinuation {
+                continuation,
+                argument,
+                result,
+            } => {
+                let cleanup_depth = self.drop_slots.len();
+                let continuation = self.emit_expr(continuation)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                self.hold_operand_for_early_exit(&continuation)?;
+                let argument = self.emit_expr(argument)?;
+                if self.terminated {
+                    self.drop_slots.truncate(cleanup_depth);
+                    return Ok(Operand::never());
+                }
+                self.hold_operand_for_early_exit(&argument)?;
+                let continuation_ty = llvm_value_type(&continuation.ty)?;
+                let entry = self.fresh_register();
+                self.instruction(format!(
+                    "{entry} = extractvalue {continuation_ty} {}, 0",
+                    continuation.value()?
+                ));
+                let environment = self.fresh_register();
+                self.instruction(format!(
+                    "{environment} = extractvalue {continuation_ty} {}, 2",
+                    continuation.value()?
+                ));
+                let flag = self.fresh_register();
+                self.instruction(format!(
+                    "{flag} = extractvalue {continuation_ty} {}, 3",
+                    continuation.value()?
+                ));
+                let active = self.fresh_register();
+                self.instruction(format!("{active} = load i1, ptr {flag}"));
+                let invoke_label = self.fresh_label("tail.continuation.invoke");
+                let used_label = self.fresh_label("tail.continuation.used");
+                self.terminate(format!(
+                    "br i1 {active}, label %{invoke_label}, label %{used_label}"
+                ));
+                self.start_block(&used_label);
+                self.instruction("call void @llvm.trap()");
+                self.terminate("unreachable");
+                self.start_block(&invoke_label);
+                self.instruction(format!("store i1 false, ptr {flag}"));
+                self.release_drop_slots(cleanup_depth);
+                self.emit_cleanup_range(0)?;
+                let mut arguments = vec![format!("ptr {environment}")];
+                if argument.ty != Ty::Unit {
+                    arguments.push(format!(
+                        "{} {}",
+                        llvm_value_type(&argument.ty)?,
+                        argument.value()?
+                    ));
+                }
+                let call = format!(
+                    "call {} {entry}({})",
+                    llvm_return_type(result)?,
+                    arguments.join(", ")
+                );
+                if *result == Ty::Unit {
+                    self.instruction(call);
+                    self.terminate("ret void");
+                } else {
+                    let returned = self.fresh_register();
+                    self.instruction(format!("{returned} = {call}"));
+                    self.terminate(format!("ret {} {returned}", llvm_value_type(result)?));
+                }
+                Ok(Operand::never())
+            }
             HirExprKind::IndirectCall {
                 callee, arguments, ..
             } => {
@@ -25421,6 +25759,123 @@ impl<'a> FunctionEmitter<'a> {
                     Ok(Operand {
                         ty: expression.ty.clone(),
                         value: Some(register),
+                    })
+                }
+            }
+            HirExprKind::EraseContinuation {
+                binding,
+                callable_ty,
+                adapter,
+            } => {
+                let callable_expression = HirExpr {
+                    ty: callable_ty.clone(),
+                    kind: HirExprKind::Unit,
+                };
+                let callable = self.emit_stored_callable_read(
+                    &callable_expression,
+                    *binding,
+                    HirReadKind::Move,
+                )?;
+                let callable_llvm_ty = llvm_value_type(callable_ty)?;
+                let environment =
+                    self.entry_alloca(&callable_llvm_ty, "erased continuation environment");
+                self.instruction(format!(
+                    "store {callable_llvm_ty} {}, ptr {environment}",
+                    callable.value()?
+                ));
+                let flag = self.entry_alloca("i1", "erased continuation active flag");
+                self.instruction(format!("store i1 true, ptr {flag}"));
+                let continuation_ty = llvm_value_type(&expression.ty)?;
+                let call_entry = format!("@{}", function_symbol(adapter));
+                let drop_entry = format!("@{}", function_symbol(&format!("{adapter}$drop")));
+                let first = self.fresh_register();
+                self.instruction(format!(
+                    "{first} = insertvalue {continuation_ty} zeroinitializer, ptr {call_entry}, 0"
+                ));
+                let second = self.fresh_register();
+                self.instruction(format!(
+                    "{second} = insertvalue {continuation_ty} {first}, ptr {drop_entry}, 1"
+                ));
+                let third = self.fresh_register();
+                self.instruction(format!(
+                    "{third} = insertvalue {continuation_ty} {second}, ptr {environment}, 2"
+                ));
+                let fourth = self.fresh_register();
+                self.instruction(format!(
+                    "{fourth} = insertvalue {continuation_ty} {third}, ptr {flag}, 3"
+                ));
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: Some(fourth),
+                })
+            }
+            HirExprKind::InvokeContinuation {
+                continuation,
+                argument,
+            } => {
+                let cleanup_depth = self.drop_slots.len();
+                let continuation = self.emit_expr(continuation)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                self.hold_operand_for_early_exit(&continuation)?;
+                let argument = self.emit_expr(argument)?;
+                if self.terminated {
+                    self.drop_slots.truncate(cleanup_depth);
+                    return Ok(Operand::never());
+                }
+                self.hold_operand_for_early_exit(&argument)?;
+                let continuation_ty = llvm_value_type(&continuation.ty)?;
+                let entry = self.fresh_register();
+                self.instruction(format!(
+                    "{entry} = extractvalue {continuation_ty} {}, 0",
+                    continuation.value()?
+                ));
+                let environment = self.fresh_register();
+                self.instruction(format!(
+                    "{environment} = extractvalue {continuation_ty} {}, 2",
+                    continuation.value()?
+                ));
+                let flag = self.fresh_register();
+                self.instruction(format!(
+                    "{flag} = extractvalue {continuation_ty} {}, 3",
+                    continuation.value()?
+                ));
+                let active = self.fresh_register();
+                self.instruction(format!("{active} = load i1, ptr {flag}"));
+                let invoke_label = self.fresh_label("continuation.invoke");
+                let used_label = self.fresh_label("continuation.used");
+                self.terminate(format!(
+                    "br i1 {active}, label %{invoke_label}, label %{used_label}"
+                ));
+                self.start_block(&used_label);
+                self.instruction("call void @llvm.trap()");
+                self.terminate("unreachable");
+                self.start_block(&invoke_label);
+                self.instruction(format!("store i1 false, ptr {flag}"));
+                self.release_drop_slots(cleanup_depth);
+                let mut arguments = vec![format!("ptr {environment}")];
+                if argument.ty != Ty::Unit {
+                    arguments.push(format!(
+                        "{} {}",
+                        llvm_value_type(&argument.ty)?,
+                        argument.value()?
+                    ));
+                }
+                let call = format!(
+                    "call {} {entry}({})",
+                    llvm_return_type(&expression.ty)?,
+                    arguments.join(", ")
+                );
+                if expression.ty == Ty::Unit {
+                    self.instruction(call);
+                    Ok(Operand::unit())
+                } else {
+                    let result = self.fresh_register();
+                    self.instruction(format!("{result} = {call}"));
+                    Ok(Operand {
+                        ty: expression.ty.clone(),
+                        value: Some(result),
                     })
                 }
             }
@@ -26691,6 +27146,7 @@ fn llvm_value_type(ty: &Ty) -> Result<String, Diagnostic> {
         Ty::Pointer { .. } | Ty::Reference { .. } | Ty::Function(_) => Ok("ptr".to_owned()),
         Ty::Struct(name) | Ty::Enum(name) => Ok(format!("%{}", type_symbol(name))),
         Ty::Callable(_) => Ok(format!("%{}", type_symbol(&canonical_type_encoding(ty)))),
+        Ty::Continuation { .. } => Ok("%salicin.continuation".to_owned()),
         Ty::Unit | Ty::Never | Ty::EffectRow { .. } | Ty::Error => Err(Diagnostic::new(format!(
             "internal error: `{ty}` has no first-class LLVM representation"
         ))),
@@ -26759,7 +27215,12 @@ fn zero_const(ty: &Ty, program: &HirProgram) -> Option<ConstValue> {
             );
             Some(ConstValue::Aggregate(fields))
         }
-        Ty::Never | Ty::Function(_) | Ty::Callable(_) | Ty::EffectRow { .. } | Ty::Error => None,
+        Ty::Never
+        | Ty::Function(_)
+        | Ty::Callable(_)
+        | Ty::Continuation { .. }
+        | Ty::EffectRow { .. }
+        | Ty::Error => None,
     }
 }
 
@@ -28391,6 +28852,12 @@ fn canonical_type_encoding(ty: &Ty) -> String {
                 &mut encoded,
                 &canonical_type_encoding(&Ty::Function(callable.signature.clone())),
             );
+            encoded
+        }
+        Ty::Continuation { input, output } => {
+            let mut encoded = String::from("continuation");
+            push_canonical_component(&mut encoded, &canonical_type_encoding(input));
+            push_canonical_component(&mut encoded, &canonical_type_encoding(output));
             encoded
         }
         Ty::EffectRow {

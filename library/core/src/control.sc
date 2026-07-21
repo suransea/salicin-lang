@@ -8,8 +8,8 @@ pub let Mutable = access
 
 // A handler clause receives a compiler-created, one-shot value with this
 // logical type. It may be invoked once to resume the suspended computation;
-// dropping it aborts that continuation. The current lowering erases the value
-// after selective CPS transformation.
+// dropping it aborts that continuation. Native lowering represents it with
+// erased call/drop entries, an environment pointer, and a one-shot flag.
 pub let Continuation(Input: type, Output: type) = struct()
 
 // Control syntax uses trailing-closure call notation and lowers through these
