@@ -8047,17 +8047,24 @@ impl Analyzer {
             if self.type_has_custom_drop(ty) {
                 return true;
             }
-            let Ty::Struct(name) = ty else {
-                return false;
+            ty = match ty {
+                Ty::Struct(name) => {
+                    let Some(field) = self
+                        .struct_layouts
+                        .get(name)
+                        .and_then(|layout| layout.fields.get(*projection))
+                    else {
+                        return false;
+                    };
+                    &field.ty
+                }
+                Ty::Array(element, length)
+                    if u64::try_from(*projection).is_ok_and(|index| index < *length) =>
+                {
+                    element
+                }
+                _ => return false,
             };
-            let Some(field) = self
-                .struct_layouts
-                .get(name)
-                .and_then(|layout| layout.fields.get(*projection))
-            else {
-                return false;
-            };
-            ty = &field.ty;
         }
         false
     }
@@ -8241,10 +8248,6 @@ impl Analyzer {
                 }
             }
             Expr::Borrow { mutable, value } => {
-                if matches!(value.as_ref(), Expr::Index { .. }) {
-                    self.error("borrowing an indexed array element is not supported yet");
-                    return error_expr();
-                }
                 let Some(mut place) = self.lower_place(value, context) else {
                     return error_expr();
                 };
@@ -8408,11 +8411,6 @@ impl Analyzer {
                         },
                     };
                 }
-                if matches!(place.as_ref(), Expr::Index { .. }) {
-                    self.error("indexed array assignment is not supported yet");
-                    let _ = self.lower_expr(value, None, context);
-                    return error_expr();
-                }
                 let Some(place) = self.lower_place(place, context) else {
                     return error_expr();
                 };
@@ -8451,7 +8449,18 @@ impl Analyzer {
             Expr::ChainMember(base, field) => {
                 self.lower_chain(base, field, None, expected, context)
             }
-            Expr::Index { base, index } => self.lower_index(base, index, context),
+            Expr::Index { base, index } => {
+                if integer_literal_value(index).is_some()
+                    && self.lower_place_without_diagnostic(base, context).is_some()
+                {
+                    let Some(place) = self.lower_place(expression, context) else {
+                        return error_expr();
+                    };
+                    self.access_place(place, AccessKind::Auto, context)
+                } else {
+                    self.lower_index(base, index, context)
+                }
+            }
             Expr::Block(statements, tail) => {
                 context.push_scope();
                 let mut lowered_statements = Vec::new();
@@ -9492,6 +9501,41 @@ impl Analyzer {
                 place.ty = field.ty.clone();
                 Some(place)
             }
+            Expr::Index { base, index } => {
+                let mut place = self.lower_place(base, context)?;
+                let Ty::Array(element, length) = &place.ty else {
+                    self.error(format!(
+                        "array index place requires an array value, found `{}`",
+                        place.ty
+                    ));
+                    return None;
+                };
+                let Some(index) = integer_literal_value(index) else {
+                    self.error(
+                        "array place index must be a compile-time integer literal; dynamic indexes are read-only for now",
+                    );
+                    return None;
+                };
+                let Ok(index) = u64::try_from(index) else {
+                    self.error(format!(
+                        "array index {index} is out of bounds for length {length}"
+                    ));
+                    return None;
+                };
+                if index >= *length {
+                    self.error(format!(
+                        "array index {index} is out of bounds for length {length}"
+                    ));
+                    return None;
+                }
+                let Ok(projection) = usize::try_from(index) else {
+                    self.error(format!("array index {index} does not fit this target"));
+                    return None;
+                };
+                place.projections.push(projection);
+                place.ty = element.as_ref().clone();
+                Some(place)
+            }
             _ => {
                 self.error("expression is not a local place");
                 None
@@ -9684,6 +9728,22 @@ impl Analyzer {
         visiting: &mut HashSet<String>,
         leaves: &mut Vec<PlaceKey>,
     ) {
+        if let Ty::Array(element, length) = ty {
+            if *length == 0 {
+                leaves.push(key);
+                return;
+            }
+            for index in 0..*length {
+                let Ok(index) = usize::try_from(index) else {
+                    leaves.push(key);
+                    return;
+                };
+                let mut element_key = key.clone();
+                element_key.projections.push(index);
+                self.append_leaf_keys(element_key, element, visiting, leaves);
+            }
+            return;
+        }
         let Ty::Struct(name) = ty else {
             leaves.push(key);
             return;
@@ -10060,6 +10120,10 @@ impl Analyzer {
                 self.lower_place(expression, context)
             }
             Expr::Member(base, _) => {
+                self.lower_place_without_diagnostic(base, context)?;
+                self.lower_place(expression, context)
+            }
+            Expr::Index { base, index } if integer_literal_value(index).is_some() => {
                 self.lower_place_without_diagnostic(base, context)?;
                 self.lower_place(expression, context)
             }
@@ -11783,10 +11847,6 @@ impl Analyzer {
                     "borrow"
                 }
             ));
-            return error_expr();
-        }
-        if matches!(value.as_ref(), Expr::Index { .. }) {
-            self.error("taking a raw pointer to an indexed array element is not supported yet");
             return error_expr();
         }
         let Some(mut place) = self.lower_place(value, context) else {
@@ -13808,7 +13868,9 @@ fn flatten_call<'a>(expression: &'a Expr, groups: &mut Vec<&'a [CallArg]>) -> &'
 fn place_root_name(expression: &Expr) -> Option<&str> {
     match expression {
         Expr::Name(name) => Some(name),
-        Expr::Member(base, _) | Expr::ChainMember(base, _) => place_root_name(base),
+        Expr::Member(base, _) | Expr::ChainMember(base, _) | Expr::Index { base, .. } => {
+            place_root_name(base)
+        }
         _ => None,
     }
 }
@@ -14510,11 +14572,47 @@ impl<'a> HirCleanupPlanner<'a> {
             return Ok(None);
         }
         let mut cleanup_place = CleanupPlace::local(local);
+        let mut ty = &place.root_ty;
         for projection in &place.projections {
-            let field = u32::try_from(*projection).map_err(|_| {
-                self.diagnostic(format!("field projection {projection} does not fit in u32"))
-            })?;
-            cleanup_place = cleanup_place.project(CleanupProjection::Field(field));
+            match ty {
+                Ty::Struct(name) => {
+                    let field = u32::try_from(*projection).map_err(|_| {
+                        self.diagnostic(format!(
+                            "field projection {projection} does not fit in u32"
+                        ))
+                    })?;
+                    cleanup_place = cleanup_place.project(CleanupProjection::Field(field));
+                    ty = &self
+                        .program
+                        .struct_layout(name)
+                        .and_then(|layout| layout.fields.get(*projection))
+                        .ok_or_else(|| {
+                            self.diagnostic(format!(
+                                "field projection {projection} is invalid for `{name}`"
+                            ))
+                        })?
+                        .ty;
+                }
+                Ty::Array(element, length) => {
+                    let index = u64::try_from(*projection).map_err(|_| {
+                        self.diagnostic(format!(
+                            "array projection {projection} does not fit in u64"
+                        ))
+                    })?;
+                    if index >= *length {
+                        return Err(self.diagnostic(format!(
+                            "array projection {index} is out of bounds for length {length}"
+                        )));
+                    }
+                    cleanup_place = cleanup_place.project(CleanupProjection::ConstantIndex(index));
+                    ty = element;
+                }
+                _ => {
+                    return Err(self.diagnostic(format!(
+                        "projection {projection} continues through non-aggregate `{ty}`"
+                    )));
+                }
+            }
         }
         self.lookup_move_path(&cleanup_place).map(Some)
     }
@@ -24236,6 +24334,49 @@ let take(): Payload = [Payload(1), Payload(2)][1]
                 }
                 _ => true,
             })
+        }));
+    }
+
+    #[test]
+    fn cleanup_plan_maps_local_array_places_to_constant_index_paths() {
+        let plan = cleanup_plan_text(
+            r#"
+let consume(move value: i32): () = ()
+let main(): i32 = {
+  let mut values = [20, 2]
+  consume(values[0])
+  values[0] = 40
+  values[0] + values[1]
+}
+"#,
+            "main",
+        );
+        let values = plan
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some("values"))
+            .expect("array binding");
+        let first = plan
+            .move_paths
+            .iter()
+            .find(|path| {
+                path.place.local == values.id
+                    && path.place.projections == [CleanupProjection::ConstantIndex(0)]
+            })
+            .expect("first array element move path");
+        assert!(plan.blocks.iter().any(|block| {
+            block.operations.iter().any(|operation| {
+                matches!(operation, CleanupOp::Transfer { destination, .. }
+                    if *destination == first.id)
+            })
+        }));
+        assert!(plan.move_paths.iter().all(|path| {
+            path.place.local != values.id
+                || path
+                    .place
+                    .projections
+                    .iter()
+                    .all(|projection| !matches!(projection, CleanupProjection::Field(_)))
         }));
     }
 

@@ -1280,6 +1280,11 @@ fn m1_loops_and_arrays_run_with_expected_result() {
         "while_mutation.sali",
         "loop_break_value.sali",
         "fixed_array_index.sali",
+        "array_index_assignment.sali",
+        "array_constant_index_place.sali",
+        "array_index_move_reinitialize.sali",
+        "array_nested_constant_index_place.sali",
+        "array_index_raw_pointer.sali",
         "dynamic_array_index.sali",
         "empty_array_typed.sali",
         "nested_loop_break.sali",
@@ -1308,7 +1313,8 @@ fn m1_array_errors_report_their_cause() {
         ("array_negative_oob.sali", "out of bounds"),
         ("array_empty_without_context.sali", "empty array"),
         ("array_non_copy_element.sali", "Copy"),
-        ("array_index_assignment.sali", "indexed"),
+        ("array_dynamic_index_assignment.sali", "compile-time"),
+        ("array_index_borrow_conflict.sali", "borrowed"),
     ] {
         let output = salic()
             .arg("check")

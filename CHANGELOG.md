@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.47.0 - 2026-07-21
+
+- Promoted fixed-array constant indices to full places, allowing reads, shared and mutable
+  borrows, assignment, explicit moves followed by reinitialization, and raw-pointer construction.
+- Tracked every fixed-array element as a distinct ownership and loan leaf, so disjoint constant
+  indices can be accessed independently while conflicting accesses are rejected.
+- Mapped typed nested struct/array projections into cleanup constant-index paths and retained
+  runtime-checked dynamic indexing as a read-only expression for now.
+
 ## 0.46.0 - 2026-07-21
 
 - Allowed complete calls to pass temporary values directly to shared and mutable borrow
