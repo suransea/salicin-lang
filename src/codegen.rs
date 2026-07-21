@@ -16956,6 +16956,9 @@ impl<'a> FunctionEmitter<'a> {
                 if self.terminated {
                     return Ok(Operand::never());
                 }
+                if value.ty == Ty::Unit {
+                    return Ok(Operand::unit());
+                }
                 self.instruction(format!(
                     "store {} {}, ptr {}",
                     llvm_value_type(&value.ty)?,
@@ -19842,10 +19845,11 @@ mod tests {
         assert_eq!(analyzer.nominal_instances.len(), 1);
         assert_eq!(analyzer.nominal_instance_names.len(), 1);
         assert!(analyzer.functions.is_empty());
-        assert_eq!(analyzer.function_templates.len(), 6);
+        assert_eq!(analyzer.function_templates.len(), 7);
         assert!(analyzer.function_templates.contains_key("box_new"));
         assert!(analyzer.function_templates.contains_key("box_ptr"));
         assert!(analyzer.function_templates.contains_key("box_read"));
+        assert!(analyzer.function_templates.contains_key("box_write"));
         assert!(analyzer.function_templates.contains_key("box_into_inner"));
         assert!(analyzer.function_templates.contains_key("box_replace"));
         assert!(analyzer

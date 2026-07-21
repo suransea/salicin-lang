@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.45.0 - 2026-07-21
+
+- Added safe source-backed `box_write(boxed)(value)` and `boxed.write(value)` APIs for `Box(T)`
+  when `T: Copy`, complementing v0.44's safe Copy reads.
+- Required a mutable Box borrow while copying the replacement into heap storage; non-Copy boxes
+  continue to use ownership-aware `replace` and never materialize the write member.
+- Extended alloc bootstrap validation and taught raw Copy stores to preserve the zero-sized unit
+  representation.
+
 ## 0.44.0 - 2026-07-21
 
 - Added safe source-backed `box_read(boxed)` and `boxed.read()` APIs for `Box(T)` when `T: Copy`,

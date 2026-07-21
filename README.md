@@ -416,6 +416,9 @@ v0.44.0 加入首个安全 Box 只读访问切片：
 - `read` 位于独立的 constrained generic inherent extension，普通 owning Box API 对所有 `T` 保持可用。
 - 这不是借用返回 API；显式引用类型和生命周期关系落地前，不会用值类型伪装从 Box 返回的引用。
 
+v0.45.0 补齐 Copy Box 的安全写侧：`box_write(boxed)(value)` 与 `boxed.write(value)` 通过可变借用
+复制更新堆值；非 `Copy` Box 不会获得这些成员，继续使用能正确转移并析构旧值的 `replace`。
+
 标准库已经从 v0.5 的 `core` 引导开始，并按 `core → alloc → std` 分层推进。v0.6 封闭了库 API
 所需的字段与签名边界，v0.7 将首组五个算术协议完整迁入 source-backed core，v0.8 完成第一阶段
 `Copy`，v0.9 建立 cleanup CFG，v0.10 补齐资源 storage/transfer，v0.11 完成完整 move-path forest 与
@@ -436,8 +439,8 @@ impl、关联类型替换、按 where 条件选择和跨包孤儿规则，v0.38 
 trait 参数实现，v0.40 补上未实例化 blanket 方法的定义期签名与方法体检查，v0.41 开放可覆盖、
 定义期验证且支持关联类型替换的默认 trait 方法，v0.42 又让共享借用方法可直接作用于临时名义值，
 并由词法临时绑定保证完整调用期间的地址稳定和调用后的唯一析构，v0.43 将相同模型扩展到可变借用
-receiver，v0.44 则先为 `T: Copy` 落地类型安全的 `Box.read`，同时明确保留真正引用返回所需的生命周期
-类型边界。下一步推进显式引用与生命周期基础，再以相同
+receiver，v0.44-v0.45 则先为 `T: Copy` 落地类型安全的 `Box.read` / `Box.write`，同时明确保留真正
+引用返回所需的生命周期类型边界。下一步推进显式引用与生命周期基础，再以相同
 allocator/drop 基础推进
 `Vec(T)`；泛型 callable
 参数将在正式的 `where` / `Fn` 约束语法落地后开放。平台 `std` 的 IO、文件、环境与进程放在 C ABI 和最小

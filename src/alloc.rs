@@ -80,22 +80,22 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
     if !program.uses.is_empty() {
         diagnostics.push("embedded alloc must not contain `use` declarations".to_owned());
     }
-    if program.items.len() != 8
-        || program.item_visibilities.len() != 8
-        || program.item_origins.len() != 8
+    if program.items.len() != 9
+        || program.item_visibilities.len() != 9
+        || program.item_origins.len() != 9
     {
         diagnostics.push(
-            "embedded alloc must contain exactly Box, box_new, box_ptr, box_read, box_into_inner, box_replace, and the two Box extensions"
+            "embedded alloc must contain exactly Box, box_new, box_ptr, box_read, box_write, box_into_inner, box_replace, and the two Box extensions"
                 .to_owned(),
         );
     } else {
-        if program.item_visibilities[..6]
+        if program.item_visibilities[..7]
             .iter()
             .any(|visibility| *visibility != Visibility::Public)
         {
             diagnostics.push("all embedded alloc bootstrap items must be public".to_owned());
         }
-        if program.item_visibilities[6..]
+        if program.item_visibilities[7..]
             .iter()
             .any(|visibility| *visibility != Visibility::Private)
         {
@@ -127,29 +127,36 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
             ),
         }
         match &program.items[4] {
+            Item::Function(function) if valid_box_write(function) => {}
+            _ => diagnostics.push(
+                "alloc box_write must mutably borrow `Box(T)`, copy a `T`, require `T: Copy`, and return unit"
+                    .to_owned(),
+            ),
+        }
+        match &program.items[5] {
             Item::Function(function) if valid_box_into_inner(function) => {}
             _ => diagnostics.push(
                 "alloc box_into_inner must consume `Box(T)` and return its owned `T`".to_owned(),
             ),
         }
-        match &program.items[5] {
+        match &program.items[6] {
             Item::Function(function) if valid_box_replace(function) => {}
             _ => diagnostics.push(
                 "alloc box_replace must mutably borrow `Box(T)`, consume a replacement `T`, and return the old `T`"
                     .to_owned(),
             ),
         }
-        match &program.items[6] {
+        match &program.items[7] {
             Item::Extend(extension) if valid_box_extension(extension) => {}
             _ => diagnostics.push(
                 "alloc Box extension must provide new, as_mut_ptr, into_inner, and replace"
                     .to_owned(),
             ),
         }
-        match &program.items[7] {
+        match &program.items[8] {
             Item::Extend(extension) if valid_copy_box_extension(extension) => {}
             _ => diagnostics.push(
-                "alloc Copy Box extension must provide `read` under a `T: Copy` constraint"
+                "alloc Copy Box extension must provide `read` and `write` under a `T: Copy` constraint"
                     .to_owned(),
             ),
         }
@@ -247,6 +254,26 @@ fn valid_box_read(function: &Function) -> bool {
         && function.body.is_some()
 }
 
+fn valid_box_write(function: &Function) -> bool {
+    function.name == "box_write"
+        && generic_t(function)
+        && matches!(
+            function.groups.as_slice(),
+            [receiver, value]
+                if matches!(receiver.as_slice(), [parameter]
+                    if parameter.name == "boxed"
+                        && parameter.mode == PassMode::MutBorrow
+                        && parameter.ty == applied("Box", named("T")))
+                    && matches!(value.as_slice(), [parameter]
+                        if parameter.name == "value"
+                            && parameter.mode == PassMode::Copy
+                            && parameter.ty == named("T"))
+        )
+        && matches!(function.where_predicates.as_slice(), [predicate] if is_copy_bound(predicate))
+        && function.return_type == Some(Type::Unit)
+        && function.body.is_some()
+}
+
 fn valid_box_into_inner(function: &Function) -> bool {
     function.name == "box_into_inner"
         && generic_t(function)
@@ -324,8 +351,17 @@ fn valid_copy_box_extension(extension: &crate::ast::ExtendDef) -> bool {
     ) && extension.target == applied("Box", named("T"))
         && extension.trait_ref.is_none()
         && matches!(extension.where_predicates.as_slice(), [predicate] if is_copy_bound(predicate))
-        && matches!(extension.members.as_slice(), [crate::ast::ExtendMember::Function(function)]
-            if valid_box_method(function, "read", PassMode::Borrow, &[], named("T")))
+        && matches!(extension.members.as_slice(), [
+            crate::ast::ExtendMember::Function(read),
+            crate::ast::ExtendMember::Function(write),
+        ] if valid_box_method(read, "read", PassMode::Borrow, &[], named("T"))
+            && valid_box_method(
+                write,
+                "write",
+                PassMode::MutBorrow,
+                &[("value", PassMode::Copy, named("T"))],
+                Type::Unit,
+            ))
 }
 
 fn valid_box_method(
@@ -372,7 +408,7 @@ mod tests {
     #[test]
     fn edition_2026_alloc_bundle_parses_and_validates() {
         let bundle = AllocBundle::for_edition(Edition::Edition2026).unwrap();
-        assert_eq!(bundle.program.items.len(), 8);
+        assert_eq!(bundle.program.items.len(), 9);
         assert!(bundle
             .program
             .item_origins
@@ -387,6 +423,18 @@ mod tests {
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
             .expect_err("box_read without Copy must fail bootstrap validation");
         assert!(error.to_string().contains("box_read"));
+    }
+
+    #[test]
+    fn rejects_box_write_without_its_copy_proof() {
+        let source = EDITION_2026_PRELUDE.replacen(
+            "pub let box_write(T: type)(mut borrow boxed: Box(T))(copy value: T): ()\nwhere T: Copy = unsafe do {",
+            "pub let box_write(T: type)(mut borrow boxed: Box(T))(copy value: T): ()\n= unsafe do {",
+            1,
+        );
+        let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
+            .expect_err("box_write without Copy must fail bootstrap validation");
+        assert!(error.to_string().contains("box_write"));
     }
 
     #[test]

@@ -2,8 +2,15 @@ let read_box(T: type)(borrow boxed: Box(T)): T
 where T: Copy = boxed.read()
 
 let main(): i32 = {
-  let boxed = Box.new(21)
-  let unit = Box.new(())
+  let mut boxed = Box.new(0)
+  boxed.write(20)
+  let first = boxed.read()
+  box_write(boxed)(22)
+  let second = box_read(boxed)
+  let mut unit = Box.new(())
+  let zero = Box.new(0)
+  unit.write(())
+  box_write(unit)(())
   unit.read()
-  box_read(boxed) + read_box(boxed)
+  first + second + read_box(zero)
 }

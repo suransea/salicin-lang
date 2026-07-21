@@ -1,0 +1,6 @@
+let Resource = struct(value: i32)
+
+let main(): i32 = {
+  Box.new(Resource(1)).write(Resource(2))
+  0
+}

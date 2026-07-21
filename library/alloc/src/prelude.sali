@@ -17,6 +17,11 @@ where T: Copy = unsafe do {
   *boxed.pointer
 }
 
+pub let box_write(T: type)(mut borrow boxed: Box(T))(copy value: T): ()
+where T: Copy = unsafe do {
+  *boxed.pointer = value
+}
+
 pub let box_into_inner(T: type)(move boxed: Box(T)): T = {
   let pointer = boxed.pointer
   let value = unsafe do {
@@ -50,4 +55,5 @@ extend(T: type) Box(T) {
 extend(T: type) Box(T)
 where T: Copy {
   let read(borrow self)(): T = box_read(self)
+  let write(mut borrow self)(copy value: T): () = box_write(self)(value)
 }
