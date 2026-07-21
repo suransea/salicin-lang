@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.44.0 - 2026-07-21
+
+- Added safe source-backed `box_read(boxed)` and `boxed.read()` APIs for `Box(T)` when `T: Copy`,
+  without exposing a raw pointer or transferring pointee ownership.
+- Defined `read` in a separate constrained generic inherent extension, so resource boxes retain all
+  owning operations but do not acquire an unsound copying method.
+- Extended strict alloc bootstrap validation for the new function, Copy proof, and extension shape,
+  and taught raw Copy loads to preserve the zero-sized unit representation.
+
 ## 0.43.0 - 2026-07-21
 
 - Allowed temporary nominal values to receive inherent and trait methods through

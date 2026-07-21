@@ -1,0 +1,3 @@
+let Resource = struct(value: i32)
+
+let main(): i32 = box_read(T: Resource)(Box.new(Resource(42))).value

@@ -12,6 +12,11 @@ pub let box_new(T: type)(move value: T): Box(T) = {
 
 pub let box_ptr(T: type)(borrow boxed: Box(T)): MutPtr(T) = boxed.pointer
 
+pub let box_read(T: type)(borrow boxed: Box(T)): T
+where T: Copy = unsafe do {
+  *boxed.pointer
+}
+
 pub let box_into_inner(T: type)(move boxed: Box(T)): T = {
   let pointer = boxed.pointer
   let value = unsafe do {
@@ -40,4 +45,9 @@ extend(T: type) Box(T) {
   let as_mut_ptr(borrow self)(): MutPtr(T) = box_ptr(self)
   let into_inner(move self)(): T = box_into_inner(self)
   let replace(mut borrow self)(move value: T): T = box_replace(self)(value)
+}
+
+extend(T: type) Box(T)
+where T: Copy {
+  let read(borrow self)(): T = box_read(self)
 }

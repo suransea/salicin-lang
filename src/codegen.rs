@@ -16936,6 +16936,9 @@ impl<'a> FunctionEmitter<'a> {
                 if self.terminated {
                     return Ok(Operand::never());
                 }
+                if expression.ty == Ty::Unit {
+                    return Ok(Operand::unit());
+                }
                 let register = self.fresh_register();
                 let ty = llvm_value_type(&expression.ty)?;
                 self.instruction(format!("{register} = load {ty}, ptr {}", pointer.value()?));
@@ -19839,9 +19842,10 @@ mod tests {
         assert_eq!(analyzer.nominal_instances.len(), 1);
         assert_eq!(analyzer.nominal_instance_names.len(), 1);
         assert!(analyzer.functions.is_empty());
-        assert_eq!(analyzer.function_templates.len(), 5);
+        assert_eq!(analyzer.function_templates.len(), 6);
         assert!(analyzer.function_templates.contains_key("box_new"));
         assert!(analyzer.function_templates.contains_key("box_ptr"));
+        assert!(analyzer.function_templates.contains_key("box_read"));
         assert!(analyzer.function_templates.contains_key("box_into_inner"));
         assert!(analyzer.function_templates.contains_key("box_replace"));
         assert!(analyzer

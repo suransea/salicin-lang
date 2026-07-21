@@ -217,6 +217,7 @@ fn alloc_box_owns_copy_and_resource_payloads() {
         "box_drop_once.sali",
         "box_nested_and_unit.sali",
         "box_recursive_layout.sali",
+        "box_read.sali",
         "box_into_inner_drop_once.sali",
         "box_replace_drop.sali",
         "forget_resource.sali",
@@ -285,6 +286,7 @@ fn where_copy_bounds_validate_generic_bodies_and_concrete_calls() {
 
     for (name, expected) in [
         ("where_copy_unsatisfied.sali", "not satisfied"),
+        ("box_read_resource.sali", "not satisfied"),
         ("where_unknown_trait.sali", "unknown trait"),
         (
             "where_duplicate_predicate.sali",
@@ -393,6 +395,7 @@ fn constrained_generic_extensions_select_members_per_instance() {
             "constrained_extend_method_unsatisfied.sali",
             "unknown method",
         ),
+        ("box_read_method_resource.sali", "unknown method"),
         (
             "constrained_extend_function_unsatisfied.sali",
             "not satisfied",

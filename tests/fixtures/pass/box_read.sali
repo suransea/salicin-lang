@@ -1,0 +1,9 @@
+let read_box(T: type)(borrow boxed: Box(T)): T
+where T: Copy = boxed.read()
+
+let main(): i32 = {
+  let boxed = Box.new(21)
+  let unit = Box.new(())
+  unit.read()
+  box_read(boxed) + read_box(boxed)
+}
