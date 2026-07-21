@@ -59,8 +59,10 @@ enclosing unsafe function or `unsafe { ... }` handler. `do` forwards the impleme
 into nested immediate calls. `let UI = effect` declares a nominal, module-visible marker effect.
 Parameterized user effects may declare typed operation requirements. Operation calls use an exact
 instantiated identity such as `State(i32)`, propagate through the existing row machinery, and are
-checked for parameter modes, result types, arity, visibility, and missing row requirements. Derived
-handlers support typed one-shot resumption, abandonment, `done:` answer conversion, named-call
+checked for parameter modes, result types, arity, visibility, and missing row requirements.
+Operations share the language's name-only overload rule: runtime label shapes must differ, calls
+use named arguments, and repeated handler labels select signatures through clause parameter names.
+Derived handlers support typed one-shot resumption, abandonment, `done:` answer conversion, named-call
 propagation, direct recursion, and resumable loop backedges. Cross-function abandonment and
 computation after `resume` use explicit CPS continuation closures. Direct and mutually recursive
 frames share an erased call/drop-entry plus environment ABI with a runtime one-shot flag. Capturing

@@ -382,7 +382,6 @@ impl Parser {
         }
         self.skip_separators();
         let mut operations = Vec::new();
-        let mut names = HashSet::new();
         while !self.at(&TokenKind::RBrace) {
             self.expect(&TokenKind::Let, "`let` in effect body")?;
             if self.take(&TokenKind::Mut) {
@@ -393,11 +392,6 @@ impl Parser {
                 return Err(self.error_here(format!(
                     "effect operation name `{operation}` is reserved by handler lowering"
                 )));
-            }
-            if !names.insert(operation.clone()) {
-                return Err(
-                    self.error_here(format!("duplicate effect operation `{name}.{operation}`"))
-                );
             }
             let (operation_compile_groups, groups) = self.declaration_groups(false)?;
             if !operation_compile_groups.is_empty() {
@@ -424,6 +418,24 @@ impl Parser {
                 return Err(
                     self.error_here("effect operations are requirements and cannot have bodies")
                 );
+            }
+            let labels = groups
+                .iter()
+                .flatten()
+                .map(|parameter| parameter.name.as_str())
+                .collect::<Vec<_>>();
+            if operations.iter().any(|candidate: &Function| {
+                candidate.name == operation
+                    && candidate
+                        .groups
+                        .iter()
+                        .flatten()
+                        .map(|parameter| parameter.name.as_str())
+                        .eq(labels.iter().copied())
+            }) {
+                return Err(self.error_here(format!(
+                    "duplicate effect operation `{name}.{operation}` with the same parameter names"
+                )));
             }
             operations.push(Function {
                 name: operation,
@@ -5112,6 +5124,30 @@ mod tests {
             program.effects.custom,
             [Type::Named("State".into(), vec![Type::I32])]
         );
+    }
+
+    #[test]
+    fn permits_effect_operation_overloads_only_by_parameter_names() {
+        let program = parse(
+            "let Ask = effect {\n\
+               let value(left: i32): i32\n\
+               let value(right: i32): i32\n\
+             }\n",
+        )
+        .expect("distinct operation labels should form an overload set");
+        let Item::Effect(ask) = &program.items[0] else {
+            panic!("expected Ask effect");
+        };
+        assert_eq!(ask.operations.len(), 2);
+
+        let duplicate = parse(
+            "let Ask = effect {\n\
+               let value(input: i32): i32\n\
+               let value(input: i64): i64\n\
+             }\n",
+        )
+        .expect_err("types must not participate in operation overload selection");
+        assert!(duplicate.message.contains("same parameter names"));
     }
 
     #[test]

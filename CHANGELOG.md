@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.126.0 - 2026-07-22
+
+- Added effect-operation overload sets distinguished only by runtime parameter names, consistently
+  rejecting type-only overloads and ambiguous positional calls.
+- Allowed repeated operation labels in derived handlers, using clause parameter names before
+  `resume` to select the handled signature.
+- Preserved named-call selection through selective CPS and added native execution coverage for two
+  same-named operations handled by distinct clauses.
+
 ## 0.125.0 - 2026-07-22
 
 - Scoped recursive named-frame visibility to callee-body transformation instead of the caller's

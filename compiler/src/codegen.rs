@@ -388,11 +388,18 @@ struct AlgebraicHandlerClause {
 struct AlgebraicHandler {
     identity: String,
     clauses: HashMap<String, AlgebraicHandlerClause>,
+    operations: HashMap<String, Vec<AlgebraicHandlerOperation>>,
     done: Option<AlgebraicHandlerClause>,
     inlining: Rc<RefCell<HashMap<String, SourceInlineFrame>>>,
     loop_breaks: Rc<RefCell<HashMap<String, SourceContinuation>>>,
     result_source: Option<Type>,
     return_continuations: Rc<RefCell<HashMap<String, SourceContinuation>>>,
+}
+
+#[derive(Clone)]
+struct AlgebraicHandlerOperation {
+    key: String,
+    labels: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -16284,6 +16291,17 @@ impl Analyzer {
         }
 
         let mut clauses = HashMap::new();
+        let mut handler_operations: HashMap<String, Vec<AlgebraicHandlerOperation>> =
+            HashMap::new();
+        for operation in &operations {
+            handler_operations
+                .entry(operation.name.clone())
+                .or_default()
+                .push(AlgebraicHandlerOperation {
+                    key: effect_operation_key(operation),
+                    labels: effect_operation_labels(operation),
+                });
+        }
         let mut done = None;
         for argument in groups[0] {
             let Some(label) = &argument.label else {
@@ -16311,16 +16329,46 @@ impl Analyzer {
                 });
                 continue;
             }
-            let Some(operation) = operations.iter().find(|operation| operation.name == *label)
-            else {
+            let candidates = operations
+                .iter()
+                .filter(|operation| operation.name == *label)
+                .collect::<Vec<_>>();
+            if candidates.is_empty() {
                 self.error(format!(
                     "unknown handler clause `{label}` for effect `{}`",
                     source_effect_identity(instance)
                 ));
                 continue;
+            }
+            let operation = if candidates.len() == 1 {
+                candidates[0]
+            } else {
+                let clause_labels = parameters
+                    .iter()
+                    .take(parameters.len().saturating_sub(1))
+                    .map(|parameter| parameter.name.as_str())
+                    .collect::<Vec<_>>();
+                let matching = candidates
+                    .iter()
+                    .copied()
+                    .filter(|operation| {
+                        effect_operation_labels(operation)
+                            .iter()
+                            .map(String::as_str)
+                            .eq(clause_labels.iter().copied())
+                    })
+                    .collect::<Vec<_>>();
+                if matching.len() != 1 {
+                    self.error(format!(
+                        "overloaded handler clause `{label}` must name the operation parameters in declaration order before `resume`"
+                    ));
+                    continue;
+                }
+                matching[0]
             };
-            if clauses.contains_key(label) {
-                self.error(format!("duplicate handler clause `{label}`"));
+            let operation_key = effect_operation_key(operation);
+            if clauses.contains_key(&operation_key) {
+                self.error(format!("duplicate handler clause `{operation_key}`"));
                 continue;
             }
             let operation_parameters = operation.groups.iter().flatten().collect::<Vec<_>>();
@@ -16340,7 +16388,7 @@ impl Analyzer {
             }
             let resume = parameters.pop().expect("validated resume parameter").name;
             clauses.insert(
-                label.clone(),
+                operation_key,
                 AlgebraicHandlerClause {
                     parameters,
                     resume: Some(resume),
@@ -16350,10 +16398,18 @@ impl Analyzer {
             );
         }
         for operation in &operations {
-            if !clauses.contains_key(&operation.name) {
+            let key = effect_operation_key(operation);
+            if !clauses.contains_key(&key) {
+                let display = if handler_operations
+                    .get(&operation.name)
+                    .is_some_and(|candidates| candidates.len() > 1)
+                {
+                    key
+                } else {
+                    operation.name.clone()
+                };
                 self.error(format!(
-                    "missing handler clause `{}` for effect `{}`",
-                    operation.name,
+                    "missing handler clause `{display}` for effect `{}`",
                     source_effect_identity(instance)
                 ));
             }
@@ -16400,6 +16456,7 @@ impl Analyzer {
         let handler = Rc::new(AlgebraicHandler {
             identity: source_effect_identity(instance),
             clauses,
+            operations: handler_operations,
             done,
             inlining: Rc::new(RefCell::new(HashMap::new())),
             loop_breaks: Rc::new(RefCell::new(HashMap::new())),
@@ -16464,18 +16521,43 @@ impl Analyzer {
             };
             return self.transform_handler_expr(argument, handler, resume, loop_continuation);
         }
-        if let Some((operation, arguments)) = handled_operation_call(&expression, &handler.identity)
+        if let Some((operation, mut arguments)) =
+            handled_operation_call(&expression, &handler.identity)
         {
-            let Some(clause) = handler.clauses.get(&operation).cloned() else {
-                self.error(format!("missing handler clause `{operation}`"));
-                return Err(());
-            };
-            if arguments.iter().any(|argument| argument.label.is_some()) {
+            let candidates = handler
+                .operations
+                .get(&operation)
+                .cloned()
+                .unwrap_or_default();
+            let labels = call_argument_labels(&arguments);
+            if labels.is_none() && arguments.iter().any(|argument| argument.label.is_some()) {
                 self.error(format!(
-                    "effect operation `{operation}` currently requires positional arguments"
+                    "cannot mix named and positional arguments in effect operation `{operation}`"
                 ));
                 return Err(());
             }
+            let selected = match labels {
+                Some(labels) => candidates
+                    .iter()
+                    .find(|candidate| candidate.labels == labels),
+                None if candidates.len() == 1 => candidates.first(),
+                None => {
+                    self.error(format!(
+                        "overloaded effect operation `{operation}` requires named arguments"
+                    ));
+                    return Err(());
+                }
+            };
+            let Some(selected) = selected else {
+                self.error(format!(
+                    "no effect operation `{operation}` matches the supplied argument names"
+                ));
+                return Err(());
+            };
+            let Some(clause) = handler.clauses.get(&selected.key).cloned() else {
+                self.error(format!("missing handler clause `{operation}`"));
+                return Err(());
+            };
             if arguments.len() != clause.parameters.len() {
                 self.error(format!(
                     "effect operation `{operation}` expects {} argument(s), found {}",
@@ -16483,6 +16565,9 @@ impl Analyzer {
                     arguments.len()
                 ));
                 return Err(());
+            }
+            for argument in &mut arguments {
+                argument.label = None;
             }
             let handler_for_clause = handler.clone();
             let resume_for_arguments = resume.clone();
@@ -17846,18 +17931,51 @@ impl Analyzer {
         expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
-        let Some(mut function) = definition
+        let candidates = definition
             .operations
             .iter()
-            .find(|candidate| candidate.name == operation)
-            .cloned()
-        else {
+            .enumerate()
+            .filter(|(_, candidate)| candidate.name == operation)
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
             self.error(format!(
                 "unknown operation `{operation}` on effect `{}`",
                 definition.name
             ));
             return error_expr();
+        }
+        let arguments = groups
+            .iter()
+            .flat_map(|group| group.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        let labels = call_argument_labels(&arguments);
+        if labels.is_none() && arguments.iter().any(|argument| argument.label.is_some()) {
+            self.error(format!(
+                "cannot mix named and positional arguments in effect operation `{operation}`"
+            ));
+            return error_expr();
+        }
+        let selected = if candidates.len() == 1 {
+            Some(candidates[0])
+        } else if let Some(labels) = labels {
+            candidates
+                .iter()
+                .copied()
+                .find(|(_, candidate)| effect_operation_labels(candidate) == labels)
+        } else {
+            self.error(format!(
+                "overloaded effect operation `{operation}` requires named arguments"
+            ));
+            return error_expr();
         };
+        let Some((operation_index, selected)) = selected else {
+            self.error(format!(
+                "no effect operation `{operation}` matches the supplied argument names"
+            ));
+            return error_expr();
+        };
+        let mut function = selected.clone();
         let Type::Named(_, arguments) = instance else {
             unreachable!("resolved effect instances are nominal applications")
         };
@@ -17877,7 +17995,7 @@ impl Analyzer {
             function.effects.custom.push(instance.clone());
         }
         let identity = source_effect_identity(instance);
-        let canonical = format!("$effect$operation${identity}${operation}");
+        let canonical = format!("$effect$operation${identity}${operation}${operation_index}");
         if !self.functions.contains_key(&canonical) {
             function.name = canonical.clone();
             let signature = FunctionSig {
@@ -21745,6 +21863,30 @@ fn handled_operation_call(expression: &Expr, identity: &str) -> Option<(String, 
     ))
 }
 
+fn effect_operation_labels(operation: &Function) -> Vec<String> {
+    operation
+        .groups
+        .iter()
+        .flatten()
+        .map(|parameter| parameter.name.clone())
+        .collect()
+}
+
+fn effect_operation_key(operation: &Function) -> String {
+    format!(
+        "{}({})",
+        operation.name,
+        effect_operation_labels(operation).join(",")
+    )
+}
+
+fn call_argument_labels(arguments: &[CallArg]) -> Option<Vec<String>> {
+    arguments
+        .iter()
+        .map(|argument| argument.label.clone())
+        .collect()
+}
+
 fn handler_expression_children(expression: &Expr) -> Vec<&Expr> {
     match expression {
         Expr::Unary(_, value)
@@ -22022,12 +22164,20 @@ fn handled_action_result_source(
     identity: &str,
     operations: &[Function],
 ) -> Option<Type> {
-    if let Some((operation, _)) = handled_operation_call(expression, identity) {
-        return operations
+    if let Some((operation, arguments)) = handled_operation_call(expression, identity) {
+        let candidates = operations
             .iter()
-            .find(|candidate| candidate.name == operation)?
-            .return_type
-            .clone();
+            .filter(|candidate| candidate.name == operation)
+            .collect::<Vec<_>>();
+        let selected = if candidates.len() == 1 {
+            candidates.first().copied()
+        } else {
+            let labels = call_argument_labels(&arguments)?;
+            candidates
+                .into_iter()
+                .find(|candidate| effect_operation_labels(candidate) == labels)
+        }?;
+        return selected.return_type.clone();
     }
     match expression {
         Expr::Block(_, Some(tail)) => handled_action_result_source(tail, identity, operations),
@@ -33711,6 +33861,39 @@ let main(): i32 = { 0 }
         assert!(wrong_instance.iter().any(|error| {
             error.message.contains("requires custom effect") && error.message.contains("State(i32)")
         }));
+    }
+
+    #[test]
+    fn algebraic_effect_operations_overload_only_by_argument_names() {
+        compile_text(
+            r#"
+let Ask = effect {
+  let value(left: i32): i32
+  let value(right: i32): i32
+}
+let choose(): i32 with(Ask) = { Ask.value(left: 19) + Ask.value(right: 23) }
+let main(): i32 = { Ask.handle(
+  value: { (left, resume) -> resume(left) },
+  value: { (right, resume) -> resume(right) }
+) { choose() } }
+"#,
+        )
+        .expect("named arguments and clause parameters should select effect operation overloads");
+
+        let positional = compile_text(
+            r#"
+let Ask = effect {
+  let value(left: i32): i32
+  let value(right: i32): i32
+}
+let choose(): i32 with(Ask) = { Ask.value(42) }
+let main(): i32 = { 0 }
+"#,
+        )
+        .expect_err("positional arguments cannot select an overloaded operation");
+        assert!(positional.iter().any(|error| error
+            .message
+            .contains("overloaded effect operation `value` requires named arguments")));
     }
 
     #[test]

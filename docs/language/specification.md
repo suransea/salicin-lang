@@ -421,7 +421,9 @@ let read(): i32 with(State(i32)) = { State(i32).get() }
 
 operation 没有函数体，完整调用产生所属的已实例化 effect。`State(i32)`、`State(i64)`以及其他
 模块中同名的 `State(i32)`都是不同的 row 成员。operation 的参数组、传递模式、返回类型和附加
-`with(...)` 要求按普通函数签名检查；部分应用本身仍是 pure。当前实现阶段已经提供声明、名义
+`with(...)` 要求按普通函数签名检查；部分应用本身仍是 pure。同名 operation 只能按运行时参数名
+重载，不能按类型重载；重载调用必须使用按声明顺序排列的具名参数。handler 中可以重复同一个
+operation label，其 clause 在 `resume` 之前重复对应的参数名以完成消歧。当前实现阶段已经提供声明、名义
 identity、传播和类型检查。派生的 `State(i32).handle(get: { (resume) -> ... }, ...) { action }`
 可处理 action 中词法可见的 operation；`resume` 是一次性 continuation，也可以不调用以中止剩余
 计算。普通具名完整调用会在 handler 下特化成真实的局部 closure frame；参数保留原本的 copy、move

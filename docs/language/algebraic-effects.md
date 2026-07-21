@@ -41,9 +41,24 @@ Every operation has the declared effect in its row. An operation may additionall
 own effect is handled.
 
 Operations are called through the effect identity, so no hidden global functions enter scope.
-Effects and operations obey normal module visibility. An operation name is unique within one effect
-in the first implementation; named overloads can be added after handler labels can represent an
-overload shape without ambiguity.
+Effects and operations obey normal module visibility. Operations may overload only by their
+runtime parameter names, never by parameter types. A call to an overloaded operation must use named
+arguments in declaration order. Its handler clause uses those same names before `resume`, so two
+clauses with the same operation label remain unambiguous:
+
+```sc
+let Ask = effect {
+  let value(left: i32): i32
+  let value(right: i32): i32
+}
+
+let answer = Ask.handle(
+  value: { (left, resume) -> resume(left) },
+  value: { (right, resume) -> resume(right) },
+) {
+  Ask.value(left: 19) + Ask.value(right: 23)
+}
+```
 
 ## Derived `handle` member
 
@@ -58,9 +73,10 @@ let answer = State(i32).handle(
 }
 ```
 
-The final trailing closure is the handled action. Every operation is supplied exactly once as a
-labeled closure. Labels make handler selection independent of source order and fit the language's
-name-only overload policy. `handle` is reserved in the effect member namespace.
+The final trailing closure is the handled action. Every operation signature is supplied exactly
+once as a labeled closure. A non-overloaded operation clause may choose local parameter names; an
+overloaded clause must repeat the selected operation's parameter names in declaration order.
+`handle` is reserved in the effect member namespace.
 
 For an operation with parameter groups `(P1)...(Pn): O`, its handler closure has the contextual
 shape `(P1)...(Pn)(resume): R`, where `R` is the result of the complete handler. For a zero-argument
