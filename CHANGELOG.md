@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.101.0 - 2026-07-22
+
+- Completed label-directed overloads for methods and associated functions declared by blanket
+  generic inherent extensions.
+- Precomputed overload identities across all applicable generic extension blocks and reproduced
+  the same candidate set for every concrete nominal instance.
+- Preserved direct generic associated-function inference and per-instance method dispatch without
+  allowing type arguments or where predicates to participate in overload choice.
+
 ## 0.100.0 - 2026-07-22
 
 - Implemented `continue` for `while` and value-producing `loop`, targeting the nearest enclosing

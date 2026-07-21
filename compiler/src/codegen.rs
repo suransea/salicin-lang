@@ -2009,13 +2009,13 @@ impl Analyzer {
         self.validate_generic_nominal_cycles();
         self.collect_nominal_layouts();
         for (extension, _) in &extensions {
-            if !extension.compile_groups.is_empty() || extension.trait_ref.is_some() {
+            if extension.trait_ref.is_some() {
                 continue;
             }
             let Type::Named(target, arguments) = &extension.target else {
                 continue;
             };
-            if !arguments.is_empty() {
+            if extension.compile_groups.is_empty() && !arguments.is_empty() {
                 continue;
             }
             for member in &extension.members {
@@ -4520,6 +4520,29 @@ impl Analyzer {
                 .groups
                 .first()
                 .is_some_and(|group| group.len() == 1 && group[0].name == "self");
+            let overload_key = (target_template.clone(), function.name.clone(), is_method);
+            let overloaded = self
+                .inherent_overload_counts
+                .get(&overload_key)
+                .copied()
+                .unwrap_or_default()
+                > 1;
+            if overloaded {
+                let shape = function_parameter_labels(function);
+                if !self
+                    .inherent_overload_shapes
+                    .entry(overload_key)
+                    .or_default()
+                    .insert(shape.clone())
+                {
+                    self.error(format!(
+                        "duplicate generic inherent overload `{target_template}.{}` with parameter labels {}",
+                        function.name,
+                        display_parameter_label_shape(&shape)
+                    ));
+                    return;
+                }
+            }
             if self
                 .generic_inherent_extensions
                 .get(target_template)
@@ -4537,6 +4560,9 @@ impl Analyzer {
                     })
                 })
             {
+                if overloaded {
+                    continue;
+                }
                 self.error(if is_method {
                     format!(
                         "duplicate generic inherent method `{target_template}.{}`",
@@ -4572,14 +4598,29 @@ impl Analyzer {
                 continue;
             }
             let key = (target_template.clone(), function.name.clone());
-            if self.generic_inherent_functions.contains_key(&key) {
+            let overload_key = (target_template.clone(), function.name.clone(), false);
+            let overloaded = self
+                .inherent_overload_counts
+                .get(&overload_key)
+                .copied()
+                .unwrap_or_default()
+                > 1;
+            if self.generic_inherent_functions.contains_key(&key) && !overloaded {
                 self.error(format!(
                     "duplicate generic associated function `{target_template}.{}`",
                     function.name
                 ));
                 continue;
             }
-            let canonical = generic_inherent_function_name(target_template, &function.name);
+            let mut canonical = generic_inherent_function_name(target_template, &function.name);
+            if overloaded {
+                canonical =
+                    overloaded_function_name(&canonical, &function_parameter_labels(function));
+                self.inherent_overloads
+                    .entry(overload_key)
+                    .or_default()
+                    .push(canonical.clone());
+            }
             let mut generic = function.clone();
             generic.name = canonical.clone();
             let mut compile_groups = extension.compile_groups.clone();
@@ -4600,7 +4641,9 @@ impl Analyzer {
                 .insert(canonical.clone(), origin.clone());
             self.function_accesses
                 .insert(canonical.clone(), extension_access.clone());
-            self.generic_inherent_functions.insert(key, canonical);
+            self.generic_inherent_functions
+                .entry(key)
+                .or_insert(canonical);
         }
 
         self.generic_inherent_extensions
@@ -4678,10 +4721,20 @@ impl Analyzer {
                         .groups
                         .first()
                         .is_some_and(|group| group.len() == 1 && group[0].name == "self"),
+                    function_parameter_labels(function),
                 )),
                 ExtendMember::Const(_) => None,
             })
             .collect::<Vec<_>>();
+        for (member, is_method, _) in &registered_members {
+            let count = self
+                .inherent_overload_counts
+                .get(&(target_template.to_owned(), member.clone(), *is_method))
+                .copied()
+                .unwrap_or(1);
+            self.inherent_overload_counts
+                .insert((canonical.to_owned(), member.clone(), *is_method), count);
+        }
         for member in &mut members {
             match member {
                 ExtendMember::Function(function) => {
@@ -4705,12 +4758,21 @@ impl Analyzer {
             },
             extension.origin.clone(),
         );
-        for (member, is_method) in registered_members {
-            let name = if is_method {
+        for (member, is_method, shape) in registered_members {
+            let mut name = if is_method {
                 inherent_method_name(canonical, &member)
             } else {
                 associated_function_name(canonical, &member)
             };
+            if self
+                .inherent_overload_counts
+                .get(&(canonical.to_owned(), member.clone(), is_method))
+                .copied()
+                .unwrap_or_default()
+                > 1
+            {
+                name = overloaded_function_name(&name, &shape);
+            }
             if let Some(access) = self.function_accesses.get(&name).cloned() {
                 self.function_accesses.insert(
                     name,
@@ -14746,6 +14808,23 @@ impl Analyzer {
                         matches!(*group, [CallArg { label: Some(label), .. }] if label == "self")
                     });
                     if !explicit_method {
+                        let overload_key = (target_template.clone(), variant_name.clone(), false);
+                        if (self.struct_templates.contains_key(target_template)
+                            || self.enum_templates.contains_key(target_template))
+                            && self.inherent_overloads.contains_key(&overload_key)
+                        {
+                            let Some(canonical) = self.resolve_inherent_overload(
+                                target_template,
+                                variant_name,
+                                false,
+                                &groups,
+                            ) else {
+                                return error_expr();
+                            };
+                            return self.lower_generic_function_call(
+                                &canonical, &groups, expected, context,
+                            );
+                        }
                         if let Some(canonical) = self
                             .generic_inherent_functions
                             .get(&(target_template.clone(), variant_name.clone()))
@@ -16118,7 +16197,11 @@ impl Analyzer {
         expected: Option<&Ty>,
         context: &LowerCtx,
     ) -> Option<(String, usize)> {
-        let template = self.function_templates[name].clone();
+        let template = self
+            .function_templates
+            .get(name)
+            .unwrap_or_else(|| panic!("missing generic function template `{name}`"))
+            .clone();
         let (compile_parameters, mut inferred, runtime_start) = self.seed_type_argument_inference(
             name,
             &template.compile_groups,
@@ -25898,6 +25981,22 @@ let main(): i32 = {
 "#,
         )
         .expect("generic inherent overloads should infer or explicitly consume compile arguments");
+
+        compile_text(
+            r#"
+let Cell(T: type) = struct(value: T)
+extend(T: type) Cell(T) {
+  let choose(left: T): T = { left }
+  let choose(right: T): T = { right }
+  let add(borrow self)(left: T): T = { left }
+  let add(borrow self)(right: T): T = { right }
+}
+let main(): i32 = {
+  Cell.choose(left: 20) + Cell(i32)(0).add(right: 22)
+}
+"#,
+        )
+        .expect("blanket generic inherent extensions should preserve overload sets per instance");
     }
 
     #[test]

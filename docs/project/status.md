@@ -40,8 +40,8 @@ call argument must select a unique candidate; a method's implicit receiver is no
 evidence. Trait conformance, default and blanket implementations, where-bound assumptions, curried
 groups, module resolution, imports, type and optional-chain probing, closure lowering, effects, and
 native mangling preserve that choice. Generic templates are selected by runtime labels before their
-compile-time groups are inferred or consumed. Overloads spread across blanket generic inherent
-extensions remain to be added.
+compile-time groups are inferred or consumed. Blanket generic inherent extensions preserve the same
+overload set across every applicable concrete nominal instance.
 Callable effect rows support requirement subtyping: a pure function value can fill an unsafe or
 custom-effect slot, while a value requiring additional effects cannot fill a narrower slot. The
 slot's widened requirements remain checked at indirect calls, and generic row inference retains the
