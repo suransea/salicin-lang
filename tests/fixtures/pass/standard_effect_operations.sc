@@ -32,6 +32,26 @@ let handled_throw_sugar_action(): i32 = {
   }
 }
 
+let tried_throw_sugar_function(): i32 = {
+  let result: Result(i32, i32) = try {
+    fail_with_throw_sugar()
+  }
+  result match {
+    Ok(value) => value,
+    Err(error) => error,
+  }
+}
+
+let tried_throw_sugar_action(): i32 = {
+  let result: Result(i32, i32) = try {
+    throw 42
+  }
+  result match {
+    Ok(value) => value,
+    Err(error) => error,
+  }
+}
+
 let handled_async(): i32 = {
   let mut seen = 0
   let value = Async.handle(
@@ -47,5 +67,5 @@ let handled_async(): i32 = {
 }
 
 let main(): i32 = {
-  handled_throw() + handled_throw_sugar_function() + handled_throw_sugar_action() + handled_async() - 126
+  handled_throw() + handled_throw_sugar_function() + handled_throw_sugar_action() + tried_throw_sugar_function() + tried_throw_sugar_action() + handled_async() - 210
 }

@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.162.0 - 2026-07-22
+
+- Allowed contextual `try { ... }` expressions with an expected `Result(T, E)` to handle the ordinary
+  standard `Throws(E)` custom effect by generating a normal `Throws(E).handle` with `done -> Ok` and
+  `raise -> Err` clauses.
+- Preserved the existing dedicated lowercase `throws(E)` Result ABI path when the body calls
+  functions with `with(throws(E))`, so current propagation behavior stays stable while ordinary
+  `Throws` handling moves onto the algebraic-effect path.
+- Covered both standard-effect function calls and direct `throw` inside contextual `try`, while
+  leaving context-free inference for ordinary `Throws(E)` as future work.
+
 ## 0.161.0 - 2026-07-22
 
 - Allowed `throw error` to target the ordinary standard `Throws(Error)` effect when no dedicated

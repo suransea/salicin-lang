@@ -16059,6 +16059,11 @@ impl Analyzer {
             return error_expr();
         }
         let error = info.error.expect("Result has an error type");
+        if !self.try_body_uses_dedicated_throws_call(body, context)
+            && self.try_body_uses_standard_throws(body, &error, context)
+        {
+            return self.lower_standard_throws_try(body, expected, context);
+        }
         let closure = self.lower_local_closure(
             &[],
             body,
@@ -16110,6 +16115,370 @@ impl Analyzer {
                 diverges: false,
             },
         }
+    }
+
+    fn lower_standard_throws_try(
+        &mut self,
+        body: &Expr,
+        expected: Ty,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let Some(info) = self.builtin_fallible_info_for_ty(&expected) else {
+            self.error("internal error: standard Throws try requires a Result expectation");
+            return error_expr();
+        };
+        let Some(error_source) = info
+            .error
+            .as_ref()
+            .and_then(|error| self.source_type_for_ty(error))
+        else {
+            self.error("standard Throws try requires a source-level error type");
+            return error_expr();
+        };
+        let Some(payload_source) = info.payload_source.clone() else {
+            self.error("standard Throws try requires a source-level success type");
+            return error_expr();
+        };
+        let throws_name = self.lang_item_name(LangItemKind::ThrowsEffect).to_owned();
+        let Some(definition) = self.effect_defs.get(&throws_name).cloned() else {
+            self.error("compiler core did not register its validated `Throws` effect");
+            return error_expr();
+        };
+        let instance = Type::Named(throws_name, vec![error_source]);
+        let inferred = Type::Named("$context$infer".into(), Vec::new());
+        let result_name = self.lang_item_name(LangItemKind::Result).to_owned();
+        let done_value = "$try$value".to_owned();
+        let raise_error = "$try$error".to_owned();
+        let clauses = vec![
+            CallArg {
+                label: Some("done".to_owned()),
+                value: Expr::Closure(
+                    vec![Param {
+                        mode: PassMode::Inferred,
+                        access: None,
+                        passing: None,
+                        region: None,
+                        name: done_value.clone(),
+                        ty: payload_source,
+                    }],
+                    Box::new(Expr::Call(
+                        Box::new(Expr::Member(
+                            Box::new(Expr::Name(result_name.clone())),
+                            "Ok".to_owned(),
+                        )),
+                        vec![CallArg {
+                            label: None,
+                            value: Expr::Name(done_value),
+                        }],
+                    )),
+                ),
+            },
+            CallArg {
+                label: Some("raise".to_owned()),
+                value: Expr::Closure(
+                    vec![Param {
+                        mode: PassMode::Inferred,
+                        access: None,
+                        passing: None,
+                        region: None,
+                        name: raise_error.clone(),
+                        ty: inferred,
+                    }],
+                    Box::new(Expr::Call(
+                        Box::new(Expr::Member(
+                            Box::new(Expr::Name(result_name)),
+                            "Err".to_owned(),
+                        )),
+                        vec![CallArg {
+                            label: None,
+                            value: Expr::Name(raise_error),
+                        }],
+                    )),
+                ),
+            },
+        ];
+        let action = vec![CallArg {
+            label: None,
+            value: Expr::Closure(Vec::new(), Box::new(body.clone())),
+        }];
+        let groups = vec![clauses.as_slice(), action.as_slice()];
+        self.lower_effect_handler(&definition, &instance, &groups, Some(&expected), context)
+    }
+
+    fn try_body_uses_standard_throws(
+        &self,
+        expression: &Expr,
+        error: &Ty,
+        context: &LowerCtx,
+    ) -> bool {
+        let Some(error_source) = self.source_type_for_ty(error) else {
+            return false;
+        };
+        let identity = source_effect_identity(&Type::Named(
+            self.lang_item_name(LangItemKind::ThrowsEffect).to_owned(),
+            vec![error_source],
+        ));
+        self.expression_uses_standard_throws_identity(expression, &identity, context)
+    }
+
+    fn expression_uses_standard_throws_identity(
+        &self,
+        expression: &Expr,
+        identity: &str,
+        context: &LowerCtx,
+    ) -> bool {
+        match expression {
+            Expr::Throw(_) => true,
+            Expr::Try(_) | Expr::Closure(_, _) => false,
+            Expr::Call(callee, arguments) => {
+                handled_operation_call(expression, identity).is_some()
+                    || self
+                        .call_custom_effect_identities(expression, context)
+                        .is_some_and(|effects| effects.iter().any(|effect| effect == identity))
+                    || self.expression_uses_standard_throws_identity(callee, identity, context)
+                    || arguments.iter().any(|argument| {
+                        self.expression_uses_standard_throws_identity(
+                            &argument.value,
+                            identity,
+                            context,
+                        )
+                    })
+            }
+            Expr::Unary(_, value)
+            | Expr::Borrow { value, .. }
+            | Expr::DoBlock { body: value }
+            | Expr::Unsafe(value)
+            | Expr::Return(Some(value))
+            | Expr::Break(Some(value)) => {
+                self.expression_uses_standard_throws_identity(value, identity, context)
+            }
+            Expr::Return(None) | Expr::Break(None) | Expr::Continue => false,
+            Expr::Binary(left, _, right)
+            | Expr::Coalesce(left, right)
+            | Expr::Assign(left, right)
+            | Expr::CompoundAssign(left, _, right) => {
+                self.expression_uses_standard_throws_identity(left, identity, context)
+                    || self.expression_uses_standard_throws_identity(right, identity, context)
+            }
+            Expr::HandlerCoalesce {
+                scrutinee,
+                success,
+                fallback,
+                ..
+            } => {
+                self.expression_uses_standard_throws_identity(scrutinee, identity, context)
+                    || self.expression_uses_standard_throws_identity(success, identity, context)
+                    || self.expression_uses_standard_throws_identity(fallback, identity, context)
+            }
+            Expr::HandlerChainCall(chain) => {
+                self.expression_uses_standard_throws_identity(&chain.scrutinee, identity, context)
+                    || chain.groups.iter().flatten().any(|argument| {
+                        self.expression_uses_standard_throws_identity(
+                            &argument.value,
+                            identity,
+                            context,
+                        )
+                    })
+                    || self.expression_uses_standard_throws_identity(
+                        &chain.success,
+                        identity,
+                        context,
+                    )
+                    || self.expression_uses_standard_throws_identity(
+                        &chain.residual,
+                        identity,
+                        context,
+                    )
+            }
+            Expr::Member(base, _) | Expr::ChainMember(base, _) => {
+                self.expression_uses_standard_throws_identity(base, identity, context)
+            }
+            Expr::Array(elements) => elements.iter().any(|element| {
+                self.expression_uses_standard_throws_identity(element, identity, context)
+            }),
+            Expr::Index { base, index } => {
+                self.expression_uses_standard_throws_identity(base, identity, context)
+                    || self.expression_uses_standard_throws_identity(index, identity, context)
+            }
+            Expr::Block(statements, tail) => {
+                statements.iter().any(|statement| match statement {
+                    Stmt::Let(binding) => self.expression_uses_standard_throws_identity(
+                        &binding.value,
+                        identity,
+                        context,
+                    ),
+                    Stmt::Expr(expression) => {
+                        self.expression_uses_standard_throws_identity(expression, identity, context)
+                    }
+                }) || tail.as_ref().is_some_and(|tail| {
+                    self.expression_uses_standard_throws_identity(tail, identity, context)
+                })
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.expression_uses_standard_throws_identity(condition, identity, context)
+                    || self.expression_uses_standard_throws_identity(then_branch, identity, context)
+                    || else_branch.as_ref().is_some_and(|else_branch| {
+                        self.expression_uses_standard_throws_identity(
+                            else_branch,
+                            identity,
+                            context,
+                        )
+                    })
+            }
+            Expr::While { condition, body } => {
+                self.expression_uses_standard_throws_identity(condition, identity, context)
+                    || self.expression_uses_standard_throws_identity(body, identity, context)
+            }
+            Expr::Loop { body } => {
+                self.expression_uses_standard_throws_identity(body, identity, context)
+            }
+            Expr::Match { scrutinee, arms } => {
+                self.expression_uses_standard_throws_identity(scrutinee, identity, context)
+                    || arms.iter().any(|arm| {
+                        arm.guard.as_ref().is_some_and(|guard| {
+                            self.expression_uses_standard_throws_identity(guard, identity, context)
+                        }) || self
+                            .expression_uses_standard_throws_identity(&arm.body, identity, context)
+                    })
+            }
+            Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => false,
+        }
+    }
+
+    fn try_body_uses_dedicated_throws_call(&self, expression: &Expr, context: &LowerCtx) -> bool {
+        match expression {
+            Expr::Try(_) | Expr::Closure(_, _) => false,
+            Expr::Call(callee, arguments) => {
+                self.call_throws_info(expression, context).is_some()
+                    || self.try_body_uses_dedicated_throws_call(callee, context)
+                    || arguments.iter().any(|argument| {
+                        self.try_body_uses_dedicated_throws_call(&argument.value, context)
+                    })
+            }
+            Expr::Unary(_, value)
+            | Expr::Borrow { value, .. }
+            | Expr::DoBlock { body: value }
+            | Expr::Throw(value)
+            | Expr::Unsafe(value)
+            | Expr::Return(Some(value))
+            | Expr::Break(Some(value)) => self.try_body_uses_dedicated_throws_call(value, context),
+            Expr::Return(None) | Expr::Break(None) | Expr::Continue => false,
+            Expr::Binary(left, _, right)
+            | Expr::Coalesce(left, right)
+            | Expr::Assign(left, right)
+            | Expr::CompoundAssign(left, _, right) => {
+                self.try_body_uses_dedicated_throws_call(left, context)
+                    || self.try_body_uses_dedicated_throws_call(right, context)
+            }
+            Expr::HandlerCoalesce {
+                scrutinee,
+                success,
+                fallback,
+                ..
+            } => {
+                self.try_body_uses_dedicated_throws_call(scrutinee, context)
+                    || self.try_body_uses_dedicated_throws_call(success, context)
+                    || self.try_body_uses_dedicated_throws_call(fallback, context)
+            }
+            Expr::HandlerChainCall(chain) => {
+                self.try_body_uses_dedicated_throws_call(&chain.scrutinee, context)
+                    || chain.groups.iter().flatten().any(|argument| {
+                        self.try_body_uses_dedicated_throws_call(&argument.value, context)
+                    })
+                    || self.try_body_uses_dedicated_throws_call(&chain.success, context)
+                    || self.try_body_uses_dedicated_throws_call(&chain.residual, context)
+            }
+            Expr::Member(base, _) | Expr::ChainMember(base, _) => {
+                self.try_body_uses_dedicated_throws_call(base, context)
+            }
+            Expr::Array(elements) => elements
+                .iter()
+                .any(|element| self.try_body_uses_dedicated_throws_call(element, context)),
+            Expr::Index { base, index } => {
+                self.try_body_uses_dedicated_throws_call(base, context)
+                    || self.try_body_uses_dedicated_throws_call(index, context)
+            }
+            Expr::Block(statements, tail) => {
+                statements.iter().any(|statement| match statement {
+                    Stmt::Let(binding) => {
+                        self.try_body_uses_dedicated_throws_call(&binding.value, context)
+                    }
+                    Stmt::Expr(expression) => {
+                        self.try_body_uses_dedicated_throws_call(expression, context)
+                    }
+                }) || tail
+                    .as_ref()
+                    .is_some_and(|tail| self.try_body_uses_dedicated_throws_call(tail, context))
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.try_body_uses_dedicated_throws_call(condition, context)
+                    || self.try_body_uses_dedicated_throws_call(then_branch, context)
+                    || else_branch.as_ref().is_some_and(|else_branch| {
+                        self.try_body_uses_dedicated_throws_call(else_branch, context)
+                    })
+            }
+            Expr::While { condition, body } => {
+                self.try_body_uses_dedicated_throws_call(condition, context)
+                    || self.try_body_uses_dedicated_throws_call(body, context)
+            }
+            Expr::Loop { body } => self.try_body_uses_dedicated_throws_call(body, context),
+            Expr::Match { scrutinee, arms } => {
+                self.try_body_uses_dedicated_throws_call(scrutinee, context)
+                    || arms.iter().any(|arm| {
+                        arm.guard.as_ref().is_some_and(|guard| {
+                            self.try_body_uses_dedicated_throws_call(guard, context)
+                        }) || self.try_body_uses_dedicated_throws_call(&arm.body, context)
+                    })
+            }
+            Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => false,
+        }
+    }
+
+    fn call_custom_effect_identities(
+        &self,
+        expression: &Expr,
+        context: &LowerCtx,
+    ) -> Option<Vec<String>> {
+        let mut groups = Vec::new();
+        let root = flatten_call(expression, &mut groups);
+        let Expr::Name(name) = root else {
+            return None;
+        };
+        if let Some(local) = context.lookup(name) {
+            let function = match &local.ty {
+                Ty::Function(function) => function,
+                Ty::Callable(callable) => &callable.signature,
+                _ => return None,
+            };
+            return (groups.len() == function.groups.len())
+                .then(|| function.custom_effects.clone());
+        }
+        if let Some(candidates) = self.function_overloads.get(name) {
+            if !groups
+                .iter()
+                .flat_map(|group| group.iter())
+                .any(|argument| argument.label.is_some())
+            {
+                return None;
+            }
+            let matches = self.matching_function_overloads(candidates, &groups, 0);
+            let [selected] = matches.as_slice() else {
+                return None;
+            };
+            let signature = self.signatures.get(selected)?;
+            return (groups.len() == signature.groups.len())
+                .then(|| signature.custom_effects.clone());
+        }
+        let signature = self.signatures.get(name)?;
+        (groups.len() == signature.groups.len()).then(|| signature.custom_effects.clone())
     }
 
     fn lower_do_block(

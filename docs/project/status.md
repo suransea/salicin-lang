@@ -27,6 +27,9 @@ standard-library contract must land with the implementation.
 so `Throws(Error).raise` can now be exercised through the same handler path as user-defined effects.
 `throw error` also desugars to that ordinary operation when the active row is the standard
 `Throws(Error)` custom effect rather than the dedicated lowercase `throws(Error)` Result ABI.
+Contextual `try { ... }` with an expected `Result(T, Error)` can now materialize ordinary
+`Throws(Error)` as `Result` through a generated `Throws(Error).handle`; context-free ordinary
+`Throws` inference is still future work.
 `core.control` also defines `Continuation(Input, Output)` and
 `EffectCallable(Input, Output, Answer)` as validated empty source contracts. The latter has a
 distinct owned semantic type plus a four-pointer LLVM call/drop/environment/flag layout and guarded

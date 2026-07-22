@@ -99,10 +99,12 @@ pub let Async = effect {
 `Throws.raise` is an ordinary `Never`-returning effect operation and can be handled with a normal
 abort clause such as `raise: { (error) -> ... }`. Source `throw error` also targets this ordinary
 operation when the current custom effect row has exactly one active `Throws(Error)` and no dedicated
-`with(throws(Error))` Result ABI boundary. The current `try` lowering still has a compiler-provided
-ABI and will be reduced further in later slices. `Async` currently exposes only a minimal
-`suspend(): ()` operation; executable async/Future lowering will add its handler contracts in the
-same implementation slice rather than pretending `await` already works.
+`with(throws(Error))` Result ABI boundary. Contextual `try { ... }` with an expected
+`Result(T, Error)` handles ordinary `Throws(Error)` through the same algebraic handler path, using
+`done -> Ok` and `raise -> Err`. Context-free inference and the dedicated lowercase `throws(Error)`
+path still have compiler-provided lowering and will be reduced further in later slices. `Async`
+currently exposes only a minimal `suspend(): ()` operation; executable async/Future lowering will add
+its handler contracts in the same implementation slice rather than pretending `await` already works.
 
 `core.access` owns standard access identities, also outside the prelude:
 
