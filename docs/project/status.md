@@ -29,8 +29,9 @@ so `Throws(Error).raise` can now be exercised through the same handler path as u
 `Throws(Error)` effect. `core.control.try` now declares its action requirement as `Throws(E)`, and
 contextual `try { ... }` with an expected `Result(T, Error)` materializes ordinary `Throws(Error)`
 as `Result` through a generated `Throws(Error).handle`. Context-free ordinary `Throws` inference now
-covers direct standard-effect function calls with a probeable success type; `Never`-only actions,
-generic calls, `do` returns, residual handlers, and mixed unsafe/error rows remain future work.
+covers direct standard-effect function calls with a probeable success type, and `do` return
+boundaries can forward standard `Throws(Error)` into a contextual `try { ... }`. `Never`-only
+actions, generic calls, residual handlers, and mixed unsafe/error rows remain future work.
 `core.control` also defines `Continuation(Input, Output)` and
 `EffectCallable(Input, Output, Answer)` as validated empty source contracts. The latter has a
 distinct owned semantic type plus a four-pointer LLVM call/drop/environment/flag layout and guarded
@@ -104,8 +105,9 @@ checked for parameter modes, result types, arity, visibility, and missing row re
 Operations share the language's name-only overload rule: runtime label shapes must differ, calls
 use named arguments, and repeated handler labels select signatures through clause parameter names.
 Handling removes only the selected nominal identity: operation gates and generated resumable frames
-retain residual `Unsafe`, `throws`, and other nominal requirements, including the distinct logical
-success and `Result` ABI types needed by throwing continuations.
+retain residual `Unsafe`, `Throws(E)`, and other nominal requirements. Some residual throwing-frame
+paths still use the older internal carrier while they are being migrated to the ordinary standard
+effect.
 Derived handlers support typed one-shot resumption, abandonment, `done:` answer conversion, named-call
 propagation, direct recursion, and resumable loop backedges. Cross-function abandonment and
 computation after `resume` use explicit CPS continuation closures. Direct and mutually recursive
@@ -174,11 +176,12 @@ Callable effect rows support requirement subtyping: a pure function value can fi
 custom-effect slot, while a value requiring additional effects cannot fill a narrower slot. The
 slot's widened requirements remain checked at indirect calls, and generic row inference retains the
 callable's exact source row.
-Fixed ordinary `Throws(E)` direct calls and contextual `try` handling are implemented for the
-non-generic paths currently covered by public fixtures. Effect-parameterized, `do`-return,
-residual-handler, and mixed unsafe/error lowering still use the older internal carrier path until
-that implementation is unified. Ordinary `Option` and `Result` functions require explicit variant
-construction; the removed `Try`, `FromResidual`, `FromError`, and `ControlFlow` language protocols no
+Fixed ordinary `Throws(E)` direct calls, contextual `try` handling, and `do` return-boundary
+forwarding are implemented for the non-generic paths currently covered by public fixtures.
+Effect-parameterized, residual-handler, and mixed unsafe/error lowering still use the older internal
+carrier path until that implementation is unified. Ordinary `Option` and `Result` functions require
+explicit variant construction; the removed `Try`, `FromResidual`, `FromError`, and `ControlFlow`
+language protocols no
 longer participate in return completion or propagation. `do` transparently forwards the complete
 active row through its immediate closure boundary, including recoverable-error, `Unsafe`,
 and nominal marker effects. Capturing closure values, generic trait methods, the remaining general

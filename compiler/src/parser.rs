@@ -4807,7 +4807,7 @@ mod tests {
         assert!(matches!(function_tail(other), Expr::DoBlock { .. }));
 
         let old =
-            parse("let unwrap(value: Result(i32, bool)): i32 with(throws(bool)) = { value.try }\n")
+            parse("let unwrap(value: Result(i32, bool)): i32 with(Throws(bool)) = { value.try }\n")
                 .unwrap_err();
         assert!(old.message.contains("postfix `.try` was removed"));
 

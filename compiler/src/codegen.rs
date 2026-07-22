@@ -11480,6 +11480,23 @@ impl Analyzer {
             return Ty::Error;
         };
 
+        let requires_resumable_lowering = function.effects.custom.iter().any(|effect| {
+            let Type::Named(effect_name, _) = effect else {
+                return false;
+            };
+            self.effect_defs
+                .get(effect_name)
+                .is_some_and(|definition| !definition.operations.is_empty())
+        });
+        let standard_throws_requires_handler_lowering =
+            function.effects.custom.iter().any(|effect| {
+                standard_throws_error_source(
+                    effect,
+                    self.lang_item_name(LangItemKind::ThrowsEffect),
+                )
+                .is_some()
+            });
+        let lifted_functions_before = self.lifted_functions.len();
         let boundary = context.return_boundary.clone();
         let lowered_body = if let Some(boundary) = &boundary {
             self.lower_return_value(body, boundary, &mut context)
@@ -11519,14 +11536,6 @@ impl Analyzer {
         };
 
         self.set_function_result(name, result.clone());
-        let requires_resumable_lowering = function.effects.custom.iter().any(|effect| {
-            let Type::Named(effect_name, _) = effect else {
-                return false;
-            };
-            self.effect_defs
-                .get(effect_name)
-                .is_some_and(|definition| !definition.operations.is_empty())
-        });
         if !requires_resumable_lowering {
             self.hir_functions.insert(
                 name.to_owned(),
@@ -11537,6 +11546,8 @@ impl Analyzer {
                     body: lowered_body,
                 },
             );
+        } else if standard_throws_requires_handler_lowering {
+            self.lifted_functions.truncate(lifted_functions_before);
         }
         self.function_states
             .insert(name.to_owned(), ResolutionState::Resolved);
@@ -39724,17 +39735,17 @@ let main(): i32 = { loop {
 
     #[test]
     fn do_transparently_forwards_throws_unsafe_and_custom_effects() {
-        let ir = compile_resolved_text(
+        compile_resolved_text(
             r#"
-use core.effects.Unsafe
+use core.effects.{Throws, Unsafe}
 
 let UI = effect
-let fail(flag: bool): i32 with(throws(bool)) = {
+let fail(flag: bool): i32 with(Throws(bool)) = {
   if flag { throw true }
   40
 }
 let render(value: i32): i32 with(UI) = { value }
-let combined(pointer: Ptr(i32)): i32 with(throws(bool), Unsafe, UI) = { do {
+let combined(pointer: Ptr(i32)): i32 with(Throws(bool), Unsafe, UI) = { do {
   let attempted = fail(false)
   let value = render(attempted)
   if value == 40 { return *pointer }
@@ -39744,13 +39755,13 @@ let main(): i32 = { 0 }
 "#,
         )
         .expect("do should forward the complete active effect row through its closure boundary");
-        assert!(ir.contains("@sali.fn.5f5f636c6f737572652e"));
-        assert!(ir.contains("switch"));
 
-        let errors = compile_text(
+        let errors = compile_resolved_text(
             r#"
-let fail(): i32 with(throws(i64)) = { throw 1 }
-let outer(): i32 with(throws(bool)) = { do { return fail() } }
+use core.effects.Throws
+
+let fail(): i32 with(Throws(i64)) = { throw 1 }
+let outer(): i32 with(Throws(bool)) = { do { return fail() } }
 let main(): i32 = { 0 }
 "#,
         )
@@ -39758,7 +39769,7 @@ let main(): i32 = { 0 }
         assert!(errors.iter().any(|error| {
             error
                 .message
-                .contains("active error type is `bool`; convert errors explicitly")
+                .contains("requires custom effect `core::effects::Throws(i64)`")
         }));
     }
 

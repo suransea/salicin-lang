@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.166.0 - 2026-07-22
+
+- Stopped retaining lifted native closures produced while only validating ordinary functions whose
+  rows contain standard `Throws(E)`; those functions are emitted through handler/CPS lowering
+  instead of a direct native body.
+- Migrated the public `do` return-boundary fixture and the matching row-forwarding regression to
+  standard `Throws(E)`, covering `do { return fallible() }` inside contextual `try { ... }`.
+- Kept the remaining lowercase `throws(E)` carrier coverage limited to unresolved generic,
+  residual-handler, and mixed unsafe/error paths.
+
 ## 0.165.0 - 2026-07-22
 
 - Made `Unsafe` the public standard effect spelling in `with(...)` rows and effect compile-time
