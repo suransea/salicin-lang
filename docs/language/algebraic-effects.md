@@ -202,12 +202,12 @@ remain observable before the action captures its environment. An earlier `borrow
 parameter, conditional action values, and actions crossing another function boundary still require
 the remaining loan-aware or general erased value integration.
 
-Selective CPS removes only the handled nominal identity. Residual `unsafe`, `throws(Error)`, and
+Selective CPS removes only the handled nominal identity. Residual `unsafe`, `Throws(Error)`, and
 other nominal requirements remain on generated resumable frames. Intercepted operations also retain
 their explicitly declared residual row through a compiler-created capability gate, so replacing an
 operation with its clause cannot accidentally authorize or erase unrelated effects. For
-`throws(Error)`, resume accepts the operation's logical success type while generated closures retain
-the `Result(Success, Error)` ABI internally.
+`Throws(Error)`, resume accepts the operation's logical success type while generated closures retain
+the current recoverable-error carrier internally.
 Lexically active handler identities are carried separately through compiler-generated CPS closures,
 so an outer handler can satisfy a residual requirement that an inner handler exposes only after
 named-frame specialization. This internal capability is not added to the frame's public callable

@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.163.0 - 2026-07-22
+
+- Changed the validated `core.control.try` contract to require ordinary `Throws(E)` in its action
+  row instead of the lowercase `throws(E)` carrier spelling, so the standard library now expresses
+  recoverable failure with the same nominal effect declaration users write.
+- Updated the core docs, grammar notes, and implementation status to make `Throws(E)` the public
+  standard effect model; legacy lowercase carrier wording is now treated as implementation debt
+  rather than a compatibility surface.
+- Migrated the public direct-throw/try fixtures that already lower through ordinary `Throws(E)`;
+  generic, `do`-return, residual-handler, and mixed unsafe cases still exercise the old internal
+  carrier until their lowering is unified.
+
 ## 0.162.0 - 2026-07-22
 
 - Allowed contextual `try { ... }` expressions with an expected `Result(T, E)` to handle the ordinary

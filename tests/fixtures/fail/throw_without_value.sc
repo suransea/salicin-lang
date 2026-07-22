@@ -1,4 +1,6 @@
-let fail(): i32 with(throws(bool)) = {
+use core.effects.Throws
+
+let fail(): i32 with(Throws(bool)) = {
   throw
 }
 

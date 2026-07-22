@@ -1281,7 +1281,10 @@ fn valid_do(function: &Function) -> bool {
 fn valid_try(function: &Function) -> bool {
     let result = Type::Named("Result".to_owned(), vec![named_type("T"), named_type("E")]);
     let effects = crate::ast::FunctionEffects {
-        throws: Some(Box::new(named_type("E"))),
+        custom: vec![Type::Named(
+            "core.effects.Throws".to_owned(),
+            vec![named_type("E")],
+        )],
         parameters: vec!["F".to_owned()],
         ..crate::ast::FunctionEffects::default()
     };
@@ -1294,7 +1297,7 @@ fn valid_try(function: &Function) -> bool {
             type_parameter("T"),
             type_parameter("E"),
         ]]
-        && single_moved_callable(function, "action", result.clone(), effects)
+        && single_moved_callable(function, "action", named_type("T"), effects)
         && function.return_type == Some(result)
         && function.effects.parameters == vec!["F"]
         && !function.effects.unsafe_effect

@@ -16638,7 +16638,7 @@ impl Analyzer {
             }
             let _ = self.lower_expr(value, None, context);
             self.error(
-                "`throw` requires an enclosing `with(throws(Error))` function or `try { ... }` handler",
+                "`throw` requires an enclosing `with(Throws(Error))` function or `try { ... }` handler",
             );
             return error_expr();
         };
@@ -37222,15 +37222,15 @@ let main(): i32 = {
             ),
             (
                 "let fail(): Option(i32) = { throw false }\nlet main(): i32 = { 0 }\n",
-                "requires an enclosing `with(throws(Error))`",
+                "requires an enclosing `with(Throws(Error))`",
             ),
             (
                 "let fail(): i32 = { throw false }\nlet main(): i32 = { 0 }\n",
-                "requires an enclosing `with(throws(Error))`",
+                "requires an enclosing `with(Throws(Error))`",
             ),
             (
                 "let fail() = { throw false }\nlet main(): i32 = { 0 }\n",
-                "requires an enclosing `with(throws(Error))`",
+                "requires an enclosing `with(Throws(Error))`",
             ),
         ] {
             let errors = compile_text(source).expect_err("invalid throw must be rejected");

@@ -94,17 +94,15 @@ pub let Async = effect {
 }
 ```
 
-`Unsafe` and `Throws(Error)` are validated lang-item identities behind the lowercase source spellings
-`with(unsafe)` and `throws(Error)`, but their declarations use ordinary source-level effect forms.
-`Throws.raise` is an ordinary `Never`-returning effect operation and can be handled with a normal
-abort clause such as `raise: { (error) -> ... }`. Source `throw error` also targets this ordinary
-operation when the current custom effect row has exactly one active `Throws(Error)` and no dedicated
-`with(throws(Error))` Result ABI boundary. Contextual `try { ... }` with an expected
-`Result(T, Error)` handles ordinary `Throws(Error)` through the same algebraic handler path, using
-`done -> Ok` and `raise -> Err`. Context-free inference and the dedicated lowercase `throws(Error)`
-path still have compiler-provided lowering and will be reduced further in later slices. `Async`
-currently exposes only a minimal `suspend(): ()` operation; executable async/Future lowering will add
-its handler contracts in the same implementation slice rather than pretending `await` already works.
+`Unsafe`, `Throws(Error)`, and `Async` are validated lang-item identities, but their declarations use
+the same source-level effect forms as user code. `Throws.raise` is an ordinary `Never`-returning
+effect operation and can be handled with a normal abort clause such as `raise: { (error) -> ... }`.
+Source `throw error` targets this ordinary operation when the current effect row has exactly one
+active `Throws(Error)`. Contextual `try { ... }` with an expected `Result(T, Error)` handles
+ordinary `Throws(Error)` through the same algebraic handler path, using `done -> Ok` and
+`raise -> Err`. `Async` currently exposes only a minimal `suspend(): ()` operation; executable
+async/Future lowering will add its handler contracts in the same implementation slice rather than
+pretending `await` already works.
 
 `core.access` owns standard access identities, also outside the prelude:
 
@@ -140,13 +138,13 @@ entry. These low-level operations are not source-level standard-library function
 ```sali
 pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E)
 pub let try(F: effect, T: type, E: type)
-  (move action: (): T with(throws(E), F)): Result(T, E) with(F)
+  (move action: (): T with(core.effects.Throws(E), F)): Result(T, E) with(F)
 pub let unsafe(E: effect, T: type)
   (move action: (): T with(unsafe, E)): T with(E)
 pub let loop(E: effect, T: type)(move body: (): () with(E)): T with(E)
 ```
 
-Here `try` removes only `throws(E)`, `unsafe` removes only the unsafe requirement, and both forward
+Here `try` removes only `Throws(E)`, `unsafe` removes only the unsafe requirement, and both forward
 the remainder row. `do` and `loop` forward the whole row.
 
 `core.iter` owns iteration rather than the prelude:
@@ -169,11 +167,12 @@ the iterable once, moves it into `IntoIterator.into_iter`, repeatedly mutably bo
 iterator for `Iterator.next`, and stops on `None`. An inherent or unrelated trait method named
 `into_iter` or `next` cannot intercept this lowering.
 
-The lowercase syntax spellings bind to these validated identities without an import. An ordinary
-same-named declaration cannot acquire their lowering behavior. Future control features follow the
-same rule: for example, async lowering must add `Future`, `async`, and handler contracts to the
-matching core release when it becomes executable, rather than reserving undocumented compiler magic
-in advance.
+The control spellings bind to these validated identities without importing ordinary names. Standard
+effect identities such as `Throws` remain normal `core.effects` exports when named in source. An
+ordinary same-named declaration cannot acquire lang-item lowering behavior. Future control features
+follow the same rule: for example, async lowering must add `Future`, `async`, and handler contracts
+to the matching core release when it becomes executable, rather than reserving undocumented compiler
+magic in advance.
 
 `core.algebra` contains first-order algebra protocols rather than putting them in the prelude:
 
@@ -229,7 +228,8 @@ equation solving remain future semantic work.
 
 `ControlFlow`, the old propagation `Try`, `FromResidual`, and `FromError` were removed together with postfix `.try`. `Option` and
 `Result` are ordinary enum values and require explicit constructors. Language error propagation is
-defined solely by `throws(E)`, `throw`, and `try { ... }`; `do` has no error-specific semantics.
+defined by the standard `Throws(E)` effect, `throw`, and `try { ... }`; `do` has no error-specific
+semantics.
 
 Primitive implementations remain compiler-defined. The unit type has the single spelling `()`. A declaration only
 receives language-item behavior when its validated identity comes from this edition's embedded core;

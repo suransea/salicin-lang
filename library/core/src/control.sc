@@ -14,6 +14,6 @@ pub let EffectCallable(Input: type, Output: type, Answer: type) = struct()
 // signatures. Their bodies are supplied by the compiler because they delimit
 // or transform control flow rather than behaving like ordinary calls.
 pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E)
-pub let try(F: effect, T: type, E: type)(move action: (): T with(throws(E), F)): Result(T, E) with(F)
+pub let try(F: effect, T: type, E: type)(move action: (): T with(core.effects.Throws(E), F)): Result(T, E) with(F)
 pub let unsafe(E: effect, T: type)(move action: (): T with(unsafe, E)): T with(E)
 pub let loop(E: effect, T: type)(move body: (): () with(E)): T with(E)

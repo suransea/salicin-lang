@@ -25,11 +25,11 @@ absent until the async/Future lowering slice is implemented, at which point its 
 standard-library contract must land with the implementation.
 `Never`-returning algebraic operations are handled as abort operations whose clauses omit `resume`,
 so `Throws(Error).raise` can now be exercised through the same handler path as user-defined effects.
-`throw error` also desugars to that ordinary operation when the active row is the standard
-`Throws(Error)` custom effect rather than the dedicated lowercase `throws(Error)` Result ABI.
-Contextual `try { ... }` with an expected `Result(T, Error)` can now materialize ordinary
-`Throws(Error)` as `Result` through a generated `Throws(Error).handle`; context-free ordinary
-`Throws` inference is still future work.
+`throw error` desugars to that ordinary operation when the active row has a unique standard
+`Throws(Error)` effect. `core.control.try` now declares its action requirement as `Throws(E)`, and
+contextual `try { ... }` with an expected `Result(T, Error)` materializes ordinary `Throws(Error)`
+as `Result` through a generated `Throws(Error).handle`; context-free ordinary `Throws` inference is
+still future work.
 `core.control` also defines `Continuation(Input, Output)` and
 `EffectCallable(Input, Output, Answer)` as validated empty source contracts. The latter has a
 distinct owned semantic type plus a four-pointer LLVM call/drop/environment/flag layout and guarded
@@ -87,12 +87,10 @@ aliases and the former prefix spelling are intentionally absent before 1.0.
 Passing keyword generics are also implemented for functions and generic inherent members:
 `P: passing` accepts `auto`, `copy`, or `move` and can be referenced directly in parameter keyword
 position. Functions and trait methods place a contextual `with(...)` clause after the result type:
-`: T with(unsafe)` adds the checked unsafe call requirement, while `: T with(throws(E))` declares an
-automatically propagated error effect and uses `Result(T, E)` as its current ABI carrier. `try { ... }`
-handles that effect and produces an explicit `Result`. Without a contextual result type, a handler
-infers `Result(T, E)` from one unique escaping `throws(E)` source across direct, method, and
-non-capturing indirect calls; nested handlers do not leak handled errors. Postfix `.try` and
-`with(try...)` are removed.
+`: T with(unsafe)` adds the checked unsafe call requirement, while `: T with(Throws(E))` declares the
+standard recoverable-error effect. `try { ... }` handles that effect and produces an explicit
+`Result`. Without a contextual result type, ordinary `Throws(E)` inference is still being completed;
+postfix `.try` and `with(try...)` are removed.
 Callable source types use the same shape, such as
 `(i32): i32 with(unsafe)`; the clause is not a runtime or currying group. Complete direct, method,
 aliased, and partially applied unsafe calls require an
@@ -158,9 +156,9 @@ Different user-defined handlers compose lexically through action, clause, and ge
 closure boundaries; nested handlers of the same identity retain nearest-boundary selection.
 Function and generic inherent-member `E: effect` parameters represent complete rows, default to pure,
 participate in monomorphization, forward through ordinary compile-time calls such as
-`callee(E)(value)`, and infer pure, unsafe, custom, or `throws(Error)` rows from higher-order callable
-arguments. A selected `throws(Error)` row preserves both its error type and the current `Result`
-carrier ABI through forwarding and specialization.
+`callee(E)(value)`, and infer pure, unsafe, custom, or standard `Throws(Error)` rows from
+higher-order callable arguments. A selected `Throws(Error)` row preserves its error type through
+forwarding and specialization.
 Named non-capturing functions can be passed and invoked through the native function-pointer ABI.
 Concrete and generic top-level functions, concrete-nominal inherent members, and trait requirements may form label-directed
 overload sets. Their runtime parameter-label shapes must differ, and at least one explicit named
@@ -174,11 +172,13 @@ Callable effect rows support requirement subtyping: a pure function value can fi
 custom-effect slot, while a value requiring additional effects cannot fill a narrower slot. The
 slot's widened requirements remain checked at indirect calls, and generic row inference retains the
 callable's exact source row.
-Fixed and effect-parameterized `throws(E)` are implemented for direct, method, partial, and
-non-capturing indirect calls. Ordinary `Option` and `Result` functions require explicit variant
+Fixed ordinary `Throws(E)` direct calls and contextual `try` handling are implemented for the
+non-generic paths currently covered by public fixtures. Effect-parameterized, `do`-return,
+residual-handler, and mixed unsafe/error lowering still use the older internal carrier path until
+that implementation is unified. Ordinary `Option` and `Result` functions require explicit variant
 construction; the removed `Try`, `FromResidual`, `FromError`, and `ControlFlow` language protocols no
 longer participate in return completion or propagation. `do` transparently forwards the complete
-active row through its immediate closure boundary, including `throws` carrier lowering, `unsafe`,
+active row through its immediate closure boundary, including recoverable-error, `unsafe`,
 and nominal marker effects. Capturing closure values, generic trait methods, the remaining general
 algebraic-continuation ABI, and async color lowering remain design or implementation work.
 
@@ -191,7 +191,7 @@ declarations; operator syntax continues to dispatch through validated lang items
 The implementation is broad but not stable. Important incomplete boundaries include:
 
 - `core` provides the initial prelude plus arithmetic, bitwise, unary, equality, partial-ordering,
-  control, and iteration protocols. Language error propagation is the built-in `throws(E)` effect.
+  control, and iteration protocols. Language error propagation is the standard `Throws(E)` effect.
   Slices, trait-based indexing, standard array/container iterator implementations, and `Future`
   remain to be implemented;
 - `std` host APIs have not been started;

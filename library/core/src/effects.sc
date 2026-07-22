@@ -1,7 +1,6 @@
-// Compiler-recognized and standard effect identities. Source spellings such as
-// `with(unsafe)` and `throws(E)` bind to the validated `Unsafe` and `Throws(E)`
-// declarations rather than to user declarations with the same spelling, but the
-// declarations themselves use the same source-level effect forms as user code.
+// Compiler-recognized and standard effect identities. These declarations use
+// the same source-level effect forms as user code; only their validated core
+// identity gives them language-item behavior.
 // `throw error` can also target the ordinary `Throws(E).raise(error)` operation
 // when a single standard `Throws(E)` custom effect is active.
 // Contextual `try { ... }` can materialize that ordinary effect as `Result(T, E)`.

@@ -2791,11 +2791,11 @@ fn throws_programs_run_with_expected_result() {
 #[test]
 fn throws_errors_report_their_cause() {
     for (name, expected) in [
-        ("throw_in_option_return.sc", "with(throws(Error))"),
-        ("throw_in_plain_return.sc", "with(throws(Error))"),
+        ("throw_in_option_return.sc", "with(Throws(Error))"),
+        ("throw_in_plain_return.sc", "with(Throws(Error))"),
         ("throw_in_global.sc", "global"),
-        ("throw_in_closure.sc", "with(throws(Error))"),
-        ("throw_omitted_return_type.sc", "with(throws(Error))"),
+        ("throw_in_closure.sc", "with(Throws(Error))"),
+        ("throw_omitted_return_type.sc", "with(Throws(Error))"),
         ("throw_error_type_mismatch.sc", "expected"),
         ("throw_without_value.sc", "expression"),
     ] {
@@ -3856,10 +3856,11 @@ fn prelude_never_coerces_through_diverging_calls() {
     let temporary = TestDirectory::new();
     let source = temporary.write(
         "never.sc",
-        r#"let stop(): Never = { loop {} }
+        r#"use core.effects.Throws
+let stop(): Never = { loop {} }
 let absurd(move value: Never): i32 = { value }
 let propagate(move value: Never): Result(i32, ()) = { value }
-let throw_never(move value: Never): i32 with(throws(())) = { throw value }
+let throw_never(move value: Never): i32 with(Throws(())) = { throw value }
 let Empty = enum {}
 let Holder = struct(value: Empty)
 let project(move holder: Holder): i32 = { holder.value }

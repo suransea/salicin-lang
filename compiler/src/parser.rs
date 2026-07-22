@@ -253,7 +253,7 @@ impl Parser {
         let (effects, throws_error, has_effect_group) = self.function_effect_clause()?;
         if throws_error.is_some() && logical_result.is_none() {
             return Err(self.error_here(
-                "`throws(Error)` requires an explicit logical return type before `with(...)`",
+                "`Throws(Error)` requires an explicit logical return type before `with(...)`",
             ));
         }
         let annotation =
@@ -633,7 +633,7 @@ impl Parser {
         let (effects, throws_error, has_effect_group) = self.function_effect_clause()?;
         if throws_error.is_some() && logical_result.is_none() {
             return Err(self.error_here(
-                "`throws(Error)` requires an explicit logical return type before `with(...)`",
+                "`Throws(Error)` requires an explicit logical return type before `with(...)`",
             ));
         }
         let annotation =
@@ -1453,7 +1453,7 @@ impl Parser {
         let (effects, throws_error, _has_effect_group) = self.function_effect_clause()?;
         if throws_error.is_some() && logical_result.is_none() {
             return Err(self.error_here(
-                "`throws(Error)` requires an explicit logical return type before `with(...)`",
+                "`Throws(Error)` requires an explicit logical return type before `with(...)`",
             ));
         }
         let return_type =
@@ -1515,7 +1515,7 @@ impl Parser {
                 unsafe_effect = true;
             } else if self.take(&TokenKind::Try) {
                 return Err(
-                    self.error_here("`with(try...)` was removed; use `with(throws(Error))`")
+                    self.error_here("`with(try...)` was removed; use `with(Throws(Error))`")
                 );
             } else if let TokenKind::Ident(name) = &self.current().kind {
                 let name = name.clone();
@@ -1597,7 +1597,7 @@ impl Parser {
                 }
             } else {
                 return Err(self.error_here(
-                    "expected `throws(Error)`, `unsafe`, an effect parameter, or a custom effect name in `with(...)`",
+                    "expected `Throws(Error)`, `unsafe`, an effect parameter, or a custom effect name in `with(...)`",
                 ));
             }
 
@@ -2413,7 +2413,7 @@ impl Parser {
             } else if self.take(&TokenKind::Dot) {
                 if self.take(&TokenKind::Try) {
                     return Err(self.error_here(
-                        "postfix `.try` was removed; calls with `throws(Error)` propagate automatically",
+                        "postfix `.try` was removed; calls with `Throws(Error)` propagate automatically",
                     ));
                 } else {
                     let member = if self.at(&TokenKind::Super)

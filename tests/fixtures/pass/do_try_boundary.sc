@@ -1,4 +1,6 @@
-let read(fail: bool): i32 with(throws(bool)) = { if fail { throw true } else { 40 } }
+use core.effects.Throws
+
+let read(fail: bool): i32 with(Throws(bool)) = { if fail { throw true } else { 40 } }
 
 let main(): i32 = {
   let propagated: Result(i32, bool) = try {

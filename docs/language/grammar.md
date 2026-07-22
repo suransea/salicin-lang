@@ -92,7 +92,7 @@ let_decl = "let", [ "mut" ], IDENT,
            [ "=", initializer ] ;
 
 with_clause = IDENT("with"), "(", effect, { ",", effect }, [ "," ], ")" ;
-effect = "unsafe" | "async" | IDENT("throws"), "(", type_expr, ")" | IDENT ;
+effect = "unsafe" | IDENT, [ "(", type_expr, { ",", type_expr }, [ "," ], ")" ] ;
 
 initializer = expression | effect_decl | "access" | struct_decl | enum_decl | trait_decl | module_decl ;
 
@@ -110,8 +110,8 @@ constructor_kind = compile_parameter_group,
 - 普通值、函数、类型和模块声明必须有 initializer；只有 trait 要求，以及编译器内嵌并验证的
   `core.control` 函数契约可以省略。普通包中的无函数体声明是语义错误。
 - `let mut` 不能含参数组，且必须绑定运行时值。
-- `with(...)` 属于函数签名，位于返回类型之后；`with(throws(E))` 声明可传播错误 `E`，
-  `with(unsafe)` 增加调用要求。
+- `with(...)` 属于函数签名，位于返回类型之后；`with(Throws(E))` 声明标准可恢复错误 effect，
+  `with(unsafe)` 增加当前内建 unsafe 调用要求。
 - `with` 和声明右侧的 `effect` 是上下文词，不是全局关键字。`let UI = effect` 声明名义 marker；
   `let Unsafe = effect {}` 是等价的显式空 operation 形式；`let State(S: type) = effect { ... }`
   还可声明无函数体的 operation requirements。旧的
@@ -442,7 +442,7 @@ continue_expr = "continue" ;
 
 `do { ... }`、`try { ... }`、`unsafe { ... }` 和未来的 `async { ... }` 在语义上都是接受尾闭包的内建函数调用，
 不是三种互不相关的块节点。parser 保留专用产生式以消除关键字后大括号的歧义。`do` 立即调用闭包
-并原样转发其 effect/color；`try` 把 `throws(E)` 处理为 `Result(T, E)`；`unsafe` 处理闭包要求的
+并原样转发其 effect/color；`try` 把 `Throws(E)` 处理为 `Result(T, E)`；`unsafe` 处理闭包要求的
 `unsafe` color。
 
 解析 `if`、`while`、`for` 控制头的最外层时禁用尾随闭包；第一个未被括号包围的 `{` 是控制主体。
