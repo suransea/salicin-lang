@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.138.0 - 2026-07-22
+
+- Allowed suspended match guards to inspect referenced non-`Copy` payload bindings without copying
+  or transferring their ownership.
+- Replaced each such closure capture with a read-only projected alias rebuilt from the continuation's
+  owned enum capture, including reconstruction through nested generated continuations.
+- Kept moves through reconstructed guard views rejected as moves out of borrowed values; the original
+  pattern still commits ownership only after the complete guard resumes `true`.
+- Taught cleanup planning to exclude borrowed projection aliases rooted in owned storage from the
+  owned move-path forest.
+- Replaced the former non-`Copy` guard failure fixture with a native resource regression covering
+  `false` and `true` resumptions, exactly-once destruction, and exit code 42.
+
 ## 0.137.0 - 2026-07-22
 
 - Allowed a suspended match guard over a non-`Copy` enum to retain pattern bindings that themselves

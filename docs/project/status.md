@@ -96,9 +96,10 @@ frame, including multiple left-to-right suspensions. Fully applied optional meth
 effectful arguments on residual paths for both builtin fallible families. Suspended guards over
 non-Copy match inputs use a binding-erased inspection pattern before moving the owned value into the
 continuation. Payload bindings are rematched and committed only after a `true` resumption, while
-`false` resumes into the remaining ordinary match candidates. Candidate bindings referenced by the
-guard may cross the suspension when they implement `Copy`; referenced non-Copy projections remain
-rejected until continuation frames can rebuild their views from the captured owner.
+`false` resumes into the remaining ordinary match candidates. Referenced Copy bindings cross by
+value; referenced non-Copy bindings are reconstructed as read-only projections from each
+continuation's owned enum capture. Those views may be inspected or borrowed but not moved before the
+guard commits.
 Different user-defined handlers compose lexically through action, clause, and generated-frame
 closure boundaries; nested handlers of the same identity retain nearest-boundary selection.
 Function and generic inherent-member `E: effect` parameters represent complete rows, default to pure,

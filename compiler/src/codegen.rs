@@ -1266,6 +1266,13 @@ struct LoopFrame {
 }
 
 #[derive(Clone)]
+struct InspectionBinding {
+    root: LocalId,
+    path: Vec<usize>,
+    ty: Ty,
+}
+
+#[derive(Clone)]
 struct LowerCtx {
     scopes: Vec<ScopeFrame>,
     flow: FlowState,
@@ -1279,6 +1286,7 @@ struct LowerCtx {
     type_substitutions: HashMap<String, Type>,
     loops: Vec<LoopFrame>,
     guard_move_restricted: HashSet<LocalId>,
+    inspection_bindings: HashMap<LocalId, InspectionBinding>,
     borrowed_parameter_regions: HashMap<LocalId, (Option<String>, bool)>,
     reference_loans: HashMap<LocalId, Vec<LoanId>>,
     reference_value_depth: usize,
@@ -1304,6 +1312,7 @@ impl LowerCtx {
             type_substitutions: HashMap::new(),
             loops: Vec::new(),
             guard_move_restricted: HashSet::new(),
+            inspection_bindings: HashMap::new(),
             borrowed_parameter_regions: HashMap::new(),
             reference_loans: HashMap::new(),
             reference_value_depth: 0,
@@ -1329,6 +1338,7 @@ impl LowerCtx {
             type_substitutions: HashMap::new(),
             loops: Vec::new(),
             guard_move_restricted: HashSet::new(),
+            inspection_bindings: HashMap::new(),
             borrowed_parameter_regions: HashMap::new(),
             reference_loans: HashMap::new(),
             reference_value_depth: 0,
@@ -11959,6 +11969,42 @@ impl Analyzer {
         if !self.scan_simple_closure_captures(body, &mut bound, outer, &mut capture_uses) {
             return error_expr();
         }
+        let mut reconstructed_inspections = Vec::new();
+        if deferred_handler_continuation {
+            let mut retained_captures = Vec::with_capacity(capture_uses.len());
+            for capture in capture_uses {
+                let local = outer
+                    .lookup(&capture.name)
+                    .expect("capture scanner only records outer locals");
+                let Some(inspection) = outer.inspection_bindings.get(&local.id).cloned() else {
+                    if !retained_captures
+                        .iter()
+                        .any(|retained: &ClosureCaptureUse| retained.name == capture.name)
+                    {
+                        retained_captures.push(capture);
+                    }
+                    continue;
+                };
+                let root_name = outer
+                    .scopes
+                    .iter()
+                    .rev()
+                    .flat_map(|scope| scope.names.iter())
+                    .find_map(|(name, local)| (local.id == inspection.root).then_some(name.clone()))
+                    .expect("inspection root remains in scope");
+                reconstructed_inspections.push((capture.name, root_name.clone(), inspection));
+                if !retained_captures
+                    .iter()
+                    .any(|capture: &ClosureCaptureUse| capture.name == root_name)
+                {
+                    retained_captures.push(ClosureCaptureUse {
+                        name: root_name,
+                        mode: ClosureCaptureMode::Move,
+                    });
+                }
+            }
+            capture_uses = retained_captures;
+        }
         if deferred_handler_continuation {
             for capture in &mut capture_uses {
                 if capture.name.starts_with("$handler$match$inspect$input$") {
@@ -12171,6 +12217,44 @@ impl Analyzer {
                 ty: hir_params.last().expect("capture parameter").ty.clone(),
                 mode: parameter_mode,
             });
+        }
+
+        for (name, root_name, inspection) in reconstructed_inspections {
+            let root = context
+                .lookup(&root_name)
+                .cloned()
+                .expect("inspection root capture exists");
+            let id = context.fresh_local();
+            let place = HirPlace {
+                local: root.id,
+                root_ty: root.ty,
+                projections: inspection.path.clone(),
+                ty: inspection.ty.clone(),
+                capability: LocalCapability::SharedParam,
+                root_mutable: false,
+                loan: None,
+                indirect: false,
+            };
+            context.scopes[0].names.insert(
+                name,
+                LocalInfo {
+                    id,
+                    ty: inspection.ty.clone(),
+                    mutable: false,
+                    capability: LocalCapability::SharedParam,
+                    alias: Some(place),
+                    partial: None,
+                    closure: None,
+                },
+            );
+            context.inspection_bindings.insert(
+                id,
+                InspectionBinding {
+                    root: root.id,
+                    path: inspection.path,
+                    ty: inspection.ty,
+                },
+            );
         }
 
         let mut groups = Vec::new();
@@ -14931,22 +15015,43 @@ impl Analyzer {
         let entry_flow = context.flow.clone();
         let mut fallthrough_flows = vec![Some(entry_flow.clone()); layout.variants.len()];
         let mut exit_flows = Vec::new();
+        let inspected_place = match &scrutinee.kind {
+            HirExprKind::Read {
+                place,
+                kind: HirReadKind::Inspect,
+            } => Some(place.clone()),
+            _ => None,
+        };
 
         for arm in arms {
             context.push_scope();
-            let (matcher, bindings, literal_conditions) =
+            let (matcher, mut bindings, literal_conditions) =
                 self.lower_enum_pattern(&arm.pattern, &layout, context);
-            if matches!(
-                scrutinee.kind,
-                HirExprKind::Read {
-                    kind: HirReadKind::Inspect,
-                    ..
+            if let Some(root) = &inspected_place {
+                for binding in bindings.iter().filter(|binding| binding.moves) {
+                    let mut alias = root.clone();
+                    alias.projections.extend(binding.path.iter().copied());
+                    alias.ty = binding.ty.clone();
+                    alias.capability = LocalCapability::SharedParam;
+                    let local = context
+                        .scopes
+                        .last_mut()
+                        .expect("match arm scope")
+                        .names
+                        .get_mut(&binding.name)
+                        .expect("pattern binding local exists");
+                    local.capability = LocalCapability::SharedParam;
+                    local.alias = Some(alias);
+                    context.inspection_bindings.insert(
+                        binding.id,
+                        InspectionBinding {
+                            root: root.local,
+                            path: binding.path.clone(),
+                            ty: binding.ty.clone(),
+                        },
+                    );
                 }
-            ) && bindings.iter().any(|binding| binding.moves)
-            {
-                self.error(
-                    "a pattern binding retained across an effectful match guard must implement Copy",
-                );
+                bindings.retain(|binding| !binding.moves);
             }
             if self.type_has_custom_drop(&scrutinee.ty)
                 && bindings
@@ -24589,6 +24694,9 @@ impl<'a> HirCleanupPlanner<'a> {
         &mut self,
         place: &HirPlace,
     ) -> Result<Option<CleanupMovePathId>, Diagnostic> {
+        if place.capability != LocalCapability::Owned {
+            return Ok(None);
+        }
         let Some(local) = self.hir_locals.get(&place.local).copied() else {
             return Err(self.diagnostic(format!(
                 "HIR place refers to unmapped local {}",
@@ -35527,7 +35635,7 @@ let main(): i32 = { Ask.handle(accept: { (resume) -> resume(false) }) {
         )
         .expect("a successful guard path can commit non-Copy bindings before entering its body");
 
-        let captured_binding = compile_text(
+        compile_text(
             r#"
 let Ask = effect { let accept(): bool }
 let Payload = struct(value: i32)
@@ -35542,11 +35650,28 @@ let main(): i32 = { Ask.handle(accept: { (resume) -> resume(false) }) {
 } }
 "#,
         )
-        .expect_err("a suspended guard cannot yet retain projected non-Copy bindings");
-        assert!(captured_binding.iter().any(|error| {
-            error.message.contains("effectful match guard")
-                && error.message.contains("implement Copy")
-        }));
+        .expect("a suspended guard reconstructs projected non-Copy bindings from its owned input");
+
+        let moving_guard_binding = compile_text(
+            r#"
+let Ask = effect { let accept(): bool }
+let Payload = struct(value: i32)
+let Event = enum { Value(Payload), Empty }
+let consume(move payload: Payload): bool = { payload.value > 0 }
+let main(): i32 = { Ask.handle(accept: { (resume) -> resume(false) }) {
+  let event = Event.Value(Payload(42))
+  event match {
+    Event.Value(payload) if Ask.accept() && consume(payload) => 1,
+    Event.Value(_) => 42,
+    Event.Empty => 0,
+  }
+} }
+"#,
+        )
+        .expect_err("a guard may inspect but not move its reconstructed payload view");
+        assert!(moving_guard_binding.iter().any(|error| error
+            .message
+            .contains("cannot move out of a borrowed value")));
     }
 
     #[test]

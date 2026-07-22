@@ -148,6 +148,7 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
         "algebraic_effect_noncopy_wildcard_guard.sc",
         "algebraic_effect_noncopy_binding_guard.sc",
         "algebraic_effect_copy_binding_guard.sc",
+        "algebraic_effect_noncopy_projection_guard.sc",
         "algebraic_effect_residual_effects.sc",
         "algebraic_effect_call_arguments.sc",
         "algebraic_effect_done.sc",
@@ -188,20 +189,6 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
     assert!(!output.status.success(), "{}", output_text(&output));
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("one-shot"),
-        "{}",
-        output_text(&output)
-    );
-
-    let output = salic()
-        .arg("check")
-        .arg(fixture("fail", "algebraic_effect_match_guard_noncopy.sc"))
-        .output()
-        .expect("reject a non-Copy binding retained by an effectful match guard");
-    assert!(!output.status.success(), "{}", output_text(&output));
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains(
-            "pattern binding retained across an effectful match guard must implement Copy"
-        ),
         "{}",
         output_text(&output)
     );
