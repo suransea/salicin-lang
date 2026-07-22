@@ -1,5 +1,5 @@
 let Pair = struct { left: i32, right: i32 }
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 
 let read(T: type)(borrow cell: Cell(T)): T
 where T: Copy = {

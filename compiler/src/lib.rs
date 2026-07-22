@@ -300,7 +300,7 @@ mod tests {
 
     #[test]
     fn generic_inherent_methods_accept_member_compile_parameters() {
-        let source = "let Cell (T: type) = struct { value: T }\n\
+        let source = "let Cell(T: type) = struct { value: T }\n\
                       extend(T: type) Cell(T) {\n\
                         let make(U: type)(move value: T)(marker: U): Cell(T) = {\n\
                           Cell(T) { value: value }\n\

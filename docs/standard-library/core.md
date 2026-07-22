@@ -171,8 +171,8 @@ functions still require `= { ... }` bodies.
 It also declares two compiler-owned erased runtime contracts:
 
 ```sc
-pub let Continuation (Input: type, Output: type) = struct {}
-pub let EffectCallable (Input: type, Output: type, Answer: type) = struct {}
+pub let Continuation(Input: type, Output: type) = struct {}
+pub let EffectCallable(Input: type, Output: type, Answer: type) = struct {}
 ```
 
 `Continuation` is a one-shot suspended computation. `EffectCallable` is an owned action awaiting a

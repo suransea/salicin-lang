@@ -1,4 +1,4 @@
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 
 extend(T: type) Cell(T) {
   let identity(U: type)(borrow self)(move value: U): U = { value }

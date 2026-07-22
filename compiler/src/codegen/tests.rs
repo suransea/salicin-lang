@@ -140,7 +140,7 @@ fn monomorphizes_and_deduplicates_explicit_generic_function_calls() {
 fn inferred_and_explicit_type_arguments_share_instance_cache_keys() {
     let program = crate::parser::parse(
         "let identity(T: type)(move value: T): T = { value }\n\
-         let Cell (T: type) = struct { value: T }\n\
+         let Cell(T: type) = struct { value: T }\n\
          let main(): i32 = {\n\
            let explicit = Cell(i32) { value: identity(i32)(20) }\n\
            let inferred_value = identity(22)\n\
@@ -178,7 +178,7 @@ fn inferred_and_explicit_type_arguments_share_instance_cache_keys() {
 #[test]
 fn generic_inherent_extensions_materialize_members_per_nominal_instance() {
     let program = crate::parser::parse(
-        "let Cell (T: type) = struct { value: T }\n\
+        "let Cell(T: type) = struct { value: T }\n\
          extend(T: type) Cell(T) {\n\
            let new(move value: T): Cell(T) = { Cell { value: value } }\n\
            let take(move self)(): T = { self.value }\n\
@@ -217,7 +217,7 @@ fn generic_inherent_extensions_materialize_members_per_nominal_instance() {
 #[test]
 fn inference_reifies_and_decomposes_generic_nominal_types() {
     let program = crate::parser::parse(
-        "let Cell (T: type) = struct { value: T }\n\
+        "let Cell(T: type) = struct { value: T }\n\
          let unwrap(T: type)(move value: Cell(T)): T = { value.value }\n\
          let main(): i32 = {\n\
            let inner = Cell(i32) { value: 42 }\n\
@@ -303,7 +303,7 @@ fn explicit_generic_enum_values_are_available_to_outer_inference() {
 fn inference_conflicts_do_not_materialize_instances() {
     let program = crate::parser::parse(
         "let identity(T: type)(move value: T): T = { value }\n\
-         let Cell (T: type) = struct { value: T }\n\
+         let Cell(T: type) = struct { value: T }\n\
          let main(): bool = { identity(Cell(i32) { value: 42 }) }\n",
     )
     .expect("conflicting inference source must parse");
@@ -434,7 +434,7 @@ fn inferred_template_calls_roll_back_abstract_instances() {
 fn registers_plain_nominals_and_deduplicates_generic_nominal_instances() {
     let program = crate::parser::parse(
         "let Plain = struct { value: i32 }\n\
-         let Cell (T: type) = struct { value: T }\n\
+         let Cell(T: type) = struct { value: T }\n\
          let main(): i32 = { Cell(i32) { value: Plain { value: 40 }.value }.value + Cell(i32) { value: 2 }.value }\n",
     )
     .expect("generic nominal source must parse");
@@ -509,7 +509,7 @@ let main(): i32 = {
 #[test]
 fn materializes_nested_generic_struct_layouts_in_dependency_order() {
     let program = crate::parser::parse(
-        "let Cell (T: type) = struct { value: T }\n\
+        "let Cell(T: type) = struct { value: T }\n\
          let main(): i32 = { Cell(Cell(i32)) { value: Cell(i32) { value: 42 } }.value.value }\n",
     )
     .expect("nested generic nominal source must parse");
@@ -1171,7 +1171,7 @@ let main(): i32 = {
 
     compile_text(
         r#"
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T) {
   let choose(left: T): T = { left }
   let choose(right: T): T = { right }
@@ -1252,7 +1252,7 @@ let Select = trait {
   let pick(borrow self)(left: i32): i32
   let pick(borrow self)(right: i32): i32
 }
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Select {
   let pick(borrow self)(left: i32): i32 = { left }
   let pick(borrow self)(right: i32): i32 = { right + 1 }
@@ -1686,7 +1686,7 @@ use core.Option
 use core.Result
 
 let identity(T: type)(move value: T): T = { value }
-let Boxed (T: type) = struct { value: T }
+let Boxed(T: type) = struct { value: T }
 let main(): i32 = {
   let first = Option(i32).None
   let second = Option(i32).Some(42)
@@ -1856,7 +1856,7 @@ fn allows_user_redefinitions_of_unimported_core_nominal_names() {
             "Option",
         ),
         (
-            "let Result (T: type) = enum { Value(value: T) }\nlet main(): i32 = { 42 }\n",
+            "let Result(T: type) = enum { Value(value: T) }\nlet main(): i32 = { 42 }\n",
             "Result",
         ),
     ] {
@@ -1964,7 +1964,7 @@ fn type_parameters_shadow_core_lang_item_names_in_type_heads() {
 #[test]
 fn generic_function_validation_rolls_back_temporary_nominal_instances() {
     let program = crate::parser::parse(
-        "let Cell (T: type) = struct { value: T }\n\
+        "let Cell(T: type) = struct { value: T }\n\
          let wrap(T: type)(move value: T): Cell(T) = { Cell(T) { value: value } }\n\
          let main(): i32 = { wrap(i32)(42).value }\n",
     )
@@ -2057,28 +2057,28 @@ fn where_bound_validation_rolls_back_assumed_trait_implementations() {
 fn rejects_invalid_generic_nominal_forms_without_instantiating_them() {
     let cases = [
         (
-            "let Invalid (T: type) = struct { next: Invalid(T) }\n\
+            "let Invalid(T: type) = struct { next: Invalid(T) }\n\
              let main(): i32 = { 42 }\n",
             "recursive generic value layout has infinite size",
         ),
         (
-            "let Wrap (T: type) = struct { value: T }\n\
-             let Grow (T: type) = struct { next: Wrap(Grow(Wrap(T))) }\n\
+            "let Wrap(T: type) = struct { value: T }\n\
+             let Grow(T: type) = struct { next: Wrap(Grow(Wrap(T))) }\n\
              let main(): i32 = { 42 }\n",
             "recursive generic value layout has infinite size",
         ),
         (
-            "let Invalid (T: type) = struct { value: Missing }\n\
+            "let Invalid(T: type) = struct { value: Missing }\n\
              let main(): i32 = { 42 }\n",
             "unknown type `Missing`",
         ),
         (
-            "let Cell (T: type) = struct { value: T }\n\
+            "let Cell(T: type) = struct { value: T }\n\
              let main(): i32 = { Cell(U: i32) { value: Cell(i32) { value: 42 } }.value.value }\n",
             "expects exactly one argument group",
         ),
         (
-            "let Cell (T: type) = struct { value: T }\n\
+            "let Cell(T: type) = struct { value: T }\n\
              extend Cell { let answer = 42 }\n\
              let main(): i32 = { 42 }\n",
             "generic extend target `Cell` is not supported",
@@ -2401,7 +2401,7 @@ fn rejects_private_generic_fields_before_inference_and_through_optional_chaining
         r#"
 use core.Option
 
-pub let Cell (T: type) = struct { value: T }
+pub let Cell(T: type) = struct { value: T }
 pub let make(): Option(Cell(i32)) = { Option(Cell(i32)).Some(Cell(i32) { value: 42 }) }
 let infer(): Cell(i32) = { Cell { value: 0 } }
 let chain(): Option(i32) = { make()?.value }
@@ -2472,7 +2472,7 @@ fn generic_inherent_member_boundaries_include_concrete_type_arguments() {
     compile_text(
         r#"
 let Hidden = struct { value: i32 }
-pub let Cell (T: type) = struct { pub value: T }
+pub let Cell(T: type) = struct { pub value: T }
 extend(T: type) Cell(T) {
   let new(move value: T): Cell(T) = { Cell { value: value } }
   let take(move self)(): T = { self.value }
@@ -2538,7 +2538,7 @@ let Leaf = struct { value: i32 }
 extend Leaf: Read {
   let read(borrow self)(): i32 = { self.value }
 }
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Read
 where T: Read {
   let read(borrow self)(): i32 = { self.value.read() }
@@ -2573,7 +2573,7 @@ let Read = trait {
   let read(borrow self)(): i32
 }
 let Leaf = struct { value: i32 }
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Read
 where T: Read {
   let read(borrow self)(): i32 = { self.value.read() }
@@ -2594,7 +2594,7 @@ let main(): i32 = {
 let Read = trait {
   let read(borrow self)(): i32
 }
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Read {
   let read(borrow self)(): i32 = { 1 }
 }
@@ -2614,7 +2614,7 @@ let main(): i32 = { 0 }
 let Convert(To: type) = trait {
   let convert(borrow self)(): To
 }
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Convert(i32) {
   let convert(borrow self)(): i32 = { 1 }
 }
@@ -2632,7 +2632,7 @@ let main(): i32 = {
     compile_text(
         r#"
 let Convert(To: type) = trait { let convert(borrow self)(): To }
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Convert(T)
 where T: Copy {
   let convert(borrow self)(): T = { self.value }}
@@ -2647,7 +2647,7 @@ let main(): i32 = { 42 }
     for source in [
         r#"
 let Convert(To: type) = trait { let convert(borrow self)(): To }
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Convert(i32) {
   let convert(borrow self)(): i32 = { 1 }
 }
@@ -2658,7 +2658,7 @@ let main(): i32 = { 42 }
 "#,
         r#"
 let Convert(To: type) = trait { let convert(borrow self)(): To }
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 extend Cell(i32): Convert(i32) {
   let convert(borrow self)(): i32 = { 2 }
 }
@@ -2676,7 +2676,7 @@ let main(): i32 = { 42 }
     compile_text(
         r#"
 let Read = trait { let read(borrow self)(): i32 }
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Read
 where T: Read {
   let read(borrow self)(): i32 = { self.value.read() }
@@ -2689,7 +2689,7 @@ let main(): i32 = { 42 }
     let mismatch = compile_text(
         r#"
 let Read = trait { let read(borrow self)(): i32 }
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Read {
   let read(borrow self)(): i64 = { 0 }
 }
@@ -2704,7 +2704,7 @@ let main(): i32 = { 42 }
     let invalid_body = compile_text(
         r#"
 let Read = trait { let read(borrow self)(): i32 }
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Read {
   let read(borrow self)(): i32 = { missing }
 }
@@ -2721,7 +2721,7 @@ let main(): i32 = { 42 }
 fn generic_copy_and_drop_extensions_follow_concrete_instance_semantics() {
     compile_text(
         r#"
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Copy
 where T: Copy {}
 let sum(copy cell: Cell(i32)): i32 = { cell.value }
@@ -2760,7 +2760,7 @@ let main(): i32 = {
 let Resource = struct { value: i32 }
 extend Resource: Drop {
   let drop(borrow(mut) self)(): () = { self.value = 0 }}
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Copy
 where T: Copy {}
 let main(): i32 = {
@@ -2777,7 +2777,7 @@ let main(): i32 = {
 let Resource = struct { value: i32 }
 extend Resource: Drop {
   let drop(borrow(mut) self)(): () = { self.value = 0 }}
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Copy {}
 let main(): i32 = { 42 }
 "#,
@@ -2789,7 +2789,7 @@ let main(): i32 = { 42 }
 
     let conflict = compile_text(
         r#"
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Copy
 where T: Copy {}
 extend(T: type) Cell(T): Drop {
@@ -2807,7 +2807,7 @@ let main(): i32 = {
 
     let foreign_copy = compile_with_origins(
         r#"
-pub let Cell (T: type) = struct { value: T }
+pub let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Copy
 where T: Copy {}
 let main(): i32 = { 42 }
@@ -2825,7 +2825,7 @@ let main(): i32 = { 42 }
 
     let foreign_drop = compile_with_origins(
         r#"
-pub let Cell (T: type) = struct { value: T }
+pub let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Drop {
   let drop(borrow(mut) self)(): () = { () }}
 let main(): i32 = { 42 }
@@ -2843,7 +2843,7 @@ let main(): i32 = { 42 }
 
     let missing_drop = compile_text(
         r#"
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Drop {}
 let main(): i32 = { 42 }
 "#,
@@ -3098,7 +3098,7 @@ let main(): i32 = { 0 }
 pub let Read = trait {
   let read(borrow self)(): i32
 }
-pub let Cell (T: type) = struct { value: T }
+pub let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Read {
   let read(borrow self)(): i32 = { 0 }
 }
@@ -3636,7 +3636,7 @@ let main(): i32 = { 0 }
 
     let concrete = compile_text(
         r#"
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 extend Cell(i32): Copy {}
 let consume(value: Cell(bool)): bool = { value.value }
 let main(): i32 = {
@@ -3654,7 +3654,7 @@ let main(): i32 = {
 fn copy_diagnostics_render_concrete_generic_source_types() {
     let parameter = compile_text(
         r#"
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 extend Cell(i32): Copy {}
 let read(copy cell: Cell(i64)): i64 = { cell.value }
 let main(): i32 = { 0 }
@@ -3673,7 +3673,7 @@ let main(): i32 = { 0 }
     let structural = compile_text(
         r#"
 let Token = struct { value: i32 }
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 extend Cell(Token): Copy {}
 let main(): i32 = { 0 }
 "#,
@@ -5194,7 +5194,7 @@ fn higher_kinded_trait_inheritance_requires_constructor_supertraits() {
 let Applicative = trait(Self: (Value: type): type)
 where Self: Functor {
   let pure(A: type)(move value: A): Self(A)}
-let Carrier (T: type) = struct { value: T }
+let Carrier(T: type) = struct { value: T }
 extend Carrier: Applicative {
   let pure(A: type)(move value: A): Carrier(A) = {
 Carrier(A) { value: value }
@@ -5219,7 +5219,7 @@ let main(): i32 = { 0 }
 let Applicative = trait(Self: (Value: type): type)
 where Self: Functor {
   let pure(A: type)(move value: A): Self(A)}
-let Carrier (T: type) = struct { value: T }
+let Carrier(T: type) = struct { value: T }
 extend Carrier: Applicative {
   let pure(A: type)(move value: A): Carrier(A) = {
 Carrier(A) { value: value }
@@ -5243,7 +5243,7 @@ fn generic_functions_accept_explicit_type_constructor_arguments() {
     let ir = compile_text(
         r#"
 let Monad = trait(Self: (Value: type): type) {}
-let Carrier (T: type) = struct { value: T }
+let Carrier(T: type) = struct { value: T }
 extend Carrier: Monad {}
 let keep(M: (Value: type): type, A: type)(move value: M(A)): M(A)
 where M: Monad = {
@@ -5319,7 +5319,7 @@ fn constructor_trait_implementation_headers_support_marker_traits() {
         r#"
 let Higher = trait(Self: (Value: type): type) {}
 let Tagged(Tag: type) = trait(Self: (Value: type): type) {}
-let Carrier (T: type) = struct { value: T }
+let Carrier(T: type) = struct { value: T }
 extend Carrier: Higher {}
 extend Carrier: Tagged(i32) {}
 let main(): i32 = { 0 }
@@ -5364,7 +5364,7 @@ fn constructor_trait_implementation_methods_register_generic_templates() {
 	    move transform: (A): B with(E),
 	  ): Self(B) with(E)
 	}
-let Carrier (T: type) = struct { value: T }
+let Carrier(T: type) = struct { value: T }
 	extend Carrier: Functor {
   let map(E: effect, A: type, B: type)(
 	    move self: Carrier(A),
@@ -5423,7 +5423,7 @@ fn constructor_trait_receiver_methods_dispatch_from_instances() {
 	    move transform: (A): B with(E),
 	  ): Self(B) with(E)
 	}
-let Carrier (T: type) = struct { value: T }
+let Carrier(T: type) = struct { value: T }
 	extend Carrier: Functor {
   let map(E: effect, A: type, B: type)(
 	    move self: Carrier(A),
@@ -5534,7 +5534,7 @@ fn constructor_trait_implementation_headers_report_current_limits() {
         (
             r#"
 let Higher = trait(Self: (Value: type): type) {}
-let Carrier (T: type) = struct { value: T }
+let Carrier(T: type) = struct { value: T }
 extend Carrier: Higher {}
 extend Carrier: Higher {}
 let main(): i32 = { 0 }
@@ -5544,7 +5544,7 @@ let main(): i32 = { 0 }
         (
             r#"
 let Higher = trait(Self: (Left: type, Right: type): type) {}
-let Carrier (T: type) = struct { value: T }
+let Carrier(T: type) = struct { value: T }
 extend Carrier: Higher {}
 let main(): i32 = { 0 }
 "#,
@@ -5559,7 +5559,7 @@ let main(): i32 = { 0 }
 	    move transform: (A): B with(E),
 	  ): Self(B) with(E)
 	}
-let Carrier (T: type) = struct { value: T }
+let Carrier(T: type) = struct { value: T }
 extend Carrier: Functor {}
 let main(): i32 = { 0 }
 "#,
@@ -6220,7 +6220,7 @@ let main(): i32 = { Number { value: 40 } + 2 }
 fn trait_method_bodies_resolve_concrete_trait_type_substitutions() {
     let ir = compile_text(
         r#"
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 let Factory(T: type) = trait {
   let Output: type
   let make(borrow self)(move value: T): Output
@@ -6249,7 +6249,7 @@ let main(): i32 = {
 fn trait_associated_functions_dispatch_from_the_implementing_type() {
     let ir = compile_text(
         r#"
-let Construct (T: type) = trait {
+let Construct(T: type) = trait {
   let construct(move value: T): Self
 }
 let Number = struct { value: i32 }
@@ -6435,7 +6435,7 @@ let main(): i32 = { 42 }
 fn trait_copy_parameters_accept_validated_concrete_copy_nominals() {
     compile_text(
         r#"
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 let Reader = trait {
   let read(borrow self)(copy value: Cell(i32)): i32
 }

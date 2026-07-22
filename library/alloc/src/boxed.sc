@@ -1,4 +1,4 @@
-pub let Box (T: type) = struct { pointer: MutPtr(T) }
+pub let Box(T: type) = struct { pointer: MutPtr(T) }
 
 pub let box_new(T: type)(move value: T): Box(T) = {
   let pointer = unsafe {

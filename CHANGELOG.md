@@ -8,6 +8,9 @@ subset.
 
 - Refactored the compiler backend into a `codegen/` module directory, splitting out cleanup-plan
   construction, LLVM emission, and codegen regression tests while preserving behavior.
+- Normalized standard-library, documentation, fixture, and diagnostic snippets to write generic
+  type declarations without a space before compile-time parameter groups, such as
+  `let Box(T: type)`.
 
 ## 0.186.0 - 2026-07-23
 

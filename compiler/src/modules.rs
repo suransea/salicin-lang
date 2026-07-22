@@ -3413,7 +3413,7 @@ mod tests {
             unit(
                 "src/api.sc",
                 &["api"],
-                "pub(package) let Cell (T: type) = struct { value: T }\n\
+                "pub(package) let Cell(T: type) = struct { value: T }\n\
                  extend(T: type) Cell(T) {\n\
                    let new(move value: T): Cell(T) = { Cell { value: value } }\n\
                    let take(move self)(): T = { self.value }\n\
@@ -4186,7 +4186,7 @@ let main(): i32 = { Option {} }
             "src/lib.sc",
             &[],
             "let Hidden = struct {}\n\
-             pub let Wrapper (T: type) = struct {}\n\
+             pub let Wrapper(T: type) = struct {}\n\
              pub let expose(value: Wrapper(Hidden)): Hidden = { value }\n\
              pub let shared: Hidden = Hidden {}\n",
             true,
@@ -4275,7 +4275,7 @@ let main(): i32 = { Option {} }
             "src/lib.sc",
             &[],
             "let Hidden = trait {}\n\
-             pub let Cell (T: type) = struct { pub value: T }\n\
+             pub let Cell(T: type) = struct { pub value: T }\n\
              extend(T: type) Cell(T) where T: Hidden {\n\
                let take(move self)(): T = { self.value }\n\
              }\n",

@@ -1,4 +1,4 @@
-let Pair (K: type, V: type) = struct { key: K, value: V }
+let Pair(K: type, V: type) = struct { key: K, value: V }
 
 let PairAlias: (Key: type, Value: type): type = Pair
 

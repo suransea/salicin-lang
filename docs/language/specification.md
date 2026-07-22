@@ -165,7 +165,7 @@ A
 类型构造子的编译期参数名也是调用标签。类型位置可以用具名实参消歧或提高可读性：
 
 ```sc
-let Pair (K: type, V: type) = struct { key: K, value: V }
+let Pair(K: type, V: type) = struct { key: K, value: V }
 let pair: Pair(V: bool, K: i32) = Pair(K: i32, V: bool) { key: 1, value: true }
 ```
 
@@ -903,7 +903,7 @@ let exclusive = boxed.view(mut)()
 ### 8.3 泛型结构体
 
 ```sc
-let Box (T: type) = struct { value: T }
+let Box(T: type) = struct { value: T }
 let a = Box(i32) { value: 10 }
 let b: Box(i32) = Box { value: 20 }
 ```
@@ -963,7 +963,7 @@ let Functor = trait(Self: (Value: type): type) {
   ): Self(B) with(E)
 }
 
-let Carrier (T: type) = struct { value: T }
+let Carrier(T: type) = struct { value: T }
 
 extend Carrier: Functor{let map(E: effect, A: type, B: type)(
     move self: Carrier(A),
@@ -1030,12 +1030,12 @@ nominal 构造子的别名也能省略编译期参数组，由普通构造实参
 枚举使用与其他类型一致的 `let` 声明：
 
 ```sc
-let Option (T: type) = enum {
+let Option(T: type) = enum {
   Some(T),
   None,
 }
 
-let Result (T: type, E: type) = enum {
+let Result(E: type)(T: type) = enum {
   Ok(T),
   Err(E),
 }
@@ -1196,7 +1196,7 @@ where T: Display {
 ```
 
 ```sc
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 
 extend(T: type) Cell(T) {
   let new(move value: T): Cell(T) = { Cell { value: value } }

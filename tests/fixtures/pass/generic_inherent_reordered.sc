@@ -1,4 +1,4 @@
-let Pair (A: type, B: type) = struct { first: A, second: B }
+let Pair(A: type, B: type) = struct { first: A, second: B }
 
 extend(X: type, Y: type) Pair(Y, X) {
   let new(move first: Y, move second: X): Pair(Y, X) = { Pair { first: first, second: second } }

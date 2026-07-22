@@ -1,4 +1,4 @@
-let Bomb (T: type) = struct { marker: T, divisor: i32 }
+let Bomb(T: type) = struct { marker: T, divisor: i32 }
 
 extend(T: type) Bomb(T): Drop {
   let drop(borrow(mut) self)(): () = {

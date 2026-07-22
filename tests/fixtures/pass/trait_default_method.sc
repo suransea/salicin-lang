@@ -16,7 +16,7 @@ extend Override: Read {
   let doubled(borrow self)(): i32 = { 42 }
 }
 
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 
 extend(T: type) Cell(T): Read
 where T: Read {

@@ -1,4 +1,4 @@
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 let Holder = struct { cell: Cell(i32) }
 
 extend(T: type) Cell(T) {

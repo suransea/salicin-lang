@@ -2,7 +2,7 @@ let Rewrap = trait {
   let rewrap(move self)(): Self
 }
 
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 
 extend(T: type) Cell(T) {
   let wrap(move value: T): Self = { Self { value: value } }

@@ -9,7 +9,7 @@ where T: Copy = {
   alias.value
 }
 
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 
 let main(): i32 = {
   let value = 20

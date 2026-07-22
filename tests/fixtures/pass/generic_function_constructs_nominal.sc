@@ -1,4 +1,4 @@
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 
 let wrap(T: type)(move value: T): Cell(T) = { Cell(T) { value: value } }
 

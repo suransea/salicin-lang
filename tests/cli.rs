@@ -822,7 +822,7 @@ edition = "2026"
     );
     project.write(
         "src/api.sc",
-        "pub(package) let Cell (T: type) = struct { value: T }\n\
+        "pub(package) let Cell(T: type) = struct { value: T }\n\
          extend(T: type) Cell(T) {\n\
            let new(move value: T): Cell(T) = { Cell { value: value } }\n\
            let take(move self)(): T = { self.value }\n\
@@ -853,7 +853,7 @@ path = "src/lib.sc"
     );
     project.write(
         "dep/src/lib.sc",
-        "pub let Cell (T: type) = struct { pub value: T }\n",
+        "pub let Cell(T: type) = struct { pub value: T }\n",
     );
     project.write(
         "app/salicin.toml",
@@ -1057,7 +1057,7 @@ fn type_constructor_aliases_cross_module_boundaries() {
     );
     project.write(
         "src/types.sc",
-        "pub(package) let Cell (T: type) = struct { pub(package) value: T }\n\
+        "pub(package) let Cell(T: type) = struct { pub(package) value: T }\n\
          pub(package) let Family(T: type): type = Cell(T)\n\
          pub(package) let Constructor: (T: type): type = Cell\n\
          pub(package) let Scalar = i32\n",
@@ -3398,10 +3398,10 @@ pub let maybe(value: i32): Option(i32) = { Option(i32).Some(value) }
 
     workspace.write(
         "app/src/fake.sc",
-        r#"pub let Option (T: type) = enum { Some(T), None }
+        r#"pub let Option(T: type) = enum { Some(T), None }
 pub let make_option(): Option(i32) = { Option(i32).Some(42) }
 
-pub let Add (Rhs: type) = trait {
+pub let Add(Rhs: type) = trait {
   let Output: type
   let add(move self)(move rhs: Rhs): Output
 }

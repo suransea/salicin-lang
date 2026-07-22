@@ -4435,7 +4435,7 @@ mod tests {
     #[test]
     fn parses_generic_structs_and_enums() {
         let program = parse(
-            "let Cell (T: type) = struct { value: T }\n\
+            "let Cell(T: type) = struct { value: T }\n\
              let Maybe(T: type) = enum {\n\
                Some(T),\n\
                Named(value: T),\n\
@@ -5455,7 +5455,7 @@ mod tests {
         );
         assert_eq!(combined.effects.parameters, vec!["E"]);
 
-        let error = parse("let Box (E: effect) = struct { value: i32 }\n").unwrap_err();
+        let error = parse("let Box(E: effect) = struct { value: i32 }\n").unwrap_err();
         assert!(error
             .message
             .contains("effect parameters belong to functions"));
@@ -5642,7 +5642,7 @@ mod tests {
 
     #[test]
     fn rejects_passing_parameters_on_data_declarations() {
-        let error = parse("let Wrapper (P: passing) = struct { value: i32 }\n").unwrap_err();
+        let error = parse("let Wrapper(P: passing) = struct { value: i32 }\n").unwrap_err();
         assert!(error
             .message
             .contains("passing parameters belong to functions"));

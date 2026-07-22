@@ -1,4 +1,4 @@
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 
 extend(T: type) Cell(T) {
   let take(move self)(): T = { self.value }

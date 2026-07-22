@@ -1,4 +1,4 @@
-let Pair (T: type) = struct { first: bool, second: T }
+let Pair(T: type) = struct { first: bool, second: T }
 
 let layout_sum(T: type)(): u64 = { size_of(T) + align_of(T) }
 

@@ -1,5 +1,5 @@
 let Pair = struct { left: i32, right: i32 }
-let Holder (T: type) = struct { value: T }
+let Holder(T: type) = struct { value: T }
 
 let RightView = trait {
   let view('a: region)(borrow('a) self)(): borrow('a) i32

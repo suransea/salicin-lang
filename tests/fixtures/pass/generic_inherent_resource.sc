@@ -6,7 +6,7 @@ extend Resource: Drop {
   }
   }}
 
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 
 extend(T: type) Cell(T) {
   let new(move value: T): Cell(T) = { Cell { value: value } }

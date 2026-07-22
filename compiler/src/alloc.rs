@@ -140,7 +140,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
         match &program.items[0] {
             Item::Struct(definition) if valid_box(definition) => {}
             _ => diagnostics.push(
-                "alloc Box must have shape `pub let Box (T: type) = struct { pointer: MutPtr(T) }`"
+                "alloc Box must have shape `pub let Box(T: type) = struct { pointer: MutPtr(T) }`"
                     .to_owned(),
             ),
         }

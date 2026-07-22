@@ -8,7 +8,7 @@ extend Counter {
   let add(T: type)(borrow self)(right: T): T = { right }
 }
 
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 
 extend(T: type) Cell(T) {
   let choose(left: T): T = { left }

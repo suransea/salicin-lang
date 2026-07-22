@@ -1,6 +1,6 @@
 use core.Result
 
-let Result (T: type, E: type) = enum {
+let Result(E: type)(T: type) = enum {
   Ok(T),
   Err(E),
 }

@@ -1,6 +1,6 @@
 let inspect(A: access)(borrow(A) value: i32): i32 = { value }
 
-let Cell (T: type) = struct { value: T }
+let Cell(T: type) = struct { value: T }
 
 extend(T: type) Cell(T) {
   let view(A: access)(borrow(A) self)(): borrow(A) T = { borrow(A) self.value }

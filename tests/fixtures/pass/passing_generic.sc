@@ -1,5 +1,5 @@
 let Token = struct { value: i32 }
-let Holder (T: type) = struct { value: T }
+let Holder(T: type) = struct { value: T }
 
 extend(T: type) Holder(T) {
   let into(P: passing)(P self)(): T = { self.value }

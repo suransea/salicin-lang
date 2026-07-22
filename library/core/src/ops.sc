@@ -1,4 +1,4 @@
-pub let Add (Rhs: type) = trait {
+pub let Add(Rhs: type) = trait {
   let Output: type
   let add(move self)(move rhs: Rhs): Output
 }
