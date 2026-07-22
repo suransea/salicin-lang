@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.150.0 - 2026-07-22
+
+- Removed the adjacency restriction for directly bound captured actions passed to reusable
+  handlers, including calls nested inside larger expressions.
+- Retained each source closure's capture names and original binding metadata, then specialized a
+  later handler call by borrowing or moving fields from the already-created callable environment.
+- Preserved binding-time borrow/move semantics instead of reconstructing captures at the later call
+  site, and consumed the stored action according to the handler's owned parameter contract.
+- Released stored closure capture loans after consumption and suppressed the obsolete direct-style
+  effectful closure body; native non-adjacent `FnMut` and `FnOnce` regressions still exit with 42.
+- Replaced the former non-adjacent diagnostic with a focused diagnostic for callable aliases and
+  other erased action values that do not retain their original source binding yet.
+
 ## 0.149.0 - 2026-07-22
 
 - Extended adjacent captured reusable-handler actions from block-tail calls to complete calls used

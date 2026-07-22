@@ -23,7 +23,8 @@ let execute(counter: MutPtr(i32)): i32 = {
   let action: (): i32 with(Ask) = { () ->
     Ask.value() + consume(resource)
   }
-  let result = run(action)
+  let padding = 0
+  let result = run(action) + padding
   let drops = unsafe { *counter }
   result + drops
 }

@@ -1257,6 +1257,7 @@ struct ClosureInfo {
     custom_effects: Vec<String>,
     result: Ty,
     captures: Vec<ClosureCapture>,
+    capture_names: Vec<String>,
     is_fn_mut: bool,
     is_fn_once: bool,
 }
@@ -1344,6 +1345,7 @@ struct LowerCtx {
     active_custom_effects: HashSet<String>,
     lexical_handler_effects: HashSet<String>,
     recursive_frame_calls: HashMap<String, RecursiveFrameCall>,
+    source_closures: HashMap<LocalId, Binding>,
 }
 
 impl LowerCtx {
@@ -1370,6 +1372,7 @@ impl LowerCtx {
             active_custom_effects: HashSet::new(),
             lexical_handler_effects: HashSet::new(),
             recursive_frame_calls: HashMap::new(),
+            source_closures: HashMap::new(),
         }
     }
 
@@ -1396,6 +1399,7 @@ impl LowerCtx {
             active_custom_effects: HashSet::new(),
             lexical_handler_effects: HashSet::new(),
             recursive_frame_calls: HashMap::new(),
+            source_closures: HashMap::new(),
         }
     }
 
@@ -11228,6 +11232,10 @@ impl Analyzer {
                                 if !reference_loans.is_empty() {
                                     context.reference_loans.insert(id, reference_loans);
                                 }
+                                if matches!(binding.value, Expr::Closure(_, _)) && closure.is_some()
+                                {
+                                    context.source_closures.insert(id, binding.clone());
+                                }
                                 context.insert_local(
                                     binding.name.clone(),
                                     LocalInfo {
@@ -12266,6 +12274,7 @@ impl Analyzer {
         context.type_substitutions = outer.type_substitutions.clone();
         let mut hir_params = Vec::new();
         let mut captures = Vec::new();
+        let mut capture_names = Vec::new();
         let mut recursive_capture_params = Vec::new();
 
         let is_fn_once = capture_uses
@@ -12400,6 +12409,7 @@ impl Analyzer {
                 value,
                 forwarded: None,
             });
+            capture_names.push(name.clone());
 
             let id = context.fresh_local();
             let captured_closure = local.closure.clone().map(|mut closure| {
@@ -12611,6 +12621,7 @@ impl Analyzer {
             custom_effects,
             result: result.clone(),
             captures,
+            capture_names,
             is_fn_mut,
             is_fn_once,
         };
@@ -21751,7 +21762,7 @@ impl Analyzer {
                             })
                         }) {
                             self.error(
-                                "a source effect closure passed to a reusable handler must currently be the binding immediately before a complete handler call, with liftable Copy borrows or owned root captures",
+                                "a source effect closure passed to a reusable handler must currently be passed directly from its original explicitly typed binding; callable aliases and other erased action values are not connected yet",
                             );
                             arguments.push(HirArgument::Move(error_expr()));
                             continue;
@@ -21976,14 +21987,17 @@ impl Analyzer {
                 ClosureCaptureMode::Mutable => PassMode::MutBorrow,
                 ClosureCaptureMode::Move => PassMode::Move,
             };
-            specialized.groups[group_index].push(Param {
-                mode,
-                access: None,
-                passing: None,
-                region: None,
-                name: lifted.clone(),
-                ty: source_ty,
-            });
+            specialized.groups[group_index].insert(
+                parameter_index + index,
+                Param {
+                    mode,
+                    access: None,
+                    passing: None,
+                    region: None,
+                    name: lifted.clone(),
+                    ty: source_ty,
+                },
+            );
             lifted_arguments.push((lifted, capture.name.clone()));
         }
         let mut injected = binding.clone();
@@ -22038,10 +22052,15 @@ impl Analyzer {
             .iter()
             .all(|argument| argument.label.is_some());
         groups[group_index].remove(argument_index);
-        groups[group_index].extend(lifted_arguments.into_iter().map(|(label, name)| CallArg {
-            label: labeled.then_some(label),
-            value: Expr::Name(name),
-        }));
+        for (offset, (label, name)) in lifted_arguments.into_iter().enumerate() {
+            groups[group_index].insert(
+                argument_index + offset,
+                CallArg {
+                    label: labeled.then_some(label),
+                    value: Expr::Name(name),
+                },
+            );
+        }
         let mut rewritten = Expr::Name(canonical);
         for group in groups {
             rewritten = Expr::Call(Box::new(rewritten), group);
@@ -22134,8 +22153,12 @@ impl Analyzer {
         &mut self,
         name: &str,
         groups: &[&[CallArg]],
-        context: &LowerCtx,
+        context: &mut LowerCtx,
     ) -> Option<(String, Vec<Vec<CallArg>>)> {
+        if let Some(specialized) = self.specialize_stored_handler_action_call(name, groups, context)
+        {
+            return Some(specialized);
+        }
         let mut function = self.functions.get(name)?.clone();
         if groups.len() > function.groups.len() {
             return None;
@@ -22281,6 +22304,198 @@ impl Analyzer {
             self.function_order.push(canonical.clone());
         }
         Some((canonical, specialized_groups))
+    }
+
+    fn specialize_stored_handler_action_call(
+        &mut self,
+        name: &str,
+        groups: &[&[CallArg]],
+        context: &mut LowerCtx,
+    ) -> Option<(String, Vec<Vec<CallArg>>)> {
+        let function = self.functions.get(name)?.clone();
+        if groups.len() != function.groups.len() {
+            return None;
+        }
+        let mut selected = None;
+        for ((candidate, group_index, parameter_index), action) in &self.runtime_handler_actions {
+            if candidate != name {
+                continue;
+            }
+            let arguments = groups.get(*group_index).copied()?;
+            let parameter = function.groups.get(*group_index)?.get(*parameter_index)?;
+            let argument_index = if arguments.iter().all(|argument| argument.label.is_none()) {
+                *parameter_index
+            } else {
+                arguments.iter().position(|argument| {
+                    argument.label.as_deref() == Some(parameter.name.as_str())
+                })?
+            };
+            let Some(CallArg {
+                value: Expr::Name(local_name),
+                ..
+            }) = arguments.get(argument_index)
+            else {
+                continue;
+            };
+            let Some(local) = context.lookup(local_name).cloned() else {
+                continue;
+            };
+            let Some(closure) = local.closure.clone() else {
+                continue;
+            };
+            let Some(source) = context.source_closures.get(&local.id).cloned() else {
+                continue;
+            };
+            if closure.capture_names.len() != closure.captures.len() {
+                continue;
+            }
+            selected = Some((
+                *group_index,
+                *parameter_index,
+                argument_index,
+                action.clone(),
+                local_name.clone(),
+                local,
+                closure,
+                source,
+            ));
+            break;
+        }
+        let (
+            group_index,
+            parameter_index,
+            argument_index,
+            action,
+            local_name,
+            local,
+            closure,
+            mut source,
+        ) = selected?;
+
+        let specialization = self.next_closure;
+        self.next_closure += 1;
+        let canonical = format!("$stored$handler${}${specialization}", hex_name(name));
+        let mut specialized = function;
+        specialized.name = canonical.clone();
+        specialized.groups[group_index].remove(parameter_index);
+        let mut replacements = HashMap::new();
+        let mut lifted_arguments = Vec::new();
+        for (index, (capture_name, capture)) in closure
+            .capture_names
+            .iter()
+            .zip(&closure.captures)
+            .enumerate()
+        {
+            let source_ty = self.source_type_for_ty(&capture.place.ty)?;
+            let lifted = format!("$handler$stored$capture${specialization}${index}");
+            replacements.insert(capture_name.clone(), lifted.clone());
+            let mode = match capture.mode {
+                ClosureCaptureMode::Shared => PassMode::Borrow,
+                ClosureCaptureMode::Mutable => PassMode::MutBorrow,
+                ClosureCaptureMode::Move => PassMode::Move,
+            };
+            specialized.groups[group_index].insert(
+                parameter_index + index,
+                Param {
+                    mode,
+                    access: None,
+                    passing: None,
+                    region: None,
+                    name: lifted.clone(),
+                    ty: source_ty,
+                },
+            );
+            lifted_arguments.push((
+                lifted,
+                Expr::Call(
+                    Box::new(Expr::Name(format!("$handler$stored$capture${index}"))),
+                    vec![CallArg {
+                        label: None,
+                        value: Expr::Name(local_name.clone()),
+                    }],
+                ),
+            ));
+        }
+        rewrite_static_function_values(&mut source.value, &replacements);
+        let specialized_body = specialized.body.as_mut()?;
+        if !inject_handler_action_binding(specialized_body, &action.effect, source) {
+            return None;
+        }
+
+        let signature = FunctionSig {
+            groups: specialized
+                .groups
+                .iter()
+                .map(|group| {
+                    group
+                        .iter()
+                        .map(|parameter| ParamSig {
+                            name: parameter.name.clone(),
+                            ty: self.lower_source_type(&parameter.ty),
+                            mode: parameter.mode,
+                        })
+                        .collect()
+                })
+                .collect(),
+            unsafe_effect: specialized.effects.unsafe_effect,
+            throws_error: specialized
+                .effects
+                .throws
+                .as_deref()
+                .map(|error| self.lower_source_type(error)),
+            custom_effects: source_effect_identities(&specialized.effects.custom),
+            result: specialized
+                .return_type
+                .as_ref()
+                .map(|result| self.lower_source_type(result)),
+        };
+        self.functions.insert(canonical.clone(), specialized);
+        self.signatures.insert(canonical.clone(), signature);
+        self.function_origins
+            .insert(canonical.clone(), self.function_origins[name].clone());
+        self.function_accesses
+            .insert(canonical.clone(), self.function_accesses[name].clone());
+        self.function_order.push(canonical.clone());
+        self.lifted_functions
+            .retain(|function| function.name != closure.function);
+
+        let callable = HirPlace {
+            local: local.id,
+            root_ty: local.ty.clone(),
+            projections: Vec::new(),
+            ty: local.ty,
+            capability: local.capability,
+            root_mutable: local.mutable,
+            loan: None,
+            indirect: false,
+        };
+        self.ensure_available(&callable, context);
+        self.mark_moved(&callable, context);
+        let capture_loans = closure
+            .captures
+            .iter()
+            .filter_map(|capture| capture.place.loan)
+            .collect::<Vec<_>>();
+        self.release_loans(&capture_loans, context);
+
+        let mut rewritten_groups = groups
+            .iter()
+            .map(|group| group.to_vec())
+            .collect::<Vec<_>>();
+        let labeled = rewritten_groups[group_index]
+            .iter()
+            .all(|argument| argument.label.is_some());
+        rewritten_groups[group_index].remove(argument_index);
+        for (offset, (label, value)) in lifted_arguments.into_iter().enumerate() {
+            rewritten_groups[group_index].insert(
+                argument_index + offset,
+                CallArg {
+                    label: labeled.then_some(label),
+                    value,
+                },
+            );
+        }
+        Some((canonical, rewritten_groups))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -22824,6 +23039,50 @@ impl Analyzer {
         temporary_loans: &mut Vec<LoanId>,
         temporary_bindings: &mut Vec<HirBinding>,
     ) -> HirArgument {
+        if let Some((local_name, index)) = internal_stored_callable_capture(argument) {
+            let Some(local) = context.lookup(local_name).cloned() else {
+                self.error("internal stored callable capture refers to an unknown local");
+                return HirArgument::Move(error_expr());
+            };
+            let Some(closure) = local.closure.as_ref() else {
+                self.error("internal stored callable capture requires a closure local");
+                return HirArgument::Move(error_expr());
+            };
+            let Some(capture) = closure.captures.get(index) else {
+                self.error("internal stored callable capture index is out of bounds");
+                return HirArgument::Move(error_expr());
+            };
+            self.require_same_type(
+                &capture.place.ty,
+                &parameter.ty,
+                format_args!("lifted handler capture `{}`", parameter.name),
+            );
+            return match capture.mode {
+                ClosureCaptureMode::Shared => HirArgument::CallableCaptureBorrow {
+                    binding: local.id,
+                    index,
+                    callable_ty: local.ty,
+                    capture_ty: capture.place.ty.clone(),
+                    mutable: false,
+                },
+                ClosureCaptureMode::Mutable => HirArgument::CallableCaptureBorrow {
+                    binding: local.id,
+                    index,
+                    callable_ty: local.ty,
+                    capture_ty: capture.place.ty.clone(),
+                    mutable: true,
+                },
+                ClosureCaptureMode::Move => HirArgument::Move(HirExpr {
+                    ty: capture.place.ty.clone(),
+                    kind: HirExprKind::PartialCapture {
+                        binding: local.id,
+                        index,
+                        moves: true,
+                        callable_ty: local.ty,
+                    },
+                }),
+            };
+        }
         let mode = self.effective_pass_mode(parameter.mode, &parameter.ty);
         match mode {
             PassMode::Copy | PassMode::Move => {
@@ -23576,6 +23835,7 @@ fn closure_info_for_callable(ty: &Ty) -> Option<ClosureInfo> {
         custom_effects: callable.signature.custom_effects.clone(),
         result: (*callable.signature.result).clone(),
         captures,
+        capture_names: Vec::new(),
         is_fn_mut: *is_fn_mut,
         is_fn_once: *is_fn_once,
     })
@@ -23642,6 +23902,27 @@ fn flatten_call<'a>(expression: &'a Expr, groups: &mut Vec<&'a [CallArg]>) -> &'
         }
         _ => expression,
     }
+}
+
+fn internal_stored_callable_capture(expression: &Expr) -> Option<(&str, usize)> {
+    let Expr::Call(callee, arguments) = expression else {
+        return None;
+    };
+    let Expr::Name(name) = callee.as_ref() else {
+        return None;
+    };
+    let index = name
+        .strip_prefix("$handler$stored$capture$")?
+        .parse::<usize>()
+        .ok()?;
+    let [CallArg {
+        label: None,
+        value: Expr::Name(local),
+    }] = arguments.as_slice()
+    else {
+        return None;
+    };
+    Some((local, index))
 }
 
 fn contextual_annotation(parameter: &Param) -> Option<Type> {
@@ -41011,7 +41292,7 @@ let main(): i32 = {
     }
 
     #[test]
-    fn reusable_handler_capturing_action_reports_unsupported_non_tail_shapes() {
+    fn reusable_handler_capturing_action_reports_unsupported_aliases() {
         let errors = compile_text(
             r#"
 let Ask = effect { let value(): i32 }
@@ -41024,14 +41305,14 @@ let main(): i32 = {
     base = base + 1
     Ask.value() + input + base
   }
-  let padding = 0
-  run(action)(1 + padding)
+  let alias = action
+  run(alias)(1)
 }
 "#,
         )
-        .expect_err("non-adjacent captured actions remain outside the first reusable slice");
+        .expect_err("captured action aliases remain outside the current reusable slice");
         assert!(errors
             .iter()
-            .any(|error| error.message.contains("binding immediately before")));
+            .any(|error| error.message.contains("passed directly from its original")));
     }
 }

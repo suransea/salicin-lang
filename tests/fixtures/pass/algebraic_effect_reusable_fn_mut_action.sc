@@ -14,6 +14,7 @@ let main(): i32 = {
     total = total + input
     Ask.value() + total
   }
-  let result = run(action)(1)
-  result + total + 30
+  let padding = 30
+  let result = 1 + run(action)(1) - 1
+  result + total + padding
 }

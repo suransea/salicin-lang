@@ -23,14 +23,14 @@ distinct owned semantic type plus a four-pointer LLVM call/drop/environment/flag
 drop glue. Compiler-internal HIR can now erase an owned CPS closure into that layout and invoke it
 with an input plus `Continuation(Output, Answer)`; target-specific adapters preserve captured
 environments, and cleanup planning treats both operations as ownership transfers. Reusable handlers
-now accept one source-level captured-action shape: an explicitly typed effectful closure binding
-immediately before a complete handler call in block-tail, `let` initializer, or expression-statement
-position. Shared and mutable `Copy` captures are lifted
+now accept directly passed, explicitly typed effectful closure bindings even when the complete
+handler call occurs later or is nested inside a larger expression. The callable environment is
+created at the original declaration, then its shared and mutable `Copy` captures are lifted
 as `borrow` and `borrow(mut)`, while consuming owned roots are lifted as `move`; the closure is then
 injected before selective CPS. Native regressions cover `FnMut` resumption plus `FnOnce` cleanup on
-both resumption and abandonment, including state/drop observations in following statements.
-Non-adjacent bindings, nested call positions, and arbitrary erased action construction remain the
-next implementation stages.
+both resumption and abandonment, including state/drop observations in following evaluation.
+Callable aliases, conditional values, direct closure literals, cross-function transport, and fully
+general erased action construction remain the next implementation stages.
 
 Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
 `continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs

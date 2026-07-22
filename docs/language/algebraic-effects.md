@@ -178,16 +178,19 @@ known targets is distributed into one specialized call per leaf. The selector is
 later parameter groups, only the selected branch evaluates its remaining arguments, and every leaf
 enters the same ordinary handler CPS and cleanup path.
 
-The captured reusable-action slice accepts an explicitly typed closure binding immediately before
-a complete handler call. The call may be a block tail, an ordinary `let` initializer, or an
-expression statement. The compiler lifts shared `Copy` captures as
+The captured reusable-action slice accepts an explicitly typed closure binding that is later passed
+directly to a complete handler call. The call may appear in a block tail, an ordinary initializer,
+an expression statement, or inside a larger expression. The closure environment is still created at
+its declaration, preserving the original borrow/move point. At the handler call, the compiler lifts
+shared `Copy` captures as
 `borrow`, mutable `Copy` captures as `borrow(mut)`, and consuming owned root captures as `move`
 parameters of a target-specific handler specialization. It injects the closure into the handler's
 lexical action and then performs selective CPS, so no direct-style effectful closure symbol reaches
 native linking. Resumption and abandonment share the existing continuation cleanup path, including
-exactly-once destruction of moved resources. A returned call releases lifted mutable borrows before
-the following statement. Non-adjacent bindings and nested call positions still require the remaining
-general erased-environment integration.
+exactly-once destruction of moved resources. Consuming the action releases its stored capture loans
+before following evaluation continues. Callable aliases, conditional action values, direct closure
+literals, and actions crossing another function boundary still require the remaining general erased
+value integration.
 
 Selective CPS removes only the handled nominal identity. Residual `unsafe`, `throws(Error)`, and
 other nominal requirements remain on generated resumable frames. Intercepted operations also retain
