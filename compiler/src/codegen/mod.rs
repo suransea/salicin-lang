@@ -8070,36 +8070,6 @@ impl Analyzer {
         }
     }
 
-    fn throws_boundary_for_ty(&self, ty: &Ty, error: &Ty) -> Option<ReturnBoundary> {
-        let standard = self.standard_fallible_info_for_ty(ty)?;
-        if standard.kind != StandardFallibleKind::Result || standard.error.as_ref() != Some(error) {
-            return None;
-        }
-        Some(ReturnBoundary {
-            kind: Some(StandardFallibleKind::Result),
-            container: ty.clone(),
-            success: standard.payload,
-            error: Some(error.clone()),
-        })
-    }
-
-    fn ensure_throws_result_type(&mut self, payload: Ty, error: Ty) -> Option<Ty> {
-        let arguments = vec![error, payload];
-        let Some(source_arguments) = arguments
-            .iter()
-            .map(|argument| self.source_type_for_ty(argument))
-            .collect::<Option<Vec<_>>>()
-        else {
-            self.error(
-                "throws result type cannot be represented by the current source type system",
-            );
-            return None;
-        };
-        let template = self.lang_item_name(LangItemKind::Result).to_owned();
-        self.ensure_nominal_instance(NominalKind::Enum, &template, source_arguments, arguments)
-            .map(Ty::Enum)
-    }
-
     fn explicit_type_argument_for_parameter<'a>(
         &self,
         owner: &str,
