@@ -2628,9 +2628,12 @@ fn explicit_result_values_and_throws_handlers_run_with_expected_result() {
 }
 
 #[test]
-fn removed_postfix_try_reports_a_migration_diagnostic() {
+fn removed_postfix_try_reports_a_syntax_error() {
     for (name, expected) in [
-        ("try_non_container_operand.sc", "postfix `.try` was removed"),
+        (
+            "try_non_container_operand.sc",
+            "expected a member name after `.`",
+        ),
         ("result_return_type_mismatch.sc", "type mismatch"),
         (
             "result_requires_explicit_constructor.sc",

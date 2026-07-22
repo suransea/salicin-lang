@@ -6,6 +6,11 @@ subset.
 
 ## Unreleased
 
+## 0.178.0 - 2026-07-22
+
+- Removed the dedicated postfix `.try` parser migration diagnostic; `.try` now fails through the
+  ordinary member-name syntax path because call propagation is modeled by `Throws(Error)` effects.
+
 ## 0.177.0 - 2026-07-22
 
 - Required effect declarations and nominal effect references in `with(...)` to use an uppercase

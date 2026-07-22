@@ -2406,21 +2406,14 @@ impl Parser {
                     index: Box::new(index),
                 };
             } else if self.take(&TokenKind::Dot) {
-                if self.take(&TokenKind::Try) {
-                    return Err(self.error_here(
-                        "postfix `.try` was removed; calls with `Throws(Error)` propagate automatically",
-                    ));
-                } else {
-                    let member = if self.at(&TokenKind::Super)
-                        && Self::is_super_path_expression(&expression)
-                    {
+                let member =
+                    if self.at(&TokenKind::Super) && Self::is_super_path_expression(&expression) {
                         self.advance();
                         "super".to_owned()
                     } else {
                         self.expect_relative_path_segment("a member name after `.`")?
                     };
-                    expression = Expr::Member(Box::new(expression), member);
-                }
+                expression = Expr::Member(Box::new(expression), member);
             } else if self.take(&TokenKind::QuestionDot) {
                 let member = self.expect_ident("a member name after `?.`")?;
                 expression = Expr::ChainMember(Box::new(expression), member);
@@ -4819,7 +4812,7 @@ mod tests {
         let old =
             parse("let unwrap(value: Result(i32, bool)): i32 with(Throws(bool)) = { value.try }\n")
                 .unwrap_err();
-        assert!(old.message.contains("postfix `.try` was removed"));
+        assert!(old.message.contains("expected a member name after `.`"));
 
         let malformed = parse("let value: Result(i32, bool) = try do { 42 }\n").unwrap_err();
         assert!(malformed.message.contains("expected a block after `try`"));
