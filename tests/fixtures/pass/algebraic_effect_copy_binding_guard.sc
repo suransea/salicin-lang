@@ -1,0 +1,42 @@
+let Check = effect {
+  let accept(): bool
+}
+
+let Resource = struct(counter: MutPtr(i32))
+
+extend Resource: Drop {
+  let drop(borrow(mut) self)(): () = { unsafe {
+    *self.counter = *self.counter + 1
+  } }
+}
+
+let Event = enum {
+  Value(Resource, i32),
+  Empty,
+}
+
+let consume(move resource: Resource, value: i32): i32 = { value }
+
+let evaluate(counter: MutPtr(i32), accepted: bool): i32 = {
+  Check.handle(accept: { (resume) -> resume(accepted) }) {
+    let event = Event.Value(Resource(counter), 20)
+    event match {
+      Event.Value(resource, value) if Check.accept() && value > 0 => consume(resource, value),
+      Event.Value(resource, value) => consume(resource, value),
+      Event.Empty => 0,
+    }
+  }
+}
+
+let main(): i32 = {
+  let counter = unsafe {
+    raw_alloc(i32)(size_of(i32), align_of(i32))
+  }
+  unsafe { *counter = 0 }
+  let result = evaluate(counter, false) + evaluate(counter, true)
+  let drops = unsafe { *counter }
+  unsafe {
+    raw_dealloc(counter, size_of(i32), align_of(i32))
+  }
+  result + drops
+}

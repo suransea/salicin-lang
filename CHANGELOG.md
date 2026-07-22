@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.137.0 - 2026-07-22
+
+- Allowed a suspended match guard over a non-`Copy` enum to retain pattern bindings that themselves
+  implement `Copy`.
+- Preserved only syntactically referenced bindings in the non-owning inspection pattern and checked
+  their concrete types during typed match lowering.
+- Materialized a distinct owned commit input before the resumed branch rematches, preventing the
+  compiler's internal inspection marker from leaking into the ownership-transfer match.
+- Kept non-`Copy` retained bindings rejected with a more precise binding-level diagnostic.
+- Added a native mixed-payload regression that copies an `i32` into the guard while transferring and
+  dropping the sibling resource exactly once on both `false` and `true` resumptions.
+
 ## 0.136.0 - 2026-07-22
 
 - Delayed non-`Copy` payload transfers in suspended match guards whose guard expression does not

@@ -13590,10 +13590,7 @@ impl Analyzer {
         if let Some(scalar_ty) = scalar_ty {
             return self.lower_scalar_match(scrutinee, arms, expected, context, &scalar_ty);
         }
-        let inspect_handler_input = matches!(scrutinee, Expr::Name(name) if name.starts_with("$handler$match$inspect$input$"))
-            && arms
-                .iter()
-                .all(|arm| !pattern_contains_binding(&arm.pattern));
+        let inspect_handler_input = matches!(scrutinee, Expr::Name(name) if name.starts_with("$handler$match$inspect$input$"));
         let scrutinee = if inspect_handler_input {
             let Some(place) = self.lower_place(scrutinee, context) else {
                 return error_expr();
@@ -14939,6 +14936,18 @@ impl Analyzer {
             context.push_scope();
             let (matcher, bindings, literal_conditions) =
                 self.lower_enum_pattern(&arm.pattern, &layout, context);
+            if matches!(
+                scrutinee.kind,
+                HirExprKind::Read {
+                    kind: HirReadKind::Inspect,
+                    ..
+                }
+            ) && bindings.iter().any(|binding| binding.moves)
+            {
+                self.error(
+                    "a pattern binding retained across an effectful match guard must implement Copy",
+                );
+            }
             if self.type_has_custom_drop(&scrutinee.ty)
                 && bindings
                     .iter()
@@ -17265,19 +17274,13 @@ impl Analyzer {
                             let guard_is_effectful = arm.guard.as_ref().is_some_and(|guard| {
                                 self.handler_expression_may_suspend(guard, &handler)
                             });
-                            if guard_is_effectful {
-                                !guard_references_pattern_bindings(
-                                    arm.guard.as_ref().expect("effectful guard exists"),
-                                    &arm.pattern,
-                                )
-                            } else {
-                                !pattern_contains_binding(&arm.pattern)
-                                    || !arms[index + 1..].iter().any(|later| {
-                                        later.guard.as_ref().is_some_and(|guard| {
-                                            self.handler_expression_may_suspend(guard, &handler)
-                                        })
+                            guard_is_effectful
+                                || !pattern_contains_binding(&arm.pattern)
+                                || !arms[index + 1..].iter().any(|later| {
+                                    later.guard.as_ref().is_some_and(|guard| {
+                                        self.handler_expression_may_suspend(guard, &handler)
                                     })
-                            }
+                                })
                         });
                     let handler_for_arms = handler.clone();
                     let resume_for_arms = resume.clone();
@@ -17490,10 +17493,7 @@ impl Analyzer {
                     )?,
                 });
             }
-            return Ok(Expr::Match {
-                scrutinee: Box::new(Expr::Name(scrutinee.to_owned())),
-                arms: transformed,
-            });
+            return Ok(handler_match_commit(scrutinee, transformed));
         }
         let Some((arm, remaining)) = arms.split_first() else {
             return Ok(Expr::Loop {
@@ -17511,16 +17511,12 @@ impl Analyzer {
             .guard
             .as_ref()
             .is_some_and(|guard| self.handler_expression_may_suspend(guard, &handler));
-        let delays_pattern_transfer = guard_is_effectful
-            && arm
-                .guard
-                .as_ref()
-                .is_some_and(|guard| !guard_references_pattern_bindings(guard, &arm.pattern));
+        let delays_pattern_transfer = guard_is_effectful;
 
         let committed_body = if delays_pattern_transfer {
-            Expr::Match {
-                scrutinee: Box::new(Expr::Name(scrutinee.to_owned())),
-                arms: vec![
+            handler_match_commit(
+                scrutinee,
+                vec![
                     MatchArm {
                         pattern: arm.pattern.clone(),
                         guard: None,
@@ -17534,7 +17530,7 @@ impl Analyzer {
                         },
                     },
                 ],
-            }
+            )
         } else {
             body.clone()
         };
@@ -17570,7 +17566,10 @@ impl Analyzer {
 
         let mut candidates = vec![MatchArm {
             pattern: if delays_pattern_transfer {
-                pattern_without_bindings(&arm.pattern)
+                pattern_for_suspended_guard(
+                    &arm.pattern,
+                    arm.guard.as_ref().expect("effectful guard exists"),
+                )
             } else {
                 arm.pattern.clone()
             },
@@ -23727,22 +23726,36 @@ fn pattern_contains_binding(pattern: &Pattern) -> bool {
     }
 }
 
-fn pattern_without_bindings(pattern: &Pattern) -> Pattern {
+fn pattern_for_suspended_guard(pattern: &Pattern, guard: &Expr) -> Pattern {
+    let mut bindings = HashSet::new();
+    collect_pattern_binding_names(pattern, &mut bindings);
+    let retained = bindings
+        .into_iter()
+        .filter(|name| expression_mentions_any_name(guard, &HashSet::from([name.clone()])))
+        .collect();
+    pattern_retaining_bindings(pattern, &retained)
+}
+
+fn pattern_retaining_bindings(pattern: &Pattern, retained: &HashSet<String>) -> Pattern {
     match pattern {
+        Pattern::Binding(name) if retained.contains(name) => pattern.clone(),
         Pattern::Binding(_) => Pattern::Wildcard,
         Pattern::Constructor { path, fields } => Pattern::Constructor {
             path: path.clone(),
             fields: match fields {
                 PatternFields::Unit => PatternFields::Unit,
                 PatternFields::Positional(patterns) => PatternFields::Positional(
-                    patterns.iter().map(pattern_without_bindings).collect(),
+                    patterns
+                        .iter()
+                        .map(|pattern| pattern_retaining_bindings(pattern, retained))
+                        .collect(),
                 ),
                 PatternFields::Named(fields) => PatternFields::Named(
                     fields
                         .iter()
                         .map(|field| crate::ast::PatternField {
                             name: field.name.clone(),
-                            pattern: pattern_without_bindings(&field.pattern),
+                            pattern: pattern_retaining_bindings(&field.pattern, retained),
                         })
                         .collect(),
                 ),
@@ -23752,10 +23765,23 @@ fn pattern_without_bindings(pattern: &Pattern) -> Pattern {
     }
 }
 
-fn guard_references_pattern_bindings(guard: &Expr, pattern: &Pattern) -> bool {
-    let mut bindings = HashSet::new();
-    collect_pattern_binding_names(pattern, &mut bindings);
-    expression_mentions_any_name(guard, &bindings)
+fn handler_match_commit(scrutinee: &str, arms: Vec<MatchArm>) -> Expr {
+    let suffix = scrutinee
+        .strip_prefix("$handler$match$inspect$input$")
+        .unwrap_or(scrutinee);
+    let input = format!("$handler$match$commit${suffix}");
+    Expr::Block(
+        vec![Stmt::Let(Binding {
+            mutable: false,
+            name: input.clone(),
+            annotation: None,
+            value: Expr::Name(scrutinee.to_owned()),
+        })],
+        Some(Box::new(Expr::Match {
+            scrutinee: Box::new(Expr::Name(input)),
+            arms,
+        })),
+    )
 }
 
 fn expression_mentions_any_name(expression: &Expr, names: &HashSet<String>) -> bool {

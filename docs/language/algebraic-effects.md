@@ -207,16 +207,18 @@ arguments, arrays, indexes, members, `match` scrutinees and arm
 bodies, and immediate `do`, `unsafe`, and `try` wrappers. Effectful `&&` and `||` operands retain
 their lazy branch semantics. Effectful `??` evaluates its fallback only on `None` or `Err`, and both
 the scrutinee and fallback may suspend independently. Match guards may suspend when the complete
-match input implements `Copy`, or when a non-`Copy` enum can be inspected without retaining a pattern
-binding in the suspended guard expression; false guards continue with the next candidate. Fully
-applied optional
+match input implements `Copy`, or when a non-`Copy` enum can be inspected while retaining only
+`Copy` pattern bindings in the suspended guard expression; false guards continue with the next
+candidate. Fully applied optional
 method calls evaluate the owned receiver first, enter argument CPS only on `Some` or `Ok`, and rewrap
 the method result before continuing. Retaining a non-Copy scrutinee across suspended candidate
 selection first tests a binding-erased, non-owning pattern and then transfers the sole owner into the
 guard continuation. If the guard resumes `true`, an ordinary rematch commits the original payload
 bindings before entering the body; if it resumes `false`, the untouched owner continues through the
-remaining candidates. A guard expression that itself refers to a candidate pattern binding remains
-unsupported because its continuation must rebuild a projected view from the captured owner.
+remaining candidates. Bindings referenced by the guard are retained in the inspection pattern and
+copied into its continuation when their concrete types implement `Copy`. A referenced non-`Copy`
+binding remains unsupported because its continuation must rebuild a projected view from the captured
+owner.
 Capturing indirect calls remain implementation work rather than falling back to callback-only
 semantics.
 
