@@ -30,7 +30,7 @@ let main(): i32 = {
     let right: (): i32 with(Abort) = { () -> Abort.stop() + consume(right_resource) }
     let first: (): i32 with(Abort) = if true { left } else { middle }
     let second: (): i32 with(Abort) = if false { middle } else { right }
-    let combined: (): i32 with(Abort) = if false { first } else { second }
+    let combined: (): i32 with(Abort) = if Abort.choose() { first } else { second }
     combined()
   }
   let drops = unsafe { *counter }

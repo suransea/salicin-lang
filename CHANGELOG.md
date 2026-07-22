@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.142.0 - 2026-07-22
+
+- Forwarded capturing callable environments through a suspended nested dynamic selector instead of
+  requiring every target to be a named non-capturing function.
+- Rebased moved `FnOnce` captures onto the continuation-owned callable environment and materialized
+  borrowed callable aggregates when passing `Fn` and `FnMut` environments by reference.
+- Kept callable storage metadata available while emitting mutually exclusive control-flow branches;
+  source-level ownership analysis still rejects sequential reuse.
+- Disarmed the complete nested drop-flag subtree when moving a callable capture, preventing child
+  resources from being destroyed by both the old and new environment.
+- Promoted the former owning-environment diagnostic to positive shared-capture coverage and added
+  native suspended-union regressions for repeated `FnMut` state and exactly-once `FnOnce` cleanup.
+
 ## 0.141.0 - 2026-07-22
 
 - Allowed finite dynamic callable selections to use existing dynamic callable values as branches.

@@ -84,8 +84,8 @@ may be copied through immutable handler-local aliases and forwarded into a speci
 frame. Mutable aliases accept assignments with the same signature and finite target set, remapping
 runtime tags across different target orders; incompatible sets are rejected before ordinary value
 lowering. Nested selections may union existing dynamic values and remap their tags. Effectful nested
-selectors support named targets; capturing branch environments still require the owning environment
-ABI when the selector itself suspends.
+selectors forward capturing branch environments through their continuation, preserving shared and
+mutable borrows, `FnMut` state, `FnOnce` transfer, and exactly-once nested cleanup.
 Compiler-generated CPS closures carry a separate lexical handler-capability set, allowing an inner
 handler's residual algebraic row to compose through an already specialized outer named frame without
 publishing that capability on the closure type. Throwing handler tails return through their physical

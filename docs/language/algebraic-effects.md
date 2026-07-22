@@ -188,8 +188,10 @@ higher-order resumable frame. Mutable aliases may be reassigned between values w
 signature and finite target set; assignment remaps tags when target order differs. Values escaping
 that lexical handler and open-ended target sets remain dynamic-ABI work. Existing dynamic values may
 also form branches of another finite selection: their target sets are merged and their runtime tags
-are remapped into the union. The outer selector may suspend for named targets; forwarding capturing
-branch environments through that suspension still requires the owning closure-environment ABI.
+are remapped into the union. The outer selector may suspend and transfer capturing branch
+environments into its one-shot continuation. Borrowed callable environments are materialized for
+the duration of the continuation call, while moved nested environments disarm their complete drop
+subtrees before ownership is transferred.
 Operation and ordinary call arguments are traversed in source order, `done:` may change the answer
 type, and nested handlers of the same identity select the nearest matching boundary. Arguments of
 an effect-propagating named call enter CPS before its callee frame is built, so multiple suspended

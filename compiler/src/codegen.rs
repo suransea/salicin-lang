@@ -18829,16 +18829,6 @@ impl Analyzer {
                                 sources.push((String::new(), vec![resolved]));
                             }
                             if valid && union.len() >= 2 {
-                                if union.iter().any(|target| {
-                                    handler.resumable_closures.borrow().contains_key(target)
-                                }) && self
-                                    .handler_expression_may_suspend(&binding.value, &handler)
-                                {
-                                    self.error(
-                                        "a capturing dynamic callable union with an effectful selector requires the owned closure-environment ABI",
-                                    );
-                                    return Err(());
-                                }
                                 let selection =
                                     expand_dynamic_callable_selection(selection, &sources, &union);
                                 let name = binding.name.clone();
@@ -20994,15 +20984,21 @@ impl Analyzer {
                 }
                 ClosureCaptureMode::Shared => HirArgument::SharedBorrow(capture.place),
                 ClosureCaptureMode::Mutable => HirArgument::MutBorrow(capture.place),
-                ClosureCaptureMode::Move => HirArgument::Move(HirExpr {
-                    ty: capture.place.ty,
-                    kind: HirExprKind::PartialCapture {
-                        binding: local.id,
-                        index,
-                        moves: true,
-                        callable_ty: local.ty.clone(),
-                    },
-                }),
+                ClosureCaptureMode::Move => {
+                    let (binding, callable_ty) = capture
+                        .forwarded
+                        .map(|forwarded| (forwarded.binding, forwarded.callable_ty))
+                        .unwrap_or_else(|| (local.id, local.ty.clone()));
+                    HirArgument::Move(HirExpr {
+                        ty: capture.place.ty,
+                        kind: HirExprKind::PartialCapture {
+                            binding,
+                            index,
+                            moves: true,
+                            callable_ty,
+                        },
+                    })
+                }
             })
             .collect();
         let mut temporary_loans = Vec::new();
@@ -27704,6 +27700,23 @@ impl<'a> FunctionEmitter<'a> {
         }
     }
 
+    fn deactivate_drop_slot_at(&mut self, pointer: &str) {
+        let Some(slot) = self
+            .drop_slots
+            .iter()
+            .rev()
+            .find(|slot| slot.pointer == pointer)
+            .cloned()
+        else {
+            return;
+        };
+        let mut updates = Vec::new();
+        Self::collect_place_flag_updates(&slot, &[], false, false, &mut updates);
+        for (flag, value) in updates {
+            self.instruction(format!("store i1 {value}, ptr {flag}"));
+        }
+    }
+
     fn collect_place_flag_updates(
         slot: &RuntimeDropSlot,
         projections: &[usize],
@@ -28364,7 +28377,7 @@ impl<'a> FunctionEmitter<'a> {
                             if place.ty == Ty::Unit {
                                 continue;
                             }
-                            let pointer = self.emit_place_address(place)?;
+                            let pointer = self.emit_borrow_address(place)?;
                             emitted_arguments.push(format!("ptr {pointer}"));
                         }
                         HirArgument::CallableCaptureBorrow {
@@ -28437,7 +28450,7 @@ impl<'a> FunctionEmitter<'a> {
                         HirArgument::SharedBorrow(place) | HirArgument::MutBorrow(place) => {
                             if place.ty != Ty::Unit {
                                 emitted_arguments
-                                    .push(format!("ptr {}", self.emit_place_address(place)?));
+                                    .push(format!("ptr {}", self.emit_borrow_address(place)?));
                             }
                         }
                         HirArgument::CallableCaptureBorrow {
@@ -28577,7 +28590,7 @@ impl<'a> FunctionEmitter<'a> {
                             if place.ty == Ty::Unit {
                                 continue;
                             }
-                            let pointer = self.emit_place_address(place)?;
+                            let pointer = self.emit_borrow_address(place)?;
                             emitted_arguments.push(format!("ptr {pointer}"));
                         }
                         HirArgument::CallableCaptureBorrow {
@@ -28771,10 +28784,8 @@ impl<'a> FunctionEmitter<'a> {
                         llvm_value_type(&capture.ty)?,
                         capture.pointer
                     ));
-                    if *moves {
-                        if let Some(flag) = capture.drop_flag {
-                            self.instruction(format!("store i1 false, ptr {flag}"));
-                        }
+                    if *moves && capture.drop_flag.is_some() {
+                        self.deactivate_drop_slot_at(&capture.pointer);
                     }
                     return Ok(Operand {
                         ty: capture.ty,
@@ -29745,6 +29756,28 @@ impl<'a> FunctionEmitter<'a> {
         })
     }
 
+    fn emit_borrow_address(&mut self, place: &HirPlace) -> Result<String, Diagnostic> {
+        if place.projections.is_empty()
+            && matches!(place.ty, Ty::Callable(_))
+            && self.partial_captures.contains_key(&place.local)
+        {
+            let expression = HirExpr {
+                ty: place.ty.clone(),
+                kind: HirExprKind::Unit,
+            };
+            let callable =
+                self.emit_stored_callable_read(&expression, place.local, HirReadKind::Copy)?;
+            let environment_ty = llvm_value_type(&callable.ty)?;
+            let environment = self.entry_alloca(&environment_ty, "borrowed callable environment");
+            self.instruction(format!(
+                "store {environment_ty} {}, ptr {environment}",
+                callable.value()?
+            ));
+            return Ok(environment);
+        }
+        self.emit_place_address(place)
+    }
+
     fn emit_place_address(&mut self, place: &HirPlace) -> Result<String, Diagnostic> {
         let mut root_pointer = self.locals.get(&place.local).cloned().ok_or_else(|| {
             Diagnostic::new(format!(
@@ -29798,7 +29831,7 @@ impl<'a> FunctionEmitter<'a> {
                     }
                 }
                 HirArgument::SharedBorrow(place) | HirArgument::MutBorrow(place) => {
-                    ("ptr".to_owned(), self.emit_place_address(place)?)
+                    ("ptr".to_owned(), self.emit_borrow_address(place)?)
                 }
                 HirArgument::CallableCaptureBorrow {
                     binding,
@@ -29872,10 +29905,8 @@ impl<'a> FunctionEmitter<'a> {
                 let field_ty = llvm_value_type(&capture.ty)?;
                 let value = self.fresh_register();
                 self.instruction(format!("{value} = load {field_ty}, ptr {}", stored.pointer));
-                if kind == HirReadKind::Move {
-                    if let Some(flag) = stored.drop_flag {
-                        self.instruction(format!("store i1 false, ptr {flag}"));
-                    }
+                if kind == HirReadKind::Move && stored.drop_flag.is_some() {
+                    self.deactivate_drop_slot_at(&stored.pointer);
                 }
                 (field_ty, value)
             };
@@ -29884,9 +29915,6 @@ impl<'a> FunctionEmitter<'a> {
                 "{next} = insertvalue {environment_ty} {environment}, {field_ty} {value}, {index}"
             ));
             environment = next;
-        }
-        if kind == HirReadKind::Move {
-            self.partial_captures.remove(&source);
         }
         Ok(Operand {
             ty: expression.ty.clone(),
@@ -29950,8 +29978,8 @@ impl<'a> FunctionEmitter<'a> {
             let ty = llvm_value_type(&capture.ty)?;
             let value = self.fresh_register();
             self.instruction(format!("{value} = load {ty}, ptr {}", capture.pointer));
-            if let Some(flag) = capture.drop_flag {
-                self.instruction(format!("store i1 false, ptr {flag}"));
+            if capture.drop_flag.is_some() {
+                self.deactivate_drop_slot_at(&capture.pointer);
             }
             let pointer = self.entry_alloca(&ty, "moved callable capture");
             self.instruction(format!("store {ty} {value}, ptr {pointer}"));
@@ -35790,7 +35818,7 @@ let main(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) {
             .iter()
             .any(|error| error.message.contains("incompatible target set")));
 
-        let suspended_capturing_union = compile_text(
+        compile_text(
             r#"
 let Ask = effect {
   let choose(): bool
@@ -35811,10 +35839,7 @@ let main(): i32 = { Ask.handle(
 } }
 "#,
         )
-        .expect_err("an effectful union selector cannot yet move capturing environments");
-        assert!(suspended_capturing_union
-            .iter()
-            .any(|error| error.message.contains("owned closure-environment ABI")));
+        .expect("effectful union selectors forward capturing closure environments");
     }
 
     #[test]
