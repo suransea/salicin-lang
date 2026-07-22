@@ -144,6 +144,10 @@ not recognize a resumable runtime protocol that has no matching standard-library
 Owned actions crossing into reusable handlers use the adjacent
 `EffectCallable(Input, Output, Answer)` contract. Its logical declaration is empty because the call
 entry, drop entry, environment pointer, and ownership flag are compiler-private ABI fields.
+The call entry receives the erased environment, the action input, and an owned
+`Continuation(Output, Answer)`, then returns the handler answer. HIR represents action erasure and
+invocation as explicit moves, and native lowering emits target-specific call/drop adapters for the
+captured closure. The low-level conversion and invocation operations remain compiler-internal.
 
 Lowering uses typed, one-shot continuation-passing IR for functions whose row contains a resumable
 user effect. Continuation environments contain values live across an operation. Cleanup planning

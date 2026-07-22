@@ -97,6 +97,10 @@ pub let EffectCallable(Input: type, Output: type, Answer: type) = struct()
 handler-supplied continuation from `Output` to `Answer`; `Input` is the action's packed runtime input.
 Both native values carry call and drop entries, an environment pointer, and an ownership flag. They
 are module exports rather than prelude names and cannot be replaced by same-named user declarations.
+The compiler-internal action entry has the logical signature
+`(environment, Input, Continuation(Output, Answer)): Answer`. Erasing or invoking an action consumes
+its owner; a dropped, uninvoked action releases its captured environment through the stored drop
+entry. These low-level operations are not source-level standard-library functions.
 
 ```sali
 pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E)

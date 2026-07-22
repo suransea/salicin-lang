@@ -658,6 +658,7 @@ struct HirProgram {
     box_pointees: HashMap<String, Ty>,
     array_types: HashSet<Ty>,
     continuation_adapters: Vec<ContinuationAdapter>,
+    effect_callable_adapters: Vec<EffectCallableAdapter>,
 }
 
 #[derive(Debug, Clone)]
@@ -668,6 +669,17 @@ struct ContinuationAdapter {
     captures: Vec<CallableCaptureTy>,
     input: Ty,
     output: Ty,
+}
+
+#[derive(Debug, Clone)]
+struct EffectCallableAdapter {
+    name: String,
+    callable_ty: Ty,
+    function: String,
+    captures: Vec<CallableCaptureTy>,
+    input: Ty,
+    output: Ty,
+    answer: Ty,
 }
 
 impl HirProgram {
@@ -914,6 +926,16 @@ enum HirExprKind {
     InvokeContinuation {
         continuation: Box<HirExpr>,
         argument: Box<HirExpr>,
+    },
+    EraseEffectCallable {
+        binding: LocalId,
+        callable_ty: Ty,
+        adapter: String,
+    },
+    InvokeEffectCallable {
+        action: Box<HirExpr>,
+        input: Box<HirExpr>,
+        continuation: Box<HirExpr>,
     },
     Partial {
         function: String,
@@ -1873,6 +1895,7 @@ struct Analyzer {
     hir_globals: HashMap<String, HirGlobal>,
     array_types: HashSet<Ty>,
     continuation_adapters: Vec<ContinuationAdapter>,
+    effect_callable_adapters: Vec<EffectCallableAdapter>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -1943,6 +1966,7 @@ impl Analyzer {
             hir_globals: HashMap::new(),
             array_types: HashSet::new(),
             continuation_adapters: Vec::new(),
+            effect_callable_adapters: Vec::new(),
             diagnostics: Vec::new(),
         };
         if !program.uses.is_empty() {
@@ -5758,6 +5782,7 @@ impl Analyzer {
                 .collect(),
             array_types: self.array_types.clone(),
             continuation_adapters: self.continuation_adapters.clone(),
+            effect_callable_adapters: self.effect_callable_adapters.clone(),
         })
     }
 
@@ -11511,6 +11536,15 @@ impl Analyzer {
                 self.validate_explicit_reference_returns(continuation, expected, context);
                 self.validate_explicit_reference_returns(argument, expected, context);
             }
+            HirExprKind::InvokeEffectCallable {
+                action,
+                input,
+                continuation,
+            } => {
+                self.validate_explicit_reference_returns(action, expected, context);
+                self.validate_explicit_reference_returns(input, expected, context);
+                self.validate_explicit_reference_returns(continuation, expected, context);
+            }
             HirExprKind::Assign { value, .. } => {
                 self.validate_explicit_reference_returns(value, expected, context);
             }
@@ -11628,6 +11662,7 @@ impl Analyzer {
             | HirExprKind::Function(_)
             | HirExprKind::PartialCapture { .. }
             | HirExprKind::EraseContinuation { .. }
+            | HirExprKind::EraseEffectCallable { .. }
             | HirExprKind::Borrow { .. }
             | HirExprKind::RawAddress { .. }
             | HirExprKind::RawBorrow { .. }
@@ -12620,7 +12655,48 @@ impl Analyzer {
                             & valid
                     });
                 }
+                if matches!(root, Expr::Name(name) if name == "$handler$invoke$effect$callable") {
+                    let arguments = groups
+                        .iter()
+                        .flat_map(|group| group.iter())
+                        .collect::<Vec<_>>();
+                    for index in [0, 2] {
+                        if let Some(CallArg {
+                            value: Expr::Name(name),
+                            ..
+                        }) = arguments.get(index)
+                        {
+                            if !bound.contains(name) && outer.lookup(name).is_some() {
+                                record_closure_capture(captures, name, ClosureCaptureMode::Move);
+                            }
+                        }
+                    }
+                    return arguments
+                        .iter()
+                        .skip(1)
+                        .take(1)
+                        .fold(true, |valid, argument| {
+                            self.scan_simple_closure_captures(
+                                &argument.value,
+                                bound,
+                                outer,
+                                captures,
+                            ) & valid
+                        });
+                }
                 if matches!(root, Expr::Name(name) if name == "$handler$erase$continuation") {
+                    if let Some(CallArg {
+                        value: Expr::Name(name),
+                        ..
+                    }) = groups.iter().flat_map(|group| group.iter()).next()
+                    {
+                        if !bound.contains(name) && outer.lookup(name).is_some() {
+                            record_closure_capture(captures, name, ClosureCaptureMode::Move);
+                        }
+                    }
+                    return true;
+                }
+                if matches!(root, Expr::Name(name) if name == "$handler$erase$effect$callable") {
                     if let Some(CallArg {
                         value: Expr::Name(name),
                         ..
@@ -16007,6 +16083,127 @@ impl Analyzer {
                     kind: HirExprKind::InvokeContinuation {
                         continuation: Box::new(continuation),
                         argument: Box::new(argument),
+                    },
+                };
+            }
+            if name == "$handler$erase$effect$callable" {
+                if groups.len() != 1 || groups[0].len() != 1 {
+                    self.error("internal effect-callable erasure expects one callable argument");
+                    return error_expr();
+                }
+                let Expr::Name(local_name) = &groups[0][0].value else {
+                    self.error("internal effect-callable erasure requires a local closure");
+                    return error_expr();
+                };
+                let Some(local) = context.lookup(local_name).cloned() else {
+                    self.error("internal effect-callable erasure refers to an unknown closure");
+                    return error_expr();
+                };
+                let Some(closure) = local.closure.clone() else {
+                    self.error("internal effect-callable erasure requires closure metadata");
+                    return error_expr();
+                };
+                let [group] = closure.groups.as_slice() else {
+                    self.error("an erased effect callable must have one parameter group");
+                    return error_expr();
+                };
+                let [input_parameter, continuation_parameter] = group.as_slice() else {
+                    self.error("an erased effect callable must accept an input and a continuation");
+                    return error_expr();
+                };
+                let Ty::Continuation {
+                    input: output,
+                    output: answer,
+                } = &continuation_parameter.ty
+                else {
+                    self.error(
+                        "an erased effect callable's second parameter must be a continuation",
+                    );
+                    return error_expr();
+                };
+                self.require_same_type(&closure.result, answer, "erased effect-callable answer");
+                let callable = HirPlace {
+                    local: local.id,
+                    root_ty: local.ty.clone(),
+                    projections: Vec::new(),
+                    ty: local.ty.clone(),
+                    capability: LocalCapability::Owned,
+                    root_mutable: local.mutable,
+                    loan: None,
+                    indirect: false,
+                };
+                self.ensure_available(&callable, context);
+                self.mark_moved(&callable, context);
+                let action_ty = Ty::EffectCallable {
+                    input: Box::new(input_parameter.ty.clone()),
+                    output: output.clone(),
+                    answer: answer.clone(),
+                };
+                let adapter = format!("$effect$callable$adapter${}", closure.function);
+                if !self
+                    .effect_callable_adapters
+                    .iter()
+                    .any(|existing| existing.name == adapter)
+                {
+                    let Ty::Callable(callable_ty) = &local.ty else {
+                        self.error("internal effect closure has no callable type");
+                        return error_expr();
+                    };
+                    self.effect_callable_adapters.push(EffectCallableAdapter {
+                        name: adapter.clone(),
+                        callable_ty: local.ty.clone(),
+                        function: closure.function,
+                        captures: callable_ty.captures.clone(),
+                        input: input_parameter.ty.clone(),
+                        output: (**output).clone(),
+                        answer: (**answer).clone(),
+                    });
+                }
+                return HirExpr {
+                    ty: action_ty,
+                    kind: HirExprKind::EraseEffectCallable {
+                        binding: local.id,
+                        callable_ty: local.ty,
+                        adapter,
+                    },
+                };
+            }
+            if name == "$handler$invoke$effect$callable" {
+                if groups.len() != 1 || groups[0].len() != 3 {
+                    self.error(
+                        "internal effect-callable invocation expects action, input, and continuation",
+                    );
+                    return error_expr();
+                }
+                let action = self.lower_expr(&groups[0][0].value, None, context);
+                let Ty::EffectCallable {
+                    input,
+                    output,
+                    answer,
+                } = action.ty.clone()
+                else {
+                    self.error("internal effect-callable invocation requires an erased action");
+                    return error_expr();
+                };
+                let input_value = self.lower_expr(&groups[0][1].value, Some(&input), context);
+                self.require_same_type(&input_value.ty, &input, "effect-callable input");
+                let expected_continuation = Ty::Continuation {
+                    input: output,
+                    output: answer.clone(),
+                };
+                let continuation =
+                    self.lower_expr(&groups[0][2].value, Some(&expected_continuation), context);
+                self.require_same_type(
+                    &continuation.ty,
+                    &expected_continuation,
+                    "effect-callable continuation",
+                );
+                return HirExpr {
+                    ty: (*answer).clone(),
+                    kind: HirExprKind::InvokeEffectCallable {
+                        action: Box::new(action),
+                        input: Box::new(input_value),
+                        continuation: Box::new(continuation),
                     },
                 };
             }
@@ -25500,6 +25697,16 @@ impl<'a> HirCleanupPlanner<'a> {
                 self.initialize_result(cursor, &result_use)?;
                 Some(cursor)
             }
+            HirExprKind::EraseEffectCallable { binding, .. } => {
+                let cleanup_local = self.hir_locals.get(binding).copied().ok_or_else(|| {
+                    self.diagnostic(format!(
+                        "erased effect callable refers to unmapped callable local {binding}"
+                    ))
+                })?;
+                self.move_out(cursor, self.root_move_path(cleanup_local)?)?;
+                self.initialize_result(cursor, &result_use)?;
+                Some(cursor)
+            }
             HirExprKind::InvokeContinuation {
                 continuation,
                 argument,
@@ -25523,6 +25730,39 @@ impl<'a> HirCleanupPlanner<'a> {
                 };
                 self.move_out(cursor, continuation_stage.path)?;
                 self.move_out(cursor, argument_stage.path)?;
+                self.initialize_result(cursor, &result_use)?;
+                Some(cursor)
+            }
+            HirExprKind::InvokeEffectCallable {
+                action,
+                input,
+                continuation,
+            } => {
+                let (_, action_stage) = self.prepare_temporary_destination(cursor, &action.ty)?;
+                let Some(cursor) =
+                    self.walk_expr(action, cursor, ResultUse::Store(action_stage.clone()))?
+                else {
+                    return Ok(None);
+                };
+                let (_, input_stage) = self.prepare_temporary_destination(cursor, &input.ty)?;
+                let Some(cursor) =
+                    self.walk_expr(input, cursor, ResultUse::Store(input_stage.clone()))?
+                else {
+                    return Ok(None);
+                };
+                let (_, continuation_stage) =
+                    self.prepare_temporary_destination(cursor, &continuation.ty)?;
+                let Some(cursor) = self.walk_expr(
+                    continuation,
+                    cursor,
+                    ResultUse::Store(continuation_stage.clone()),
+                )?
+                else {
+                    return Ok(None);
+                };
+                self.move_out(cursor, action_stage.path)?;
+                self.move_out(cursor, input_stage.path)?;
+                self.move_out(cursor, continuation_stage.path)?;
                 self.initialize_result(cursor, &result_use)?;
                 Some(cursor)
             }
@@ -27089,6 +27329,8 @@ impl ConstantEvaluator<'_> {
             | HirExprKind::TailInvokeContinuation { .. }
             | HirExprKind::EraseContinuation { .. }
             | HirExprKind::InvokeContinuation { .. }
+            | HirExprKind::EraseEffectCallable { .. }
+            | HirExprKind::InvokeEffectCallable { .. }
             | HirExprKind::IndirectCall { .. }
             | HirExprKind::Partial { .. }
             | HirExprKind::PartialCapture { .. }
@@ -27335,6 +27577,12 @@ impl<'a> Emitter<'a> {
             output.push_str(&self.emit_continuation_drop_adapter(adapter)?);
             output.push('\n');
         }
+        for adapter in &self.program.effect_callable_adapters {
+            output.push_str(&self.emit_effect_callable_adapter(adapter)?);
+            output.push('\n');
+            output.push_str(&self.emit_effect_callable_drop_adapter(adapter)?);
+            output.push('\n');
+        }
 
         for ty in self.drop_glue_types() {
             output.push_str(&self.emit_drop_glue(&ty)?);
@@ -27434,6 +27682,9 @@ impl<'a> Emitter<'a> {
             }
         }
         for adapter in &self.program.continuation_adapters {
+            collect(&adapter.callable_ty, &mut types);
+        }
+        for adapter in &self.program.effect_callable_adapters {
             collect(&adapter.callable_ty, &mut types);
         }
         for layout in &self.program.enums {
@@ -27705,6 +27956,83 @@ impl<'a> Emitter<'a> {
     fn emit_continuation_drop_adapter(
         &self,
         adapter: &ContinuationAdapter,
+    ) -> Result<String, Diagnostic> {
+        let name = format!("{}$drop", adapter.name);
+        let mut output = format!(
+            "define internal void @{}(ptr %environment) {{\nentry:\n",
+            function_symbol(&name)
+        );
+        if self.program.needs_drop(&adapter.callable_ty) {
+            output.push_str(&format!(
+                "  call void @{}(ptr %environment)\n",
+                drop_glue_symbol(&adapter.callable_ty)
+            ));
+        }
+        output.push_str("  ret void\n}\n");
+        Ok(output)
+    }
+
+    fn emit_effect_callable_adapter(
+        &self,
+        adapter: &EffectCallableAdapter,
+    ) -> Result<String, Diagnostic> {
+        let result_ty = llvm_return_type(&adapter.answer)?;
+        let input_parameter = if adapter.input == Ty::Unit {
+            String::new()
+        } else {
+            format!(", {} %input", llvm_value_type(&adapter.input)?)
+        };
+        let continuation_ty = Ty::Continuation {
+            input: Box::new(adapter.output.clone()),
+            output: Box::new(adapter.answer.clone()),
+        };
+        let continuation_llvm_ty = llvm_value_type(&continuation_ty)?;
+        let mut output = format!(
+            "define internal {result_ty} @{}(ptr %environment{input_parameter}, {continuation_llvm_ty} %continuation) {{\nentry:\n",
+            function_symbol(&adapter.name)
+        );
+        let callable_ty = llvm_value_type(&adapter.callable_ty)?;
+        output.push_str(&format!(
+            "  %callable = load {callable_ty}, ptr %environment\n"
+        ));
+        let mut arguments = Vec::new();
+        for (index, capture) in adapter.captures.iter().enumerate() {
+            if capture.ty == Ty::Unit {
+                continue;
+            }
+            let field_ty = if matches!(capture.mode, PassMode::Borrow | PassMode::MutBorrow) {
+                "ptr".to_owned()
+            } else {
+                llvm_value_type(&capture.ty)?
+            };
+            output.push_str(&format!(
+                "  %capture.{index} = extractvalue {callable_ty} %callable, {index}\n"
+            ));
+            arguments.push(format!("{field_ty} %capture.{index}"));
+        }
+        if adapter.input != Ty::Unit {
+            arguments.push(format!("{} %input", llvm_value_type(&adapter.input)?));
+        }
+        arguments.push(format!("{continuation_llvm_ty} %continuation"));
+        let call = format!(
+            "call {result_ty} @{}({})",
+            function_symbol(&adapter.function),
+            arguments.join(", ")
+        );
+        if adapter.answer == Ty::Unit {
+            output.push_str(&format!("  {call}\n  ret void\n}}\n"));
+        } else {
+            output.push_str(&format!(
+                "  %result = {call}\n  ret {} %result\n}}\n",
+                llvm_value_type(&adapter.answer)?
+            ));
+        }
+        Ok(output)
+    }
+
+    fn emit_effect_callable_drop_adapter(
+        &self,
+        adapter: &EffectCallableAdapter,
     ) -> Result<String, Diagnostic> {
         let name = format!("{}$drop", adapter.name);
         let mut output = format!(
@@ -29084,6 +29412,135 @@ impl<'a> FunctionEmitter<'a> {
                         argument.value()?
                     ));
                 }
+                let call = format!(
+                    "call {} {entry}({})",
+                    llvm_return_type(&expression.ty)?,
+                    arguments.join(", ")
+                );
+                if expression.ty == Ty::Unit {
+                    self.instruction(call);
+                    Ok(Operand::unit())
+                } else {
+                    let result = self.fresh_register();
+                    self.instruction(format!("{result} = {call}"));
+                    Ok(Operand {
+                        ty: expression.ty.clone(),
+                        value: Some(result),
+                    })
+                }
+            }
+            HirExprKind::EraseEffectCallable {
+                binding,
+                callable_ty,
+                adapter,
+            } => {
+                let callable_expression = HirExpr {
+                    ty: callable_ty.clone(),
+                    kind: HirExprKind::Unit,
+                };
+                let callable = self.emit_stored_callable_read(
+                    &callable_expression,
+                    *binding,
+                    HirReadKind::Move,
+                )?;
+                let callable_llvm_ty = llvm_value_type(callable_ty)?;
+                let environment =
+                    self.entry_alloca(&callable_llvm_ty, "erased effect-callable environment");
+                self.instruction(format!(
+                    "store {callable_llvm_ty} {}, ptr {environment}",
+                    callable.value()?
+                ));
+                let flag = self.entry_alloca("i1", "erased effect-callable active flag");
+                self.instruction(format!("store i1 true, ptr {flag}"));
+                let action_ty = llvm_value_type(&expression.ty)?;
+                let call_entry = format!("@{}", function_symbol(adapter));
+                let drop_entry = format!("@{}", function_symbol(&format!("{adapter}$drop")));
+                let first = self.fresh_register();
+                self.instruction(format!(
+                    "{first} = insertvalue {action_ty} zeroinitializer, ptr {call_entry}, 0"
+                ));
+                let second = self.fresh_register();
+                self.instruction(format!(
+                    "{second} = insertvalue {action_ty} {first}, ptr {drop_entry}, 1"
+                ));
+                let third = self.fresh_register();
+                self.instruction(format!(
+                    "{third} = insertvalue {action_ty} {second}, ptr {environment}, 2"
+                ));
+                let fourth = self.fresh_register();
+                self.instruction(format!(
+                    "{fourth} = insertvalue {action_ty} {third}, ptr {flag}, 3"
+                ));
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: Some(fourth),
+                })
+            }
+            HirExprKind::InvokeEffectCallable {
+                action,
+                input,
+                continuation,
+            } => {
+                let cleanup_depth = self.drop_slots.len();
+                let action = self.emit_expr(action)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                self.hold_operand_for_early_exit(&action)?;
+                let input = self.emit_expr(input)?;
+                if self.terminated {
+                    self.drop_slots.truncate(cleanup_depth);
+                    return Ok(Operand::never());
+                }
+                self.hold_operand_for_early_exit(&input)?;
+                let continuation = self.emit_expr(continuation)?;
+                if self.terminated {
+                    self.drop_slots.truncate(cleanup_depth);
+                    return Ok(Operand::never());
+                }
+                self.hold_operand_for_early_exit(&continuation)?;
+                let action_ty = llvm_value_type(&action.ty)?;
+                let entry = self.fresh_register();
+                self.instruction(format!(
+                    "{entry} = extractvalue {action_ty} {}, 0",
+                    action.value()?
+                ));
+                let environment = self.fresh_register();
+                self.instruction(format!(
+                    "{environment} = extractvalue {action_ty} {}, 2",
+                    action.value()?
+                ));
+                let flag = self.fresh_register();
+                self.instruction(format!(
+                    "{flag} = extractvalue {action_ty} {}, 3",
+                    action.value()?
+                ));
+                let active = self.fresh_register();
+                self.instruction(format!("{active} = load i1, ptr {flag}"));
+                let invoke_label = self.fresh_label("effect.callable.invoke");
+                let used_label = self.fresh_label("effect.callable.used");
+                self.terminate(format!(
+                    "br i1 {active}, label %{invoke_label}, label %{used_label}"
+                ));
+                self.start_block(&used_label);
+                self.instruction("call void @llvm.trap()");
+                self.terminate("unreachable");
+                self.start_block(&invoke_label);
+                self.instruction(format!("store i1 false, ptr {flag}"));
+                self.release_drop_slots(cleanup_depth);
+                let mut arguments = vec![format!("ptr {environment}")];
+                if input.ty != Ty::Unit {
+                    arguments.push(format!(
+                        "{} {}",
+                        llvm_value_type(&input.ty)?,
+                        input.value()?
+                    ));
+                }
+                arguments.push(format!(
+                    "{} {}",
+                    llvm_value_type(&continuation.ty)?,
+                    continuation.value()?
+                ));
                 let call = format!(
                     "call {} {entry}({})",
                     llvm_return_type(&expression.ty)?,
@@ -39951,5 +40408,52 @@ let finish(): () = { let value = Plain(42); () }
             .sites
             .iter()
             .all(|site| site.local != value.id));
+    }
+
+    #[test]
+    fn erased_effect_callable_uses_cps_entry_and_owned_environment() {
+        let mut program = crate::parser::parse(
+            r#"
+let main(): i32 = {
+  let continuation: (i32): i32 = { (value: i32) -> value + 2 }
+  let action: (i32, Continuation(i32, i32)): i32 = {
+    (input: i32, move next: Continuation(i32, i32)) -> invoke_continuation(next, input)
+  }
+  let erased_continuation = erase_continuation(continuation)
+  let erased_action = erase_effect_callable(action)
+  invoke_effect_callable(erased_action, 40, erased_continuation)
+}
+"#,
+        )
+        .expect("internal effect-callable source must parse");
+        let replacements = HashMap::from([
+            (
+                "invoke_continuation".to_owned(),
+                "$handler$invoke$continuation".to_owned(),
+            ),
+            (
+                "erase_continuation".to_owned(),
+                "$handler$erase$continuation".to_owned(),
+            ),
+            (
+                "erase_effect_callable".to_owned(),
+                "$handler$erase$effect$callable".to_owned(),
+            ),
+            (
+                "invoke_effect_callable".to_owned(),
+                "$handler$invoke$effect$callable".to_owned(),
+            ),
+        ]);
+        let Item::Function(main) = &mut program.items[0] else {
+            panic!("expected main function");
+        };
+        rewrite_static_function_values(main.body.as_mut().expect("main has a body"), &replacements);
+
+        let llvm = compile(&program).expect("erased CPS action must lower");
+        assert!(llvm.contains("%salicin.effect_callable = type { ptr, ptr, ptr, ptr }"));
+        assert!(llvm.contains("effect.callable.invoke"));
+        assert!(llvm.contains("erased effect-callable environment"));
+        assert!(!llvm.contains("$effect$callable$adapter$"));
+        assert!(llvm.contains("246566666563742463616c6c61626c65246164617074657224"));
     }
 }

@@ -469,7 +469,9 @@ core bundle 形状校验的声明赋予 lang-item 身份。控制函数的函数
 消除或转发非局部控制边界。普通包不能声明无函数体的顶层函数，也不能用同名声明获得特殊语义。
 同一模块还声明空结构契约 `Continuation(Input, Output)` 与
 `EffectCallable(Input, Output, Answer)`；前者表示一次性续体，后者表示携带 call/drop 入口、环境与
-所有权标志的擦除 handler action。字段属于编译器 ABI，不暴露为普通结构体数据。
+所有权标志的擦除 handler action。其内部调用入口接收 `Input` 与
+`Continuation(Output, Answer)` 并返回 `Answer`；擦除和调用都转移所有权。字段与低层操作属于
+编译器 ABI，不暴露为普通结构体数据或标准库函数。
 未来实现 async 时，必须在同一个实现切片加入对应 effect、`Future`、`async` 与 `await` 契约；
 当前标准库不会先暴露一个无法执行的占位 API。
 

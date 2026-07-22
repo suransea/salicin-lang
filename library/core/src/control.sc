@@ -14,7 +14,8 @@ pub let Continuation(Input: type, Output: type) = struct()
 
 // An owned, erased action that may perform a handled algebraic effect. Its
 // native representation carries an action entry, a drop entry, an environment
-// pointer, and an ownership flag. `Answer` is the surrounding handler result.
+// pointer, and an ownership flag. The entry consumes an `Input` and a
+// `Continuation(Output, Answer)`; `Answer` is the surrounding handler result.
 pub let EffectCallable(Input: type, Output: type, Answer: type) = struct()
 
 // Control syntax uses trailing-closure call notation and lowers through these

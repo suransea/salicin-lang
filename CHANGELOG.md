@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.146.0 - 2026-07-22
+
+- Added compiler-internal HIR operations that erase an owned CPS closure into
+  `EffectCallable(Input, Output, Answer)` and invoke it with an input plus
+  `Continuation(Output, Answer)`.
+- Added target-specific call/drop adapters that retain captured callable environments behind the
+  four-field erased ABI.
+- Made both erasure and invocation explicit ownership transfers in cleanup planning, with a guarded
+  one-shot invocation branch that traps reuse and leaves abandonment to the erased drop entry.
+- Added an LLVM regression covering the complete CPS entry shape without exposing low-level erasure
+  intrinsics as source API.
+
 ## 0.145.0 - 2026-07-22
 
 - Added the source-backed `core.control.EffectCallable(Input, Output, Answer)` lang-item contract for

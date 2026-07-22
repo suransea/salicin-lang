@@ -20,8 +20,11 @@ land with the implementation.
 The same module now defines `Continuation(Input, Output)` and
 `EffectCallable(Input, Output, Answer)` as validated empty source contracts. The latter has a
 distinct owned semantic type plus a four-pointer LLVM call/drop/environment/flag layout and guarded
-drop glue. Erasing captured effectful closures into that ABI and invoking them from reusable handlers
-is the next implementation stage.
+drop glue. Compiler-internal HIR can now erase an owned CPS closure into that layout and invoke it
+with an input plus `Continuation(Output, Answer)`; target-specific adapters preserve captured
+environments, and cleanup planning treats both operations as ownership transfers. Reusable handlers
+do not yet construct this erased action from arbitrary source closures; connecting call-site closure
+lowering to the internal ABI is the next implementation stage.
 
 Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
 `continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs
