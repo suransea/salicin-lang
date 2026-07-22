@@ -31,10 +31,11 @@ intentionally absent until the async/Future lowering slice is implemented, at wh
 executable standard-library contract must land with the implementation.
 `Never`-returning algebraic operations are handled as abort operations whose clauses omit `resume`,
 so `Throws(Error).raise` can now be exercised through the same handler path as user-defined effects.
-`throw error` desugars to that ordinary operation when the active row has a unique standard
-`Throws(Error)` effect. `core.control.try` now declares its action requirement as `Throws(E)`, and
-contextual `try { ... }` with an expected `Result(T, Error)` materializes ordinary `Throws(Error)`
-as `Result` through a generated `Throws(Error).handle`. Context-free ordinary `Throws` inference now
+`throw error` reads the validated `core.control.throw` effect declaration and then desugars to that
+ordinary operation when the active row has a unique standard `Throws(Error)` effect.
+`core.control.try` now declares its action requirement as `Throws(E)`, and contextual `try { ... }`
+with an expected `Result(T, Error)` materializes ordinary `Throws(Error)` as `Result` through a
+generated `Throws(Error).handle`. Context-free ordinary `Throws` inference now
 covers direct standard-effect function calls, local function values, explicitly instantiated generic
 calls such as `fail(bool)(...)`, and `do` return boundaries forwarding standard `Throws(Error)` into
 a contextual `try { ... }`, provided the success type is probeable and the escaping error type is

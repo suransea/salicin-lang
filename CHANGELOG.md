@@ -6,6 +6,14 @@ subset.
 
 ## Unreleased
 
+## 0.171.0 - 2026-07-22
+
+- Routed standard `throw` lowering through the validated `core.control.throw` declaration by
+  substituting its `Error` parameter and reading its declared `Throws(Error)` effect before invoking
+  `Throws.raise`.
+- Covered the source-backed `core.control.throw` function template in core lang-item registration
+  tests, so its declared effect row remains visible to semantic lowering.
+
 ## 0.170.0 - 2026-07-22
 
 - Added `core.control.throw` as an edition-validated compiler-provided control contract:

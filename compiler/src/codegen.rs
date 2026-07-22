@@ -17238,12 +17238,23 @@ impl Analyzer {
             0 => None,
             1 => {
                 let error_source = candidates.pop().expect("one candidate");
+                let Some(instance) = self.standard_throw_effect_source(error_source) else {
+                    self.error(
+                        "compiler core did not register its validated `throw` control contract",
+                    );
+                    return Some(error_expr());
+                };
                 let throws_name = self.lang_item_name(LangItemKind::ThrowsEffect).to_owned();
+                if standard_throws_error_source(&instance, &throws_name).is_none() {
+                    self.error(
+                        "compiler core `throw` contract does not target its validated `Throws` effect",
+                    );
+                    return Some(error_expr());
+                }
                 let Some(definition) = self.effect_defs.get(&throws_name).cloned() else {
                     self.error("compiler core did not register its validated `Throws` effect");
                     return Some(error_expr());
                 };
-                let instance = Type::Named(throws_name, vec![error_source]);
                 let arguments = vec![CallArg {
                     label: None,
                     value: value.clone(),
@@ -17277,6 +17288,23 @@ impl Analyzer {
                 Some(error_expr())
             }
         }
+    }
+
+    fn standard_throw_effect_source(&self, error_source: Type) -> Option<Type> {
+        let throw_name = self.lang_item_name(LangItemKind::Throw);
+        let mut function = self.function_templates.get(throw_name)?.clone();
+        let substitutions = HashMap::from([("Error".to_owned(), error_source)]);
+        substitute_function_types(&mut function, &substitutions);
+        if !function.effects.parameters.is_empty()
+            || function.effects.unsafe_effect
+            || function.effects.throws.is_some()
+        {
+            return None;
+        }
+        let [effect] = function.effects.custom.as_slice() else {
+            return None;
+        };
+        Some(effect.clone())
     }
 
     fn active_standard_throws_error_sources(&self, context: &LowerCtx) -> Vec<Type> {
@@ -37303,6 +37331,28 @@ mod tests {
                     .canonical_name()
             );
         }
+        let throw_name = analyzer.lang_item_name(LangItemKind::Throw);
+        let throw = &analyzer.function_templates[throw_name];
+        assert_eq!(
+            throw.compile_groups,
+            vec![vec![CompileParam {
+                name: "Error".to_owned(),
+                kind: CompileParamKind::Type,
+            }]]
+        );
+        assert_eq!(
+            throw.return_type,
+            Some(Type::Named("Never".to_owned(), Vec::new()))
+        );
+        assert_eq!(
+            throw.effects.custom,
+            vec![Type::Named(
+                analyzer
+                    .lang_item_name(LangItemKind::ThrowsEffect)
+                    .to_owned(),
+                vec![Type::Named("Error".to_owned(), Vec::new())],
+            )]
+        );
         assert_eq!(analyzer.nominal_instances.len(), 2);
         assert_eq!(analyzer.nominal_instance_names.len(), 2);
         let partial_ordering = analyzer.lang_item_name(LangItemKind::PartialOrdering);
