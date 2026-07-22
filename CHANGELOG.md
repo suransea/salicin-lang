@@ -6,6 +6,9 @@ subset.
 
 ## Unreleased
 
+- Refactored the compiler backend into a `codegen/` module directory, splitting out cleanup-plan
+  construction, LLVM emission, and codegen regression tests while preserving behavior.
+
 ## 0.186.0 - 2026-07-23
 
 - Changed `Result` to the curried constructor `Result(Error)(Value)`, making `Result(Error)` the
