@@ -10,7 +10,7 @@ let choose(flag: bool): i32 with(Throws(bool)) = {
 }
 
 let main(): i32 = {
-  let first: Result(i32, bool) = try { choose(false) }
-  let second: Result(i32, bool) = try { choose(true) }
+  let first: Result(bool)(i32) = try { choose(false) }
+  let second: Result(bool)(i32) = try { choose(true) }
   (first ?? 0) + (second ?? 0)
 }

@@ -2331,7 +2331,7 @@ impl Analyzer {
         match effects.throws.as_deref() {
             Some(error) => Type::Named(
                 self.lang_item_name(LangItemKind::Result).to_owned(),
-                vec![logical, error.clone()],
+                vec![error.clone(), logical],
             ),
             None => logical,
         }
@@ -2568,13 +2568,6 @@ impl Analyzer {
                         self.struct_defs
                             .insert(definition.name.clone(), definition.clone());
                     } else {
-                        if definition.compile_groups.len() != 1 {
-                            self.error(format!(
-                                "generic struct `{}` must use exactly one compile-time parameter group",
-                                definition.name
-                            ));
-                            continue;
-                        }
                         self.struct_template_order.push(definition.name.clone());
                         self.struct_templates
                             .insert(definition.name.clone(), definition.clone());
@@ -2622,13 +2615,6 @@ impl Analyzer {
                         self.enum_defs
                             .insert(definition.name.clone(), definition.clone());
                     } else {
-                        if definition.compile_groups.len() != 1 {
-                            self.error(format!(
-                                "generic enum `{}` must use exactly one compile-time parameter group",
-                                definition.name
-                            ));
-                            continue;
-                        }
                         self.enum_template_order.push(definition.name.clone());
                         self.enum_templates
                             .insert(definition.name.clone(), definition.clone());
@@ -4082,6 +4068,55 @@ impl Analyzer {
         None
     }
 
+    fn partial_nominal_constructor_trait_target(
+        &mut self,
+        source: &Type,
+        declared_parameters: &[CompileParam],
+    ) -> Option<GenericConstructorTraitExtensionTarget> {
+        let Type::Named(target_name, supplied_arguments) = source else {
+            return None;
+        };
+        let base =
+            self.type_constructor_impl_target(&Type::Named(target_name.clone(), Vec::new()))?;
+        if supplied_arguments.is_empty() || supplied_arguments.len() >= base.parameter_count {
+            return None;
+        }
+        let declared = declared_parameters
+            .iter()
+            .map(|parameter| parameter.name.clone())
+            .collect::<HashSet<_>>();
+        let mut determined = HashSet::new();
+        for argument in supplied_arguments {
+            let Type::Named(name, arguments) = argument else {
+                self.error(
+                    "generic constructor trait extend target arguments must be bare declared type parameters",
+                );
+                return None;
+            };
+            if !arguments.is_empty() || !declared.contains(name) || !determined.insert(name.clone())
+            {
+                self.error(
+                    "generic constructor trait extend target arguments must use every declared type parameter exactly once",
+                );
+                return None;
+            }
+        }
+        if determined.len() != declared_parameters.len() {
+            self.error(
+                "every generic constructor trait extend parameter must be determined by the target constructor",
+            );
+            return None;
+        }
+        Some(GenericConstructorTraitExtensionTarget {
+            target: TypeConstructorImplTarget {
+                name: target_name.clone(),
+                kind: base.kind,
+                parameter_count: base.parameter_count - supplied_arguments.len(),
+            },
+            self_constructor: source.clone(),
+        })
+    }
+
     fn partial_alias_constructor_trait_target(
         &mut self,
         source: &Type,
@@ -4245,7 +4280,8 @@ impl Analyzer {
             self.type_constructor_impl_target(source)
                 .map(|target| target.parameter_count)
         } else {
-            self.remaining_type_alias_constructor_parameter_count(source)
+            self.remaining_nominal_constructor_parameter_count(source)
+                .or_else(|| self.remaining_type_alias_constructor_parameter_count(source))
         };
         let Some(actual_count) = actual_count else {
             self.error(format!(
@@ -4278,6 +4314,17 @@ impl Analyzer {
             return None;
         }
         Some(parameters.len() - arguments.len())
+    }
+
+    fn remaining_nominal_constructor_parameter_count(&self, source: &Type) -> Option<usize> {
+        let Type::Named(name, arguments) = source else {
+            return None;
+        };
+        let total = self.type_constructor_impl_target(&Type::Named(name.clone(), Vec::new()))?;
+        if arguments.is_empty() || arguments.len() >= total.parameter_count {
+            return None;
+        }
+        Some(total.parameter_count - arguments.len())
     }
 
     fn trait_ref_has_constructor_subject(&self, source: &Type) -> bool {
@@ -5875,11 +5922,14 @@ impl Analyzer {
                 return;
             }
         }
-        let Some(target) =
-            self.partial_alias_constructor_trait_target(&extension.target, &parameters)
+        let Some(target) = self
+            .partial_nominal_constructor_trait_target(&extension.target, &parameters)
+            .or_else(|| {
+                self.partial_alias_constructor_trait_target(&extension.target, &parameters)
+            })
         else {
             self.error(
-                "generic constructor trait extend target must be a partially applied transparent type alias",
+                "generic constructor trait extend target must be a partially applied nominal constructor or transparent type alias",
             );
             return;
         };
@@ -8714,23 +8764,27 @@ impl Analyzer {
                     _ => Type::Named(name.clone(), Vec::new()),
                 })
             }
-            Expr::Call(callee, call_arguments) => {
-                let Expr::Name(name) = callee.as_ref() else {
+            Expr::Call(_, _) => {
+                let mut groups = Vec::new();
+                let root = flatten_call(expression, &mut groups);
+                let Expr::Name(name) = root else {
                     self.error("generic type arguments require a named type constructor");
                     return None;
                 };
-                if call_arguments
+                if groups
                     .iter()
+                    .flat_map(|group| group.iter())
                     .any(|argument| argument.label.is_some())
                 {
                     self.error("generic type arguments cannot contain labeled arguments");
                     return None;
                 }
                 if name == "Array" {
-                    if call_arguments.len() != 2 {
+                    if groups.len() != 1 || groups[0].len() != 2 {
                         self.error("`Array` type arguments require an element type and length");
                         return None;
                     }
+                    let call_arguments = groups[0];
                     let element =
                         self.type_argument_from_expr(&call_arguments[0].value, substitutions)?;
                     let Expr::Integer(length) = call_arguments[1].value else {
@@ -8744,7 +8798,7 @@ impl Analyzer {
                     Some(Type::Array(Box::new(element), length))
                 } else {
                     let mut arguments = Vec::new();
-                    for argument in call_arguments {
+                    for argument in groups.iter().flat_map(|group| group.iter()) {
                         arguments
                             .push(self.type_argument_from_expr(&argument.value, substitutions)?);
                     }
@@ -9020,17 +9074,24 @@ impl Analyzer {
                     _ => Type::Named(name.clone(), Vec::new()),
                 })
             }),
-            Expr::Call(callee, arguments) => {
-                let Expr::Name(name) = callee.as_ref() else {
+            Expr::Call(_, _) => {
+                let mut groups = Vec::new();
+                let root = flatten_call(expression, &mut groups);
+                let Expr::Name(name) = root else {
                     return None;
                 };
-                if arguments.iter().any(|argument| argument.label.is_some()) {
+                if groups
+                    .iter()
+                    .flat_map(|group| group.iter())
+                    .any(|argument| argument.label.is_some())
+                {
                     return None;
                 }
                 if name == "Array" {
-                    if arguments.len() != 2 {
+                    if groups.len() != 1 || groups[0].len() != 2 {
                         return None;
                     }
+                    let arguments = groups[0];
                     let element =
                         self.probe_type_argument_source(&arguments[0].value, substitutions)?;
                     let Expr::Integer(length) = arguments[1].value else {
@@ -9038,8 +9099,9 @@ impl Analyzer {
                     };
                     Some(Type::Array(Box::new(element), u64::try_from(length).ok()?))
                 } else {
-                    let arguments = arguments
+                    let arguments = groups
                         .iter()
+                        .flat_map(|group| group.iter())
                         .map(|argument| {
                             self.probe_type_argument_source(&argument.value, substitutions)
                         })
@@ -11044,7 +11106,7 @@ impl Analyzer {
                 error: None,
             })
         } else if template == self.lang_item_name(LangItemKind::Result) {
-            let [payload, error] = arguments else {
+            let [error, payload] = arguments else {
                 return None;
             };
             Some(BuiltinFallibleInfo {
@@ -11080,7 +11142,7 @@ impl Analyzer {
                 error: None,
             })
         } else if template == self.lang_item_name(LangItemKind::Result) {
-            let [payload, error] = arguments.as_slice() else {
+            let [error, payload] = arguments.as_slice() else {
                 return None;
             };
             Some(BuiltinFallibleInfo {
@@ -11284,10 +11346,11 @@ impl Analyzer {
         else {
             return TypeProbe::Unsupported;
         };
-        let mut arguments = vec![output];
+        let mut arguments = Vec::new();
         if info.kind == BuiltinFallibleKind::Result {
             arguments.push(info.error.expect("Result probe has an error type"));
         }
+        arguments.push(output);
         let Some(source_arguments) = arguments
             .iter()
             .map(|argument| self.source_type_for_ty(argument))
@@ -11326,7 +11389,7 @@ impl Analyzer {
     }
 
     fn ensure_throws_result_type(&mut self, payload: Ty, error: Ty) -> Option<Ty> {
-        let arguments = vec![payload, error];
+        let arguments = vec![error, payload];
         let Some(source_arguments) = arguments
             .iter()
             .map(|argument| self.source_type_for_ty(argument))
@@ -11342,28 +11405,75 @@ impl Analyzer {
             .map(Ty::Enum)
     }
 
+    fn builtin_fallible_payload_parameter(
+        &self,
+        kind: BuiltinFallibleKind,
+        enum_name: &str,
+    ) -> Option<CompileParam> {
+        let template = self.enum_templates.get(enum_name)?;
+        let payload_variant = match kind {
+            BuiltinFallibleKind::Option => "Some",
+            BuiltinFallibleKind::Result => "Ok",
+        };
+        let payload_name = template
+            .variants
+            .iter()
+            .find(|variant| variant.name == payload_variant)
+            .and_then(|variant| match &variant.fields {
+                VariantFields::Positional(types) => types.first(),
+                VariantFields::Unit | VariantFields::Named(_) => None,
+            })
+            .and_then(|ty| match ty {
+                Type::Named(name, arguments) if arguments.is_empty() => Some(name.as_str()),
+                _ => None,
+            })?;
+        template
+            .compile_groups
+            .iter()
+            .flatten()
+            .find(|parameter| parameter.name == payload_name)
+            .cloned()
+    }
+
+    fn explicit_type_argument_for_parameter<'a>(
+        &self,
+        owner: &str,
+        type_groups: &[&'a [CallArg]],
+        parameter_name: &str,
+    ) -> Option<&'a CallArg> {
+        if type_groups
+            .iter()
+            .flat_map(|group| group.iter())
+            .any(|argument| argument.label.is_some())
+        {
+            return type_groups
+                .iter()
+                .flat_map(|group| group.iter())
+                .find(|argument| argument.label.as_deref() == Some(parameter_name));
+        }
+        let position = self.enum_templates[owner]
+            .compile_groups
+            .iter()
+            .flatten()
+            .position(|parameter| parameter.name == parameter_name)?;
+        type_groups
+            .iter()
+            .flat_map(|group| group.iter())
+            .nth(position)
+    }
+
     fn inferred_try_payload(
         &self,
         inferred: &InferredCoalesceLhs<'_>,
         context: &LowerCtx,
     ) -> Option<Ty> {
-        let payload_parameter = self.enum_templates[&inferred.name]
-            .compile_groups
-            .iter()
-            .flatten()
-            .next()?;
-        let explicit_payload = inferred.type_groups.first().and_then(|arguments| {
-            if arguments
-                .first()
-                .is_some_and(|argument| argument.label.is_some())
-            {
-                arguments.iter().find(|argument| {
-                    argument.label.as_deref() == Some(payload_parameter.name.as_str())
-                })
-            } else {
-                arguments.first()
-            }
-        });
+        let payload_parameter =
+            self.builtin_fallible_payload_parameter(inferred.kind, &inferred.name)?;
+        let explicit_payload = self.explicit_type_argument_for_parameter(
+            &inferred.name,
+            &inferred.type_groups,
+            &payload_parameter.name,
+        );
         if let Some(argument) = explicit_payload {
             let source =
                 self.probe_type_argument_source(&argument.value, &context.type_substitutions)?;
@@ -11432,24 +11542,14 @@ impl Analyzer {
             BuiltinFallibleKind::Option => self.lang_item_name(LangItemKind::Option),
             BuiltinFallibleKind::Result => self.lang_item_name(LangItemKind::Result),
         };
-        let payload_parameter = self.enum_templates[enum_name]
-            .compile_groups
-            .iter()
-            .flatten()
-            .next()
+        let payload_parameter = self
+            .builtin_fallible_payload_parameter(kind, enum_name)
             .expect("fallible built-in has a payload type parameter");
-        let explicit_payload = type_groups.first().and_then(|arguments| {
-            if arguments
-                .first()
-                .is_some_and(|argument| argument.label.is_some())
-            {
-                arguments.iter().find(|argument| {
-                    argument.label.as_deref() == Some(payload_parameter.name.as_str())
-                })
-            } else {
-                arguments.first()
-            }
-        });
+        let explicit_payload = self.explicit_type_argument_for_parameter(
+            enum_name,
+            type_groups,
+            &payload_parameter.name,
+        );
         if let Some(argument) = explicit_payload {
             let Some(source) =
                 self.probe_type_argument_source(&argument.value, &context.type_substitutions)
@@ -12895,14 +12995,26 @@ impl Analyzer {
                     || self.struct_templates.contains_key(name)
                     || self.enum_templates.contains_key(name)
             }
-            Expr::Call(callee, arguments) => {
-                let Expr::Name(name) = callee.as_ref() else {
+            Expr::Call(_, _) => {
+                let mut groups = Vec::new();
+                let root = flatten_call(expression, &mut groups);
+                let Expr::Name(name) = root else {
                     return false;
                 };
-                (name == "Array"
-                    || self.struct_templates.contains_key(name)
-                    || self.enum_templates.contains_key(name))
-                    && arguments.iter().all(|argument| argument.label.is_none())
+                if groups
+                    .iter()
+                    .flat_map(|group| group.iter())
+                    .any(|argument| argument.label.is_some())
+                {
+                    return false;
+                }
+                if name == "Array" {
+                    return groups.len() == 1
+                        && groups[0].len() == 2
+                        && self.expression_is_explicit_type_argument(&groups[0][0].value, context)
+                        && matches!(groups[0][1].value, Expr::Integer(_));
+                }
+                self.struct_templates.contains_key(name) || self.enum_templates.contains_key(name)
             }
             _ => false,
         }
@@ -17254,7 +17366,7 @@ impl Analyzer {
         }
         let Some(info) = self.builtin_fallible_info_for_ty(&scrutinee.ty) else {
             self.error(format!(
-                "operator `??` requires `Option(T)` or `Result(T, E)` on the left, found `{}`",
+                "operator `??` requires `Option(T)` or `Result(E)(T)` on the left, found `{}`",
                 scrutinee.ty
             ));
             return error_expr();
@@ -17342,7 +17454,7 @@ impl Analyzer {
         }
         let Some(info) = self.builtin_fallible_info_for_ty(&scrutinee.ty) else {
             self.error(format!(
-                "operator `??` requires `Option(T)` or `Result(T, E)` on the left, found `{}`",
+                "operator `??` requires `Option(T)` or `Result(E)(T)` on the left, found `{}`",
                 scrutinee.ty
             ));
             return error_expr();
@@ -17403,7 +17515,7 @@ impl Analyzer {
         }
         let Some(info) = self.builtin_fallible_info_for_ty(&scrutinee.ty) else {
             self.error(format!(
-                "operator `?.` requires an owned `Option(T)` or `Result(T, E)`, found `{}`",
+                "operator `?.` requires an owned `Option(T)` or `Result(E)(T)`, found `{}`",
                 scrutinee.ty
             ));
             return error_expr();
@@ -17421,10 +17533,11 @@ impl Analyzer {
             return error_expr();
         }
         let template = self.fallible_type_name(info.kind).to_owned();
-        let mut arguments = vec![output];
+        let mut arguments = Vec::new();
         if info.kind == BuiltinFallibleKind::Result {
             arguments.push(info.error.clone().expect("Result has an error type"));
         }
+        arguments.push(output);
         let Some(source_arguments) = arguments
             .iter()
             .map(|argument| self.source_type_for_ty(argument))
@@ -17684,10 +17797,11 @@ impl Analyzer {
                 return None;
             }
             let payload = self.inferred_try_payload(&inferred, context)?;
-            let mut arguments = vec![payload];
+            let mut arguments = Vec::new();
             if inferred.kind == BuiltinFallibleKind::Result {
                 arguments.push(expected.error?);
             }
+            arguments.push(payload);
             let source_arguments = arguments
                 .iter()
                 .map(|argument| self.source_type_for_ty(argument))
@@ -17706,7 +17820,7 @@ impl Analyzer {
         }
         let Some(info) = self.builtin_fallible_info_for_ty(&scrutinee.ty) else {
             self.error(format!(
-                "operator `?.` requires an owned `Option(T)`, `Result(T, E)`, or `Chain` value, found `{}`",
+                "operator `?.` requires an owned `Option(T)`, `Result(E)(T)`, or `Chain` value, found `{}`",
                 scrutinee.ty
             ));
             return error_expr();
@@ -17722,10 +17836,11 @@ impl Analyzer {
             return error_expr();
         }
         let template = self.fallible_type_name(info.kind).to_owned();
-        let mut arguments = vec![output];
+        let mut arguments = Vec::new();
         if info.kind == BuiltinFallibleKind::Result {
             arguments.push(info.error.clone().expect("Result has an error type"));
         }
+        arguments.push(output);
         let Some(source_arguments) = arguments
             .iter()
             .map(|argument| self.source_type_for_ty(argument))
@@ -17859,7 +17974,7 @@ impl Analyzer {
                         Some((payload, _)) => payload,
                         None => {
                             self.error(
-                                "cannot infer the success type of `try { ... }`; add a contextual `Result(T, E)` type",
+                                "cannot infer the success type of `try { ... }`; add a contextual `Result(E)(T)` type",
                             );
                             return None;
                         }
@@ -17869,7 +17984,7 @@ impl Analyzer {
                     Some((payload, _)) => payload,
                     None => {
                         self.error(
-                            "cannot infer the success type of `try { ... }`; add a contextual `Result(T, E)` type",
+                            "cannot infer the success type of `try { ... }`; add a contextual `Result(E)(T)` type",
                         );
                         return None;
                     }
@@ -17877,7 +17992,7 @@ impl Analyzer {
                 Expr::Throw(_) => Ty::Never,
                 _ => {
                     self.error(
-                        "cannot infer the success type of `try { ... }`; add a contextual `Result(T, E)` type",
+                        "cannot infer the success type of `try { ... }`; add a contextual `Result(E)(T)` type",
                     );
                     return None;
                 }
@@ -17888,7 +18003,7 @@ impl Analyzer {
         let error = match errors.len() {
             0 => {
                 self.error(
-                    "cannot infer `try { ... }` because its body has no escaping throws source; add a contextual `Result(T, E)` type",
+                    "cannot infer `try { ... }` because its body has no escaping throws source; add a contextual `Result(E)(T)` type",
                 );
                 return None;
             }
@@ -17900,7 +18015,7 @@ impl Analyzer {
                     .collect::<Vec<_>>();
                 names.sort();
                 self.error(format!(
-                    "cannot infer `try {{ ... }}` from multiple escaping error types: {}; convert them to one type or add a contextual `Result(T, E)` type",
+                    "cannot infer `try {{ ... }}` from multiple escaping error types: {}; convert them to one type or add a contextual `Result(E)(T)` type",
                     names
                         .iter()
                         .map(|name| format!("`{name}`"))
@@ -18318,13 +18433,13 @@ impl Analyzer {
         let Some(info) = self.builtin_fallible_info_for_ty(&expected) else {
             let _ = self.lower_expr(body, None, context);
             self.error(format!(
-                "`try {{ ... }}` produces `Result(T, E)`, but this context expects `{expected}`"
+                "`try {{ ... }}` produces `Result(E)(T)`, but this context expects `{expected}`"
             ));
             return error_expr();
         };
         if info.kind != BuiltinFallibleKind::Result {
             let _ = self.lower_expr(body, None, context);
-            self.error("`try { ... }` requires `Result(T, E)`, not `Option(T)`");
+            self.error("`try { ... }` requires `Result(E)(T)`, not `Option(T)`");
             return error_expr();
         }
         let error = info.error.expect("Result has an error type");
@@ -24848,7 +24963,18 @@ impl Analyzer {
             return None;
         }
         if let Some(payload_hint) = hints.payload.filter(|hint| hint.ty != Ty::Error) {
-            let Some(payload_parameter) = template.compile_groups.iter().flatten().next() else {
+            let kind = if name == self.lang_item_name(LangItemKind::Option) {
+                BuiltinFallibleKind::Option
+            } else if name == self.lang_item_name(LangItemKind::Result) {
+                BuiltinFallibleKind::Result
+            } else {
+                self.error(format!(
+                    "internal error: coalescing enum `{name}` is not a built-in fallible type"
+                ));
+                return None;
+            };
+            let Some(payload_parameter) = self.builtin_fallible_payload_parameter(kind, name)
+            else {
                 self.error(format!(
                     "internal error: coalescing enum `{name}` has no payload type parameter"
                 ));
@@ -38028,7 +38154,7 @@ fn substitute_function_types(function: &mut Function, substitutions: &HashMap<St
             };
             function.return_type = Some(Type::Named(
                 "core::Result".to_owned(),
-                vec![result, error.clone()],
+                vec![error.clone(), result],
             ));
         }
     }
@@ -38651,7 +38777,7 @@ fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<String, Typ
                     let logical_result = std::mem::replace(result.as_mut(), Type::Unit);
                     **result = Type::Named(
                         "core::Result".to_owned(),
-                        vec![logical_result, error.clone()],
+                        vec![error.clone(), logical_result],
                     );
                 }
             }
@@ -39882,13 +40008,19 @@ let main(): i32 = {
         assert_eq!(option.variants[1].fields, VariantFields::Unit);
 
         let result = &analyzer.enum_templates["core::Result"];
-        assert_eq!(result.compile_groups.len(), 1);
+        assert_eq!(result.compile_groups.len(), 2);
+        assert_eq!(result.compile_groups[0].len(), 1);
+        assert_eq!(result.compile_groups[0][0].name, "E");
+        assert_eq!(result.compile_groups[1].len(), 1);
+        assert_eq!(result.compile_groups[1][0].name, "T");
         assert_eq!(
-            result.compile_groups[0]
+            result
+                .compile_groups
                 .iter()
+                .flatten()
                 .map(|parameter| parameter.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["T", "E"]
+            vec!["E", "T"]
         );
         assert_eq!(result.variants.len(), 2);
         assert_eq!(result.variants[0].name, "Ok");
@@ -40040,15 +40172,15 @@ let unwrap_option(move value: Option(i32)): i32 = { value match {
   Some(item) => item,
   None => 0,
 } }
-let unwrap_result(move value: Result(i32, bool)): i32 = { value match {
+let unwrap_result(move value: Result(bool)(i32)): i32 = { value match {
   Ok(item) => item,
   Err(_) => 0,
 } }
 let main(): i32 = {
   let some = Option.Some(19)
   let none: Option(i32) = Option.None
-  let ok: Result(i32, bool) = Result.Ok(23)
-  let err: Result(i32, bool) = Result.Err(false)
+  let ok: Result(bool)(i32) = Result.Ok(23)
+  let err: Result(bool)(i32) = Result.Err(false)
   unwrap_option(some) + unwrap_option(none) + unwrap_result(ok) + unwrap_result(err)
 }
 "#,
@@ -40062,7 +40194,7 @@ let main(): i32 = {
         let result = NominalInstanceKey {
             kind: NominalKind::Enum,
             template: "core::Result".into(),
-            arguments: vec![Ty::I32, Ty::Bool],
+            arguments: vec![Ty::Bool, Ty::I32],
         };
         assert!(ir.contains(&hex_name(&nominal_instance_name(&option))));
         assert!(ir.contains(&hex_name(&nominal_instance_name(&result))));
@@ -40105,7 +40237,7 @@ let fallback(borrow(mut) count: i32): i32 = {
 let main(): i32 = {
   let mut count = 0
   let option = make(count) ?? fallback(count)
-  let result = Result(i32, bool).Err(false) ?? option
+  let result = Result(bool)(i32).Err(false) ?? option
   if count == 11 { result } else { 0 }
 }
 "#,
@@ -40136,7 +40268,7 @@ let answer(fail: bool): i32 with(Throws(bool)) = {
   42
 }
 let main(): i32 = {
-  let result: Result(i32, bool) = try { answer(true) }
+  let result: Result(bool)(i32) = try { answer(true) }
   result ?? 42
 }
 "#,
@@ -40161,7 +40293,7 @@ let forward(fail: bool): i32 with(Throws(bool)) = { read(fail) + 2 }
 let invoke(action: (bool): i32 with(Throws(bool)))(fail: bool): i32 with(Throws(bool)) = {
   action(fail) }
 let main(): i32 = {
-  let result: Result(i32, bool) = try { invoke(forward)(false) }
+  let result: Result(bool)(i32) = try { invoke(forward)(false) }
   result match {
     Ok(value) => value,
     Err(_) => 0
@@ -40218,7 +40350,7 @@ extend Failure {
 }
 let main(): i32 = {
   let failure = Failure { code: 1 }
-  let result: Result(i32, bool) = try { failure.raise() }
+  let result: Result(bool)(i32) = try { failure.raise() }
   result ?? 42
 }
 "#,
@@ -40413,7 +40545,7 @@ extend Counter {
 }
 let main(): i32 = {
   let counter = Counter { value: 42 }
-  let result: Result(i32, bool) = try { counter.read(fail: false) }
+  let result: Result(bool)(i32) = try { counter.read(fail: false) }
   result ?? 0
 }
 "#,
@@ -40572,8 +40704,8 @@ let fail(): i32 with(Throws(bool)) = { throw(true) }
 let forward(): i32 with(Throws(bool)) = { invoke(fail)() }
 let explicit(): i32 with(Throws(bool)) = { invoke(Throws(bool))(fail)() }
 let main(): i32 = {
-  let inferred: Result(i32, bool) = try { forward() }
-  let selected: Result(i32, bool) = try { explicit() }
+  let inferred: Result(bool)(i32) = try { forward() }
+  let selected: Result(bool)(i32) = try { explicit() }
   (inferred ?? 21) + (selected ?? 21)
 }
 "#,
@@ -41007,7 +41139,7 @@ let main(): i32 = {
     fn coalesce_reports_non_containers_mismatched_fallbacks_and_moves() {
         let non_container = compile_text("let main(): i32 = { 40 ?? 2 }\n").unwrap_err();
         assert!(non_container.iter().any(|diagnostic| diagnostic.message
-            == "operator `??` requires `Option(T)` or `Result(T, E)` on the left, found `i32`"));
+            == "operator `??` requires `Option(T)` or `Result(E)(T)` on the left, found `i32`"));
 
         let mismatch = compile_resolved_text(
             "use core.Option\nlet main(): i32 = { Option(i32).None ?? true }\n",
@@ -41022,7 +41154,7 @@ let main(): i32 = {
 use core.Result
 
 let main(): i32 = {
-  let value = Result(i32, bool).Ok(42)
+  let value = Result(bool)(i32).Ok(42)
   let answer = value ?? 0
   value match { Ok(item) => item, Err(_) => answer }
 }
@@ -41069,8 +41201,8 @@ use core.Result
 let main(): i32 = {
   let number = Option.Some(42)
   let flag = Option.Some(true)
-  let first: Result(i32, bool) = Result.Ok(42)
-  let second: Result(bool, i32) = Result.Err(0)
+  let first: Result(bool)(i32) = Result.Ok(42)
+  let second: Result(i32)(bool) = Result.Err(0)
   let value = number match { Some(item) => item, None => 0 }
   let enabled = flag match { Some(item) => item, None => false }
   let left = first match { Ok(item) => item, Err(_) => 0 }
@@ -43306,7 +43438,7 @@ let inner(): i32 with(Supply, Throws(bool)) = {
   Ask.handle(value: { (resume) -> resume(42) }) { request() }
 }
 let main(): i32 = {
-  let result: Result(i32, bool) = try {
+  let result: Result(bool)(i32) = try {
     Supply.handle(seed: { (resume) -> resume(0) }) { inner() }
   }
   result ?? 0
@@ -44012,7 +44144,7 @@ use core.effects.Throws
 let fail(flag: bool): i32 with(Throws(bool)) = { if flag { throw(true) } else { 41 } }
 let forward(flag: bool): i32 with(Throws(bool)) = { fail(flag) }
 let main(): i32 = {
-  let result: Result(i32, bool) = try { forward(false) }
+  let result: Result(bool)(i32) = try { forward(false) }
   result ?? 0
 }
 "#,
@@ -44066,7 +44198,7 @@ use core.effects.Unsafe
 let UI = effect
 let render(value: i32): i32 with(UI) = { value }
 let read(pointer: Ptr(i32)): i32 with(Unsafe) = { *pointer }
-let handle(pointer: Ptr(i32)): Result(i32, bool) with(Unsafe, UI) = { try {
+let handle(pointer: Ptr(i32)): Result(bool)(i32) with(Unsafe, UI) = { try {
   let value = read(pointer)
   return render(value)
 } }
@@ -44771,8 +44903,8 @@ let option_next(value: i32): Option(i32) = {
   Option(i32).Some(value + 1)
 }
 
-let result_next(value: i32): Result(i32, bool) = {
-  Result(i32, bool).Ok(value + 2)
+let result_next(value: i32): Result(bool)(i32) = {
+  Result(bool)(i32).Ok(value + 2)
 }
 
 let read_option(value: Option(i32)): i32 = {
@@ -44782,7 +44914,7 @@ let read_option(value: Option(i32)): i32 = {
   }
 }
 
-let read_result(value: Result(i32, bool)): i32 = {
+let read_result(value: Result(bool)(i32)): i32 = {
   value match {
     Ok(number) => number,
     Err(_) => 0,
@@ -44791,15 +44923,15 @@ let read_result(value: Result(i32, bool)): i32 = {
 
 let main(): i32 = {
   let option = Option(i32).Some(39).flat_map(option_next)
-  let result = Result(i32, bool).Ok(1).flat_map(result_next)
+  let result = Result(bool)(i32).Ok(1).flat_map(result_next)
   let mapped_option = Option(i32).Some(1).map(add_one)
-  let mapped_result = Result(i32, bool).Ok(2).map(add_one)
+  let mapped_result = Result(bool)(i32).Ok(2).map(add_one)
   let pure_option: Option(i32) = Option.pure(3)
-  let pure_result: Result(i32, bool) = Result.pure(4)
+  let pure_result: Result(bool)(i32) = Result.pure(4)
   let option_transform: Option((i32): i32) = Option.Some(add_one)
-  let result_transform: Result((i32): i32, bool) = Result.Ok(add_one)
+  let result_transform: Result(bool)((i32): i32) = Result.Ok(add_one)
   let applied_option = option_transform.apply(Option(i32).Some(5))
-  let applied_result = result_transform.apply(Result(i32, bool).Ok(6))
+  let applied_result = result_transform.apply(Result(bool)(i32).Ok(6))
   read_option(option) + read_result(result) + read_option(mapped_option) + read_result(mapped_result) + read_option(pure_option) + read_result(pure_result) + read_option(applied_option) + read_result(applied_result) - 70
 }
 "#,
@@ -45555,7 +45687,7 @@ let read(fail: bool): i32 with(Throws(Failure)) = {
   if fail { throw(Failure { code: 1 }) } else { 40 } }
 let run(fail: bool): i32 with(Throws(Failure)) = { read(fail) + 2 }
 let main(): i32 = {
-  let result: Result(i32, Failure) = try { run(false) }
+  let result: Result(Failure)(i32) = try { run(false) }
   result match { Ok(value) => value, Err(_) => 0 }
 }
 "#,
@@ -45987,11 +46119,11 @@ extend Payload {
 }
 let read(value: Option(Payload)): Option(i32) = { value?.value }
 let nested(value: Option(Payload)): Option(Option(i32)) = { value?.nested }
-let call(value: Result(Payload, bool)): Result(i32, bool) = { value?.add(2) }
+let call(value: Result(bool)(Payload)): Result(bool)(i32) = { value?.add(2) }
 let main(): i32 = {
   let boxed = Payload { value: 40, nested: Option(i32).Some(42) }
   let left = read(Option(Payload).Some(boxed)) ?? 0
-  let right = call(Result(Payload, bool).Ok(Payload { value: 0, nested: Option(i32).None })) ?? 0
+  let right = call(Result(bool)(Payload).Ok(Payload { value: 0, nested: Option(i32).None })) ?? 0
   left + right
 }
 "#,
@@ -46008,7 +46140,7 @@ let main(): i32 = {
 use core.Result
 
 let Boxed = struct { value: i32 }
-let read(): Result(i32, bool) = { Result.Ok(Boxed { value: 42 })?.value }
+let read(): Result(bool)(i32) = { Result.Ok(Boxed { value: 42 })?.value }
 let main(): i32 = { read() ?? 0 }
 "#,
         )
@@ -46050,7 +46182,7 @@ let Payload = struct { value: i32 }
 let read(value: Payload): Option(i32) = { value?.value }
 let main(): i32 = { 0 }
 "#,
-                "requires an owned `Option(T)`, `Result(T, E)`, or `Chain` value",
+                "requires an owned `Option(T)`, `Result(E)(T)`, or `Chain` value",
             ),
         ];
         for (source, expected) in cases {
@@ -46412,7 +46544,7 @@ let propagate(fail: bool): i32 with(Throws(bool)) = {
   item
 }
 let main(): i32 = {
-  let result: Result(i32, bool) = try { propagate(false) }
+  let result: Result(bool)(i32) = try { propagate(false) }
   result ?? 0
 }
 "#,

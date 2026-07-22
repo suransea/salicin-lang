@@ -4,8 +4,8 @@ use core.Result
 let main(): i32 = {
   let option_number = Option(i32).Some(20)
   let option_flag = Option(bool).Some(true)
-  let result_ok = Result(i32, bool).Ok(7)
-  let result_err = Result(bool, i32).Err(5)
+  let result_ok = Result(bool)(i32).Ok(7)
+  let result_err = Result(i32)(bool).Err(5)
 
   let first = option_number match {
     Some(value) => value,

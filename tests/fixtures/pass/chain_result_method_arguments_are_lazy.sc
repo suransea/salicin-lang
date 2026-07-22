@@ -13,6 +13,6 @@ let side_effect(borrow(mut) count: i32): i32 = {
 
 let main(): i32 = {
   let mut count = 0
-  let answer = Result(Adder, bool).Err(true)?.add(side_effect(count)) ?? 42
+  let answer = Result(bool)(Adder).Err(true)?.add(side_effect(count)) ?? 42
   if count == 0 { answer } else { 0 }
 }

@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.186.0 - 2026-07-23
+
+- Changed `Result` to the curried constructor `Result(Error)(Value)`, making `Result(Error)` the
+  standard unary constructor for higher-kinded protocols.
+- Removed the now-redundant `ResultWith(Error)` adapter and its root export.
+- Updated `Result` chaining, coalescing, `try`, and standard `Monad` implementations to use the
+  new error-first constructor order.
+- Added parsing for consecutive type argument groups in type positions, so curried type
+  constructors can be written as `Result(Error)(Value)`.
+
 ## 0.185.0 - 2026-07-23
 
 - Moved `Option(T)`, `Result(T, E)`, and `ResultWith(Error)` to the `core` root so source writes

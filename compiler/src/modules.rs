@@ -352,7 +352,7 @@ const ALLOC_EXPORTS: &[(&str, &str)] = &[
 ];
 
 const CORE_PRELUDE_EXPORTS: &[&str] = &["Never", "Copy", "Drop"];
-const CORE_ROOT_EXPORTS: &[&str] = &["Option", "Result", "ResultWith"];
+const CORE_ROOT_EXPORTS: &[&str] = &["Option", "Result"];
 const CORE_OPS_EXPORTS: &[&str] = &[
     "Add",
     "Sub",

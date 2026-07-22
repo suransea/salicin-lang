@@ -23,7 +23,7 @@ let run(): i32 with(Supply, Throws(bool)) = {
 }
 
 let main(): i32 = {
-  let result: Result(i32, bool) = try {
+  let result: Result(bool)(i32) = try {
     Supply.handle(seed: { (resume) -> resume(0) }) { run() }
   }
   result ?? 0

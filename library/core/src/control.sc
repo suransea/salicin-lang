@@ -18,7 +18,7 @@ pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E) = {
   action()
 }
 
-pub let try(F: effect, T: type, E: type)(move action: (): T with(core.effects.Throws(E), F)): core.Result(T, E) with(F) = {
+pub let try(F: effect, T: type, E: type)(move action: (): T with(core.effects.Throws(E), F)): core.Result(E)(T) with(F) = {
   core.effects.Throws(E).handle(
     raise: { (error) -> core.Result.Err(error) },
     done: { (value) -> core.Result.Ok(value) },

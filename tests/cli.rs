@@ -3862,7 +3862,7 @@ fn prelude_never_coerces_through_diverging_calls() {
 use core.effects.Throws
 let stop(): Never = { loop {} }
 let absurd(move value: Never): i32 = { value }
-let propagate(move value: Never): Result(i32, ()) = { value }
+let propagate(move value: Never): Result(())(i32) = { value }
 let raise_unit(): Never with(Throws(())) = { throw(Error: ())(()) }
 let throw_never(): i32 with(Throws(())) = { raise_unit() }
 let Empty = enum {}

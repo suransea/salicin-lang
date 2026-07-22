@@ -2,8 +2,8 @@ use core.Option
 use core.Result
 
 let main(): i32 = {
-  let inner = Result(i32, bool).Ok(42)
-  let outer = Option(Result(i32, bool)).Some(inner)
+  let inner = Result(bool)(i32).Ok(42)
+  let outer = Option(Result(bool)(i32)).Some(inner)
   outer match {
     Some(result) => result match {
       Ok(value) => value,

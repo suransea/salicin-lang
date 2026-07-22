@@ -1452,7 +1452,7 @@ fn valid_do(function: &Function) -> bool {
 fn valid_try(function: &Function) -> bool {
     let result = Type::Named(
         "core.Result".to_owned(),
-        vec![named_type("T"), named_type("E")],
+        vec![named_type("E"), named_type("T")],
     );
     let effects = crate::ast::FunctionEffects {
         custom: vec![Type::Named(
@@ -1639,14 +1639,14 @@ fn validate_option(definition: &EnumDef, diagnostics: &mut Vec<String>) {
 }
 
 fn validate_result(definition: &EnumDef, diagnostics: &mut Vec<String>) {
-    let expected_groups = vec![vec![type_parameter("T"), type_parameter("E")]];
+    let expected_groups = vec![vec![type_parameter("E")], vec![type_parameter("T")]];
     let expected_variants = vec![
         positional_variant("Ok", named_type("T")),
         positional_variant("Err", named_type("E")),
     ];
     if definition.compile_groups != expected_groups || definition.variants != expected_variants {
         diagnostics.push(
-            "lang item `Result` must have shape `pub let Result (T: type, E: type) = enum { Ok(T), Err(E) }`"
+            "lang item `Result` must have shape `pub let Result(E: type)(T: type) = enum { Ok(T), Err(E) }`"
                 .to_owned(),
         );
     }
@@ -1886,7 +1886,7 @@ mod tests {
         [
             r#"
 pub let Option (T: type) = enum { Some(T), None }
-pub let Result (T: type, E: type) = enum { Ok(T), Err(E) }
+pub let Result(E: type)(T: type) = enum { Ok(T), Err(E) }
 pub let Never = enum {}
 "#,
             copy_declaration,
@@ -1959,7 +1959,7 @@ pub let Shr(Rhs: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 17);
+        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 16);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -2284,7 +2284,7 @@ pub let Add(Rhs: type) = trait {
 }
 pub let Never = enum {}
 pub let Option (T: type) = enum { Some(T), None }
-pub let Result (T: type, E: type) = enum { Ok(T), Err(E) }
+pub let Result(E: type)(T: type) = enum { Ok(T), Err(E) }
 pub let Div(Rhs: type) = trait {
   let Output: type
   let div(move self)(move rhs: Rhs): Output
@@ -2572,7 +2572,7 @@ pub let Shr(Rhs: type) = trait {
     fn rejects_malformed_operator_traits_in_fixed_role_order() {
         let source = r#"
 pub let Option (T: type) = enum { Some(T), None }
-pub let Result (T: type, E: type) = enum { Ok(T), Err(E) }
+pub let Result(E: type)(T: type) = enum { Ok(T), Err(E) }
 pub let Never = enum {}
 pub let Copy = trait {}
 pub let Drop = trait {

@@ -1660,7 +1660,7 @@ impl Parser {
     fn apply_throws_effect(output: Type, throws_error: Option<Type>) -> Type {
         match throws_error {
             None => output,
-            Some(error) => Type::Named("Result".to_owned(), vec![output, error]),
+            Some(error) => Type::Named("Result".to_owned(), vec![error, output]),
         }
     }
 
@@ -1845,7 +1845,12 @@ impl Parser {
         }
 
         let mut arguments = Vec::new();
-        if self.take(&TokenKind::LParen) && !self.take(&TokenKind::RParen) {
+        let mut labeled_total = 0;
+        while self.take(&TokenKind::LParen) {
+            if self.take(&TokenKind::RParen) {
+                break;
+            }
+            let group_start = arguments.len();
             let mut labeled = 0;
             loop {
                 let label = if matches!(self.current().kind, TokenKind::Ident(_))
@@ -1875,11 +1880,17 @@ impl Parser {
                     break;
                 }
             }
-            if labeled != 0 && labeled != arguments.len() {
+            labeled_total += labeled;
+            if labeled != 0 && labeled != arguments.len() - group_start {
                 return Err(
                     self.error_here("type arguments must be either all labeled or all positional")
                 );
             }
+        }
+        if labeled_total != 0 && labeled_total != arguments.len() {
+            return Err(
+                self.error_here("type arguments must be either all labeled or all positional")
+            );
         }
 
         if arguments.is_empty() {
@@ -4910,7 +4921,7 @@ mod tests {
 
     #[test]
     fn parses_throw_as_a_core_control_function() {
-        let program = parse("let fail(): Result(i32, bool) = { throw(false) }\n").unwrap();
+        let program = parse("let fail(): Result(bool)(i32) = { throw(false) }\n").unwrap();
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };
@@ -4931,14 +4942,14 @@ mod tests {
             )
         );
 
-        let error = parse("let fail(): Result(i32, bool) = { throw false }\n").unwrap_err();
+        let error = parse("let fail(): Result(bool)(i32) = { throw false }\n").unwrap_err();
         assert!(error.message.contains("`throw` is a function"));
     }
 
     #[test]
     fn parses_do_and_try_as_distinct_immediate_handlers() {
         let program = parse(
-            "let main(): Result(i32, bool) = { try { 42 } }\n\
+            "let main(): Result(bool)(i32) = { try { 42 } }\n\
              let other(): i32 = { do { 42 } }\n",
         )
         .unwrap();
@@ -4952,11 +4963,11 @@ mod tests {
         assert!(matches!(function_tail(other), Expr::DoBlock { .. }));
 
         let old =
-            parse("let unwrap(value: Result(i32, bool)): i32 with(Throws(bool)) = { value.try }\n")
+            parse("let unwrap(value: Result(bool)(i32)): i32 with(Throws(bool)) = { value.try }\n")
                 .unwrap_err();
         assert!(old.message.contains("expected a member name after `.`"));
 
-        let malformed = parse("let value: Result(i32, bool) = try do { 42 }\n").unwrap_err();
+        let malformed = parse("let value: Result(bool)(i32) = try do { 42 }\n").unwrap_err();
         assert!(malformed.message.contains("expected a block after `try`"));
     }
 
@@ -6099,7 +6110,7 @@ mod tests {
     #[test]
     fn parses_labeled_type_arguments_without_reordering() {
         let program = parse(
-            "let consume(value: Pair(V: bool, K: i32)): Result(E: bool, T: i32) = { value }\n",
+            "let consume(value: Pair(V: bool, K: i32)): Result(E: bool)(T: i32) = { value }\n",
         )
         .unwrap();
         let Item::Function(function) = &program.items[0] else {

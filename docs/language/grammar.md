@@ -449,7 +449,7 @@ continue_expr = "continue" ;
 
 `do { ... }`、`try { ... }`、`unsafe { ... }` 和未来的 `async { ... }` 在语义上都是接受尾闭包的内建函数调用，
 不是三种互不相关的块节点。parser 保留专用产生式以消除关键字后大括号的歧义。`do` 立即调用闭包
-并原样转发其 effect/color；`try` 把 `Throws(E)` 处理为 `Result(T, E)`；`unsafe` 处理闭包要求的
+并原样转发其 effect/color；`try` 把 `Throws(E)` 处理为 `Result(E)(T)`；`unsafe` 处理闭包要求的
 `Unsafe` effect。
 
 解析 `if`、`while`、`for` 控制头的最外层时禁用尾随闭包；第一个未被括号包围的 `{` 是控制主体。

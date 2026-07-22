@@ -30,13 +30,12 @@ library/
 ## Prelude policy
 
 The edition prelude must stay small. It is intended only for names that the language constantly
-produces or needs as universal contracts, currently `Never`, `Copy`, and `Drop`. `Option`,
-`Result`, and `ResultWith` live at the `core` root and require ordinary imports when named:
+produces or needs as universal contracts, currently `Never`, `Copy`, and `Drop`. `Option` and
+`Result` live at the `core` root and require ordinary imports when named:
 
 ```sc
 use core.Option
 use core.Result
-use core.ResultWith
 ```
 
 Operator traits belong to `core.ops`, effect identities belong to `core.effects`, access identities

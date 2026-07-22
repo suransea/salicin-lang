@@ -5,7 +5,7 @@ let main(): i32 = {
   let some = Option.Some(20)
   let none: Option(i32) = Option.None
   let ok = Result(E: bool).Ok(22)
-  let err: Result(i32, bool) = Result.Err(false)
+  let err: Result(bool)(i32) = Result.Err(false)
 
   let from_some = some match {
     Some(value) => value,

@@ -15,8 +15,9 @@ need authority or primitive control-flow lowering.
 The unit type has one source spelling, `()`; the former `void` alias is removed before 1.0. The
 uninhabited prelude enum is spelled `Never`; the former lowercase `never` spelling has no
 compatibility alias.
-`Option`, `Result`, and `ResultWith` are ordinary root `core` definitions rather than prelude
-exports, so source that names them imports `core.Option`, `core.Result`, or `core.ResultWith`.
+`Option` and `Result` are ordinary root `core` definitions rather than prelude exports, so source
+that names them imports `core.Option` or `core.Result`. `Result` is curried as
+`Result(Error)(Value)`, making `Result(Error)` the standard unary constructor for HKT protocols.
 
 Transparent type aliases and type-constructor aliases are implemented. `let Scalar = i32`,
 `let Family(T: type): type = Box(T)`, and `let Constructor: (T: type): type = Box` all expand before
@@ -38,7 +39,7 @@ so `Throws(Error).raise` can now be exercised through the same handler path as u
 `throw(error)` reads the validated source-backed `core.control.throw` function and then calls the
 ordinary `Throws(Error).raise` operation when the active row has a unique standard `Throws(Error)`
 effect. `core.control.try` is likewise source-backed: it declares its action requirement as
-`Throws(E)` and materializes ordinary `Throws(Error)` as `core.Result(T, Error)` through
+`Throws(E)` and materializes ordinary `Throws(Error)` as `core.Result(Error)(T)` through
 `Throws(Error).handle`. Context-free ordinary `Throws` inference now
 covers direct standard-effect function calls, local function values, explicitly instantiated generic
 calls such as `fail(bool)(...)`, and `do` return boundaries forwarding standard `Throws(Error)` into
@@ -110,9 +111,10 @@ expose `Carrier(i32) { value: 41 }.map(...)` through the ordinary generic functi
 functions can take explicit type-constructor arguments and constructor predicates such as
 `where M: Monad`. Trait-level `where` inheritance is implemented for the standard
 `Applicative where Self: Functor` and `Monad where Self: Applicative` relationships. `core.Option`
-and the `core.ResultWith(Error)` adapter implement the standard functional protocols from ordinary
-library files. Partially applied transparent type aliases can act as HKT implementation targets; the
-remaining HKT work is associated-type lowering and broader constructor equation solving.
+and partially applied `core.Result(Error)` constructors implement the standard functional protocols
+from ordinary library files. Curried constructors and partially applied transparent type aliases can
+act as HKT implementation targets; the remaining HKT work is associated-type lowering and broader
+constructor equation solving.
 
 Access keyword generics are implemented for functions and generic inherent members: `A: access` accepts `shared` or `mut`,
 defaults to shared when omitted, participates in monomorphization, and can drive parameter modes,
@@ -125,7 +127,7 @@ position. Functions and trait methods place a contextual `with(...)` clause afte
 `: T with(Unsafe)` adds the checked unsafe call requirement, while `: T with(Throws(E))` declares the
 standard recoverable-error effect. `try { ... }` handles that effect and produces an explicit
 `Result`. Without a contextual result type, direct ordinary `Throws(E)` calls and local function
-values can infer `Result(T, E)` when the success type and unique error type are probeable; postfix
+values can infer `Result(E)(T)` when the success type and unique error type are probeable; postfix
 `.try`, lowercase `with(throws...)`, lowercase `with(unsafe)`, and `with(try...)` are removed with
 no compatibility aliases or dedicated parser migration paths.
 Callable source types use the same shape, such as

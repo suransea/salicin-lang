@@ -12,6 +12,6 @@ let fail(): i32 with(Throws(bool)) = {
 }
 
 let main(): i32 = {
-  let result: Result(i32, bool) = try { fail() }
+  let result: Result(bool)(i32) = try { fail() }
   result match { Ok(_) => 0, Err(error) => if error { 42 } else { 0 } }
 }

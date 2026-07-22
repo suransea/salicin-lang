@@ -8,6 +8,6 @@ let fail(): i32 with(Throws(bool)) = {
 let forward(): i32 with(Throws(bool)) = { fail() }
 
 let main(): i32 = {
-  let result: Result(i32, bool) = try { forward() }
+  let result: Result(bool)(i32) = try { forward() }
   result ?? 42
 }

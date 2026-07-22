@@ -39,7 +39,7 @@ let handled_throw_sugar_action(): i32 = {
 }
 
 let tried_throw_sugar_function(): i32 = {
-  let result: Result(i32, i32) = try {
+  let result: Result(i32)(i32) = try {
     fail_with_throw_sugar()
   }
   result match {
@@ -49,7 +49,7 @@ let tried_throw_sugar_function(): i32 = {
 }
 
 let tried_throw_sugar_action(): i32 = {
-  let result: Result(i32, i32) = try {
+  let result: Result(i32)(i32) = try {
     throw(42)
   }
   result match {

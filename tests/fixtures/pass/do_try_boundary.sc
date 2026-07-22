@@ -4,13 +4,13 @@ use core.effects.Throws
 let read(fail: bool): i32 with(Throws(bool)) = { if fail { throw(true) } else { 40 } }
 
 let main(): i32 = {
-  let propagated: Result(i32, bool) = try {
+  let propagated: Result(bool)(i32) = try {
     read(true) + 2
   }
-  let thrown: Result(i32, bool) = try {
+  let thrown: Result(bool)(i32) = try {
     throw(true)
   }
-  let success: Result(i32, bool) = try {
+  let success: Result(bool)(i32) = try {
     read(false) + 2
   }
   let propagation_ok = propagated match { Ok(_) => false, Err(error) => error }

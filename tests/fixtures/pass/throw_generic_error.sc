@@ -6,6 +6,6 @@ let fail(E: type)(move error: E): i32 with(Throws(E)) = {
 }
 
 let main(): i32 = {
-  let result: Result(i32, bool) = try { fail(bool)(true) }
+  let result: Result(bool)(i32) = try { fail(bool)(true) }
   result ?? 42
 }

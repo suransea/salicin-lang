@@ -3,12 +3,10 @@ pub let Option(T: type) = enum {
   None,
 }
 
-pub let Result(T: type, E: type) = enum {
+pub let Result(E: type)(T: type) = enum {
   Ok(T),
   Err(E),
 }
-
-pub let ResultWith(Error: type)(Value: type): type = Result(Value, Error)
 
 extend(T: type) Option(T): core.ops.Chain {
   let Item = T
@@ -41,15 +39,15 @@ extend(T: type) Option(T): core.ops.Coalesce {
   }
 }
 
-extend(T: type, Error: type) Result(T, Error): core.ops.Chain {
+extend(Error: type, T: type) Result(Error)(T): core.ops.Chain {
   let Item = T
-  let Rebind = ResultWith(Error)
+  let Rebind = Result(Error)
 
   let chain(E: effect, U: type)(
     move self,
   )(
     move transform: (T): U with(E),
-  ): Result(U, Error) with(E) = {
+  ): Result(Error)(U) with(E) = {
     self match {
       Ok(value) => Result.Ok(transform(value)),
       Err(error) => Result.Err(error),
@@ -57,7 +55,7 @@ extend(T: type, Error: type) Result(T, Error): core.ops.Chain {
   }
 }
 
-extend(T: type, Error: type) Result(T, Error): core.ops.Coalesce {
+extend(Error: type, T: type) Result(Error)(T): core.ops.Coalesce {
   let Item = T
 
   let coalesce(E: effect)(

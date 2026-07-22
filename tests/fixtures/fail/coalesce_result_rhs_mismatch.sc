@@ -1,3 +1,3 @@
 use core.Result
 
-let main(): i32 = { Result(i32, bool).Err(false) ?? true }
+let main(): i32 = { Result(bool)(i32).Err(false) ?? true }

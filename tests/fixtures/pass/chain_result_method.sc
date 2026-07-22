@@ -6,4 +6,4 @@ extend Number {
   let take(move self)(): i32 = { self.value }
 }
 
-let main(): i32 = { Result(Number, bool).Ok(Number { value: 42 })?.take() ?? 0 }
+let main(): i32 = { Result(bool)(Number).Ok(Number { value: 42 })?.take() ?? 0 }

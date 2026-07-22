@@ -19,18 +19,15 @@ pub let Option(T: type) = enum {
   None,
 }
 
-pub let Result(T: type, E: type) = enum {
+pub let Result(E: type)(T: type) = enum {
   Ok(T),
   Err(E),
 }
-
-pub let ResultWith(Error: type)(Value: type): type = Result(Value, Error)
 ```
 
-Naming them requires an ordinary root import such as `use core.Option`, `use core.Result`, or
-`use core.ResultWith`. Operators and syntax that lower through these identities use the validated
-standard-library declarations directly; importing is only required when source code writes the
-names.
+Naming them requires an ordinary root import such as `use core.Option` or `use core.Result`.
+Operators and syntax that lower through these identities use the validated standard-library
+declarations directly; importing is only required when source code writes the names.
 
 `core.ops` contains the arithmetic protocols `Add`, `Sub`, `Mul`, `Div`, and `Rem`, the equality
 protocol `Eq`, the ordering protocol `PartialOrd`, the unary protocols `Neg` and `Not`, the bitwise
@@ -146,7 +143,7 @@ Standard and user effect identities use type-like nominal spelling: effect decla
 final segment of a `with(...)` effect path must start with an uppercase letter. Effect row parameters
 such as `E: effect` are still resolved as parameters rather than nominal effects.
 Source `throw(error)` targets this ordinary operation when the current effect row has exactly one
-active `Throws(Error)`. Contextual `try { ... }` with an expected `Result(T, Error)` handles
+active `Throws(Error)`. Contextual `try { ... }` with an expected `Result(Error)(T)` handles
 ordinary `Throws(Error)` through the same algebraic handler path, using `done -> Ok` and
 `raise -> Err`. Without an explicit `Result` context, direct calls and local function-value calls
 to ordinary `Throws(Error)` functions now infer the same handler result when the success type is
@@ -190,7 +187,7 @@ entry. These low-level operations are not source-level standard-library function
 ```sc
 pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E)
 pub let try(F: effect, T: type, E: type)
-  (move action: (): T with(core.effects.Throws(E), F)): core.Result(T, E) with(F)
+  (move action: (): T with(core.effects.Throws(E), F)): core.Result(E)(T) with(F)
 pub let throw(Error: type)(move error: Error): Never with(core.effects.Throws(Error))
 pub let unsafe(E: effect, T: type)
   (move action: (): T with(core.effects.Unsafe, E)): T with(E)
@@ -207,7 +204,7 @@ pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E) = {
 }
 
 pub let try(F: effect, T: type, E: type)
-  (move action: (): T with(core.effects.Throws(E), F)): core.Result(T, E) with(F) = {
+  (move action: (): T with(core.effects.Throws(E), F)): core.Result(E)(T) with(F) = {
   core.effects.Throws(E).handle(
     raise: { (error) -> core.Result.Err(error) },
     done: { (value) -> core.Result.Ok(value) },
@@ -303,24 +300,22 @@ constraints express protocol inheritance, so a
 requires `Carrier: Applicative`.
 
 The standard library implements `Functor`, `Applicative`, and `Monad` for `core.Option` and for
-`core.ResultWith(Error)`, the unary constructor adapter for `core.Result(Value, Error)`.
-`ResultWith` is a normal non-prelude root item:
+each partially applied `core.Result(Error)` constructor:
 
 ```sc
 use core.Result
-use core.ResultWith
 use core.functional.Monad
 
-let next(value: i32): Result(i32, bool) = {
-  Result(i32, bool).Ok(value + 1)
+let next(value: i32): Result(bool)(i32) = {
+  Result(bool)(i32).Ok(value + 1)
 }
 
-let value = Result(i32, bool).Ok(41).flat_map(next)
+let value = Result(bool)(i32).Ok(41).flat_map(next)
 ```
 
-Partially applied transparent type aliases may be used as constructor trait implementation targets,
-which is how `ResultWith(Error): Monad` is expressed without making `Result` special. Associated-type
-lowering and broader constructor equation solving remain future semantic work.
+Curried constructors may be used as constructor trait implementation targets, which is how
+`Result(Error): Monad` is expressed without making `Result` special. Associated-type lowering and
+broader constructor equation solving remain future semantic work.
 
 `ControlFlow`, the old propagation `Try`, `FromResidual`, and `FromError` were removed together with postfix `.try`. `Option` and
 `Result` are ordinary enum values and require explicit constructors. Language error propagation is

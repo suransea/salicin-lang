@@ -3,7 +3,7 @@
 // identity gives them language-item behavior.
 // `throw(error)` can also target the ordinary `Throws(E).raise(error)` operation
 // when a single standard `Throws(E)` custom effect is active.
-// Contextual `try { ... }` can materialize that ordinary effect as `Result(T, E)`.
+// Contextual `try { ... }` can materialize that ordinary effect as `Result(E)(T)`.
 pub let Unsafe = effect {}
 
 pub let Throws(Error: type) = effect {

@@ -3,7 +3,7 @@ use core.Result
 
 let Read = effect {
   let option_base(present: bool): Option(Adder)
-  let result_base(present: bool): Result(Adder, bool)
+  let result_base(present: bool): Result(bool)(Adder)
   let argument(): i32
 }
 

@@ -7,10 +7,10 @@ let option_return(): Option(i32) = {
   return Option(i32).Some(10)
 }
 
-let result_tail(): Result(i32, bool) = { Result(i32, bool).Ok(11) }
+let result_tail(): Result(bool)(i32) = { Result(bool)(i32).Ok(11) }
 
-let result_return(): Result(i32, bool) = {
-  return Result(i32, bool).Ok(11)
+let result_return(): Result(bool)(i32) = {
+  return Result(bool)(i32).Ok(11)
 }
 
 let main(): i32 = {
