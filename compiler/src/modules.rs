@@ -320,6 +320,8 @@ const CORE_OPS_EXPORTS: &[&str] = &[
     "BitXor",
     "Shl",
     "Shr",
+    "Chain",
+    "Coalesce",
 ];
 const CORE_EFFECTS_EXPORTS: &[&str] = &["Unsafe", "Throws", "Async"];
 const CORE_ACCESS_EXPORTS: &[&str] = &["Shared", "Mutable"];

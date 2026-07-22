@@ -1899,6 +1899,7 @@ fn assignment_operator_trait(operator: BinaryOp) -> Option<LangItemKind> {
 struct TraitSchema {
     compile_parameters: Vec<CompileParam>,
     associated_types: Vec<String>,
+    associated_type_kinds: HashMap<String, CompileParamKind>,
     methods: HashMap<String, Function>,
     method_overloads: HashMap<String, Vec<String>>,
     method_order: Vec<String>,
@@ -3175,6 +3176,7 @@ impl Analyzer {
             .collect::<HashSet<_>>();
         let mut member_names = HashSet::new();
         let mut associated_types = Vec::new();
+        let mut associated_type_kinds = HashMap::new();
         let mut methods = HashMap::new();
         let mut method_overloads = HashMap::<String, Vec<String>>::new();
         let mut overload_shapes = HashMap::<String, HashSet<ParameterLabelShape>>::new();
@@ -3201,13 +3203,28 @@ impl Analyzer {
                         ));
                         valid = false;
                     }
-                    if !compile_groups.is_empty() {
-                        self.error(format!(
-                            "generic associated type `{}.{name}` is not supported",
-                            definition.name
-                        ));
-                        valid = false;
-                    }
+                    let kind = if compile_groups.is_empty() {
+                        CompileParamKind::Type
+                    } else {
+                        let mut parameter_count = 0usize;
+                        let mut groups_valid = true;
+                        for parameter in compile_groups.iter().flatten() {
+                            parameter_count += 1;
+                            if parameter.kind != CompileParamKind::Type {
+                                self.error(format!(
+                                    "generic associated type `{}.{name}` parameters currently must have kind `type`",
+                                    definition.name
+                                ));
+                                groups_valid = false;
+                            }
+                        }
+                        if groups_valid {
+                            CompileParamKind::TypeConstructor { parameter_count }
+                        } else {
+                            valid = false;
+                            CompileParamKind::Type
+                        }
+                    };
                     if default.is_some() {
                         self.error(format!(
                             "default associated type `{}.{name}` is not supported",
@@ -3215,6 +3232,7 @@ impl Analyzer {
                         ));
                         valid = false;
                     }
+                    associated_type_kinds.insert(name.clone(), kind);
                     associated_types.push(name);
                 }
                 TraitMember::Function(function) => {
@@ -3269,6 +3287,7 @@ impl Analyzer {
             TraitSchema {
                 compile_parameters,
                 associated_types,
+                associated_type_kinds,
                 methods,
                 method_overloads,
                 method_order,
@@ -3293,7 +3312,7 @@ impl Analyzer {
                 schema
                     .associated_types
                     .iter()
-                    .map(|name| (name.clone(), CompileParamKind::Type)),
+                    .map(|name| (name.clone(), schema.associated_type_kinds[name])),
             );
             let mut valid = schema.valid;
             for method_name in &schema.method_order {
@@ -3362,7 +3381,7 @@ impl Analyzer {
         });
         compile_parameters.extend(schema.associated_types.iter().map(|name| CompileParam {
             name: name.clone(),
-            kind: crate::ast::CompileParamKind::Type,
+            kind: schema.associated_type_kinds[name],
         }));
         let trait_arguments = schema
             .compile_parameters
@@ -3372,6 +3391,7 @@ impl Analyzer {
         let associated_types = schema
             .associated_types
             .iter()
+            .filter(|name| schema.associated_type_kinds[*name] == CompileParamKind::Type)
             .map(|name| crate::ast::AssociatedTypeBinding {
                 name: name.clone(),
                 ty: Type::Named(name.clone(), Vec::new()),
@@ -4226,6 +4246,14 @@ impl Analyzer {
                         valid = false;
                         continue;
                     }
+                    if schema.associated_type_kinds[&binding.name] != CompileParamKind::Type {
+                        self.error(format!(
+                            "generic associated type `{}.{}` implementations are not supported yet",
+                            key.trait_ref.name, binding.name
+                        ));
+                        valid = false;
+                        continue;
+                    }
                     if binding.annotation.is_some() {
                         self.error(format!(
                             "associated type `{}.{}` must not have a value annotation",
@@ -4276,6 +4304,14 @@ impl Analyzer {
         }
 
         for associated in &schema.associated_types {
+            if schema.associated_type_kinds[associated] != CompileParamKind::Type {
+                self.error(format!(
+                    "generic associated type `{}.{associated}` implementations are not supported yet",
+                    key.trait_ref.name
+                ));
+                valid = false;
+                continue;
+            }
             if !raw_associated.contains_key(associated) {
                 self.error(format!(
                     "missing associated type `{}.{associated}` in trait implementation",
@@ -5332,6 +5368,13 @@ impl Analyzer {
                             binding.name
                         ));
                         valid = false;
+                    } else if schema.associated_type_kinds[&binding.name] != CompileParamKind::Type
+                    {
+                        self.error(format!(
+                            "generic associated type `{trait_name}.{}` implementations are not supported yet",
+                            binding.name
+                        ));
+                        valid = false;
                     } else if !associated.insert(binding.name.clone()) {
                         self.error(format!(
                             "duplicate associated type `{trait_name}.{}`",
@@ -5381,6 +5424,13 @@ impl Analyzer {
             }
         }
         for name in &schema.associated_types {
+            if schema.associated_type_kinds[name] != CompileParamKind::Type {
+                self.error(format!(
+                    "generic associated type `{trait_name}.{name}` implementations are not supported yet"
+                ));
+                valid = false;
+                continue;
+            }
             if !associated.contains(name) {
                 self.error(format!(
                     "missing associated type `{trait_name}.{name}` in generic trait implementation"
@@ -5421,6 +5471,18 @@ impl Analyzer {
             let ExtendMember::Const(binding) = member else {
                 continue;
             };
+            if schema
+                .associated_type_kinds
+                .get(&binding.name)
+                .is_some_and(|kind| *kind != CompileParamKind::Type)
+            {
+                self.error(format!(
+                    "generic associated type `{trait_name}.{}` implementations are not supported yet",
+                    binding.name
+                ));
+                valid = false;
+                continue;
+            }
             let Some(source) =
                 self.type_argument_from_expr(&binding.value, &expected_substitutions)
             else {
@@ -5431,6 +5493,10 @@ impl Analyzer {
         }
         let mut normalized = HashMap::new();
         for associated in &schema.associated_types {
+            if schema.associated_type_kinds[associated] != CompileParamKind::Type {
+                valid = false;
+                continue;
+            }
             if let Some(source) = self.normalize_trait_impl_associated_type(
                 trait_name,
                 associated,
@@ -7021,6 +7087,12 @@ impl Analyzer {
                 if !schema.associated_types.contains(&binding.name) {
                     self.error(format!(
                         "unknown associated type `{name}.{}` in where predicate of `{function}`",
+                        binding.name
+                    ));
+                    valid = false;
+                } else if schema.associated_type_kinds[&binding.name] != CompileParamKind::Type {
+                    self.error(format!(
+                        "generic associated type equality `{name}.{}` in where predicate of `{function}` is not supported yet",
                         binding.name
                     ));
                     valid = false;
@@ -41536,14 +41608,23 @@ let main(): i32 = {
     fn higher_kinded_trait_method_signatures_validate() {
         let program = crate::parser::parse(
             r#"
-let Functor(F: (Value: type): type) = trait {
-  let map(E: effect, A: type, B: type)(
-    move value: F(A),
-    move transform: (A): B with(E),
-  ): F(B) with(E)
-}
-let main(): i32 = { 0 }
-"#,
+	let Functor(F: (Value: type): type) = trait {
+	  let map(E: effect, A: type, B: type)(
+	    move value: F(A),
+	    move transform: (A): B with(E),
+	  ): F(B) with(E)
+	}
+	let Chain = trait {
+	  let Item: type
+	  let Rebind(Value: type): type
+	  let chain(E: effect, U: type)(
+	    move self
+	  )(
+	    move transform: (Item): U with(E)
+	  ): Rebind(U) with(E)
+	}
+	let main(): i32 = { 0 }
+	"#,
         )
         .expect("higher-kinded trait source must parse");
 
@@ -42557,12 +42638,16 @@ let main(): i32 = {
         let cases = [
             (
                 r#"
-let Generic = trait {
-  let Item(T: type): type
-}
-let main(): i32 = { 0 }
-"#,
-                "generic associated type",
+	let Generic = trait {
+	  let Item(T: type): type
+	}
+	let Node = struct(value: i32)
+	extend Node: Generic {
+	  let Item = i32
+	}
+	let main(): i32 = { 0 }
+	"#,
+                "implementations are not supported yet",
             ),
             (
                 r#"

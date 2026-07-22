@@ -1093,7 +1093,7 @@ extend A: Bar {
 ```sali
 let Chain = trait {
   let Item: type
-  let Rebind(U: type): type
+  let Rebind(Value: type): type
 }
 ```
 
@@ -1470,12 +1470,11 @@ result?.normalize()
 ```sali
 let Chain = trait {
   let Item: type
-  let Rebind(U: type): type
+  let Rebind(Value: type): type
 
-  let chain(U: type)(F: type)
+  let chain(E: effect, U: type)
     (move self)
-    (move transform: F): Rebind(U)
-  where F: FnOnce((move _: Item): U)
+    (move transform: (Item): U with(E)): Rebind(U) with(E)
 }
 ```
 
@@ -1494,15 +1493,15 @@ let data = read() ?? empty_data
 ```
 
 `??` 在左侧成功时取出 `T`，否则惰性计算右侧 `T`。它通过 `Coalesce` trait 实现，编译器把右侧
-包装为零参数 `FnOnce`，所以右侧严格按需执行。结果类型为 `T`：
+包装为零参数闭包；闭包是否为一次性调用由普通捕获/移动规则推断，所以右侧严格按需执行。结果类型为
+`T`：
 
 ```sali
 let Coalesce = trait {
   let Item: type
-  let coalesce(F: type)
+  let coalesce(E: effect)
     (move self)
-    (move fallback: F): Item
-  where F: FnOnce((): Item)
+    (move fallback: (): Item with(E)): Item with(E)
 }
 ```
 

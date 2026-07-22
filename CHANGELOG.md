@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.172.0 - 2026-07-22
+
+- Added source-backed `core.ops.Chain` and `core.ops.Coalesce` protocol declarations for `?.` and
+  `??`, exported outside the prelude and validated as ordinary core lang-item contracts.
+- Allowed trait declarations and method signatures to mention one-argument generic associated type
+  constructors, while keeping GAT implementations and where-predicate equalities explicitly
+  rejected until the semantic lowering slice is implemented.
+- Covered malformed `Chain` and `Coalesce` core contracts in bundle validation tests.
+
 ## 0.171.0 - 2026-07-22
 
 - Routed standard `throw` lowering through the validated `core.control.throw` declaration by

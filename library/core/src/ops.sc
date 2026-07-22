@@ -112,3 +112,14 @@ pub let Shr(Rhs: type) = trait {
   let Output: type
   let shr(move self)(move rhs: Rhs): Output
 }
+
+pub let Chain = trait {
+  let Item: type
+  let Rebind(Value: type): type
+  let chain(E: effect, U: type)(move self)(move transform: (Item): U with(E)): Rebind(U) with(E)
+}
+
+pub let Coalesce = trait {
+  let Item: type
+  let coalesce(E: effect)(move self)(move fallback: (): Item with(E)): Item with(E)
+}

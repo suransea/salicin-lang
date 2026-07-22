@@ -43,6 +43,19 @@ pub let ShrAssign(Rhs: type) = trait { let shr_assign(borrow(mut) self)(move rhs
 "#;
 
 #[cfg(test)]
+const TEST_CHAIN_OPS: &str = r#"
+pub let Chain = trait {
+  let Item: type
+  let Rebind(Value: type): type
+  let chain(E: effect, U: type)(move self)(move transform: (Item): U with(E)): Rebind(U) with(E)
+}
+pub let Coalesce = trait {
+  let Item: type
+  let coalesce(E: effect)(move self)(move fallback: (): Item with(E)): Item with(E)
+}
+"#;
+
+#[cfg(test)]
 const TEST_EFFECTS: &str = r#"
 pub let Unsafe = effect {}
 pub let Throws(Error: type) = effect { let raise(move error: Error): Never }
@@ -82,6 +95,8 @@ pub enum LangItemKind {
     BitXor,
     Shl,
     Shr,
+    Chain,
+    Coalesce,
     UnsafeEffect,
     ThrowsEffect,
     SharedAccess,
@@ -98,7 +113,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 43] = [
+    const ALL: [Self; 45] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -129,6 +144,8 @@ impl LangItemKind {
         Self::BitXor,
         Self::Shl,
         Self::Shr,
+        Self::Chain,
+        Self::Coalesce,
         Self::UnsafeEffect,
         Self::ThrowsEffect,
         Self::SharedAccess,
@@ -176,6 +193,8 @@ impl LangItemKind {
             Self::BitXor => "BitXor",
             Self::Shl => "Shl",
             Self::Shr => "Shr",
+            Self::Chain => "Chain",
+            Self::Coalesce => "Coalesce",
             Self::UnsafeEffect => "Unsafe",
             Self::ThrowsEffect => "Throws",
             Self::SharedAccess => "Shared",
@@ -225,6 +244,8 @@ impl LangItemKind {
             | Self::BitXor
             | Self::Shl
             | Self::Shr
+            | Self::Chain
+            | Self::Coalesce
             | Self::Iterator
             | Self::IntoIterator => "trait",
         }
@@ -262,6 +283,8 @@ impl LangItemKind {
             | Self::BitXorAssign
             | Self::ShlAssign
             | Self::ShrAssign
+            | Self::Chain
+            | Self::Coalesce
             | Self::UnsafeEffect
             | Self::ThrowsEffect
             | Self::SharedAccess
@@ -365,6 +388,8 @@ pub struct LangItems {
     bit_xor: LangItem,
     shl: LangItem,
     shr: LangItem,
+    chain: LangItem,
+    coalesce: LangItem,
     unsafe_effect: LangItem,
     throws_effect: LangItem,
     shared_access: LangItem,
@@ -491,6 +516,14 @@ impl LangItems {
         &self.shr
     }
 
+    pub const fn chain(&self) -> &LangItem {
+        &self.chain
+    }
+
+    pub const fn coalesce(&self) -> &LangItem {
+        &self.coalesce
+    }
+
     pub const fn unsafe_effect(&self) -> &LangItem {
         &self.unsafe_effect
     }
@@ -563,6 +596,8 @@ impl LangItems {
             LangItemKind::BitXor => &self.bit_xor,
             LangItemKind::Shl => &self.shl,
             LangItemKind::Shr => &self.shr,
+            LangItemKind::Chain => &self.chain,
+            LangItemKind::Coalesce => &self.coalesce,
             LangItemKind::UnsafeEffect => &self.unsafe_effect,
             LangItemKind::ThrowsEffect => &self.throws_effect,
             LangItemKind::SharedAccess => &self.shared_access,
@@ -625,7 +660,7 @@ impl CoreBundle {
         // Most contract tests isolate one prelude/operator declaration. Keep
         // the independently tested control module present in those fixtures.
         let source = format!(
-            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_EFFECTS}\n{EDITION_2026_ACCESS}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}"
+            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{TEST_EFFECTS}\n{EDITION_2026_ACCESS}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}"
         );
         let mut program = parser::parse(&source).map_err(|error| {
             CoreBundleError::new(
@@ -735,6 +770,8 @@ impl CoreBundle {
             &mut lang_items.bit_xor,
             &mut lang_items.shl,
             &mut lang_items.shr,
+            &mut lang_items.chain,
+            &mut lang_items.coalesce,
             &mut lang_items.unsafe_effect,
             &mut lang_items.throws_effect,
             &mut lang_items.shared_access,
@@ -965,6 +1002,8 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         bit_xor: item(LangItemKind::BitXor),
         shl: item(LangItemKind::Shl),
         shr: item(LangItemKind::Shr),
+        chain: item(LangItemKind::Chain),
+        coalesce: item(LangItemKind::Coalesce),
         unsafe_effect: item(LangItemKind::UnsafeEffect),
         throws_effect: item(LangItemKind::ThrowsEffect),
         shared_access: item(LangItemKind::SharedAccess),
@@ -1077,6 +1116,10 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         }
         (LangItemKind::IntoIterator, Item::Trait(definition)) => {
             validate_into_iterator(definition, diagnostics)
+        }
+        (LangItemKind::Chain, Item::Trait(definition)) => validate_chain(definition, diagnostics),
+        (LangItemKind::Coalesce, Item::Trait(definition)) => {
+            validate_coalesce(definition, diagnostics)
         }
         (kind @ (LangItemKind::Neg | LangItemKind::Not), Item::Trait(definition)) => {
             validate_unary_operator(kind, definition, diagnostics)
@@ -1205,6 +1248,103 @@ fn valid_iteration_method(function: &Function, name: &str, mode: PassMode, resul
         && receiver.mode == mode
         && receiver.ty == named_type("Self")
         && empty_group.is_empty()
+}
+
+fn validate_chain(definition: &TraitDef, diagnostics: &mut Vec<String>) {
+    let valid = definition.compile_groups.is_empty()
+        && matches!(
+            definition.members.as_slice(),
+            [
+                TraitMember::AssociatedType {
+                    name: item_name,
+                    compile_groups: item_groups,
+                    default: None,
+                },
+                TraitMember::AssociatedType {
+                    name: rebind_name,
+                    compile_groups: rebind_groups,
+                    default: None,
+                },
+                TraitMember::Function(function),
+            ] if item_name == "Item"
+                && item_groups.is_empty()
+                && rebind_name == "Rebind"
+                && *rebind_groups == vec![vec![type_parameter("Value")]]
+                && valid_chain_method(function)
+        );
+    if !valid {
+        diagnostics.push(
+            "lang item `Chain` must declare `Item`, `Rebind(Value: type): type`, and `chain(E: effect, U: type)(move self)(move transform: (Item): U with(E)): Rebind(U) with(E)`"
+                .to_owned(),
+        );
+    }
+}
+
+fn valid_chain_method(function: &Function) -> bool {
+    let [receiver_group, transform_group] = function.groups.as_slice() else {
+        return false;
+    };
+    let ([receiver], [transform]) = (receiver_group.as_slice(), transform_group.as_slice()) else {
+        return false;
+    };
+    let effects = effect_parameter("E");
+    function.name == "chain"
+        && function.compile_groups == vec![vec![compile_effect_parameter("E"), type_parameter("U")]]
+        && function.return_type == Some(Type::Named("Rebind".to_owned(), vec![named_type("U")]))
+        && function.effects == effects
+        && function.where_predicates.is_empty()
+        && function.body.is_none()
+        && receiver.name == "self"
+        && receiver.mode == PassMode::Move
+        && receiver.ty == named_type("Self")
+        && transform.name == "transform"
+        && transform.mode == PassMode::Move
+        && transform.ty == function_type(vec![vec![named_type("Item")]], named_type("U"), effects)
+}
+
+fn validate_coalesce(definition: &TraitDef, diagnostics: &mut Vec<String>) {
+    let valid = definition.compile_groups.is_empty()
+        && matches!(
+            definition.members.as_slice(),
+            [
+                TraitMember::AssociatedType {
+                    name,
+                    compile_groups,
+                    default: None,
+                },
+                TraitMember::Function(function),
+            ] if name == "Item"
+                && compile_groups.is_empty()
+                && valid_coalesce_method(function)
+        );
+    if !valid {
+        diagnostics.push(
+            "lang item `Coalesce` must declare `Item` and `coalesce(E: effect)(move self)(move fallback: (): Item with(E)): Item with(E)`"
+                .to_owned(),
+        );
+    }
+}
+
+fn valid_coalesce_method(function: &Function) -> bool {
+    let [receiver_group, fallback_group] = function.groups.as_slice() else {
+        return false;
+    };
+    let ([receiver], [fallback]) = (receiver_group.as_slice(), fallback_group.as_slice()) else {
+        return false;
+    };
+    let effects = effect_parameter("E");
+    function.name == "coalesce"
+        && function.compile_groups == vec![vec![compile_effect_parameter("E")]]
+        && function.return_type == Some(named_type("Item"))
+        && function.effects == effects
+        && function.where_predicates.is_empty()
+        && function.body.is_none()
+        && receiver.name == "self"
+        && receiver.mode == PassMode::Move
+        && receiver.ty == named_type("Self")
+        && fallback.name == "fallback"
+        && fallback.mode == PassMode::Move
+        && fallback.ty == function_type(vec![Vec::new()], named_type("Item"), effects)
 }
 
 fn validate_effect(
@@ -1420,8 +1560,27 @@ fn type_parameter(name: &str) -> CompileParam {
     }
 }
 
+fn compile_effect_parameter(name: &str) -> CompileParam {
+    CompileParam {
+        name: name.to_owned(),
+        kind: CompileParamKind::Effect,
+    }
+}
+
 fn named_type(name: &str) -> Type {
     Type::Named(name.to_owned(), Vec::new())
+}
+
+fn function_type(
+    groups: Vec<Vec<Type>>,
+    result: Type,
+    effects: crate::ast::FunctionEffects,
+) -> Type {
+    Type::Function {
+        groups,
+        effects,
+        result: Box::new(result),
+    }
 }
 
 fn positional_variant(name: &str, field: Type) -> VariantDef {
@@ -1802,7 +1961,9 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::BitOr
                 | LangItemKind::BitXor
                 | LangItemKind::Shl
-                | LangItemKind::Shr => format!("core::ops::{}", kind.source_name()),
+                | LangItemKind::Shr
+                | LangItemKind::Chain
+                | LangItemKind::Coalesce => format!("core::ops::{}", kind.source_name()),
                 LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect => {
                     format!("core::effects::{}", kind.source_name())
                 }
@@ -1863,7 +2024,9 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::BitOr
                 | LangItemKind::BitXor
                 | LangItemKind::Shl
-                | LangItemKind::Shr => "ops",
+                | LangItemKind::Shr
+                | LangItemKind::Chain
+                | LangItemKind::Coalesce => "ops",
                 LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect => "effects",
                 LangItemKind::SharedAccess | LangItemKind::MutableAccess => "access",
                 LangItemKind::Continuation
@@ -2023,6 +2186,49 @@ pub let Shr(Rhs: type) = trait {
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.contains("lang item `AddAssign`")));
+    }
+
+    #[test]
+    fn rejects_malformed_chain_and_coalesce_contracts() {
+        let malformed =
+            EDITION_2026_OPS.replace("let Rebind(Value: type): type", "let Rebind: type");
+        let error = CoreBundle::from_modules(
+            Edition::Edition2026,
+            &[
+                ("prelude", EDITION_2026_PRELUDE),
+                ("ops", &malformed),
+                ("effects", EDITION_2026_EFFECTS),
+                ("access", EDITION_2026_ACCESS),
+                ("control", EDITION_2026_CONTROL),
+                ("iter", EDITION_2026_ITER),
+            ],
+        )
+        .unwrap_err();
+        assert!(error
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.contains("lang item `Chain`")));
+
+        let malformed = EDITION_2026_OPS.replace(
+            "let coalesce(E: effect)(move self)(move fallback: (): Item with(E)): Item with(E)",
+            "let coalesce(move self)(move fallback: (): Item): Item",
+        );
+        let error = CoreBundle::from_modules(
+            Edition::Edition2026,
+            &[
+                ("prelude", EDITION_2026_PRELUDE),
+                ("ops", &malformed),
+                ("effects", EDITION_2026_EFFECTS),
+                ("access", EDITION_2026_ACCESS),
+                ("control", EDITION_2026_CONTROL),
+                ("iter", EDITION_2026_ITER),
+            ],
+        )
+        .unwrap_err();
+        assert!(error
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.contains("lang item `Coalesce`")));
     }
 
     #[test]

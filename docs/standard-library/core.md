@@ -13,9 +13,9 @@ validates declarations that have language-defined roles.
 - the `Copy` and `Drop` traits
 
 `core.ops` contains the arithmetic protocols `Add`, `Sub`, `Mul`, `Div`, and `Rem`, the equality
-protocol `Eq`, the ordering protocol `PartialOrd`, the unary protocols `Neg` and `Not`, and the
-bitwise protocols `BitAnd`, `BitOr`, `BitXor`, `Shl`, and `Shr`, plus arithmetic assignment
-protocols. They are not in the prelude.
+protocol `Eq`, the ordering protocol `PartialOrd`, the unary protocols `Neg` and `Not`, the bitwise
+protocols `BitAnd`, `BitOr`, `BitXor`, `Shl`, and `Shr`, the assignment protocols, and the
+nullish-control protocols `Chain` and `Coalesce`. They are not in the prelude.
 Arithmetic and bitwise protocols consume their operands and use an associated `Output` type:
 
 ```sali
@@ -76,9 +76,30 @@ semantics, including division, remainder, and shift traps. The left place is res
 inherent or unrelated trait method with the same member spelling cannot intercept compound
 assignment.
 
-Writing `left + right`, `left & right`, `left == right`, or `left < right` does not itself require an import. An
-import is required when source names the protocol in an implementation, bound, type, or direct
-member access.
+Writing `left + right`, `left & right`, `left == right`, or `left < right` does not itself require an
+import. An import is required when source names the protocol in an implementation, bound, type, or
+direct member access.
+
+`Chain` and `Coalesce` are the standard protocols for `?.` and `??`:
+
+```sali
+pub let Chain = trait {
+  let Item: type
+  let Rebind(Value: type): type
+  let chain(E: effect, U: type)(move self)(move transform: (Item): U with(E)): Rebind(U) with(E)
+}
+
+pub let Coalesce = trait {
+  let Item: type
+  let coalesce(E: effect)(move self)(move fallback: (): Item with(E)): Item with(E)
+}
+```
+
+The protocols use the same trait and generic-associated-constructor syntax as user declarations.
+The current compiler validates these standard contracts and accepts GAT references in trait method
+signatures; full user implementations and operator dispatch through these protocols are still the
+next semantic slice. Until then, executable `?.` and `??` support remains limited to the compiler's
+built-in `Option`/`Result` paths.
 
 `core.effects` owns standard effect identities. It is not part of the prelude:
 

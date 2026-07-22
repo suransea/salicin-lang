@@ -26,7 +26,8 @@ Compiler-lowered capabilities are now source-backed by validated declarations in
 modules: `core.effects` owns `Unsafe`, `Throws(Error)` with `raise(move error: Error): Never`, and
 an ordinary `Async` effect with a minimal `suspend(): ()` operation;
 `core.access` owns `Shared` and `Mutable`; `core.control` owns the bodyless intrinsic signatures for
-`do`, `try`, `throw`, `unsafe`, and `loop`. These exports remain outside the prelude. `await` is
+`do`, `try`, `throw`, `unsafe`, and `loop`; `core.ops` owns the standard `Chain` and `Coalesce`
+protocol declarations for `?.` and `??`. These exports remain outside the prelude. `await` is
 intentionally absent until the async/Future lowering slice is implemented, at which point its
 executable standard-library contract must land with the implementation.
 `Never`-returning algebraic operations are handled as abort operations whose clauses omit `resume`,
@@ -82,6 +83,11 @@ Arithmetic, bitwise, and shift compound assignment (`+=`, `-=`, `*=`, `/=`, `%=`
 Built-in integers retain checked trap boundaries, while nominal values dispatch through the
 source-backed `core.ops` `*Assign` traits with a mutable receiver borrow. Same-named ordinary methods
 cannot intercept operator lowering.
+`core.ops.Chain` uses a `Rebind(Value: type): type` generic associated constructor and `Coalesce`
+uses an effect-forwarding fallback closure. The compiler now accepts such GAT declarations and
+method-signature references, but still rejects GAT implementations and GAT where-predicate
+equalities. General `?.`/`??` dispatch through these protocols therefore remains future work;
+current executable lowering is still the built-in `Option`/`Result` path.
 
 `core.algebra` currently provides first-order `Semigroup(T)` and `Monoid(T)` protocols outside the
 prelude. `core.functional` now provides higher-kinded `Functor`, `Applicative`, and `Monad`
