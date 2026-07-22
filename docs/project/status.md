@@ -28,8 +28,9 @@ so `Throws(Error).raise` can now be exercised through the same handler path as u
 `throw error` desugars to that ordinary operation when the active row has a unique standard
 `Throws(Error)` effect. `core.control.try` now declares its action requirement as `Throws(E)`, and
 contextual `try { ... }` with an expected `Result(T, Error)` materializes ordinary `Throws(Error)`
-as `Result` through a generated `Throws(Error).handle`; context-free ordinary `Throws` inference is
-still future work.
+as `Result` through a generated `Throws(Error).handle`. Context-free ordinary `Throws` inference now
+covers direct standard-effect function calls with a probeable success type; `Never`-only actions,
+generic calls, `do` returns, residual handlers, and mixed unsafe/error rows remain future work.
 `core.control` also defines `Continuation(Input, Output)` and
 `EffectCallable(Input, Output, Answer)` as validated empty source contracts. The latter has a
 distinct owned semantic type plus a four-pointer LLVM call/drop/environment/flag layout and guarded
@@ -89,8 +90,9 @@ Passing keyword generics are also implemented for functions and generic inherent
 position. Functions and trait methods place a contextual `with(...)` clause after the result type:
 `: T with(unsafe)` adds the checked unsafe call requirement, while `: T with(Throws(E))` declares the
 standard recoverable-error effect. `try { ... }` handles that effect and produces an explicit
-`Result`. Without a contextual result type, ordinary `Throws(E)` inference is still being completed;
-postfix `.try` and `with(try...)` are removed.
+`Result`. Without a contextual result type, direct ordinary `Throws(E)` calls can infer
+`Result(T, E)` when the success type and unique error type are probeable; postfix `.try` and
+`with(try...)` are removed.
 Callable source types use the same shape, such as
 `(i32): i32 with(unsafe)`; the clause is not a runtime or currying group. Complete direct, method,
 aliased, and partially applied unsafe calls require an

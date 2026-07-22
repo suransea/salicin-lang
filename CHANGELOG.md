@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.164.0 - 2026-07-22
+
+- Extended context-free `try { ... }` inference to ordinary standard `Throws(E)` function calls:
+  when the body has one escaping standard `Throws(Error)` row and a probeable success type, the
+  compiler now infers `Result(T, Error)` without a `let result: Result(T, Error)` annotation.
+- Added a direct standard-effect fixture covering unannotated `try` over a `with(Throws(i32))`
+  function call, keeping remaining `Never`-only, generic, `do`-return, residual-handler, and mixed
+  unsafe/error cases explicit implementation gaps.
+
 ## 0.163.0 - 2026-07-22
 
 - Changed the validated `core.control.try` contract to require ordinary `Throws(E)` in its action

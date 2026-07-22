@@ -403,8 +403,8 @@ operation 使用代数 effect 的普通 handler 规则；它的 clause 不带 `r
 `try { body }` 是 handler：它移除 `body` 的 `Throws(E)` 要求并产生 `Result(T, E)`。handler
 内的正常尾值成为 `Ok`，传播出的错误成为 `Err`。当 `try { body }` 有显式 `Result(T, E)` 上下文，
 编译器会生成普通 `Throws(E).handle`：正常完成经 `done` 变为 `Ok`，`raise` 变为 `Err`。无上下文时，
-成功类型和唯一 `Throws(E)` 错误类型需要由 body 推断；无法唯一确定时，用
-`let result: Result(T, E) = try { ... }` 提供上下文，或先把错误显式转换为同一种类型。普通
+直接调用普通 `Throws(E)` 函数可在成功类型可探测且错误类型唯一时推断 `Result(T, E)`；无法唯一确定时，
+用 `let result: Result(T, E) = try { ... }` 提供上下文，或先把错误显式转换为同一种类型。普通
 `Option` 和 `Result` 仍是普通数据类型；`?.`、
 `??` 与显式 `match` 用来操作它们，不会凭返回类型隐式获得 throws 语义。
 
@@ -1564,7 +1564,7 @@ result match {
 正常尾值产生 `Ok(value)`，未在内部处理的错误产生 `Err(error)`。`try` 只处理 `Throws(E)`，不处理同一
 闭包中的 `unsafe`、异步或用户 marker；这些要求继续留在外围 row 中。绑定、返回值或实参提供的
 `Result(T, E)` 可以确定 handler 类型；没有这类上下文时，编译器从闭包内唯一逃逸的 `Throws(E)` 来源
-反向推断。多错误类型仍必须显式转换或用上下文消歧。
+反向推断直接函数调用。多错误类型、`Never`-only action、泛型调用和 residual handler 仍必须显式转换或用上下文消歧。
 
 `do { ... }` 不处理错误，只转发闭包的完整 effect row。因此它不能替代 `try`；它的作用仍是创建并
 立即调用一个普通尾闭包边界。即使块内的 `return` 要求生成独立 closure，`Throws(E)`、

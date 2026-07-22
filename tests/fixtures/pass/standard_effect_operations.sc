@@ -8,6 +8,10 @@ let fail_with_throw_sugar(): Never with(Throws(i32)) = {
   throw 42
 }
 
+let choose_with_throw_sugar(fail: bool): i32 with(Throws(i32)) = {
+  if fail { throw 42 } else { 1 }
+}
+
 let handled_throw(): i32 = {
   Throws(i32).handle(
     raise: { (error) -> error },
@@ -52,6 +56,16 @@ let tried_throw_sugar_action(): i32 = {
   }
 }
 
+let inferred_try_from_throw_sugar_function(): i32 = {
+  let result = try {
+    choose_with_throw_sugar(true)
+  }
+  result match {
+    Ok(value) => value,
+    Err(error) => error,
+  }
+}
+
 let handled_async(): i32 = {
   let mut seen = 0
   let value = Async.handle(
@@ -67,5 +81,5 @@ let handled_async(): i32 = {
 }
 
 let main(): i32 = {
-  handled_throw() + handled_throw_sugar_function() + handled_throw_sugar_action() + tried_throw_sugar_function() + tried_throw_sugar_action() + handled_async() - 210
+  handled_throw() + handled_throw_sugar_function() + handled_throw_sugar_action() + tried_throw_sugar_function() + tried_throw_sugar_action() + inferred_try_from_throw_sugar_function() + handled_async() - 252
 }

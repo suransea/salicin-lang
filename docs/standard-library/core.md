@@ -100,7 +100,9 @@ effect operation and can be handled with a normal abort clause such as `raise: {
 Source `throw error` targets this ordinary operation when the current effect row has exactly one
 active `Throws(Error)`. Contextual `try { ... }` with an expected `Result(T, Error)` handles
 ordinary `Throws(Error)` through the same algebraic handler path, using `done -> Ok` and
-`raise -> Err`. `Async` currently exposes only a minimal `suspend(): ()` operation; executable
+`raise -> Err`. Without an explicit `Result` context, direct calls to ordinary `Throws(Error)`
+functions now infer the same handler result when the success type is probeable and the escaping
+error type is unique. `Async` currently exposes only a minimal `suspend(): ()` operation; executable
 async/Future lowering will add its handler contracts in the same implementation slice rather than
 pretending `await` already works.
 

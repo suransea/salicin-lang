@@ -15936,6 +15936,7 @@ impl Analyzer {
                 if let Some((_, error)) = self.call_throws_info(expression, context) {
                     errors.insert(error);
                 }
+                self.collect_standard_throws_errors_from_call(expression, context, errors);
                 let mut groups = Vec::new();
                 let root = flatten_call(expression, &mut groups);
                 match root {
@@ -16030,6 +16031,25 @@ impl Analyzer {
                         self.collect_escaping_throws(guard, context, errors);
                     }
                     self.collect_escaping_throws(&arm.body, context, errors);
+                }
+            }
+        }
+    }
+
+    fn collect_standard_throws_errors_from_call(
+        &self,
+        expression: &Expr,
+        context: &LowerCtx,
+        errors: &mut HashSet<Ty>,
+    ) {
+        let throws_name = self.lang_item_name(LangItemKind::ThrowsEffect);
+        if let Some(sources) = self.call_custom_effect_sources(expression, context) {
+            for source in sources
+                .iter()
+                .filter_map(|effect| standard_throws_error_source(effect, throws_name))
+            {
+                if let Some(error) = self.probe_source_ty(&source) {
+                    errors.insert(error);
                 }
             }
         }
@@ -16479,6 +16499,44 @@ impl Analyzer {
         }
         let signature = self.signatures.get(name)?;
         (groups.len() == signature.groups.len()).then(|| signature.custom_effects.clone())
+    }
+
+    fn call_custom_effect_sources(
+        &self,
+        expression: &Expr,
+        context: &LowerCtx,
+    ) -> Option<Vec<Type>> {
+        let mut groups = Vec::new();
+        let root = flatten_call(expression, &mut groups);
+        let Expr::Name(name) = root else {
+            return None;
+        };
+        if context.lookup(name).is_some() {
+            return None;
+        }
+        let canonical = if let Some(candidates) = self.function_overloads.get(name) {
+            if !groups
+                .iter()
+                .flat_map(|group| group.iter())
+                .any(|argument| argument.label.is_some())
+            {
+                return None;
+            }
+            let matches = self.matching_function_overloads(candidates, &groups, 0);
+            let [selected] = matches.as_slice() else {
+                return None;
+            };
+            selected.clone()
+        } else {
+            name.clone()
+        };
+        let signature = self.signatures.get(&canonical)?;
+        (groups.len() == signature.groups.len()).then(|| {
+            self.functions
+                .get(&canonical)
+                .map(|function| function.effects.custom.clone())
+                .unwrap_or_else(|| effect_identity_sources(&signature.custom_effects))
+        })
     }
 
     fn lower_do_block(
