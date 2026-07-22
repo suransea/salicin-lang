@@ -408,8 +408,7 @@ struct SourceResumableClosure {
 
 #[derive(Clone)]
 struct SourceDynamicCallable {
-    then_target: String,
-    else_target: String,
+    targets: Vec<String>,
     group_lengths: Vec<usize>,
 }
 
@@ -17788,29 +17787,34 @@ impl Analyzer {
             }
             call
         };
-        let then_branch = match self.transform_handler_expr(
-            rebuild(&callable.then_target),
-            handler.clone(),
-            resume.clone(),
-            continuation.clone(),
-        ) {
-            Ok(branch) => branch,
-            Err(()) => return Some(Err(())),
+        let mut branches = Vec::with_capacity(callable.targets.len());
+        for target in &callable.targets {
+            match self.transform_handler_expr(
+                rebuild(target),
+                handler.clone(),
+                resume.clone(),
+                continuation.clone(),
+            ) {
+                Ok(branch) => branches.push(branch),
+                Err(()) => return Some(Err(())),
+            }
+        }
+        let Some(mut dispatch) = branches.pop() else {
+            self.error("internal dynamic callable has no dispatch targets");
+            return Some(Err(()));
         };
-        let else_branch = match self.transform_handler_expr(
-            rebuild(&callable.else_target),
-            handler,
-            resume,
-            continuation,
-        ) {
-            Ok(branch) => branch,
-            Err(()) => return Some(Err(())),
-        };
-        Some(Ok(Expr::If {
-            condition: Box::new(Expr::Name(name.clone())),
-            then_branch: Box::new(then_branch),
-            else_branch: Some(Box::new(else_branch)),
-        }))
+        for (index, branch) in branches.into_iter().enumerate().rev() {
+            dispatch = Expr::If {
+                condition: Box::new(Expr::Binary(
+                    Box::new(Expr::Name(name.clone())),
+                    BinaryOp::Eq,
+                    Box::new(Expr::Integer(index as i128)),
+                )),
+                then_branch: Box::new(branch),
+                else_branch: Some(Box::new(dispatch)),
+            };
+        }
+        Some(Ok(dispatch))
     }
 
     fn transform_resumable_closure_call(
@@ -18522,81 +18526,70 @@ impl Analyzer {
                         .custom
                         .iter()
                         .any(|effect| source_effect_identity(effect) == handler.identity)
+                        && matches!(binding.value, Expr::If { .. })
                     {
-                        if let Expr::If {
-                            condition,
-                            then_branch,
-                            else_branch: Some(else_branch),
-                        } = &binding.value
+                        let mut targets = Vec::new();
+                        if let Some(selection) =
+                            static_callable_selection(&binding.value, &mut targets)
                         {
-                            let then_target = static_callable_branch_target(then_branch);
-                            let else_target = static_callable_branch_target(else_branch);
-                            if let (Some(then_target), Some(else_target)) =
-                                (then_target, else_target)
+                            let resolve = |target: String| {
+                                handler
+                                    .function_aliases
+                                    .borrow()
+                                    .get(&target)
+                                    .cloned()
+                                    .unwrap_or(target)
+                            };
+                            let targets = targets.into_iter().map(resolve).collect::<Vec<_>>();
+                            if targets.len() >= 2
+                                && targets
+                                    .iter()
+                                    .all(|target| self.functions.contains_key(target))
                             {
-                                let resolve = |target: String| {
-                                    handler
-                                        .function_aliases
-                                        .borrow()
-                                        .get(&target)
-                                        .cloned()
-                                        .unwrap_or(target)
+                                let name = binding.name.clone();
+                                let callable = SourceDynamicCallable {
+                                    targets,
+                                    group_lengths: callable_groups.iter().map(Vec::len).collect(),
                                 };
-                                let then_target = resolve(then_target);
-                                let else_target = resolve(else_target);
-                                if self.functions.contains_key(&then_target)
-                                    && self.functions.contains_key(&else_target)
-                                {
-                                    let name = binding.name.clone();
-                                    let callable = SourceDynamicCallable {
-                                        then_target,
-                                        else_target,
-                                        group_lengths: callable_groups
-                                            .iter()
-                                            .map(Vec::len)
-                                            .collect(),
-                                    };
-                                    let condition = (**condition).clone();
-                                    let next_handler = handler.clone();
-                                    let next_resume = resume.clone();
-                                    let next_continuation = continuation.clone();
-                                    return self.transform_handler_expr(
-                                        condition,
-                                        handler,
-                                        resume,
-                                        Rc::new(move |analyzer, condition| {
-                                            let previous = next_handler
-                                                .dynamic_callables
-                                                .borrow_mut()
-                                                .insert(name.clone(), callable.clone());
-                                            let rest = analyzer.transform_handler_block(
-                                                statements.clone(),
-                                                tail.clone(),
-                                                next_handler.clone(),
-                                                next_resume.clone(),
-                                                next_continuation.clone(),
-                                            );
-                                            let mut callables =
-                                                next_handler.dynamic_callables.borrow_mut();
-                                            if let Some(previous) = previous {
-                                                callables.insert(name.clone(), previous);
-                                            } else {
-                                                callables.remove(&name);
-                                            }
-                                            drop(callables);
-                                            let rest = rest?;
-                                            Ok(Expr::Block(
-                                                vec![Stmt::Let(Binding {
-                                                    mutable: false,
-                                                    name: name.clone(),
-                                                    annotation: Some(Type::Bool),
-                                                    value: condition,
-                                                })],
-                                                Some(Box::new(rest)),
-                                            ))
-                                        }),
-                                    );
-                                }
+                                let next_handler = handler.clone();
+                                let next_resume = resume.clone();
+                                let next_continuation = continuation.clone();
+                                return self.transform_handler_expr(
+                                    selection,
+                                    handler,
+                                    resume,
+                                    Rc::new(move |analyzer, selection| {
+                                        let previous = next_handler
+                                            .dynamic_callables
+                                            .borrow_mut()
+                                            .insert(name.clone(), callable.clone());
+                                        let rest = analyzer.transform_handler_block(
+                                            statements.clone(),
+                                            tail.clone(),
+                                            next_handler.clone(),
+                                            next_resume.clone(),
+                                            next_continuation.clone(),
+                                        );
+                                        let mut callables =
+                                            next_handler.dynamic_callables.borrow_mut();
+                                        if let Some(previous) = previous {
+                                            callables.insert(name.clone(), previous);
+                                        } else {
+                                            callables.remove(&name);
+                                        }
+                                        drop(callables);
+                                        let rest = rest?;
+                                        Ok(Expr::Block(
+                                            vec![Stmt::Let(Binding {
+                                                mutable: false,
+                                                name: name.clone(),
+                                                annotation: Some(Type::I32),
+                                                value: selection,
+                                            })],
+                                            Some(Box::new(rest)),
+                                        ))
+                                    }),
+                                );
                             }
                         }
                     }
@@ -22726,12 +22719,25 @@ fn handler_alias_reference(expression: &Expr, aliases: &HashMap<String, String>)
         .find_map(|child| handler_alias_reference(child, aliases))
 }
 
-fn static_callable_branch_target(expression: &Expr) -> Option<String> {
+fn static_callable_selection(expression: &Expr, targets: &mut Vec<String>) -> Option<Expr> {
     match expression {
-        Expr::Name(name) => Some(name.clone()),
-        Expr::Block(statements, Some(tail)) if statements.is_empty() => {
-            static_callable_branch_target(tail)
+        Expr::Name(name) => {
+            let index = targets.len();
+            targets.push(name.clone());
+            Some(Expr::Integer(index as i128))
         }
+        Expr::Block(statements, Some(tail)) if statements.is_empty() => {
+            static_callable_selection(tail, targets)
+        }
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch: Some(else_branch),
+        } => Some(Expr::If {
+            condition: condition.clone(),
+            then_branch: Box::new(static_callable_selection(then_branch, targets)?),
+            else_branch: Some(Box::new(static_callable_selection(else_branch, targets)?)),
+        }),
         _ => None,
     }
 }

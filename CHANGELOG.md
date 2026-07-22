@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.134.0 - 2026-07-22
+
+- Generalized handler-local conditional selection from two named effectful callables to any finite
+  `if / else if / else` tree of named targets.
+- Lowered the selection tree once at the binding site to an `i32` tag and dispatched that tag at
+  every call while preserving the current resumable continuation.
+- Kept target resolution name-based and handler-local, avoiding type-based overload search or a
+  general escaping dynamic-callable ABI.
+- Extended native dynamic-dispatch coverage to a three-target selection forwarded through a
+  higher-order frame.
+
 ## 0.133.0 - 2026-07-22
 
 - Carried lexical handler capabilities through compiler-generated named, loop, and continuation CPS

@@ -75,8 +75,8 @@ effectful frames and are erased from those frames' runtime parameter lists. Expl
 capturing local closures use a hidden erased continuation argument while lexically enclosed by the
 handler. Their ordinary capture environments preserve `Fn`, `FnMut`, and `FnOnce` behavior,
 including repeated mutable calls and exactly-once abandonment cleanup, and they may specialize a
-higher-order frame. Two-way conditional selections between named targets use a binding-site boolean
-tag and call-time resumable branch dispatch, including forwarding through a higher-order frame.
+higher-order frame. Finite conditional trees between named targets use a binding-site integer tag
+and call-time resumable branch dispatch, including forwarding through a higher-order frame.
 Escaping callables, conditional closure environments, and open-ended dynamic targets remain
 implementation work and receive dedicated diagnostics.
 Compiler-generated CPS closures carry a separate lexical handler-capability set, allowing an inner
