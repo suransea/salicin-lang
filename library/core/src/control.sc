@@ -10,6 +10,14 @@ pub let Continuation(Input: type, Output: type) = struct {}
 // `Continuation(Output, Answer)`; `Answer` is the surrounding handler result.
 pub let EffectCallable(Input: type, Output: type, Answer: type) = struct {}
 
+// Protocol anchor for compiler-derived effect handlers. Every source
+// `effect` declaration automatically satisfies this trait; the operation
+// clauses and the `handle` member are synthesized from that declaration's
+// operation set.
+pub let Handle = trait(Self: effect) {
+  let Clauses(Value: type, Answer: type): type
+}
+
 // Control syntax uses trailing-closure call notation and targets these
 // validated functions. Most control helpers are ordinary source definitions;
 // the compiler only keeps syntax-directed shortcuts and the few places that

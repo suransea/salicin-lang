@@ -168,11 +168,14 @@ effect declarations. `unsafe` and `loop` still need compiler authority and primi
 their bodyless signatures are permitted only for validated core lang items; ordinary package
 functions still require `= { ... }` bodies.
 
-It also declares two compiler-owned erased runtime contracts:
+It also declares the protocol and erased runtime contracts used by algebraic handler lowering:
 
 ```sc
 pub let Continuation(Input: type, Output: type) = struct {}
 pub let EffectCallable(Input: type, Output: type, Answer: type) = struct {}
+pub let Handle = trait(Self: effect) {
+  let Clauses(Value: type, Answer: type): type
+}
 ```
 
 `Continuation` is a one-shot suspended computation. `EffectCallable` is an owned action awaiting a
@@ -182,7 +185,10 @@ are module exports rather than prelude names and cannot be replaced by same-name
 The compiler-internal action entry has the logical signature
 `(environment, Input, Continuation(Output, Answer)): Answer`. Erasing or invoking an action consumes
 its owner; a dropped, uninvoked action releases its captured environment through the stored drop
-entry. These low-level operations are not source-level standard-library functions.
+entry. `Handle` is an effect-kinded lang trait automatically satisfied by every source
+`effect` declaration; its `Clauses` associated constructor names the compiler-derived labeled
+clause pack used by `.handle`. These low-level operations and generated handler implementations are
+not ordinary source-level standard-library functions.
 
 ```sc
 pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E)

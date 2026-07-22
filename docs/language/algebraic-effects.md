@@ -62,7 +62,8 @@ let answer = Ask.handle(
 
 ## Derived `handle` member
 
-Every effect declaration derives a compiler-lowered associated member named `handle`:
+Every effect declaration automatically satisfies the validated `core.control.Handle` protocol and
+derives a compiler-lowered associated member named `handle`:
 
 ```sc
 let answer = State(i32).handle(
@@ -76,7 +77,8 @@ let answer = State(i32).handle(
 The final trailing closure is the handled action. Every operation signature is supplied exactly
 once as a labeled closure. A non-overloaded operation clause may choose local parameter names; an
 overloaded clause must repeat the selected operation's parameter names in declaration order.
-`handle` is reserved in the effect member namespace.
+`handle` is reserved in the effect member namespace. The operation-specific clause pack is derived
+from the source `effect` declaration rather than implemented by ordinary user code.
 
 For an operation with parameter groups `(P1)...(Pn): O`, its handler closure normally has the
 contextual shape `(P1)...(Pn)(resume): R`, where `R` is the result of the complete handler. For a
@@ -143,12 +145,15 @@ unification or silently discard duplicate nominal identities.
 ## Lowering contract
 
 Effect operations and derived handlers are justified by the source `effect { ... }` declaration in
-the same way enum constructors are justified by an `enum` declaration. Shared continuation behavior
-has the edition-pinned `Continuation(Input, Output)` declaration in `core.control`; the compiler may
-not recognize a resumable runtime protocol that has no matching standard-library source contract.
-Owned actions crossing into reusable handlers use the adjacent
-`EffectCallable(Input, Output, Answer)` contract. Its logical declaration is empty because the call
-entry, drop entry, environment pointer, and ownership flag are compiler-private ABI fields.
+the same way enum constructors are justified by an `enum` declaration. The handler surface is backed
+by the edition-pinned `Handle` trait in `core.control`; every effect declaration receives a
+compiler-derived implementation whose `Clauses(Value, Answer)` associated constructor denotes the
+operation-indexed clause pack for that exact effect instance. Shared continuation behavior has the
+adjacent `Continuation(Input, Output)` declaration; the compiler may not recognize a resumable
+runtime protocol that has no matching standard-library source contract. Owned actions crossing into
+reusable handlers use the adjacent `EffectCallable(Input, Output, Answer)` contract. Its logical
+declaration is empty because the call entry, drop entry, environment pointer, and ownership flag are
+compiler-private ABI fields.
 The call entry receives the erased environment, the action input, and an owned
 `Continuation(Output, Answer)`, then returns the handler answer. HIR represents action erasure and
 invocation as explicit moves, and native lowering emits target-specific call/drop adapters for the

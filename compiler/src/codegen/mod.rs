@@ -3303,10 +3303,12 @@ impl Analyzer {
         }
         if !matches!(
             definition.self_parameter.kind,
-            CompileParamKind::Type | CompileParamKind::TypeConstructor { .. }
+            CompileParamKind::Type
+                | CompileParamKind::TypeConstructor { .. }
+                | CompileParamKind::Effect
         ) {
             self.error(format!(
-                "trait `{}` self kind must be `type` or a type-constructor kind, found {}",
+                "trait `{}` self kind must be `type`, a type-constructor kind, or `effect`, found {}",
                 definition.name,
                 describe_compile_param_kind(definition.self_parameter.kind)
             ));
@@ -21086,6 +21088,15 @@ impl Analyzer {
         context: &mut LowerCtx,
     ) -> HirExpr {
         let diagnostic_count = self.diagnostics.len();
+        let handle_protocol = self.lang_item_name(LangItemKind::Handle).to_owned();
+        if !self.traits.get(&handle_protocol).is_some_and(|schema| {
+            schema.valid && schema.self_parameter.kind == CompileParamKind::Effect
+        }) {
+            self.error(
+                "effect handler lowering requires the validated `core.control.Handle` protocol",
+            );
+            return error_expr();
+        }
         if groups.len() != 2 || groups[1].len() != 1 || groups[1][0].label.is_some() {
             self.error(format!(
                 "`{}.handle` expects one labeled clause group followed by one trailing action closure",

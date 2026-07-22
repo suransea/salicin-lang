@@ -106,6 +106,7 @@ pub enum LangItemKind {
     MutableAccess,
     Continuation,
     EffectCallable,
+    Handle,
     Do,
     Try,
     Throw,
@@ -116,7 +117,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 45] = [
+    const ALL: [Self; 46] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -155,6 +156,7 @@ impl LangItemKind {
         Self::MutableAccess,
         Self::Continuation,
         Self::EffectCallable,
+        Self::Handle,
         Self::Do,
         Self::Try,
         Self::Throw,
@@ -204,6 +206,7 @@ impl LangItemKind {
             Self::MutableAccess => "Mutable",
             Self::Continuation => "Continuation",
             Self::EffectCallable => "EffectCallable",
+            Self::Handle => "Handle",
             Self::Do => "do",
             Self::Try => "try",
             Self::Throw => "throw",
@@ -221,7 +224,8 @@ impl LangItemKind {
             Self::UnsafeEffect | Self::ThrowsEffect => "effect",
             Self::SharedAccess | Self::MutableAccess => "access",
             Self::Do | Self::Try | Self::Throw | Self::Unsafe | Self::Loop => "function",
-            Self::Copy
+            Self::Handle
+            | Self::Copy
             | Self::Drop
             | Self::Add
             | Self::Sub
@@ -294,6 +298,7 @@ impl LangItemKind {
             | Self::MutableAccess
             | Self::Continuation
             | Self::EffectCallable
+            | Self::Handle
             | Self::Do
             | Self::Try
             | Self::Throw
@@ -399,6 +404,7 @@ pub struct LangItems {
     mutable_access: LangItem,
     continuation: LangItem,
     effect_callable: LangItem,
+    handle: LangItem,
     do_function: LangItem,
     try_function: LangItem,
     throw_function: LangItem,
@@ -545,6 +551,9 @@ impl LangItems {
     pub const fn effect_callable(&self) -> &LangItem {
         &self.effect_callable
     }
+    pub const fn handle(&self) -> &LangItem {
+        &self.handle
+    }
     pub const fn do_function(&self) -> &LangItem {
         &self.do_function
     }
@@ -607,6 +616,7 @@ impl LangItems {
             LangItemKind::MutableAccess => &self.mutable_access,
             LangItemKind::Continuation => &self.continuation,
             LangItemKind::EffectCallable => &self.effect_callable,
+            LangItemKind::Handle => &self.handle,
             LangItemKind::Do => &self.do_function,
             LangItemKind::Try => &self.try_function,
             LangItemKind::Throw => &self.throw_function,
@@ -778,6 +788,7 @@ impl CoreBundle {
             &mut lang_items.throws_effect,
             &mut lang_items.shared_access,
             &mut lang_items.mutable_access,
+            &mut lang_items.handle,
             &mut lang_items.do_function,
             &mut lang_items.try_function,
             &mut lang_items.throw_function,
@@ -1020,6 +1031,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         mutable_access: item(LangItemKind::MutableAccess),
         continuation: item(LangItemKind::Continuation),
         effect_callable: item(LangItemKind::EffectCallable),
+        handle: item(LangItemKind::Handle),
         do_function: item(LangItemKind::Do),
         try_function: item(LangItemKind::Try),
         throw_function: item(LangItemKind::Throw),
@@ -1113,6 +1125,7 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
                 );
             }
         }
+        (LangItemKind::Handle, Item::Trait(definition)) => validate_handle(definition, diagnostics),
         (
             LangItemKind::Do
             | LangItemKind::Try
@@ -1587,6 +1600,29 @@ fn trait_has_default_self(definition: &TraitDef) -> bool {
         && definition.self_parameter.kind == CompileParamKind::Type
 }
 
+fn validate_handle(definition: &TraitDef, diagnostics: &mut Vec<String>) {
+    let valid = definition.self_parameter.name == "Self"
+        && definition.self_parameter.kind == CompileParamKind::Effect
+        && definition.compile_groups.is_empty()
+        && definition.where_predicates.is_empty()
+        && matches!(
+            definition.members.as_slice(),
+            [TraitMember::AssociatedType {
+                name,
+                compile_groups,
+                default,
+            }] if name == "Clauses"
+                && compile_groups == &vec![vec![type_parameter("Value"), type_parameter("Answer")]]
+                && default.is_none()
+        );
+    if !valid {
+        diagnostics.push(
+            "lang item `Handle` must have shape `pub let Handle = trait(Self: effect) { let Clauses(Value: type, Answer: type): type }`"
+                .to_owned(),
+        );
+    }
+}
+
 fn compile_effect_parameter(name: &str) -> CompileParam {
     CompileParam {
         name: name.to_owned(),
@@ -2004,6 +2040,7 @@ pub let Shr(Rhs: type) = trait {
                 }
                 LangItemKind::Continuation
                 | LangItemKind::EffectCallable
+                | LangItemKind::Handle
                 | LangItemKind::Do
                 | LangItemKind::Try
                 | LangItemKind::Throw
@@ -2060,6 +2097,7 @@ pub let Shr(Rhs: type) = trait {
                 LangItemKind::SharedAccess | LangItemKind::MutableAccess => "access",
                 LangItemKind::Continuation
                 | LangItemKind::EffectCallable
+                | LangItemKind::Handle
                 | LangItemKind::Do
                 | LangItemKind::Try
                 | LangItemKind::Throw
@@ -2148,6 +2186,28 @@ pub let Shr(Rhs: type) = trait {
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.contains("lang item `EffectCallable`")));
+
+        let malformed = EDITION_2026_CONTROL.replace(
+            "pub let Handle = trait(Self: effect) {\n  let Clauses(Value: type, Answer: type): type\n}",
+            "pub let Handle = trait { let Clauses(Value: type): type }",
+        );
+        let error = CoreBundle::from_modules(
+            Edition::Edition2026,
+            &[
+                ("prelude", EDITION_2026_PRELUDE),
+                ("core", EDITION_2026_ROOT),
+                ("ops", EDITION_2026_OPS),
+                ("effects", EDITION_2026_EFFECTS),
+                ("access", EDITION_2026_ACCESS),
+                ("control", &malformed),
+                ("iter", EDITION_2026_ITER),
+            ],
+        )
+        .unwrap_err();
+        assert!(error
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.contains("lang item `Handle`")));
 
         let malformed = EDITION_2026_CONTROL.replace(
             "pub let throw(Error: type)(move error: Error): Never with(core.effects.Throws(Error))",
