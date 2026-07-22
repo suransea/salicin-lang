@@ -1,4 +1,6 @@
-let fail(E: type)(move error: E): i32 with(throws(E)) = {
+use core.effects.Throws
+
+let fail(E: type)(move error: E): i32 with(Throws(E)) = {
   throw error
 }
 

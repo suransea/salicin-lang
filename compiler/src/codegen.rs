@@ -16656,6 +16656,11 @@ impl Analyzer {
             return (groups.len() == signature.groups.len())
                 .then(|| signature.custom_effects.clone());
         }
+        if let Some(sources) =
+            self.generic_template_call_custom_effect_sources(name, &groups, context)
+        {
+            return Some(source_effect_identities(&sources));
+        }
         let signature = self.signatures.get(name)?;
         (groups.len() == signature.groups.len()).then(|| signature.custom_effects.clone())
     }
@@ -16689,6 +16694,11 @@ impl Analyzer {
         } else {
             name.clone()
         };
+        if let Some(sources) =
+            self.generic_template_call_custom_effect_sources(&canonical, &groups, context)
+        {
+            return Some(sources);
+        }
         let signature = self.signatures.get(&canonical)?;
         (groups.len() == signature.groups.len()).then(|| {
             self.functions
@@ -16696,6 +16706,44 @@ impl Analyzer {
                 .map(|function| function.effects.custom.clone())
                 .unwrap_or_else(|| effect_identity_sources(&signature.custom_effects))
         })
+    }
+
+    fn generic_template_call_custom_effect_sources(
+        &self,
+        name: &str,
+        groups: &[&[CallArg]],
+        context: &LowerCtx,
+    ) -> Option<Vec<Type>> {
+        let template = self.function_templates.get(name)?;
+        let compile_group_count = template.compile_groups.len();
+        if groups.len() != compile_group_count + template.groups.len() {
+            return None;
+        }
+        let mut substitutions = HashMap::new();
+        for (parameters, supplied) in template
+            .compile_groups
+            .iter()
+            .zip(groups.iter().take(compile_group_count))
+        {
+            if parameters.len() != supplied.len()
+                || supplied.iter().any(|argument| argument.label.is_some())
+            {
+                return None;
+            }
+            for (parameter, argument) in parameters.iter().zip(*supplied) {
+                let source = self.probe_compile_argument_source(
+                    parameter,
+                    &argument.value,
+                    &context.type_substitutions,
+                )?;
+                substitutions.insert(parameter.name.clone(), source);
+            }
+        }
+        let mut effects = template.effects.custom.clone();
+        for effect in &mut effects {
+            substitute_type_parameters(effect, &substitutions);
+        }
+        Some(effects)
     }
 
     fn lower_do_block(
@@ -20625,6 +20673,71 @@ impl Analyzer {
         )))
     }
 
+    fn explicit_generic_handler_function(
+        &mut self,
+        name: &str,
+        groups: &[&[CallArg]],
+        handled_identity: &str,
+    ) -> Option<Result<(String, Function, usize), ()>> {
+        let template = self.function_templates.get(name)?.clone();
+        let compile_group_count = template.compile_groups.len();
+        if groups.len() < compile_group_count
+            || groups.len() > compile_group_count + template.groups.len()
+        {
+            return None;
+        }
+        let mut substitutions = HashMap::new();
+        let mut source_arguments = Vec::new();
+        for (parameters, supplied) in template
+            .compile_groups
+            .iter()
+            .zip(groups.iter().take(compile_group_count))
+        {
+            if parameters.len() != supplied.len()
+                || supplied.iter().any(|argument| argument.label.is_some())
+            {
+                return None;
+            }
+            for (parameter, argument) in parameters.iter().zip(*supplied) {
+                let source = match parameter.kind {
+                    CompileParamKind::Type => {
+                        match self.type_argument_from_expr(&argument.value, &HashMap::new()) {
+                            Some(source) => source,
+                            None => return Some(Err(())),
+                        }
+                    }
+                    _ => return None,
+                };
+                substitutions.insert(parameter.name.clone(), source.clone());
+                source_arguments.push(source);
+            }
+        }
+        let mut effects = template.effects.custom.clone();
+        for effect in &mut effects {
+            substitute_type_parameters(effect, &substitutions);
+        }
+        if !effects
+            .iter()
+            .any(|effect| source_effect_identity(effect) == handled_identity)
+        {
+            return None;
+        }
+        let arguments = match self.materialize_type_arguments(&source_arguments) {
+            Some(arguments) => arguments,
+            None => return Some(Err(())),
+        };
+        let canonical = match self.ensure_function_instance(name, source_arguments, arguments) {
+            Some(canonical) => canonical,
+            None => return Some(Err(())),
+        };
+        let function = self
+            .functions
+            .get(&canonical)
+            .cloned()
+            .expect("created generic function instance is registered");
+        Some(Ok((canonical, function, compile_group_count)))
+    }
+
     fn transform_effectful_named_call(
         &mut self,
         expression: &Expr,
@@ -20636,9 +20749,24 @@ impl Analyzer {
         let Expr::Name(source_name) = flatten_call(expression, &mut groups) else {
             return None;
         };
+        let original_groups = groups.clone();
         let aliased_name = handler.function_aliases.borrow().get(source_name).cloned();
-        let name = aliased_name.as_deref().unwrap_or(source_name);
-        let function = self.functions.get(name)?.clone();
+        let source_name = source_name.clone();
+        let selected_name = aliased_name.as_deref().unwrap_or(&source_name);
+        let (name, function, runtime_group_start) =
+            if let Some(function) = self.functions.get(selected_name).cloned() {
+                (selected_name.to_owned(), function, 0)
+            } else if let Some(resolved) =
+                self.explicit_generic_handler_function(selected_name, &groups, &handler.identity)
+            {
+                match resolved {
+                    Ok(resolved) => resolved,
+                    Err(()) => return Some(Err(())),
+                }
+            } else {
+                return None;
+            };
+        groups = groups[runtime_group_start..].to_vec();
         if !function
             .effects
             .custom
@@ -20652,18 +20780,25 @@ impl Analyzer {
             .flat_map(|group| group.iter())
             .any(|argument| self.handler_expression_may_suspend(&argument.value, &handler))
         {
+            let compile_prefix = original_groups[..runtime_group_start]
+                .iter()
+                .map(|group| group.to_vec())
+                .collect::<Vec<_>>();
             let group_lengths = groups.iter().map(|group| group.len()).collect::<Vec<_>>();
             let arguments = groups
                 .iter()
                 .flat_map(|group| group.iter().cloned())
                 .collect::<Vec<_>>();
-            let callee = source_name.clone();
+            let callee = source_name;
             let next_handler = handler.clone();
             let next_resume = resume.clone();
             let next_continuation = continuation.clone();
             let completed: SourceArgumentsContinuation = Rc::new(move |analyzer, arguments| {
                 let mut offset = 0;
                 let mut call = Expr::Name(callee.clone());
+                for group in &compile_prefix {
+                    call = Expr::Call(Box::new(call), group.clone());
+                }
                 for length in &group_lengths {
                     let end = offset + length;
                     call = Expr::Call(Box::new(call), arguments[offset..end].to_vec());
@@ -20691,7 +20826,7 @@ impl Analyzer {
                 completed,
             ));
         }
-        if let Some(frame) = handler.inlining.borrow().get(name).cloned() {
+        if let Some(frame) = handler.inlining.borrow().get(&name).cloned() {
             let specialization = self.next_closure;
             self.next_closure += 1;
             let value_name = format!("$handler$recursive$continuation$value${specialization}");
@@ -20878,12 +21013,12 @@ impl Analyzer {
             self.error(format!(
                 "resumable function `{name}` requires an explicit return type"
             ));
-            handler.inlining.borrow_mut().remove(name);
+            handler.inlining.borrow_mut().remove(&name);
             return Some(Err(()));
         };
         let Some(answer) = handler.result_source.clone() else {
             self.error("a resumable named call requires a contextual handler answer type");
-            handler.inlining.borrow_mut().remove(name);
+            handler.inlining.borrow_mut().remove(&name);
             return Some(Err(()));
         };
         let continuation_name = format!("$handler$call$continuation${specialization}");
@@ -20977,7 +21112,7 @@ impl Analyzer {
                     .return_continuations
                     .borrow_mut()
                     .remove(&return_name);
-                handler.inlining.borrow_mut().remove(name);
+                handler.inlining.borrow_mut().remove(&name);
                 return Some(Err(()));
             }
         };
@@ -21057,7 +21192,7 @@ impl Analyzer {
             ],
             Some(Box::new(call)),
         ));
-        handler.inlining.borrow_mut().remove(name);
+        handler.inlining.borrow_mut().remove(&name);
         Some(result)
     }
 

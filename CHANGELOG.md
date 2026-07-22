@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.167.0 - 2026-07-22
+
+- Taught standard `Throws(E)` detection and handler lowering to recognize explicitly instantiated
+  generic functions, so calls such as `fail(bool)(true)` are handled by contextual `try { ... }`
+  through the ordinary standard effect path.
+- Migrated the public generic throw fixture from lowercase `throws(E)` to `core.effects.Throws(E)`.
+- Kept remaining lowercase carrier coverage limited to residual-handler and mixed unsafe/error
+  paths.
+
 ## 0.166.0 - 2026-07-22
 
 - Stopped retaining lifted native closures produced while only validating ordinary functions whose

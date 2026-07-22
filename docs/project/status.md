@@ -29,9 +29,10 @@ so `Throws(Error).raise` can now be exercised through the same handler path as u
 `Throws(Error)` effect. `core.control.try` now declares its action requirement as `Throws(E)`, and
 contextual `try { ... }` with an expected `Result(T, Error)` materializes ordinary `Throws(Error)`
 as `Result` through a generated `Throws(Error).handle`. Context-free ordinary `Throws` inference now
-covers direct standard-effect function calls with a probeable success type, and `do` return
-boundaries can forward standard `Throws(Error)` into a contextual `try { ... }`. `Never`-only
-actions, generic calls, residual handlers, and mixed unsafe/error rows remain future work.
+covers direct standard-effect function calls with a probeable success type, explicitly instantiated
+generic calls such as `fail(bool)(...)`, and `do` return boundaries forwarding standard
+`Throws(Error)` into a contextual `try { ... }`. `Never`-only actions, residual handlers, and mixed
+unsafe/error rows remain future work.
 `core.control` also defines `Continuation(Input, Output)` and
 `EffectCallable(Input, Output, Answer)` as validated empty source contracts. The latter has a
 distinct owned semantic type plus a four-pointer LLVM call/drop/environment/flag layout and guarded
@@ -177,8 +178,8 @@ custom-effect slot, while a value requiring additional effects cannot fill a nar
 slot's widened requirements remain checked at indirect calls, and generic row inference retains the
 callable's exact source row.
 Fixed ordinary `Throws(E)` direct calls, contextual `try` handling, and `do` return-boundary
-forwarding are implemented for the non-generic paths currently covered by public fixtures.
-Effect-parameterized, residual-handler, and mixed unsafe/error lowering still use the older internal
+forwarding are implemented for the public direct and explicitly instantiated generic fixtures.
+Effect-parameterized residual-handler and mixed unsafe/error lowering still use the older internal
 carrier path until that implementation is unified. Ordinary `Option` and `Result` functions require
 explicit variant construction; the removed `Try`, `FromResidual`, `FromError`, and `ControlFlow`
 language protocols no
