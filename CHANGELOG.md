@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.135.0 - 2026-07-22
+
+- Allowed finite handler-local callable selections to target explicitly typed capturing resumable
+  closures as well as named functions.
+- Preserved selected `FnMut` state, rejected a second selected `FnOnce` invocation through ordinary
+  flow joins, and covered selected plus unselected resource cleanup on abandonment.
+- Added a non-owning enum inspection read for effectful match guards whose candidate patterns bind no
+  payload values, then moved the sole owned input into the suspended guard continuation.
+- Kept effectful guards with payload bindings rejected until their pattern transfers can be committed
+  only after the resumed guard succeeds.
+- Added three native regressions covering dynamic `FnMut`, dynamic `FnOnce` cleanup, and a false
+  suspended guard over a resource-owning enum; all produce exit code 42.
+
 ## 0.134.0 - 2026-07-22
 
 - Generalized handler-local conditional selection from two named effectful callables to any finite

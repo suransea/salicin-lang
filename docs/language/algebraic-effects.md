@@ -178,8 +178,11 @@ its body tail-invokes that continuation. The normal closure environment remains 
 captures retain `Fn` behavior, mutable captures retain `FnMut` state across resumptions and later
 calls, and move captures retain `FnOnce` ownership. Abandoning an operation inside the closure drops
 the moved capture through the erased continuation exactly once. Such a closure may also specialize
-an effectful higher-order callable parameter; conditionally selected or escaping closure values
-remain dynamic-ABI work.
+an effectful higher-order callable parameter or participate in a finite handler-local selection.
+The tag dispatches directly to the chosen closure environment, preserving
+`Fn`/`FnMut` state and `FnOnce` flow consumption; it does not create an escaping erased closure
+value. Selected and unselected owned environments remain covered by normal scope and abandonment
+cleanup; escaping closure selections remain dynamic-ABI work.
 Operation and ordinary call arguments are traversed in source order, `done:` may change the answer
 type, and nested handlers of the same identity select the nearest matching boundary. Arguments of
 an effect-propagating named call enter CPS before its callee frame is built, so multiple suspended
@@ -204,11 +207,15 @@ arguments, arrays, indexes, members, `match` scrutinees and arm
 bodies, and immediate `do`, `unsafe`, and `try` wrappers. Effectful `&&` and `||` operands retain
 their lazy branch semantics. Effectful `??` evaluates its fallback only on `None` or `Err`, and both
 the scrutinee and fallback may suspend independently. Match guards may suspend when the complete
-match input implements `Copy`; false guards continue with the next candidate. Fully applied optional
+match input implements `Copy`, or when a non-`Copy` enum is matched only by binding-free candidate
+patterns; false guards continue with the next candidate. Fully applied optional
 method calls evaluate the owned receiver first, enter argument CPS only on `Some` or `Ok`, and rewrap
 the method result before continuing. Retaining a non-Copy scrutinee across suspended candidate
-selection and capturing indirect calls remain implementation work; unsupported cases are rejected
-rather than compiled with callback-only semantics.
+selection is implemented when all candidate patterns are binding-free: dispatch inspects a
+non-owning enum value, then transfers the sole owner into the guard continuation. A suspended guard
+whose pattern binds payload values still requires delayed pattern-transfer commitment and is
+rejected. Capturing indirect calls remain implementation work rather than falling back to
+callback-only semantics.
 
 Lexically nested handlers of different effect identities compose in source order. The outer
 selective-CPS pass traverses the inner handler's action and clause closures, including generated

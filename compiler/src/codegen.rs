@@ -772,6 +772,7 @@ struct HirPlace {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HirReadKind {
     Copy,
+    Inspect,
     Move,
 }
 
@@ -11960,6 +11961,10 @@ impl Analyzer {
         }
         if deferred_handler_continuation {
             for capture in &mut capture_uses {
+                if capture.name.starts_with("$handler$match$inspect$input$") {
+                    capture.mode = ClosureCaptureMode::Move;
+                    continue;
+                }
                 let Some(closure) = outer
                     .lookup(&capture.name)
                     .and_then(|local| local.closure.as_ref())
@@ -12063,7 +12068,9 @@ impl Analyzer {
                     if !(self.is_copy_type(&local.ty)
                         || deferred_handler_continuation && local.closure.is_some()) =>
                 {
-                    if name.starts_with("$handler$match$input$") {
+                    if name.starts_with("$handler$match$input$")
+                        || name.starts_with("$handler$match$inspect$input$")
+                    {
                         self.error(
                             "an effectful match guard currently requires its match input to implement Copy",
                         );
@@ -13583,7 +13590,26 @@ impl Analyzer {
         if let Some(scalar_ty) = scalar_ty {
             return self.lower_scalar_match(scrutinee, arms, expected, context, &scalar_ty);
         }
-        let scrutinee = self.lower_expr(scrutinee, None, context);
+        let inspect_handler_input = matches!(scrutinee, Expr::Name(name) if name.starts_with("$handler$match$inspect$input$"))
+            && arms
+                .iter()
+                .all(|arm| !pattern_contains_binding(&arm.pattern));
+        let scrutinee = if inspect_handler_input {
+            let Some(place) = self.lower_place(scrutinee, context) else {
+                return error_expr();
+            };
+            self.ensure_available(&place, context);
+            self.ensure_no_conflicting_loan(&place, AccessKind::Copy, context);
+            HirExpr {
+                ty: place.ty.clone(),
+                kind: HirExprKind::Read {
+                    place,
+                    kind: HirReadKind::Inspect,
+                },
+            }
+        } else {
+            self.lower_expr(scrutinee, None, context)
+        };
         self.lower_match_with_scrutinee(scrutinee, arms, expected, context)
     }
 
@@ -17244,7 +17270,14 @@ impl Analyzer {
                         Rc::new(move |analyzer, scrutinee| {
                             let match_id = analyzer.next_closure;
                             analyzer.next_closure += 1;
-                            let input = format!("$handler$match$input${match_id}");
+                            let input = if arms
+                                .iter()
+                                .all(|arm| !pattern_contains_binding(&arm.pattern))
+                            {
+                                format!("$handler$match$inspect$input${match_id}")
+                            } else {
+                                format!("$handler$match$input${match_id}")
+                            };
                             let candidates = analyzer.transform_handler_match_candidates(
                                 &input,
                                 &arms,
@@ -18542,9 +18575,10 @@ impl Analyzer {
                             };
                             let targets = targets.into_iter().map(resolve).collect::<Vec<_>>();
                             if targets.len() >= 2
-                                && targets
-                                    .iter()
-                                    .all(|target| self.functions.contains_key(target))
+                                && targets.iter().all(|target| {
+                                    self.functions.contains_key(target)
+                                        || handler.resumable_closures.borrow().contains_key(target)
+                                })
                             {
                                 let name = binding.name.clone();
                                 let callable = SourceDynamicCallable {
@@ -23609,6 +23643,20 @@ fn collect_pattern_binding_names(pattern: &Pattern, names: &mut HashSet<String>)
     }
 }
 
+fn pattern_contains_binding(pattern: &Pattern) -> bool {
+    match pattern {
+        Pattern::Binding(_) => true,
+        Pattern::Constructor { fields, .. } => match fields {
+            PatternFields::Unit => false,
+            PatternFields::Positional(patterns) => patterns.iter().any(pattern_contains_binding),
+            PatternFields::Named(fields) => fields
+                .iter()
+                .any(|field| pattern_contains_binding(&field.pattern)),
+        },
+        Pattern::Wildcard | Pattern::Integer(_) | Pattern::Bool(_) => false,
+    }
+}
+
 fn record_closure_capture(
     captures: &mut Vec<ClosureCaptureUse>,
     name: &str,
@@ -25764,7 +25812,53 @@ impl<'a> HirCleanupPlanner<'a> {
         cursor: CleanupCursor,
         result_use: ResultUse,
     ) -> Result<Option<CleanupCursor>, Diagnostic> {
-        let (scrutinee_local, scrutinee_path) = self.prepare_temporary(cursor, &scrutinee.ty)?;
+        let inspects_borrowed_storage = matches!(
+            scrutinee.kind,
+            HirExprKind::Read {
+                kind: HirReadKind::Inspect,
+                ..
+            }
+        );
+        let (scrutinee_local, scrutinee_path) = if inspects_borrowed_storage {
+            let local = self
+                .builder
+                .new_local(
+                    cursor.scope,
+                    CleanupLocalKind::Temporary,
+                    CleanupLocalOwnership::Owned,
+                    false,
+                )
+                .map_err(|error| self.diagnostic(error))?;
+            self.track_local(
+                cursor.scope,
+                local,
+                CleanupLocalKind::Temporary,
+                CleanupLocalOwnership::Owned,
+            );
+            self.operation(cursor.block, CleanupOp::StorageLive(local))?;
+            let place = CleanupPlace::local(local);
+            let path = self.register_move_path(place.clone(), None, false)?;
+            if let Ty::Enum(name) = &scrutinee.ty {
+                let variant_count = self
+                    .program
+                    .enum_layout(name)
+                    .ok_or_else(|| self.diagnostic(format!("missing enum layout `{name}`")))?
+                    .variants
+                    .len();
+                for variant in 0..variant_count {
+                    let variant = u32::try_from(variant)
+                        .map_err(|_| self.diagnostic("inspection variant does not fit in u32"))?;
+                    self.register_move_path(
+                        place.clone().project(CleanupProjection::Downcast(variant)),
+                        Some(path),
+                        false,
+                    )?;
+                }
+            }
+            (local, path)
+        } else {
+            self.prepare_temporary(cursor, &scrutinee.ty)?
+        };
         let scrutinee_destination = CleanupDestination {
             place: CleanupPlace::local(scrutinee_local),
             path: scrutinee_path,
@@ -28725,13 +28819,20 @@ impl<'a> FunctionEmitter<'a> {
         scrutinee: &HirExpr,
         arms: &[HirMatchArm],
     ) -> Result<Operand, Diagnostic> {
+        let inspects_borrowed_storage = matches!(
+            scrutinee.kind,
+            HirExprKind::Read {
+                kind: HirReadKind::Inspect,
+                ..
+            }
+        );
         let scrutinee = self.emit_expr(scrutinee)?;
         if self.terminated {
             return Ok(Operand::never());
         }
         let match_cleanup_depth = self.drop_slots.len();
         let mut match_drop_slot = None;
-        if self.program.needs_drop(&scrutinee.ty) {
+        if self.program.needs_drop(&scrutinee.ty) && !inspects_borrowed_storage {
             let ty = llvm_value_type(&scrutinee.ty)?;
             let pointer = self.entry_alloca(&ty, "match scrutinee");
             self.instruction(format!("store {ty} {}, ptr {pointer}", scrutinee.value()?));
@@ -35144,6 +35245,73 @@ let main(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) {
         assert!(escaping.iter().any(|error| error
             .message
             .contains("dynamic effectful callable `action` cannot escape its handler")));
+    }
+
+    #[test]
+    fn dynamic_resumable_closure_selection_preserves_fn_once_consumption() {
+        let errors = compile_text(
+            r#"
+let Ask = effect { let value(): i32 }
+let Payload = struct(value: i32)
+let consume(move payload: Payload): i32 = { payload.value }
+let main(): i32 = { Ask.handle(value: { (resume) -> resume(1) }) {
+  let left_payload = Payload(20)
+  let right_payload = Payload(21)
+  let left: (): i32 with(Ask) = { () -> Ask.value() + consume(left_payload) }
+  let right: (): i32 with(Ask) = { () -> Ask.value() + consume(right_payload) }
+  let action: (): i32 with(Ask) = if true { left } else { right }
+  let first = action()
+  first + action()
+} }
+"#,
+        )
+        .expect_err("a selected FnOnce resumable closure cannot be invoked twice");
+        assert!(errors.iter().any(|error| {
+            error.message.contains("closure")
+                && (error.message.contains("consumed") || error.message.contains("moved"))
+        }));
+    }
+
+    #[test]
+    fn effectful_guards_inspect_noncopy_inputs_without_committing_payload_moves() {
+        compile_text(
+            r#"
+let Ask = effect { let accept(): bool }
+let Payload = struct(value: i32)
+let Event = enum { Value(Payload), Empty }
+let main(): i32 = { Ask.handle(accept: { (resume) -> resume(false) }) {
+  let event = Event.Value(Payload(42))
+  event match {
+    Event.Value(_) if Ask.accept() => 0,
+    Event.Value(_) => 42,
+    Event.Empty => 0,
+  }
+} }
+"#,
+        )
+        .expect("a binding-free effectful guard may inspect a non-Copy enum input");
+
+        let moving_binding = compile_text(
+            r#"
+let Ask = effect { let accept(): bool }
+let Payload = struct(value: i32)
+let Event = enum { Value(Payload), Empty }
+let consume(move payload: Payload): i32 = { payload.value }
+let main(): i32 = { Ask.handle(accept: { (resume) -> resume(false) }) {
+  let event = Event.Value(Payload(42))
+  event match {
+    Event.Value(payload) if Ask.accept() => consume(payload),
+    Event.Value(payload) => consume(payload),
+    Event.Empty => 0,
+  }
+} }
+"#,
+        )
+        .expect_err("moving pattern bindings still require delayed-commit CPS support");
+        assert!(moving_binding.iter().any(|error| {
+            error.message.contains("effectful match guard")
+                && error.message.contains("implement Copy")
+        }));
     }
 
     #[test]
