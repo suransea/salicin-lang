@@ -19,12 +19,12 @@ The implementation lives under `compiler/src`:
 - `core.rs` and `alloc.rs` load and validate compiler-matched standard-library declarations.
 - `cleanup.rs` models resource storage and destruction across control flow.
 - `codegen/` owns typed lowering and LLVM emission:
-  - `mod.rs` keeps the public compile/check entry points, HIR data model, and the current `Analyzer`
-    implementation.
+  - `mod.rs` keeps the public compile/check entry points and the current `Analyzer` implementation.
   - `cleanup_plan.rs` adapts HIR into verified cleanup plans before emission.
   - `compile_time.rs` encodes compiler-visible compile-time domain values, source effect
     identities, and compile-parameter shape helpers.
   - `emitter.rs` evaluates global constants and emits textual LLVM IR.
+  - `hir.rs` defines typed IR structs, semantic types, places, signatures, and helper predicates.
   - `names.rs` centralizes stable symbol, monomorphization instance, trait-method, and canonical
     type encodings.
   - `source_rewrite.rs` owns source-level rewrites before semantic lowering, including labeled
@@ -50,7 +50,6 @@ resolved AST
 
 Useful future `codegen/` modules are:
 
-- `hir.rs` for typed IR structs, types, places, and helper predicates;
 - `registry.rs` for item collection, generic nominal/function instantiation, and trait impl maps;
 - `lower.rs` for expression and statement lowering into HIR;
 - `borrow.rs` for move/borrow flow checks that currently live inside `Analyzer`;
