@@ -35,7 +35,7 @@ belong to `core.iter`, and owning containers belong to `alloc.boxed` and `alloc.
 declarations must be named through their module or imported
 explicitly with ordinary `use`; for example:
 
-```sali
+```sc
 use alloc.boxed.Box
 use alloc.vec.{Vec, vec_at}
 ```

@@ -86,8 +86,11 @@ cannot intercept operator lowering.
 `core.ops.Chain` uses a `Rebind(Value: type): type` generic associated constructor and `Coalesce`
 uses an effect-forwarding fallback closure. The compiler now accepts such GAT declarations and
 method-signature references, but still rejects GAT implementations and GAT where-predicate
-equalities. General `?.`/`??` dispatch through these protocols therefore remains future work;
-current executable lowering is still the built-in `Option`/`Result` path.
+equalities. Concrete nominal trait implementation methods can now carry matching compile-time
+parameter groups and are registered as generic templates, which unblocks source-level protocol
+methods such as `coalesce(E)`. General `?.`/`??` dispatch through these protocols still requires the
+closure-to-function fallback bridge; current executable lowering remains the built-in
+`Option`/`Result` path.
 
 `core.algebra` currently provides first-order `Semigroup(T)` and `Monoid(T)` protocols outside the
 prelude. `core.functional` now provides higher-kinded `Functor`, `Applicative`, and `Monad`
@@ -111,7 +114,8 @@ position. Functions and trait methods place a contextual `with(...)` clause afte
 standard recoverable-error effect. `try { ... }` handles that effect and produces an explicit
 `Result`. Without a contextual result type, direct ordinary `Throws(E)` calls and local function
 values can infer `Result(T, E)` when the success type and unique error type are probeable; postfix
-`.try`, lowercase `with(throws...)`, and `with(try...)` are removed.
+`.try`, lowercase `with(throws...)`, lowercase `with(unsafe)`, and `with(try...)` are removed with
+no compatibility aliases or dedicated parser migration paths.
 Callable source types use the same shape, such as
 `(i32): i32 with(Unsafe)`; the clause is not a runtime or currying group. Complete direct, method,
 aliased, and partially applied unsafe calls require an enclosing `with(Unsafe)` function or

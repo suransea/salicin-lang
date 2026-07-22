@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.173.0 - 2026-07-22
+
+- Allowed concrete nominal trait implementation methods to keep matching compile-time parameter
+  groups, registering those methods as function templates so calls such as
+  `value.method(T)(...)` can instantiate the implementation body.
+- Removed the remaining dedicated parser migration branch for lowercase `with(unsafe)` and
+  `with(try...)`; standard effects are parsed only as ordinary effect names such as `Unsafe`,
+  `Throws(E)`, and `Async`.
+- Updated language and standard-library documentation snippets to use the `.sc` code fence and the
+  uppercase `Async` effect spelling.
+
 ## 0.172.0 - 2026-07-22
 
 - Added source-backed `core.ops.Chain` and `core.ops.Coalesce` protocol declarations for `?.` and

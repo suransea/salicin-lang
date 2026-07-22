@@ -18,7 +18,7 @@ protocols `BitAnd`, `BitOr`, `BitXor`, `Shl`, and `Shr`, the assignment protocol
 nullish-control protocols `Chain` and `Coalesce`. They are not in the prelude.
 Arithmetic and bitwise protocols consume their operands and use an associated `Output` type:
 
-```sali
+```sc
 use core.ops.Add
 
 extend Number: Add(Number) {
@@ -30,7 +30,7 @@ extend Number: Add(Number) {
 `Eq(Rhs)` borrows both operands and returns `bool`; `!=` invokes the same method exactly once and
 negates its result:
 
-```sali
+```sc
 use core.ops.Eq
 
 extend Number: Eq(Number) {
@@ -42,7 +42,7 @@ extend Number: Eq(Number) {
 whose variants are `Less`, `Equal`, `Greater`, and `Unordered`. All four ordering operators invoke
 the method once; an `Unordered` result makes each operator false:
 
-```sali
+```sc
 use core.ops.{PartialOrd, PartialOrdering}
 
 extend Number: PartialOrd(Number) {
@@ -64,7 +64,7 @@ or out-of-width shift counts trap instead of exposing backend undefined behavior
 `ShrAssign(Rhs)` are separate mutation protocols. Each mutably borrows `self`, consumes `rhs`, and
 returns `()`:
 
-```sali
+```sc
 pub let AddAssign(Rhs: type) = trait {
   let add_assign(borrow(mut) self)(move rhs: Rhs): ()
 }
@@ -82,7 +82,7 @@ direct member access.
 
 `Chain` and `Coalesce` are the standard protocols for `?.` and `??`:
 
-```sali
+```sc
 pub let Chain = trait {
   let Item: type
   let Rebind(Value: type): type
@@ -103,7 +103,7 @@ built-in `Option`/`Result` paths.
 
 `core.effects` owns standard effect identities. It is not part of the prelude:
 
-```sali
+```sc
 pub let Unsafe = effect {}
 
 pub let Throws(Error: type) = effect {
@@ -130,7 +130,7 @@ pretending `await` already works.
 
 `core.access` owns standard access identities, also outside the prelude:
 
-```sali
+```sc
 pub let Shared = access
 pub let Mutable = access
 ```
@@ -145,7 +145,7 @@ items; ordinary package functions still require `= { ... }` bodies.
 
 It also declares two compiler-owned erased runtime contracts:
 
-```sali
+```sc
 pub let Continuation(Input: type, Output: type) = struct()
 pub let EffectCallable(Input: type, Output: type, Answer: type) = struct()
 ```
@@ -159,7 +159,7 @@ The compiler-internal action entry has the logical signature
 its owner; a dropped, uninvoked action releases its captured environment through the stored drop
 entry. These low-level operations are not source-level standard-library functions.
 
-```sali
+```sc
 pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E)
 pub let try(F: effect, T: type, E: type)
   (move action: (): T with(core.effects.Throws(E), F)): Result(T, E) with(F)
@@ -175,7 +175,7 @@ the remainder row. `throw` introduces the standard `Throws(Error)` requirement, 
 
 `core.iter` owns iteration rather than the prelude:
 
-```sali
+```sc
 pub let Iterator = trait {
   let Item: type
   let next(borrow(mut) self)(): Option(Item)
@@ -202,7 +202,7 @@ magic in advance.
 
 `core.algebra` contains first-order algebra protocols rather than putting them in the prelude:
 
-```sali
+```sc
 pub let Semigroup(T: type) = trait {
   let combine(move left: T, move right: T): T
 }
@@ -218,7 +218,7 @@ The compiler does not prove algebraic laws.
 `core.functional` contains higher-kinded protocols over compile-time type constructors. It is not
 part of the prelude:
 
-```sali
+```sc
 pub let Functor(F: (Value: type): type) = trait {
   let map(E: effect, A: type, B: type)(
     move value: F(A),

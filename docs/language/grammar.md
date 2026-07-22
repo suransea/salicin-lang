@@ -54,7 +54,7 @@ lexer 产生 `NEWLINE`，但在以下情况忽略物理换行：
 
 `{...}` 不抑制换行，因为块内需要分隔语句。普通调用不能跨逻辑换行从 `(` 继续：
 
-```sali
+```sc
 f
 (x) // 两个表达式，不是 f(x)
 ```
@@ -92,7 +92,7 @@ let_decl = "let", [ "mut" ], IDENT,
            [ "=", initializer ] ;
 
 with_clause = IDENT("with"), "(", effect, { ",", effect }, [ "," ], ")" ;
-effect = "unsafe" | IDENT, [ "(", type_expr, { ",", type_expr }, [ "," ], ")" ] ;
+effect = IDENT, [ "(", type_expr, { ",", type_expr }, [ "," ], ")" ] ;
 
 initializer = expression | effect_decl | "access" | struct_decl | enum_decl | trait_decl | module_decl ;
 
@@ -202,7 +202,7 @@ compile_parameter = IDENT, ":", ( "type" | "access" | "passing" | "effect" | con
 
 编译期参数组的语义限制与函数相同。例如：
 
-```sali
+```sc
 extend(T: type) Box(T): Display
 where T: Display {
   let display(borrow self)(): String = { ... }
@@ -270,7 +270,7 @@ type_argument  = [ IDENT, ":" ], type_expr | INTEGER ;
 
 匿名签名槽只有在模式为 `auto` 时可省略 `_:`：
 
-```sali
+```sc
 (T): U                 // auto 参数，类型 T
 (borrow _: T): U       // 调用时借用 T
 (_: borrow T): U       // 按 auto 传入一个已有借用值
@@ -505,7 +505,7 @@ path_head = IDENT | "root" | "self" | "super" | "Self" ;
 
 ## 10. 必须锁定的 parser 测试
 
-```sali
+```sc
 let f = {}                         // 零参闭包
 let f(x: i32) = {}                 // 返回 () 的具名闭包
 let x = do {}                      // 单元值

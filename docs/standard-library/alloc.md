@@ -5,7 +5,7 @@ replaceable allocator ABI. It is split by public module and is not part of the i
 
 Alloc names are not implicitly visible. Import only the declarations a module uses:
 
-```sali
+```sc
 use alloc.boxed.{Box, box_as_ref}
 use alloc.vec.Vec
 ```

@@ -1509,13 +1509,7 @@ impl Parser {
         let mut effect_parameters = Vec::new();
         let mut custom = Vec::new();
         loop {
-            if self.take(&TokenKind::Unsafe) {
-                return Err(self.error_here("`with(unsafe)` was removed; use `with(Unsafe)`"));
-            } else if self.take(&TokenKind::Try) {
-                return Err(
-                    self.error_here("`with(try...)` was removed; use `with(Throws(Error))`")
-                );
-            } else if let TokenKind::Ident(name) = &self.current().kind {
+            if let TokenKind::Ident(name) = &self.current().kind {
                 let name = name.clone();
                 if self.effect_parameters_in_scope.contains(&name)
                     && !self.at_offset(1, &TokenKind::Dot)
@@ -3958,8 +3952,16 @@ mod tests {
             assert!(error.message.contains("duplicate"));
         }
 
-        let removed = parse("let f(): i32 with(try(bool)) = { 0 }\n").unwrap_err();
-        assert!(removed.message.contains("`with(try...)` was removed"));
+        for source in [
+            "let f(): i32 with(unsafe) = { 0 }\n",
+            "let f(): i32 with(try(bool)) = { 0 }\n",
+        ] {
+            let error = parse(source).unwrap_err();
+            assert!(error
+                .message
+                .contains("expected `Throws(Error)`, `Unsafe`, an effect parameter"));
+            assert!(!error.message.contains("was removed"));
+        }
     }
 
     #[test]

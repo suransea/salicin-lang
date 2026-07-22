@@ -4395,24 +4395,12 @@ impl Analyzer {
             let method_name = declaration.name.clone();
             let mut expected = declaration.clone();
             substitute_function_types(&mut expected, &substitutions);
-            let Some(expected_shape) = self.function_shape(&expected) else {
-                valid = false;
-                continue;
-            };
 
             let (mut function, function_origin) = supplied_methods
                 .get(method_id)
                 .cloned()
                 .map(|function| (function, origin.clone()))
                 .unwrap_or_else(|| (declaration.clone(), schema.access.origin.clone()));
-            if !function.compile_groups.is_empty() {
-                self.error(format!(
-                    "generic trait implementation method `{}.{method_name}` is not supported",
-                    key.trait_ref.name
-                ));
-                valid = false;
-                continue;
-            }
             if function.body.is_none() {
                 self.error(format!(
                     "trait implementation method `{}.{method_name}` requires a body",
@@ -4436,17 +4424,38 @@ impl Analyzer {
                     nominal_name(&target).expect("concrete trait implementation target is nominal");
                 substitute_self_expression_target(body, target_name);
             }
-            let Some(actual_shape) = self.function_shape(&function) else {
+            if !compile_parameter_groups_match(&expected.compile_groups, &function.compile_groups) {
                 self.error(format!(
-                    "trait method `{}.{method_name}` signature mismatch",
+                    "trait method `{}.{method_name}` signature mismatch: compile-time parameter groups do not match the trait declaration",
                     key.trait_ref.name
                 ));
                 valid = false;
                 continue;
-            };
-            if actual_shape != expected_shape {
+            }
+            if function.compile_groups.is_empty() {
+                let Some(expected_shape) = self.function_shape(&expected) else {
+                    valid = false;
+                    continue;
+                };
+                let Some(actual_shape) = self.function_shape(&function) else {
+                    self.error(format!(
+                        "trait method `{}.{method_name}` signature mismatch",
+                        key.trait_ref.name
+                    ));
+                    valid = false;
+                    continue;
+                };
+                if actual_shape != expected_shape {
+                    self.error(format!(
+                        "trait method `{}.{method_name}` signature mismatch: expected {expected_shape:?}, found {actual_shape:?}",
+                        key.trait_ref.name
+                    ));
+                    valid = false;
+                    continue;
+                }
+            } else if !source_function_shapes_match(&expected, &function) {
                 self.error(format!(
-                    "trait method `{}.{method_name}` signature mismatch: expected {expected_shape:?}, found {actual_shape:?}",
+                    "trait method `{}.{method_name}` signature mismatch",
                     key.trait_ref.name
                 ));
                 valid = false;
@@ -4462,43 +4471,50 @@ impl Analyzer {
 
         let mut methods = HashMap::new();
         for (method_id, canonical, function, function_origin) in registered {
-            let groups = function
-                .groups
-                .iter()
-                .map(|group| {
-                    group
-                        .iter()
-                        .map(|parameter| ParamSig {
-                            name: parameter.name.clone(),
-                            ty: self.lower_source_type(&parameter.ty),
-                            mode: parameter.mode,
-                        })
-                        .collect()
-                })
-                .collect();
-            let result = function
-                .return_type
-                .as_ref()
-                .map(|result| self.lower_source_type(result));
-            let throws_error = function
-                .effects
-                .throws
-                .as_deref()
-                .map(|error| self.lower_source_type(error));
-            self.signatures.insert(
-                canonical.clone(),
-                FunctionSig {
-                    groups,
-                    unsafe_effect: self.function_effects_unsafe(&function.effects),
-                    throws_error,
-                    custom_effects: self.function_effects_custom_identities(&function.effects),
-                    result,
-                },
-            );
-            self.function_order.push(canonical.clone());
-            self.functions.insert(canonical.clone(), function);
-            self.function_origins
-                .insert(canonical.clone(), function_origin);
+            if function.compile_groups.is_empty() {
+                let groups = function
+                    .groups
+                    .iter()
+                    .map(|group| {
+                        group
+                            .iter()
+                            .map(|parameter| ParamSig {
+                                name: parameter.name.clone(),
+                                ty: self.lower_source_type(&parameter.ty),
+                                mode: parameter.mode,
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let result = function
+                    .return_type
+                    .as_ref()
+                    .map(|result| self.lower_source_type(result));
+                let throws_error = function
+                    .effects
+                    .throws
+                    .as_deref()
+                    .map(|error| self.lower_source_type(error));
+                self.signatures.insert(
+                    canonical.clone(),
+                    FunctionSig {
+                        groups,
+                        unsafe_effect: self.function_effects_unsafe(&function.effects),
+                        throws_error,
+                        custom_effects: self.function_effects_custom_identities(&function.effects),
+                        result,
+                    },
+                );
+                self.function_order.push(canonical.clone());
+                self.functions.insert(canonical.clone(), function);
+                self.function_origins
+                    .insert(canonical.clone(), function_origin);
+            } else {
+                self.function_template_order.push(canonical.clone());
+                self.function_templates.insert(canonical.clone(), function);
+                self.function_template_origins
+                    .insert(canonical.clone(), function_origin);
+            }
             self.function_accesses
                 .insert(canonical.clone(), implementation_access.clone());
             self.function_type_substitutions
@@ -23549,8 +23565,14 @@ impl Analyzer {
                 }
             } else {
                 if let Some(kind) = forced_trait {
+                    let requirement = match kind {
+                        LangItemKind::Iterator | LangItemKind::IntoIterator => "`for`",
+                        LangItemKind::Coalesce => "operator `??`",
+                        LangItemKind::Chain => "operator `?.`",
+                        _ => "language syntax",
+                    };
                     self.error(format!(
-                        "type `{}` does not implement `{}` required by `for`",
+                        "type `{}` does not implement `{}` required by {requirement}",
                         self.diagnostic_type_name(&receiver_place.ty),
                         kind.source_name(),
                     ));
@@ -38117,6 +38139,57 @@ let main(): i32 = { Option(i32).Some(20) ?? fallback() }
             &arms[1].body.kind,
             HirExprKind::Call { function, .. } if function == "fallback"
         ));
+    }
+
+    #[test]
+    fn concrete_trait_implementation_methods_can_be_compile_time_generic() {
+        let program = crate::parser::parse(
+            r#"
+let Apply = trait {
+  let apply(T: type)(move self)(move value: T): T
+}
+let Boxed = struct(value: i32)
+extend Boxed: Apply {
+  let apply(T: type)(move self)(move value: T): T = {
+    value
+  }
+}
+let main(): i32 = { Boxed(40).apply(i32)(2) }
+"#,
+        )
+        .expect("generic concrete trait method source must parse");
+        let analyzer = Analyzer::new(&program);
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected generic concrete trait method diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        let key = TraitImplKey {
+            self_ty: Ty::Struct("Boxed".into()),
+            trait_ref: TraitRefKey {
+                name: "Apply".into(),
+                arguments: Vec::new(),
+            },
+        };
+        let canonical = trait_method_name(&key, "apply");
+        assert!(analyzer.function_templates.contains_key(&canonical));
+        let mut analyzed = Analyzer::new(&program);
+        let lowered = analyzed.analyze();
+        assert!(
+            lowered.is_some() && analyzed.diagnostics.is_empty(),
+            "unexpected lowering diagnostics: {:?}",
+            analyzed.diagnostics
+        );
+        let instance = analyzed
+            .function_instances
+            .values()
+            .find(|instance| instance.key.template == canonical)
+            .expect("generic trait method template must instantiate")
+            .canonical
+            .clone();
+        let ir = compile(&program).expect("generic concrete trait method must compile");
+        let symbol = function_symbol(&instance);
+        assert!(ir.contains(&format!("call i32 @{symbol}(")));
     }
 
     #[test]
