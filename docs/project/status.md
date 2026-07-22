@@ -85,13 +85,13 @@ source-backed `core.ops` `*Assign` traits with a mutable receiver borrow. Same-n
 cannot intercept operator lowering.
 `core.ops.Chain` uses a `Rebind(Value: type): type` generic associated constructor and `Coalesce`
 uses an effect-forwarding fallback closure. The compiler accepts such GAT declarations and
-method-signature references, and concrete nominal trait implementations can now bind a direct
+method-signature references. Concrete and generic nominal trait implementations can bind a direct
 generic nominal constructor such as `let Rebind = Maybe`; the constructor source is substituted into
-method templates as `Maybe(U)` without pretending that `Maybe` is a runtime type. GAT
-where-predicate equalities, partial constructor applications, and generic-impl GAT bindings remain
-future work. Concrete nominal trait implementation methods can carry matching compile-time
-parameter groups and are registered as generic templates, which unblocks source-level protocol
-methods such as `coalesce(E)` and `chain(E, U)`. `??` now dispatches non-`Option`/`Result` nominal
+method templates as `Maybe(U)` without pretending that `Maybe` is a runtime type. Generic trait
+implementation methods can carry matching compile-time parameter groups and are registered as
+generic templates, which unblocks source-level protocol methods such as `coalesce(E)` and
+`chain(E, U)`. GAT where-predicate equalities, partial constructor applications, and broader
+constructor equation solving remain future work. `??` now dispatches non-`Option`/`Result` nominal
 values through `core.ops.Coalesce` when its fallback can be represented as a no-capture lifted
 function. `?.` now dispatches non-`Option`/`Result` nominal values through `core.ops.Chain` under
 the same no-capture transform limit; simple field access is covered, while transforms that capture

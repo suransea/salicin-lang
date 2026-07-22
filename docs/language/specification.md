@@ -1485,9 +1485,10 @@ let Chain = trait {
 默认不自动展平；需要显式 `flat_map`。标准 `Option` 和 `Result` 的实现消费左侧容器，确保失败
 residual 只移动或析构一次；借用容器可由标准库提供单独的 `Chain` 实现。
 
-当前实现支持 concrete trait impl 中的直接构造子绑定，例如 `let Rebind = Maybe`，并能让非
-`Option`/`Result` nominal 类型的 `?.` 调度到 `Chain.chain`。自定义 `?.` 的 transform 目前必须能
-降为无捕获 lifted function；会捕获外层参数的可选方法调用仍等待通用 callable-to-function bridge。
+当前实现支持 concrete 与 generic nominal trait impl 中的直接构造子绑定，例如
+`let Rebind = Maybe`，并能让非 `Option`/`Result` nominal 类型的 `?.` 调度到 `Chain.chain`。
+自定义 `?.` 的 transform 目前必须能降为无捕获 lifted function；会捕获外层参数的可选方法调用仍等待
+通用 callable-to-function bridge。
 
 ### 14.2 合并运算符 `??`
 

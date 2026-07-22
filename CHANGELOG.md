@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.176.0 - 2026-07-22
+
+- Allowed generic nominal trait implementations to bind direct generic associated constructors,
+  so `extend(T: type) Maybe(T): Chain { let Rebind = Maybe ... }` materializes each concrete
+  instance with the same source-backed constructor substitution as concrete implementations.
+- Allowed generic trait implementation methods to carry compile-time parameter groups matching
+  their trait declarations, including effect rows such as `chain(E: effect, U: type)`.
+- Materialized blanket trait implementations for nominal source probes before lowering custom
+  `?.`, so cached generic nominal instances can still dispatch through `core.ops.Chain`.
+
 ## 0.175.0 - 2026-07-22
 
 - Implemented concrete generic associated type constructor bindings such as `let Rebind = Maybe`

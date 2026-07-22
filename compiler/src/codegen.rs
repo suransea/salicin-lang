@@ -5484,10 +5484,12 @@ impl Analyzer {
                             binding.name
                         ));
                         valid = false;
-                    } else if schema.associated_type_kinds[&binding.name] != CompileParamKind::Type
-                    {
+                    } else if matches!(
+                        schema.associated_type_kinds[&binding.name],
+                        CompileParamKind::EffectConstructor { .. }
+                    ) {
                         self.error(format!(
-                            "generic associated type `{trait_name}.{}` implementations are not supported yet",
+                            "effect associated constructor `{trait_name}.{}` implementations are not supported yet",
                             binding.name
                         ));
                         valid = false;
@@ -5522,13 +5524,6 @@ impl Analyzer {
                         ));
                         valid = false;
                     }
-                    if !function.compile_groups.is_empty() {
-                        self.error(format!(
-                            "generic trait implementation method `{trait_name}.{}` is not supported",
-                            function.name
-                        ));
-                        valid = false;
-                    }
                     if function.body.is_none() {
                         self.error(format!(
                             "trait implementation method `{trait_name}.{}` requires a body",
@@ -5540,12 +5535,21 @@ impl Analyzer {
             }
         }
         for name in &schema.associated_types {
-            if schema.associated_type_kinds[name] != CompileParamKind::Type {
-                self.error(format!(
-                    "generic associated type `{trait_name}.{name}` implementations are not supported yet"
-                ));
-                valid = false;
-                continue;
+            match schema.associated_type_kinds[name] {
+                CompileParamKind::Type | CompileParamKind::TypeConstructor { .. } => {}
+                CompileParamKind::EffectConstructor { .. } => {
+                    self.error(format!(
+                        "effect associated constructor `{trait_name}.{name}` implementations are not supported yet"
+                    ));
+                    valid = false;
+                    continue;
+                }
+                CompileParamKind::Region
+                | CompileParamKind::Access
+                | CompileParamKind::Passing
+                | CompileParamKind::Effect => {
+                    unreachable!("associated types only store type kinds")
+                }
             }
             if !associated.contains(name) {
                 self.error(format!(
@@ -5587,13 +5591,12 @@ impl Analyzer {
             let ExtendMember::Const(binding) = member else {
                 continue;
             };
-            if schema
-                .associated_type_kinds
-                .get(&binding.name)
-                .is_some_and(|kind| *kind != CompileParamKind::Type)
-            {
+            if matches!(
+                schema.associated_type_kinds.get(&binding.name),
+                Some(CompileParamKind::EffectConstructor { .. })
+            ) {
                 self.error(format!(
-                    "generic associated type `{trait_name}.{}` implementations are not supported yet",
+                    "effect associated constructor `{trait_name}.{}` implementations are not supported yet",
                     binding.name
                 ));
                 valid = false;
@@ -5609,21 +5612,49 @@ impl Analyzer {
         }
         let mut normalized = HashMap::new();
         for associated in &schema.associated_types {
-            if schema.associated_type_kinds[associated] != CompileParamKind::Type {
-                valid = false;
-                continue;
-            }
-            if let Some(source) = self.normalize_trait_impl_associated_type(
-                trait_name,
-                associated,
-                &raw_associated,
-                &expected_substitutions,
-                &mut normalized,
-                &mut Vec::new(),
-            ) {
-                expected_substitutions.insert(associated.clone(), source);
-            } else {
-                valid = false;
+            match schema.associated_type_kinds[associated] {
+                CompileParamKind::Type => {
+                    if let Some(source) = self.normalize_trait_impl_associated_type(
+                        trait_name,
+                        associated,
+                        &raw_associated,
+                        &expected_substitutions,
+                        &mut normalized,
+                        &mut Vec::new(),
+                    ) {
+                        expected_substitutions.insert(associated.clone(), source);
+                    } else {
+                        valid = false;
+                    }
+                }
+                CompileParamKind::TypeConstructor { parameter_count } => {
+                    let Some(source) = raw_associated.get(associated) else {
+                        valid = false;
+                        continue;
+                    };
+                    if self.validate_associated_type_constructor(
+                        trait_name,
+                        associated,
+                        source,
+                        parameter_count,
+                    ) {
+                        expected_substitutions.insert(associated.clone(), source.clone());
+                    } else {
+                        valid = false;
+                    }
+                }
+                CompileParamKind::EffectConstructor { .. } => {
+                    self.error(format!(
+                        "effect associated constructor `{trait_name}.{associated}` implementations are not supported yet"
+                    ));
+                    valid = false;
+                }
+                CompileParamKind::Region
+                | CompileParamKind::Access
+                | CompileParamKind::Passing
+                | CompileParamKind::Effect => {
+                    unreachable!("associated types only store type kinds")
+                }
             }
         }
         let mut actual_self = HashMap::new();
@@ -5640,6 +5671,13 @@ impl Analyzer {
             let mut expected = declaration.clone();
             substitute_function_types(&mut expected, &expected_substitutions);
             let mut actual = actual.clone();
+            if !compile_parameter_groups_match(&expected.compile_groups, &actual.compile_groups) {
+                self.error(format!(
+                    "trait method `{trait_name}.{method_name}` signature mismatch in generic implementation: compile-time parameter groups do not match the trait declaration"
+                ));
+                valid = false;
+                continue;
+            }
             if schema_function_has_receiver(&expected) != schema_function_has_receiver(&actual) {
                 self.error(format!(
                     "trait method `{trait_name}.{method_name}` signature mismatch in generic implementation"
@@ -5656,6 +5694,70 @@ impl Analyzer {
             }
         }
         valid
+    }
+
+    fn instantiate_generic_trait_extensions_for_instance(
+        &mut self,
+        target_template: &str,
+        canonical: &str,
+        source_arguments: &[Type],
+    ) {
+        if self.suppress_generic_inherent_instantiation != 0 {
+            return;
+        }
+        if !source_arguments
+            .iter()
+            .all(|source| self.source_type_is_concrete(source))
+        {
+            return;
+        }
+        let extensions = self
+            .generic_trait_extensions
+            .get(target_template)
+            .cloned()
+            .unwrap_or_default();
+        for extension in &extensions {
+            if self.generic_trait_extension_impl_exists(canonical, source_arguments, extension) {
+                continue;
+            }
+            self.instantiate_generic_trait_extension(
+                target_template,
+                canonical,
+                source_arguments,
+                extension,
+            );
+        }
+    }
+
+    fn generic_trait_extension_impl_exists(
+        &mut self,
+        canonical: &str,
+        source_arguments: &[Type],
+        extension: &GenericTraitExtension,
+    ) -> bool {
+        let Some(instance) = self.nominal_instances.get(canonical).cloned() else {
+            return false;
+        };
+        if source_arguments.len() != extension.target_arguments.len() {
+            return false;
+        }
+        let substitutions = extension
+            .target_arguments
+            .iter()
+            .cloned()
+            .zip(source_arguments.iter().cloned())
+            .collect::<HashMap<_, _>>();
+        let mut trait_ref = extension.trait_ref.clone();
+        substitute_type_parameters(&mut trait_ref, &substitutions);
+        let Some((trait_ref, _, _)) = self.resolve_trait_impl_ref(&trait_ref) else {
+            return false;
+        };
+        let self_ty = match instance.key.kind {
+            NominalKind::Struct => Ty::Struct(canonical.to_owned()),
+            NominalKind::Enum => Ty::Enum(canonical.to_owned()),
+        };
+        let key = TraitImplKey { self_ty, trait_ref };
+        self.trait_impl_headers.contains(&key) || self.trait_impls.contains_key(&key)
     }
 
     fn register_generic_trait_validation_templates(
@@ -5689,7 +5791,13 @@ impl Analyzer {
             let mut template = function.clone();
             template.name = canonical.clone();
             template.compile_groups = extension.compile_groups.clone();
+            template
+                .compile_groups
+                .extend(function.compile_groups.clone());
             template.where_predicates = extension.where_predicates.clone();
+            template
+                .where_predicates
+                .extend(function.where_predicates.clone());
             substitute_function_types(&mut template, &self_substitution);
             if let Some(body) = &mut template.body {
                 substitute_self_expression_target(body, target_template);
@@ -5738,6 +5846,14 @@ impl Analyzer {
         }
         let mut trait_ref = extension.trait_ref.clone();
         substitute_type_parameters(&mut trait_ref, &substitutions);
+        self.instantiating_generic_trait_extension += 1;
+        let already_registered = self
+            .instantiated_generic_trait_key(canonical, &trait_ref)
+            .is_some_and(|key| self.trait_impl_headers.contains(&key));
+        if already_registered {
+            self.instantiating_generic_trait_extension -= 1;
+            return;
+        }
         let mut members = extension.members.clone();
         for member in &mut members {
             match member {
@@ -5752,7 +5868,6 @@ impl Analyzer {
                 }
             }
         }
-        self.instantiating_generic_trait_extension += 1;
         self.collect_trait_extension(
             ExtendDef {
                 compile_groups: Vec::new(),
@@ -5764,6 +5879,20 @@ impl Analyzer {
             extension.origin.clone(),
         );
         self.instantiating_generic_trait_extension -= 1;
+    }
+
+    fn instantiated_generic_trait_key(
+        &mut self,
+        canonical: &str,
+        trait_ref: &Type,
+    ) -> Option<TraitImplKey> {
+        let instance = self.nominal_instances.get(canonical).cloned()?;
+        let (trait_ref, _, _) = self.resolve_trait_impl_ref(trait_ref)?;
+        let self_ty = match instance.key.kind {
+            NominalKind::Struct => Ty::Struct(canonical.to_owned()),
+            NominalKind::Enum => Ty::Enum(canonical.to_owned()),
+        };
+        Some(TraitImplKey { self_ty, trait_ref })
     }
 
     fn collect_generic_inherent_extension(&mut self, extension: ExtendDef, origin: ItemOrigin) {
@@ -6539,11 +6668,19 @@ impl Analyzer {
             arguments,
         };
         if let Some(canonical) = self.nominal_instance_names.get(&key) {
-            let info = &self.nominal_instances[canonical];
+            let canonical = canonical.clone();
+            let info = &self.nominal_instances[&canonical];
             debug_assert_eq!(info.key, key);
-            debug_assert_eq!(info.canonical, *canonical);
+            debug_assert_eq!(info.canonical, canonical);
             match self.nominal_instance_states.get(&key) {
-                Some(NominalInstanceState::Ready) => return Some(canonical.clone()),
+                Some(NominalInstanceState::Ready) => {
+                    self.instantiate_generic_trait_extensions_for_instance(
+                        template_name,
+                        &canonical,
+                        &source_arguments,
+                    );
+                    return Some(canonical);
+                }
                 Some(NominalInstanceState::Building) => {
                     self.error(format!(
                         "recursive generic value layout has infinite size while instantiating `{template_name}`"
@@ -16076,8 +16213,17 @@ impl Analyzer {
         }
         let base_probe = self.probe_expr_ty(base, None, context);
         if self.builtin_fallible_info_for_probe(&base_probe).is_none() {
+            let materialized;
             let base_ty = match &base_probe {
-                TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) => Some(ty),
+                TypeProbe::Known(ty) => Some(ty),
+                TypeProbe::KnownSource(ty, source) => {
+                    materialized = self.lower_source_type(source);
+                    if materialized == Ty::Error {
+                        Some(ty)
+                    } else {
+                        Some(&materialized)
+                    }
+                }
                 TypeProbe::Defaultable(_) | TypeProbe::Unsupported => None,
             };
             if let Some(plan) = base_ty
@@ -38742,6 +38888,71 @@ let main(): i32 = {
             .canonical
             .clone();
         let ir = compile(&program).expect("custom Chain implementation must drive `?.`");
+        let symbol = function_symbol(&instance);
+        assert!(ir.contains(&format!("@{symbol}(")));
+    }
+
+    #[test]
+    fn generic_trait_implementation_can_rebind_chain_constructor() {
+        let program = resolve_text(
+            r#"
+use core.ops.Chain
+
+let Boxed = struct(value: i32)
+let Maybe(T: type) = enum { Some(T), None }
+
+extend(T: type) Maybe(T): Chain {
+  let Item = T
+  let Rebind = Maybe
+  let chain(E: effect, U: type)(move self)(move transform: (T): U with(E)): Maybe(U) with(E) = {
+    self match {
+      Some(value) => Maybe(U).Some(transform(value)),
+      None => Maybe(U).None,
+    }
+  }
+}
+
+let main(): i32 = {
+  let value = Maybe(Boxed).Some(Boxed(42))?.value
+  value match { Some(answer) => answer, None => 0 }
+}
+"#,
+        );
+        let key = TraitImplKey {
+            self_ty: Ty::Enum(nominal_instance_name(&NominalInstanceKey {
+                kind: NominalKind::Enum,
+                template: "Maybe".into(),
+                arguments: vec![Ty::Struct("Boxed".into())],
+            })),
+            trait_ref: TraitRefKey {
+                name: "core::ops::Chain".into(),
+                arguments: Vec::new(),
+            },
+        };
+        let template = trait_method_name(&key, "chain");
+        let mut analyzer = Analyzer::new(&program);
+        let lowered = analyzer.analyze();
+        assert!(
+            lowered.is_some() && analyzer.diagnostics.is_empty(),
+            "unexpected generic custom `?.` diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        let implementation = analyzer
+            .trait_impls
+            .get(&key)
+            .expect("generic Maybe(Boxed) instance must implement Chain");
+        assert_eq!(
+            implementation.associated_type_sources["Rebind"],
+            Type::Named("Maybe".into(), Vec::new())
+        );
+        let instance = analyzer
+            .function_instances
+            .values()
+            .find(|instance| instance.key.template == template)
+            .expect("generic custom Chain method template must instantiate")
+            .canonical
+            .clone();
+        let ir = compile(&program).expect("generic custom Chain implementation must drive `?.`");
         let symbol = function_symbol(&instance);
         assert!(ir.contains(&format!("@{symbol}(")));
     }
