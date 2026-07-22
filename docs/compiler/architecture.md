@@ -24,6 +24,7 @@ The implementation lives under `compiler/src`:
     validation over lowered types.
   - `chain.rs` owns `?.` and custom `Chain` protocol type probing, access typing, and
     handler-aware lowering.
+  - `coalesce.rs` owns `??` and custom `Coalesce` protocol type probing and lowering.
   - `cleanup_plan.rs` adapts HIR into verified cleanup plans before emission.
   - `compile_time.rs` encodes compiler-visible compile-time domain values, source effect
     identities, and compile-parameter shape helpers.
