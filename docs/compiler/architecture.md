@@ -30,6 +30,7 @@ The implementation lives under `compiler/src`:
   - `names.rs` centralizes stable symbol, monomorphization instance, trait-method, and canonical
     type encodings.
   - `operators.rs` centralizes operator-syntax bindings to validated lang-item protocols.
+  - `registry.rs` defines item, trait, overload, and generic-instance registry keys and schemas.
   - `source_rewrite.rs` owns source-level rewrites before semantic lowering, including labeled
     type-argument normalization, type-alias expansion, region-parameter erasure, and generic
     type substitution, plus AST hygiene helpers used by handler and static-function specialization.
@@ -53,7 +54,6 @@ resolved AST
 
 Useful future `codegen/` modules are:
 
-- `registry.rs` for item collection, generic nominal/function instantiation, and trait impl maps;
 - `lower.rs` for expression and statement lowering into HIR;
 - `effects.rs` for algebraic-effect operation/handler CPS rewriting and residual-row logic.
 

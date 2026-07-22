@@ -31,6 +31,7 @@ mod flow;
 mod hir;
 mod names;
 mod operators;
+mod registry;
 mod source_rewrite;
 
 use cleanup_plan::build_and_verify_cleanup_plans;
@@ -40,6 +41,7 @@ use flow::*;
 use hir::*;
 use names::*;
 use operators::*;
+use registry::*;
 use source_rewrite::*;
 
 #[cfg(test)]
@@ -117,84 +119,6 @@ pub fn check_library(program: &Program) -> Result<(), Vec<Diagnostic>> {
     let hir = hir.expect("analysis without diagnostics must produce HIR");
     let _cleanup_plans = build_and_verify_cleanup_plans(&hir)?;
     evaluate_globals(&hir).map(|_| ())
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct FunctionInstanceKey {
-    template: String,
-    arguments: Vec<Ty>,
-}
-
-#[derive(Debug, Clone)]
-struct FunctionInstanceInfo {
-    key: FunctionInstanceKey,
-    canonical: String,
-}
-
-const MAX_FUNCTION_INSTANCES: usize = 256;
-const MAX_NOMINAL_INSTANCES: usize = 256;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum NominalKind {
-    Struct,
-    Enum,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum TopLevelNamespace {
-    Function,
-    Type,
-    Other,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct NominalInstanceKey {
-    kind: NominalKind,
-    template: String,
-    arguments: Vec<Ty>,
-}
-
-#[derive(Debug, Clone)]
-struct NominalInstanceInfo {
-    key: NominalInstanceKey,
-    canonical: String,
-}
-
-#[derive(Clone)]
-struct GenericInherentExtension {
-    target_arguments: Vec<String>,
-    where_predicates: Vec<crate::ast::WherePredicate>,
-    members: Vec<ExtendMember>,
-    access: AccessBoundary,
-    origin: ItemOrigin,
-}
-
-#[derive(Clone)]
-struct GenericTraitExtension {
-    target_arguments: Vec<String>,
-    trait_ref: Type,
-    where_predicates: Vec<crate::ast::WherePredicate>,
-    members: Vec<ExtendMember>,
-    origin: ItemOrigin,
-}
-
-#[derive(Clone)]
-struct GenericConstructorTraitExtensionTarget {
-    target: TypeConstructorImplTarget,
-    self_constructor: Type,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ImplTypePattern {
-    Variable(u8, usize),
-    I32,
-    I64,
-    U32,
-    U64,
-    Bool,
-    Unit,
-    Array(Box<ImplTypePattern>, u64),
-    Named(String, Vec<ImplTypePattern>),
 }
 
 #[derive(Debug, Clone)]
@@ -323,65 +247,6 @@ struct InferredEnumHints<'a> {
     result: Option<&'a Ty>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NominalInstanceState {
-    Building,
-    Ready,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ResolutionState {
-    Resolving,
-    Resolved,
-}
-
-#[derive(Clone, Default)]
-struct InherentMemberSet {
-    methods: HashMap<String, String>,
-    functions: HashMap<String, String>,
-    constants: HashMap<String, String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct TraitRefKey {
-    name: String,
-    arguments: Vec<Ty>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct TraitImplKey {
-    self_ty: Ty,
-    trait_ref: TraitRefKey,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct TypeConstructorImplTarget {
-    name: String,
-    kind: NominalKind,
-    parameter_count: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct ConstructorTraitRefKey {
-    name: String,
-    arguments: Vec<Ty>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct ConstructorTraitImplKey {
-    target: TypeConstructorImplTarget,
-    trait_ref: ConstructorTraitRefKey,
-}
-
-#[derive(Debug, Clone)]
-struct TraitImplInfo {
-    key: TraitImplKey,
-    associated_types: HashMap<String, Ty>,
-    associated_type_sources: HashMap<String, Type>,
-    methods: HashMap<String, String>,
-    access: AccessBoundary,
-}
-
 #[derive(Debug, Clone)]
 struct BinaryOperatorCandidate {
     method: String,
@@ -402,105 +267,6 @@ enum BoundMethodConstraint<'a> {
     None,
     Nominal(&'a str),
     LangItem(LangItemKind),
-}
-
-#[derive(Debug, Clone)]
-struct TraitSchema {
-    self_parameter: CompileParam,
-    compile_parameters: Vec<CompileParam>,
-    where_predicates: Vec<crate::ast::WherePredicate>,
-    associated_types: Vec<String>,
-    associated_type_kinds: HashMap<String, CompileParamKind>,
-    methods: HashMap<String, Function>,
-    method_overloads: HashMap<String, Vec<String>>,
-    method_order: Vec<String>,
-    access: AccessBoundary,
-    valid: bool,
-}
-
-fn schema_function_has_receiver(function: &Function) -> bool {
-    function
-        .groups
-        .first()
-        .is_some_and(|group| group.len() == 1 && group[0].name == "self")
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct FunctionShape {
-    groups: Vec<Vec<(PassMode, Ty)>>,
-    result: Ty,
-    effects: crate::ast::FunctionEffects,
-}
-
-type ParameterLabelShape = Vec<Vec<String>>;
-type InherentOverloadKey = (String, String, bool);
-
-fn function_parameter_labels(function: &Function) -> ParameterLabelShape {
-    function
-        .groups
-        .iter()
-        .map(|group| {
-            group
-                .iter()
-                .map(|parameter| parameter.name.clone())
-                .collect()
-        })
-        .collect()
-}
-
-fn display_parameter_label_shape(groups: &ParameterLabelShape) -> String {
-    groups
-        .iter()
-        .map(|group| format!("({})", group.join(", ")))
-        .collect::<Vec<_>>()
-        .join("")
-}
-
-fn top_level_namespace(item: &Item) -> TopLevelNamespace {
-    match item {
-        Item::Function(_) => TopLevelNamespace::Function,
-        Item::Struct(_) | Item::Enum(_) | Item::TypeAlias(_) => TopLevelNamespace::Type,
-        Item::Global(_) | Item::Trait(_) | Item::Effect(_) | Item::Domain(_) | Item::Extend(_) => {
-            TopLevelNamespace::Other
-        }
-    }
-}
-
-fn overloaded_function_name(base: &str, groups: &ParameterLabelShape) -> String {
-    let shape = groups
-        .iter()
-        .map(|group| format!("{}${}", group.len(), group.join("$")))
-        .collect::<Vec<_>>()
-        .join("$$");
-    format!("{base}$overload${shape}")
-}
-
-fn trait_method_identity(schema: &TraitSchema, function: &Function) -> Option<String> {
-    if let Some(overloads) = schema.method_overloads.get(&function.name) {
-        let identity =
-            overloaded_function_name(&function.name, &function_parameter_labels(function));
-        overloads.contains(&identity).then_some(identity)
-    } else {
-        schema
-            .methods
-            .contains_key(&function.name)
-            .then(|| function.name.clone())
-    }
-}
-
-#[derive(Clone)]
-struct NominalSnapshot {
-    struct_defs: HashMap<String, StructDef>,
-    enum_defs: HashMap<String, EnumDef>,
-    struct_layouts: HashMap<String, StructLayout>,
-    enum_layouts: HashMap<String, EnumLayout>,
-    nominal_accesses: HashMap<String, AccessBoundary>,
-    struct_order: Vec<String>,
-    enum_order: Vec<String>,
-    instance_names: HashMap<NominalInstanceKey, String>,
-    instances: HashMap<String, NominalInstanceInfo>,
-    states: HashMap<NominalInstanceKey, NominalInstanceState>,
-    invalid_recursive_nominals: HashSet<String>,
 }
 
 struct Analyzer {
