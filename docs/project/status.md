@@ -79,9 +79,10 @@ higher-order frame. Two-way conditional selections between named targets use a b
 tag and call-time resumable branch dispatch, including forwarding through a higher-order frame.
 Escaping callables, conditional closure environments, and open-ended dynamic targets remain
 implementation work and receive dedicated diagnostics.
-An inner handler whose residual algebraic requirement is introduced only after an outer named frame
-has already been source-specialized still needs a shared lexical handler-capability context; this
-deeper cross-frame composition remains implementation work.
+Compiler-generated CPS closures carry a separate lexical handler-capability set, allowing an inner
+handler's residual algebraic row to compose through an already specialized outer named frame without
+publishing that capability on the closure type. Throwing handler tails return through their physical
+`Result` boundary when wrapping prevents a direct tail call.
 Recursive-frame visibility is limited to callee-body
 transformation, so sequential calls to the same effectful named function remain independent.
 Abandonment invokes the armed environment's drop entry,

@@ -165,6 +165,11 @@ their explicitly declared residual row through a compiler-created capability gat
 operation with its clause cannot accidentally authorize or erase unrelated effects. For
 `throws(Error)`, resume accepts the operation's logical success type while generated closures retain
 the `Result(Success, Error)` ABI internally.
+Lexically active handler identities are carried separately through compiler-generated CPS closures,
+so an outer handler can satisfy a residual requirement that an inner handler exposes only after
+named-frame specialization. This internal capability is not added to the frame's public callable
+row and is not inherited by an ordinary user closure. A throwing tail continuation that must wrap a
+success value returns through its `Result` boundary instead of using the direct tail-call fast path.
 
 An explicitly typed local closure whose row contains the handled effect is lowered to a resumable
 closure while it remains lexically visible to that handler. Its ordinary result becomes the input

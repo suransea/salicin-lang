@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.133.0 - 2026-07-22
+
+- Carried lexical handler capabilities through compiler-generated named, loop, and continuation CPS
+  closures without adding them to the callable's public effect row.
+- Composed an inner operation's residual algebraic requirement through an outer source-specialized
+  handler frame.
+- Inferred untransformed handler action success types separately from outer CPS answer types.
+- Wrapped throwing handler tail continuations in their `Result` return boundary when a direct tail
+  call cannot preserve the physical ABI by itself.
+- Extended native residual-row coverage to nested algebraic, `unsafe`, and `throws(bool)` effects.
+
 ## 0.132.0 - 2026-07-22
 
 - Preserved every residual `unsafe`, `throws`, and nominal effect requirement when a handler

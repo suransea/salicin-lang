@@ -1,12 +1,16 @@
-let Ask = effect {
-  let value(): i32 with(throws(bool), unsafe)
+let Supply = effect {
+  let seed(): i32
 }
 
-let request(): i32 with(Ask, throws(bool), unsafe) = {
+let Ask = effect {
+  let value(): i32 with(Supply, throws(bool), unsafe)
+}
+
+let request(): i32 with(Ask, Supply, throws(bool), unsafe) = {
   Ask.value()
 }
 
-let run(): i32 with(throws(bool)) = {
+let run(): i32 with(Supply, throws(bool)) = {
   unsafe {
     Ask.handle(value: { (resume) -> resume(42) }) {
       request()
@@ -15,6 +19,8 @@ let run(): i32 with(throws(bool)) = {
 }
 
 let main(): i32 = {
-  let result: Result(i32, bool) = try { run() }
+  let result: Result(i32, bool) = try {
+    Supply.handle(seed: { (resume) -> resume(0) }) { run() }
+  }
   result ?? 0
 }

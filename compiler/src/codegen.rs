@@ -1217,6 +1217,7 @@ struct ClosureEffectContext {
     unsafe_depth: usize,
     throws_error: Option<Ty>,
     custom_effects: HashSet<String>,
+    lexical_handler_effects: HashSet<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1284,6 +1285,7 @@ struct LowerCtx {
     unsafe_depth: usize,
     active_throws_error: Option<Ty>,
     active_custom_effects: HashSet<String>,
+    lexical_handler_effects: HashSet<String>,
     recursive_frame_calls: HashMap<String, RecursiveFrameCall>,
 }
 
@@ -1308,6 +1310,7 @@ impl LowerCtx {
             unsafe_depth: 0,
             active_throws_error: None,
             active_custom_effects: HashSet::new(),
+            lexical_handler_effects: HashSet::new(),
             recursive_frame_calls: HashMap::new(),
         }
     }
@@ -1332,6 +1335,7 @@ impl LowerCtx {
             unsafe_depth: 0,
             active_throws_error: None,
             active_custom_effects: HashSet::new(),
+            lexical_handler_effects: HashSet::new(),
             recursive_frame_calls: HashMap::new(),
         }
     }
@@ -10819,7 +10823,7 @@ impl Analyzer {
                             };
                             let value = match &binding.value {
                                 Expr::Closure(params, body) => {
-                                    let (declared_result, effects) = match annotation.as_ref() {
+                                    let (declared_result, mut effects) = match annotation.as_ref() {
                                         Some(Ty::Function(function)) => (
                                             Some((*function.result).clone()),
                                             ClosureEffectContext {
@@ -10833,6 +10837,7 @@ impl Analyzer {
                                                     .iter()
                                                     .cloned()
                                                     .collect(),
+                                                lexical_handler_effects: HashSet::new(),
                                             },
                                         ),
                                         Some(other) => {
@@ -10844,6 +10849,10 @@ impl Analyzer {
                                         }
                                         None => (None, ClosureEffectContext::default()),
                                     };
+                                    if is_internal_handler_closure_binding(&binding.name) {
+                                        effects.lexical_handler_effects =
+                                            context.lexical_handler_effects.clone();
+                                    }
                                     self.lower_local_closure(
                                         params,
                                         body,
@@ -11975,6 +11984,10 @@ impl Analyzer {
         context.unsafe_depth = effects.unsafe_depth;
         context.active_throws_error = effects.throws_error.clone();
         context.active_custom_effects = effects.custom_effects.clone();
+        context
+            .active_custom_effects
+            .extend(effects.lexical_handler_effects.iter().cloned());
+        context.lexical_handler_effects = effects.lexical_handler_effects.clone();
         context.recursive_frame_calls = outer.recursive_frame_calls.clone();
         context.return_boundary = effects.throws_error.as_ref().and_then(|error| {
             declared_result
@@ -14649,6 +14662,7 @@ impl Analyzer {
                 unsafe_depth: context.unsafe_depth,
                 throws_error: Some(error),
                 custom_effects: context.active_custom_effects.clone(),
+                lexical_handler_effects: context.lexical_handler_effects.clone(),
             },
             context,
         );
@@ -14732,6 +14746,7 @@ impl Analyzer {
                 unsafe_depth: context.unsafe_depth,
                 throws_error: active_throws_error.clone(),
                 custom_effects: context.active_custom_effects.clone(),
+                lexical_handler_effects: context.lexical_handler_effects.clone(),
             },
             context,
         );
@@ -15797,6 +15812,17 @@ impl Analyzer {
                     self.error("internal handler tail continuation has invalid arguments");
                     return error_expr();
                 }
+                if let Some(boundary) = context.return_boundary.clone() {
+                    let call =
+                        self.lower_expr(&groups[0][0].value, Some(&boundary.success), context);
+                    let result = self.finish_return_value(call, &boundary);
+                    context.returned_types.push(result.ty.clone());
+                    context.flow.reachable = false;
+                    return HirExpr {
+                        ty: Ty::Never,
+                        kind: HirExprKind::Return(Some(Box::new(result))),
+                    };
+                }
                 let declared_result = context.declared_result.clone();
                 let call = self.lower_expr(&groups[0][0].value, declared_result.as_ref(), context);
                 let result = call.ty.clone();
@@ -16295,6 +16321,27 @@ impl Analyzer {
         Ok(Some((definition, Type::Named(name, arguments))))
     }
 
+    fn probe_handler_action_logical_ty(
+        &mut self,
+        expression: &Expr,
+        context: &LowerCtx,
+    ) -> Option<Ty> {
+        if let Some((payload, _)) = self.call_throws_info(expression, context) {
+            return Some(payload);
+        }
+        match expression {
+            Expr::Block(_, Some(tail)) | Expr::Unsafe(tail) | Expr::DoBlock { body: tail } => {
+                self.probe_handler_action_logical_ty(tail, context)
+            }
+            _ => match self.probe_expr_ty(expression, None, context) {
+                TypeProbe::Known(ty)
+                | TypeProbe::KnownSource(ty, _)
+                | TypeProbe::Defaultable(ty) => Some(ty),
+                TypeProbe::Unsupported => None,
+            },
+        }
+    }
+
     fn lower_effect_handler(
         &mut self,
         definition: &EffectDef,
@@ -16468,27 +16515,23 @@ impl Analyzer {
             return error_expr();
         }
 
-        let inferred_handler_result = expected
-            .cloned()
+        let inferred_handler_result = done
+            .is_none()
+            .then(|| self.probe_handler_action_logical_ty(action_body, context))
+            .flatten()
             .or_else(|| {
-                if done.is_some() {
-                    return None;
-                }
-                match self.probe_expr_ty(action_body, None, context) {
-                    TypeProbe::Known(ty)
-                    | TypeProbe::KnownSource(ty, _)
-                    | TypeProbe::Defaultable(ty) => Some(ty),
-                    TypeProbe::Unsupported => None,
-                }
+                done.is_none()
+                    .then(|| {
+                        handled_action_result_source(
+                            action_body,
+                            &source_effect_identity(instance),
+                            &operations,
+                        )
+                        .map(|source| self.lower_source_type(&source))
+                    })
+                    .flatten()
             })
-            .or_else(|| {
-                handled_action_result_source(
-                    action_body,
-                    &source_effect_identity(instance),
-                    &operations,
-                )
-                .map(|source| self.lower_source_type(&source))
-            })
+            .or_else(|| expected.cloned())
             .or_else(|| {
                 let bodies = clauses
                     .values()
@@ -16552,9 +16595,15 @@ impl Analyzer {
         let newly_active = context
             .active_custom_effects
             .insert(handled_identity.clone());
+        let newly_lexical = context
+            .lexical_handler_effects
+            .insert(handled_identity.clone());
         let lowered = self.lower_expr(&transformed, expected, context);
         if newly_active {
             context.active_custom_effects.remove(&handled_identity);
+        }
+        if newly_lexical {
+            context.lexical_handler_effects.remove(&handled_identity);
         }
         lowered
     }
@@ -22969,6 +23018,22 @@ fn logical_effect_result_source(result: &Type, effects: &FunctionEffects) -> Typ
         }
         _ => result.clone(),
     }
+}
+
+fn is_internal_handler_closure_binding(name: &str) -> bool {
+    const PREFIXES: &[&str] = &[
+        "$handler$continuation$",
+        "$handler$closure$continuation$",
+        "$handler$recursive$continuation$",
+        "$handler$call$continuation$",
+        "$handler$frame$",
+        "$handler$loop$frame$",
+    ];
+    PREFIXES.iter().any(|prefix| {
+        name.strip_prefix(prefix).is_some_and(|suffix| {
+            !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
+        })
+    })
 }
 
 fn logical_function_result_source(function: &Function) -> Option<Type> {
@@ -34872,6 +34937,39 @@ let main(): i32 = {
 "#,
         )
         .expect("an outer algebraic handler should satisfy an inner operation's residual row");
+
+        compile_text(
+            r#"
+let Supply = effect { let seed(): i32 }
+let Ask = effect { let value(): i32 with(Supply) }
+let request(): i32 with(Ask, Supply) = { Ask.value() }
+let inner(): i32 with(Supply) = {
+  Ask.handle(value: { (resume) -> resume(42) }) { request() }
+}
+let main(): i32 = {
+  Supply.handle(seed: { (resume) -> resume(0) }) { inner() }
+}
+"#,
+        )
+        .expect("lexical handler capabilities should cross generated named CPS frames");
+
+        compile_text(
+            r#"
+let Supply = effect { let seed(): i32 }
+let Ask = effect { let value(): i32 with(Supply, throws(bool)) }
+let request(): i32 with(Ask, Supply, throws(bool)) = { Ask.value() }
+let inner(): i32 with(Supply, throws(bool)) = {
+  Ask.handle(value: { (resume) -> resume(42) }) { request() }
+}
+let main(): i32 = {
+  let result: Result(i32, bool) = try {
+    Supply.handle(seed: { (resume) -> resume(0) }) { inner() }
+  }
+  result ?? 0
+}
+"#,
+        )
+        .expect("throws answers should compose across nested named handler frames");
 
         let missing_operation_effect = compile_text(
             r#"
