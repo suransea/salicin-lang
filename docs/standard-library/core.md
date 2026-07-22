@@ -86,6 +86,18 @@ the `Shared` and `Mutable` access identities, and the compiler-provided `do`, `t
 `loop` trailing-closure functions. Their bodyless signatures are permitted only for validated core
 lang items; ordinary package functions still require `= { ... }` bodies.
 
+It also declares two compiler-owned erased runtime contracts:
+
+```sali
+pub let Continuation(Input: type, Output: type) = struct()
+pub let EffectCallable(Input: type, Output: type, Answer: type) = struct()
+```
+
+`Continuation` is a one-shot suspended computation. `EffectCallable` is an owned action awaiting a
+handler-supplied continuation from `Output` to `Answer`; `Input` is the action's packed runtime input.
+Both native values carry call and drop entries, an environment pointer, and an ownership flag. They
+are module exports rather than prelude names and cannot be replaced by same-named user declarations.
+
 ```sali
 pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E)
 pub let try(F: effect, T: type, E: type)

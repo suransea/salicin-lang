@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.145.0 - 2026-07-22
+
+- Added the source-backed `core.control.EffectCallable(Input, Output, Answer)` lang-item contract for
+  owned erased actions passed into algebraic handlers.
+- Validated its exact three-type-parameter empty-struct declaration alongside `Continuation` and
+  exposed it only through the ordinary `core.control` module.
+- Added a distinct semantic type, canonical identity, API-visibility traversal, non-`Copy` ownership
+  classification, cleanup move path, and LLVM `%salicin.effect_callable` representation.
+- Added flag-guarded drop glue for its `{ call, drop, environment, flag }` ABI and a native imported
+  contract regression producing 42.
+
 ## 0.144.0 - 2026-07-22
 
 - Allowed a complete reusable-handler call to receive a finite nested `if` selection between known

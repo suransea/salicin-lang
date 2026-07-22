@@ -17,6 +17,11 @@ Compiler-lowered control is now source-backed by validated declarations in `core
 `unsafe`, and `loop`. These exports remain outside the prelude. `await` is intentionally absent until
 the async/Future lowering slice is implemented, at which point its standard-library contract must
 land with the implementation.
+The same module now defines `Continuation(Input, Output)` and
+`EffectCallable(Input, Output, Answer)` as validated empty source contracts. The latter has a
+distinct owned semantic type plus a four-pointer LLVM call/drop/environment/flag layout and guarded
+drop glue. Erasing captured effectful closures into that ABI and invoking them from reusable handlers
+is the next implementation stage.
 
 Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
 `continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs

@@ -141,6 +141,9 @@ Effect operations and derived handlers are justified by the source `effect { ...
 the same way enum constructors are justified by an `enum` declaration. Shared continuation behavior
 has the edition-pinned `Continuation(Input, Output)` declaration in `core.control`; the compiler may
 not recognize a resumable runtime protocol that has no matching standard-library source contract.
+Owned actions crossing into reusable handlers use the adjacent
+`EffectCallable(Input, Output, Answer)` contract. Its logical declaration is empty because the call
+entry, drop entry, environment pointer, and ownership flag are compiler-private ABI fields.
 
 Lowering uses typed, one-shot continuation-passing IR for functions whose row contains a resumable
 user effect. Continuation environments contain values live across an operation. Cleanup planning

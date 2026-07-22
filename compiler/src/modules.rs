@@ -327,6 +327,7 @@ const CORE_CONTROL_EXPORTS: &[&str] = &[
     "Shared",
     "Mutable",
     "Continuation",
+    "EffectCallable",
     "do",
     "try",
     "unsafe",

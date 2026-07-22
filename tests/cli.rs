@@ -135,6 +135,7 @@ fn effect_generics_select_pure_and_unsafe_instances() {
 fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
     for fixture_name in [
         "algebraic_effect_handler.sc",
+        "effect_callable_contract.sc",
         "algebraic_effect_abort.sc",
         "algebraic_effect_function_propagation.sc",
         "algebraic_effect_function_alias.sc",

@@ -132,6 +132,11 @@ enum Ty {
         input: Box<Ty>,
         output: Box<Ty>,
     },
+    EffectCallable {
+        input: Box<Ty>,
+        output: Box<Ty>,
+        answer: Box<Ty>,
+    },
     EffectRow {
         unsafe_effect: bool,
         throws_error: Option<Box<Ty>>,
@@ -587,6 +592,11 @@ impl fmt::Display for Ty {
             Self::Continuation { input, output } => {
                 write!(f, "Continuation({input}, {output})")
             }
+            Self::EffectCallable {
+                input,
+                output,
+                answer,
+            } => write!(f, "EffectCallable({input}, {output}, {answer})"),
             Self::EffectRow {
                 unsafe_effect,
                 throws_error,
@@ -705,7 +715,7 @@ impl HirProgram {
                 !matches!(capture.mode, PassMode::Borrow | PassMode::MutBorrow)
                     && self.needs_drop(&capture.ty)
             }),
-            Ty::Continuation { .. } => true,
+            Ty::Continuation { .. } | Ty::EffectCallable { .. } => true,
             Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool | Ty::Unit | Ty::Never | Ty::Error => {
                 false
             }
@@ -2703,7 +2713,7 @@ impl Analyzer {
             Ty::Array(element, _) => self.type_is_copy_with_nominals(element, valid),
             Ty::Enum(name) if name == self.lang_item_name(LangItemKind::Never) => true,
             Ty::Struct(_) | Ty::Enum(_) => valid.contains(ty),
-            Ty::Callable(_) | Ty::Continuation { .. } => false,
+            Ty::Callable(_) | Ty::Continuation { .. } | Ty::EffectCallable { .. } => false,
         }
     }
 
@@ -6348,6 +6358,20 @@ impl Analyzer {
                 }
             }
             Type::Named(name, arguments)
+                if name == self.lang_item_name(LangItemKind::EffectCallable) =>
+            {
+                if arguments.len() != 3 {
+                    self.error("EffectCallable expects input, output, and answer type arguments");
+                    Ty::Error
+                } else {
+                    Ty::EffectCallable {
+                        input: Box::new(self.lower_source_type(&arguments[0])),
+                        output: Box::new(self.lower_source_type(&arguments[1])),
+                        answer: Box::new(self.lower_source_type(&arguments[2])),
+                    }
+                }
+            }
+            Type::Named(name, arguments)
                 if arguments.is_empty() && self.abstract_type_parameters.contains_key(name) =>
             {
                 Ty::Struct(name.clone())
@@ -6599,6 +6623,18 @@ impl Analyzer {
                     self.source_type_for_ty(output)?,
                 ],
             )),
+            Ty::EffectCallable {
+                input,
+                output,
+                answer,
+            } => Some(Type::Named(
+                self.lang_item_name(LangItemKind::EffectCallable).to_owned(),
+                vec![
+                    self.source_type_for_ty(input)?,
+                    self.source_type_for_ty(output)?,
+                    self.source_type_for_ty(answer)?,
+                ],
+            )),
             Ty::EffectRow {
                 unsafe_effect,
                 throws_error,
@@ -6700,6 +6736,16 @@ impl Analyzer {
                 "Continuation({}, {})",
                 self.diagnostic_type_name(input),
                 self.diagnostic_type_name(output)
+            ),
+            Ty::EffectCallable {
+                input,
+                output,
+                answer,
+            } => format!(
+                "EffectCallable({}, {}, {})",
+                self.diagnostic_type_name(input),
+                self.diagnostic_type_name(output),
+                self.diagnostic_type_name(answer)
             ),
             Ty::EffectRow { .. } => ty.to_string(),
         }
@@ -7787,6 +7833,15 @@ impl Analyzer {
                     let restricted = visit(analyzer, access, input, fallback_origin, visited);
                     visit(analyzer, restricted, output, fallback_origin, visited)
                 }
+                Ty::EffectCallable {
+                    input,
+                    output,
+                    answer,
+                } => {
+                    let restricted = visit(analyzer, access, input, fallback_origin, visited);
+                    let restricted = visit(analyzer, restricted, output, fallback_origin, visited);
+                    visit(analyzer, restricted, answer, fallback_origin, visited)
+                }
                 Ty::EffectRow { throws_error, .. } => {
                     throws_error.as_deref().map_or(access.clone(), |error| {
                         visit(analyzer, access, error, fallback_origin, visited)
@@ -7891,6 +7946,15 @@ impl Analyzer {
             Ty::Continuation { input, output } => {
                 self.collect_type_api_leaks(input, exposed, description, visited, diagnostics);
                 self.collect_type_api_leaks(output, exposed, description, visited, diagnostics);
+            }
+            Ty::EffectCallable {
+                input,
+                output,
+                answer,
+            } => {
+                self.collect_type_api_leaks(input, exposed, description, visited, diagnostics);
+                self.collect_type_api_leaks(output, exposed, description, visited, diagnostics);
+                self.collect_type_api_leaks(answer, exposed, description, visited, diagnostics);
             }
             Ty::EffectRow { throws_error, .. } => {
                 if let Some(error) = throws_error {
@@ -10266,7 +10330,7 @@ impl Analyzer {
                     !matches!(capture.mode, PassMode::Borrow | PassMode::MutBorrow)
                         && self.type_needs_drop_inner(&capture.ty, visiting)
                 }),
-                Ty::Continuation { .. } => true,
+                Ty::Continuation { .. } | Ty::EffectCallable { .. } => true,
                 Ty::I32
                 | Ty::I64
                 | Ty::U32
@@ -25117,7 +25181,7 @@ impl<'a> HirCleanupPlanner<'a> {
                     }
                 }
             }
-            Ty::Continuation { .. } => {}
+            Ty::Continuation { .. } | Ty::EffectCallable { .. } => {}
             Ty::I32
             | Ty::I64
             | Ty::U32
@@ -27180,7 +27244,7 @@ impl<'a> Emitter<'a> {
     fn emit_module(&self, include_entry_point: bool) -> Result<String, Diagnostic> {
         let mut output = String::new();
         output.push_str(
-            "; ModuleID = 'salicin'\nsource_filename = \"salicin\"\n\n%salicin.continuation = type { ptr, ptr, ptr, ptr }\n\ndeclare void @llvm.trap()\ndeclare ptr @salicin_alloc(i64, i64)\ndeclare void @salicin_dealloc(ptr, i64, i64)\n\n",
+            "; ModuleID = 'salicin'\nsource_filename = \"salicin\"\n\n%salicin.continuation = type { ptr, ptr, ptr, ptr }\n%salicin.effect_callable = type { ptr, ptr, ptr, ptr }\n\ndeclare void @llvm.trap()\ndeclare ptr @salicin_alloc(i64, i64)\ndeclare void @salicin_dealloc(ptr, i64, i64)\n\n",
         );
 
         for layout in &self.program.structs {
@@ -27329,6 +27393,15 @@ impl<'a> Emitter<'a> {
                     collect(input, types);
                     collect(output, types);
                 }
+                Ty::EffectCallable {
+                    input,
+                    output,
+                    answer,
+                } => {
+                    collect(input, types);
+                    collect(output, types);
+                    collect(answer, types);
+                }
                 Ty::I32
                 | Ty::I64
                 | Ty::U32
@@ -27441,7 +27514,7 @@ impl<'a> Emitter<'a> {
                     self.collect_drop_glue_type(&capture.ty, types);
                 }
             }
-            Ty::Continuation { .. } => {}
+            Ty::Continuation { .. } | Ty::EffectCallable { .. } => {}
             Ty::I32
             | Ty::I64
             | Ty::U32
@@ -27508,6 +27581,11 @@ impl<'a> Emitter<'a> {
             Ty::Continuation { .. } => {
                 output.push_str(
                     "  %drop.addr = getelementptr inbounds %salicin.continuation, ptr %value, i32 0, i32 1\n  %drop = load ptr, ptr %drop.addr\n  %environment.addr = getelementptr inbounds %salicin.continuation, ptr %value, i32 0, i32 2\n  %environment = load ptr, ptr %environment.addr\n  %flag.addr = getelementptr inbounds %salicin.continuation, ptr %value, i32 0, i32 3\n  %flag = load ptr, ptr %flag.addr\n  %active = load i1, ptr %flag\n  br i1 %active, label %drop.active, label %drop.done\ndrop.active:\n  store i1 false, ptr %flag\n  call void %drop(ptr %environment)\n  br label %drop.done\ndrop.done:\n  ret void\n}\n",
+                );
+            }
+            Ty::EffectCallable { .. } => {
+                output.push_str(
+                    "  %drop.addr = getelementptr inbounds %salicin.effect_callable, ptr %value, i32 0, i32 1\n  %drop = load ptr, ptr %drop.addr\n  %environment.addr = getelementptr inbounds %salicin.effect_callable, ptr %value, i32 0, i32 2\n  %environment = load ptr, ptr %environment.addr\n  %flag.addr = getelementptr inbounds %salicin.effect_callable, ptr %value, i32 0, i32 3\n  %flag = load ptr, ptr %flag.addr\n  %active = load i1, ptr %flag\n  br i1 %active, label %drop.active, label %drop.done\ndrop.active:\n  store i1 false, ptr %flag\n  call void %drop(ptr %environment)\n  br label %drop.done\ndrop.done:\n  ret void\n}\n",
                 );
             }
             Ty::Enum(name) => {
@@ -30341,6 +30419,7 @@ fn llvm_value_type(ty: &Ty) -> Result<String, Diagnostic> {
         Ty::Struct(name) | Ty::Enum(name) => Ok(format!("%{}", type_symbol(name))),
         Ty::Callable(_) => Ok(format!("%{}", type_symbol(&canonical_type_encoding(ty)))),
         Ty::Continuation { .. } => Ok("%salicin.continuation".to_owned()),
+        Ty::EffectCallable { .. } => Ok("%salicin.effect_callable".to_owned()),
         Ty::Unit | Ty::Never | Ty::EffectRow { .. } | Ty::Error => Err(Diagnostic::new(format!(
             "internal error: `{ty}` has no first-class LLVM representation"
         ))),
@@ -30413,6 +30492,7 @@ fn zero_const(ty: &Ty, program: &HirProgram) -> Option<ConstValue> {
         | Ty::Function(_)
         | Ty::Callable(_)
         | Ty::Continuation { .. }
+        | Ty::EffectCallable { .. }
         | Ty::EffectRow { .. }
         | Ty::Error => None,
     }
@@ -32124,6 +32204,17 @@ fn canonical_type_encoding(ty: &Ty) -> String {
             let mut encoded = String::from("continuation");
             push_canonical_component(&mut encoded, &canonical_type_encoding(input));
             push_canonical_component(&mut encoded, &canonical_type_encoding(output));
+            encoded
+        }
+        Ty::EffectCallable {
+            input,
+            output,
+            answer,
+        } => {
+            let mut encoded = String::from("effect-callable");
+            push_canonical_component(&mut encoded, &canonical_type_encoding(input));
+            push_canonical_component(&mut encoded, &canonical_type_encoding(output));
+            push_canonical_component(&mut encoded, &canonical_type_encoding(answer));
             encoded
         }
         Ty::EffectRow {

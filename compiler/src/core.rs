@@ -75,6 +75,7 @@ pub enum LangItemKind {
     SharedAccess,
     MutableAccess,
     Continuation,
+    EffectCallable,
     Do,
     Try,
     Unsafe,
@@ -84,7 +85,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 41] = [
+    const ALL: [Self; 42] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -120,6 +121,7 @@ impl LangItemKind {
         Self::SharedAccess,
         Self::MutableAccess,
         Self::Continuation,
+        Self::EffectCallable,
         Self::Do,
         Self::Try,
         Self::Unsafe,
@@ -165,6 +167,7 @@ impl LangItemKind {
             Self::SharedAccess => "Shared",
             Self::MutableAccess => "Mutable",
             Self::Continuation => "Continuation",
+            Self::EffectCallable => "EffectCallable",
             Self::Do => "do",
             Self::Try => "try",
             Self::Unsafe => "unsafe",
@@ -177,7 +180,7 @@ impl LangItemKind {
     const fn expected_kind(self) -> &'static str {
         match self {
             Self::Option | Self::Result | Self::Never | Self::PartialOrdering => "enum",
-            Self::Continuation => "struct",
+            Self::Continuation | Self::EffectCallable => "struct",
             Self::UnsafeEffect | Self::ThrowsEffect => "effect",
             Self::SharedAccess | Self::MutableAccess => "access",
             Self::Do | Self::Try | Self::Unsafe | Self::Loop => "function",
@@ -249,6 +252,7 @@ impl LangItemKind {
             | Self::SharedAccess
             | Self::MutableAccess
             | Self::Continuation
+            | Self::EffectCallable
             | Self::Do
             | Self::Try
             | Self::Unsafe
@@ -350,6 +354,7 @@ pub struct LangItems {
     shared_access: LangItem,
     mutable_access: LangItem,
     continuation: LangItem,
+    effect_callable: LangItem,
     do_function: LangItem,
     try_function: LangItem,
     unsafe_function: LangItem,
@@ -484,6 +489,9 @@ impl LangItems {
     pub const fn continuation(&self) -> &LangItem {
         &self.continuation
     }
+    pub const fn effect_callable(&self) -> &LangItem {
+        &self.effect_callable
+    }
     pub const fn do_function(&self) -> &LangItem {
         &self.do_function
     }
@@ -540,6 +548,7 @@ impl LangItems {
             LangItemKind::SharedAccess => &self.shared_access,
             LangItemKind::MutableAccess => &self.mutable_access,
             LangItemKind::Continuation => &self.continuation,
+            LangItemKind::EffectCallable => &self.effect_callable,
             LangItemKind::Do => &self.do_function,
             LangItemKind::Try => &self.try_function,
             LangItemKind::Unsafe => &self.unsafe_function,
@@ -908,6 +917,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         shared_access: item(LangItemKind::SharedAccess),
         mutable_access: item(LangItemKind::MutableAccess),
         continuation: item(LangItemKind::Continuation),
+        effect_callable: item(LangItemKind::EffectCallable),
         do_function: item(LangItemKind::Do),
         try_function: item(LangItemKind::Try),
         unsafe_function: item(LangItemKind::Unsafe),
@@ -974,6 +984,21 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
             if !valid {
                 diagnostics.push(
                     "lang item `Continuation` must have shape `pub let Continuation(Input: type, Output: type) = struct()`"
+                        .to_owned(),
+                );
+            }
+        }
+        (LangItemKind::EffectCallable, Item::Struct(definition)) => {
+            let valid = definition.compile_groups
+                == vec![vec![
+                    type_parameter("Input"),
+                    type_parameter("Output"),
+                    type_parameter("Answer"),
+                ]]
+                && definition.fields.is_empty();
+            if !valid {
+                diagnostics.push(
+                    "lang item `EffectCallable` must have shape `pub let EffectCallable(Input: type, Output: type, Answer: type) = struct()`"
                         .to_owned(),
                 );
             }
@@ -1627,7 +1652,7 @@ pub let Shr(Rhs: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), 41);
+        assert_eq!(bundle.program().items.len(), 42);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -1667,6 +1692,7 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::SharedAccess
                 | LangItemKind::MutableAccess
                 | LangItemKind::Continuation
+                | LangItemKind::EffectCallable
                 | LangItemKind::Do
                 | LangItemKind::Try
                 | LangItemKind::Unsafe
@@ -1679,7 +1705,10 @@ pub let Shr(Rhs: type) = trait {
                 item_name(&bundle.program().items[lang_item.item_index()]),
                 Some(canonical.as_str())
             );
-            let expected_lang_item_name = if kind == LangItemKind::Continuation {
+            let expected_lang_item_name = if matches!(
+                kind,
+                LangItemKind::Continuation | LangItemKind::EffectCallable
+            ) {
                 kind.source_name()
             } else {
                 canonical.as_str()
@@ -1721,6 +1750,7 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::SharedAccess
                 | LangItemKind::MutableAccess
                 | LangItemKind::Continuation
+                | LangItemKind::EffectCallable
                 | LangItemKind::Do
                 | LangItemKind::Try
                 | LangItemKind::Unsafe
@@ -1757,6 +1787,25 @@ pub let Shr(Rhs: type) = trait {
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.contains("lang item `unsafe`")));
+
+        let malformed = EDITION_2026_CONTROL.replace(
+            "pub let EffectCallable(Input: type, Output: type, Answer: type) = struct()",
+            "pub let EffectCallable(Input: type, Output: type) = struct()",
+        );
+        let error = CoreBundle::from_modules(
+            Edition::Edition2026,
+            &[
+                ("prelude", EDITION_2026_PRELUDE),
+                ("ops", EDITION_2026_OPS),
+                ("control", &malformed),
+                ("iter", EDITION_2026_ITER),
+            ],
+        )
+        .unwrap_err();
+        assert!(error
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.contains("lang item `EffectCallable`")));
     }
 
     #[test]
