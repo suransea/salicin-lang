@@ -4,9 +4,11 @@ use crate::ast::{
     CompileParam, CompileParamKind, EnumDef, ExtendMember, Function, Item, ItemOrigin, PassMode,
     StructDef, Type,
 };
+use crate::core::LangItemKind;
 
 use super::hir::{AccessBoundary, EnumLayout, StructLayout, Ty};
 use super::source_rewrite::substitute_type_parameters;
+use super::Analyzer;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct FunctionInstanceKey {
@@ -164,6 +166,252 @@ pub(super) fn schema_function_has_receiver(function: &Function) -> bool {
         .groups
         .first()
         .is_some_and(|group| group.len() == 1 && group[0].name == "self")
+}
+
+impl Analyzer {
+    pub(super) fn trait_method_candidates(
+        &self,
+        receiver: &Ty,
+        member: &str,
+        origin: &ItemOrigin,
+    ) -> Vec<TraitImplKey> {
+        self.trait_methods_by_receiver
+            .get(&(receiver.clone(), member.to_owned()))
+            .into_iter()
+            .flatten()
+            .filter(|candidate| {
+                self.trait_impls
+                    .get(*candidate)
+                    .is_some_and(|implementation| {
+                        Self::access_boundary_allows(origin, &implementation.access)
+                    })
+            })
+            .cloned()
+            .collect()
+    }
+
+    pub(super) fn trait_associated_function_candidates(
+        &self,
+        target: &Ty,
+        member: &str,
+        origin: &ItemOrigin,
+    ) -> Vec<String> {
+        let mut candidates = self
+            .trait_impls
+            .values()
+            .filter_map(|implementation| {
+                if implementation.key.self_ty != *target
+                    || !Self::access_boundary_allows(origin, &implementation.access)
+                {
+                    return None;
+                }
+                let schema = self.traits.get(&implementation.key.trait_ref.name)?;
+                let method_ids = schema
+                    .method_overloads
+                    .get(member)
+                    .cloned()
+                    .unwrap_or_else(|| vec![member.to_owned()]);
+                Some(
+                    method_ids
+                        .into_iter()
+                        .filter(|method_id| {
+                            schema
+                                .methods
+                                .get(method_id)
+                                .is_some_and(|function| !schema_function_has_receiver(function))
+                        })
+                        .filter_map(|method_id| implementation.methods.get(&method_id).cloned())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        candidates.sort();
+        candidates
+    }
+
+    pub(super) fn constructor_trait_associated_function_candidates(
+        &self,
+        target: &str,
+        member: &str,
+        origin: &ItemOrigin,
+    ) -> Vec<String> {
+        let mut candidates = self
+            .constructor_trait_impl_methods
+            .iter()
+            .filter_map(|(key, methods)| {
+                if key.target.name != target {
+                    return None;
+                }
+                let schema = self.traits.get(&key.trait_ref.name)?;
+                let method_ids = schema
+                    .method_overloads
+                    .get(member)
+                    .cloned()
+                    .unwrap_or_else(|| vec![member.to_owned()]);
+                Some(
+                    method_ids
+                        .into_iter()
+                        .filter(|method_id| {
+                            schema
+                                .methods
+                                .get(method_id)
+                                .is_some_and(|function| !schema_function_has_receiver(function))
+                        })
+                        .filter_map(|method_id| methods.get(&method_id).cloned())
+                        .filter(|canonical| {
+                            self.function_accesses
+                                .get(canonical)
+                                .is_some_and(|access| Self::access_boundary_allows(origin, access))
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        candidates.sort();
+        candidates
+    }
+
+    pub(super) fn trait_method_function_candidates(
+        &self,
+        receiver: &Ty,
+        member: &str,
+        origin: &ItemOrigin,
+    ) -> Vec<(TraitImplKey, String)> {
+        self.trait_method_candidates(receiver, member, origin)
+            .into_iter()
+            .flat_map(|key| {
+                let implementation = &self.trait_impls[&key];
+                let schema = &self.traits[&key.trait_ref.name];
+                let method_ids = schema
+                    .method_overloads
+                    .get(member)
+                    .cloned()
+                    .unwrap_or_else(|| vec![member.to_owned()]);
+                method_ids
+                    .into_iter()
+                    .filter_map(|method_id| {
+                        implementation
+                            .methods
+                            .get(&method_id)
+                            .cloned()
+                            .map(|canonical| (key.clone(), canonical))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    pub(super) fn constructor_trait_method_function_candidates(
+        &self,
+        receiver: &Ty,
+        member: &str,
+        origin: &ItemOrigin,
+    ) -> Vec<(ConstructorTraitImplKey, String)> {
+        let (receiver_name, receiver_kind) = match receiver {
+            Ty::Struct(name) => (name, NominalKind::Struct),
+            Ty::Enum(name) => (name, NominalKind::Enum),
+            _ => return Vec::new(),
+        };
+        let Some(instance) = self.nominal_instances.get(receiver_name) else {
+            return Vec::new();
+        };
+        let mut candidates = self
+            .constructor_trait_impl_methods
+            .iter()
+            .filter_map(|(key, methods)| {
+                if key.target.name != instance.key.template || key.target.kind != receiver_kind {
+                    return None;
+                }
+                let schema = self.traits.get(&key.trait_ref.name)?;
+                let method_ids = schema
+                    .method_overloads
+                    .get(member)
+                    .cloned()
+                    .unwrap_or_else(|| vec![member.to_owned()]);
+                Some(
+                    method_ids
+                        .into_iter()
+                        .filter(|method_id| {
+                            schema
+                                .methods
+                                .get(method_id)
+                                .is_some_and(schema_function_has_receiver)
+                        })
+                        .filter_map(|method_id| methods.get(&method_id).cloned())
+                        .filter(|canonical| {
+                            self.function_accesses
+                                .get(canonical)
+                                .is_some_and(|access| Self::access_boundary_allows(origin, access))
+                        })
+                        .map(|canonical| (key.clone(), canonical))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        candidates.sort_by(|(_, left), (_, right)| left.cmp(right));
+        candidates
+    }
+
+    pub(super) fn has_inaccessible_constructor_trait_associated_function(
+        &self,
+        target: &str,
+        member: &str,
+        origin: &ItemOrigin,
+    ) -> bool {
+        self.constructor_trait_impl_methods
+            .iter()
+            .any(|(key, methods)| {
+                if key.target.name != target {
+                    return false;
+                }
+                let Some(schema) = self.traits.get(&key.trait_ref.name) else {
+                    return false;
+                };
+                let method_ids = schema
+                    .method_overloads
+                    .get(member)
+                    .cloned()
+                    .unwrap_or_else(|| vec![member.to_owned()]);
+                method_ids.into_iter().any(|method_id| {
+                    schema
+                        .methods
+                        .get(&method_id)
+                        .is_some_and(|function| !schema_function_has_receiver(function))
+                        && methods.get(&method_id).is_some_and(|canonical| {
+                            self.function_accesses
+                                .get(canonical)
+                                .is_some_and(|access| !Self::access_boundary_allows(origin, access))
+                        })
+                })
+            })
+    }
+
+    pub(super) fn is_drop_impl(&self, key: &TraitImplKey) -> bool {
+        key.trait_ref.name == self.lang_item_name(LangItemKind::Drop)
+            && key.trait_ref.arguments.is_empty()
+    }
+
+    pub(super) fn has_inaccessible_trait_method(
+        &self,
+        receiver: &Ty,
+        member: &str,
+        origin: &ItemOrigin,
+    ) -> bool {
+        self.trait_methods_by_receiver
+            .get(&(receiver.clone(), member.to_owned()))
+            .is_some_and(|candidates| {
+                candidates.iter().any(|candidate| {
+                    self.trait_impls
+                        .get(candidate)
+                        .is_some_and(|implementation| {
+                            !Self::access_boundary_allows(origin, &implementation.access)
+                        })
+                })
+            })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

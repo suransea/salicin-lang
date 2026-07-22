@@ -39,8 +39,8 @@ The implementation lives under `compiler/src`:
     type encodings.
   - `operators.rs` centralizes operator-syntax bindings, candidate selection, type probes, and HIR
     lowering for validated lang-item protocols.
-  - `registry.rs` defines item, trait, overload, and generic-instance registry keys, schemas, and
-    generic implementation pattern matching helpers.
+  - `registry.rs` defines item, trait, overload, and generic-instance registry keys, schemas,
+    candidate lookup, and generic implementation pattern matching helpers.
   - `source_rewrite.rs` owns source-level rewrites before semantic lowering, including labeled
     type-argument normalization, type-alias expansion, region-parameter erasure, and generic
     type substitution, plus AST hygiene helpers used by handler and static-function specialization.
