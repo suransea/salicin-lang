@@ -1,6 +1,6 @@
-use core.effects.Unsafe
+use core.effects.{Throws, Unsafe}
 
-let read(fail: bool): i32 with(throws(bool), Unsafe) = {
+let read(fail: bool): i32 with(Throws(bool), Unsafe) = {
   if fail { throw true }
   42
 }

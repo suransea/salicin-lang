@@ -31,8 +31,9 @@ contextual `try { ... }` with an expected `Result(T, Error)` materializes ordina
 as `Result` through a generated `Throws(Error).handle`. Context-free ordinary `Throws` inference now
 covers direct standard-effect function calls with a probeable success type, explicitly instantiated
 generic calls such as `fail(bool)(...)`, and `do` return boundaries forwarding standard
-`Throws(Error)` into a contextual `try { ... }`. `Never`-only actions, residual handlers, and mixed
-unsafe/error rows remain future work.
+`Throws(Error)` into a contextual `try { ... }`. Mixed `Throws(Error)` plus `Unsafe` rows now run
+through the standard effect spelling while preserving `unsafe { ... }` authorization across
+generated CPS frames. `Never`-only actions and residual handlers remain future work.
 `core.control` also defines `Continuation(Input, Output)` and
 `EffectCallable(Input, Output, Answer)` as validated empty source contracts. The latter has a
 distinct owned semantic type plus a four-pointer LLVM call/drop/environment/flag layout and guarded
@@ -177,10 +178,11 @@ Callable effect rows support requirement subtyping: a pure function value can fi
 custom-effect slot, while a value requiring additional effects cannot fill a narrower slot. The
 slot's widened requirements remain checked at indirect calls, and generic row inference retains the
 callable's exact source row.
-Fixed ordinary `Throws(E)` direct calls, contextual `try` handling, and `do` return-boundary
-forwarding are implemented for the public direct and explicitly instantiated generic fixtures.
-Effect-parameterized residual-handler and mixed unsafe/error lowering still use the older internal
-carrier path until that implementation is unified. Ordinary `Option` and `Result` functions require
+Fixed ordinary `Throws(E)` direct calls, contextual `try` handling, `do` return-boundary
+forwarding, and mixed `Throws(E)`/`Unsafe` rows are implemented for the public direct, explicitly
+instantiated generic, and mixed-effect fixtures.
+Effect-parameterized residual-handler lowering still uses the older internal carrier path until
+that implementation is unified. Ordinary `Option` and `Result` functions require
 explicit variant construction; the removed `Try`, `FromResidual`, `FromError`, and `ControlFlow`
 language protocols no
 longer participate in return completion or propagation. `do` transparently forwards the complete

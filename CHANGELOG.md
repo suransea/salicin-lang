@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.168.0 - 2026-07-22
+
+- Migrated the public mixed unsafe/error fixture from lowercase `throws(E)` to the ordinary
+  `core.effects.Throws(E)` spelling while keeping `Unsafe` in the same effect row.
+- Preserved lexical `unsafe { ... }` authorization across algebraic-handler CPS frame generation,
+  so standard `Throws(E)` handling can forward residual `Unsafe` without requiring a second
+  explicit unsafe boundary at generated frame call sites.
+- Updated the mixed unsafe/error unit coverage to assert the standard `Throws(E)` row rather than
+  the removed dedicated Result-ABI shape.
+
 ## 0.167.0 - 2026-07-22
 
 - Taught standard `Throws(E)` detection and handler lowering to recognize explicitly instantiated

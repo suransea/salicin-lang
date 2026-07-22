@@ -416,6 +416,7 @@ struct AlgebraicHandler {
     source: Type,
     clauses: HashMap<String, AlgebraicHandlerClause>,
     operations: HashMap<String, Vec<AlgebraicHandlerOperation>>,
+    lexical_unsafe_depth: Rc<Cell<usize>>,
     function_aliases: Rc<RefCell<HashMap<String, String>>>,
     resumable_closures: Rc<RefCell<HashMap<String, SourceResumableClosure>>>,
     dynamic_callables: Rc<RefCell<HashMap<String, SourceDynamicCallable>>>,
@@ -2143,6 +2144,23 @@ impl Analyzer {
 
     fn function_effects_unsafe(&self, effects: &FunctionEffects) -> bool {
         effects.unsafe_effect || self.source_effects_include_standard_unsafe(&effects.custom)
+    }
+
+    fn strip_authorized_unsafe_effects(&self, effects: &mut FunctionEffects) {
+        effects.unsafe_effect = false;
+        effects
+            .custom
+            .retain(|effect| !self.is_standard_unsafe_effect_source(effect));
+    }
+
+    fn effect_abi_result_source(&self, logical: Type, effects: &FunctionEffects) -> Type {
+        match effects.throws.as_deref() {
+            Some(error) => Type::Named(
+                self.lang_item_name(LangItemKind::Result).to_owned(),
+                vec![logical, error.clone()],
+            ),
+            None => logical,
+        }
     }
 
     fn function_effects_custom_identities(&self, effects: &FunctionEffects) -> Vec<String> {
@@ -16096,6 +16114,9 @@ impl Analyzer {
                     errors.insert(error);
                 }
                 self.collect_standard_throws_errors_from_call(expression, context, errors);
+                self.collect_standard_throws_errors_from_effect_handler_call(
+                    expression, context, errors,
+                );
                 let mut groups = Vec::new();
                 let root = flatten_call(expression, &mut groups);
                 match root {
@@ -16212,6 +16233,47 @@ impl Analyzer {
                 }
             }
         }
+    }
+
+    fn collect_standard_throws_errors_from_effect_handler_call(
+        &self,
+        expression: &Expr,
+        context: &LowerCtx,
+        errors: &mut HashSet<Ty>,
+    ) {
+        let Expr::Call(inner_callee, action_arguments) = expression else {
+            return;
+        };
+        let [CallArg {
+            label: None,
+            value: Expr::Closure(action_parameters, action_body),
+        }] = action_arguments.as_slice()
+        else {
+            return;
+        };
+        if !action_parameters.is_empty() {
+            return;
+        }
+        let mut groups = Vec::new();
+        let Expr::Member(effect, member) = flatten_call(inner_callee, &mut groups) else {
+            return;
+        };
+        if member != "handle" || groups.len() != 1 {
+            return;
+        }
+        let Some(effect_name) = source_type_expression_name(effect) else {
+            return;
+        };
+        let root_name = effect_name.split('(').next().unwrap_or(&effect_name);
+        if !self.effect_defs.contains_key(root_name) {
+            return;
+        }
+        for argument in groups[0] {
+            if let Expr::Closure(_, body) = &argument.value {
+                self.collect_escaping_throws(body, context, errors);
+            }
+        }
+        self.collect_escaping_throws(action_body, context, errors);
     }
 
     fn lower_try(&mut self, body: &Expr, expected: Option<&Ty>, context: &mut LowerCtx) -> HirExpr {
@@ -16414,6 +16476,9 @@ impl Analyzer {
                     || self
                         .call_custom_effect_identities(expression, context)
                         .is_some_and(|effects| effects.iter().any(|effect| effect == identity))
+                    || self.effect_handler_call_uses_standard_throws_identity(
+                        expression, identity, context,
+                    )
                     || self.expression_uses_standard_throws_identity(callee, identity, context)
                     || arguments.iter().any(|argument| {
                         self.expression_uses_standard_throws_identity(
@@ -16526,6 +16591,48 @@ impl Analyzer {
             }
             Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => false,
         }
+    }
+
+    fn effect_handler_call_uses_standard_throws_identity(
+        &self,
+        expression: &Expr,
+        identity: &str,
+        context: &LowerCtx,
+    ) -> bool {
+        let Expr::Call(inner_callee, action_arguments) = expression else {
+            return false;
+        };
+        let [CallArg {
+            label: None,
+            value: Expr::Closure(action_parameters, action_body),
+        }] = action_arguments.as_slice()
+        else {
+            return false;
+        };
+        if !action_parameters.is_empty() {
+            return false;
+        }
+        let mut groups = Vec::new();
+        let Expr::Member(effect, member) = flatten_call(inner_callee, &mut groups) else {
+            return false;
+        };
+        if member != "handle" || groups.len() != 1 {
+            return false;
+        }
+        let Some(effect_name) = source_type_expression_name(effect) else {
+            return false;
+        };
+        let root_name = effect_name.split('(').next().unwrap_or(&effect_name);
+        if !self.effect_defs.contains_key(root_name) {
+            return false;
+        }
+        groups[0].iter().any(|argument| {
+            matches!(
+                &argument.value,
+                Expr::Closure(_, body)
+                    if self.expression_uses_standard_throws_identity(body, identity, context)
+            )
+        }) || self.expression_uses_standard_throws_identity(action_body, identity, context)
     }
 
     fn try_body_uses_dedicated_throws_call(&self, expression: &Expr, context: &LowerCtx) -> bool {
@@ -18877,6 +18984,7 @@ impl Analyzer {
             source: instance.clone(),
             clauses,
             operations: handler_operations,
+            lexical_unsafe_depth: Rc::new(Cell::new(context.unsafe_depth)),
             function_aliases: Rc::new(RefCell::new(HashMap::new())),
             resumable_closures: Rc::new(RefCell::new(HashMap::new())),
             dynamic_callables: Rc::new(RefCell::new(HashMap::new())),
@@ -19054,9 +19162,12 @@ impl Analyzer {
             }
             let handler_for_clause = handler.clone();
             let resume_for_arguments = resume.clone();
-            let result_type_name = self.lang_item_name(LangItemKind::Result).to_owned();
             let completed: SourceArgumentsContinuation = Rc::new(move |analyzer, arguments| {
                 let mut bindings = Vec::new();
+                let mut residual_effects = residual_effects.clone();
+                if handler_for_clause.lexical_unsafe_depth.get() > 0 {
+                    analyzer.strip_authorized_unsafe_effects(&mut residual_effects);
+                }
                 if residual_effects != FunctionEffects::default() {
                     let gate_id = analyzer.next_closure;
                     analyzer.next_closure += 1;
@@ -19067,11 +19178,9 @@ impl Analyzer {
                         annotation: Some(Type::Function {
                             groups: vec![Vec::new()],
                             effects: residual_effects.clone(),
-                            result: Box::new(effect_abi_result_source(
-                                Type::Unit,
-                                &residual_effects,
-                                &result_type_name,
-                            )),
+                            result: Box::new(
+                                analyzer.effect_abi_result_source(Type::Unit, &residual_effects),
+                            ),
                         }),
                         value: Expr::Closure(Vec::new(), Box::new(Expr::Unit)),
                     }));
@@ -19645,12 +19754,16 @@ impl Analyzer {
             }
             Expr::Unsafe(value) => {
                 let next = continuation.clone();
-                self.transform_handler_expr(
+                let depth = handler.lexical_unsafe_depth.get();
+                handler.lexical_unsafe_depth.set(depth + 1);
+                let transformed = self.transform_handler_expr(
                     *value,
-                    handler,
+                    handler.clone(),
                     resume,
                     Rc::new(move |analyzer, value| next(analyzer, Expr::Unsafe(Box::new(value)))),
-                )
+                );
+                handler.lexical_unsafe_depth.set(depth);
+                transformed
             }
             Expr::DoBlock { body } => {
                 let next = continuation.clone();
@@ -20648,11 +20761,10 @@ impl Analyzer {
         rewritten_effects
             .custom
             .retain(|effect| source_effect_identity(effect) != handler.identity);
-        let rewritten_result = effect_abi_result_source(
-            answer.clone(),
-            &rewritten_effects,
-            self.lang_item_name(LangItemKind::Result),
-        );
+        if handler.lexical_unsafe_depth.get() > 0 {
+            self.strip_authorized_unsafe_effects(&mut rewritten_effects);
+        }
+        let rewritten_result = self.effect_abi_result_source(answer.clone(), &rewritten_effects);
         let rewritten = Binding {
             mutable: binding.mutable,
             name: binding.name.clone(),
@@ -21164,11 +21276,10 @@ impl Analyzer {
         frame_effects
             .custom
             .retain(|effect| source_effect_identity(effect) != handler.identity);
-        let frame_result = effect_abi_result_source(
-            answer,
-            &frame_effects,
-            self.lang_item_name(LangItemKind::Result),
-        );
+        if handler.lexical_unsafe_depth.get() > 0 {
+            self.strip_authorized_unsafe_effects(&mut frame_effects);
+        }
+        let frame_result = self.effect_abi_result_source(answer, &frame_effects);
         let frame_annotation = Some(Type::Function {
             groups: vec![flattened_parameters
                 .iter()
@@ -26919,17 +27030,6 @@ fn standard_throws_error_source(effect: &Type, throws_name: &str) -> Option<Type
             Some(arguments[0].clone())
         }
         _ => None,
-    }
-}
-
-fn effect_abi_result_source(
-    logical: Type,
-    effects: &FunctionEffects,
-    result_type_name: &str,
-) -> Type {
-    match effects.throws.as_deref() {
-        Some(error) => Type::Named(result_type_name.to_owned(), vec![logical, error.clone()]),
-        None => logical,
     }
 }
 
@@ -40706,26 +40806,27 @@ let main(): i32 = {
 
     #[test]
     fn throws_and_unsafe_share_one_effect_row() {
-        let ir = compile_resolved_library_text(
+        compile_resolved_library_text(
             r#"
-use core.effects.Unsafe
+use core.effects.{Throws, Unsafe}
 
-let read(pointer: Ptr(i32), fail: bool): i32 with(throws(bool), Unsafe) = {
+let read(pointer: Ptr(i32), fail: bool): i32 with(Throws(bool), Unsafe) = {
   if fail { throw true }
   *pointer
 }
-let forward(pointer: Ptr(i32), fail: bool): i32 with(throws(bool), Unsafe) = {
+let forward(pointer: Ptr(i32), fail: bool): i32 with(Throws(bool), Unsafe) = {
   read(pointer, fail) }
 "#,
         )
-        .expect("throws should propagate while unsafe remains a separate call requirement");
-        assert!(ir.contains("define internal %sali.type."));
+        .expect(
+            "standard Throws should propagate while Unsafe remains a separate call requirement",
+        );
 
         let errors = compile_resolved_text(
             r#"
-use core.effects.Unsafe
+use core.effects.{Throws, Unsafe}
 
-let read(pointer: Ptr(i32)): i32 with(throws(bool), Unsafe) = { *pointer }
+let read(pointer: Ptr(i32)): i32 with(Throws(bool), Unsafe) = { *pointer }
 let main(): i32 = {
   let value = 42
   read(Ptr(borrow value))
