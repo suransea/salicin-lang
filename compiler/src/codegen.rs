@@ -417,6 +417,7 @@ struct SourceDynamicCallable {
 struct AlgebraicHandlerOperation {
     key: String,
     labels: Vec<String>,
+    residual_effects: FunctionEffects,
 }
 
 #[derive(Clone)]
@@ -16338,12 +16339,17 @@ impl Analyzer {
         let mut handler_operations: HashMap<String, Vec<AlgebraicHandlerOperation>> =
             HashMap::new();
         for operation in &operations {
+            let mut residual_effects = operation.effects.clone();
+            residual_effects.custom.retain(|effect| {
+                source_effect_identity(effect) != source_effect_identity(instance)
+            });
             handler_operations
                 .entry(operation.name.clone())
                 .or_default()
                 .push(AlgebraicHandlerOperation {
                     key: effect_operation_key(operation),
                     labels: effect_operation_labels(operation),
+                    residual_effects,
                 });
         }
         let mut done = None;
@@ -16437,7 +16443,7 @@ impl Analyzer {
                     parameters,
                     resume: Some(resume),
                     body: (**body).clone(),
-                    resume_input: operation.return_type.clone(),
+                    resume_input: logical_function_result_source(operation),
                 },
             );
         }
@@ -16533,6 +16539,7 @@ impl Analyzer {
         } else {
             Rc::new(|_, value| Ok(value))
         };
+        let handled_identity = handler.identity.clone();
         let transformed = match self.transform_handler_expr(
             (**action_body).clone(),
             handler,
@@ -16542,7 +16549,14 @@ impl Analyzer {
             Ok(expression) => expression,
             Err(()) => return error_expr(),
         };
-        self.lower_expr(&transformed, expected, context)
+        let newly_active = context
+            .active_custom_effects
+            .insert(handled_identity.clone());
+        let lowered = self.lower_expr(&transformed, expected, context);
+        if newly_active {
+            context.active_custom_effects.remove(&handled_identity);
+        }
+        lowered
     }
 
     fn transform_handler_expr(
@@ -16619,6 +16633,7 @@ impl Analyzer {
                 self.error(format!("missing handler clause `{operation}`"));
                 return Err(());
             };
+            let residual_effects = selected.residual_effects.clone();
             if arguments.len() != clause.parameters.len() {
                 self.error(format!(
                     "effect operation `{operation}` expects {} argument(s), found {}",
@@ -16632,20 +16647,42 @@ impl Analyzer {
             }
             let handler_for_clause = handler.clone();
             let resume_for_arguments = resume.clone();
+            let result_type_name = self.lang_item_name(LangItemKind::Result).to_owned();
             let completed: SourceArgumentsContinuation = Rc::new(move |analyzer, arguments| {
-                let mut bindings = clause
-                    .parameters
-                    .iter()
-                    .zip(arguments)
-                    .map(|(parameter, argument)| {
+                let mut bindings = Vec::new();
+                if residual_effects != FunctionEffects::default() {
+                    let gate_id = analyzer.next_closure;
+                    analyzer.next_closure += 1;
+                    let gate_name = format!("$handler$operation$effects${gate_id}");
+                    bindings.push(Stmt::Let(Binding {
+                        mutable: false,
+                        name: gate_name.clone(),
+                        annotation: Some(Type::Function {
+                            groups: vec![Vec::new()],
+                            effects: residual_effects.clone(),
+                            result: Box::new(effect_abi_result_source(
+                                Type::Unit,
+                                &residual_effects,
+                                &result_type_name,
+                            )),
+                        }),
+                        value: Expr::Closure(Vec::new(), Box::new(Expr::Unit)),
+                    }));
+                    bindings.push(Stmt::Expr(Expr::Call(
+                        Box::new(Expr::Name(gate_name)),
+                        Vec::new(),
+                    )));
+                }
+                bindings.extend(clause.parameters.iter().zip(arguments).map(
+                    |(parameter, argument)| {
                         Stmt::Let(Binding {
                             mutable: false,
                             name: parameter.name.clone(),
                             annotation: contextual_annotation(parameter),
                             value: argument.value,
                         })
-                    })
-                    .collect::<Vec<_>>();
+                    },
+                ));
                 let Some(input) = clause.resume_input.clone() else {
                     analyzer.error("effect operation is missing its continuation input type");
                     return Err(());
@@ -17883,7 +17920,7 @@ impl Analyzer {
             self.error("a resumable closure requires a contextual handler answer type");
             return Some(Err(()));
         };
-        let input = (**result).clone();
+        let input = logical_effect_result_source(result, effects);
         let specialization = self.next_closure;
         self.next_closure += 1;
         let continuation_name = format!("$handler$closure$frame$continuation${specialization}");
@@ -17946,13 +17983,18 @@ impl Analyzer {
         rewritten_effects
             .custom
             .retain(|effect| source_effect_identity(effect) != handler.identity);
+        let rewritten_result = effect_abi_result_source(
+            answer.clone(),
+            &rewritten_effects,
+            self.lang_item_name(LangItemKind::Result),
+        );
         let rewritten = Binding {
             mutable: binding.mutable,
             name: binding.name.clone(),
             annotation: Some(Type::Function {
                 groups: rewritten_groups,
                 effects: rewritten_effects,
-                result: Box::new(answer.clone()),
+                result: Box::new(rewritten_result),
             }),
             value,
         };
@@ -18215,7 +18257,7 @@ impl Analyzer {
             ));
             return Some(Err(()));
         }
-        let Some(input) = function.return_type.clone() else {
+        let Some(input) = logical_function_result_source(&function) else {
             self.error(format!(
                 "resumable function `{name}` requires an explicit return type"
             ));
@@ -18366,13 +18408,22 @@ impl Analyzer {
                 .map(|parameter| parameter.mode)
                 .collect(),
         );
+        let mut frame_effects = function.effects.clone();
+        frame_effects
+            .custom
+            .retain(|effect| source_effect_identity(effect) != handler.identity);
+        let frame_result = effect_abi_result_source(
+            answer,
+            &frame_effects,
+            self.lang_item_name(LangItemKind::Result),
+        );
         let frame_annotation = Some(Type::Function {
             groups: vec![flattened_parameters
                 .iter()
                 .map(|parameter| parameter.ty.clone())
                 .collect()],
-            effects: FunctionEffects::default(),
-            result: Box::new(answer),
+            effects: frame_effects,
+            result: Box::new(frame_result),
         });
         let frame = Binding {
             mutable: true,
@@ -22908,6 +22959,36 @@ fn rewrite_handler_chain_wrappers(
     }
 }
 
+fn logical_effect_result_source(result: &Type, effects: &FunctionEffects) -> Type {
+    let Some(error) = effects.throws.as_deref() else {
+        return result.clone();
+    };
+    match result {
+        Type::Named(_, arguments) if arguments.len() == 2 && arguments[1] == *error => {
+            arguments[0].clone()
+        }
+        _ => result.clone(),
+    }
+}
+
+fn logical_function_result_source(function: &Function) -> Option<Type> {
+    function
+        .return_type
+        .as_ref()
+        .map(|result| logical_effect_result_source(result, &function.effects))
+}
+
+fn effect_abi_result_source(
+    logical: Type,
+    effects: &FunctionEffects,
+    result_type_name: &str,
+) -> Type {
+    match effects.throws.as_deref() {
+        Some(error) => Type::Named(result_type_name.to_owned(), vec![logical, error.clone()]),
+        None => logical,
+    }
+}
+
 fn handled_action_result_source(
     expression: &Expr,
     identity: &str,
@@ -22926,7 +23007,7 @@ fn handled_action_result_source(
                 .into_iter()
                 .find(|candidate| effect_operation_labels(candidate) == labels)
         }?;
-        return selected.return_type.clone();
+        return logical_function_result_source(selected);
     }
     match expression {
         Expr::Block(_, Some(tail)) => handled_action_result_source(tail, identity, operations),
@@ -34763,6 +34844,109 @@ let main(): i32 = { 0 }
         assert!(wrong_instance.iter().any(|error| {
             error.message.contains("requires custom effect") && error.message.contains("State(i32)")
         }));
+    }
+
+    #[test]
+    fn algebraic_handlers_preserve_operation_and_frame_residual_effects() {
+        compile_text(
+            r#"
+let IO = effect
+let Ask = effect { let value(): i32 with(IO) }
+let run(): i32 with(IO) = { Ask.handle(value: { (resume) -> resume(42) }) {
+  Ask.value()
+} }
+let main(): i32 = { 0 }
+"#,
+        )
+        .expect("handling Ask should leave an operation's IO requirement active");
+
+        compile_text(
+            r#"
+let Supply = effect { let seed(): i32 }
+let Ask = effect { let value(): i32 with(Supply) }
+let main(): i32 = {
+  Supply.handle(seed: { (resume) -> resume(0) }) {
+    Ask.handle(value: { (resume) -> resume(42) }) { Ask.value() }
+  }
+}
+"#,
+        )
+        .expect("an outer algebraic handler should satisfy an inner operation's residual row");
+
+        let missing_operation_effect = compile_text(
+            r#"
+let IO = effect
+let Ask = effect { let value(): i32 with(IO) }
+let run(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) {
+  Ask.value()
+} }
+let main(): i32 = { run() }
+"#,
+        )
+        .expect_err("handling one effect must not erase an operation's other effects");
+        assert!(missing_operation_effect
+            .iter()
+            .any(|error| error.message.contains("requires custom effect `IO`")));
+
+        let missing_frame_effect = compile_text(
+            r#"
+let IO = effect
+let Ask = effect { let value(): i32 }
+let request(): i32 with(Ask, IO) = { Ask.value() }
+let run(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) {
+  request()
+} }
+let main(): i32 = { run() }
+"#,
+        )
+        .expect_err("a specialized resumable frame must retain effects other than Ask");
+        assert!(missing_frame_effect
+            .iter()
+            .any(|error| error.message.contains("requires custom effect `IO`")));
+
+        compile_text(
+            r#"
+let AskUnsafe = effect { let value(): i32 with(unsafe) }
+let unsafe_run(): i32 = { unsafe { AskUnsafe.handle(value: { (resume) -> resume(42) }) {
+  AskUnsafe.value()
+} } }
+let AskThrows = effect { let value(): i32 with(throws(bool)) }
+let throwing_run(): i32 with(throws(bool)) = {
+  AskThrows.handle(value: { (resume) -> resume(42) }) { AskThrows.value() }
+}
+let AskFrame = effect { let value(): i32 }
+let throwing_request(): i32 with(AskFrame, throws(bool)) = { AskFrame.value() }
+let throwing_frame(): i32 with(throws(bool)) = {
+  AskFrame.handle(value: { (resume) -> resume(42) }) { throwing_request() }
+}
+let main(): i32 = { 0 }
+"#,
+        )
+        .expect("unsafe and throws requirements should survive operation handling");
+
+        let missing_unsafe = compile_text(
+            r#"
+let Ask = effect { let value(): i32 with(unsafe) }
+let run(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) { Ask.value() } }
+let main(): i32 = { run() }
+"#,
+        )
+        .expect_err("handling an operation must not authorize its unsafe requirement");
+        assert!(missing_unsafe
+            .iter()
+            .any(|error| error.message.contains("requires an `unsafe` handler")));
+
+        let missing_throws = compile_text(
+            r#"
+let Ask = effect { let value(): i32 with(throws(bool)) }
+let run(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) { Ask.value() } }
+let main(): i32 = { run() }
+"#,
+        )
+        .expect_err("handling an operation must not erase its throws requirement");
+        assert!(missing_throws
+            .iter()
+            .any(|error| error.message.contains("call requires `throws(bool)`")));
     }
 
     #[test]

@@ -62,6 +62,9 @@ instantiated identity such as `State(i32)`, propagate through the existing row m
 checked for parameter modes, result types, arity, visibility, and missing row requirements.
 Operations share the language's name-only overload rule: runtime label shapes must differ, calls
 use named arguments, and repeated handler labels select signatures through clause parameter names.
+Handling removes only the selected nominal identity: operation gates and generated resumable frames
+retain residual `unsafe`, `throws`, and other nominal requirements, including the distinct logical
+success and `Result` ABI types needed by throwing continuations.
 Derived handlers support typed one-shot resumption, abandonment, `done:` answer conversion, named-call
 propagation, direct recursion, and resumable loop backedges. Cross-function abandonment and
 computation after `resume` use explicit CPS continuation closures. Direct and mutually recursive
@@ -76,6 +79,9 @@ higher-order frame. Two-way conditional selections between named targets use a b
 tag and call-time resumable branch dispatch, including forwarding through a higher-order frame.
 Escaping callables, conditional closure environments, and open-ended dynamic targets remain
 implementation work and receive dedicated diagnostics.
+An inner handler whose residual algebraic requirement is introduced only after an outer named frame
+has already been source-specialized still needs a shared lexical handler-capability context; this
+deeper cross-frame composition remains implementation work.
 Recursive-frame visibility is limited to callee-body
 transformation, so sequential calls to the same effectful named function remain independent.
 Abandonment invokes the armed environment's drop entry,

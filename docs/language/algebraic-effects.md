@@ -159,6 +159,13 @@ binding, then dispatched at each call into the selected resumable entry with the
 continuation. Escaping closures and open-ended callable values still require the general
 handler-aware runtime ABI and are rejected explicitly.
 
+Selective CPS removes only the handled nominal identity. Residual `unsafe`, `throws(Error)`, and
+other nominal requirements remain on generated resumable frames. Intercepted operations also retain
+their explicitly declared residual row through a compiler-created capability gate, so replacing an
+operation with its clause cannot accidentally authorize or erase unrelated effects. For
+`throws(Error)`, resume accepts the operation's logical success type while generated closures retain
+the `Result(Success, Error)` ABI internally.
+
 An explicitly typed local closure whose row contains the handled effect is lowered to a resumable
 closure while it remains lexically visible to that handler. Its ordinary result becomes the input
 of a hidden `Continuation(Input, HandlerAnswer)` parameter appended to the final runtime group, and

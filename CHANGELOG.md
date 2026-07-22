@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.132.0 - 2026-07-22
+
+- Preserved every residual `unsafe`, `throws`, and nominal effect requirement when a handler
+  removes one algebraic effect from an operation or specialized named frame.
+- Added an internal effect gate for intercepted operations so selective CPS lowering cannot bypass
+  the ordinary call-site capability diagnostics.
+- Distinguished logical operation results from their `Result(T, E)` throws ABI when constructing
+  resume continuations and handler answer types.
+- Added native coverage combining a handled algebraic operation with forwarded `unsafe` and
+  `throws(bool)` requirements.
+
 ## 0.131.0 - 2026-07-22
 
 - Lowered two-way conditional selection between named effectful callables to a binding-site boolean
