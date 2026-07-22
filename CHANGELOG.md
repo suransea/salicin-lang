@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.160.0 - 2026-07-22
+
+- Treated `Never`-returning algebraic effect operations as abort operations: their handler clauses
+  omit `resume`, discard the suspended continuation, and directly produce the handler answer.
+- Allowed `Throws(Error).raise` to be invoked and handled through the same operation/handler path as
+  user-defined standard effects, covering both direct and cross-function handler lowering.
+- Documented the remaining special boundary: `throw`/`try` still use the current compiler ABI while
+  `Throws.raise` now exposes the ordinary source-level abort-operation shape.
+
 ## 0.159.0 - 2026-07-22
 
 - Added callable dispatch for constructor trait associated functions, so a generic nominal

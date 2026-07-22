@@ -96,11 +96,11 @@ pub let Async = effect {
 
 `Unsafe` and `Throws(Error)` are validated lang-item identities behind the lowercase source spellings
 `with(unsafe)` and `throws(Error)`, but their declarations use ordinary source-level effect forms.
-`Throws.raise` is the standard operation-level shape for error raising; the current `throw`/`try`
-lowering still has a compiler-provided ABI and will be reduced further in later slices. `Async`
-currently exposes only a minimal `suspend(): ()` operation; executable async/Future lowering will
-add its handler contracts in the same implementation slice rather than pretending `await` already
-works.
+`Throws.raise` is an ordinary `Never`-returning effect operation and can be handled with a normal
+abort clause such as `raise: { (error) -> ... }`. The current `throw`/`try` lowering still has a
+compiler-provided ABI and will be reduced further in later slices. `Async` currently exposes only a
+minimal `suspend(): ()` operation; executable async/Future lowering will add its handler contracts in
+the same implementation slice rather than pretending `await` already works.
 
 `core.access` owns standard access identities, also outside the prelude:
 

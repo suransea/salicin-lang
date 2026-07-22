@@ -137,6 +137,7 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
         "algebraic_effect_handler.sc",
         "effect_callable_contract.sc",
         "algebraic_effect_abort.sc",
+        "algebraic_effect_never_abort.sc",
         "algebraic_effect_function_propagation.sc",
         "algebraic_effect_function_alias.sc",
         "algebraic_effect_static_higher_order.sc",
@@ -204,6 +205,18 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
     assert!(!output.status.success(), "{}", output_text(&output));
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("one-shot"),
+        "{}",
+        output_text(&output)
+    );
+
+    let output = salic()
+        .arg("check")
+        .arg(fixture("fail", "algebraic_effect_never_abort_resume.sc"))
+        .output()
+        .expect("reject a resume parameter on a Never-returning operation");
+    assert!(!output.status.success(), "{}", output_text(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("without `resume`"),
         "{}",
         output_text(&output)
     );

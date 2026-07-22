@@ -17975,15 +17975,18 @@ impl Analyzer {
             let operation = if candidates.len() == 1 {
                 candidates[0]
             } else {
-                let clause_labels = parameters
-                    .iter()
-                    .take(parameters.len().saturating_sub(1))
-                    .map(|parameter| parameter.name.as_str())
-                    .collect::<Vec<_>>();
                 let matching = candidates
                     .iter()
                     .copied()
                     .filter(|operation| {
+                        let label_count = parameters.len().saturating_sub(usize::from(
+                            operation_resume_input_source(operation).is_some(),
+                        ));
+                        let clause_labels = parameters
+                            .iter()
+                            .take(label_count)
+                            .map(|parameter| parameter.name.as_str())
+                            .collect::<Vec<_>>();
                         effect_operation_labels(operation)
                             .iter()
                             .map(String::as_str)
@@ -18004,28 +18007,41 @@ impl Analyzer {
                 continue;
             }
             let operation_parameters = operation.groups.iter().flatten().collect::<Vec<_>>();
-            if parameters.len() != operation_parameters.len() + 1 {
-                self.error(format!(
-                    "handler clause `{label}` expects {} operation parameter(s) followed by `resume`, found {} parameter(s)",
-                    operation_parameters.len(),
-                    parameters.len()
-                ));
+            let resume_input = operation_resume_input_source(operation);
+            let expected_parameter_count =
+                operation_parameters.len() + usize::from(resume_input.is_some());
+            if parameters.len() != expected_parameter_count {
+                if resume_input.is_some() {
+                    self.error(format!(
+                        "handler clause `{label}` expects {} operation parameter(s) followed by `resume`, found {} parameter(s)",
+                        operation_parameters.len(),
+                        parameters.len()
+                    ));
+                } else {
+                    self.error(format!(
+                        "handler clause `{label}` handles a `Never`-returning operation and expects {} operation parameter(s) without `resume`, found {} parameter(s)",
+                        operation_parameters.len(),
+                        parameters.len()
+                    ));
+                }
                 continue;
             }
             let mut parameters = parameters.clone();
-            for (parameter, declared) in parameters.iter_mut().zip(operation_parameters) {
+            for (parameter, declared) in parameters.iter_mut().zip(operation_parameters.iter()) {
                 if parameter.ty == Type::Named("$context$infer".into(), Vec::new()) {
                     parameter.ty = declared.ty.clone();
                 }
             }
-            let resume = parameters.pop().expect("validated resume parameter").name;
+            let resume = resume_input
+                .is_some()
+                .then(|| parameters.pop().expect("validated resume parameter").name);
             clauses.insert(
                 operation_key,
                 AlgebraicHandlerClause {
                     parameters,
-                    resume: Some(resume),
+                    resume,
                     body: (**body).clone(),
-                    resume_input: logical_function_result_source(operation),
+                    resume_input,
                 },
             );
         }
@@ -18050,10 +18066,13 @@ impl Analyzer {
             return error_expr();
         }
 
-        let inferred_handler_result = done
-            .is_none()
-            .then(|| self.probe_handler_action_logical_ty(action_body, context))
-            .flatten()
+        let inferred_from_action = if done.is_none() {
+            self.probe_handler_action_logical_ty(action_body, context)
+                .filter(|ty| !self.is_uninhabited_type(ty))
+        } else {
+            None
+        };
+        let inferred_handler_result = inferred_from_action
             .or_else(|| {
                 done.is_none()
                     .then(|| {
@@ -18293,6 +18312,22 @@ impl Analyzer {
                         })
                     },
                 ));
+                if clause.resume_input.is_none() {
+                    if clause.resume.is_some() {
+                        analyzer.error(
+                            "internal handler clause has a resume name but no continuation input",
+                        );
+                        return Err(());
+                    }
+                    let identity: SourceContinuation = Rc::new(|_, value| Ok(value));
+                    let body = analyzer.transform_handler_expr(
+                        clause.body.clone(),
+                        handler_for_clause.clone(),
+                        None,
+                        identity,
+                    )?;
+                    return Ok(Expr::Block(bindings, Some(Box::new(body))));
+                }
                 let Some(input) = clause.resume_input.clone() else {
                     analyzer.error("effect operation is missing its continuation input type");
                     return Err(());
@@ -25980,6 +26015,18 @@ fn logical_function_result_source(function: &Function) -> Option<Type> {
         .map(|result| logical_effect_result_source(result, &function.effects))
 }
 
+fn source_type_is_never(source: &Type) -> bool {
+    matches!(
+        source,
+        Type::Named(name, arguments)
+            if arguments.is_empty() && name.rsplit("::").next() == Some("Never")
+    )
+}
+
+fn operation_resume_input_source(function: &Function) -> Option<Type> {
+    logical_function_result_source(function).filter(|source| !source_type_is_never(source))
+}
+
 fn effect_abi_result_source(
     logical: Type,
     effects: &FunctionEffects,
@@ -26009,7 +26056,7 @@ fn handled_action_result_source(
                 .into_iter()
                 .find(|candidate| effect_operation_labels(candidate) == labels)
         }?;
-        return logical_function_result_source(selected);
+        return operation_resume_input_source(selected);
     }
     match expression {
         Expr::Block(_, Some(tail)) => handled_action_result_source(tail, identity, operations),

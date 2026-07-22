@@ -78,11 +78,16 @@ once as a labeled closure. A non-overloaded operation clause may choose local pa
 overloaded clause must repeat the selected operation's parameter names in declaration order.
 `handle` is reserved in the effect member namespace.
 
-For an operation with parameter groups `(P1)...(Pn): O`, its handler closure has the contextual
-shape `(P1)...(Pn)(resume): R`, where `R` is the result of the complete handler. For a zero-argument
-operation, the callback has only the `resume` group. Handler closure parameter types may be omitted
-because the effect declaration provides a unique contextual signature; this contextual omission is
-limited to handler clauses until general closure-parameter inference is specified.
+For an operation with parameter groups `(P1)...(Pn): O`, its handler closure normally has the
+contextual shape `(P1)...(Pn)(resume): R`, where `R` is the result of the complete handler. For a
+zero-argument resumable operation, the callback has only the `resume` group. Handler closure
+parameter types may be omitted because the effect declaration provides a unique contextual
+signature; this contextual omission is limited to handler clauses until general closure-parameter
+inference is specified.
+
+An operation whose logical result is `Never` is an abort operation. Its clause omits `resume` and has
+shape `(P1)...(Pn): R`; executing the operation discards the suspended continuation and the clause
+directly produces the complete handler result.
 
 By default the action result and handler result are the same type. A `done:` clause permits an
 answer-type transformation:

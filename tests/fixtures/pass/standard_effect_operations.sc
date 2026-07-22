@@ -4,6 +4,14 @@ let fail_with_answer(): Never with(Throws(i32)) = {
   Throws(i32).raise(42)
 }
 
+let handled_throw(): i32 = {
+  Throws(i32).handle(
+    raise: { (error) -> error },
+  ) {
+    fail_with_answer()
+  }
+}
+
 let handled_async(): i32 = {
   let mut seen = 0
   let value = Async.handle(
@@ -19,5 +27,5 @@ let handled_async(): i32 = {
 }
 
 let main(): i32 = {
-  handled_async()
+  handled_throw() + handled_async() - 42
 }

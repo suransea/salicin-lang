@@ -23,6 +23,8 @@ an ordinary `Async` effect with a minimal `suspend(): ()` operation;
 `do`, `try`, `unsafe`, and `loop`. These exports remain outside the prelude. `await` is intentionally
 absent until the async/Future lowering slice is implemented, at which point its executable
 standard-library contract must land with the implementation.
+`Never`-returning algebraic operations are handled as abort operations whose clauses omit `resume`,
+so `Throws(Error).raise` can now be exercised through the same handler path as user-defined effects.
 `core.control` also defines `Continuation(Input, Output)` and
 `EffectCallable(Input, Output, Answer)` as validated empty source contracts. The latter has a
 distinct owned semantic type plus a four-pointer LLVM call/drop/environment/flag layout and guarded
