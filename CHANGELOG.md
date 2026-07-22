@@ -6,6 +6,11 @@ subset.
 
 ## Unreleased
 
+## 0.179.0 - 2026-07-22
+
+- Removed dedicated `!` effect-syntax migration diagnostics; old `T ! Effect` forms now fail
+  through the ordinary declaration/type parser paths.
+
 ## 0.178.0 - 2026-07-22
 
 - Removed the dedicated postfix `.try` parser migration diagnostic; `.try` now fails through the

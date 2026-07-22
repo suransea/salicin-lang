@@ -243,11 +243,6 @@ impl Parser {
         let logical_result = if self.take(&TokenKind::Colon) {
             Some(self.function_result_type()?)
         } else {
-            if self.at(&TokenKind::Bang) {
-                return Err(self.error_here(
-                    "`!` effect syntax was removed; use a trailing `with(...)` clause",
-                ));
-            }
             None
         };
         let (effects, throws_error, has_effect_group) = self.function_effect_clause()?;
@@ -627,11 +622,6 @@ impl Parser {
         let logical_result = if self.take(&TokenKind::Colon) {
             Some(self.function_result_type()?)
         } else {
-            if self.at(&TokenKind::Bang) {
-                return Err(self.error_here(
-                    "`!` effect syntax was removed; use a trailing `with(...)` clause",
-                ));
-            }
             None
         };
         let (effects, throws_error, has_effect_group) = self.function_effect_clause()?;
@@ -1447,11 +1437,6 @@ impl Parser {
             }
             Some(self.function_result_type()?)
         } else {
-            if self.at(&TokenKind::Bang) {
-                return Err(self.error_here(
-                    "`!` effect syntax was removed; use a trailing `with(...)` clause",
-                ));
-            }
             None
         };
         let (effects, throws_error, _has_effect_group) = self.function_effect_clause()?;
@@ -1632,11 +1617,6 @@ impl Parser {
             return Err(self.error_here(
                 "bare effect groups were removed; write `with(...)` after the result type",
             ));
-        }
-        if self.at(&TokenKind::Bang) {
-            return Err(
-                self.error_here("`!` effect syntax was removed; use a trailing `with(...)` clause")
-            );
         }
         Ok(output)
     }
@@ -3934,7 +3914,7 @@ mod tests {
             .contains("bare function effect groups were removed"));
 
         let error = parse("let f(): i32 ! unsafe = { 42 }\n").unwrap_err();
-        assert!(error.message.contains("`!` effect syntax was removed"));
+        assert!(error.message.contains("expected a newline or `;`"));
 
         let program =
             parse("let fallible(): i32 with(Throws(bool), Unsafe) = { throw true }\n").unwrap();
