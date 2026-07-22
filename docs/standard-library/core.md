@@ -96,11 +96,13 @@ pub let Coalesce = trait {
 ```
 
 The protocols use the same trait and generic-associated-constructor syntax as user declarations.
-The current compiler validates these standard contracts and accepts GAT references in trait method
-signatures. `??` dispatches non-`Option`/`Result` nominal values through `Coalesce` when the fallback
-can be represented as a no-capture lifted function. Captured fallback closures still require the
-general callable-to-function argument bridge. Executable `?.` dispatch through `Chain` remains a
-future semantic slice, while the built-in `Option`/`Result` paths remain available.
+The current compiler validates these standard contracts, accepts GAT references in trait method
+signatures, and supports concrete direct constructor implementations such as `let Rebind = Maybe`.
+`??` dispatches non-`Option`/`Result` nominal values through `Coalesce` when the fallback can be
+represented as a no-capture lifted function. `?.` dispatches non-`Option`/`Result` nominal values
+through `Chain` when the synthesized transform closure can be represented in the same way; simple
+field access is supported, while transforms that capture outer method-call arguments still require the
+general callable-to-function bridge. The built-in `Option`/`Result` paths remain available.
 
 `core.effects` owns standard effect identities. It is not part of the prelude:
 

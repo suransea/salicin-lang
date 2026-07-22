@@ -1652,6 +1652,7 @@ struct ConstructorTraitImplKey {
 struct TraitImplInfo {
     key: TraitImplKey,
     associated_types: HashMap<String, Ty>,
+    associated_type_sources: HashMap<String, Type>,
     methods: HashMap<String, String>,
     access: AccessBoundary,
 }
@@ -1667,6 +1668,14 @@ struct BinaryOperatorCandidate {
     method: String,
     rhs: Ty,
     output: Ty,
+}
+
+#[derive(Debug, Clone)]
+struct CustomChainPlan {
+    item_source: Type,
+    output_source: Type,
+    result_ty: Ty,
+    result_source: Type,
 }
 
 #[derive(Clone, Copy)]
@@ -3883,6 +3892,42 @@ impl Analyzer {
         None
     }
 
+    fn validate_associated_type_constructor(
+        &mut self,
+        trait_name: &str,
+        associated: &str,
+        source: &Type,
+        expected_count: usize,
+    ) -> bool {
+        let Type::Named(name, arguments) = source else {
+            self.error(format!(
+                "associated type constructor `{trait_name}.{associated}` must name a generic type constructor"
+            ));
+            return false;
+        };
+        if !arguments.is_empty() {
+            self.error(format!(
+                "associated type constructor `{trait_name}.{associated}` must name a generic type constructor, found an applied type"
+            ));
+            return false;
+        }
+        let Some(target) = self.type_constructor_impl_target(source) else {
+            self.error(format!(
+                "associated type constructor `{trait_name}.{associated}` must name a generic type constructor"
+            ));
+            return false;
+        };
+        if target.parameter_count != expected_count {
+            self.error(format!(
+                "associated type constructor `{trait_name}.{associated}` expects {expected_count} type parameter{}, but `{name}` has {}",
+                if expected_count == 1 { "" } else { "s" },
+                target.parameter_count
+            ));
+            return false;
+        }
+        true
+    }
+
     fn trait_ref_has_constructor_subject(&self, source: &Type) -> bool {
         let Type::Named(name, _) = source else {
             return false;
@@ -4246,14 +4291,6 @@ impl Analyzer {
                         valid = false;
                         continue;
                     }
-                    if schema.associated_type_kinds[&binding.name] != CompileParamKind::Type {
-                        self.error(format!(
-                            "generic associated type `{}.{}` implementations are not supported yet",
-                            key.trait_ref.name, binding.name
-                        ));
-                        valid = false;
-                        continue;
-                    }
                     if binding.annotation.is_some() {
                         self.error(format!(
                             "associated type `{}.{}` must not have a value annotation",
@@ -4304,14 +4341,6 @@ impl Analyzer {
         }
 
         for associated in &schema.associated_types {
-            if schema.associated_type_kinds[associated] != CompileParamKind::Type {
-                self.error(format!(
-                    "generic associated type `{}.{associated}` implementations are not supported yet",
-                    key.trait_ref.name
-                ));
-                valid = false;
-                continue;
-            }
             if !raw_associated.contains_key(associated) {
                 self.error(format!(
                     "missing associated type `{}.{associated}` in trait implementation",
@@ -4336,32 +4365,73 @@ impl Analyzer {
 
         let mut normalized_sources = HashMap::new();
         for associated in &schema.associated_types {
-            if self
-                .normalize_trait_impl_associated_type(
-                    &key.trait_ref.name,
-                    associated,
-                    &raw_associated,
-                    &substitutions,
-                    &mut normalized_sources,
-                    &mut Vec::new(),
-                )
-                .is_none()
-            {
-                valid = false;
+            match schema.associated_type_kinds[associated] {
+                CompileParamKind::Type => {
+                    if self
+                        .normalize_trait_impl_associated_type(
+                            &key.trait_ref.name,
+                            associated,
+                            &raw_associated,
+                            &substitutions,
+                            &mut normalized_sources,
+                            &mut Vec::new(),
+                        )
+                        .is_none()
+                    {
+                        valid = false;
+                    }
+                }
+                CompileParamKind::TypeConstructor { .. } => {}
+                CompileParamKind::EffectConstructor { .. } => {
+                    self.error(format!(
+                        "effect associated constructor `{}.{associated}` implementations are not supported yet",
+                        key.trait_ref.name
+                    ));
+                    valid = false;
+                }
+                CompileParamKind::Region
+                | CompileParamKind::Access
+                | CompileParamKind::Passing
+                | CompileParamKind::Effect => {
+                    unreachable!("associated types only store type kinds")
+                }
             }
         }
         if !valid {
             return;
         }
         let mut associated_types = HashMap::new();
+        let mut associated_type_sources = HashMap::new();
         for (name, source) in &normalized_sources {
             let ty = self.lower_source_type(source);
             if ty == Ty::Error {
                 valid = false;
             } else {
                 associated_types.insert(name.clone(), ty);
+                associated_type_sources.insert(name.clone(), source.clone());
                 substitutions.insert(name.clone(), source.clone());
             }
+        }
+        for associated in &schema.associated_types {
+            let CompileParamKind::TypeConstructor { parameter_count } =
+                schema.associated_type_kinds[associated]
+            else {
+                continue;
+            };
+            let source = raw_associated
+                .get(associated)
+                .expect("missing associated constructors were diagnosed");
+            if !self.validate_associated_type_constructor(
+                &key.trait_ref.name,
+                associated,
+                source,
+                parameter_count,
+            ) {
+                valid = false;
+                continue;
+            }
+            associated_type_sources.insert(associated.clone(), source.clone());
+            substitutions.insert(associated.clone(), source.clone());
         }
         if !valid {
             return;
@@ -4379,6 +4449,35 @@ impl Analyzer {
                 &mut HashSet::new(),
                 &mut api_diagnostics,
             );
+        }
+        for (name, source) in &associated_type_sources {
+            if associated_types.contains_key(name) {
+                continue;
+            }
+            let Type::Named(constructor, arguments) = source else {
+                continue;
+            };
+            if !arguments.is_empty() {
+                continue;
+            }
+            if let Some(referenced) = self.nominal_accesses.get(constructor) {
+                if !Self::api_audience_is_contained(&implementation_access, referenced) {
+                    let exposed_visibility = match implementation_access.visibility {
+                        Visibility::Private => "private",
+                        Visibility::Package => "pub(package)",
+                        Visibility::Public => "public",
+                    };
+                    let referenced_visibility = match referenced.visibility {
+                        Visibility::Private => "private",
+                        Visibility::Package => "pub(package)",
+                        Visibility::Public => "public",
+                    };
+                    api_diagnostics.push(format!(
+                        "trait implementation `{} for {target}` associated type constructor `{name}` with {exposed_visibility} visibility exposes {referenced_visibility} type constructor `{constructor}` beyond its access boundary",
+                        key.trait_ref.name
+                    ));
+                }
+            }
         }
         api_diagnostics.sort();
         api_diagnostics.dedup();
@@ -4536,6 +4635,7 @@ impl Analyzer {
             TraitImplInfo {
                 key: key.clone(),
                 associated_types,
+                associated_type_sources,
                 methods,
                 access: implementation_access,
             },
@@ -7054,6 +7154,7 @@ impl Analyzer {
                 TraitImplInfo {
                     key,
                     associated_types,
+                    associated_type_sources: HashMap::new(),
                     methods,
                     access: schema.access,
                 },
@@ -9717,6 +9818,52 @@ impl Analyzer {
         signature.result.clone()
     }
 
+    fn custom_chain_plan_for_ty(
+        &self,
+        container: &Ty,
+        member: &str,
+        groups: Option<&[&[CallArg]]>,
+        origin: &ItemOrigin,
+    ) -> Option<CustomChainPlan> {
+        let chain_trait = self.lang_item_name(LangItemKind::Chain);
+        let candidates = self
+            .trait_method_candidates(container, "chain", origin)
+            .into_iter()
+            .filter(|key| key.trait_ref.name == chain_trait)
+            .collect::<Vec<_>>();
+        let [key] = candidates.as_slice() else {
+            return None;
+        };
+        let implementation = self.trait_impls.get(key)?;
+        let item_ty = implementation.associated_types.get("Item")?;
+        let item_source = implementation
+            .associated_type_sources
+            .get("Item")
+            .cloned()
+            .or_else(|| self.source_type_for_ty(item_ty))?;
+        let output_ty = self.probe_chain_access_ty(item_ty, member, groups, origin)?;
+        if matches!(output_ty, Ty::Function(_)) {
+            return None;
+        }
+        let output_source = self.source_type_for_ty(&output_ty)?;
+        let Type::Named(rebind, arguments) =
+            implementation.associated_type_sources.get("Rebind")?
+        else {
+            return None;
+        };
+        if !arguments.is_empty() {
+            return None;
+        }
+        let result_source = Type::Named(rebind.clone(), vec![output_source.clone()]);
+        let result_ty = self.probe_source_ty(&result_source)?;
+        Some(CustomChainPlan {
+            item_source,
+            output_source,
+            result_ty,
+            result_source,
+        })
+    }
+
     fn probe_chain_ty(
         &self,
         base: &Expr,
@@ -9735,6 +9882,17 @@ impl Analyzer {
             return TypeProbe::Unsupported;
         }
         let base_probe = self.probe_expr_ty(base, None, context);
+        if self.builtin_fallible_info_for_probe(&base_probe).is_none() {
+            let base_ty = match &base_probe {
+                TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) => Some(ty),
+                TypeProbe::Defaultable(_) | TypeProbe::Unsupported => None,
+            };
+            if let Some(plan) = base_ty
+                .and_then(|ty| self.custom_chain_plan_for_ty(ty, member, groups, &context.origin))
+            {
+                return TypeProbe::KnownSource(plan.result_ty, plan.result_source);
+            }
+        }
         let info = self
             .builtin_fallible_info_for_probe(&base_probe)
             .or_else(|| {
@@ -15912,6 +16070,22 @@ impl Analyzer {
             || place_root_name(base)
                 .and_then(|name| context.lookup(name))
                 .is_some_and(|local| local.capability != LocalCapability::Owned);
+        if borrowed {
+            self.error("optional chaining requires an owned `Option`, `Result`, or `Chain` value");
+            return error_expr();
+        }
+        let base_probe = self.probe_expr_ty(base, None, context);
+        if self.builtin_fallible_info_for_probe(&base_probe).is_none() {
+            let base_ty = match &base_probe {
+                TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) => Some(ty),
+                TypeProbe::Defaultable(_) | TypeProbe::Unsupported => None,
+            };
+            if let Some(plan) = base_ty
+                .and_then(|ty| self.custom_chain_plan_for_ty(ty, member, groups, &context.origin))
+            {
+                return self.lower_custom_chain_call(base, member, groups, plan, expected, context);
+            }
+        }
         let base_expected = expected.and_then(|expected| {
             let expected = self.builtin_fallible_info_for_ty(expected)?;
             let inferred = self.inferred_builtin_coalesce_lhs(base, context)?;
@@ -15936,16 +16110,12 @@ impl Analyzer {
             Some(Ty::Enum(canonical))
         });
         let scrutinee = self.lower_expr(base, base_expected.as_ref(), context);
-        if borrowed {
-            self.error("optional chaining requires an owned `Option` or `Result` value");
-            return error_expr();
-        }
         if scrutinee.ty == Ty::Error {
             return error_expr();
         }
         let Some(info) = self.builtin_fallible_info_for_ty(&scrutinee.ty) else {
             self.error(format!(
-                "operator `?.` requires an owned `Option(T)` or `Result(T, E)`, found `{}`",
+                "operator `?.` requires an owned `Option(T)`, `Result(T, E)`, or `Chain` value, found `{}`",
                 scrutinee.ty
             ));
             return error_expr();
@@ -16031,6 +16201,62 @@ impl Analyzer {
             },
         });
         self.lower_match_with_scrutinee(scrutinee, &arms, Some(&Ty::Enum(canonical)), context)
+    }
+
+    fn lower_custom_chain_call(
+        &mut self,
+        base: &Expr,
+        member: &str,
+        groups: Option<&[&[CallArg]]>,
+        plan: CustomChainPlan,
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        const PAYLOAD_BINDING: &str = "$chain$payload";
+        let mut access = Expr::Member(
+            Box::new(Expr::Name(PAYLOAD_BINDING.to_owned())),
+            member.to_owned(),
+        );
+        if let Some(groups) = groups {
+            for arguments in groups {
+                access = Expr::Call(Box::new(access), arguments.to_vec());
+            }
+        }
+        let transform = Expr::Closure(
+            vec![Param {
+                mode: PassMode::Inferred,
+                access: None,
+                passing: None,
+                region: None,
+                name: PAYLOAD_BINDING.to_owned(),
+                ty: plan.item_source,
+            }],
+            Box::new(access),
+        );
+        let callee = Expr::Call(
+            Box::new(Expr::Member(
+                Box::new(base.clone()),
+                "$lang$chain".to_owned(),
+            )),
+            vec![
+                CallArg {
+                    label: None,
+                    value: Expr::Name("pure".to_owned()),
+                },
+                CallArg {
+                    label: None,
+                    value: source_type_expression(&plan.output_source),
+                },
+            ],
+        );
+        let call = Expr::Call(
+            Box::new(callee),
+            vec![CallArg {
+                label: None,
+                value: transform,
+            }],
+        );
+        self.lower_expr(&call, expected, context)
     }
 
     fn infer_try_result_type(&mut self, body: &Expr, context: &LowerCtx) -> Option<Ty> {
@@ -18715,6 +18941,7 @@ impl Analyzer {
             if let Some((member, lang_item)) = match variant_name.as_str() {
                 "$lang$into_iter" => Some(("into_iter", LangItemKind::IntoIterator)),
                 "$lang$next" => Some(("next", LangItemKind::Iterator)),
+                "$lang$chain" => Some(("chain", LangItemKind::Chain)),
                 "$lang$coalesce" => Some(("coalesce", LangItemKind::Coalesce)),
                 _ => None,
             } {
@@ -25905,6 +26132,9 @@ impl Analyzer {
             let moves = matches!(&*argument, HirArgument::Move(_));
             match argument {
                 HirArgument::Copy(value) | HirArgument::Move(value) => {
+                    if matches!(value.kind, HirExprKind::Function(_)) {
+                        continue;
+                    }
                     if let HirExprKind::Read { place, .. } = &value.kind {
                         if let Some(binding) = borrowed_temporaries.remove(&place.local) {
                             statements.push(HirStmt::Let(binding));
@@ -38395,6 +38625,128 @@ let main(): i32 = {
     }
 
     #[test]
+    fn generic_associated_type_constructor_rebinds_chain_result() {
+        let program = resolve_text(
+            r#"
+use core.ops.Chain
+
+let Boxed = struct(value: i32)
+let Maybe(T: type) = enum { Some(T), None }
+
+extend Maybe(Boxed): Chain {
+  let Item = Boxed
+  let Rebind = Maybe
+  let chain(E: effect, U: type)(move self)(move transform: (Boxed): U with(E)): Maybe(U) with(E) = {
+    self match {
+      Some(value) => Maybe(U).Some(transform(value)),
+      None => Maybe(U).None,
+    }
+  }
+}
+
+let main(): i32 = {
+  let value = Maybe(Boxed).Some(Boxed(40)).chain(pure, i32)({ (item: Boxed) -> item.value + 2 })
+  value match { Some(answer) => answer, None => 0 }
+}
+"#,
+        );
+        let key = TraitImplKey {
+            self_ty: Ty::Enum(nominal_instance_name(&NominalInstanceKey {
+                kind: NominalKind::Enum,
+                template: "Maybe".into(),
+                arguments: vec![Ty::Struct("Boxed".into())],
+            })),
+            trait_ref: TraitRefKey {
+                name: "core::ops::Chain".into(),
+                arguments: Vec::new(),
+            },
+        };
+        let template = trait_method_name(&key, "chain");
+        let mut analyzer = Analyzer::new(&program);
+        let implementation = analyzer
+            .trait_impls
+            .get(&key)
+            .expect("Maybe(Boxed) must implement Chain");
+        assert_eq!(
+            implementation.associated_type_sources["Rebind"],
+            Type::Named("Maybe".into(), Vec::new())
+        );
+        let lowered = analyzer.analyze();
+        assert!(
+            lowered.is_some() && analyzer.diagnostics.is_empty(),
+            "unexpected custom Chain diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        let instance = analyzer
+            .function_instances
+            .values()
+            .find(|instance| instance.key.template == template)
+            .expect("custom Chain method template must instantiate")
+            .canonical
+            .clone();
+        let ir = compile(&program).expect("direct custom Chain call must compile");
+        let symbol = function_symbol(&instance);
+        assert!(ir.contains(&format!("@{symbol}(")));
+    }
+
+    #[test]
+    fn chain_operator_dispatches_through_core_trait_for_user_types() {
+        let program = resolve_text(
+            r#"
+use core.ops.Chain
+
+let Boxed = struct(value: i32)
+let Maybe(T: type) = enum { Some(T), None }
+
+extend Maybe(Boxed): Chain {
+  let Item = Boxed
+  let Rebind = Maybe
+  let chain(E: effect, U: type)(move self)(move transform: (Boxed): U with(E)): Maybe(U) with(E) = {
+    self match {
+      Some(value) => Maybe(U).Some(transform(value)),
+      None => Maybe(U).None,
+    }
+  }
+}
+
+let main(): i32 = {
+  let value = Maybe(Boxed).Some(Boxed(42))?.value
+  value match { Some(answer) => answer, None => 0 }
+}
+"#,
+        );
+        let key = TraitImplKey {
+            self_ty: Ty::Enum(nominal_instance_name(&NominalInstanceKey {
+                kind: NominalKind::Enum,
+                template: "Maybe".into(),
+                arguments: vec![Ty::Struct("Boxed".into())],
+            })),
+            trait_ref: TraitRefKey {
+                name: "core::ops::Chain".into(),
+                arguments: Vec::new(),
+            },
+        };
+        let template = trait_method_name(&key, "chain");
+        let mut analyzer = Analyzer::new(&program);
+        let lowered = analyzer.analyze();
+        assert!(
+            lowered.is_some() && analyzer.diagnostics.is_empty(),
+            "unexpected custom `?.` diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        let instance = analyzer
+            .function_instances
+            .values()
+            .find(|instance| instance.key.template == template)
+            .expect("custom Chain operator method template must instantiate")
+            .canonical
+            .clone();
+        let ir = compile(&program).expect("custom Chain implementation must drive `?.`");
+        let symbol = function_symbol(&instance);
+        assert!(ir.contains(&format!("@{symbol}(")));
+    }
+
+    #[test]
     fn coalesce_probe_participates_in_outer_inference_and_nests_right_associatively() {
         compile_text(
             r#"
@@ -42919,10 +43271,10 @@ let main(): i32 = {
 	let Node = struct(value: i32)
 	extend Node: Generic {
 	  let Item = i32
-	}
-	let main(): i32 = { 0 }
-	"#,
-                "implementations are not supported yet",
+		}
+		let main(): i32 = { 0 }
+		"#,
+                "must name a generic type constructor",
             ),
             (
                 r#"
@@ -43360,7 +43712,7 @@ let Payload = struct(value: i32)
 let read(value: Payload): Option(i32) = { value?.value }
 let main(): i32 = { 0 }
 "#,
-                "requires an owned `Option(T)` or `Result(T, E)`",
+                "requires an owned `Option(T)`, `Result(T, E)`, or `Chain` value",
             ),
         ];
         for (source, expected) in cases {

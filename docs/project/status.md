@@ -84,14 +84,19 @@ Built-in integers retain checked trap boundaries, while nominal values dispatch 
 source-backed `core.ops` `*Assign` traits with a mutable receiver borrow. Same-named ordinary methods
 cannot intercept operator lowering.
 `core.ops.Chain` uses a `Rebind(Value: type): type` generic associated constructor and `Coalesce`
-uses an effect-forwarding fallback closure. The compiler now accepts such GAT declarations and
-method-signature references, but still rejects GAT implementations and GAT where-predicate
-equalities. Concrete nominal trait implementation methods can now carry matching compile-time
+uses an effect-forwarding fallback closure. The compiler accepts such GAT declarations and
+method-signature references, and concrete nominal trait implementations can now bind a direct
+generic nominal constructor such as `let Rebind = Maybe`; the constructor source is substituted into
+method templates as `Maybe(U)` without pretending that `Maybe` is a runtime type. GAT
+where-predicate equalities, partial constructor applications, and generic-impl GAT bindings remain
+future work. Concrete nominal trait implementation methods can carry matching compile-time
 parameter groups and are registered as generic templates, which unblocks source-level protocol
-methods such as `coalesce(E)`. `??` now dispatches non-`Option`/`Result` nominal values through
-`core.ops.Coalesce` when its fallback can be represented as a no-capture lifted function. Capturing
-fallback closures still require the general callable-to-function argument bridge. `?.` dispatch
-through `Chain` remains future work; the built-in `Option`/`Result` paths remain available.
+methods such as `coalesce(E)` and `chain(E, U)`. `??` now dispatches non-`Option`/`Result` nominal
+values through `core.ops.Coalesce` when its fallback can be represented as a no-capture lifted
+function. `?.` now dispatches non-`Option`/`Result` nominal values through `core.ops.Chain` under
+the same no-capture transform limit; simple field access is covered, while transforms that capture
+outer call arguments still require the general callable-to-function bridge. The built-in
+`Option`/`Result` paths remain available.
 
 `core.algebra` currently provides first-order `Semigroup(T)` and `Monoid(T)` protocols outside the
 prelude. `core.functional` now provides higher-kinded `Functor`, `Applicative`, and `Monad`

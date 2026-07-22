@@ -1485,6 +1485,10 @@ let Chain = trait {
 默认不自动展平；需要显式 `flat_map`。标准 `Option` 和 `Result` 的实现消费左侧容器，确保失败
 residual 只移动或析构一次；借用容器可由标准库提供单独的 `Chain` 实现。
 
+当前实现支持 concrete trait impl 中的直接构造子绑定，例如 `let Rebind = Maybe`，并能让非
+`Option`/`Result` nominal 类型的 `?.` 调度到 `Chain.chain`。自定义 `?.` 的 transform 目前必须能
+降为无捕获 lifted function；会捕获外层参数的可选方法调用仍等待通用 callable-to-function bridge。
+
 ### 14.2 合并运算符 `??`
 
 ```sc
@@ -1517,7 +1521,8 @@ let value = result.recover { (error: Error) -> fallback(error) }
 `recover` 是普通方法，不是语言语法；它通过独立参数组接收尾随闭包。
 
 `?.` 与 `??` 和其他可重载运算符一样允许用户类型实现，但实现必须满足 `Chain`/`Coalesce`
-lang-item trait。短路与“右侧最多求值一次”仍是语言保证，用户实现不能改变。
+lang-item trait。标准 `Option`/`Result` 实现提供语言定义的短路行为；用户实现的短路律属于协议契约
+和标准库测试约束，不由当前类型系统证明。
 
 ## 15. 错误 effect 与 `try` handler
 

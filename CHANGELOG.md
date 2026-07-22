@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.175.0 - 2026-07-22
+
+- Implemented concrete generic associated type constructor bindings such as `let Rebind = Maybe`
+  for nominal trait implementations, storing constructor sources separately from ordinary lowered
+  associated types so `Rebind(U)` can substitute to `Maybe(U)` in method templates.
+- Routed `?.` on non-`Option`/`Result` nominal values through the validated `core.ops.Chain.chain`
+  method when the synthesized transform closure can be represented as a no-capture lifted function.
+- Fixed call-argument staging for direct lifted function values, keeping bare function pointers out
+  of temporary locals that have no runtime storage.
+
 ## 0.174.0 - 2026-07-22
 
 - Routed `??` on non-`Option`/`Result` nominal values through the validated `core.ops.Coalesce`
