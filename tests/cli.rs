@@ -3436,7 +3436,7 @@ pub let make_number(value: i32): Number = { Number(value) }
     );
     assert!(
         String::from_utf8_lossy(&fake_option.stderr)
-            .contains("requires `Option(T)` or `Result(T, E)`"),
+            .contains("type `fake::Option(i32)` does not implement `Coalesce`"),
         "{}",
         output_text(&fake_option)
     );

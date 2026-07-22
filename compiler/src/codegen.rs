@@ -15448,6 +15448,14 @@ impl Analyzer {
         context: &mut LowerCtx,
     ) -> HirExpr {
         let inferred_left = self.inferred_builtin_coalesce_lhs(left, context);
+        if inferred_left.is_none() {
+            let left_probe = self.probe_expr_ty(left, None, context);
+            if Self::nominal_ty_from_probe(&left_probe).is_some()
+                && self.builtin_fallible_info_for_probe(&left_probe).is_none()
+            {
+                return self.lower_custom_coalesce(left, right, expected, context);
+            }
+        }
         let payload_hint = inferred_left.as_ref().and_then(|inferred| {
             match self.inferred_coalesce_payload_probe(
                 inferred.kind,
@@ -15542,6 +15550,41 @@ impl Analyzer {
             ],
         };
         self.lower_match_with_scrutinee(scrutinee, &arms, Some(&info.payload), context)
+    }
+
+    fn lower_custom_coalesce(
+        &mut self,
+        left: &Expr,
+        right: &Expr,
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        const SCRUTINEE_BINDING: &str = "$coalesce$scrutinee";
+        let lowered = Expr::Block(
+            vec![Stmt::Let(Binding {
+                mutable: false,
+                name: SCRUTINEE_BINDING.to_owned(),
+                annotation: None,
+                value: left.clone(),
+            })],
+            Some(Box::new(Expr::Call(
+                Box::new(Expr::Call(
+                    Box::new(Expr::Member(
+                        Box::new(Expr::Name(SCRUTINEE_BINDING.to_owned())),
+                        "$lang$coalesce".to_owned(),
+                    )),
+                    vec![CallArg {
+                        label: None,
+                        value: Expr::Name("pure".to_owned()),
+                    }],
+                )),
+                vec![CallArg {
+                    label: None,
+                    value: Expr::Closure(Vec::new(), Box::new(right.clone())),
+                }],
+            ))),
+        );
+        self.lower_expr(&lowered, expected, context)
     }
 
     fn lower_handler_coalesce(
@@ -18672,6 +18715,7 @@ impl Analyzer {
             if let Some((member, lang_item)) = match variant_name.as_str() {
                 "$lang$into_iter" => Some(("into_iter", LangItemKind::IntoIterator)),
                 "$lang$next" => Some(("next", LangItemKind::Iterator)),
+                "$lang$coalesce" => Some(("coalesce", LangItemKind::Coalesce)),
                 _ => None,
             } {
                 return self.lower_bound_method_call(
@@ -25665,6 +25709,16 @@ impl Analyzer {
                     } else {
                         self.lower_reference_value_expr(argument, &parameter.ty, context)
                     }
+                } else if let (Ty::Function(function_ty), Expr::Closure(params, body)) =
+                    (&parameter.ty, argument)
+                {
+                    self.lower_noncapturing_closure_argument_as_function(
+                        params,
+                        body,
+                        function_ty,
+                        &parameter.name,
+                        context,
+                    )
                 } else if let Some(place) = self.lower_place_without_diagnostic(argument, context) {
                     let access = if mode == PassMode::Copy {
                         AccessKind::Copy
@@ -25745,6 +25799,91 @@ impl Analyzer {
             }
             PassMode::Inferred => unreachable!("effective mode is explicit"),
         }
+    }
+
+    fn lower_noncapturing_closure_argument_as_function(
+        &mut self,
+        params: &[crate::ast::Param],
+        body: &Expr,
+        function_ty: &FunctionTy,
+        parameter_name: &str,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let Some(captures) = self.closure_literal_capture_uses(params, body, context) else {
+            return error_expr();
+        };
+        if !captures.is_empty() {
+            self.error(format!(
+                "capturing closure cannot be passed to function-typed parameter `{parameter_name}` yet"
+            ));
+            return error_expr();
+        }
+        let custom_effect_sources =
+            source_effect_source_map(&effect_identity_sources(&function_ty.custom_effects));
+        let lowered = self.lower_local_closure(
+            params,
+            body,
+            Some((*function_ty.result).clone()),
+            ClosureEffectContext {
+                unsafe_depth: usize::from(function_ty.unsafe_effect),
+                throws_error: function_ty.throws_error.as_deref().cloned(),
+                custom_effects: function_ty.custom_effects.iter().cloned().collect(),
+                custom_effect_sources,
+                lexical_handler_effects: HashSet::new(),
+                lexical_handler_effect_sources: HashMap::new(),
+            },
+            context,
+        );
+        let HirExprKind::LocalClosure(closure) = lowered.kind else {
+            return error_expr();
+        };
+        if !closure.captures.is_empty() {
+            self.error(format!(
+                "capturing closure cannot be passed to function-typed parameter `{parameter_name}` yet"
+            ));
+            return error_expr();
+        }
+        HirExpr {
+            ty: Ty::Function(FunctionTy {
+                groups: closure
+                    .groups
+                    .iter()
+                    .map(|group| group.iter().map(|parameter| parameter.ty.clone()).collect())
+                    .collect(),
+                unsafe_effect: closure.unsafe_effect,
+                throws_error: closure.throws_error.clone().map(Box::new),
+                custom_effects: closure.custom_effects.clone(),
+                result: Box::new(closure.result.clone()),
+            }),
+            kind: HirExprKind::Function(closure.function),
+        }
+    }
+
+    fn closure_literal_capture_uses(
+        &mut self,
+        params: &[crate::ast::Param],
+        body: &Expr,
+        context: &LowerCtx,
+    ) -> Option<Vec<ClosureCaptureUse>> {
+        let mut bound = HashSet::new();
+        let mut current_params = params;
+        let mut current_body = body;
+        loop {
+            bound.extend(
+                current_params
+                    .iter()
+                    .map(|parameter| parameter.name.clone()),
+            );
+            if let Expr::Closure(nested_params, nested_body) = current_body {
+                current_params = nested_params;
+                current_body = nested_body;
+            } else {
+                break;
+            }
+        }
+        let mut captures = Vec::new();
+        self.scan_simple_closure_captures(current_body, &mut bound, context, &mut captures)
+            .then_some(captures)
     }
 
     fn wrap_call_argument_temporaries(
@@ -38188,6 +38327,69 @@ let main(): i32 = { Boxed(40).apply(i32)(2) }
             .canonical
             .clone();
         let ir = compile(&program).expect("generic concrete trait method must compile");
+        let symbol = function_symbol(&instance);
+        assert!(ir.contains(&format!("call i32 @{symbol}(")));
+    }
+
+    #[test]
+    fn noncapturing_closure_arguments_can_fill_function_parameters() {
+        compile_text(
+            r#"
+let invoke(move action: (): i32): i32 = { action() }
+let main(): i32 = { invoke({ 42 }) }
+"#,
+        )
+        .expect("noncapturing closure argument must compile");
+    }
+
+    #[test]
+    fn coalesce_operator_dispatches_through_core_trait_for_user_types() {
+        let program = resolve_text(
+            r#"
+use core.ops.Coalesce
+
+let Choice = enum { Present(i32), Missing }
+
+extend Choice: Coalesce {
+  let Item = i32
+  let coalesce(E: effect)(move self)(move fallback: (): i32 with(E)): i32 with(E) = {
+    self match {
+      Present(value) => value,
+      Missing => fallback(),
+    }
+  }
+}
+
+let main(): i32 = {
+  let present = Choice.Present(10) ?? 1
+  let missing = Choice.Missing ?? 2
+  present + missing
+}
+"#,
+        );
+        let key = TraitImplKey {
+            self_ty: Ty::Enum("Choice".into()),
+            trait_ref: TraitRefKey {
+                name: "core::ops::Coalesce".into(),
+                arguments: Vec::new(),
+            },
+        };
+        let template = trait_method_name(&key, "coalesce");
+        let mut analyzer = Analyzer::new(&program);
+        let lowered = analyzer.analyze();
+        assert!(
+            lowered.is_some() && analyzer.diagnostics.is_empty(),
+            "unexpected custom Coalesce diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        let instance = analyzer
+            .function_instances
+            .values()
+            .find(|instance| instance.key.template == template)
+            .expect("custom Coalesce method template must instantiate")
+            .canonical
+            .clone();
+        let ir = compile(&program).expect("custom Coalesce implementation must drive `??`");
         let symbol = function_symbol(&instance);
         assert!(ir.contains(&format!("call i32 @{symbol}(")));
     }

@@ -88,9 +88,10 @@ uses an effect-forwarding fallback closure. The compiler now accepts such GAT de
 method-signature references, but still rejects GAT implementations and GAT where-predicate
 equalities. Concrete nominal trait implementation methods can now carry matching compile-time
 parameter groups and are registered as generic templates, which unblocks source-level protocol
-methods such as `coalesce(E)`. General `?.`/`??` dispatch through these protocols still requires the
-closure-to-function fallback bridge; current executable lowering remains the built-in
-`Option`/`Result` path.
+methods such as `coalesce(E)`. `??` now dispatches non-`Option`/`Result` nominal values through
+`core.ops.Coalesce` when its fallback can be represented as a no-capture lifted function. Capturing
+fallback closures still require the general callable-to-function argument bridge. `?.` dispatch
+through `Chain` remains future work; the built-in `Option`/`Result` paths remain available.
 
 `core.algebra` currently provides first-order `Semigroup(T)` and `Monoid(T)` protocols outside the
 prelude. `core.functional` now provides higher-kinded `Functor`, `Applicative`, and `Monad`

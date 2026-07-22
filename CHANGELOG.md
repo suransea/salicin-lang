@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.174.0 - 2026-07-22
+
+- Routed `??` on non-`Option`/`Result` nominal values through the validated `core.ops.Coalesce`
+  trait method, selecting the standard `pure` effect row for the synthesized fallback action.
+- Added a narrow no-capture closure-to-function-parameter bridge, allowing closure literals such as
+  `{ 42 }` to fill `(): T` parameters by using their lifted function symbol directly.
+- Documented the current custom `Coalesce` limit: captured fallback closures still require the
+  general callable-to-function bridge before they can be represented as ordinary trait arguments.
+
 ## 0.173.0 - 2026-07-22
 
 - Allowed concrete nominal trait implementation methods to keep matching compile-time parameter
