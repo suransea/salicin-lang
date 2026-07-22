@@ -21738,7 +21738,7 @@ impl Analyzer {
                             })
                         }) {
                             self.error(
-                                "a source effect closure passed to a reusable handler must currently be an immutable binding immediately before a complete block-tail call and may capture only immutable Copy locals",
+                                "a source effect closure passed to a reusable handler must currently be the binding immediately before a complete block-tail call, with liftable Copy borrows or owned root captures",
                             );
                             arguments.push(HirArgument::Move(error_expr()));
                             continue;
@@ -21853,9 +21853,6 @@ impl Analyzer {
         tail: &mut Option<Expr>,
         context: &LowerCtx,
     ) -> bool {
-        if binding.mutable {
-            return false;
-        }
         let Some(Type::Function { effects, .. }) = binding.annotation.as_ref() else {
             return false;
         };
@@ -21922,10 +21919,27 @@ impl Analyzer {
             return false;
         }
         if captures.iter().any(|capture| {
-            capture.mode != ClosureCaptureMode::Shared
-                || context
-                    .lookup(&capture.name)
-                    .is_none_or(|local| local.mutable || !self.is_copy_type(&local.ty))
+            context
+                .lookup(&capture.name)
+                .is_none_or(|local| match capture.mode {
+                    ClosureCaptureMode::Shared => !self.is_copy_type(&local.ty),
+                    ClosureCaptureMode::Mutable => {
+                        !local.mutable
+                            || local.capability != LocalCapability::Owned
+                            || !self.is_copy_type(&local.ty)
+                    }
+                    ClosureCaptureMode::Move => {
+                        local.capability != LocalCapability::Owned
+                            || !matches!(
+                                local.ty,
+                                Ty::Struct(_)
+                                    | Ty::Enum(_)
+                                    | Ty::Callable(_)
+                                    | Ty::Continuation { .. }
+                                    | Ty::EffectCallable { .. }
+                            )
+                    }
+                })
         }) {
             return false;
         }
@@ -21947,8 +21961,13 @@ impl Analyzer {
             };
             let lifted = format!("$handler$action$capture${specialization}${index}");
             replacements.insert(capture.name.clone(), lifted.clone());
+            let mode = match capture.mode {
+                ClosureCaptureMode::Shared => PassMode::Borrow,
+                ClosureCaptureMode::Mutable => PassMode::MutBorrow,
+                ClosureCaptureMode::Move => PassMode::Move,
+            };
             specialized.groups[group_index].push(Param {
-                mode: PassMode::Borrow,
+                mode,
                 access: None,
                 passing: None,
                 region: None,
@@ -40982,7 +41001,7 @@ let main(): i32 = {
     }
 
     #[test]
-    fn reusable_handler_capturing_action_reports_unsupported_ownership_shapes() {
+    fn reusable_handler_capturing_action_reports_unsupported_non_tail_shapes() {
         let errors = compile_text(
             r#"
 let Ask = effect { let value(): i32 }
@@ -40995,13 +41014,14 @@ let main(): i32 = {
     base = base + 1
     Ask.value() + input + base
   }
-  run(action)(1)
+  let padding = 0
+  run(action)(1 + padding)
 }
 "#,
         )
-        .expect_err("mutable captured actions remain outside the first reusable slice");
-        assert!(errors.iter().any(|error| error
-            .message
-            .contains("may capture only immutable Copy locals")));
+        .expect_err("non-adjacent captured actions remain outside the first reusable slice");
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("binding immediately before")));
     }
 }

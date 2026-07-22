@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.148.0 - 2026-07-22
+
+- Extended captured reusable-handler actions from shared `Copy` environments to `FnMut` mutable
+  captures and `FnOnce` owned root captures.
+- Lifted mutable captures as `borrow(mut)` parameters and consuming captures as `move` parameters,
+  preserving the closure's source ownership mode through handler specialization and selective CPS.
+- Verified native `FnMut` state across a resumed operation and exactly-once `FnOnce` resource cleanup
+  on both resumption and continuation abandonment; all three regressions exit with 42.
+- Kept unsupported non-adjacent and non-tail source shapes on a dedicated user-facing diagnostic.
+
 ## 0.147.0 - 2026-07-22
 
 - Allowed a complete reusable-handler call in block-tail position to consume the immediately
