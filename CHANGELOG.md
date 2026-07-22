@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.147.0 - 2026-07-22
+
+- Allowed a complete reusable-handler call in block-tail position to consume the immediately
+  preceding, explicitly typed effectful closure when it captures immutable `Copy` locals.
+- Lifted those shared captures into target-specific handler parameters, injected the closure into
+  the lexical handler action, and ran the existing selective-CPS transformation there.
+- Kept the original higher-order source signature for type checking while classifying its handled
+  action slot with the internal `EffectCallable(Input, Output, Answer)` runtime contract.
+- Added a native captured-action regression that resumes the operation and exits with 42.
+
 ## 0.146.0 - 2026-07-22
 
 - Added compiler-internal HIR operations that erase an owned CPS closure into

@@ -397,11 +397,19 @@ struct AlgebraicHandler {
     function_aliases: Rc<RefCell<HashMap<String, String>>>,
     resumable_closures: Rc<RefCell<HashMap<String, SourceResumableClosure>>>,
     dynamic_callables: Rc<RefCell<HashMap<String, SourceDynamicCallable>>>,
+    erased_callables: HashMap<String, SourceErasedCallable>,
     done: Option<AlgebraicHandlerClause>,
     inlining: Rc<RefCell<HashMap<String, SourceInlineFrame>>>,
     loop_breaks: Rc<RefCell<HashMap<String, SourceContinuation>>>,
     result_source: Option<Type>,
     return_continuations: Rc<RefCell<HashMap<String, SourceContinuation>>>,
+}
+
+#[derive(Clone)]
+struct SourceErasedCallable {
+    output: Type,
+    answer: Type,
+    accepts_input: bool,
 }
 
 #[derive(Clone)]
@@ -680,6 +688,15 @@ struct EffectCallableAdapter {
     input: Ty,
     output: Ty,
     answer: Ty,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeHandlerAction {
+    effect: String,
+    input: Ty,
+    output: Ty,
+    answer: Ty,
+    accepts_input: bool,
 }
 
 impl HirProgram {
@@ -1896,6 +1913,7 @@ struct Analyzer {
     array_types: HashSet<Ty>,
     continuation_adapters: Vec<ContinuationAdapter>,
     effect_callable_adapters: Vec<EffectCallableAdapter>,
+    runtime_handler_actions: HashMap<(String, usize, usize), RuntimeHandlerAction>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -1967,6 +1985,7 @@ impl Analyzer {
             array_types: HashSet::new(),
             continuation_adapters: Vec::new(),
             effect_callable_adapters: Vec::new(),
+            runtime_handler_actions: HashMap::new(),
             diagnostics: Vec::new(),
         };
         if !program.uses.is_empty() {
@@ -2375,6 +2394,7 @@ impl Analyzer {
                 },
             );
         }
+        self.register_runtime_handler_actions();
         for name in self.global_order.clone() {
             let binding = self.globals[&name].clone();
             let annotation = binding
@@ -2386,6 +2406,73 @@ impl Analyzer {
 
         self.validate_nominal_templates();
         self.validate_function_templates();
+    }
+
+    fn register_runtime_handler_actions(&mut self) {
+        for function_name in self.function_order.clone() {
+            let function = self.functions[&function_name].clone();
+            let Some(body) = function.body.as_ref() else {
+                continue;
+            };
+            let Some(answer_source) = function.return_type.as_ref() else {
+                continue;
+            };
+            let answer = self.lower_source_type(answer_source);
+            for (group_index, group) in function.groups.iter().enumerate() {
+                for (parameter_index, parameter) in group.iter().enumerate() {
+                    if matches!(parameter.mode, PassMode::Borrow | PassMode::MutBorrow) {
+                        continue;
+                    }
+                    let Type::Function {
+                        groups,
+                        effects,
+                        result,
+                    } = &parameter.ty
+                    else {
+                        continue;
+                    };
+                    if effects.unsafe_effect
+                        || effects.throws.is_some()
+                        || !effects.parameters.is_empty()
+                        || effects.custom.len() != 1
+                        || groups.len() != 1
+                        || groups[0].len() > 1
+                    {
+                        continue;
+                    }
+                    let effect = source_effect_identity(&effects.custom[0]);
+                    let root = effect.split('(').next().unwrap_or(&effect);
+                    if self
+                        .effect_defs
+                        .get(root)
+                        .is_none_or(|definition| definition.operations.is_empty())
+                        || function
+                            .effects
+                            .custom
+                            .iter()
+                            .any(|candidate| source_effect_identity(candidate) == effect)
+                        || !expression_handles_effect(body, &effect)
+                    {
+                        continue;
+                    }
+                    let input = groups[0]
+                        .first()
+                        .map(|input| self.lower_source_type(input))
+                        .unwrap_or(Ty::Unit);
+                    let output = self.lower_source_type(result);
+                    self.runtime_handler_actions.insert(
+                        (function_name.clone(), group_index, parameter_index),
+                        RuntimeHandlerAction {
+                            effect,
+                            input,
+                            output,
+                            answer: answer.clone(),
+                            accepts_input: !groups[0].is_empty(),
+                        },
+                    );
+                }
+            }
+        }
     }
 
     fn validate_program_effects(&mut self, program: &Program) {
@@ -10151,6 +10238,15 @@ impl Analyzer {
         for (group_index, group) in signature.groups.iter().enumerate() {
             for (parameter_index, param) in group.iter().enumerate() {
                 self.validate_parameter_mode(name, param);
+                let runtime_ty = self
+                    .runtime_handler_actions
+                    .get(&(name.to_owned(), group_index, parameter_index))
+                    .map(|action| Ty::EffectCallable {
+                        input: Box::new(action.input.clone()),
+                        output: Box::new(action.output.clone()),
+                        answer: Box::new(action.answer.clone()),
+                    })
+                    .unwrap_or_else(|| param.ty.clone());
                 if context.scopes[0].names.contains_key(&param.name) {
                     self.error(format!(
                         "duplicate parameter `{}` in function `{name}`",
@@ -10170,7 +10266,7 @@ impl Analyzer {
                     );
                 } else if let Ty::Reference {
                     mutable, region, ..
-                } = &param.ty
+                } = &runtime_ty
                 {
                     context
                         .borrowed_parameter_regions
@@ -10186,7 +10282,7 @@ impl Analyzer {
                     param.name.clone(),
                     LocalInfo {
                         id,
-                        ty: param.ty.clone(),
+                        ty: runtime_ty.clone(),
                         mutable: param.mode == PassMode::MutBorrow,
                         capability,
                         alias: None,
@@ -10197,7 +10293,7 @@ impl Analyzer {
                 params.push(HirParam {
                     id,
                     name: param.name.clone(),
-                    ty: param.ty.clone(),
+                    ty: runtime_ty,
                     mode: param.mode,
                 });
             }
@@ -10903,9 +10999,20 @@ impl Analyzer {
             Expr::Block(statements, tail) => {
                 context.push_scope();
                 let mut lowered_statements = Vec::new();
-                for statement in statements {
+                let source_statements = statements.clone();
+                let mut source_tail = tail.as_deref().cloned();
+                for (statement_index, statement) in source_statements.iter().enumerate() {
                     match statement {
                         Stmt::Let(binding) => {
+                            if statement_index + 1 == source_statements.len()
+                                && self.specialize_capturing_handler_action_binding(
+                                    binding,
+                                    &mut source_tail,
+                                    context,
+                                )
+                            {
+                                continue;
+                            }
                             let borrow_annotation = binding.annotation.as_ref().and_then(|ty| {
                                 matches!(ty, Type::Borrow { .. })
                                     .then(|| self.lower_source_type(ty))
@@ -11136,7 +11243,7 @@ impl Analyzer {
                         }
                     }
                 }
-                let lowered_tail = tail
+                let lowered_tail = source_tail
                     .as_ref()
                     .map(|tail| Box::new(self.lower_expr(tail, expected, context)));
                 let ty = lowered_tail
@@ -16946,6 +17053,31 @@ impl Analyzer {
                         TypeProbe::Unsupported => None,
                     })
             });
+        let erased_callables = context
+            .function_name
+            .as_ref()
+            .into_iter()
+            .flat_map(|function_name| {
+                self.runtime_handler_actions
+                    .iter()
+                    .filter(move |((candidate, _, _), action)| {
+                        candidate == function_name
+                            && action.effect == source_effect_identity(instance)
+                    })
+                    .filter_map(|((_, group_index, parameter_index), action)| {
+                        let function = self.functions.get(function_name)?;
+                        let parameter = function.groups.get(*group_index)?.get(*parameter_index)?;
+                        Some((
+                            parameter.name.clone(),
+                            SourceErasedCallable {
+                                output: self.source_type_for_ty(&action.output)?,
+                                answer: self.source_type_for_ty(&action.answer)?,
+                                accepts_input: action.accepts_input,
+                            },
+                        ))
+                    })
+            })
+            .collect::<HashMap<_, _>>();
         let handler = Rc::new(AlgebraicHandler {
             identity: source_effect_identity(instance),
             clauses,
@@ -16953,6 +17085,7 @@ impl Analyzer {
             function_aliases: Rc::new(RefCell::new(HashMap::new())),
             resumable_closures: Rc::new(RefCell::new(HashMap::new())),
             dynamic_callables: Rc::new(RefCell::new(HashMap::new())),
+            erased_callables,
             done,
             inlining: Rc::new(RefCell::new(HashMap::new())),
             loop_breaks: Rc::new(RefCell::new(HashMap::new())),
@@ -17227,6 +17360,14 @@ impl Analyzer {
         }
 
         if matches!(&expression, Expr::Call(_, _)) {
+            if let Some(result) = self.transform_erased_effect_callable_call(
+                &expression,
+                handler.clone(),
+                resume.clone(),
+                continuation.clone(),
+            ) {
+                return result;
+            }
             if let Some(result) = self.transform_effectful_chain_call(
                 &expression,
                 handler.clone(),
@@ -17766,6 +17907,109 @@ impl Analyzer {
         }
     }
 
+    fn transform_erased_effect_callable_call(
+        &mut self,
+        expression: &Expr,
+        handler: Rc<AlgebraicHandler>,
+        resume: Option<SourceResume>,
+        continuation: SourceContinuation,
+    ) -> Option<Result<Expr, ()>> {
+        let mut groups = Vec::new();
+        let Expr::Name(name) = flatten_call(expression, &mut groups) else {
+            return None;
+        };
+        let action = handler.erased_callables.get(name)?.clone();
+        if groups.len() != 1
+            || groups[0].len() != usize::from(action.accepts_input)
+            || groups[0].iter().any(|argument| argument.label.is_some())
+        {
+            self.error(format!(
+                "erased effect callable `{name}` must be fully applied with {} positional input(s)",
+                usize::from(action.accepts_input)
+            ));
+            return Some(Err(()));
+        }
+        let arguments = groups[0].to_vec();
+        let action_name = name.clone();
+        let completed: SourceArgumentsContinuation = Rc::new(move |analyzer, arguments| {
+            let specialization = analyzer.next_closure;
+            analyzer.next_closure += 1;
+            let continuation_name = format!("$handler$erased$action$continuation${specialization}");
+            let continuation_value_name = format!("$handler$erased$action$value${specialization}");
+            let continuation_body =
+                continuation(analyzer, Expr::Name(continuation_value_name.clone()))?;
+            let continuation_binding = Binding {
+                mutable: true,
+                name: continuation_name.clone(),
+                annotation: Some(Type::Function {
+                    groups: vec![vec![action.output.clone()]],
+                    effects: FunctionEffects::default(),
+                    result: Box::new(action.answer.clone()),
+                }),
+                value: Expr::Closure(
+                    vec![Param {
+                        mode: PassMode::Inferred,
+                        access: None,
+                        passing: None,
+                        region: None,
+                        name: continuation_value_name,
+                        ty: action.output.clone(),
+                    }],
+                    Box::new(continuation_body),
+                ),
+            };
+            let erased_continuation_name =
+                format!("$handler$erased$action$continuation$value${specialization}");
+            let erased_continuation_binding = Binding {
+                mutable: true,
+                name: erased_continuation_name.clone(),
+                annotation: Some(Type::Named(
+                    analyzer
+                        .lang_item_name(LangItemKind::Continuation)
+                        .to_owned(),
+                    vec![action.output.clone(), action.answer.clone()],
+                )),
+                value: Expr::Call(
+                    Box::new(Expr::Name("$handler$erase$continuation".to_owned())),
+                    vec![CallArg {
+                        label: None,
+                        value: Expr::Name(continuation_name),
+                    }],
+                ),
+            };
+            let input = arguments
+                .into_iter()
+                .next()
+                .map(|argument| argument.value)
+                .unwrap_or(Expr::Unit);
+            let invoke = Expr::Call(
+                Box::new(Expr::Name("$handler$invoke$effect$callable".to_owned())),
+                vec![
+                    CallArg {
+                        label: None,
+                        value: Expr::Name(action_name.clone()),
+                    },
+                    CallArg {
+                        label: None,
+                        value: input,
+                    },
+                    CallArg {
+                        label: None,
+                        value: Expr::Name(erased_continuation_name),
+                    },
+                ],
+            );
+            Ok(Expr::Block(
+                vec![
+                    Stmt::Let(continuation_binding),
+                    Stmt::Let(erased_continuation_binding),
+                ],
+                Some(Box::new(invoke)),
+            ))
+        });
+        Some(self.transform_handler_arguments(arguments, Vec::new(), handler, resume, completed))
+    }
+
     fn transform_effectful_chain_call(
         &mut self,
         expression: &Expr,
@@ -18019,6 +18263,7 @@ impl Analyzer {
             if let Expr::Name(name) = flatten_call(expression, &mut groups) {
                 if handler.resumable_closures.borrow().contains_key(name)
                     || handler.dynamic_callables.borrow().contains_key(name)
+                    || handler.erased_callables.contains_key(name)
                 {
                     return true;
                 }
@@ -21478,7 +21723,48 @@ impl Analyzer {
             else {
                 return error_expr();
             };
-            for (argument, parameter) in ordered.into_iter().zip(params) {
+            for (parameter_index, (argument, parameter)) in
+                ordered.into_iter().zip(params).enumerate()
+            {
+                if let Some(action) = self.runtime_handler_actions.get(&(
+                    name.to_owned(),
+                    group_index,
+                    parameter_index,
+                )) {
+                    if let Expr::Name(local_name) = &argument.value {
+                        if context.lookup(local_name).is_some_and(|local| {
+                            local.closure.as_ref().is_some_and(|closure| {
+                                !matches!(closure.groups.as_slice(), [group] if group.len() == 2)
+                            })
+                        }) {
+                            self.error(
+                                "a source effect closure passed to a reusable handler must currently be an immutable binding immediately before a complete block-tail call and may capture only immutable Copy locals",
+                            );
+                            arguments.push(HirArgument::Move(error_expr()));
+                            continue;
+                        }
+                    }
+                    let expected_action = Ty::EffectCallable {
+                        input: Box::new(action.input.clone()),
+                        output: Box::new(action.output.clone()),
+                        answer: Box::new(action.answer.clone()),
+                    };
+                    let erased = Expr::Call(
+                        Box::new(Expr::Name("$handler$erase$effect$callable".to_owned())),
+                        vec![CallArg {
+                            label: None,
+                            value: argument.value.clone(),
+                        }],
+                    );
+                    let erased = self.lower_expr(&erased, Some(&expected_action), context);
+                    self.require_same_type(
+                        &erased.ty,
+                        &expected_action,
+                        format_args!("handler action parameter `{}`", parameter.name),
+                    );
+                    arguments.push(HirArgument::Move(erased));
+                    continue;
+                }
                 arguments.push(self.lower_call_argument(
                     &argument.value,
                     parameter,
@@ -21559,6 +21845,180 @@ impl Analyzer {
             }
         };
         self.wrap_call_argument_temporaries(call, &mut arguments, temporary_bindings, context)
+    }
+
+    fn specialize_capturing_handler_action_binding(
+        &mut self,
+        binding: &Binding,
+        tail: &mut Option<Expr>,
+        context: &LowerCtx,
+    ) -> bool {
+        if binding.mutable {
+            return false;
+        }
+        let Some(Type::Function { effects, .. }) = binding.annotation.as_ref() else {
+            return false;
+        };
+        let Expr::Closure(parameters, body) = &binding.value else {
+            return false;
+        };
+        let Some(call) = tail.as_ref() else {
+            return false;
+        };
+        let mut group_refs = Vec::new();
+        let Expr::Name(target) = flatten_call(call, &mut group_refs) else {
+            return false;
+        };
+        let Some(function) = self.functions.get(target).cloned() else {
+            return false;
+        };
+        if group_refs.len() != function.groups.len() {
+            return false;
+        }
+
+        let mut action_position = None;
+        for ((candidate, group_index, parameter_index), action) in &self.runtime_handler_actions {
+            if candidate != target
+                || !effects
+                    .custom
+                    .iter()
+                    .any(|effect| source_effect_identity(effect) == action.effect)
+            {
+                continue;
+            }
+            let arguments = group_refs.get(*group_index).copied().unwrap_or_default();
+            let parameter = &function.groups[*group_index][*parameter_index];
+            let argument_index = if arguments.iter().all(|argument| argument.label.is_none()) {
+                *parameter_index
+            } else {
+                let Some(index) = arguments.iter().position(|argument| {
+                    argument.label.as_deref() == Some(parameter.name.as_str())
+                }) else {
+                    continue;
+                };
+                index
+            };
+            if matches!(arguments.get(argument_index), Some(CallArg { value: Expr::Name(name), .. }) if name == &binding.name)
+            {
+                action_position = Some((
+                    *group_index,
+                    *parameter_index,
+                    argument_index,
+                    action.clone(),
+                ));
+                break;
+            }
+        }
+        let Some((group_index, parameter_index, argument_index, action)) = action_position else {
+            return false;
+        };
+
+        let mut bound = parameters
+            .iter()
+            .map(|parameter| parameter.name.clone())
+            .collect::<HashSet<_>>();
+        let mut captures = Vec::new();
+        if !self.scan_simple_closure_captures(body, &mut bound, context, &mut captures) {
+            return false;
+        }
+        if captures.iter().any(|capture| {
+            capture.mode != ClosureCaptureMode::Shared
+                || context
+                    .lookup(&capture.name)
+                    .is_none_or(|local| local.mutable || !self.is_copy_type(&local.ty))
+        }) {
+            return false;
+        }
+
+        let specialization = self.next_closure;
+        self.next_closure += 1;
+        let canonical = format!("$capturing$handler${}${specialization}", hex_name(target));
+        let mut specialized = function;
+        specialized.name = canonical.clone();
+        specialized.groups[group_index].remove(parameter_index);
+        let mut replacements = HashMap::new();
+        let mut lifted_arguments = Vec::new();
+        for (index, capture) in captures.iter().enumerate() {
+            let local = context
+                .lookup(&capture.name)
+                .expect("capture scanner records visible locals");
+            let Some(source_ty) = self.source_type_for_ty(&local.ty) else {
+                return false;
+            };
+            let lifted = format!("$handler$action$capture${specialization}${index}");
+            replacements.insert(capture.name.clone(), lifted.clone());
+            specialized.groups[group_index].push(Param {
+                mode: PassMode::Borrow,
+                access: None,
+                passing: None,
+                region: None,
+                name: lifted.clone(),
+                ty: source_ty,
+            });
+            lifted_arguments.push((lifted, capture.name.clone()));
+        }
+        let mut injected = binding.clone();
+        rewrite_static_function_values(&mut injected.value, &replacements);
+        let Some(specialized_body) = specialized.body.as_mut() else {
+            return false;
+        };
+        if !inject_handler_action_binding(specialized_body, &action.effect, injected) {
+            return false;
+        }
+
+        let signature = FunctionSig {
+            groups: specialized
+                .groups
+                .iter()
+                .map(|group| {
+                    group
+                        .iter()
+                        .map(|parameter| ParamSig {
+                            name: parameter.name.clone(),
+                            ty: self.lower_source_type(&parameter.ty),
+                            mode: parameter.mode,
+                        })
+                        .collect()
+                })
+                .collect(),
+            unsafe_effect: specialized.effects.unsafe_effect,
+            throws_error: specialized
+                .effects
+                .throws
+                .as_deref()
+                .map(|error| self.lower_source_type(error)),
+            custom_effects: source_effect_identities(&specialized.effects.custom),
+            result: specialized
+                .return_type
+                .as_ref()
+                .map(|result| self.lower_source_type(result)),
+        };
+        self.functions.insert(canonical.clone(), specialized);
+        self.signatures.insert(canonical.clone(), signature);
+        self.function_origins
+            .insert(canonical.clone(), self.function_origins[target].clone());
+        self.function_accesses
+            .insert(canonical.clone(), self.function_accesses[target].clone());
+        self.function_order.push(canonical.clone());
+
+        let mut groups = group_refs
+            .iter()
+            .map(|group| group.to_vec())
+            .collect::<Vec<_>>();
+        let labeled = groups[group_index]
+            .iter()
+            .all(|argument| argument.label.is_some());
+        groups[group_index].remove(argument_index);
+        groups[group_index].extend(lifted_arguments.into_iter().map(|(label, name)| CallArg {
+            label: labeled.then_some(label),
+            value: Expr::Name(name),
+        }));
+        let mut rewritten = Expr::Name(canonical);
+        for group in groups {
+            rewritten = Expr::Call(Box::new(rewritten), group);
+        }
+        *tail = Some(rewritten);
+        true
     }
 
     fn distribute_static_handler_selection(
@@ -23743,6 +24203,70 @@ fn handler_expression_children(expression: &Expr) -> Vec<&Expr> {
         | Expr::Name(_)
         | Expr::Closure(_, _)
         | Expr::Continue => Vec::new(),
+    }
+}
+
+fn expression_handles_effect(expression: &Expr, identity: &str) -> bool {
+    if let Expr::Call(inner, action) = expression {
+        if matches!(action.as_slice(), [CallArg { label: None, value: Expr::Closure(parameters, _) }] if parameters.is_empty())
+        {
+            let mut groups = Vec::new();
+            if let Expr::Member(effect, member) = flatten_call(inner, &mut groups) {
+                if member == "handle"
+                    && source_type_expression_name(effect).is_some_and(|effect| effect == identity)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    handler_expression_children(expression)
+        .into_iter()
+        .any(|child| expression_handles_effect(child, identity))
+}
+
+fn inject_handler_action_binding(
+    expression: &mut Expr,
+    identity: &str,
+    action_binding: Binding,
+) -> bool {
+    if let Expr::Call(inner, action) = expression {
+        if let [CallArg {
+            label: None,
+            value: Expr::Closure(parameters, action_body),
+        }] = action.as_mut_slice()
+        {
+            let mut groups = Vec::new();
+            if parameters.is_empty()
+                && matches!(flatten_call(inner, &mut groups), Expr::Member(effect, member)
+                    if member == "handle"
+                        && source_type_expression_name(effect).is_some_and(|effect| effect == identity))
+            {
+                let old_body = (**action_body).clone();
+                **action_body =
+                    Expr::Block(vec![Stmt::Let(action_binding)], Some(Box::new(old_body)));
+                return true;
+            }
+        }
+    }
+    match expression {
+        Expr::Block(statements, tail) => {
+            for statement in statements {
+                let child = match statement {
+                    Stmt::Let(local) => &mut local.value,
+                    Stmt::Expr(expression) => expression,
+                };
+                if inject_handler_action_binding(child, identity, action_binding.clone()) {
+                    return true;
+                }
+            }
+            tail.as_mut()
+                .is_some_and(|tail| inject_handler_action_binding(tail, identity, action_binding))
+        }
+        Expr::Unsafe(body) | Expr::DoBlock { body } => {
+            inject_handler_action_binding(body, identity, action_binding)
+        }
+        _ => false,
     }
 }
 
@@ -40455,5 +40979,29 @@ let main(): i32 = {
         assert!(llvm.contains("erased effect-callable environment"));
         assert!(!llvm.contains("$effect$callable$adapter$"));
         assert!(llvm.contains("246566666563742463616c6c61626c65246164617074657224"));
+    }
+
+    #[test]
+    fn reusable_handler_capturing_action_reports_unsupported_ownership_shapes() {
+        let errors = compile_text(
+            r#"
+let Ask = effect { let value(): i32 }
+let run(move action: (i32): i32 with(Ask))(input: i32): i32 = {
+  Ask.handle(value: { (resume) -> resume(10) }) { action(input) }
+}
+let main(): i32 = {
+  let mut base = 30
+  let mut action: (i32): i32 with(Ask) = { (input: i32) ->
+    base = base + 1
+    Ask.value() + input + base
+  }
+  run(action)(1)
+}
+"#,
+        )
+        .expect_err("mutable captured actions remain outside the first reusable slice");
+        assert!(errors.iter().any(|error| error
+            .message
+            .contains("may capture only immutable Copy locals")));
     }
 }

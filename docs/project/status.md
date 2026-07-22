@@ -23,8 +23,11 @@ distinct owned semantic type plus a four-pointer LLVM call/drop/environment/flag
 drop glue. Compiler-internal HIR can now erase an owned CPS closure into that layout and invoke it
 with an input plus `Continuation(Output, Answer)`; target-specific adapters preserve captured
 environments, and cleanup planning treats both operations as ownership transfers. Reusable handlers
-do not yet construct this erased action from arbitrary source closures; connecting call-site closure
-lowering to the internal ABI is the next implementation stage.
+now accept one source-level captured-action shape: an explicitly typed immutable effectful closure
+binding immediately before a complete block-tail handler call may capture immutable `Copy` locals.
+Those shared captures are lifted into a handler specialization and the closure is injected before
+selective CPS. Mutable and owning captures, non-tail uses, and arbitrary erased action construction
+remain the next implementation stages.
 
 Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
 `continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs
