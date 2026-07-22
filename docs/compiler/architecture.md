@@ -24,6 +24,8 @@ The implementation lives under `compiler/src`:
   - `compile_time.rs` encodes compiler-visible compile-time domain values, source effect
     identities, and compile-parameter shape helpers.
   - `emitter.rs` evaluates global constants and emits textual LLVM IR.
+  - `fallible.rs` defines standard `Option`/`Result` short-circuit container metadata shared by
+    `??`, `?.`, `try`, and `throw` lowering.
   - `flow.rs` tracks local scopes, move initialization alternatives, lexical loans, and lowering
     context state used by ownership and borrow checks.
   - `hir.rs` defines typed IR structs, semantic types, places, signatures, and helper predicates.

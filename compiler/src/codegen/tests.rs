@@ -1701,7 +1701,7 @@ let main(): i32 = {
 }
 
 #[test]
-fn coalesce_infers_empty_builtin_variants_from_expected_or_rhs_payloads() {
+fn coalesce_infers_empty_standard_variants_from_expected_or_rhs_payloads() {
     compile_resolved_text(
         r#"
 use core.Option
@@ -6696,7 +6696,7 @@ fn emits_local_non_escaping_partial_application() {
 }
 
 #[test]
-fn lowers_builtin_optional_fields_and_methods_without_flattening() {
+fn lowers_standard_optional_fields_and_methods_without_flattening() {
     let ir = compile_resolved_text(
         r#"
 use core.Option

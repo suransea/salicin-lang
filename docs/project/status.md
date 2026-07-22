@@ -186,7 +186,7 @@ currently covers ordinary arguments, arrays, indexes, members, match bodies, imm
 wrappers, lazy boolean branches, lazy `Option`/`Result` coalescing, and match guards over `Copy`
 inputs. Arguments of an effect-propagating named call are transformed before its resumable callee
 frame, including multiple left-to-right suspensions. Fully applied optional method calls preserve receiver-before-argument order and skip
-effectful arguments on residual paths for both builtin fallible families. Suspended guards over
+effectful arguments on residual paths for both standard fallible families. Suspended guards over
 non-Copy match inputs use a binding-erased inspection pattern before moving the owned value into the
 continuation. Payload bindings are rematched and committed only after a `true` resumption, while
 `false` resumes into the remaining ordinary match candidates. Referenced Copy bindings cross by

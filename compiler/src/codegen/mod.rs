@@ -27,6 +27,7 @@ use crate::modules::PackageId;
 mod cleanup_plan;
 mod compile_time;
 mod emitter;
+mod fallible;
 mod flow;
 mod hir;
 mod names;
@@ -37,6 +38,7 @@ mod source_rewrite;
 use cleanup_plan::build_and_verify_cleanup_plans;
 use compile_time::*;
 use emitter::{evaluate_globals, Emitter};
+use fallible::*;
 use flow::*;
 use hir::*;
 use names::*;
@@ -136,42 +138,6 @@ enum TypeProbe {
     Unsupported,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BuiltinFallibleKind {
-    Option,
-    Result,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct BuiltinFallibleInfo {
-    kind: BuiltinFallibleKind,
-    payload: Ty,
-    payload_source: Option<Type>,
-    error: Option<Ty>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ReturnBoundary {
-    kind: Option<BuiltinFallibleKind>,
-    container: Ty,
-    success: Ty,
-    error: Option<Ty>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct CoalescePayloadHint {
-    ty: Ty,
-    source: Option<Type>,
-}
-
-struct InferredCoalesceLhs<'a> {
-    kind: BuiltinFallibleKind,
-    name: String,
-    type_groups: Vec<&'a [CallArg]>,
-    variant: &'a str,
-    value_groups: Vec<&'a [CallArg]>,
-}
-
 type SourceContinuation = Rc<dyn Fn(&mut Analyzer, Expr) -> Result<Expr, ()>>;
 type SourceArgumentsContinuation = Rc<dyn Fn(&mut Analyzer, Vec<CallArg>) -> Result<Expr, ()>>;
 #[derive(Clone)]
@@ -239,12 +205,6 @@ struct SourceResume {
     name: String,
     runtime_name: String,
     uses: Rc<Cell<usize>>,
-}
-
-#[derive(Clone, Copy)]
-struct InferredEnumHints<'a> {
-    payload: Option<&'a CoalescePayloadHint>,
-    result: Option<&'a Ty>,
 }
 
 #[derive(Debug, Clone)]
@@ -518,10 +478,10 @@ impl Analyzer {
         self.custom_effect_source_map_without_standard_unsafe(&effects.custom)
     }
 
-    fn fallible_type_name(&self, kind: BuiltinFallibleKind) -> &str {
+    fn fallible_type_name(&self, kind: StandardFallibleKind) -> &str {
         match kind {
-            BuiltinFallibleKind::Option => self.lang_item_name(LangItemKind::Option),
-            BuiltinFallibleKind::Result => self.lang_item_name(LangItemKind::Result),
+            StandardFallibleKind::Option => self.lang_item_name(LangItemKind::Option),
+            StandardFallibleKind::Result => self.lang_item_name(LangItemKind::Result),
         }
     }
 
@@ -7989,7 +7949,7 @@ impl Analyzer {
                     }
                 }
                 let actual_logical_result = if actual_function.throws_error.is_some() {
-                    self.builtin_fallible_info_for_ty(&actual_function.result)
+                    self.standard_fallible_info_for_ty(&actual_function.result)
                         .map(|info| info.payload)
                         .ok_or_else(mismatch)?
                 } else {
@@ -9248,7 +9208,7 @@ impl Analyzer {
         self.probe_numeric_binary_ty(left, right, expected, context)
     }
 
-    fn builtin_fallible_info_for_ty(&self, ty: &Ty) -> Option<BuiltinFallibleInfo> {
+    fn standard_fallible_info_for_ty(&self, ty: &Ty) -> Option<StandardFallibleInfo> {
         let Ty::Enum(canonical) = ty else {
             return None;
         };
@@ -9262,8 +9222,8 @@ impl Analyzer {
             let [payload] = arguments else {
                 return None;
             };
-            Some(BuiltinFallibleInfo {
-                kind: BuiltinFallibleKind::Option,
+            Some(StandardFallibleInfo {
+                kind: StandardFallibleKind::Option,
                 payload: payload.clone(),
                 payload_source: self.source_type_for_ty(payload),
                 error: None,
@@ -9272,8 +9232,8 @@ impl Analyzer {
             let [error, payload] = arguments else {
                 return None;
             };
-            Some(BuiltinFallibleInfo {
-                kind: BuiltinFallibleKind::Result,
+            Some(StandardFallibleInfo {
+                kind: StandardFallibleKind::Result,
                 payload: payload.clone(),
                 payload_source: self.source_type_for_ty(payload),
                 error: Some(error.clone()),
@@ -9283,12 +9243,12 @@ impl Analyzer {
         }
     }
 
-    fn builtin_fallible_info_for_probe(&self, probe: &TypeProbe) -> Option<BuiltinFallibleInfo> {
+    fn standard_fallible_info_for_probe(&self, probe: &TypeProbe) -> Option<StandardFallibleInfo> {
         let ty = match probe {
             TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) => ty,
             TypeProbe::Defaultable(_) | TypeProbe::Unsupported => return None,
         };
-        if let Some(info) = self.builtin_fallible_info_for_ty(ty) {
+        if let Some(info) = self.standard_fallible_info_for_ty(ty) {
             return Some(info);
         }
         let TypeProbe::KnownSource(Ty::Enum(_), Type::Named(template, arguments)) = probe else {
@@ -9298,8 +9258,8 @@ impl Analyzer {
             let [payload] = arguments.as_slice() else {
                 return None;
             };
-            Some(BuiltinFallibleInfo {
-                kind: BuiltinFallibleKind::Option,
+            Some(StandardFallibleInfo {
+                kind: StandardFallibleKind::Option,
                 payload: self.probe_source_ty(payload)?,
                 payload_source: Some(payload.clone()),
                 error: None,
@@ -9308,8 +9268,8 @@ impl Analyzer {
             let [error, payload] = arguments.as_slice() else {
                 return None;
             };
-            Some(BuiltinFallibleInfo {
-                kind: BuiltinFallibleKind::Result,
+            Some(StandardFallibleInfo {
+                kind: StandardFallibleKind::Result,
                 payload: self.probe_source_ty(payload)?,
                 payload_source: Some(payload.clone()),
                 error: Some(self.probe_source_ty(error)?),
@@ -9475,7 +9435,7 @@ impl Analyzer {
             return TypeProbe::Unsupported;
         }
         let base_probe = self.probe_expr_ty(base, None, context);
-        if self.builtin_fallible_info_for_probe(&base_probe).is_none() {
+        if self.standard_fallible_info_for_probe(&base_probe).is_none() {
             let base_ty = match &base_probe {
                 TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) => Some(ty),
                 TypeProbe::Defaultable(_) | TypeProbe::Unsupported => None,
@@ -9487,14 +9447,14 @@ impl Analyzer {
             }
         }
         let info = self
-            .builtin_fallible_info_for_probe(&base_probe)
+            .standard_fallible_info_for_probe(&base_probe)
             .or_else(|| {
-                let expected = self.builtin_fallible_info_for_ty(expected?)?;
-                let inferred = self.inferred_builtin_coalesce_lhs(base, context)?;
+                let expected = self.standard_fallible_info_for_ty(expected?)?;
+                let inferred = self.inferred_standard_coalesce_lhs(base, context)?;
                 if inferred.kind != expected.kind {
                     return None;
                 }
-                Some(BuiltinFallibleInfo {
+                Some(StandardFallibleInfo {
                     kind: inferred.kind,
                     payload: self.inferred_try_payload(&inferred, context)?,
                     payload_source: None,
@@ -9510,7 +9470,7 @@ impl Analyzer {
             return TypeProbe::Unsupported;
         };
         let mut arguments = Vec::new();
-        if info.kind == BuiltinFallibleKind::Result {
+        if info.kind == StandardFallibleKind::Result {
             arguments.push(info.error.expect("Result probe has an error type"));
         }
         arguments.push(output);
@@ -9539,14 +9499,14 @@ impl Analyzer {
     }
 
     fn throws_boundary_for_ty(&self, ty: &Ty, error: &Ty) -> Option<ReturnBoundary> {
-        let builtin = self.builtin_fallible_info_for_ty(ty)?;
-        if builtin.kind != BuiltinFallibleKind::Result || builtin.error.as_ref() != Some(error) {
+        let standard = self.standard_fallible_info_for_ty(ty)?;
+        if standard.kind != StandardFallibleKind::Result || standard.error.as_ref() != Some(error) {
             return None;
         }
         Some(ReturnBoundary {
-            kind: Some(BuiltinFallibleKind::Result),
+            kind: Some(StandardFallibleKind::Result),
             container: ty.clone(),
-            success: builtin.payload,
+            success: standard.payload,
             error: Some(error.clone()),
         })
     }
@@ -9568,15 +9528,15 @@ impl Analyzer {
             .map(Ty::Enum)
     }
 
-    fn builtin_fallible_payload_parameter(
+    fn standard_fallible_payload_parameter(
         &self,
-        kind: BuiltinFallibleKind,
+        kind: StandardFallibleKind,
         enum_name: &str,
     ) -> Option<CompileParam> {
         let template = self.enum_templates.get(enum_name)?;
         let payload_variant = match kind {
-            BuiltinFallibleKind::Option => "Some",
-            BuiltinFallibleKind::Result => "Ok",
+            StandardFallibleKind::Option => "Some",
+            StandardFallibleKind::Result => "Ok",
         };
         let payload_name = template
             .variants
@@ -9631,7 +9591,7 @@ impl Analyzer {
         context: &LowerCtx,
     ) -> Option<Ty> {
         let payload_parameter =
-            self.builtin_fallible_payload_parameter(inferred.kind, &inferred.name)?;
+            self.standard_fallible_payload_parameter(inferred.kind, &inferred.name)?;
         let explicit_payload = self.explicit_type_argument_for_parameter(
             &inferred.name,
             &inferred.type_groups,
@@ -9644,8 +9604,8 @@ impl Analyzer {
         }
 
         let success_variant = match inferred.kind {
-            BuiltinFallibleKind::Option => "Some",
-            BuiltinFallibleKind::Result => "Ok",
+            StandardFallibleKind::Option => "Some",
+            StandardFallibleKind::Result => "Ok",
         };
         if inferred.variant != success_variant {
             return None;
@@ -9667,7 +9627,7 @@ impl Analyzer {
         }
     }
 
-    fn inferred_builtin_coalesce_lhs<'a>(
+    fn inferred_standard_coalesce_lhs<'a>(
         &self,
         expression: &'a Expr,
         context: &LowerCtx,
@@ -9678,9 +9638,9 @@ impl Analyzer {
         };
         let (name, type_groups) = self.inferred_generic_enum_type_head(base, context)?;
         let kind = if name == self.lang_item_name(LangItemKind::Option) {
-            BuiltinFallibleKind::Option
+            StandardFallibleKind::Option
         } else if name == self.lang_item_name(LangItemKind::Result) {
-            BuiltinFallibleKind::Result
+            StandardFallibleKind::Result
         } else {
             return None;
         };
@@ -9695,19 +9655,19 @@ impl Analyzer {
 
     fn inferred_coalesce_payload_probe(
         &self,
-        kind: BuiltinFallibleKind,
+        kind: StandardFallibleKind,
         type_groups: &[&[CallArg]],
         hint: Option<&Ty>,
         right: &Expr,
         context: &LowerCtx,
     ) -> TypeProbe {
         let enum_name = match kind {
-            BuiltinFallibleKind::Option => self.lang_item_name(LangItemKind::Option),
-            BuiltinFallibleKind::Result => self.lang_item_name(LangItemKind::Result),
+            StandardFallibleKind::Option => self.lang_item_name(LangItemKind::Option),
+            StandardFallibleKind::Result => self.lang_item_name(LangItemKind::Result),
         };
         let payload_parameter = self
-            .builtin_fallible_payload_parameter(kind, enum_name)
-            .expect("fallible built-in has a payload type parameter");
+            .standard_fallible_payload_parameter(kind, enum_name)
+            .expect("standard fallible container has a payload type parameter");
         let explicit_payload = self.explicit_type_argument_for_parameter(
             enum_name,
             type_groups,
@@ -9741,13 +9701,13 @@ impl Analyzer {
         context: &LowerCtx,
     ) -> TypeProbe {
         let left_probe = self.probe_expr_ty(left, None, context);
-        let payload = if let Some(info) = self.builtin_fallible_info_for_probe(&left_probe) {
+        let payload = if let Some(info) = self.standard_fallible_info_for_probe(&left_probe) {
             match info.payload_source {
                 Some(source) => TypeProbe::KnownSource(info.payload, source),
                 None => TypeProbe::Known(info.payload),
             }
         } else {
-            let Some(inferred) = self.inferred_builtin_coalesce_lhs(left, context) else {
+            let Some(inferred) = self.inferred_standard_coalesce_lhs(left, context) else {
                 return TypeProbe::Unsupported;
             };
             self.inferred_coalesce_payload_probe(
@@ -9869,7 +9829,7 @@ impl Analyzer {
             }
             Expr::Try(value) => {
                 let probe = self.probe_expr_ty(value, None, context);
-                let Some(info) = self.builtin_fallible_info_for_probe(&probe) else {
+                let Some(info) = self.standard_fallible_info_for_probe(&probe) else {
                     return TypeProbe::Unsupported;
                 };
                 match info.payload_source {
@@ -10165,7 +10125,7 @@ impl Analyzer {
                 };
                 if signature.throws_error.is_some() {
                     return self
-                        .builtin_fallible_info_for_ty(&result)
+                        .standard_fallible_info_for_ty(&result)
                         .map_or(TypeProbe::Unsupported, |info| {
                             TypeProbe::Known(info.payload)
                         });
@@ -10230,7 +10190,7 @@ impl Analyzer {
         };
         if runtime_groups.len() == function.groups.len() {
             if function.effects.throws.is_some() {
-                let Some(info) = self.builtin_fallible_info_for_ty(&result) else {
+                let Some(info) = self.standard_fallible_info_for_ty(&result) else {
                     return TypeProbe::Unsupported;
                 };
                 return TypeProbe::Known(info.payload);
@@ -10367,7 +10327,7 @@ impl Analyzer {
             if groups.len() == function.groups.len() {
                 if function.throws_error.is_some() {
                     return self
-                        .builtin_fallible_info_for_ty(&function.result)
+                        .standard_fallible_info_for_ty(&function.result)
                         .map_or(TypeProbe::Unsupported, |info| {
                             TypeProbe::Known(info.payload)
                         });
@@ -10403,7 +10363,7 @@ impl Analyzer {
                 };
                 if signature.throws_error.is_some() {
                     return self
-                        .builtin_fallible_info_for_ty(&result)
+                        .standard_fallible_info_for_ty(&result)
                         .map_or(TypeProbe::Unsupported, |info| {
                             TypeProbe::Known(info.payload)
                         });
@@ -10501,7 +10461,7 @@ impl Analyzer {
                     };
                     if runtime_groups.len() == template.groups.len() {
                         if template.effects.throws.is_some() {
-                            let Some(info) = self.builtin_fallible_info_for_ty(&result) else {
+                            let Some(info) = self.standard_fallible_info_for_ty(&result) else {
                                 return TypeProbe::Unsupported;
                             };
                             return TypeProbe::Known(info.payload);
@@ -10558,7 +10518,7 @@ impl Analyzer {
                 };
                 if signature.throws_error.is_some() {
                     return self
-                        .builtin_fallible_info_for_ty(&result)
+                        .standard_fallible_info_for_ty(&result)
                         .map_or(TypeProbe::Unsupported, |info| {
                             TypeProbe::Known(info.payload)
                         });
@@ -11476,10 +11436,10 @@ impl Analyzer {
             return error_expr();
         };
         let variant_name = match (boundary.kind, success) {
-            (Some(BuiltinFallibleKind::Option), true) => "Some",
-            (Some(BuiltinFallibleKind::Option), false) => "None",
-            (Some(BuiltinFallibleKind::Result), true) => "Ok",
-            (Some(BuiltinFallibleKind::Result), false) => "Err",
+            (Some(StandardFallibleKind::Option), true) => "Some",
+            (Some(StandardFallibleKind::Option), false) => "None",
+            (Some(StandardFallibleKind::Result), true) => "Ok",
+            (Some(StandardFallibleKind::Result), false) => "Err",
             (None, _) => {
                 self.error("internal error: custom return boundary requires protocol conversion");
                 return error_expr();
@@ -15462,11 +15422,11 @@ impl Analyzer {
         expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
-        let inferred_left = self.inferred_builtin_coalesce_lhs(left, context);
+        let inferred_left = self.inferred_standard_coalesce_lhs(left, context);
         if inferred_left.is_none() {
             let left_probe = self.probe_expr_ty(left, None, context);
             if Self::nominal_ty_from_probe(&left_probe).is_some()
-                && self.builtin_fallible_info_for_probe(&left_probe).is_none()
+                && self.standard_fallible_info_for_probe(&left_probe).is_none()
             {
                 return self.lower_custom_coalesce(left, right, expected, context);
             }
@@ -15527,7 +15487,7 @@ impl Analyzer {
         if scrutinee.ty == Ty::Error {
             return error_expr();
         }
-        let Some(info) = self.builtin_fallible_info_for_ty(&scrutinee.ty) else {
+        let Some(info) = self.standard_fallible_info_for_ty(&scrutinee.ty) else {
             self.error(format!(
                 "operator `??` requires `Option(T)` or `Result(E)(T)` on the left, found `{}`",
                 scrutinee.ty
@@ -15555,11 +15515,11 @@ impl Analyzer {
             body: right.clone(),
         };
         let arms = match info.kind {
-            BuiltinFallibleKind::Option => vec![
+            StandardFallibleKind::Option => vec![
                 payload_arm("Some"),
                 fallback_arm("None", PatternFields::Unit),
             ],
-            BuiltinFallibleKind::Result => vec![
+            StandardFallibleKind::Result => vec![
                 payload_arm("Ok"),
                 fallback_arm("Err", PatternFields::Positional(vec![Pattern::Wildcard])),
             ],
@@ -15615,7 +15575,7 @@ impl Analyzer {
         if scrutinee.ty == Ty::Error {
             return error_expr();
         }
-        let Some(info) = self.builtin_fallible_info_for_ty(&scrutinee.ty) else {
+        let Some(info) = self.standard_fallible_info_for_ty(&scrutinee.ty) else {
             self.error(format!(
                 "operator `??` requires `Option(T)` or `Result(E)(T)` on the left, found `{}`",
                 scrutinee.ty
@@ -15639,11 +15599,11 @@ impl Analyzer {
             body: fallback.clone(),
         };
         let arms = match info.kind {
-            BuiltinFallibleKind::Option => vec![
+            StandardFallibleKind::Option => vec![
                 payload_arm("Some"),
                 fallback_arm("None", PatternFields::Unit),
             ],
-            BuiltinFallibleKind::Result => vec![
+            StandardFallibleKind::Result => vec![
                 payload_arm("Ok"),
                 fallback_arm("Err", PatternFields::Positional(vec![Pattern::Wildcard])),
             ],
@@ -15676,7 +15636,7 @@ impl Analyzer {
         if scrutinee.ty == Ty::Error {
             return error_expr();
         }
-        let Some(info) = self.builtin_fallible_info_for_ty(&scrutinee.ty) else {
+        let Some(info) = self.standard_fallible_info_for_ty(&scrutinee.ty) else {
             self.error(format!(
                 "operator `?.` requires an owned `Option(T)` or `Result(E)(T)`, found `{}`",
                 scrutinee.ty
@@ -15697,7 +15657,7 @@ impl Analyzer {
         }
         let template = self.fallible_type_name(info.kind).to_owned();
         let mut arguments = Vec::new();
-        if info.kind == BuiltinFallibleKind::Result {
+        if info.kind == StandardFallibleKind::Result {
             arguments.push(info.error.clone().expect("Result has an error type"));
         }
         arguments.push(output);
@@ -15706,7 +15666,7 @@ impl Analyzer {
             .map(|argument| self.source_type_for_ty(argument))
             .collect::<Option<Vec<_>>>()
         else {
-            self.error("optional chaining result cannot be represented as a builtin container");
+            self.error("optional chaining result cannot be represented as a standard container");
             return error_expr();
         };
         let Some(canonical) =
@@ -15715,8 +15675,8 @@ impl Analyzer {
             return error_expr();
         };
         let success_variant = match info.kind {
-            BuiltinFallibleKind::Option => "Some",
-            BuiltinFallibleKind::Result => "Ok",
+            StandardFallibleKind::Option => "Some",
+            StandardFallibleKind::Result => "Ok",
         };
         let mut success = source_success.clone();
         rewrite_handler_chain_wrappers(
@@ -15724,8 +15684,8 @@ impl Analyzer {
             &canonical,
             success_variant,
             match info.kind {
-                BuiltinFallibleKind::Option => "None",
-                BuiltinFallibleKind::Result => "Err",
+                StandardFallibleKind::Option => "None",
+                StandardFallibleKind::Result => "Err",
             },
         );
         let mut residual = source_residual.clone();
@@ -15734,8 +15694,8 @@ impl Analyzer {
             &canonical,
             success_variant,
             match info.kind {
-                BuiltinFallibleKind::Option => "None",
-                BuiltinFallibleKind::Result => "Err",
+                StandardFallibleKind::Option => "None",
+                StandardFallibleKind::Result => "Err",
             },
         );
         let mut arms = vec![MatchArm {
@@ -15747,7 +15707,7 @@ impl Analyzer {
             body: success,
         }];
         arms.push(match info.kind {
-            BuiltinFallibleKind::Option => MatchArm {
+            StandardFallibleKind::Option => MatchArm {
                 pattern: Pattern::Constructor {
                     path: vec!["None".to_owned()],
                     fields: PatternFields::Unit,
@@ -15755,7 +15715,7 @@ impl Analyzer {
                 guard: None,
                 body: residual,
             },
-            BuiltinFallibleKind::Result => MatchArm {
+            StandardFallibleKind::Result => MatchArm {
                 pattern: Pattern::Constructor {
                     path: vec!["Err".to_owned()],
                     fields: PatternFields::Positional(vec![Pattern::Binding(error.to_owned())]),
@@ -15933,7 +15893,7 @@ impl Analyzer {
             return error_expr();
         }
         let base_probe = self.probe_expr_ty(base, None, context);
-        if self.builtin_fallible_info_for_probe(&base_probe).is_none() {
+        if self.standard_fallible_info_for_probe(&base_probe).is_none() {
             let materialized;
             let base_ty = match &base_probe {
                 TypeProbe::Known(ty) => Some(ty),
@@ -15954,14 +15914,14 @@ impl Analyzer {
             }
         }
         let base_expected = expected.and_then(|expected| {
-            let expected = self.builtin_fallible_info_for_ty(expected)?;
-            let inferred = self.inferred_builtin_coalesce_lhs(base, context)?;
+            let expected = self.standard_fallible_info_for_ty(expected)?;
+            let inferred = self.inferred_standard_coalesce_lhs(base, context)?;
             if inferred.kind != expected.kind {
                 return None;
             }
             let payload = self.inferred_try_payload(&inferred, context)?;
             let mut arguments = Vec::new();
-            if inferred.kind == BuiltinFallibleKind::Result {
+            if inferred.kind == StandardFallibleKind::Result {
                 arguments.push(expected.error?);
             }
             arguments.push(payload);
@@ -15981,7 +15941,7 @@ impl Analyzer {
         if scrutinee.ty == Ty::Error {
             return error_expr();
         }
-        let Some(info) = self.builtin_fallible_info_for_ty(&scrutinee.ty) else {
+        let Some(info) = self.standard_fallible_info_for_ty(&scrutinee.ty) else {
             self.error(format!(
                 "operator `?.` requires an owned `Option(T)`, `Result(E)(T)`, or `Chain` value, found `{}`",
                 scrutinee.ty
@@ -16000,7 +15960,7 @@ impl Analyzer {
         }
         let template = self.fallible_type_name(info.kind).to_owned();
         let mut arguments = Vec::new();
-        if info.kind == BuiltinFallibleKind::Result {
+        if info.kind == StandardFallibleKind::Result {
             arguments.push(info.error.clone().expect("Result has an error type"));
         }
         arguments.push(output);
@@ -16009,7 +15969,7 @@ impl Analyzer {
             .map(|argument| self.source_type_for_ty(argument))
             .collect::<Option<Vec<_>>>()
         else {
-            self.error("optional chaining result cannot be represented as a builtin container");
+            self.error("optional chaining result cannot be represented as a standard container");
             return error_expr();
         };
         let Some(canonical) =
@@ -16036,8 +15996,8 @@ impl Analyzer {
             })
         };
         let success_variant = match info.kind {
-            BuiltinFallibleKind::Option => "Some",
-            BuiltinFallibleKind::Result => "Ok",
+            StandardFallibleKind::Option => "Some",
+            StandardFallibleKind::Result => "Ok",
         };
         let mut arms = vec![MatchArm {
             pattern: Pattern::Constructor {
@@ -16050,7 +16010,7 @@ impl Analyzer {
             body: wrap(success_variant, Some(access)),
         }];
         arms.push(match info.kind {
-            BuiltinFallibleKind::Option => MatchArm {
+            StandardFallibleKind::Option => MatchArm {
                 pattern: Pattern::Constructor {
                     path: vec!["None".to_owned()],
                     fields: PatternFields::Unit,
@@ -16058,7 +16018,7 @@ impl Analyzer {
                 guard: None,
                 body: wrap("None", None),
             },
-            BuiltinFallibleKind::Result => MatchArm {
+            StandardFallibleKind::Result => MatchArm {
                 pattern: Pattern::Constructor {
                     path: vec!["Err".to_owned()],
                     fields: PatternFields::Positional(vec![Pattern::Binding(
@@ -16193,14 +16153,16 @@ impl Analyzer {
 
     fn throws_info_from_function(&self, function: &FunctionTy) -> Option<(Ty, Ty)> {
         let error = function.throws_error.as_deref()?.clone();
-        let payload = self.builtin_fallible_info_for_ty(&function.result)?.payload;
+        let payload = self
+            .standard_fallible_info_for_ty(&function.result)?
+            .payload;
         Some((payload, error))
     }
 
     fn throws_info_from_signature(&self, signature: &FunctionSig) -> Option<(Ty, Ty)> {
         let error = signature.throws_error.clone()?;
         let result = signature.result.as_ref()?;
-        let payload = self.builtin_fallible_info_for_ty(result)?.payload;
+        let payload = self.standard_fallible_info_for_ty(result)?.payload;
         Some((payload, error))
     }
 
@@ -16593,14 +16555,14 @@ impl Analyzer {
                 }
             },
         };
-        let Some(info) = self.builtin_fallible_info_for_ty(&expected) else {
+        let Some(info) = self.standard_fallible_info_for_ty(&expected) else {
             let _ = self.lower_expr(body, None, context);
             self.error(format!(
                 "`try {{ ... }}` produces `Result(E)(T)`, but this context expects `{expected}`"
             ));
             return error_expr();
         };
-        if info.kind != BuiltinFallibleKind::Result {
+        if info.kind != StandardFallibleKind::Result {
             let _ = self.lower_expr(body, None, context);
             self.error("`try { ... }` requires `Result(E)(T)`, not `Option(T)`");
             return error_expr();
@@ -16670,7 +16632,7 @@ impl Analyzer {
         expected: Ty,
         context: &mut LowerCtx,
     ) -> HirExpr {
-        let Some(info) = self.builtin_fallible_info_for_ty(&expected) else {
+        let Some(info) = self.standard_fallible_info_for_ty(&expected) else {
             self.error("internal error: standard Throws try requires a Result expectation");
             return error_expr();
         };
@@ -17448,11 +17410,11 @@ impl Analyzer {
             self.error("internal error: active throws effect has no Result return boundary");
             return error_expr();
         }
-        let Some(info) = self.builtin_fallible_info_for_ty(&operand.ty) else {
+        let Some(info) = self.standard_fallible_info_for_ty(&operand.ty) else {
             self.error("internal error: throws call does not use a Result ABI");
             return error_expr();
         };
-        if info.kind != BuiltinFallibleKind::Result || info.error.as_ref() != Some(thrown_error) {
+        if info.kind != StandardFallibleKind::Result || info.error.as_ref() != Some(thrown_error) {
             self.error("internal error: throws call Result ABI does not match its error effect");
             return error_expr();
         }
@@ -17499,7 +17461,7 @@ impl Analyzer {
             self.error("internal error: throws effect has no Result return boundary");
             return error_expr();
         };
-        if boundary.kind != Some(BuiltinFallibleKind::Result)
+        if boundary.kind != Some(StandardFallibleKind::Result)
             || boundary.error.as_ref() != Some(&error_ty)
         {
             let _ = self.lower_expr(value, Some(&error_ty), context);
@@ -23136,16 +23098,16 @@ impl Analyzer {
         }
         if let Some(payload_hint) = hints.payload.filter(|hint| hint.ty != Ty::Error) {
             let kind = if name == self.lang_item_name(LangItemKind::Option) {
-                BuiltinFallibleKind::Option
+                StandardFallibleKind::Option
             } else if name == self.lang_item_name(LangItemKind::Result) {
-                BuiltinFallibleKind::Result
+                StandardFallibleKind::Result
             } else {
                 self.error(format!(
-                    "internal error: coalescing enum `{name}` is not a built-in fallible type"
+                    "internal error: coalescing enum `{name}` is not a standard fallible type"
                 ));
                 return None;
             };
-            let Some(payload_parameter) = self.builtin_fallible_payload_parameter(kind, name)
+            let Some(payload_parameter) = self.standard_fallible_payload_parameter(kind, name)
             else {
                 self.error(format!(
                     "internal error: coalescing enum `{name}` has no payload type parameter"

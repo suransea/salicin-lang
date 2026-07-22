@@ -2,10 +2,10 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::{Binding, ItemOrigin, Type};
 
+use super::fallible::ReturnBoundary;
 use super::hir::{
     ClosureInfo, HirPlace, LoanId, LocalCapability, LocalId, ParamSig, PartialInfo, Ty,
 };
-use super::ReturnBoundary;
 
 #[derive(Debug, Clone)]
 pub(super) struct LocalInfo {
