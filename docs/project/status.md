@@ -94,10 +94,11 @@ wrappers, lazy boolean branches, lazy `Option`/`Result` coalescing, and match gu
 inputs. Arguments of an effect-propagating named call are transformed before its resumable callee
 frame, including multiple left-to-right suspensions. Fully applied optional method calls preserve receiver-before-argument order and skip
 effectful arguments on residual paths for both builtin fallible families. Suspended guards over
-non-Copy match inputs use non-owning discriminant inspection when every candidate pattern is
-binding-free, after which the owned value moves into the suspended continuation. Patterns that bind
-non-Copy payloads remain rejected until candidate continuations can retain speculative ownership and
-commit the transfer only on a successful guard.
+non-Copy match inputs use a binding-erased inspection pattern before moving the owned value into the
+continuation. Payload bindings are rematched and committed only after a `true` resumption, while
+`false` resumes into the remaining ordinary match candidates. A guard expression that refers to one
+of its candidate pattern bindings remains rejected until continuation frames can rebuild that
+projected view from the captured owner.
 Different user-defined handlers compose lexically through action, clause, and generated-frame
 closure boundaries; nested handlers of the same identity retain nearest-boundary selection.
 Function and generic inherent-member `E: effect` parameters represent complete rows, default to pure,

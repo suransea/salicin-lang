@@ -207,15 +207,18 @@ arguments, arrays, indexes, members, `match` scrutinees and arm
 bodies, and immediate `do`, `unsafe`, and `try` wrappers. Effectful `&&` and `||` operands retain
 their lazy branch semantics. Effectful `??` evaluates its fallback only on `None` or `Err`, and both
 the scrutinee and fallback may suspend independently. Match guards may suspend when the complete
-match input implements `Copy`, or when a non-`Copy` enum is matched only by binding-free candidate
-patterns; false guards continue with the next candidate. Fully applied optional
+match input implements `Copy`, or when a non-`Copy` enum can be inspected without retaining a pattern
+binding in the suspended guard expression; false guards continue with the next candidate. Fully
+applied optional
 method calls evaluate the owned receiver first, enter argument CPS only on `Some` or `Ok`, and rewrap
 the method result before continuing. Retaining a non-Copy scrutinee across suspended candidate
-selection is implemented when all candidate patterns are binding-free: dispatch inspects a
-non-owning enum value, then transfers the sole owner into the guard continuation. A suspended guard
-whose pattern binds payload values still requires delayed pattern-transfer commitment and is
-rejected. Capturing indirect calls remain implementation work rather than falling back to
-callback-only semantics.
+selection first tests a binding-erased, non-owning pattern and then transfers the sole owner into the
+guard continuation. If the guard resumes `true`, an ordinary rematch commits the original payload
+bindings before entering the body; if it resumes `false`, the untouched owner continues through the
+remaining candidates. A guard expression that itself refers to a candidate pattern binding remains
+unsupported because its continuation must rebuild a projected view from the captured owner.
+Capturing indirect calls remain implementation work rather than falling back to callback-only
+semantics.
 
 Lexically nested handlers of different effect identities compose in source order. The outer
 selective-CPS pass traverses the inner handler's action and clause closures, including generated

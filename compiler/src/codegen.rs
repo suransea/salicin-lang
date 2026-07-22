@@ -17260,6 +17260,25 @@ impl Analyzer {
                         .is_some_and(|guard| self.handler_expression_may_suspend(guard, &handler))
                 });
                 if has_effectful_guard {
+                    let can_delay_pattern_transfers =
+                        arms.iter().enumerate().all(|(index, arm)| {
+                            let guard_is_effectful = arm.guard.as_ref().is_some_and(|guard| {
+                                self.handler_expression_may_suspend(guard, &handler)
+                            });
+                            if guard_is_effectful {
+                                !guard_references_pattern_bindings(
+                                    arm.guard.as_ref().expect("effectful guard exists"),
+                                    &arm.pattern,
+                                )
+                            } else {
+                                !pattern_contains_binding(&arm.pattern)
+                                    || !arms[index + 1..].iter().any(|later| {
+                                        later.guard.as_ref().is_some_and(|guard| {
+                                            self.handler_expression_may_suspend(guard, &handler)
+                                        })
+                                    })
+                            }
+                        });
                     let handler_for_arms = handler.clone();
                     let resume_for_arms = resume.clone();
                     let next = continuation.clone();
@@ -17270,10 +17289,7 @@ impl Analyzer {
                         Rc::new(move |analyzer, scrutinee| {
                             let match_id = analyzer.next_closure;
                             analyzer.next_closure += 1;
-                            let input = if arms
-                                .iter()
-                                .all(|arm| !pattern_contains_binding(&arm.pattern))
-                            {
+                            let input = if can_delay_pattern_transfers {
                                 format!("$handler$match$inspect$input${match_id}")
                             } else {
                                 format!("$handler$match$input${match_id}")
@@ -17456,6 +17472,29 @@ impl Analyzer {
         resume: Option<SourceResume>,
         continuation: SourceContinuation,
     ) -> Result<Expr, ()> {
+        if !arms.iter().any(|arm| {
+            arm.guard
+                .as_ref()
+                .is_some_and(|guard| self.handler_expression_may_suspend(guard, &handler))
+        }) {
+            let mut transformed = Vec::with_capacity(arms.len());
+            for arm in arms {
+                transformed.push(MatchArm {
+                    pattern: arm.pattern.clone(),
+                    guard: arm.guard.clone(),
+                    body: self.transform_handler_expr(
+                        arm.body.clone(),
+                        handler.clone(),
+                        resume.clone(),
+                        continuation.clone(),
+                    )?,
+                });
+            }
+            return Ok(Expr::Match {
+                scrutinee: Box::new(Expr::Name(scrutinee.to_owned())),
+                arms: transformed,
+            });
+        }
         let Some((arm, remaining)) = arms.split_first() else {
             return Ok(Expr::Loop {
                 body: Box::new(Expr::Unit),
@@ -17472,6 +17511,33 @@ impl Analyzer {
             .guard
             .as_ref()
             .is_some_and(|guard| self.handler_expression_may_suspend(guard, &handler));
+        let delays_pattern_transfer = guard_is_effectful
+            && arm
+                .guard
+                .as_ref()
+                .is_some_and(|guard| !guard_references_pattern_bindings(guard, &arm.pattern));
+
+        let committed_body = if delays_pattern_transfer {
+            Expr::Match {
+                scrutinee: Box::new(Expr::Name(scrutinee.to_owned())),
+                arms: vec![
+                    MatchArm {
+                        pattern: arm.pattern.clone(),
+                        guard: None,
+                        body: body.clone(),
+                    },
+                    MatchArm {
+                        pattern: Pattern::Wildcard,
+                        guard: None,
+                        body: Expr::Loop {
+                            body: Box::new(Expr::Unit),
+                        },
+                    },
+                ],
+            }
+        } else {
+            body.clone()
+        };
 
         let candidate = if let Some(guard) = &arm.guard {
             if guard_is_effectful {
@@ -17482,7 +17548,7 @@ impl Analyzer {
                     resume.clone(),
                     continuation.clone(),
                 )?;
-                let true_branch = body.clone();
+                let true_branch = committed_body;
                 self.transform_handler_expr(
                     guard.clone(),
                     handler.clone(),
@@ -17503,7 +17569,11 @@ impl Analyzer {
         };
 
         let mut candidates = vec![MatchArm {
-            pattern: arm.pattern.clone(),
+            pattern: if delays_pattern_transfer {
+                pattern_without_bindings(&arm.pattern)
+            } else {
+                arm.pattern.clone()
+            },
             guard: if guard_is_effectful {
                 None
             } else {
@@ -23654,6 +23724,128 @@ fn pattern_contains_binding(pattern: &Pattern) -> bool {
                 .any(|field| pattern_contains_binding(&field.pattern)),
         },
         Pattern::Wildcard | Pattern::Integer(_) | Pattern::Bool(_) => false,
+    }
+}
+
+fn pattern_without_bindings(pattern: &Pattern) -> Pattern {
+    match pattern {
+        Pattern::Binding(_) => Pattern::Wildcard,
+        Pattern::Constructor { path, fields } => Pattern::Constructor {
+            path: path.clone(),
+            fields: match fields {
+                PatternFields::Unit => PatternFields::Unit,
+                PatternFields::Positional(patterns) => PatternFields::Positional(
+                    patterns.iter().map(pattern_without_bindings).collect(),
+                ),
+                PatternFields::Named(fields) => PatternFields::Named(
+                    fields
+                        .iter()
+                        .map(|field| crate::ast::PatternField {
+                            name: field.name.clone(),
+                            pattern: pattern_without_bindings(&field.pattern),
+                        })
+                        .collect(),
+                ),
+            },
+        },
+        Pattern::Wildcard | Pattern::Integer(_) | Pattern::Bool(_) => pattern.clone(),
+    }
+}
+
+fn guard_references_pattern_bindings(guard: &Expr, pattern: &Pattern) -> bool {
+    let mut bindings = HashSet::new();
+    collect_pattern_binding_names(pattern, &mut bindings);
+    expression_mentions_any_name(guard, &bindings)
+}
+
+fn expression_mentions_any_name(expression: &Expr, names: &HashSet<String>) -> bool {
+    match expression {
+        Expr::Name(name) => names.contains(name),
+        Expr::Unary(_, value)
+        | Expr::Try(value)
+        | Expr::DoBlock { body: value }
+        | Expr::Throw(value)
+        | Expr::Unsafe(value) => expression_mentions_any_name(value, names),
+        Expr::Borrow { value, .. } => expression_mentions_any_name(value, names),
+        Expr::Binary(left, _, right)
+        | Expr::Coalesce(left, right)
+        | Expr::Assign(left, right)
+        | Expr::CompoundAssign(left, _, right) => {
+            expression_mentions_any_name(left, names) || expression_mentions_any_name(right, names)
+        }
+        Expr::HandlerCoalesce {
+            scrutinee,
+            success,
+            fallback,
+            ..
+        } => {
+            expression_mentions_any_name(scrutinee, names)
+                || expression_mentions_any_name(success, names)
+                || expression_mentions_any_name(fallback, names)
+        }
+        Expr::HandlerChainCall(chain) => {
+            expression_mentions_any_name(&chain.scrutinee, names)
+                || chain
+                    .groups
+                    .iter()
+                    .flatten()
+                    .any(|argument| expression_mentions_any_name(&argument.value, names))
+                || expression_mentions_any_name(&chain.success, names)
+                || expression_mentions_any_name(&chain.residual, names)
+        }
+        Expr::Call(callee, arguments) => {
+            expression_mentions_any_name(callee, names)
+                || arguments
+                    .iter()
+                    .any(|argument| expression_mentions_any_name(&argument.value, names))
+        }
+        Expr::Member(base, _) | Expr::ChainMember(base, _) => {
+            expression_mentions_any_name(base, names)
+        }
+        Expr::Array(elements) => elements
+            .iter()
+            .any(|element| expression_mentions_any_name(element, names)),
+        Expr::Index { base, index } => {
+            expression_mentions_any_name(base, names) || expression_mentions_any_name(index, names)
+        }
+        Expr::Block(statements, tail) => {
+            statements.iter().any(|statement| match statement {
+                Stmt::Let(binding) => expression_mentions_any_name(&binding.value, names),
+                Stmt::Expr(expression) => expression_mentions_any_name(expression, names),
+            }) || tail
+                .as_deref()
+                .is_some_and(|tail| expression_mentions_any_name(tail, names))
+        }
+        Expr::Closure(_, body) => expression_mentions_any_name(body, names),
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            expression_mentions_any_name(condition, names)
+                || expression_mentions_any_name(then_branch, names)
+                || else_branch
+                    .as_deref()
+                    .is_some_and(|branch| expression_mentions_any_name(branch, names))
+        }
+        Expr::Return(value) | Expr::Break(value) => value
+            .as_deref()
+            .is_some_and(|value| expression_mentions_any_name(value, names)),
+        Expr::While { condition, body } => {
+            expression_mentions_any_name(condition, names)
+                || expression_mentions_any_name(body, names)
+        }
+        Expr::Loop { body } => expression_mentions_any_name(body, names),
+        Expr::Match { scrutinee, arms } => {
+            expression_mentions_any_name(scrutinee, names)
+                || arms.iter().any(|arm| {
+                    arm.guard
+                        .as_ref()
+                        .is_some_and(|guard| expression_mentions_any_name(guard, names))
+                        || expression_mentions_any_name(&arm.body, names)
+                })
+        }
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => false,
     }
 }
 
@@ -35291,7 +35483,7 @@ let main(): i32 = { Ask.handle(accept: { (resume) -> resume(false) }) {
         )
         .expect("a binding-free effectful guard may inspect a non-Copy enum input");
 
-        let moving_binding = compile_text(
+        compile_text(
             r#"
 let Ask = effect { let accept(): bool }
 let Payload = struct(value: i32)
@@ -35307,8 +35499,25 @@ let main(): i32 = { Ask.handle(accept: { (resume) -> resume(false) }) {
 } }
 "#,
         )
-        .expect_err("moving pattern bindings still require delayed-commit CPS support");
-        assert!(moving_binding.iter().any(|error| {
+        .expect("a successful guard path can commit non-Copy bindings before entering its body");
+
+        let captured_binding = compile_text(
+            r#"
+let Ask = effect { let accept(): bool }
+let Payload = struct(value: i32)
+let Event = enum { Value(Payload), Empty }
+let main(): i32 = { Ask.handle(accept: { (resume) -> resume(false) }) {
+  let event = Event.Value(Payload(42))
+  event match {
+    Event.Value(payload) if Ask.accept() && payload.value > 0 => 1,
+    Event.Value(_) => 42,
+    Event.Empty => 0,
+  }
+} }
+"#,
+        )
+        .expect_err("a suspended guard cannot yet retain projected non-Copy bindings");
+        assert!(captured_binding.iter().any(|error| {
             error.message.contains("effectful match guard")
                 && error.message.contains("implement Copy")
         }));

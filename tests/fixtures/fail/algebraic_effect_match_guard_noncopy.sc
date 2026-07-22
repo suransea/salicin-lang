@@ -7,7 +7,7 @@ let Event = enum { Value(Resource), Empty }
 
 let classify(event: Event): i32 with(Decide) = {
   event match {
-    Value(resource) if Decide.accept() => resource.value,
+    Value(resource) if Decide.accept() && resource.value > 0 => resource.value,
     Value(resource) => resource.value,
     Empty => 0,
   }

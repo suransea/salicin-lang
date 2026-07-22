@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.136.0 - 2026-07-22
+
+- Delayed non-`Copy` payload transfers in suspended match guards whose guard expression does not
+  itself reference the candidate's pattern bindings.
+- Matched a binding-erased inspection pattern first, moved the sole owned enum into the generated
+  continuation, and rematched the original pattern only after the guard resumed `true`.
+- Collapsed the non-effectful tail of a candidate chain back into one ordinary match so a `false`
+  resumption can continue without consuming and reconstructing the scrutinee between candidates.
+- Kept guards that retain projected payload bindings across a suspension rejected until continuation
+  frames can rebuild those projections from their owned scrutinee.
+- Added a native resource regression exercising both `false` and `true` resumptions; two inputs are
+  each consumed and dropped exactly once and the program exits with code 42.
+
 ## 0.135.0 - 2026-07-22
 
 - Allowed finite handler-local callable selections to target explicitly typed capturing resumable
