@@ -4,8 +4,8 @@ use crate::ast::{
     AccessDef, AssociatedTypeBinding, BinaryOp, Binding, CallArg, CompileParam, CompileParamKind,
     EffectDef, EnumDef, Expr, ExtendDef, ExtendMember, Field, Function, FunctionEffects, Item,
     MatchArm, Param, PassMode, Pattern, PatternField, PatternFields, Program, Stmt, StructDef,
-    TraitDef, TraitMember, Type, TypeAliasDef, UnaryOp, UseDecl, VariantDef, VariantFields,
-    Visibility, WherePredicate,
+    TraitDef, TraitMember, Type, TypeAliasDef, TypeArg, UnaryOp, UseDecl, VariantDef,
+    VariantFields, Visibility, WherePredicate,
 };
 use crate::lexer::{lex, LexError, Token, TokenKind};
 
@@ -716,6 +716,7 @@ impl Parser {
         let mut arguments = Vec::new();
         let mut associated_types = Vec::new();
         let mut saw_associated = false;
+        let mut labeled = 0;
         if self.take(&TokenKind::LParen) && !self.take(&TokenKind::RParen) {
             loop {
                 if matches!(self.current().kind, TokenKind::Ident(_))
@@ -734,7 +735,26 @@ impl Parser {
                             "positional trait arguments must precede associated type equalities",
                         ));
                     }
-                    arguments.push(self.type_expr()?);
+                    let label = if matches!(self.current().kind, TokenKind::Ident(_))
+                        && self.at_offset(1, &TokenKind::Colon)
+                        && !self.at_offset(2, &TokenKind::Type)
+                        && !self.at_offset(2, &TokenKind::Region)
+                        && !matches!(
+                            self.tokens.get(self.index + 2).map(|token| &token.kind),
+                            Some(TokenKind::Ident(kind))
+                                if matches!(kind.as_str(), "access" | "passing" | "effect")
+                        ) {
+                        labeled += 1;
+                        let label = self.expect_ident("a trait argument label")?;
+                        self.expect(&TokenKind::Colon, "`:` after trait argument label")?;
+                        Some(label)
+                    } else {
+                        None
+                    };
+                    arguments.push(TypeArg {
+                        label,
+                        ty: self.type_expr()?,
+                    });
                 }
                 if self.take(&TokenKind::Comma) {
                     if self.take(&TokenKind::RParen) {
@@ -745,8 +765,21 @@ impl Parser {
                     break;
                 }
             }
+            if labeled != 0 && labeled != arguments.len() {
+                return Err(
+                    self.error_here("trait arguments must be either all labeled or all positional")
+                );
+            }
         }
-        Ok((Type::Named(name, arguments), associated_types))
+        let trait_ref = if arguments.iter().any(|argument| argument.label.is_some()) {
+            Type::NamedArgs(name, arguments)
+        } else {
+            Type::Named(
+                name,
+                arguments.into_iter().map(|argument| argument.ty).collect(),
+            )
+        };
+        Ok((trait_ref, associated_types))
     }
 
     fn declaration_groups(
@@ -809,12 +842,7 @@ impl Parser {
                 Some(TokenKind::Ident(_)) | Some(TokenKind::RegionName(_))
             )
             && self.at_offset(2, &TokenKind::Colon)
-            && (self.at_offset(3, &TokenKind::Type)
-                || self.at_offset(3, &TokenKind::Region)
-                || matches!(
-                    self.tokens.get(self.index + 3).map(|token| &token.kind),
-                    Some(TokenKind::Ident(name)) if matches!(name.as_str(), "access" | "passing" | "effect")
-                ))
+            && self.compile_parameter_kind_starts_at(3)
     }
 
     fn current_starts_compile_parameter(&self) -> bool {
@@ -822,12 +850,228 @@ impl Parser {
             self.current().kind,
             TokenKind::Ident(_) | TokenKind::RegionName(_)
         ) && self.at_offset(1, &TokenKind::Colon)
-            && (self.at_offset(2, &TokenKind::Type)
-                || self.at_offset(2, &TokenKind::Region)
-                || matches!(
-                    self.tokens.get(self.index + 2).map(|token| &token.kind),
-                    Some(TokenKind::Ident(name)) if matches!(name.as_str(), "access" | "passing" | "effect")
-                ))
+            && self.compile_parameter_kind_starts_at(2)
+    }
+
+    fn compile_parameter_kind_starts_at(&self, offset: usize) -> bool {
+        self.at_offset(offset, &TokenKind::Type)
+            || self.at_offset(offset, &TokenKind::Region)
+            || self.constructor_compile_parameter_kind_starts_at(offset)
+            || matches!(
+                self.tokens.get(self.index + offset).map(|token| &token.kind),
+                Some(TokenKind::Ident(name))
+                    if matches!(name.as_str(), "access" | "passing" | "effect")
+            )
+    }
+
+    fn constructor_compile_parameter_kind_starts_at(&self, offset: usize) -> bool {
+        let mut index = self.index + offset;
+        let mut groups = 0;
+        while matches!(
+            self.tokens.get(index).map(|token| &token.kind),
+            Some(TokenKind::LParen)
+        ) {
+            groups += 1;
+            index += 1;
+            loop {
+                if !matches!(
+                    self.tokens.get(index).map(|token| &token.kind),
+                    Some(TokenKind::Ident(_))
+                ) {
+                    return false;
+                }
+                index += 1;
+                if !matches!(
+                    self.tokens.get(index).map(|token| &token.kind),
+                    Some(TokenKind::Colon)
+                ) {
+                    return false;
+                }
+                index += 1;
+                if !matches!(
+                    self.tokens.get(index).map(|token| &token.kind),
+                    Some(TokenKind::Type)
+                ) {
+                    return false;
+                }
+                index += 1;
+                if matches!(
+                    self.tokens.get(index).map(|token| &token.kind),
+                    Some(TokenKind::Comma)
+                ) {
+                    index += 1;
+                    if matches!(
+                        self.tokens.get(index).map(|token| &token.kind),
+                        Some(TokenKind::RParen)
+                    ) {
+                        break;
+                    }
+                    continue;
+                }
+                break;
+            }
+            if !matches!(
+                self.tokens.get(index).map(|token| &token.kind),
+                Some(TokenKind::RParen)
+            ) {
+                return false;
+            }
+            index += 1;
+        }
+        if groups == 0 {
+            return false;
+        }
+        if !matches!(
+            self.tokens.get(index).map(|token| &token.kind),
+            Some(TokenKind::Colon)
+        ) {
+            return false;
+        }
+        index += 1;
+        matches!(
+            self.tokens.get(index).map(|token| &token.kind),
+            Some(TokenKind::Type)
+        ) || matches!(
+            self.tokens.get(index).map(|token| &token.kind),
+            Some(TokenKind::Ident(name)) if name == "effect"
+        )
+    }
+
+    fn compile_parameter_kind(
+        &mut self,
+        name_token: &Token,
+        name: &str,
+        region_name: bool,
+    ) -> Result<CompileParamKind, ParseError> {
+        if self.take(&TokenKind::Type) {
+            if region_name {
+                return Err(self.error_at(
+                    name_token,
+                    "region names must use the `region` compile-time kind",
+                ));
+            }
+            if matches!(name, "_" | "i32" | "i64" | "u32" | "u64" | "bool" | "Never") {
+                return Err(self.error_at(
+                    name_token,
+                    format!(
+                        "reserved type name `{name}` cannot be used as a compile-time parameter"
+                    ),
+                ));
+            }
+            return Ok(CompileParamKind::Type);
+        }
+
+        if let TokenKind::Ident(kind) = self.current().kind.clone() {
+            let parameter_kind = match kind.as_str() {
+                "access" => Some(CompileParamKind::Access),
+                "passing" => Some(CompileParamKind::Passing),
+                "effect" => Some(CompileParamKind::Effect),
+                _ => None,
+            };
+            if let Some(parameter_kind) = parameter_kind {
+                if region_name {
+                    return Err(self.error_at(
+                        name_token,
+                        format!(
+                            "region names cannot use the `{kind}` compile-time kind; use `region`"
+                        ),
+                    ));
+                }
+                self.advance();
+                return Ok(parameter_kind);
+            }
+        }
+
+        if self.at(&TokenKind::LParen) {
+            if region_name {
+                return Err(self.error_at(
+                    name_token,
+                    "region names cannot use constructor compile-time kinds; use `region`",
+                ));
+            }
+            if matches!(name, "_" | "i32" | "i64" | "u32" | "u64" | "bool" | "Never") {
+                return Err(self.error_at(
+                    name_token,
+                    format!(
+                        "reserved type name `{name}` cannot be used as a compile-time parameter"
+                    ),
+                ));
+            }
+            return self.constructor_compile_parameter_kind();
+        }
+
+        self.expect(
+            &TokenKind::Region,
+            "`type`, `access`, `passing`, `effect`, a constructor kind, or `region`",
+        )?;
+        if !region_name {
+            return Err(self.error_at(
+                name_token,
+                "region compile-time parameters must start with `'`",
+            ));
+        }
+        Ok(CompileParamKind::Region)
+    }
+
+    fn constructor_compile_parameter_kind(&mut self) -> Result<CompileParamKind, ParseError> {
+        let mut parameter_count = 0;
+        while self.at(&TokenKind::LParen) {
+            parameter_count += self.constructor_kind_parameter_group()?;
+        }
+        self.expect(&TokenKind::Colon, "`:` before constructor result kind")?;
+        if self.take(&TokenKind::Type) {
+            return Ok(CompileParamKind::TypeConstructor { parameter_count });
+        }
+        if matches!(&self.current().kind, TokenKind::Ident(name) if name == "effect") {
+            self.advance();
+            return Ok(CompileParamKind::EffectConstructor { parameter_count });
+        }
+        Err(self.error_here("expected constructor result kind `type` or `effect`"))
+    }
+
+    fn constructor_kind_parameter_group(&mut self) -> Result<usize, ParseError> {
+        self.expect(&TokenKind::LParen, "`(` in constructor kind")?;
+        if self.take(&TokenKind::RParen) {
+            return Err(self.error_here("constructor kind parameter groups cannot be empty"));
+        }
+
+        let mut parameter_count = 0;
+        loop {
+            let name_token = self.current().clone();
+            let name = self.expect_ident("a constructor kind parameter name")?;
+            if matches!(
+                name.as_str(),
+                "_" | "i32" | "i64" | "u32" | "u64" | "bool" | "Never"
+            ) {
+                return Err(self.error_at(
+                    &name_token,
+                    format!(
+                        "reserved type name `{name}` cannot be used as a constructor kind parameter"
+                    ),
+                ));
+            }
+            self.expect(
+                &TokenKind::Colon,
+                "`:` after constructor kind parameter name",
+            )?;
+            if !self.take(&TokenKind::Type) {
+                return Err(
+                    self.error_here("constructor kind parameters currently must have kind `type`")
+                );
+            }
+            parameter_count += 1;
+
+            if self.take(&TokenKind::Comma) {
+                if self.take(&TokenKind::RParen) {
+                    break;
+                }
+            } else {
+                self.expect(&TokenKind::RParen, "`)` after constructor kind parameters")?;
+                break;
+            }
+        }
+
+        Ok(parameter_count)
     }
 
     fn compile_parameter_group(&mut self) -> Result<Vec<CompileParam>, ParseError> {
@@ -853,65 +1097,7 @@ impl Parser {
                 _ => unreachable!("compile parameter start was checked"),
             };
             self.expect(&TokenKind::Colon, "`:` after compile-time parameter name")?;
-            let kind = if self.take(&TokenKind::Type) {
-                if region_name {
-                    return Err(self.error_at(
-                        &name_token,
-                        "region names must use the `region` compile-time kind",
-                    ));
-                }
-                if matches!(
-                    name.as_str(),
-                    "_" | "i32" | "i64" | "u32" | "u64" | "bool" | "never"
-                ) {
-                    return Err(self.error_at(
-                        &name_token,
-                        format!(
-                            "reserved type name `{name}` cannot be used as a compile-time parameter"
-                        ),
-                    ));
-                }
-                CompileParamKind::Type
-            } else if matches!(&self.current().kind, TokenKind::Ident(name) if name == "access") {
-                if region_name {
-                    return Err(self.error_at(
-                        &name_token,
-                        "access parameter names must be ordinary identifiers",
-                    ));
-                }
-                self.advance();
-                CompileParamKind::Access
-            } else if matches!(&self.current().kind, TokenKind::Ident(name) if name == "passing") {
-                if region_name {
-                    return Err(self.error_at(
-                        &name_token,
-                        "passing parameter names must be ordinary identifiers",
-                    ));
-                }
-                self.advance();
-                CompileParamKind::Passing
-            } else if matches!(&self.current().kind, TokenKind::Ident(name) if name == "effect") {
-                if region_name {
-                    return Err(self.error_at(
-                        &name_token,
-                        "effect parameter names must be ordinary identifiers",
-                    ));
-                }
-                self.advance();
-                CompileParamKind::Effect
-            } else {
-                self.expect(
-                    &TokenKind::Region,
-                    "`type`, `access`, `passing`, `effect`, or `region`",
-                )?;
-                if !region_name {
-                    return Err(self.error_at(
-                        &name_token,
-                        "region compile-time parameters must start with `'`",
-                    ));
-                }
-                CompileParamKind::Region
-            };
+            let kind = self.compile_parameter_kind(&name_token, &name, region_name)?;
             params.push(CompileParam { name, kind });
 
             if self.take(&TokenKind::Comma) {
@@ -1359,8 +1545,26 @@ impl Parser {
                     let name = path.join(".");
                     let mut arguments = Vec::new();
                     if self.take(&TokenKind::LParen) && !self.take(&TokenKind::RParen) {
+                        let mut labeled = 0;
                         loop {
-                            arguments.push(self.type_expr()?);
+                            let label = if matches!(self.current().kind, TokenKind::Ident(_))
+                                && self.at_offset(1, &TokenKind::Colon)
+                                && !self.at_offset(2, &TokenKind::Type)
+                                && !self.at_offset(2, &TokenKind::Region)
+                                && !matches!(
+                                    self.tokens.get(self.index + 2).map(|token| &token.kind),
+                                    Some(TokenKind::Ident(kind))
+                                        if matches!(kind.as_str(), "access" | "passing" | "effect")
+                                ) {
+                                labeled += 1;
+                                let label = self.expect_ident("an effect argument label")?;
+                                self.expect(&TokenKind::Colon, "`:` after effect argument label")?;
+                                Some(label)
+                            } else {
+                                None
+                            };
+                            let ty = self.type_expr()?;
+                            arguments.push(TypeArg { label, ty });
                             if self.take(&TokenKind::Comma) {
                                 if self.take(&TokenKind::RParen) {
                                     break;
@@ -1370,8 +1574,20 @@ impl Parser {
                                 break;
                             }
                         }
+                        if labeled != 0 && labeled != arguments.len() {
+                            return Err(self.error_here(
+                                "effect arguments must be either all labeled or all positional",
+                            ));
+                        }
                     }
-                    let effect = Type::Named(name.clone(), arguments);
+                    let effect = if arguments.iter().any(|argument| argument.label.is_some()) {
+                        Type::NamedArgs(name.clone(), arguments)
+                    } else {
+                        Type::Named(
+                            name.clone(),
+                            arguments.into_iter().map(|argument| argument.ty).collect(),
+                        )
+                    };
                     if custom.contains(&effect) {
                         return Err(self.error_here(format!(
                             "duplicate custom effect `{name}` in `with(...)`"
@@ -1605,8 +1821,26 @@ impl Parser {
             && self.take(&TokenKind::LParen)
             && !self.take(&TokenKind::RParen)
         {
+            let mut labeled = 0;
             loop {
-                arguments.push(self.type_expr()?);
+                let label = if matches!(self.current().kind, TokenKind::Ident(_))
+                    && self.at_offset(1, &TokenKind::Colon)
+                    && !self.at_offset(2, &TokenKind::Type)
+                    && !self.at_offset(2, &TokenKind::Region)
+                    && !matches!(
+                        self.tokens.get(self.index + 2).map(|token| &token.kind),
+                        Some(TokenKind::Ident(kind))
+                            if matches!(kind.as_str(), "access" | "passing" | "effect")
+                    ) {
+                    labeled += 1;
+                    let label = self.expect_ident("a type argument label")?;
+                    self.expect(&TokenKind::Colon, "`:` after type argument label")?;
+                    Some(label)
+                } else {
+                    None
+                };
+                let ty = self.type_expr()?;
+                arguments.push(TypeArg { label, ty });
                 if self.take(&TokenKind::Comma) {
                     if self.take(&TokenKind::RParen) {
                         break;
@@ -1615,6 +1849,11 @@ impl Parser {
                     self.expect(&TokenKind::RParen, "`)` after type arguments")?;
                     break;
                 }
+            }
+            if labeled != 0 && labeled != arguments.len() {
+                return Err(
+                    self.error_here("type arguments must be either all labeled or all positional")
+                );
             }
         }
 
@@ -1625,10 +1864,15 @@ impl Parser {
                 "u32" => Type::U32,
                 "u64" => Type::U64,
                 "bool" => Type::Bool,
-                _ => Type::Named(name, arguments),
+                _ => Type::Named(name, Vec::new()),
             })
+        } else if arguments.iter().any(|argument| argument.label.is_some()) {
+            Ok(Type::NamedArgs(name, arguments))
         } else {
-            Ok(Type::Named(name, arguments))
+            Ok(Type::Named(
+                name,
+                arguments.into_iter().map(|argument| argument.ty).collect(),
+            ))
         }
     }
 
@@ -3174,6 +3418,9 @@ fn validate_type_effects(ty: &Type, effects: &HashSet<String>) -> Result<(), Str
         Type::Named(name, _) if effects.contains(name) => Err(format!(
             "effect parameter `{name}` cannot be used as a runtime type"
         )),
+        Type::NamedArgs(name, _) if effects.contains(name) => Err(format!(
+            "effect parameter `{name}` cannot be used as a runtime type"
+        )),
         Type::Borrow { pointee, .. } | Type::Array(pointee, _) => {
             validate_type_effects(pointee, effects)
         }
@@ -3198,6 +3445,12 @@ fn validate_type_effects(ty: &Type, effects: &HashSet<String>) -> Result<(), Str
         Type::Named(_, arguments) => {
             for argument in arguments {
                 validate_type_effects(argument, effects)?;
+            }
+            Ok(())
+        }
+        Type::NamedArgs(_, arguments) => {
+            for argument in arguments {
+                validate_type_effects(&argument.ty, effects)?;
             }
             Ok(())
         }
@@ -3240,6 +3493,12 @@ fn validate_type_accesses(ty: &Type, accesses: &HashSet<String>) -> Result<(), S
         Type::Named(_, arguments) => {
             for argument in arguments {
                 validate_type_accesses(argument, accesses)?;
+            }
+            Ok(())
+        }
+        Type::NamedArgs(_, arguments) => {
+            for argument in arguments {
+                validate_type_accesses(&argument.ty, accesses)?;
             }
             Ok(())
         }
@@ -3407,6 +3666,12 @@ fn validate_type_regions(ty: &Type, regions: &HashSet<String>) -> Result<(), Str
         Type::Named(_, arguments) => {
             for argument in arguments {
                 validate_type_regions(argument, regions)?;
+            }
+            Ok(())
+        }
+        Type::NamedArgs(_, arguments) => {
+            for argument in arguments {
+                validate_type_regions(&argument.ty, regions)?;
             }
             Ok(())
         }
@@ -4302,7 +4567,7 @@ mod tests {
 
     #[test]
     fn rejects_reserved_compile_parameter_names() {
-        for name in ["_", "i32", "i64", "u32", "u64", "bool", "never"] {
+        for name in ["_", "i32", "i64", "u32", "u64", "bool", "Never"] {
             let source = format!("let invalid({name}: type)(value: i32): i32 = {{ value }}\n");
             let error = parse(&source).unwrap_err();
             assert_eq!(
@@ -5601,6 +5866,93 @@ mod tests {
             &program.items[2],
             Item::TypeAlias(alias) if alias.compile_groups.is_empty() && alias.target == Type::I32
         ));
+    }
+
+    #[test]
+    fn parses_constructor_compile_parameter_kinds() {
+        let program = parse(
+            "let Use(F: (Element: type): type)(move value: F(i32)): F(i32) = { value }\n\
+             let Effects(E: (Error: type): effect)(move action: (): i32 with(E(bool))): i32 with(E(bool)) = { action() }\n\
+             let Functor(F: (Value: type): type) = trait {\n\
+               let map(E: effect, A: type, B: type)(move value: F(A), move transform: (A): B with(E)): F(B) with(E)\n\
+             }\n",
+        )
+        .unwrap();
+
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        assert_eq!(
+            function.compile_groups[0][0].kind,
+            CompileParamKind::TypeConstructor { parameter_count: 1 }
+        );
+        assert_eq!(
+            function.groups[0][0].ty,
+            Type::Named("F".into(), vec![Type::I32])
+        );
+
+        let Item::Function(effects) = &program.items[1] else {
+            panic!("expected effect-constructor function");
+        };
+        assert_eq!(
+            effects.compile_groups[0][0].kind,
+            CompileParamKind::EffectConstructor { parameter_count: 1 }
+        );
+        assert_eq!(
+            effects.effects.custom,
+            vec![Type::Named("E".into(), vec![Type::Bool])]
+        );
+
+        let Item::Trait(trait_def) = &program.items[2] else {
+            panic!("expected trait");
+        };
+        assert_eq!(
+            trait_def.compile_groups[0][0].kind,
+            CompileParamKind::TypeConstructor { parameter_count: 1 }
+        );
+    }
+
+    #[test]
+    fn parses_labeled_type_arguments_without_reordering() {
+        let program = parse(
+            "let consume(value: Pair(V: bool, K: i32)): Result(E: bool, T: i32) = { value }\n",
+        )
+        .unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        assert_eq!(
+            function.groups[0][0].ty,
+            Type::NamedArgs(
+                "Pair".into(),
+                vec![
+                    TypeArg {
+                        label: Some("V".into()),
+                        ty: Type::Bool,
+                    },
+                    TypeArg {
+                        label: Some("K".into()),
+                        ty: Type::I32,
+                    },
+                ],
+            )
+        );
+        assert_eq!(
+            function.return_type,
+            Some(Type::NamedArgs(
+                "Result".into(),
+                vec![
+                    TypeArg {
+                        label: Some("E".into()),
+                        ty: Type::Bool,
+                    },
+                    TypeArg {
+                        label: Some("T".into()),
+                        ty: Type::I32,
+                    },
+                ],
+            ))
+        );
     }
 
     #[test]

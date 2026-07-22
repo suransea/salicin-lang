@@ -9,7 +9,7 @@ validates declarations that have language-defined roles.
 `core.prelude` contains the deliberately small implicit surface:
 
 - `Option(T)` and `Result(T, E)`
-- the uninhabited `never` type
+- the uninhabited `Never` type
 - the `Copy` and `Drop` traits
 
 `core.ops` contains the arithmetic protocols `Add`, `Sub`, `Mul`, `Div`, and `Rem`, the equality
@@ -80,11 +80,33 @@ Writing `left + right`, `left & right`, `left == right`, or `left < right` does 
 import is required when source names the protocol in an implementation, bound, type, or direct
 member access.
 
-`core.control` owns the edition-pinned contracts for compiler-lowered control constructs. It is not
-part of the prelude. The module declares the `Unsafe` and parameterized `Throws(E)` effect identities,
-the `Shared` and `Mutable` access identities, and the compiler-provided `do`, `try`, `unsafe`, and
-`loop` trailing-closure functions. Their bodyless signatures are permitted only for validated core
-lang items; ordinary package functions still require `= { ... }` bodies.
+`core.effects` owns standard effect identities. It is not part of the prelude:
+
+```sali
+pub let Unsafe = effect
+pub let Throws(E: type) = effect
+pub let Async = effect
+```
+
+`Unsafe` and `Throws(E)` are validated lang-item identities behind the lowercase source spellings
+`with(unsafe)` and `throws(E)`. `Async` is currently an ordinary marker effect; executable
+async/Future lowering will add its handler contracts in the same implementation slice rather than
+pretending `await` already works.
+
+`core.access` owns standard access identities, also outside the prelude:
+
+```sali
+pub let Shared = access
+pub let Mutable = access
+```
+
+The language still writes borrow types as `borrow T` and `borrow(mut) T`; naming these declarations
+directly requires an ordinary `use core.access...`.
+
+`core.control` owns the edition-pinned contracts for compiler-lowered control functions. It is not
+part of the prelude. The module declares the compiler-provided `do`, `try`, `unsafe`, and `loop`
+trailing-closure functions. Their bodyless signatures are permitted only for validated core lang
+items; ordinary package functions still require `= { ... }` bodies.
 
 It also declares two compiler-owned erased runtime contracts:
 
@@ -136,9 +158,56 @@ iterator for `Iterator.next`, and stops on `None`. An inherent or unrelated trai
 
 The lowercase syntax spellings bind to these validated identities without an import. An ordinary
 same-named declaration cannot acquire their lowering behavior. Future control features follow the
-same rule: for example, async lowering must add its effect, `Future`, `async`, and `await` contracts
-to the matching core release when it becomes executable, rather than reserving undocumented compiler
-magic in advance.
+same rule: for example, async lowering must add `Future`, `async`, and handler contracts to the
+matching core release when it becomes executable, rather than reserving undocumented compiler magic
+in advance.
+
+`core.algebra` contains first-order algebra protocols rather than putting them in the prelude:
+
+```sali
+pub let Semigroup(T: type) = trait {
+  let combine(move left: T, move right: T): T
+}
+
+pub let Monoid(T: type) = trait {
+  let empty(): T
+  let combine(move left: T, move right: T): T
+}
+```
+
+The compiler does not prove algebraic laws.
+
+`core.functional` contains higher-kinded protocols over compile-time type constructors. It is not
+part of the prelude:
+
+```sali
+pub let Functor(F: (Value: type): type) = trait {
+  let map(E: effect, A: type, B: type)(
+    move value: F(A),
+    move transform: (A): B with(E),
+  ): F(B) with(E)
+}
+
+pub let Applicative(F: (Value: type): type) = trait {
+  let pure(A: type)(move value: A): F(A)
+
+  let apply(E: effect, A: type, B: type)(
+    move transform: F((A): B with(E)),
+    move value: F(A),
+  ): F(B) with(E)
+}
+
+pub let Monad(M: (Value: type): type) = trait {
+  let flat_map(E: effect, A: type, B: type)(
+    move value: M(A),
+    move next: (A): M(B) with(E),
+  ): M(B) with(E)
+}
+```
+
+These declarations use constructor kinds such as `(Value: type): type`. Trait inheritance
+constraints such as `Applicative where F: Functor`, constructor-valued trait implementations such as
+`extend Option: Functor`, and full HKT equation solving remain future semantic work.
 
 `ControlFlow`, the old propagation `Try`, `FromResidual`, and `FromError` were removed together with postfix `.try`. `Option` and
 `Result` are ordinary enum values and require explicit constructors. Language error propagation is

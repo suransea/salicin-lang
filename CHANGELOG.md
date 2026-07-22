@@ -6,6 +6,55 @@ subset.
 
 ## Unreleased
 
+## 0.156.0 - 2026-07-22
+
+- Added constructor compile-time kinds such as `F: (Value: type): type` and
+  `E: (Error: type): effect` to the AST and parser, with disambiguating lookahead so function types
+  like `action: (): T with(E)` remain runtime parameter types rather than compile-time parameters.
+- Extended trait signature validation to understand type-constructor parameters in method types and
+  effect-constructor parameters in `with(...)` rows, while keeping constructor-valued generic
+  functions and trait implementations explicitly unsupported with diagnostics.
+- Added non-prelude `core.functional.Functor`, `core.functional.Applicative`, and
+  `core.functional.Monad` source definitions over HKT constructor kinds, and mounted
+  `core.functional` in the standard-library namespace with ordinary `use` diagnostics.
+- Documented the current HKT boundary: standard protocols can be declared, but trait inheritance,
+  `extend Option: Functor`, and broad constructor equation solving remain future semantic work.
+
+## 0.155.0 - 2026-07-22
+
+- Renamed the prelude uninhabited type from `never` to `Never` without a compatibility alias, and
+  updated parser reservations, diagnostics, tests, and documentation to use the source spelling.
+- Split validated core capabilities into ordinary standard-library modules: `core.effects` now owns
+  `Unsafe`, `Throws(E)`, and the ordinary `Async` marker; `core.access` owns `Shared` and `Mutable`;
+  `core.control` now contains only the control/runtime contracts for `do`, `try`, `unsafe`, `loop`,
+  `Continuation`, and `EffectCallable`.
+- Added `core.algebra.Semigroup(T)` and `core.algebra.Monoid(T)` as first-order standard-library
+  protocols outside the prelude, and relaxed core validation so non-lang-item standard modules can
+  contain ordinary public declarations while lang-item modules remain shape-checked.
+
+## 0.154.0 - 2026-07-22
+
+- Added labeled type-constructor arguments in type positions, allowing declarations such as
+  `Pair(V: bool, K: i32)` to normalize against the constructor's `K: type, V: type` labels before
+  semantic lowering.
+- Preserved labels in the parser as a temporary AST form, then erased them before alias expansion so
+  existing type checking, monomorphization, and LLVM lowering continue to operate on positional
+  nominal applications.
+- Extended type-constructor alias coverage so labeled applications of aliases use the alias labels
+  and still preserve the target nominal identity.
+- Added diagnostics for unknown, duplicate, missing, and arity-mismatched labeled type arguments.
+
+## 0.153.0 - 2026-07-22
+
+- Extended direct trailing-closure actions to complete reusable-handler calls with earlier `copy`
+  or `move` runtime arguments, including arguments in preceding curried groups.
+- Materialized preceding values and the action as typed locals in source order before capture
+  lifting, preserving observable side effects and ownership transfer.
+- Kept preceding shared and mutable borrow parameters out of this transformation until their loan
+  lifetime can be represented without converting the borrowed place into an owned temporary.
+- Added a native ordered-evaluation regression whose mutable capture and resumed operation produce
+  exit status 42.
+
 ## 0.152.0 - 2026-07-22
 
 - Accepted a direct trailing-closure literal for a reusable handler action when no earlier runtime

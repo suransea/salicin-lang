@@ -1,11 +1,3 @@
-// Compiler-recognized capability values. Source spellings such as
-// `with(unsafe)`, `throws(E)`, `shared`, and `mut` bind to these edition-pinned
-// declarations rather than to user declarations with the same spelling.
-pub let Unsafe = effect
-pub let Throws(E: type) = effect
-pub let Shared = access
-pub let Mutable = access
-
 // A handler clause receives a compiler-created, one-shot value with this
 // logical type. It may be invoked once to resume the suspended computation;
 // dropping it aborts that continuation. Native lowering represents it with

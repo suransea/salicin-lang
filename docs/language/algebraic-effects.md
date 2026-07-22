@@ -190,10 +190,12 @@ native linking. Resumption and abandonment share the existing continuation clean
 exactly-once destruction of moved resources. Consuming the action releases its stored capture loans
 before following evaluation continues. Moving the callable through local alias chains retains the
 same source/action identity and relocates borrowed pointer slots separately from owned fields.
-When the action is the first runtime value evaluated by a complete call, a direct trailing-closure
-literal is materialized into the same typed local representation automatically. Calls with earlier
-runtime arguments, conditional action values, and actions crossing another function boundary still
-require the remaining general erased value integration.
+A direct trailing-closure literal is materialized into the same typed local representation
+automatically. Earlier `copy` and `move` arguments, including values in preceding curried groups,
+are first materialized as typed locals in source order, so their side effects and ownership transfer
+remain observable before the action captures its environment. An earlier `borrow` or `borrow(mut)`
+parameter, conditional action values, and actions crossing another function boundary still require
+the remaining loan-aware or general erased value integration.
 
 Selective CPS removes only the handled nominal identity. Residual `unsafe`, `throws(Error)`, and
 other nominal requirements remain on generated resumable frames. Intercepted operations also retain

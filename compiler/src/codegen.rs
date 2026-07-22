@@ -255,6 +255,20 @@ fn source_effect_identity(effect: &Type) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        Type::NamedArgs(name, arguments) => format!(
+            "{name}({})",
+            arguments
+                .iter()
+                .map(|argument| {
+                    let rendered = source_effect_identity(&argument.ty);
+                    match &argument.label {
+                        Some(label) => format!("{label}: {rendered}"),
+                        None => rendered,
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         Type::Borrow { .. } | Type::Array(_, _) | Type::Function { .. } => {
             format!("{effect:?}")
         }
@@ -569,7 +583,7 @@ impl fmt::Display for Ty {
             }
             Self::Array(element, length) => write!(f, "Array({element}, {length})"),
             Self::Struct(name) | Self::Enum(name) => f.write_str(name),
-            Self::Never => f.write_str("never"),
+            Self::Never => f.write_str("Never"),
             Self::Error => f.write_str("<error>"),
             Self::Function(function) => {
                 for group in &function.groups {
@@ -1787,6 +1801,30 @@ fn schema_function_has_receiver(function: &Function) -> bool {
         .is_some_and(|group| group.len() == 1 && group[0].name == "self")
 }
 
+fn describe_compile_param_kind(kind: CompileParamKind) -> String {
+    match kind {
+        CompileParamKind::Type => "`type`".to_owned(),
+        CompileParamKind::Region => "`region`".to_owned(),
+        CompileParamKind::Access => "`access`".to_owned(),
+        CompileParamKind::Passing => "`passing`".to_owned(),
+        CompileParamKind::Effect => "`effect`".to_owned(),
+        CompileParamKind::TypeConstructor { parameter_count } => {
+            format!(
+                "`({} type parameter{}): type`",
+                parameter_count,
+                if parameter_count == 1 { "" } else { "s" }
+            )
+        }
+        CompileParamKind::EffectConstructor { parameter_count } => {
+            format!(
+                "`({} type parameter{}): effect`",
+                parameter_count,
+                if parameter_count == 1 { "" } else { "s" }
+            )
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FunctionShape {
     groups: Vec<Vec<(PassMode, Ty)>>,
@@ -2003,6 +2041,13 @@ impl Analyzer {
         erase_region_parameters(&mut core_program);
         erase_region_parameters(&mut alloc_program);
         erase_region_parameters(&mut source_program);
+        for diagnostic in normalize_labeled_type_arguments([
+            &mut core_program,
+            &mut alloc_program,
+            &mut source_program,
+        ]) {
+            analyzer.error(diagnostic);
+        }
         promote_inferred_type_aliases([&mut core_program, &mut alloc_program, &mut source_program]);
         for diagnostic in
             expand_type_aliases([&mut core_program, &mut alloc_program, &mut source_program])
@@ -2298,7 +2343,7 @@ impl Analyzer {
                         && definition.name != self.lang_item_name(LangItemKind::MutableAccess)
                     {
                         self.error(format!(
-                            "access value `{}` can only be declared by `core.control`",
+                            "access value `{}` can only be declared by `core.access`",
                             definition.name
                         ));
                     }
@@ -2359,7 +2404,7 @@ impl Analyzer {
 
         let never = self.lang_item_name(LangItemKind::Never);
         if !self.enum_defs.contains_key(never) {
-            self.error("compiler core did not register its validated `never` declaration");
+            self.error("compiler core did not register its validated `Never` declaration");
         }
 
         for name in self.function_order.clone() {
@@ -3020,13 +3065,6 @@ impl Analyzer {
                     } else {
                         name.clone()
                     };
-                    if !function.compile_groups.is_empty() {
-                        self.error(format!(
-                            "generic trait method `{}.{name}` is not supported",
-                            definition.name
-                        ));
-                        valid = false;
-                    }
                     if function.return_type.is_none() {
                         self.error(format!(
                             "trait method `{}.{name}` requires an explicit return type",
@@ -3058,30 +3096,35 @@ impl Analyzer {
         trait_names.sort();
         for trait_name in trait_names {
             let schema = self.traits[&trait_name].clone();
-            let mut type_names = schema
+            let mut compile_parameter_kinds = schema
                 .compile_parameters
                 .iter()
-                .map(|parameter| parameter.name.clone())
-                .collect::<HashSet<_>>();
-            type_names.insert("Self".to_owned());
-            type_names.extend(schema.associated_types.iter().cloned());
+                .map(|parameter| (parameter.name.clone(), parameter.kind))
+                .collect::<HashMap<_, _>>();
+            compile_parameter_kinds.insert("Self".to_owned(), CompileParamKind::Type);
+            compile_parameter_kinds.extend(
+                schema
+                    .associated_types
+                    .iter()
+                    .map(|name| (name.clone(), CompileParamKind::Type)),
+            );
             let mut valid = schema.valid;
             for method_name in &schema.method_order {
                 let method = &schema.methods[method_name];
-                let mut method_type_names = type_names.clone();
-                method_type_names.extend(
+                let mut method_compile_parameter_kinds = compile_parameter_kinds.clone();
+                method_compile_parameter_kinds.extend(
                     method
                         .compile_groups
                         .iter()
                         .flatten()
-                        .map(|parameter| parameter.name.clone()),
+                        .map(|parameter| (parameter.name.clone(), parameter.kind)),
                 );
                 for parameter in method.groups.iter().flatten() {
                     valid &= self.validate_trait_source_type(
                         &trait_name,
                         method_name,
                         &parameter.ty,
-                        &method_type_names,
+                        &method_compile_parameter_kinds,
                     );
                     if parameter.mode == PassMode::Copy
                         && !self.trait_source_type_is_definitely_copy(&parameter.ty)
@@ -3099,9 +3142,15 @@ impl Analyzer {
                         &trait_name,
                         method_name,
                         result,
-                        &method_type_names,
+                        &method_compile_parameter_kinds,
                     );
                 }
+                valid &= self.validate_trait_source_effects(
+                    &trait_name,
+                    method_name,
+                    &method.effects,
+                    &method_compile_parameter_kinds,
+                );
             }
             self.traits
                 .get_mut(&trait_name)
@@ -3184,13 +3233,16 @@ impl Analyzer {
         trait_name: &str,
         member_name: &str,
         source: &Type,
-        type_names: &HashSet<String>,
+        compile_parameters: &HashMap<String, CompileParamKind>,
     ) -> bool {
         match source {
             Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => true,
-            Type::Borrow { pointee, .. } => {
-                self.validate_trait_source_type(trait_name, member_name, pointee, type_names)
-            }
+            Type::Borrow { pointee, .. } => self.validate_trait_source_type(
+                trait_name,
+                member_name,
+                pointee,
+                compile_parameters,
+            ),
             Type::Array(element, length) => {
                 let mut valid = true;
                 if *length > i32::MAX as u64 {
@@ -3199,23 +3251,98 @@ impl Analyzer {
                     ));
                     valid = false;
                 }
-                valid &=
-                    self.validate_trait_source_type(trait_name, member_name, element, type_names);
+                valid &= self.validate_trait_source_type(
+                    trait_name,
+                    member_name,
+                    element,
+                    compile_parameters,
+                );
                 valid
             }
-            Type::Function { groups, result, .. } => {
+            Type::Function {
+                groups,
+                effects,
+                result,
+            } => {
                 groups.iter().flatten().all(|ty| {
-                    self.validate_trait_source_type(trait_name, member_name, ty, type_names)
-                }) && self.validate_trait_source_type(trait_name, member_name, result, type_names)
+                    self.validate_trait_source_type(trait_name, member_name, ty, compile_parameters)
+                }) && self.validate_trait_source_type(
+                    trait_name,
+                    member_name,
+                    result,
+                    compile_parameters,
+                ) && self.validate_trait_source_effects(
+                    trait_name,
+                    member_name,
+                    effects,
+                    compile_parameters,
+                )
             }
-            Type::Named(name, arguments) if type_names.contains(name) => {
-                if arguments.is_empty() {
-                    true
-                } else {
-                    self.error(format!(
-                        "trait type parameter `{name}` in `{trait_name}.{member_name}` does not accept type arguments"
-                    ));
-                    false
+            Type::Named(name, arguments) if compile_parameters.contains_key(name) => {
+                let kind = compile_parameters
+                    .get(name)
+                    .copied()
+                    .expect("checked compile parameter exists");
+                match kind {
+                    CompileParamKind::Type => {
+                        if arguments.is_empty() {
+                            true
+                        } else {
+                            self.error(format!(
+                                "trait type parameter `{name}` in `{trait_name}.{member_name}` does not accept type arguments"
+                            ));
+                            false
+                        }
+                    }
+                    CompileParamKind::TypeConstructor { parameter_count } => {
+                        let mut valid = true;
+                        if arguments.len() != parameter_count {
+                            self.error(format!(
+                                "type constructor parameter `{name}` in `{trait_name}.{member_name}` expects {parameter_count} type arguments, found {}",
+                                arguments.len()
+                            ));
+                            valid = false;
+                        }
+                        for argument in arguments {
+                            valid &= self.validate_trait_source_type(
+                                trait_name,
+                                member_name,
+                                argument,
+                                compile_parameters,
+                            );
+                        }
+                        valid
+                    }
+                    CompileParamKind::EffectConstructor { .. } => {
+                        self.error(format!(
+                            "effect constructor parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
+                        ));
+                        false
+                    }
+                    CompileParamKind::Effect => {
+                        self.error(format!(
+                            "effect row parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
+                        ));
+                        false
+                    }
+                    CompileParamKind::Access => {
+                        self.error(format!(
+                            "access parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
+                        ));
+                        false
+                    }
+                    CompileParamKind::Passing => {
+                        self.error(format!(
+                            "passing parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
+                        ));
+                        false
+                    }
+                    CompileParamKind::Region => {
+                        self.error(format!(
+                            "region parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
+                        ));
+                        false
+                    }
                 }
             }
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => true,
@@ -3271,11 +3398,159 @@ impl Analyzer {
                         trait_name,
                         member_name,
                         argument,
-                        type_names,
+                        compile_parameters,
                     );
                 }
                 valid
             }
+            Type::NamedArgs(name, _) => {
+                self.error(format!(
+                    "internal error: labeled type arguments for `{name}` were not normalized"
+                ));
+                false
+            }
+        }
+    }
+
+    fn validate_trait_source_effects(
+        &mut self,
+        trait_name: &str,
+        member_name: &str,
+        effects: &FunctionEffects,
+        compile_parameters: &HashMap<String, CompileParamKind>,
+    ) -> bool {
+        let mut valid = true;
+        if let Some(error) = &effects.throws {
+            valid &=
+                self.validate_trait_source_type(trait_name, member_name, error, compile_parameters);
+        }
+        for parameter in &effects.parameters {
+            match compile_parameters.get(parameter).copied() {
+                Some(CompileParamKind::Effect) => {}
+                Some(kind) => {
+                    self.error(format!(
+                        "effect row `{parameter}` in trait member `{trait_name}.{member_name}` has incompatible compile-time kind {}",
+                        describe_compile_param_kind(kind)
+                    ));
+                    valid = false;
+                }
+                None => {
+                    self.error(format!(
+                        "unknown effect row `{parameter}` in trait member `{trait_name}.{member_name}`"
+                    ));
+                    valid = false;
+                }
+            }
+        }
+        for effect in &effects.custom {
+            valid &= self.validate_trait_source_effect(
+                trait_name,
+                member_name,
+                effect,
+                compile_parameters,
+            );
+        }
+        valid
+    }
+
+    fn validate_trait_source_effect(
+        &mut self,
+        trait_name: &str,
+        member_name: &str,
+        effect: &Type,
+        compile_parameters: &HashMap<String, CompileParamKind>,
+    ) -> bool {
+        let (name, arguments) = match effect {
+            Type::Named(name, arguments) => (name, arguments.as_slice()),
+            Type::NamedArgs(name, arguments) => {
+                let mut valid = true;
+                for argument in arguments {
+                    valid &= self.validate_trait_source_type(
+                        trait_name,
+                        member_name,
+                        &argument.ty,
+                        compile_parameters,
+                    );
+                }
+                if let Some(kind) = compile_parameters.get(name).copied() {
+                    return match kind {
+                        CompileParamKind::EffectConstructor { parameter_count } => {
+                            if arguments.len() == parameter_count {
+                                valid
+                            } else {
+                                self.error(format!(
+                                    "effect constructor parameter `{name}` in trait member `{trait_name}.{member_name}` expects {parameter_count} type arguments, found {}",
+                                    arguments.len()
+                                ));
+                                false
+                            }
+                        }
+                        CompileParamKind::Effect => {
+                            self.error(format!(
+                                "effect row parameter `{name}` in trait member `{trait_name}.{member_name}` does not accept effect arguments"
+                            ));
+                            false
+                        }
+                        _ => {
+                            self.error(format!(
+                                "compile-time parameter `{name}` in trait member `{trait_name}.{member_name}` has kind {}, not `effect`",
+                                describe_compile_param_kind(kind)
+                            ));
+                            false
+                        }
+                    };
+                }
+                return valid;
+            }
+            _ => return true,
+        };
+
+        if let Some(kind) = compile_parameters.get(name).copied() {
+            match kind {
+                CompileParamKind::EffectConstructor { parameter_count } => {
+                    let mut valid = true;
+                    if arguments.len() != parameter_count {
+                        self.error(format!(
+                            "effect constructor parameter `{name}` in trait member `{trait_name}.{member_name}` expects {parameter_count} type arguments, found {}",
+                            arguments.len()
+                        ));
+                        valid = false;
+                    }
+                    for argument in arguments {
+                        valid &= self.validate_trait_source_type(
+                            trait_name,
+                            member_name,
+                            argument,
+                            compile_parameters,
+                        );
+                    }
+                    valid
+                }
+                CompileParamKind::Effect => {
+                    self.error(format!(
+                        "effect row parameter `{name}` in trait member `{trait_name}.{member_name}` does not accept effect arguments"
+                    ));
+                    false
+                }
+                _ => {
+                    self.error(format!(
+                        "compile-time parameter `{name}` in trait member `{trait_name}.{member_name}` has kind {}, not `effect`",
+                        describe_compile_param_kind(kind)
+                    ));
+                    false
+                }
+            }
+        } else {
+            let mut valid = true;
+            for argument in arguments {
+                valid &= self.validate_trait_source_type(
+                    trait_name,
+                    member_name,
+                    argument,
+                    compile_parameters,
+                );
+            }
+            valid
         }
     }
 
@@ -3315,6 +3590,7 @@ impl Analyzer {
                         .iter()
                         .all(|argument| self.source_type_is_concrete(argument))
             }
+            Type::NamedArgs(_, _) => false,
         }
     }
 
@@ -3341,6 +3617,7 @@ impl Analyzer {
                         .iter()
                         .all(|argument| self.source_type_is_abstract_or_concrete(argument))
             }
+            Type::NamedArgs(_, _) => false,
         }
     }
 
@@ -3570,6 +3847,25 @@ impl Analyzer {
                             normalized,
                             visiting,
                         )
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+            )),
+            Type::NamedArgs(name, arguments) => Some(Type::NamedArgs(
+                name.clone(),
+                arguments
+                    .iter()
+                    .map(|argument| {
+                        Some(crate::ast::TypeArg {
+                            label: argument.label.clone(),
+                            ty: self.normalize_trait_impl_type(
+                                trait_name,
+                                &argument.ty,
+                                raw,
+                                base_substitutions,
+                                normalized,
+                                visiting,
+                            )?,
+                        })
                     })
                     .collect::<Option<Vec<_>>>()?,
             )),
@@ -5903,6 +6199,7 @@ impl Analyzer {
             }
 
             let mut substitutions = HashMap::new();
+            let mut unsupported_constructor_parameters = false;
             for (index, parameter) in template.compile_groups.iter().flatten().enumerate() {
                 let marker = match parameter.kind {
                     CompileParamKind::Type => {
@@ -5918,6 +6215,15 @@ impl Analyzer {
                     // concrete instance is lowered again after substituting its selected row.
                     CompileParamKind::Effect => EFFECT_UNSAFE_MARKER.to_owned(),
                     CompileParamKind::Region => continue,
+                    CompileParamKind::TypeConstructor { .. }
+                    | CompileParamKind::EffectConstructor { .. } => {
+                        unsupported_constructor_parameters = true;
+                        self.error(format!(
+                            "constructor compile-time parameter `{}` in generic function `{template_name}` is parsed but not supported by semantic analysis yet",
+                            parameter.name
+                        ));
+                        continue;
+                    }
                 };
                 if substitutions
                     .insert(parameter.name.clone(), Type::Named(marker, Vec::new()))
@@ -5928,6 +6234,9 @@ impl Analyzer {
                         parameter.name
                     ));
                 }
+            }
+            if unsupported_constructor_parameters {
+                continue;
             }
 
             let functions_before = self.functions.clone();
@@ -6560,6 +6869,12 @@ impl Analyzer {
                     NominalKind::Enum => Ty::Enum(canonical),
                 }
             }
+            Type::NamedArgs(name, _) => {
+                self.error(format!(
+                    "internal error: labeled type arguments for `{name}` were not normalized"
+                ));
+                Ty::Error
+            }
         }
     }
 
@@ -6817,7 +7132,7 @@ impl Analyzer {
                     .join(", ");
                 format!("{}({arguments})", instance.key.template)
             }
-            Ty::Never => "never".to_owned(),
+            Ty::Never => "Never".to_owned(),
             Ty::Error => "<error>".to_owned(),
             Ty::Function(function) => {
                 let mut rendered = String::new();
@@ -7032,6 +7347,7 @@ impl Analyzer {
                     NominalKind::Enum => Ty::Enum(canonical),
                 })
             }
+            Type::NamedArgs(_, _) => None,
         }
     }
 
@@ -7494,6 +7810,9 @@ impl Analyzer {
                     Err(mismatch())
                 }
             }
+            Type::NamedArgs(name, _) => Err(format!(
+                "internal error: labeled type arguments for `{name}` were not normalized before type inference"
+            )),
         }
     }
 
@@ -7644,6 +7963,7 @@ impl Analyzer {
                     None
                 }
             }
+            Type::NamedArgs(_, _) => None,
         }
     }
 
@@ -9632,6 +9952,14 @@ impl Analyzer {
                         self.error("region arguments are erased before semantic analysis");
                         return None;
                     }
+                    CompileParamKind::TypeConstructor { .. }
+                    | CompileParamKind::EffectConstructor { .. } => {
+                        self.error(format!(
+                            "constructor compile-time argument `{}` in `{owner}` is parsed but not supported by semantic analysis yet",
+                            parameter.name
+                        ));
+                        return None;
+                    }
                 };
                 let Some(ty) = self.probe_source_ty(&source) else {
                     self.error(format!(
@@ -9806,6 +10134,8 @@ impl Analyzer {
             }
             CompileParamKind::Effect => self.expression_is_explicit_effect_argument(expression),
             CompileParamKind::Region => false,
+            CompileParamKind::TypeConstructor { .. }
+            | CompileParamKind::EffectConstructor { .. } => false,
         }
     }
 
@@ -9833,7 +10163,7 @@ impl Analyzer {
                     || context.has_type_parameter(name)
                     || matches!(
                         name.as_str(),
-                        "i32" | "i64" | "u32" | "u64" | "bool" | "never"
+                        "i32" | "i64" | "u32" | "u64" | "bool" | "Never"
                     )
                     || self.struct_defs.contains_key(name)
                     || self.enum_defs.contains_key(name)
@@ -21889,22 +22219,24 @@ impl Analyzer {
         if groups.len() != function.groups.len() {
             return None;
         }
-        for (candidate, group_index, parameter_index) in self.runtime_handler_actions.keys() {
-            if candidate != name || groups[..*group_index].iter().any(|group| !group.is_empty()) {
+        let action_positions = self
+            .runtime_handler_actions
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        for (candidate, group_index, parameter_index) in action_positions {
+            if candidate != name {
                 continue;
             }
-            let arguments = groups.get(*group_index).copied()?;
-            let parameter = function.groups.get(*group_index)?.get(*parameter_index)?;
+            let arguments = groups.get(group_index).copied()?;
+            let parameter = function.groups.get(group_index)?.get(parameter_index)?;
             let argument_index = if arguments.iter().all(|argument| argument.label.is_none()) {
-                *parameter_index
+                parameter_index
             } else {
                 arguments.iter().position(|argument| {
                     argument.label.as_deref() == Some(parameter.name.as_str())
                 })?
             };
-            if argument_index != 0 {
-                continue;
-            }
             let Some(CallArg {
                 value: Expr::Closure(_, _),
                 ..
@@ -21912,25 +22244,60 @@ impl Analyzer {
             else {
                 continue;
             };
-            let id = self.next_closure;
-            self.next_closure += 1;
-            let local = format!("$handler$direct$action${id}");
-            let binding = Binding {
-                mutable: true,
-                name: local.clone(),
-                annotation: Some(parameter.ty.clone()),
-                value: arguments[argument_index].value.clone(),
-            };
             let mut rewritten_groups = groups
                 .iter()
                 .map(|group| group.to_vec())
                 .collect::<Vec<_>>();
-            rewritten_groups[*group_index][argument_index].value = Expr::Name(local);
+            let mut bindings = Vec::new();
+            for (earlier_group, rewritten_group) in rewritten_groups
+                .iter_mut()
+                .enumerate()
+                .take(group_index + 1)
+            {
+                let end = if earlier_group == group_index {
+                    argument_index
+                } else {
+                    rewritten_group.len()
+                };
+                for (earlier_argument, rewritten_argument) in
+                    rewritten_group.iter_mut().enumerate().take(end)
+                {
+                    let earlier_parameter =
+                        function.groups.get(earlier_group)?.get(earlier_argument)?;
+                    let parameter_ty = self.lower_source_type(&earlier_parameter.ty);
+                    if matches!(
+                        self.effective_pass_mode(earlier_parameter.mode, &parameter_ty),
+                        PassMode::Borrow | PassMode::MutBorrow
+                    ) {
+                        return None;
+                    }
+                    let id = self.next_closure;
+                    self.next_closure += 1;
+                    let local = format!("$handler$direct$argument${id}");
+                    bindings.push(Stmt::Let(Binding {
+                        mutable: false,
+                        name: local.clone(),
+                        annotation: Some(earlier_parameter.ty.clone()),
+                        value: rewritten_argument.value.clone(),
+                    }));
+                    rewritten_argument.value = Expr::Name(local);
+                }
+            }
+            let id = self.next_closure;
+            self.next_closure += 1;
+            let local = format!("$handler$direct$action${id}");
+            bindings.push(Stmt::Let(Binding {
+                mutable: true,
+                name: local.clone(),
+                annotation: Some(parameter.ty.clone()),
+                value: arguments[argument_index].value.clone(),
+            }));
+            rewritten_groups[group_index][argument_index].value = Expr::Name(local);
             let mut call = Expr::Name(name.to_owned());
             for group in rewritten_groups {
                 call = Expr::Call(Box::new(call), group);
             }
-            return Some(Expr::Block(vec![Stmt::Let(binding)], Some(Box::new(call))));
+            return Some(Expr::Block(bindings, Some(Box::new(call))));
         }
         None
     }
@@ -31983,6 +32350,21 @@ fn collect_nominal_type_dependencies(
                 output.push(name.clone());
             }
         }
+        Type::NamedArgs(name, arguments)
+            if !bound.contains(name.as_str()) && nominal_names.contains(name) =>
+        {
+            if !output.contains(name) {
+                output.push(name.clone());
+            }
+            for argument in arguments {
+                collect_nominal_type_dependencies(&argument.ty, nominal_names, bound, output);
+            }
+        }
+        Type::NamedArgs(_, arguments) => {
+            for argument in arguments {
+                collect_nominal_type_dependencies(&argument.ty, nominal_names, bound, output);
+            }
+        }
         Type::I32
         | Type::I64
         | Type::U32
@@ -31990,6 +32372,504 @@ fn collect_nominal_type_dependencies(
         | Type::Bool
         | Type::Unit
         | Type::Named(_, _) => {}
+    }
+}
+
+fn normalize_labeled_type_arguments<const N: usize>(programs: [&mut Program; N]) -> Vec<String> {
+    let constructor_parameters = programs
+        .iter()
+        .flat_map(|program| program.items.iter())
+        .filter_map(|item| {
+            let (name, groups) = match item {
+                Item::Struct(definition) => (&definition.name, &definition.compile_groups),
+                Item::Enum(definition) => (&definition.name, &definition.compile_groups),
+                Item::Effect(definition) => (&definition.name, &definition.compile_groups),
+                Item::Trait(definition) => (&definition.name, &definition.compile_groups),
+                Item::TypeAlias(definition) => (&definition.name, &definition.compile_groups),
+                Item::Function(_) | Item::Global(_) | Item::Access(_) | Item::Extend(_) => {
+                    return None;
+                }
+            };
+            Some((
+                name.clone(),
+                groups.iter().flatten().cloned().collect::<Vec<_>>(),
+            ))
+        })
+        .collect::<HashMap<_, _>>();
+    let mut diagnostics = Vec::new();
+
+    for program in programs {
+        for item in &mut program.items {
+            normalize_item_labeled_type_arguments(item, &constructor_parameters, &mut diagnostics);
+        }
+    }
+    diagnostics.sort();
+    diagnostics.dedup();
+    diagnostics
+}
+
+fn normalize_item_labeled_type_arguments(
+    item: &mut Item,
+    constructor_parameters: &HashMap<String, Vec<CompileParam>>,
+    diagnostics: &mut Vec<String>,
+) {
+    match item {
+        Item::Function(function) => {
+            normalize_function_labeled_type_arguments(function, constructor_parameters, diagnostics)
+        }
+        Item::Global(binding) => {
+            if let Some(annotation) = &mut binding.annotation {
+                normalize_type_labeled_arguments(annotation, constructor_parameters, diagnostics);
+            }
+            normalize_expr_labeled_type_arguments(
+                &mut binding.value,
+                constructor_parameters,
+                diagnostics,
+            );
+        }
+        Item::Struct(definition) => {
+            for field in &mut definition.fields {
+                normalize_type_labeled_arguments(
+                    &mut field.ty,
+                    constructor_parameters,
+                    diagnostics,
+                );
+            }
+        }
+        Item::Enum(definition) => {
+            for variant in &mut definition.variants {
+                match &mut variant.fields {
+                    VariantFields::Unit => {}
+                    VariantFields::Positional(types) => {
+                        for ty in types {
+                            normalize_type_labeled_arguments(
+                                ty,
+                                constructor_parameters,
+                                diagnostics,
+                            );
+                        }
+                    }
+                    VariantFields::Named(fields) => {
+                        for field in fields {
+                            normalize_type_labeled_arguments(
+                                &mut field.ty,
+                                constructor_parameters,
+                                diagnostics,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        Item::Effect(definition) => {
+            for operation in &mut definition.operations {
+                normalize_function_labeled_type_arguments(
+                    operation,
+                    constructor_parameters,
+                    diagnostics,
+                );
+            }
+        }
+        Item::Trait(definition) => {
+            for member in &mut definition.members {
+                match member {
+                    TraitMember::Function(function) => normalize_function_labeled_type_arguments(
+                        function,
+                        constructor_parameters,
+                        diagnostics,
+                    ),
+                    TraitMember::AssociatedType { default, .. } => {
+                        if let Some(default) = default {
+                            normalize_type_labeled_arguments(
+                                default,
+                                constructor_parameters,
+                                diagnostics,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        Item::Extend(extension) => {
+            normalize_type_labeled_arguments(
+                &mut extension.target,
+                constructor_parameters,
+                diagnostics,
+            );
+            if let Some(trait_ref) = &mut extension.trait_ref {
+                normalize_type_labeled_arguments(trait_ref, constructor_parameters, diagnostics);
+            }
+            for predicate in &mut extension.where_predicates {
+                normalize_type_labeled_arguments(
+                    &mut predicate.subject,
+                    constructor_parameters,
+                    diagnostics,
+                );
+                normalize_type_labeled_arguments(
+                    &mut predicate.trait_ref,
+                    constructor_parameters,
+                    diagnostics,
+                );
+                for binding in &mut predicate.associated_types {
+                    normalize_type_labeled_arguments(
+                        &mut binding.ty,
+                        constructor_parameters,
+                        diagnostics,
+                    );
+                }
+            }
+            for member in &mut extension.members {
+                match member {
+                    ExtendMember::Function(function) => normalize_function_labeled_type_arguments(
+                        function,
+                        constructor_parameters,
+                        diagnostics,
+                    ),
+                    ExtendMember::Const(binding) => {
+                        if let Some(annotation) = &mut binding.annotation {
+                            normalize_type_labeled_arguments(
+                                annotation,
+                                constructor_parameters,
+                                diagnostics,
+                            );
+                        }
+                        normalize_expr_labeled_type_arguments(
+                            &mut binding.value,
+                            constructor_parameters,
+                            diagnostics,
+                        );
+                    }
+                }
+            }
+        }
+        Item::TypeAlias(definition) => normalize_type_labeled_arguments(
+            &mut definition.target,
+            constructor_parameters,
+            diagnostics,
+        ),
+        Item::Access(_) => {}
+    }
+}
+
+fn normalize_function_labeled_type_arguments(
+    function: &mut Function,
+    constructor_parameters: &HashMap<String, Vec<CompileParam>>,
+    diagnostics: &mut Vec<String>,
+) {
+    for parameter in function.groups.iter_mut().flatten() {
+        normalize_type_labeled_arguments(&mut parameter.ty, constructor_parameters, diagnostics);
+    }
+    if let Some(result) = &mut function.return_type {
+        normalize_type_labeled_arguments(result, constructor_parameters, diagnostics);
+    }
+    if let Some(error) = &mut function.effects.throws {
+        normalize_type_labeled_arguments(error, constructor_parameters, diagnostics);
+    }
+    for effect in &mut function.effects.custom {
+        normalize_type_labeled_arguments(effect, constructor_parameters, diagnostics);
+    }
+    for predicate in &mut function.where_predicates {
+        normalize_type_labeled_arguments(
+            &mut predicate.subject,
+            constructor_parameters,
+            diagnostics,
+        );
+        normalize_type_labeled_arguments(
+            &mut predicate.trait_ref,
+            constructor_parameters,
+            diagnostics,
+        );
+        for binding in &mut predicate.associated_types {
+            normalize_type_labeled_arguments(&mut binding.ty, constructor_parameters, diagnostics);
+        }
+    }
+    if let Some(body) = &mut function.body {
+        normalize_expr_labeled_type_arguments(body, constructor_parameters, diagnostics);
+    }
+}
+
+fn normalize_type_labeled_arguments(
+    ty: &mut Type,
+    constructor_parameters: &HashMap<String, Vec<CompileParam>>,
+    diagnostics: &mut Vec<String>,
+) {
+    match ty {
+        Type::Borrow { pointee, .. } => {
+            normalize_type_labeled_arguments(pointee, constructor_parameters, diagnostics)
+        }
+        Type::Array(element, _) => {
+            normalize_type_labeled_arguments(element, constructor_parameters, diagnostics)
+        }
+        Type::Function {
+            groups,
+            effects,
+            result,
+        } => {
+            for ty in groups.iter_mut().flatten() {
+                normalize_type_labeled_arguments(ty, constructor_parameters, diagnostics);
+            }
+            if let Some(error) = &mut effects.throws {
+                normalize_type_labeled_arguments(error, constructor_parameters, diagnostics);
+            }
+            for effect in &mut effects.custom {
+                normalize_type_labeled_arguments(effect, constructor_parameters, diagnostics);
+            }
+            normalize_type_labeled_arguments(result, constructor_parameters, diagnostics);
+        }
+        Type::Named(_, arguments) => {
+            for argument in arguments {
+                normalize_type_labeled_arguments(argument, constructor_parameters, diagnostics);
+            }
+        }
+        Type::NamedArgs(name, arguments) => {
+            for argument in &mut *arguments {
+                normalize_type_labeled_arguments(
+                    &mut argument.ty,
+                    constructor_parameters,
+                    diagnostics,
+                );
+            }
+            let written = arguments.clone();
+            let positional = written
+                .iter()
+                .map(|argument| argument.ty.clone())
+                .collect::<Vec<_>>();
+            let Some(parameters) = constructor_parameters.get(name) else {
+                diagnostics.push(format!(
+                    "labeled type arguments require a known type constructor `{name}`"
+                ));
+                *ty = Type::Named(name.clone(), positional);
+                return;
+            };
+            if parameters
+                .iter()
+                .any(|parameter| parameter.kind != CompileParamKind::Type)
+            {
+                diagnostics.push(format!(
+                    "type constructor `{name}` has non-type compile-time parameters and cannot be applied in a type position with labels"
+                ));
+                *ty = Type::Named(name.clone(), positional);
+                return;
+            }
+            if written.len() != parameters.len() {
+                diagnostics.push(format!(
+                    "type argument count mismatch for `{name}`: expected {}, found {}",
+                    parameters.len(),
+                    written.len()
+                ));
+                *ty = Type::Named(name.clone(), positional);
+                return;
+            }
+            let mut ordered = Vec::with_capacity(parameters.len());
+            let mut seen = HashSet::new();
+            let mut valid = true;
+            for parameter in parameters {
+                let mut matches = written
+                    .iter()
+                    .filter(|argument| argument.label.as_deref() == Some(parameter.name.as_str()));
+                match (matches.next(), matches.next()) {
+                    (Some(argument), None) => {
+                        seen.insert(parameter.name.clone());
+                        ordered.push(argument.ty.clone());
+                    }
+                    (Some(_), Some(_)) => {
+                        diagnostics.push(format!(
+                            "duplicate type argument `{}` for `{name}`",
+                            parameter.name
+                        ));
+                        valid = false;
+                    }
+                    (None, _) => {
+                        diagnostics.push(format!(
+                            "missing type argument `{}` for `{name}`",
+                            parameter.name
+                        ));
+                        valid = false;
+                    }
+                }
+            }
+            for argument in &written {
+                if let Some(label) = &argument.label {
+                    if !seen.contains(label) {
+                        diagnostics.push(format!("unknown type argument `{label}` for `{name}`"));
+                        valid = false;
+                    }
+                }
+            }
+            *ty = if valid {
+                Type::Named(name.clone(), ordered)
+            } else {
+                Type::Named(name.clone(), positional)
+            };
+        }
+        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => {}
+    }
+}
+
+fn normalize_expr_labeled_type_arguments(
+    expression: &mut Expr,
+    constructor_parameters: &HashMap<String, Vec<CompileParam>>,
+    diagnostics: &mut Vec<String>,
+) {
+    match expression {
+        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => {}
+        Expr::Unary(_, operand)
+        | Expr::Try(operand)
+        | Expr::Throw(operand)
+        | Expr::Unsafe(operand) => {
+            normalize_expr_labeled_type_arguments(operand, constructor_parameters, diagnostics)
+        }
+        Expr::DoBlock { body } => {
+            normalize_expr_labeled_type_arguments(body, constructor_parameters, diagnostics)
+        }
+        Expr::Borrow { value, .. } => {
+            normalize_expr_labeled_type_arguments(value, constructor_parameters, diagnostics)
+        }
+        Expr::Binary(left, _, right)
+        | Expr::Coalesce(left, right)
+        | Expr::Assign(left, right)
+        | Expr::CompoundAssign(left, _, right) => {
+            normalize_expr_labeled_type_arguments(left, constructor_parameters, diagnostics);
+            normalize_expr_labeled_type_arguments(right, constructor_parameters, diagnostics);
+        }
+        Expr::HandlerCoalesce {
+            scrutinee,
+            success,
+            fallback,
+            ..
+        } => {
+            normalize_expr_labeled_type_arguments(scrutinee, constructor_parameters, diagnostics);
+            normalize_expr_labeled_type_arguments(success, constructor_parameters, diagnostics);
+            normalize_expr_labeled_type_arguments(fallback, constructor_parameters, diagnostics);
+        }
+        Expr::HandlerChainCall(chain) => {
+            normalize_expr_labeled_type_arguments(
+                &mut chain.scrutinee,
+                constructor_parameters,
+                diagnostics,
+            );
+            for argument in chain.groups.iter_mut().flatten() {
+                normalize_expr_labeled_type_arguments(
+                    &mut argument.value,
+                    constructor_parameters,
+                    diagnostics,
+                );
+            }
+            normalize_expr_labeled_type_arguments(
+                &mut chain.success,
+                constructor_parameters,
+                diagnostics,
+            );
+            normalize_expr_labeled_type_arguments(
+                &mut chain.residual,
+                constructor_parameters,
+                diagnostics,
+            );
+        }
+        Expr::Call(callee, arguments) => {
+            normalize_expr_labeled_type_arguments(callee, constructor_parameters, diagnostics);
+            for argument in arguments {
+                normalize_expr_labeled_type_arguments(
+                    &mut argument.value,
+                    constructor_parameters,
+                    diagnostics,
+                );
+            }
+        }
+        Expr::Member(base, _) | Expr::ChainMember(base, _) => {
+            normalize_expr_labeled_type_arguments(base, constructor_parameters, diagnostics)
+        }
+        Expr::Array(elements) => {
+            for element in elements {
+                normalize_expr_labeled_type_arguments(element, constructor_parameters, diagnostics);
+            }
+        }
+        Expr::Index { base, index } => {
+            normalize_expr_labeled_type_arguments(base, constructor_parameters, diagnostics);
+            normalize_expr_labeled_type_arguments(index, constructor_parameters, diagnostics);
+        }
+        Expr::Block(statements, tail) => {
+            for statement in statements {
+                match statement {
+                    Stmt::Let(binding) => {
+                        if let Some(annotation) = &mut binding.annotation {
+                            normalize_type_labeled_arguments(
+                                annotation,
+                                constructor_parameters,
+                                diagnostics,
+                            );
+                        }
+                        normalize_expr_labeled_type_arguments(
+                            &mut binding.value,
+                            constructor_parameters,
+                            diagnostics,
+                        );
+                    }
+                    Stmt::Expr(expression) => normalize_expr_labeled_type_arguments(
+                        expression,
+                        constructor_parameters,
+                        diagnostics,
+                    ),
+                }
+            }
+            if let Some(tail) = tail {
+                normalize_expr_labeled_type_arguments(tail, constructor_parameters, diagnostics);
+            }
+        }
+        Expr::Closure(parameters, body) => {
+            for parameter in parameters {
+                normalize_type_labeled_arguments(
+                    &mut parameter.ty,
+                    constructor_parameters,
+                    diagnostics,
+                );
+            }
+            normalize_expr_labeled_type_arguments(body, constructor_parameters, diagnostics);
+        }
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            normalize_expr_labeled_type_arguments(condition, constructor_parameters, diagnostics);
+            normalize_expr_labeled_type_arguments(then_branch, constructor_parameters, diagnostics);
+            if let Some(else_branch) = else_branch {
+                normalize_expr_labeled_type_arguments(
+                    else_branch,
+                    constructor_parameters,
+                    diagnostics,
+                );
+            }
+        }
+        Expr::Return(value) | Expr::Break(value) => {
+            if let Some(value) = value {
+                normalize_expr_labeled_type_arguments(value, constructor_parameters, diagnostics);
+            }
+        }
+        Expr::While { condition, body } => {
+            normalize_expr_labeled_type_arguments(condition, constructor_parameters, diagnostics);
+            normalize_expr_labeled_type_arguments(body, constructor_parameters, diagnostics);
+        }
+        Expr::Loop { body } => {
+            normalize_expr_labeled_type_arguments(body, constructor_parameters, diagnostics)
+        }
+        Expr::Match { scrutinee, arms } => {
+            normalize_expr_labeled_type_arguments(scrutinee, constructor_parameters, diagnostics);
+            for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    normalize_expr_labeled_type_arguments(
+                        guard,
+                        constructor_parameters,
+                        diagnostics,
+                    );
+                }
+                normalize_expr_labeled_type_arguments(
+                    &mut arm.body,
+                    constructor_parameters,
+                    diagnostics,
+                );
+            }
+        }
     }
 }
 
@@ -32293,6 +33173,14 @@ fn expand_alias_type(
             expand_alias_type(&mut target, aliases, stack, diagnostics);
             stack.pop();
             *source = target;
+        }
+        Type::NamedArgs(name, arguments) => {
+            for argument in arguments {
+                expand_alias_type(&mut argument.ty, aliases, stack, diagnostics);
+            }
+            diagnostics.push(format!(
+                "internal error: labeled type arguments for `{name}` were not normalized before type alias expansion"
+            ));
         }
         Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => {}
     }
@@ -33074,6 +33962,16 @@ fn source_type_expression(source: &Type) -> Expr {
                 })
                 .collect(),
         ),
+        Type::NamedArgs(name, arguments) => Expr::Call(
+            Box::new(Expr::Name(name.clone())),
+            arguments
+                .iter()
+                .map(|argument| CallArg {
+                    label: argument.label.clone(),
+                    value: source_type_expression(&argument.ty),
+                })
+                .collect(),
+        ),
     }
 }
 
@@ -33151,6 +34049,11 @@ fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<String, Typ
         Type::Named(_, arguments) => {
             for argument in arguments {
                 substitute_type_parameters(argument, substitutions);
+            }
+        }
+        Type::NamedArgs(_, arguments) => {
+            for argument in arguments {
+                substitute_type_parameters(&mut argument.ty, substitutions);
             }
         }
         Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => {}
@@ -33342,6 +34245,13 @@ fn impl_type_pattern(
                 .map(|argument| impl_type_pattern(argument, variables, side))
                 .collect(),
         ),
+        Type::NamedArgs(name, arguments) => ImplTypePattern::Named(
+            name.clone(),
+            arguments
+                .iter()
+                .map(|argument| impl_type_pattern(&argument.ty, variables, side))
+                .collect(),
+        ),
     }
 }
 
@@ -33519,7 +34429,7 @@ fn canonical_type_encoding(ty: &Ty) -> String {
             push_canonical_component(&mut encoded, name);
             encoded
         }
-        Ty::Never => "never".to_owned(),
+        Ty::Never => "Never".to_owned(),
         Ty::Function(function) => {
             let mut encoded = String::from("function");
             encoded.push_str(&function.groups.len().to_string());
@@ -33650,6 +34560,11 @@ fn substitute_self_type(ty: &mut Type, target: &str) {
         Type::Named(_, arguments) => {
             for argument in arguments {
                 substitute_self_type(argument, target);
+            }
+        }
+        Type::NamedArgs(_, arguments) => {
+            for argument in arguments {
+                substitute_self_type(&mut argument.ty, target);
             }
         }
         Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => {}
@@ -34305,10 +35220,10 @@ mod tests {
         assert_eq!(result.variants[0].name, "Ok");
         assert_eq!(result.variants[1].name, "Err");
 
-        let never = &analyzer.enum_defs["never"];
+        let never = &analyzer.enum_defs["Never"];
         assert!(never.compile_groups.is_empty());
         assert!(never.variants.is_empty());
-        assert!(analyzer.enum_layouts["never"].variants.is_empty());
+        assert!(analyzer.enum_layouts["Never"].variants.is_empty());
         for operator_trait in BINARY_OPERATOR_TRAITS {
             let name = analyzer.lang_item_name(operator_trait.lang_item).to_owned();
             assert!(analyzer.traits[&name].valid);
@@ -34459,15 +35374,15 @@ let main(): i32 = {
         let ir = compile_library_text(
             r#"
 let Empty = enum {}
-let from_never(move value: never): i32 = { value match {} }
+let from_never(move value: Never): i32 = { value match {} }
 let from_empty(move value: Empty): bool = { value match {} }
-let stop(): never = { loop {} }
+let stop(): Never = { loop {} }
 let choose(flag: bool): i32 = { if flag { 42 } else { stop() } }
 "#,
         )
         .expect("empty enums and empty matches must compile");
 
-        assert!(ir.contains(&type_symbol("never")));
+        assert!(ir.contains(&type_symbol("Never")));
         assert!(ir.contains(&type_symbol("Empty")));
         assert!(ir.contains("unreachable"));
         assert!(!ir.contains("define i32 @main()"));
@@ -35191,14 +36106,14 @@ let main(): i32 = {
         }
 
         let program =
-            crate::parser::parse("let never = struct(value: i32)\nlet main(): i32 = { 42 }\n")
-                .expect("reserved never source must parse");
+            crate::parser::parse("let Never = struct(value: i32)\nlet main(): i32 = { 42 }\n")
+                .expect("reserved Never source must parse");
         let analyzer = Analyzer::new(&program);
         assert!(analyzer
             .diagnostics
             .iter()
-            .any(|diagnostic| { diagnostic.message == "duplicate top-level name `never`" }));
-        assert!(analyzer.enum_defs["never"].variants.is_empty());
+            .any(|diagnostic| { diagnostic.message == "duplicate top-level name `Never`" }));
+        assert!(analyzer.enum_defs["Never"].variants.is_empty());
 
         let program =
             crate::parser::parse("let Add = struct(value: i32)\nlet main(): i32 = { 42 }\n")
@@ -38423,6 +39338,83 @@ let main(): i32 = {
     }
 
     #[test]
+    fn higher_kinded_trait_method_signatures_validate() {
+        let program = crate::parser::parse(
+            r#"
+let Functor(F: (Value: type): type) = trait {
+  let map(E: effect, A: type, B: type)(
+    move value: F(A),
+    move transform: (A): B with(E),
+  ): F(B) with(E)
+}
+let main(): i32 = { 0 }
+"#,
+        )
+        .expect("higher-kinded trait source must parse");
+
+        let analyzer = Analyzer::new(&program);
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected HKT trait diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        assert_eq!(
+            analyzer.traits["Functor"].compile_parameters[0].kind,
+            CompileParamKind::TypeConstructor { parameter_count: 1 }
+        );
+
+        compile(&program).expect("higher-kinded trait declaration must compile");
+    }
+
+    #[test]
+    fn higher_kinded_trait_method_signatures_report_kind_errors() {
+        for (source, expected) in [
+            (
+                r#"
+let Bad(F: (Value: type): type) = trait {
+  let read(move value: F): ()
+}
+let main(): i32 = { 0 }
+"#,
+                "expects 1 type arguments, found 0",
+            ),
+            (
+                r#"
+let Bad = trait {
+  let read(E: effect)(move value: E): ()
+}
+let main(): i32 = { 0 }
+"#,
+                "cannot be used as a runtime type",
+            ),
+            (
+                r#"
+let Bad(E: (Error: type): effect) = trait {
+  let read(): () with(E)
+}
+let main(): i32 = { 0 }
+"#,
+                "expects 1 type arguments, found 0",
+            ),
+        ] {
+            let diagnostics = match crate::parser::parse(source) {
+                Ok(program) => Analyzer::new(&program)
+                    .diagnostics
+                    .iter()
+                    .map(|diagnostic| diagnostic.message.clone())
+                    .collect::<Vec<_>>(),
+                Err(error) => vec![error.message],
+            };
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.contains(expected)),
+                "missing `{expected}` in {diagnostics:?}"
+            );
+        }
+    }
+
+    #[test]
     fn lowers_core_add_trait_to_a_static_call() {
         let program = resolve_text(
             r#"
@@ -38812,8 +39804,8 @@ let main(): i32 = { Number(42) + 42 }
 use core.ops.Sub
 let Number = struct(value: i32)
 extend Number: Sub(i32) {
-  let Output = never
-  let sub(move self)(move rhs: i32): never = { loop {} }
+  let Output = Never
+  let sub(move self)(move rhs: i32): Never = { loop {} }
 }
 let main(): i32 = { Number(42) - 1 }
 "#,
@@ -38828,8 +39820,8 @@ let main(): i32 = { Number(42) - 1 }
 use core.ops.Sub
 let Number = struct(value: i32)
 extend Number: Sub(i32) {
-  let Output = never
-  let sub(move self)(move rhs: i32): never = { loop {} }
+  let Output = Never
+  let sub(move self)(move rhs: i32): Never = { loop {} }
 }
 extend Number: Sub(i64) {
   let Output = i32
@@ -40419,7 +41411,7 @@ let main(): i32 = {
         let plan = cleanup_plan_text(
             r#"
 let Payload = struct(value: i32)
-let stop(): never = { loop {} }
+let stop(): Never = { loop {} }
 let choose(move value: Payload, code: i32): Payload = { value }
 let make(): Payload = { choose(Payload(1), stop()) }
 "#,
@@ -40857,7 +41849,7 @@ let main(): i32 = {
 
     #[test]
     fn cleanup_plan_makes_uninhabited_parameter_entries_unreachable() {
-        let plan = cleanup_plan_text("let absurd(move value: never): i32 = { value }\n", "absurd");
+        let plan = cleanup_plan_text("let absurd(move value: Never): i32 = { value }\n", "absurd");
         let function_entry = plan
             .blocks
             .iter()
@@ -41098,7 +42090,7 @@ let cycle(): () = { while false { 1; () } }
 
         let loop_plan = cleanup_plan_text(
             r#"
-let cycle(): never = { loop { 1; () } }
+let cycle(): Never = { loop { 1; () } }
 "#,
             "cycle",
         );
@@ -41185,7 +42177,7 @@ let bind(): i32 = {
     fn cleanup_plan_does_not_initialize_results_when_loop_inputs_diverge() {
         let condition_plan = cleanup_plan_text(
             r#"
-let stop(): never = { loop {} }
+let stop(): Never = { loop {} }
 let bind(): () = {
   let done = while stop() {}
   done
@@ -41407,6 +42399,31 @@ let main(): i32 = {
 "#,
         )
         .expect("direct trailing-closure actions must materialize before specialization");
+        assert!(llvm.contains("24636170747572696e672468616e646c657224"));
+    }
+
+    #[test]
+    fn reusable_handler_materializes_arguments_before_direct_action() {
+        let llvm = compile_text(
+            r#"
+let Ask = effect { let value(): i32 }
+let run(seed: i32)(move action: (): i32 with(Ask)): i32 = {
+  Ask.handle(value: { (resume) -> resume(20) }) { action() + seed }
+}
+let prepare(borrow(mut) order: i32): i32 = {
+  order = order + 1
+  20
+}
+let main(): i32 = {
+  let mut order = 0
+  run(prepare(order)) { () ->
+    order = order * 2
+    Ask.value() + order
+  }
+}
+"#,
+        )
+        .expect("arguments before a direct action must be materialized in source order");
         assert!(llvm.contains("24636170747572696e672468616e646c657224"));
     }
 }

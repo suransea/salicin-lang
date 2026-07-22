@@ -232,6 +232,8 @@ pub enum CompileParamKind {
     Access,
     Passing,
     Effect,
+    TypeConstructor { parameter_count: usize },
+    EffectConstructor { parameter_count: usize },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -278,6 +280,15 @@ pub enum Type {
         result: Box<Type>,
     },
     Named(String, Vec<Type>),
+    /// A parsed named type application whose argument labels still need to be
+    /// normalized against the constructor's compile-time parameter names.
+    NamedArgs(String, Vec<TypeArg>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TypeArg {
+    pub label: Option<String>,
+    pub ty: Type,
 }
 
 #[derive(Debug, Clone, PartialEq)]

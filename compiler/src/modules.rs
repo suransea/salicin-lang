@@ -293,7 +293,7 @@ const ALLOC_EXPORTS: &[(&str, &str)] = &[
     ("vec", "vec_write"),
 ];
 
-const CORE_PRELUDE_EXPORTS: &[&str] = &["Option", "Result", "never", "Copy", "Drop"];
+const CORE_PRELUDE_EXPORTS: &[&str] = &["Option", "Result", "Never", "Copy", "Drop"];
 const CORE_OPS_EXPORTS: &[&str] = &[
     "Add",
     "Sub",
@@ -321,11 +321,9 @@ const CORE_OPS_EXPORTS: &[&str] = &[
     "Shl",
     "Shr",
 ];
+const CORE_EFFECTS_EXPORTS: &[&str] = &["Unsafe", "Throws", "Async"];
+const CORE_ACCESS_EXPORTS: &[&str] = &["Shared", "Mutable"];
 const CORE_CONTROL_EXPORTS: &[&str] = &[
-    "Unsafe",
-    "Throws",
-    "Shared",
-    "Mutable",
     "Continuation",
     "EffectCallable",
     "do",
@@ -333,8 +331,9 @@ const CORE_CONTROL_EXPORTS: &[&str] = &[
     "unsafe",
     "loop",
 ];
-const CORE_CONTROL_IMPORTS: &[&str] = &["Unsafe", "Throws", "Shared", "Mutable"];
 const CORE_ITER_EXPORTS: &[&str] = &["Iterator", "IntoIterator"];
+const CORE_ALGEBRA_EXPORTS: &[&str] = &["Semigroup", "Monoid"];
+const CORE_FUNCTIONAL_EXPORTS: &[&str] = &["Functor", "Applicative", "Monad"];
 
 fn validate_package_layout(
     packages: &[SourcePackage],
@@ -758,8 +757,17 @@ fn install_standard_namespaces(
     for name in CORE_OPS_EXPORTS {
         required_imports.insert((*name).to_owned(), format!("core.ops.{name}"));
     }
-    for name in CORE_CONTROL_IMPORTS {
-        required_imports.insert((*name).to_owned(), format!("core.control.{name}"));
+    for name in CORE_EFFECTS_EXPORTS {
+        required_imports.insert((*name).to_owned(), format!("core.effects.{name}"));
+    }
+    for name in CORE_ACCESS_EXPORTS {
+        required_imports.insert((*name).to_owned(), format!("core.access.{name}"));
+    }
+    for name in CORE_ALGEBRA_EXPORTS {
+        required_imports.insert((*name).to_owned(), format!("core.algebra.{name}"));
+    }
+    for name in CORE_FUNCTIONAL_EXPORTS {
+        required_imports.insert((*name).to_owned(), format!("core.functional.{name}"));
     }
     for name in CORE_ITER_EXPORTS {
         required_imports.insert((*name).to_owned(), format!("core.iter.{name}"));
@@ -780,7 +788,16 @@ fn install_standard_namespaces(
             ));
         } else {
             module_paths.insert(core_root.clone());
-            for module in ["prelude", "ops", "control", "iter"] {
+            for module in [
+                "prelude",
+                "ops",
+                "effects",
+                "access",
+                "control",
+                "iter",
+                "algebra",
+                "functional",
+            ] {
                 let mut module_path = core_root.clone();
                 module_path.push(module.to_owned());
                 module_paths.insert(module_path);
@@ -817,6 +834,38 @@ fn install_standard_namespaces(
                     },
                 );
             }
+            for name in CORE_EFFECTS_EXPORTS {
+                let mut module_path = core_root.clone();
+                module_path.push("effects".to_owned());
+                let mut logical_path = module_path.clone();
+                logical_path.push((*name).to_owned());
+                symbols.insert(
+                    logical_path,
+                    Symbol {
+                        canonical: format!("core::effects::{name}"),
+                        module_path,
+                        package_root: package_root.clone(),
+                        visibility: Visibility::Public,
+                        source_path: "<core>".to_owned(),
+                    },
+                );
+            }
+            for name in CORE_ACCESS_EXPORTS {
+                let mut module_path = core_root.clone();
+                module_path.push("access".to_owned());
+                let mut logical_path = module_path.clone();
+                logical_path.push((*name).to_owned());
+                symbols.insert(
+                    logical_path,
+                    Symbol {
+                        canonical: format!("core::access::{name}"),
+                        module_path,
+                        package_root: package_root.clone(),
+                        visibility: Visibility::Public,
+                        source_path: "<core>".to_owned(),
+                    },
+                );
+            }
             for name in CORE_CONTROL_EXPORTS {
                 let mut module_path = core_root.clone();
                 module_path.push("control".to_owned());
@@ -826,6 +875,38 @@ fn install_standard_namespaces(
                     logical_path,
                     Symbol {
                         canonical: format!("core::control::{name}"),
+                        module_path,
+                        package_root: package_root.clone(),
+                        visibility: Visibility::Public,
+                        source_path: "<core>".to_owned(),
+                    },
+                );
+            }
+            for name in CORE_ALGEBRA_EXPORTS {
+                let mut module_path = core_root.clone();
+                module_path.push("algebra".to_owned());
+                let mut logical_path = module_path.clone();
+                logical_path.push((*name).to_owned());
+                symbols.insert(
+                    logical_path,
+                    Symbol {
+                        canonical: format!("core::algebra::{name}"),
+                        module_path,
+                        package_root: package_root.clone(),
+                        visibility: Visibility::Public,
+                        source_path: "<core>".to_owned(),
+                    },
+                );
+            }
+            for name in CORE_FUNCTIONAL_EXPORTS {
+                let mut module_path = core_root.clone();
+                module_path.push("functional".to_owned());
+                let mut logical_path = module_path.clone();
+                logical_path.push((*name).to_owned());
+                symbols.insert(
+                    logical_path,
+                    Symbol {
+                        canonical: format!("core::functional::{name}"),
                         module_path,
                         package_root: package_root.clone(),
                         visibility: Visibility::Public,
@@ -1840,6 +1921,31 @@ fn validate_exposed_type(
                 );
             }
         }
+        Type::NamedArgs(name, arguments) => {
+            if !is_bound_api_type(name, bound_types) {
+                if let Some(referenced) = nominal_boundaries.get(name.as_str()) {
+                    if !api_audience_is_contained(exposed, referenced) {
+                        diagnostics.push(format!(
+                            "{source_path}: error: {description} with {} visibility exposes {} type `{name}` beyond its access boundary{}",
+                            visibility_description(exposed.visibility),
+                            visibility_description(referenced.visibility),
+                            boundary_location(referenced),
+                        ));
+                    }
+                }
+            }
+            for argument in arguments {
+                validate_exposed_type(
+                    &argument.ty,
+                    exposed,
+                    source_path,
+                    bound_types,
+                    description,
+                    nominal_boundaries,
+                    diagnostics,
+                );
+            }
+        }
         Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => {}
     }
 }
@@ -1853,8 +1959,10 @@ fn validate_exposed_effect(
     nominal_boundaries: &HashMap<&str, ApiBoundary>,
     diagnostics: &mut Vec<String>,
 ) {
-    let Type::Named(name, arguments) = effect else {
-        return;
+    let (name, positional, labeled) = match effect {
+        Type::Named(name, arguments) => (name, Some(arguments.as_slice()), None),
+        Type::NamedArgs(name, arguments) => (name, None, Some(arguments.as_slice())),
+        _ => return,
     };
     if let Some(referenced) = nominal_boundaries.get(name.as_str()) {
         if !api_audience_is_contained(exposed, referenced) {
@@ -1866,9 +1974,20 @@ fn validate_exposed_effect(
             ));
         }
     }
-    for argument in arguments {
+    for argument in positional.into_iter().flatten() {
         validate_exposed_type(
             argument,
+            exposed,
+            source_path,
+            bound_types,
+            description,
+            nominal_boundaries,
+            diagnostics,
+        );
+    }
+    for argument in labeled.into_iter().flatten() {
+        validate_exposed_type(
+            &argument.ty,
             exposed,
             source_path,
             bound_types,
@@ -2202,11 +2321,33 @@ impl Resolver {
                 if let Some(error) = &mut effects.throws {
                     self.rewrite_type(error, context, type_scope);
                 }
+                for effect in &mut effects.custom {
+                    self.rewrite_type(effect, context, type_scope);
+                }
                 self.rewrite_type(result, context, type_scope);
             }
             Type::Named(name, arguments) => {
                 for argument in arguments {
                     self.rewrite_type(argument, context, type_scope);
+                }
+                let segments: Vec<String> = name.split('.').map(str::to_owned).collect();
+                if segments
+                    .first()
+                    .is_some_and(|first| type_scope.contains(first))
+                {
+                    return;
+                }
+                if let Some(canonical) = self.resolve_logical_path(&segments, context) {
+                    *name = canonical;
+                } else {
+                    if !self.reject_unimported_standard(&segments, context) {
+                        self.reject_bare_module(&segments, context, "a type");
+                    }
+                }
+            }
+            Type::NamedArgs(name, arguments) => {
+                for argument in arguments {
+                    self.rewrite_type(&mut argument.ty, context, type_scope);
                 }
                 let segments: Vec<String> = name.split('.').map(str::to_owned).collect();
                 if segments
@@ -2678,7 +2819,14 @@ fn compile_parameter_names(
         groups
             .iter()
             .flatten()
-            .filter(|parameter| parameter.kind == CompileParamKind::Type)
+            .filter(|parameter| {
+                matches!(
+                    parameter.kind,
+                    CompileParamKind::Type
+                        | CompileParamKind::TypeConstructor { .. }
+                        | CompileParamKind::EffectConstructor { .. }
+                )
+            })
             .map(|parameter| parameter.name.clone()),
     );
     names
@@ -3158,6 +3306,7 @@ mod tests {
                 &[],
                 r#"use root.fake as Option
 use root.fake as Add
+use root.fake as Never
 
 let Number = struct(value: i32)
 extend Number: Add(Number) {
@@ -3165,20 +3314,19 @@ extend Number: Add(Number) {
   let add(move self)(move rhs: Number): i32 = { self.value + rhs.value }
 }
 
-let stop(): never = { loop {} }
+let stop(): Never = { loop {} }
 let main(): i32 = { Option() }
 "#,
                 true,
             ),
             unit("fake.sc", &["fake"], "let marker = 0\n", false),
-            unit("never.sc", &["never"], "let marker = 0\n", false),
         ])
         .unwrap_err();
 
         for expected in [
             "module `Option` cannot be used as a value or callable",
             "module `Add` cannot be used as a type",
-            "module `never` cannot be used as a type",
+            "module `Never` cannot be used as a type",
         ] {
             assert!(
                 errors
@@ -4026,6 +4174,47 @@ let main(): i32 = { Option() }
                     Some(Type::Named(name, _)) if name == "core::ops::Add"))
         }));
 
+        let standard_modules = resolve_sources(&[unit(
+            "standard.sc",
+            &[],
+            "use core.effects.Async\n\
+             use core.algebra.{Semigroup, Monoid}\n\
+             let Number = struct(value: i32)\n\
+             let suspended(): i32 with(Async) = { 0 }\n\
+             let invoke(move action: (): i32 with(Async)): i32 with(Async) = { action() }\n\
+             extend Number: Semigroup(Number) {\n\
+               let combine(move left: Number, move right: Number): Number = { Number(left.value + right.value) }\n\
+             }\n\
+             extend Number: Monoid(Number) {\n\
+               let empty(): Number = { Number(0) }\n\
+               let combine(move left: Number, move right: Number): Number = { Number(left.value + right.value) }\n\
+             }\n",
+            true,
+        )])
+        .unwrap();
+        assert_eq!(
+            function(&standard_modules, "suspended").effects.custom,
+            vec![Type::Named("core::effects::Async".into(), Vec::new())]
+        );
+        let invoke = function(&standard_modules, "invoke");
+        let Type::Function { effects, .. } = &invoke.groups[0][0].ty else {
+            panic!("expected function-typed action parameter");
+        };
+        assert_eq!(
+            effects.custom,
+            vec![Type::Named("core::effects::Async".into(), Vec::new())]
+        );
+        assert!(standard_modules.items.iter().any(|item| {
+            matches!(item, Item::Extend(extension)
+                if matches!(&extension.trait_ref,
+                    Some(Type::Named(name, _)) if name == "core::algebra::Semigroup"))
+        }));
+        assert!(standard_modules.items.iter().any(|item| {
+            matches!(item, Item::Extend(extension)
+                if matches!(&extension.trait_ref,
+                    Some(Type::Named(name, _)) if name == "core::algebra::Monoid"))
+        }));
+
         let bare = resolve_sources(&[unit(
             "main.sc",
             &[],
@@ -4052,6 +4241,46 @@ let main(): i32 = { Option() }
         assert!(bare_operator.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `Add` is not in the prelude")
                 && diagnostic.contains("use core.ops.Add")
+        }));
+
+        let bare_effect = resolve_sources(&[unit(
+            "effect.sc",
+            &[],
+            "let suspended(): i32 with(Async) = { 0 }\n",
+            true,
+        )])
+        .unwrap_err();
+        assert!(bare_effect.iter().any(|diagnostic| {
+            diagnostic.contains("standard-library item `Async` is not in the prelude")
+                && diagnostic.contains("use core.effects.Async")
+        }));
+
+        let bare_algebra = resolve_sources(&[unit(
+            "algebra.sc",
+            &[],
+            "let Number = struct(value: i32)\n\
+             extend Number: Semigroup(Number) {\n\
+               let combine(move left: Number, move right: Number): Number = { left }\n\
+             }\n",
+            true,
+        )])
+        .unwrap_err();
+        assert!(bare_algebra.iter().any(|diagnostic| {
+            diagnostic.contains("standard-library item `Semigroup` is not in the prelude")
+                && diagnostic.contains("use core.algebra.Semigroup")
+        }));
+
+        let bare_functional = resolve_sources(&[unit(
+            "functional.sc",
+            &[],
+            "let Number = struct(value: i32)\n\
+             extend Number: Functor {}\n",
+            true,
+        )])
+        .unwrap_err();
+        assert!(bare_functional.iter().any(|diagnostic| {
+            diagnostic.contains("standard-library item `Functor` is not in the prelude")
+                && diagnostic.contains("use core.functional.Functor")
         }));
 
         for namespace in ["core", "alloc"] {
@@ -4112,8 +4341,16 @@ let main(): i32 = { Option() }
             .iter()
             .map(|name| ("prelude", *name))
             .chain(CORE_OPS_EXPORTS.iter().map(|name| ("ops", *name)))
+            .chain(CORE_EFFECTS_EXPORTS.iter().map(|name| ("effects", *name)))
+            .chain(CORE_ACCESS_EXPORTS.iter().map(|name| ("access", *name)))
             .chain(CORE_CONTROL_EXPORTS.iter().map(|name| ("control", *name)))
             .chain(CORE_ITER_EXPORTS.iter().map(|name| ("iter", *name)))
+            .chain(CORE_ALGEBRA_EXPORTS.iter().map(|name| ("algebra", *name)))
+            .chain(
+                CORE_FUNCTIONAL_EXPORTS
+                    .iter()
+                    .map(|name| ("functional", *name)),
+            )
             .collect::<BTreeSet<_>>();
         assert_eq!(core_exports, expected_core);
 

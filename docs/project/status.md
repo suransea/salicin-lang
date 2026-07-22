@@ -5,19 +5,24 @@ compiler pipeline, project manifests and local dependencies, ownership and borro
 source-backed core traits and containers, cleanup lowering, raw allocation primitives, and a growing
 `Box`/`Vec` allocation library.
 
-The unit type has one source spelling, `()`; the former `void` alias is removed before 1.0.
+The unit type has one source spelling, `()`; the former `void` alias is removed before 1.0. The
+uninhabited prelude enum is spelled `Never`; the former lowercase `never` spelling has no
+compatibility alias.
 
 Transparent type aliases and type-constructor aliases are implemented. `let Scalar = i32`,
 `let Family(T: type): type = Box(T)`, and `let Constructor: (T: type): type = Box` all expand before
 runtime lowering, preserve the target nominal identity, support forward references and constructor
-inference, and reject alias cycles and arity mismatches.
+inference, and reject alias cycles and arity mismatches. Type positions also accept labeled
+constructor arguments such as `Pair(V: bool, K: i32)`; labels are matched against the constructor's
+compile-time parameter names, normalized to declaration order, and erased before semantic lowering.
 
-Compiler-lowered control is now source-backed by validated declarations in `core.control`:
-`Unsafe`, `Throws(E)`, `Shared`, `Mutable`, and the bodyless intrinsic signatures for `do`, `try`,
-`unsafe`, and `loop`. These exports remain outside the prelude. `await` is intentionally absent until
-the async/Future lowering slice is implemented, at which point its standard-library contract must
-land with the implementation.
-The same module now defines `Continuation(Input, Output)` and
+Compiler-lowered capabilities are now source-backed by validated declarations in ordinary core
+modules: `core.effects` owns `Unsafe`, `Throws(E)`, and an ordinary `Async` marker effect;
+`core.access` owns `Shared` and `Mutable`; `core.control` owns the bodyless intrinsic signatures for
+`do`, `try`, `unsafe`, and `loop`. These exports remain outside the prelude. `await` is intentionally
+absent until the async/Future lowering slice is implemented, at which point its executable
+standard-library contract must land with the implementation.
+`core.control` also defines `Continuation(Input, Output)` and
 `EffectCallable(Input, Output, Answer)` as validated empty source contracts. The latter has a
 distinct owned semantic type plus a four-pointer LLVM call/drop/environment/flag layout and guarded
 drop glue. Compiler-internal HIR can now erase an owned CPS closure into that layout and invoke it
@@ -31,9 +36,10 @@ injected before selective CPS. Native regressions cover `FnMut` resumption plus 
 both resumption and abandonment, including state/drop observations in following evaluation.
 Local callable alias moves now carry the original action metadata and relocate borrowed pointer
 slots without confusing them with owned pointee values. A direct trailing-closure action is also
-materialized automatically when it is the first runtime value evaluated by the complete handler
-call. Earlier runtime arguments, conditional values, cross-function transport, and fully general
-erased action construction remain the next implementation stages.
+materialized automatically. Earlier `copy` and `move` arguments across the complete call are staged
+as typed locals in source order before that action, preserving side effects and ownership. Earlier
+borrowed arguments remain pending loan-aware staging; conditional values, cross-function transport,
+and fully general erased action construction remain the next implementation stages.
 
 Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
 `continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs
@@ -54,6 +60,12 @@ Arithmetic, bitwise, and shift compound assignment (`+=`, `-=`, `*=`, `/=`, `%=`
 Built-in integers retain checked trap boundaries, while nominal values dispatch through the
 source-backed `core.ops` `*Assign` traits with a mutable receiver borrow. Same-named ordinary methods
 cannot intercept operator lowering.
+
+`core.algebra` currently provides first-order `Semigroup(T)` and `Monoid(T)` protocols outside the
+prelude. `core.functional` now provides higher-kinded `Functor`, `Applicative`, and `Monad`
+protocol declarations over constructor kinds such as `(Value: type): type`. The remaining HKT work is
+constructor-valued trait implementation (`extend Option: Functor`), trait inheritance constraints,
+and broader constructor equation solving.
 
 Access keyword generics are implemented for functions and generic inherent members: `A: access` accepts `shared` or `mut`,
 defaults to shared when omitted, participates in monomorphization, and can drive parameter modes,

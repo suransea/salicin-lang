@@ -44,7 +44,7 @@ dependencies = [
 
 [[package]]
 name = "salicin-lang"
-version = "0.152.0"
+version = "0.156.0"
 dependencies = [
  "same-file",
  "semver",

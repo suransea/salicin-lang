@@ -19,8 +19,14 @@ use crate::parser;
 
 const EDITION_2026_PRELUDE: &str = include_str!("../../library/core/src/prelude.sc");
 const EDITION_2026_OPS: &str = include_str!("../../library/core/src/ops.sc");
+const EDITION_2026_EFFECTS: &str = include_str!("../../library/core/src/effects.sc");
+const EDITION_2026_ACCESS: &str = include_str!("../../library/core/src/access.sc");
 const EDITION_2026_CONTROL: &str = include_str!("../../library/core/src/control.sc");
 const EDITION_2026_ITER: &str = include_str!("../../library/core/src/iter.sc");
+const EDITION_2026_ALGEBRA: &str = include_str!("../../library/core/src/algebra.sc");
+const EDITION_2026_FUNCTIONAL: &str = include_str!("../../library/core/src/functional.sc");
+
+const NON_LANG_ITEM_CORE_MODULES: &[&str] = &["effects", "algebra", "functional"];
 
 #[cfg(test)]
 const TEST_ASSIGNMENT_OPS: &str = r#"
@@ -34,6 +40,12 @@ pub let BitOrAssign(Rhs: type) = trait { let bit_or_assign(borrow(mut) self)(mov
 pub let BitXorAssign(Rhs: type) = trait { let bit_xor_assign(borrow(mut) self)(move rhs: Rhs): () }
 pub let ShlAssign(Rhs: type) = trait { let shl_assign(borrow(mut) self)(move rhs: Rhs): () }
 pub let ShrAssign(Rhs: type) = trait { let shr_assign(borrow(mut) self)(move rhs: Rhs): () }
+"#;
+
+#[cfg(test)]
+const TEST_EFFECTS: &str = r#"
+pub let Unsafe = effect
+pub let Throws(E: type) = effect
 "#;
 
 /// A stable logical role fulfilled by one declaration in the edition's
@@ -134,7 +146,7 @@ impl LangItemKind {
         match self {
             Self::Option => "Option",
             Self::Result => "Result",
-            Self::Never => "never",
+            Self::Never => "Never",
             Self::Copy => "Copy",
             Self::Drop => "Drop",
             Self::Add => "Add",
@@ -576,8 +588,12 @@ impl CoreBundle {
                 &[
                     ("prelude", EDITION_2026_PRELUDE),
                     ("ops", EDITION_2026_OPS),
+                    ("effects", EDITION_2026_EFFECTS),
+                    ("access", EDITION_2026_ACCESS),
                     ("control", EDITION_2026_CONTROL),
                     ("iter", EDITION_2026_ITER),
+                    ("algebra", EDITION_2026_ALGEBRA),
+                    ("functional", EDITION_2026_FUNCTIONAL),
                 ],
             ),
         }
@@ -599,8 +615,9 @@ impl CoreBundle {
     fn from_source(edition: Edition, source: &str) -> Result<Self, CoreBundleError> {
         // Most contract tests isolate one prelude/operator declaration. Keep
         // the independently tested control module present in those fixtures.
-        let source =
-            format!("{source}\n{TEST_ASSIGNMENT_OPS}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}");
+        let source = format!(
+            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_EFFECTS}\n{EDITION_2026_ACCESS}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}"
+        );
         let mut program = parser::parse(&source).map_err(|error| {
             CoreBundleError::new(
                 edition,
@@ -787,6 +804,20 @@ pub const fn embedded_ops_source(edition: Edition) -> &'static str {
     }
 }
 
+/// Return the effect protocol source compiled into this compiler.
+pub const fn embedded_effects_source(edition: Edition) -> &'static str {
+    match edition {
+        Edition::Edition2026 => EDITION_2026_EFFECTS,
+    }
+}
+
+/// Return the access protocol source compiled into this compiler.
+pub const fn embedded_access_source(edition: Edition) -> &'static str {
+    match edition {
+        Edition::Edition2026 => EDITION_2026_ACCESS,
+    }
+}
+
 /// Return the error-control protocol source compiled into this compiler.
 pub const fn embedded_control_source(edition: Edition) -> &'static str {
     match edition {
@@ -798,6 +829,13 @@ pub const fn embedded_control_source(edition: Edition) -> &'static str {
 pub const fn embedded_iter_source(edition: Edition) -> &'static str {
     match edition {
         Edition::Edition2026 => EDITION_2026_ITER,
+    }
+}
+
+/// Return the algebra protocol source compiled into this compiler.
+pub const fn embedded_algebra_source(edition: Edition) -> &'static str {
+    match edition {
+        Edition::Edition2026 => EDITION_2026_ALGEBRA,
     }
 }
 
@@ -815,10 +853,11 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
     }
 
     let mut indices: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
-    for (index, (item, visibility)) in program
+    for (index, ((item, visibility), origin)) in program
         .items
         .iter()
         .zip(&program.item_visibilities)
+        .zip(&program.item_origins)
         .enumerate()
     {
         if matches!(item, Item::Extend(_)) {
@@ -832,15 +871,19 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
             ));
             continue;
         };
-        let Some(kind) = LangItemKind::ALL
+        let kind = if let Some(kind) = LangItemKind::ALL
             .iter()
             .copied()
             .find(|kind| kind.source_name() == name)
-        else {
-            diagnostics.push(format!(
-                "unexpected declaration `{name}` at item {}",
-                index + 1
-            ));
+        {
+            kind
+        } else {
+            if !is_allowed_non_lang_item(origin) {
+                diagnostics.push(format!(
+                    "unexpected declaration `{name}` at item {}",
+                    index + 1
+                ));
+            }
             continue;
         };
         indices.entry(kind.source_name()).or_default().push(index);
@@ -939,6 +982,13 @@ fn item_name(item: &Item) -> Option<&str> {
         Item::Trait(definition) => Some(&definition.name),
         Item::Extend(_) => None,
     }
+}
+
+fn is_allowed_non_lang_item(origin: &ItemOrigin) -> bool {
+    origin
+        .module_path
+        .last()
+        .is_some_and(|module| NON_LANG_ITEM_CORE_MODULES.contains(&module.as_str()))
 }
 
 fn item_kind(item: &Item) -> &'static str {
@@ -1352,7 +1402,7 @@ fn validate_result(definition: &EnumDef, diagnostics: &mut Vec<String>) {
 
 fn validate_never(definition: &EnumDef, diagnostics: &mut Vec<String>) {
     if !definition.compile_groups.is_empty() || !definition.variants.is_empty() {
-        diagnostics.push("lang item `never` must have shape `pub let never = enum {}`".to_owned());
+        diagnostics.push("lang item `Never` must have shape `pub let Never = enum {}`".to_owned());
     }
 }
 
@@ -1580,7 +1630,7 @@ mod tests {
             r#"
 pub let Option(T: type) = enum { Some(T), None }
 pub let Result(T: type, E: type) = enum { Ok(T), Err(E) }
-pub let never = enum {}
+pub let Never = enum {}
 "#,
             copy_declaration,
             r#"
@@ -1652,7 +1702,7 @@ pub let Shr(Rhs: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), 42);
+        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 6);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -1687,11 +1737,13 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::BitXor
                 | LangItemKind::Shl
                 | LangItemKind::Shr => format!("core::ops::{}", kind.source_name()),
-                LangItemKind::UnsafeEffect
-                | LangItemKind::ThrowsEffect
-                | LangItemKind::SharedAccess
-                | LangItemKind::MutableAccess
-                | LangItemKind::Continuation
+                LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect => {
+                    format!("core::effects::{}", kind.source_name())
+                }
+                LangItemKind::SharedAccess | LangItemKind::MutableAccess => {
+                    format!("core::access::{}", kind.source_name())
+                }
+                LangItemKind::Continuation
                 | LangItemKind::EffectCallable
                 | LangItemKind::Do
                 | LangItemKind::Try
@@ -1745,11 +1797,9 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::BitXor
                 | LangItemKind::Shl
                 | LangItemKind::Shr => "ops",
-                LangItemKind::UnsafeEffect
-                | LangItemKind::ThrowsEffect
-                | LangItemKind::SharedAccess
-                | LangItemKind::MutableAccess
-                | LangItemKind::Continuation
+                LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect => "effects",
+                LangItemKind::SharedAccess | LangItemKind::MutableAccess => "access",
+                LangItemKind::Continuation
                 | LangItemKind::EffectCallable
                 | LangItemKind::Do
                 | LangItemKind::Try
@@ -1778,6 +1828,8 @@ pub let Shr(Rhs: type) = trait {
             &[
                 ("prelude", EDITION_2026_PRELUDE),
                 ("ops", EDITION_2026_OPS),
+                ("effects", EDITION_2026_EFFECTS),
+                ("access", EDITION_2026_ACCESS),
                 ("control", &malformed),
                 ("iter", EDITION_2026_ITER),
             ],
@@ -1797,6 +1849,8 @@ pub let Shr(Rhs: type) = trait {
             &[
                 ("prelude", EDITION_2026_PRELUDE),
                 ("ops", EDITION_2026_OPS),
+                ("effects", EDITION_2026_EFFECTS),
+                ("access", EDITION_2026_ACCESS),
                 ("control", &malformed),
                 ("iter", EDITION_2026_ITER),
             ],
@@ -1819,6 +1873,8 @@ pub let Shr(Rhs: type) = trait {
             &[
                 ("prelude", EDITION_2026_PRELUDE),
                 ("ops", EDITION_2026_OPS),
+                ("effects", EDITION_2026_EFFECTS),
+                ("access", EDITION_2026_ACCESS),
                 ("control", EDITION_2026_CONTROL),
                 ("iter", &malformed),
             ],
@@ -1841,6 +1897,8 @@ pub let Shr(Rhs: type) = trait {
             &[
                 ("prelude", EDITION_2026_PRELUDE),
                 ("ops", &malformed),
+                ("effects", EDITION_2026_EFFECTS),
+                ("access", EDITION_2026_ACCESS),
                 ("control", EDITION_2026_CONTROL),
                 ("iter", EDITION_2026_ITER),
             ],
@@ -1867,7 +1925,7 @@ pub let Add(Rhs: type) = trait {
   let Output: type
   let add(move self)(move rhs: Rhs): Output
 }
-pub let never = enum {}
+pub let Never = enum {}
 pub let Option(T: type) = enum { Some(T), None }
 pub let Result(T: type, E: type) = enum { Ok(T), Err(E) }
 pub let Div(Rhs: type) = trait {
@@ -1954,7 +2012,7 @@ pub let Shr(Rhs: type) = trait {
         let source = r#"
 let Option(T: type) = enum { Some(T), None }
 pub let Result = struct(value: i32)
-pub let never = enum { Reachable }
+pub let Never = enum { Reachable }
 pub let Copy(T: type) = trait {}
 pub let Add(Rhs: type) = trait {
   let add(move self)(move rhs: Rhs): Rhs
@@ -2023,14 +2081,14 @@ pub let Drop = trait {
                 "lang item `Option` must be `pub`, found private visibility",
                 "unexpected declaration `Extra` at item 6",
                 "lang item `Result` must be enum, found struct",
-                "lang item `never` must have shape `pub let never = enum {}`",
+                "lang item `Never` must have shape `pub let Never = enum {}`",
                 "lang item `Copy` must have shape `pub let Copy = trait {}`",
                 "lang item `Add` must have shape `pub let Add(Rhs: type) = trait { let Output: type; let add(move self)(move rhs: Rhs): Output }`",
             ]
         );
         assert_eq!(
             error.to_string(),
-            "invalid embedded core bundle for edition 2026\n- lang item `Option` must be `pub`, found private visibility\n- unexpected declaration `Extra` at item 6\n- lang item `Result` must be enum, found struct\n- lang item `never` must have shape `pub let never = enum {}`\n- lang item `Copy` must have shape `pub let Copy = trait {}`\n- lang item `Add` must have shape `pub let Add(Rhs: type) = trait { let Output: type; let add(move self)(move rhs: Rhs): Output }`"
+            "invalid embedded core bundle for edition 2026\n- lang item `Option` must be `pub`, found private visibility\n- unexpected declaration `Extra` at item 6\n- lang item `Result` must be enum, found struct\n- lang item `Never` must have shape `pub let Never = enum {}`\n- lang item `Copy` must have shape `pub let Copy = trait {}`\n- lang item `Add` must have shape `pub let Add(Rhs: type) = trait { let Output: type; let add(move self)(move rhs: Rhs): Output }`"
         );
     }
 
@@ -2039,7 +2097,7 @@ pub let Drop = trait {
         let source = r#"
 pub let Option(T: type) = enum { Some(T), None }
 pub let Option(T: type) = enum { Some(T), None }
-pub let never = enum {}
+pub let Never = enum {}
 pub let Add(Rhs: type) = trait {
   let Output: type
   let add(move self)(move rhs: Rhs): Output
@@ -2158,7 +2216,7 @@ pub let Shr(Rhs: type) = trait {
         let source = r#"
 pub let Option(T: type) = enum { Some(T), None }
 pub let Result(T: type, E: type) = enum { Ok(T), Err(E) }
-pub let never = enum {}
+pub let Never = enum {}
 pub let Copy = trait {}
 pub let Drop = trait {
   let drop(borrow(mut) self)(): ()

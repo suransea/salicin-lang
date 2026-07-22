@@ -8,7 +8,7 @@ pub let Result(T: type, E: type) = enum {
   Err(E),
 }
 
-pub let never = enum {}
+pub let Never = enum {}
 
 pub let Copy = trait {}
 

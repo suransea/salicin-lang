@@ -86,7 +86,7 @@ visibility = "pub", [ "(", "package", ")" ] ;
 ```ebnf
 let_decl = "let", [ "mut" ], IDENT,
            { parameter_group },
-           [ ":", ( type_expr | "type" | type_constructor_kind ) ],
+           [ ":", ( type_expr | "type" | constructor_kind ) ],
            [ with_clause ],
            [ where_clause ],
            [ "=", initializer ] ;
@@ -101,8 +101,8 @@ effect_decl = "effect", [ "{", separators,
 effect_operation = "let", IDENT, parameter_group, { parameter_group },
                    ":", type_expr, [ with_clause ] ;
 
-type_constructor_kind = compile_parameter_group,
-                        { compile_parameter_group }, ":", "type" ;
+constructor_kind = compile_parameter_group,
+                   { compile_parameter_group }, ":", ( "type" | IDENT("effect") ) ;
 ```
 
 语义限制：
@@ -115,14 +115,18 @@ type_constructor_kind = compile_parameter_group,
 - `with` 和 marker 声明右侧的 `effect` 是上下文词，不是全局关键字。`let UI = effect` 声明名义
   marker；`let State(S: type) = effect { ... }` 还可声明无函数体的 operation requirements。旧的
   `(effect): T`、`T(effect)` 与 `T ! effect` 都不属于语法。
-- 声明右侧的 `access` 同样是上下文词，仅用于 core bundle 声明内建 access 身份。控制 lang item
-  可在声明名位置使用 `do`、`try`、`unsafe`、`loop`；普通源码不能重新声明这些名字。
+- 声明右侧的 `access` 同样是上下文词，仅用于 core bundle 声明内建 access 身份。access 身份位于
+  `core.access`；effect 身份位于 `core.effects`；控制 lang item 可在声明名位置使用 `do`、`try`、
+  `unsafe`、`loop`；普通源码不能重新声明这些名字。
 - `let f(x: T) = { body }` 是把参数提升到名称旁边的具名闭包声明；RHS 必须有花括号。
 - `let f: (x: T): R = { body }` 是带名签名的具名闭包声明：所有槽必须有名字。
 - `let f: (T): R = { (x: T) -> body }` 是普通函数值绑定。
 - `let Alias(T: type): type = Target(T)` 定义透明类型族；`let Constructor:
   (T: type): type = Target` 直接绑定类型构造子。前者的 RHS 必须是已应用的具体类型，不进行隐式
   eta 应用。
+- 编译期参数 kind 可以写成构造子签名，例如 `F: (Value: type): type` 与
+  `E: (Error: type): effect`。当前语义支持它们进入 trait 方法签名和标准库协议声明；泛型函数
+  实例化、constructor-valued trait implementation 和完整 HKT 方程求解仍是后续工作。
 - 具名函数的参数类型必须显式；首版 `let` 名称位置不接受解构 pattern。
 - trait 声明体中的无 initializer `let` 是 requirement。
 
@@ -188,7 +192,7 @@ extend_decl = "extend", [ compile_parameter_group ], type_expr,
 
 compile_parameter_group = "(", compile_parameter,
                           { ",", compile_parameter }, [ "," ], ")" ;
-compile_parameter = IDENT, ":", ( "type" | "access" | "passing" | "effect" )
+compile_parameter = IDENT, ":", ( "type" | "access" | "passing" | "effect" | constructor_kind )
                   | REGION, ":", "region" ;
 ```
 
@@ -242,11 +246,12 @@ type_atom = path, [ type_arguments ]
                          [ ",", REGION ], ")" ], type_atom ;
 
 type_arguments = "(", type_argument, { ",", type_argument }, [ "," ], ")" ;
-type_argument  = type_expr | INTEGER ;
+type_argument  = [ IDENT, ":" ], type_expr | INTEGER ;
 ```
 
 `_` 不是类型实参。调用中的编译期参数组可整体省略，并由运行时实参和期望类型推断；显式消歧使用
 普通的 `IDENT ":" expression` 命名实参，不增加另一套括号或关键字。
+类型位置的构造子实参同样可以写 `IDENT ":" type_expr` 标签；一个实参组不能混用具名和位置形式。
 `access` 是编译期 kind；其内建实参为 `shared` 与 `mut`。`borrow(A)` 和
 `borrow(A, 'a)` 分别携带 access 参数以及 access/region 参数组合。
 `passing` 是函数编译期 kind；其内建实参为 `auto`、`copy` 与 `move`，并在参数模式位置以
@@ -255,8 +260,8 @@ type_argument  = type_expr | INTEGER ;
 默认值为 `pure`。参数名只可出现在函数签名的 `with(...)` 子句和其他 effect 编译期实参位置，
 例如 `with(E)` 与 `forward(E)(value)`；它也可由 callable 实参或期望类型推断。
 
-无结果类型只写作 `()`；`void` 拼法已删除。`never` 按普通 prelude 名称解析，等价于
-`let never = enum {}`，不是 lexer 关键字。零 variant enum 合法；其值位置可以用空的
+无结果类型只写作 `()`；`void` 拼法已删除。`Never` 按普通 prelude 名称解析，等价于
+`let Never = enum {}`，不是 lexer 关键字。零 variant enum 合法；其值位置可以用空的
 `match {}` 消除。
 
 匿名签名槽只有在模式为 `auto` 时可省略 `_:`：

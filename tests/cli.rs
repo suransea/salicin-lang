@@ -143,6 +143,7 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
         "algebraic_effect_reusable_handler.sc",
         "algebraic_effect_reusable_capturing_action.sc",
         "algebraic_effect_reusable_direct_action.sc",
+        "algebraic_effect_reusable_ordered_direct_action.sc",
         "algebraic_effect_reusable_fn_mut_action.sc",
         "algebraic_effect_reusable_fn_once_abort.sc",
         "algebraic_effect_reusable_fn_once_resume.sc",
@@ -994,16 +995,30 @@ fn m1_struct_programs_run_with_expected_result() {
 
 #[test]
 fn type_constructor_aliases_run_and_report_kind_errors() {
-    let output = salic()
-        .arg("run")
-        .arg(fixture("pass", "type_constructor_alias.sc"))
-        .output()
-        .expect("run type-constructor alias fixture");
-    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+    for name in [
+        "type_constructor_alias.sc",
+        "type_constructor_labeled_arguments.sc",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run type-constructor fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
 
     for (name, expected) in [
         ("type_alias_cycle.sc", "cyclic type alias"),
         ("type_alias_arity.sc", "argument count mismatch"),
+        (
+            "type_constructor_unknown_label.sc",
+            "unknown type argument `Element`",
+        ),
     ] {
         let output = salic()
             .arg("check")
@@ -3492,16 +3507,15 @@ let main(): i32 = { Number(20) + Number(22) }
         output_text(&module_add)
     );
 
-    workspace.write("app/src/never.sc", "let marker = 0\n");
     workspace.write(
         "app/src/main.sc",
-        "let stop(): never = { loop {} }\nlet main(): i32 = { 42 }\n",
+        "use root.fake as Never\nlet stop(): Never = { loop {} }\nlet main(): i32 = { 42 }\n",
     );
     let module_never = salic()
         .arg("check")
         .arg(&app)
         .output()
-        .expect("reject a child module falling back to core never");
+        .expect("reject an import alias falling back to core Never");
     assert_eq!(
         module_never.status.code(),
         Some(1),
@@ -3510,7 +3524,7 @@ let main(): i32 = { Number(20) + Number(22) }
     );
     assert!(
         String::from_utf8_lossy(&module_never.stderr)
-            .contains("module `never` cannot be used as a type"),
+            .contains("module `Never` cannot be used as a type"),
         "{}",
         output_text(&module_never)
     );
@@ -3815,10 +3829,10 @@ fn prelude_never_coerces_through_diverging_calls() {
     let temporary = TestDirectory::new();
     let source = temporary.write(
         "never.sc",
-        r#"let stop(): never = { loop {} }
-let absurd(move value: never): i32 = { value }
-let propagate(move value: never): Result(i32, ()) = { value }
-let throw_never(move value: never): i32 with(throws(())) = { throw value }
+        r#"let stop(): Never = { loop {} }
+let absurd(move value: Never): i32 = { value }
+let propagate(move value: Never): Result(i32, ()) = { value }
+let throw_never(move value: Never): i32 with(throws(())) = { throw value }
 let Empty = enum {}
 let Holder = struct(value: Empty)
 let project(move holder: Holder): i32 = { holder.value }
@@ -3831,7 +3845,7 @@ let main(): i32 = { choose(true) }
         .arg("run")
         .arg(source)
         .output()
-        .expect("run program with never coercion");
+        .expect("run program with Never coercion");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 }
 

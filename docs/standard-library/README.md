@@ -13,8 +13,12 @@ library/
   core/src/
     prelude.sc
     ops.sc
+    effects.sc
+    access.sc
     control.sc
     iter.sc
+    algebra.sc
+    functional.sc
   alloc/src/
     boxed.sc
     vec.sc
@@ -23,11 +27,13 @@ library/
 ## Prelude policy
 
 The edition prelude must stay small. It is intended for universally useful language-level names,
-currently `Option`, `Result`, `never`, `Copy`, and `Drop`. Operator traits belong to `core.ops`,
-compiler-lowered control contracts belong to `core.control`, iteration protocols belong to
-`core.iter`, and
-owning containers belong to `alloc.boxed` and `alloc.vec`. Alloc declarations must be named through
-their module or imported explicitly with ordinary `use`; for example:
+currently `Option`, `Result`, `Never`, `Copy`, and `Drop`. Operator traits belong to `core.ops`,
+effect identities belong to `core.effects`, access identities belong to `core.access`,
+compiler-lowered control contracts belong to `core.control`, algebra protocols belong to
+`core.algebra`, higher-kinded functional protocols belong to `core.functional`, iteration protocols
+belong to `core.iter`, and owning containers belong to `alloc.boxed` and `alloc.vec`. Alloc
+declarations must be named through their module or imported
+explicitly with ordinary `use`; for example:
 
 ```sali
 use alloc.boxed.Box
@@ -43,8 +49,11 @@ either standard namespace.
 traits require ordinary imports when
 named. Merely writing the corresponding operator token does not require importing its protocol.
 The syntax spellings for `throws(E)`, `do`, `try`, `unsafe`, and `loop` bind directly to validated
-lang-item declarations in `core.control`; they do not inject those module exports as ordinary
-unqualified names. The former control-container protocols have been removed.
+lang-item declarations in `core.effects` or `core.control`; they do not inject those module exports
+as ordinary unqualified names. The former control-container protocols have been removed.
+`Shared`/`Mutable` require `use core.access...` when named as standard-library declarations.
+`Semigroup` and `Monoid` require `use core.algebra...` when named.
+`Functor`, `Applicative`, and `Monad` require `use core.functional...` when named.
 `Iterator` and `IntoIterator` require an ordinary `use core.iter...` when named in an implementation
 or bound. Writing `for pattern in value { ... }` binds to their validated lang-item identities
 without importing them and cannot be redirected by same-named inherent methods or traits.
