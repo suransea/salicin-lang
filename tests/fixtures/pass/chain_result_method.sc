@@ -1,7 +1,7 @@
-let Number = struct(value: i32)
+let Number = struct { value: i32 }
 
 extend Number {
   let take(move self)(): i32 = { self.value }
 }
 
-let main(): i32 = { Result(Number, bool).Ok(Number(42))?.take() ?? 0 }
+let main(): i32 = { Result(Number, bool).Ok(Number { value: 42 })?.take() ?? 0 }

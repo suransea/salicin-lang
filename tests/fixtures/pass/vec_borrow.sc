@@ -1,6 +1,6 @@
 use alloc.vec.{Vec, vec_at}
 
-let Resource = struct(value: i32)
+let Resource = struct { value: i32 }
 
 extend Resource {
   let read(borrow self)(): i32 = { self.value }
@@ -8,8 +8,8 @@ extend Resource {
 
 let main(): i32 = {
   let mut values: Vec(Resource) = Vec(Resource).new()
-  values.push(Resource(20))
-  values.push(Resource(0))
+  values.push(Resource { value: 20 })
+  values.push(Resource { value: 0 })
   let first = do {
     let reference = vec_at(values)(0)
     reference.read()

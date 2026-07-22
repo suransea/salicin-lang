@@ -1,5 +1,5 @@
-let Pair = struct(left: i32, right: i32)
-let Holder(T: type) = struct(value: T)
+let Pair = struct { left: i32, right: i32 }
+let Holder (T: type) = struct { value: T }
 
 let RightView = trait {
   let view('a: region)(borrow('a) self)(): borrow('a) i32
@@ -44,8 +44,8 @@ extend Pair: RightView {
 }
 
 let main(): i32 = {
-  let mut pair = Pair(20, 0)
-  let holder = Holder(0)
+  let mut pair = Pair { left: 20, right: 0 }
+  let holder = Holder { value: 0 }
   let before = do {
     let reference = forward(pair)
     let generic = same(value: pair)

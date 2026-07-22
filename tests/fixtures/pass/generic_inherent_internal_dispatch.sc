@@ -1,9 +1,9 @@
-let Cell(T: type) = struct(value: T)
+let Cell (T: type) = struct { value: T }
 
 extend(T: type) Cell(T) {
   let take(move self)(): T = { self.value }
   let round_trip(move value: T): T = {
-    let cell = Cell(value)
+    let cell = Cell { value: value }
     cell.take()
   }
 }

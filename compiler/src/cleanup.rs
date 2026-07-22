@@ -301,7 +301,7 @@ pub(crate) enum StorageLiveness {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DropCondition {
     Static,
-    Flag(DropFlagId),
+    Flag { value: DropFlagId },
 }
 
 /// A tree-shaped cleanup decision. When a flag is set, `path` is complete and
@@ -1183,7 +1183,7 @@ impl DropFlagAnalysis {
                 let flag = flags[&path];
                 vec![DropObligation {
                     path,
-                    condition: DropCondition::Flag(flag),
+                    condition: DropCondition::Flag { value: flag },
                     children_when_clear: children(),
                 }]
             }
@@ -4283,7 +4283,7 @@ mod tests {
         assert_eq!(plan.drop_flags.sites.len(), 1);
         assert_eq!(
             plan.drop_flags.sites[0].obligations[0].condition,
-            DropCondition::Flag(flag)
+            DropCondition::Flag { value: flag }
         );
     }
 

@@ -1,8 +1,8 @@
-let Cell(T: type) = struct(value: T)
+let Cell (T: type) = struct { value: T }
 
 extend(T: type) Cell(T)
 where T: Copy {
-  let new(copy value: T): Cell(T) = { Cell(value) }
+  let new(copy value: T): Cell(T) = { Cell { value: value } }
   let duplicate(borrow self)(): T = {
     let first = self.value
     self.value

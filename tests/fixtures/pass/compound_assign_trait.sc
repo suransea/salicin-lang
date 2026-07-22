@@ -1,6 +1,6 @@
 use core.ops.{AddAssign, BitXorAssign}
 
-let Counter = struct(value: i32)
+let Counter = struct { value: i32 }
 
 extend Counter {
   let add_assign(borrow self)(move rhs: i32): bool = { false }
@@ -19,7 +19,7 @@ extend Counter: BitXorAssign(i32) {
 }
 
 let main(): i32 = {
-  let mut counter = Counter(40)
+  let mut counter = Counter { value: 40 }
   counter += 2
   counter ^= 0
   counter.value

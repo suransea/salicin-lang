@@ -4,7 +4,7 @@ let Read = effect {
   let argument(): i32
 }
 
-let Adder = struct(base: i32)
+let Adder = struct { base: i32 }
 
 extend Adder {
   let add(move self)(value: i32): i32 = { self.base + value }
@@ -14,10 +14,10 @@ let main(): i32 = {
   let mut arguments = 0
   let result: i32 = Read.handle(
     option_base: { (present, resume) ->
-      resume(if present { Option.Some(Adder(8)) } else { Option.None })
+      resume(if present { Option.Some(Adder { base: 8 }) } else { Option.None })
     },
     result_base: { (present, resume) ->
-      resume(if present { Result.Ok(Adder(8)) } else { Result.Err(true) })
+      resume(if present { Result.Ok(Adder { base: 8 }) } else { Result.Err(true) })
     },
     argument: { (resume) ->
       arguments += 1;

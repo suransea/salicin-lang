@@ -1,3 +1,3 @@
-let Cell(T: type) = struct(value: T)
+let Cell (T: type) = struct { value: T }
 
-let main(): i32 = { Cell(42).value }
+let main(): i32 = { Cell { value: 42 }.value }

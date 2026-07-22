@@ -1,4 +1,4 @@
-let Payload = struct(value: i32)
+let Payload = struct { value: i32 }
 
 let Message = enum {
   Data(Payload),

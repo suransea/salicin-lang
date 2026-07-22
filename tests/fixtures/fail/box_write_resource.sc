@@ -1,8 +1,8 @@
 use alloc.boxed.{Box, box_write}
 
-let Resource = struct(value: i32)
+let Resource = struct { value: i32 }
 
 let main(): i32 = {
-  box_write(T: Resource)(Box.new(Resource(1)))(Resource(2))
+  box_write(T: Resource)(Box.new(Resource { value: 1 }))(Resource { value: 2 })
   0
 }

@@ -1,6 +1,6 @@
 use alloc.vec.Vec
 
-let Resource = struct(counter: MutPtr(i32), value: i32)
+let Resource = struct { counter: MutPtr(i32), value: i32 }
 
 extend Resource {
   let read(borrow self)(): i32 = { self.value }
@@ -10,8 +10,7 @@ extend Resource: Drop {
   let drop(borrow(mut) self)(): () = { unsafe {
     *self.counter = *self.counter + 1
   }
-  }
-}
+  }}
 
 let main(): i32 = {
   let counter = unsafe {
@@ -25,10 +24,10 @@ let main(): i32 = {
     let mut values: Vec(Resource) = Vec(Resource).new()
     let started_empty = values.is_empty()
     values.reserve(4)
-    values.push(Resource(counter, 1))
-    values.push(Resource(counter, 2))
-    values.push(Resource(counter, 3))
-    values.push(Resource(counter, 4))
+    values.push(Resource { counter: counter, value: 1 })
+    values.push(Resource { counter: counter, value: 2 })
+    values.push(Resource { counter: counter, value: 3 })
+    values.push(Resource { counter: counter, value: 4 })
     values.reserve(8)
     let before_remove = unsafe {
       *counter
@@ -48,7 +47,7 @@ let main(): i32 = {
       *counter
     }
     let ended_empty = values.is_empty()
-    values.push(Resource(counter, 5))
+    values.push(Resource { counter: counter, value: 5 })
     if started_empty && ended_empty && before_remove == 0 && removed_value == 2 && after_truncate == 2 && after_clear == 4 {
       score = 37
     }

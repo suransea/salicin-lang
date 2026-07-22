@@ -1,12 +1,11 @@
-let Resource = struct(value: i32)
+let Resource = struct { value: i32 }
 let Choice = enum { Pair(Resource, Resource), None }
 
 extend Resource: Drop {
   let drop(borrow(mut) self)(): () = {
     let checked = 1 / self.value
     self.value = 0
-  }
-}
+  }}
 
 let consume(move value: Resource): () = { () }
 
@@ -29,7 +28,7 @@ let escape(move choice: Choice): i32 = { choice match {
 }
 
 let main(): i32 = {
-  let first = inspect(Choice.Pair(Resource(1), Resource(1)))
-  let second = escape(Choice.Pair(Resource(1), Resource(1)))
+  let first = inspect(Choice.Pair(Resource { value: 1 }, Resource { value: 1 }))
+  let second = escape(Choice.Pair(Resource { value: 1 }, Resource { value: 1 }))
   first + second - 42
 }

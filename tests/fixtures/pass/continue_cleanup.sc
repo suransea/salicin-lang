@@ -1,10 +1,9 @@
-let Resource = struct(counter: MutPtr(i32))
+let Resource = struct { counter: MutPtr(i32) }
 
 extend Resource: Drop {
   let drop(borrow(mut) self)(): () = { unsafe {
     *self.counter = *self.counter + 1
-  } }
-}
+  } }}
 
 let main(): i32 = {
   let counter = unsafe {
@@ -18,7 +17,7 @@ let main(): i32 = {
   loop {
     iteration = iteration + 1
     if iteration < 3 {
-      let resource = Resource(counter)
+      let resource = Resource { counter: counter }
       continue
     }
     break

@@ -1,6 +1,6 @@
 use core.ops.Add
 
-let Number = struct(value: i32)
+let Number = struct { value: i32 }
 
 extend Number: Add(i32) {
   let Output = i32
@@ -13,6 +13,6 @@ extend Number: Add(i64) {
 }
 
 let main(): i32 = {
-  let answer: i64 = Number(40) + 2
+  let answer: i64 = Number { value: 40 } + 2
   if answer == 42 { 42 } else { 0 }
 }

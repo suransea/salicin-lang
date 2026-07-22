@@ -835,9 +835,9 @@ edition = "2026"
     );
     project.write(
         "src/api.sc",
-        "pub(package) let Cell(T: type) = struct(value: T)\n\
+        "pub(package) let Cell (T: type) = struct { value: T }\n\
          extend(T: type) Cell(T) {\n\
-           let new(move value: T): Cell(T) = { Cell(value) }\n\
+           let new(move value: T): Cell(T) = { Cell { value: value } }\n\
            let take(move self)(): T = { self.value }\n\
          }\n",
     );
@@ -866,7 +866,7 @@ path = "src/lib.sc"
     );
     project.write(
         "dep/src/lib.sc",
-        "pub let Cell(T: type) = struct(pub value: T)\n",
+        "pub let Cell (T: type) = struct { pub value: T }\n",
     );
     project.write(
         "app/salicin.toml",
@@ -1070,7 +1070,7 @@ fn type_constructor_aliases_cross_module_boundaries() {
     );
     project.write(
         "src/types.sc",
-        "pub(package) let Cell(T: type) = struct(pub(package) value: T)\n\
+        "pub(package) let Cell (T: type) = struct { pub(package) value: T }\n\
          pub(package) let Family(T: type): type = Cell(T)\n\
          pub(package) let Constructor: (T: type): type = Cell\n\
          pub(package) let Scalar = i32\n",
@@ -1079,8 +1079,8 @@ fn type_constructor_aliases_cross_module_boundaries() {
         "src/main.sc",
         "use types.{Family, Constructor, Scalar}\n\n\
          let main(): Scalar = {\n\
-           let left: Family(i32) = Family(i32)(40)\n\
-           let right = Constructor(2)\n\
+           let left: Family(i32) = Family(i32) { value: 40 }\n\
+           let right = Constructor(i32) { value: 2 }\n\
            left.value + right.value\n\
          }\n",
     );
@@ -3269,14 +3269,14 @@ dep = { path = "../dep" }
     );
     workspace.write(
         "dep/src/lib.sc",
-        r#"pub let Number = struct(value: i32)
+        r#"pub let Number = struct { value: i32 }
 let Secret = trait {
   let reveal(borrow self)(): i32
 }
 extend Number: Secret {
   let reveal(borrow self)(): i32 = { self.value }
 }
-pub let make(): Number = { Number(value: 21) }
+pub let make(): Number = { Number { value: 21 } }
 pub let maybe(): Option(Number) = { Option(Number).Some(make()) }
 pub let reveal(T: type)(move number: Number): i32 = { number.reveal() }
 pub let answer(): i32 = {
@@ -3370,12 +3370,12 @@ dep = { path = "../dep" }
         "dep/src/lib.sc",
         r#"use core.ops.Add
 
-pub let Number = struct(value: i32)
+pub let Number = struct { value: i32 }
 extend Number: Add(Number) {
   let Output = Number
-  let add(move self)(move rhs: Number): Number = { Number(self.value + rhs.value) }
+  let add(move self)(move rhs: Number): Number = { Number { value: self.value + rhs.value } }
 }
-pub let make(value: i32): Number = { Number(value) }
+pub let make(value: i32): Number = { Number { value: value } }
 pub let value(move number: Number): i32 = { number.value }
 pub let maybe(value: i32): Option(i32) = { Option(i32).Some(value) }
 "#,
@@ -3399,10 +3399,10 @@ pub let maybe(value: i32): Option(i32) = { Option(i32).Some(value) }
 
     workspace.write(
         "app/src/fake.sc",
-        r#"pub let Option(T: type) = enum { Some(T), None }
+        r#"pub let Option (T: type) = enum { Some(T), None }
 pub let make_option(): Option(i32) = { Option(i32).Some(42) }
 
-pub let Add(Rhs: type) = trait {
+pub let Add (Rhs: type) = trait {
   let Output: type
   let add(move self)(move rhs: Rhs): Output
 }
@@ -3410,16 +3410,16 @@ pub let Sub(Rhs: type) = trait {
   let Output: type
   let sub(move self)(move rhs: Rhs): Output
 }
-pub let Number = struct(value: i32)
+pub let Number = struct { value: i32 }
 extend Number: Add(Number) {
   let Output = Number
-  let add(move self)(move rhs: Number): Number = { Number(self.value + rhs.value) }
+  let add(move self)(move rhs: Number): Number = { Number { value: self.value + rhs.value } }
 }
 extend Number: Sub(Number) {
   let Output = Number
-  let sub(move self)(move rhs: Number): Number = { Number(self.value - rhs.value) }
+  let sub(move self)(move rhs: Number): Number = { Number { value: self.value - rhs.value } }
 }
-pub let make_number(value: i32): Number = { Number(value) }
+pub let make_number(value: i32): Number = { Number { value: value } }
 "#,
     );
     workspace.write(
@@ -3488,7 +3488,7 @@ pub let make_number(value: i32): Number = { Number(value) }
 
     workspace.write(
         "app/src/main.sc",
-        "use root.fake as Option\nlet main(): i32 = { Option() }\n",
+        "use root.fake as Option\nlet main(): i32 = { Option {} }\n",
     );
     let module_option = salic()
         .arg("check")
@@ -3503,7 +3503,7 @@ pub let make_number(value: i32): Number = { Number(value) }
     );
     assert!(
         String::from_utf8_lossy(&module_option.stderr)
-            .contains("module `Option` cannot be used as a value or callable"),
+            .contains("module `Option` cannot be used as a type or compile-time argument"),
         "{}",
         output_text(&module_option)
     );
@@ -3511,12 +3511,12 @@ pub let make_number(value: i32): Number = { Number(value) }
     workspace.write(
         "app/src/main.sc",
         r#"use root.fake as Add
-let Number = struct(value: i32)
+let Number = struct { value: i32 }
 extend Number: Add(Number) {
   let Output = i32
   let add(move self)(move rhs: Number): i32 = { self.value + rhs.value }
 }
-let main(): i32 = { Number(20) + Number(22) }
+let main(): i32 = { Number { value: 20 } + Number { value: 22 } }
 "#,
     );
     let module_add = salic()
@@ -3580,8 +3580,8 @@ dep = { path = "../dep" }
     );
     workspace.write(
         "dep/src/lib.sc",
-        r#"pub let Token = struct(value: i32)
-pub let make(value: i32): Token = { Token(value) }
+        r#"pub let Token = struct { value: i32 }
+pub let make(value: i32): Token = { Token { value: value } }
 "#,
     );
     workspace.write(
@@ -3607,9 +3607,9 @@ let main(): i32 = { 42 }
 
     workspace.write(
         "dep/src/lib.sc",
-        r#"pub let Token = struct(value: i32)
+        r#"pub let Token = struct { value: i32 }
 extend Token: Copy {}
-pub let make(value: i32): Token = { Token(value) }
+pub let make(value: i32): Token = { Token { value: value } }
 pub let read(copy token: Token): i32 = { token.value }
 "#,
     );
@@ -3639,10 +3639,10 @@ pub let read(copy token: Token): i32 = { token.value }
     workspace.write(
         "app/src/main.sc",
         r#"use root.fake.Copy as FakeCopy
-let Local = struct(value: i32)
+let Local = struct { value: i32 }
 extend Local: FakeCopy {}
 let read(copy local: Local): i32 = { local.value }
-let main(): i32 = { read(Local(42)) }
+let main(): i32 = { read(Local { value: 42 }) }
 "#,
     );
 
@@ -3667,11 +3667,11 @@ let main(): i32 = { read(Local(42)) }
     workspace.write(
         "app/src/fake.sc",
         r#"pub let Copy = trait {}
-pub let Token = struct(value: i32)
+pub let Token = struct { value: i32 }
 
 extend Token: Copy {}
 
-pub let make(value: i32): Token = { Token(value) }
+pub let make(value: i32): Token = { Token { value: value } }
 pub let read(copy token: Token): i32 = { token.value }
 "#,
     );
@@ -3703,7 +3703,7 @@ fn transitive_diamond_dependencies_share_nominal_identity() {
     );
     workspace.write(
         "shared/src/lib.sc",
-        "pub let Token = struct(pub value: i32)\npub let make(value: i32): Token = { Token(value: value) }\n",
+        "pub let Token = struct { pub value: i32 }\npub let make(value: i32): Token = { Token { value: value } }\n",
     );
     for side in ["left", "right"] {
         workspace.write(
@@ -3865,7 +3865,7 @@ let absurd(move value: Never): i32 = { value }
 let propagate(move value: Never): Result(i32, ()) = { value }
 let throw_never(move value: Never): i32 with(Throws(())) = { throw value }
 let Empty = enum {}
-let Holder = struct(value: Empty)
+let Holder = struct { value: Empty }
 let project(move holder: Holder): i32 = { holder.value }
 let choose(flag: bool): i32 = { if flag { 42 } else { stop() } }
 let main(): i32 = { choose(true) }
@@ -3906,7 +3906,7 @@ edition = "2026"
     );
     project.write(
         "src/math.sc",
-        r#"pub(package) let Number = struct(value: i32)
+        r#"pub(package) let Number = struct { value: i32 }
 let Read = trait {
   let read(borrow self)(): i32
 }
@@ -3914,19 +3914,19 @@ extend Number: Read {
   let read(borrow self)(): i32 = { self.value }
 }
 pub(package) let answer(): i32 = {
-  let number = Number(value: 40)
+  let number = Number { value: 40 }
   number.read()
 }
 "#,
     );
     project.write(
         "src/net/http.sc",
-        r#"pub(package) let Reply = struct(pub(package) value: i32)
+        r#"pub(package) let Reply = struct { pub(package) value: i32 }
 pub(package) let Status = enum {
   Ok(i32),
   Err,
 }
-pub(package) let reply(): Reply = { Reply(value: 0) }
+pub(package) let reply(): Reply = { Reply { value: 0 } }
 "#,
     );
 
@@ -3947,16 +3947,16 @@ fn field_visibility_controls_cross_module_and_cross_package_data_access() {
     );
     private_project.write(
         "src/data.sc",
-        r#"pub(package) let Record = struct(secret: i32, pub(package) open: i32)
+        r#"pub(package) let Record = struct { secret: i32, pub(package) open: i32 }
 pub(package) let Event = enum { Named(secret: i32), Empty }
-pub(package) let record(): Record = { Record(secret: 20, open: 22) }
+pub(package) let record(): Record = { Record { secret: 20, open: 22 } }
 pub(package) let event(): Event = { Event.Named(secret: 42) }
 "#,
     );
     private_project.write(
         "src/main.sc",
         r#"let read(): i32 = { data.record().secret }
-let build(): data.Record = { data.Record(secret: 20, open: 22) }
+let build(): data.Record = { data.Record { secret: 20, open: 22 } }
 let unpack(): i32 = { data.event() match {
   data.Event.Named(secret: value) => value,
   data.Event.Empty => 0,
@@ -3984,7 +3984,7 @@ let main(): i32 = { 0 }
     );
     workspace.write(
         "dep/src/lib.sc",
-        r#"pub let Record = struct(pub value: i32)
+        r#"pub let Record = struct { pub value: i32 }
 pub let Event = enum { Named(pub value: i32), Empty }
 "#,
     );
@@ -4002,7 +4002,7 @@ dep = { path = "../dep" }
     workspace.write(
         "app/src/main.sc",
         r#"let main(): i32 = {
-  let record = dep.Record(value: 20)
+  let record = dep.Record { value: 20 }
   let event = dep.Event.Named(value: 22)
   let extra = event match {
     dep.Event.Named(value: value) => value,
@@ -4158,14 +4158,14 @@ let main(): i32 = { nested.deep.answer() }
     );
     project.write(
         "src/kit.sc",
-        r#"pub(package) let Number = struct(pub(package) value: i32)
+        r#"pub(package) let Number = struct { pub(package) value: i32 }
 pub(package) let Outcome = enum {
   Ready(i32),
   Empty,
 }
 pub(package) let zero(): i32 = { 0 }
 pub(package) let increment(value: i32): i32 = { value + 1 }
-pub(package) let make_number(value: i32): Number = { Number(value: value) }
+pub(package) let make_number(value: i32): Number = { Number { value: value } }
 "#,
     );
     project.write("src/nested.sc", "let parent_bonus(): i32 = { 2 }\n");

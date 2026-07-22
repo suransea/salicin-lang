@@ -1,4 +1,4 @@
-let Cell(T: type) = struct(value: T)
+let Cell (T: type) = struct { value: T }
 
 extend(T: type) Cell(T): Copy
 where T: Copy {}
@@ -9,8 +9,8 @@ let read_twice(copy cell: Cell(Cell(i32))): i32 = {
 }
 
 let main(): i32 = {
-  let inner = Cell(42)
-  let outer = Cell(inner)
+  let inner = Cell { value: 42 }
+  let outer = Cell { value: inner }
   let duplicate = outer
   read_twice(outer) + duplicate.value.value - 42
 }

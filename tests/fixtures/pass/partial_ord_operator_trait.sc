@@ -1,6 +1,6 @@
 use core.ops.{PartialOrd, PartialOrdering}
 
-let Number = struct(value: i32, unordered: bool)
+let Number = struct { value: i32, unordered: bool }
 
 extend Number: PartialOrd(Number) {
   let partial_cmp(borrow self)(borrow rhs: Number): PartialOrdering = {
@@ -12,9 +12,9 @@ extend Number: PartialOrd(Number) {
 }
 
 let main(): i32 = {
-  let low = Number(1, false)
-  let high = Number(2, false)
-  let none = Number(0, true)
+  let low = Number { value: 1, unordered: false }
+  let high = Number { value: 2, unordered: false }
+  let none = Number { value: 0, unordered: true }
   if low < high && low <= high && high > low && high >= low &&
     !(none < low) && !(none <= low) && !(none > low) && !(none >= low) {
     42

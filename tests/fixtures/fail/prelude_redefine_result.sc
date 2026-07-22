@@ -1,4 +1,4 @@
-let Result(T: type, E: type) = enum {
+let Result (T: type, E: type) = enum {
   Ok(T),
   Err(E),
 }

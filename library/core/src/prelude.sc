@@ -1,9 +1,9 @@
-pub let Option(T: type) = enum {
+pub let Option (T: type) = enum {
   Some(T),
   None,
 }
 
-pub let Result(T: type, E: type) = enum {
+pub let Result (T: type, E: type) = enum {
   Ok(T),
   Err(E),
 }

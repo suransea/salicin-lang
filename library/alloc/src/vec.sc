@@ -1,8 +1,6 @@
-pub let Vec(T: type) = struct(
-  pointer: MutPtr(T),
+pub let Vec (T: type) = struct { pointer: MutPtr(T),
   length: u64,
-  storage_capacity: u64,
-)
+  storage_capacity: u64, }
 
 let vec_layout_size(T: type)(capacity: u64): u64 = {
   let element_size = size_of(T)
@@ -27,19 +25,11 @@ let vec_deallocate(T: type)(pointer: MutPtr(T), capacity: u64): () = {
 }
 
 pub let vec_new(T: type)(): Vec(T) = {
-  Vec(T)(
-    pointer: vec_allocate(T: T)(0),
-    length: 0,
-    storage_capacity: 0,
-  )
+  Vec(T) { pointer: vec_allocate(T: T)(0), length: 0, storage_capacity: 0 }
 }
 
 pub let vec_with_capacity(T: type)(capacity: u64): Vec(T) = {
-  Vec(T)(
-    pointer: vec_allocate(T: T)(capacity),
-    length: 0,
-    storage_capacity: capacity,
-  )
+  Vec(T) { pointer: vec_allocate(T: T)(capacity), length: 0, storage_capacity: capacity }
 }
 
 pub let vec_len(T: type)(borrow values: Vec(T)): u64 = { values.length }

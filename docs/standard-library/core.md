@@ -153,8 +153,8 @@ items; ordinary package functions still require `= { ... }` bodies.
 It also declares two compiler-owned erased runtime contracts:
 
 ```sc
-pub let Continuation(Input: type, Output: type) = struct()
-pub let EffectCallable(Input: type, Output: type, Answer: type) = struct()
+pub let Continuation (Input: type, Output: type) = struct {}
+pub let EffectCallable (Input: type, Output: type, Answer: type) = struct {}
 ```
 
 `Continuation` is a one-shot suspended computation. `EffectCallable` is an owned action awaiting a
@@ -215,9 +215,7 @@ pub let Semigroup = trait {
 }
 
 pub let Monoid = trait
-where Self: Semigroup {
-  let empty(): Self
-}
+where Self: Semigroup{let empty(): Self}
 ```
 
 The compiler does not prove algebraic laws.
@@ -235,31 +233,27 @@ pub let Functor = trait(Self: (Value: type): type) {
 }
 
 pub let Applicative = trait(Self: (Value: type): type)
-where Self: Functor {
-  let pure(A: type)(move value: A): Self(A)
+where Self: Functor{let pure(A: type)(move value: A): Self(A)
 
   let apply(E: effect, A: type, B: type)(
     move self: Self((A): B with(E)),
   )(
     move value: Self(A),
-  ): Self(B) with(E)
-}
+  ): Self(B) with(E)}
 
 pub let Monad = trait(Self: (Value: type): type)
-where Self: Applicative {
-  let flat_map(E: effect, A: type, B: type)(
+where Self: Applicative{let flat_map(E: effect, A: type, B: type)(
     move self: Self(A),
   )(
     move next: (A): Self(B) with(E),
-  ): Self(B) with(E)
-}
+  ): Self(B) with(E)}
 ```
 
 These declarations use constructor kinds such as `(Value: type): type` on the trait `Self` subject,
 not as ordinary trait parameters. Traits with a matching constructor subject can be implemented for
 generic nominal constructors. Method implementations are registered as generic function templates
-and validated, for example `extend Carrier: Functor { let map(E, A, B)... }`. Receiver methods
-dispatch from concrete nominal instances, so `Carrier(i32)(41).map(add_one)` selects the
+and validated, for example `extend Carrier: Functor{let map(E, A, B)...}`. Receiver methods
+dispatch from concrete nominal instances, so `Carrier(i32) { value: 41 }.map(add_one)` selects the
 `Carrier: Functor` implementation and instantiates the generic method template. Constructor
 associated functions without a receiver can still be called from the bare constructor; for example,
 `Carrier.pure(...)` is available once `Carrier` implements `Applicative`. Trait-level `where`

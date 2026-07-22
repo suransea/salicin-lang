@@ -1,7 +1,7 @@
-let Number = struct(value: i32)
+let Number = struct { value: i32 }
 
 extend Number {
-  let make(value: i32): Number = { Number(value) }
+  let make(value: i32): Number = { Number { value: value } }
 }
 
 let main(): i32 = { Number.make(42).value }

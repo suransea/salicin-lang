@@ -1,4 +1,4 @@
-let Payload = struct(left: i32, right: i32)
+let Payload = struct { left: i32, right: i32 }
 
 extend Payload: Copy {}
 
@@ -7,7 +7,7 @@ let main(): i32 = {
     raw_alloc(Payload)(size_of(Payload), align_of(Payload))
   }
   unsafe {
-    *pointer = Payload(left: 40, right: 2)
+    *pointer = Payload { left: 40, right: 2 }
   }
   let payload = unsafe {
     *pointer

@@ -1,8 +1,8 @@
-use alloc.boxed.box_new
+use alloc.boxed.{Box, box_new}
 
 let main(): i32 = {
-  let unit = box_new(())
-  let inner = box_new(42)
-  let outer = box_new(inner)
+  let unit: Box(()) = box_new(())
+  let inner = box_new(T: i32)(42)
+  let outer = box_new(T: Box(i32))(inner)
   42
 }

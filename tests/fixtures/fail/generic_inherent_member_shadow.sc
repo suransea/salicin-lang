@@ -1,4 +1,4 @@
-let Cell(T: type) = struct(value: T)
+let Cell (T: type) = struct { value: T }
 
 extend(T: type) Cell(T) {
   let invalid(T: type)(borrow self)(): T = { self.value }

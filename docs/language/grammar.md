@@ -130,7 +130,7 @@ constructor_kind = compile_parameter_group,
   trait 参数；`trait(Self: Kind)` 声明被实现主体的 kind，省略时为 `Self: type`。匹配 arity 的
   泛型 nominal 构造子可以实现 `Self` 为构造子 kind 的 trait；method implementation 会注册为
   generic function template 并接受模板验证。receiver-style constructor trait 方法可以从具体
-  nominal 实例分派，例如 `Carrier(i32)(41).map(add_one)`；无 receiver 的 constructor trait
+  nominal 实例分派，例如 `Carrier(i32) { value: 41 }.map(add_one)`；无 receiver 的 constructor trait
   associated function 可以通过裸构造子调用。关联类型 lowering 与完整 HKT 方程求解仍会被显式
   拒绝或留待后续。
 - 具名函数的参数类型必须显式；首版 `let` 名称位置不接受解构 pattern。
@@ -162,8 +162,12 @@ access_or_region = IDENT | "shared" | "mut" | REGION ;
 ### 4.2 数据、trait 与模块
 
 ```ebnf
-struct_decl = "struct", "(", [ field_list ], ")" ;
+struct_decl = "struct", [ "(", struct_option_list, ")" ],
+              "{", [ field_list ], "}" ;
 module_decl = "struct", "{", separators, { item, separators }, "}" ;
+
+struct_option_list = struct_option, { ",", struct_option }, [ "," ] ;
+struct_option      = "derive", ":", IDENT ;
 
 field_list = field_decl, { ",", field_decl }, [ "," ] ;
 field_decl = [ visibility ], IDENT, ":", type_expr ;
@@ -183,8 +187,9 @@ trait_decl = "trait", "{", separators, { trait_item, separators }, "}" ;
 trait_item = { attribute }, [ visibility ], let_decl ;
 ```
 
-一个 variant 的字段全部按位置或全部命名；不能混合。`struct(...)` 与 `struct {...}` 只允许作为
-命名 `let` initializer，分别建立运行时名义类型和编译期模块。
+一个 variant 的字段全部按位置或全部命名；不能混合。`struct { ... }` 在字段上下文建立运行时
+名义类型，在声明上下文建立编译期模块；二者都只允许作为命名 `let` initializer。当前实现支持
+`struct(derive: Copy) { ... }`，并把它降低为普通 `Copy` trait 实现。
 
 struct 字段与命名 variant 字段默认私有，并可写 `pub(package)` / `pub`。字段有效可见性不会宽于
 外层类型；位置 variant payload 没有独立 visibility 语法，继承 enum 声明的可见性。
@@ -501,7 +506,7 @@ path_head = IDENT | "root" | "self" | "super" | "Self" ;
 ```
 
 完全限定 trait 成员 `<T as Trait>.member` 作为独立的 `qualified_path` 产生，加入 `path` 可出现的
-位置。类型应用 `A(T)` 与运行时调用 `f(x)` 具有相同 token 外形，由名称的 kind 和上下文在语义
+位置。类型应用 `A { value: T }` 与运行时调用 `f(x)` 具有相同 token 外形，由名称的 kind 和上下文在语义
 分析阶段区分。表达式或 pattern 路径头 `Self` 只在 `extend` 成员内有效，并由语义分析替换为当前
 具体或泛型扩展目标。
 

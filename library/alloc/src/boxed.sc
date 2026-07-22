@@ -1,4 +1,4 @@
-pub let Box(T: type) = struct(pointer: MutPtr(T))
+pub let Box (T: type) = struct { pointer: MutPtr(T) }
 
 pub let box_new(T: type)(move value: T): Box(T) = {
   let pointer = unsafe {
@@ -7,7 +7,7 @@ pub let box_new(T: type)(move value: T): Box(T) = {
   unsafe {
     raw_init(pointer, value)
   }
-  Box(T)(pointer: pointer)
+  Box(T) { pointer: pointer }
 }
 
 pub let box_ptr(T: type)(borrow boxed: Box(T)): MutPtr(T) = { boxed.pointer }

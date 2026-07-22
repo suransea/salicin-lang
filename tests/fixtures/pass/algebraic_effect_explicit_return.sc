@@ -2,16 +2,15 @@ let Read = effect {
   let read(): i32
 }
 
-let Resource = struct(counter: MutPtr(i32))
+let Resource = struct { counter: MutPtr(i32) }
 
 extend Resource: Drop {
   let drop(borrow(mut) self)(): () = { unsafe {
     *self.counter = *self.counter + 1
-  } }
-}
+  } }}
 
 let read_early(counter: MutPtr(i32)): i32 with(Read) = {
-  let resource = Resource(counter)
+  let resource = Resource { counter: counter }
   let value = Read.read()
   return value
 }

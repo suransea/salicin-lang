@@ -1,4 +1,4 @@
-let Counter = struct(value: i32)
+let Counter = struct { value: i32 }
 
 extend Counter {
   let reset(borrow(mut) self)(): i32 = {
@@ -7,4 +7,4 @@ extend Counter {
   }
 }
 
-let main(): i32 = { Counter(0).reset() }
+let main(): i32 = { Counter { value: 0 }.reset() }

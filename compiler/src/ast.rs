@@ -159,6 +159,7 @@ pub enum ExtendMember {
 pub struct StructDef {
     pub name: String,
     pub compile_groups: Vec<Vec<CompileParam>>,
+    pub derives: Vec<String>,
     pub fields: Vec<Field>,
 }
 
@@ -397,6 +398,10 @@ pub enum Expr {
     Assign(Box<Expr>, Box<Expr>),
     CompoundAssign(Box<Expr>, BinaryOp, Box<Expr>),
     Call(Box<Expr>, Vec<CallArg>),
+    StructLiteral {
+        constructor: Box<Expr>,
+        fields: Vec<CallArg>,
+    },
     Member(Box<Expr>, String),
     ChainMember(Box<Expr>, String),
     Array(Vec<Expr>),

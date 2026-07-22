@@ -250,6 +250,13 @@ type AliasTable = HashMap<Vec<String>, ResolvedAlias>;
 
 type SymbolTable = HashMap<Vec<String>, Symbol>;
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum DeclarationNamespace {
+    Function,
+    Type,
+    Other,
+}
+
 /// Direct dependency aliases keyed by the internal root of the declaring
 /// package. Target roots are internal and cannot be written in source code.
 type DependencyTable = HashMap<Vec<String>, BTreeMap<String, Vec<String>>>;
@@ -612,6 +619,7 @@ fn collect_symbols(
     dependencies: &DependencyTable,
 ) -> (SymbolTable, HashSet<Vec<String>>, Vec<String>) {
     let mut symbols: SymbolTable = HashMap::new();
+    let mut symbol_namespaces = HashMap::<Vec<String>, HashSet<DeclarationNamespace>>::new();
     let mut module_paths = HashSet::new();
     let mut diagnostics = Vec::new();
     let mut function_overloads = HashMap::<Vec<String>, HashSet<Vec<Vec<String>>>>::new();
@@ -667,7 +675,29 @@ fn collect_symbols(
                 source_path: unit.source.path.clone(),
             };
 
+            let namespace = declaration_namespace(item);
             if let Some(previous) = symbols.get(&logical_path) {
+                let occupied = symbol_namespaces
+                    .get(&logical_path)
+                    .cloned()
+                    .unwrap_or_default();
+                let type_function_pair = matches!(
+                    (namespace, occupied.contains(&DeclarationNamespace::Type)),
+                    (DeclarationNamespace::Function, true)
+                ) || matches!(
+                    (
+                        namespace,
+                        occupied.contains(&DeclarationNamespace::Function)
+                    ),
+                    (DeclarationNamespace::Type, true)
+                );
+                if type_function_pair && *visibility != previous.visibility {
+                    diagnostics.push(format!(
+                        "{}: error: declaration `{name}` must use the same visibility as the same-named declaration in {}",
+                        unit.source.path, previous.source_path
+                    ));
+                    continue;
+                }
                 if let Item::Function(function) = item {
                     let shape = function
                         .groups
@@ -679,6 +709,20 @@ fn collect_symbols(
                                 .collect::<Vec<_>>()
                         })
                         .collect::<Vec<_>>();
+                    if type_function_pair
+                        && !occupied.contains(&DeclarationNamespace::Other)
+                        && !occupied.contains(&DeclarationNamespace::Function)
+                    {
+                        function_overloads
+                            .entry(logical_path.clone())
+                            .or_default()
+                            .insert(shape);
+                        symbol_namespaces
+                            .entry(logical_path)
+                            .or_default()
+                            .insert(DeclarationNamespace::Function);
+                        continue;
+                    }
                     let Some(overloads) = function_overloads.get_mut(&logical_path) else {
                         diagnostics.push(format!(
                             "{}: error: duplicate declaration `{name}` in module `{}`; first declared in {}",
@@ -699,6 +743,15 @@ fn collect_symbols(
                             unit.source.path, previous.source_path
                         ));
                     }
+                } else if type_function_pair
+                    && !occupied.contains(&DeclarationNamespace::Other)
+                    && !occupied.contains(&DeclarationNamespace::Type)
+                {
+                    symbol_namespaces
+                        .entry(logical_path)
+                        .or_default()
+                        .insert(namespace);
+                    continue;
                 } else {
                     diagnostics.push(format!(
                         "{}: error: duplicate declaration `{name}` in module `{}`; first declared in {}",
@@ -723,6 +776,10 @@ fn collect_symbols(
                             .collect::<Vec<_>>()]),
                     );
                 }
+                symbol_namespaces
+                    .entry(logical_path.clone())
+                    .or_default()
+                    .insert(namespace);
                 symbols.insert(logical_path, symbol);
             }
 
@@ -2069,6 +2126,16 @@ fn declaration_name(item: &Item) -> Option<&str> {
     }
 }
 
+fn declaration_namespace(item: &Item) -> DeclarationNamespace {
+    match item {
+        Item::Function(_) => DeclarationNamespace::Function,
+        Item::Struct(_) | Item::Enum(_) | Item::TypeAlias(_) => DeclarationNamespace::Type,
+        Item::Global(_) | Item::Trait(_) | Item::Effect(_) | Item::Access(_) | Item::Extend(_) => {
+            DeclarationNamespace::Other
+        }
+    }
+}
+
 fn canonical_name(module_path: &[String], name: &str) -> String {
     if module_path.is_empty() {
         name.to_owned()
@@ -2445,6 +2512,15 @@ impl Resolver {
                     self.rewrite_expr(&mut argument.value, context, type_scope, value_scope);
                 }
             }
+            Expr::StructLiteral {
+                constructor,
+                fields,
+            } => {
+                self.rewrite_compile_argument_expr(constructor, context, type_scope);
+                for field in fields {
+                    self.rewrite_expr(&mut field.value, context, type_scope, value_scope);
+                }
+            }
             Expr::Member(_, _) => {
                 self.rewrite_member_chain(expression, context, type_scope, value_scope);
             }
@@ -2515,6 +2591,69 @@ impl Resolver {
                 }
             }
             Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
+        }
+    }
+
+    fn rewrite_compile_argument_expr(
+        &mut self,
+        expression: &mut Expr,
+        context: ResolveContext<'_>,
+        type_scope: &HashSet<String>,
+    ) {
+        match expression {
+            Expr::Name(name) => {
+                if type_scope.contains(name) || compile_argument_name_is_builtin(name) {
+                    return;
+                }
+                let logical = vec![name.clone()];
+                if let Some(canonical) = self.resolve_logical_path(&logical, context) {
+                    *name = canonical;
+                } else if !self.reject_unimported_standard(&logical, context) {
+                    self.reject_bare_module(&logical, context, "a type or compile-time argument");
+                }
+            }
+            Expr::Call(callee, arguments) => {
+                self.rewrite_compile_argument_expr(callee, context, type_scope);
+                for argument in arguments {
+                    self.rewrite_compile_argument_expr(&mut argument.value, context, type_scope);
+                }
+            }
+            Expr::Member(_, _) => {
+                self.rewrite_compile_argument_member_chain(expression, context, type_scope);
+            }
+            Expr::Unit | Expr::Integer(_) | Expr::Bool(_) => {}
+            other => self.rewrite_expr(other, context, type_scope, &HashSet::new()),
+        }
+    }
+
+    fn rewrite_compile_argument_member_chain(
+        &mut self,
+        expression: &mut Expr,
+        context: ResolveContext<'_>,
+        type_scope: &HashSet<String>,
+    ) {
+        let mut segments = Vec::new();
+        if collect_member_segments(expression, &mut segments)
+            && !segments
+                .first()
+                .is_some_and(|first| type_scope.contains(first))
+        {
+            if let Some((canonical, consumed)) = self.resolve_longest_prefix(&segments, context) {
+                let mut resolved = Expr::Name(canonical);
+                for member in &segments[consumed..] {
+                    resolved = Expr::Member(Box::new(resolved), member.clone());
+                }
+                *expression = resolved;
+                return;
+            }
+            if self.reject_unimported_standard(&segments, context) {
+                return;
+            }
+            self.reject_bare_module(&segments, context, "a type or compile-time argument");
+            return;
+        }
+        if let Expr::Member(base, _) = expression {
+            self.rewrite_compile_argument_expr(base, context, type_scope);
         }
     }
 
@@ -2842,6 +2981,23 @@ fn compile_parameter_names(
     names
 }
 
+fn compile_argument_name_is_builtin(name: &str) -> bool {
+    matches!(
+        name,
+        "i32"
+            | "i64"
+            | "u32"
+            | "u64"
+            | "bool"
+            | "shared"
+            | "mut"
+            | "auto"
+            | "copy"
+            | "move"
+            | "pure"
+    )
+}
+
 fn collect_member_segments(expression: &Expr, segments: &mut Vec<String>) -> bool {
     match expression {
         Expr::Name(name) => {
@@ -2919,8 +3075,8 @@ mod tests {
             unit(
                 "src/geometry.sc",
                 &["geometry"],
-                "pub(package) let Point = struct(x: i32, y: i32)\n\
-                 pub(package) let make(): Point = { Point(x: 1, y: 2) }\n",
+                "pub(package) let Point = struct { x: i32, y: i32 }\n\
+                 pub(package) let make(): Point = { Point { x: 1, y: 2 } }\n",
                 false,
             ),
         ])
@@ -2948,8 +3104,8 @@ mod tests {
         );
         assert!(matches!(
             function_tail(make),
-            Expr::Call(callee, _)
-                if callee.as_ref() == &Expr::Name("geometry::Point".into())
+            Expr::StructLiteral { constructor, .. }
+                if constructor.as_ref() == &Expr::Name("geometry::Point".into())
         ));
     }
 
@@ -2965,8 +3121,8 @@ mod tests {
             unit(
                 "src/data.sc",
                 &["data"],
-                "pub(package) let Point = struct(pub(package) x: i32)\n\
-                 pub(package) let origin = Point(x: 1)\n",
+                "pub(package) let Point = struct { pub(package) x: i32 }\n\
+                 pub(package) let origin = Point { x: 1 }\n",
                 false,
             ),
         ])
@@ -3054,22 +3210,21 @@ mod tests {
             unit(
                 "src/api.sc",
                 &["api"],
-                "pub(package) let Self = struct(value: i32)\n\
-                 pub(package) let Output = struct(value: i32)\n\
-                 pub(package) let A = struct(value: i32)\n\
+                "pub(package) let Self = struct { value: i32 }\n\
+                 pub(package) let Output = struct { value: i32 }\n\
+                 pub(package) let A = struct { value: i32 }\n\
                  pub(package) let Convert = trait {\n\
                    let Output: type\n\
                    let A: type\n\
                    let B: type\n\
                    let convert(borrow self)(value: Self): Output\n\
                  }\n\
-                 pub(package) let Number = struct(value: i32)\n\
+                 pub(package) let Number = struct { value: i32 }\n\
                  extend Number: Convert {\n\
                    let Output = i32\n\
                    let A = Self\n\
                    let B = A\n\
-                   let convert(borrow self)(value: Self): Output = { value.value }\n\
-                 }\n",
+                   let convert(borrow self)(value: Self): Output = { value.value }\n}\n",
                 false,
             ),
         ])
@@ -3158,9 +3313,9 @@ mod tests {
             unit(
                 "src/api.sc",
                 &["api"],
-                "pub(package) let Cell(T: type) = struct(value: T)\n\
+                "pub(package) let Cell (T: type) = struct { value: T }\n\
                  extend(T: type) Cell(T) {\n\
-                   let new(move value: T): Cell(T) = { Cell(value) }\n\
+                   let new(move value: T): Cell(T) = { Cell { value: value } }\n\
                    let take(move self)(): T = { self.value }\n\
                  }\n",
                 false,
@@ -3318,14 +3473,14 @@ mod tests {
 use root.fake as Add
 use root.fake as Never
 
-let Number = struct(value: i32)
+let Number = struct { value: i32 }
 extend Number: Add(Number) {
   let Output = i32
   let add(move self)(move rhs: Number): i32 = { self.value + rhs.value }
 }
 
 let stop(): Never = { loop {} }
-let main(): i32 = { Option() }
+let main(): i32 = { Option {} }
 "#,
                 true,
             ),
@@ -3334,7 +3489,7 @@ let main(): i32 = { Option() }
         .unwrap_err();
 
         for expected in [
-            "module `Option` cannot be used as a value or callable",
+            "module `Option` cannot be used as a type or compile-time argument",
             "module `Add` cannot be used as a type",
             "module `Never` cannot be used as a type",
         ] {
@@ -3795,7 +3950,7 @@ let main(): i32 = { Option() }
                 vec![unit(
                     "shared/src/lib.sc",
                     &[],
-                    "pub let Token = struct(value: i32)\n",
+                    "pub let Token = struct { value: i32 }\n",
                     true,
                 )],
             ),
@@ -3930,10 +4085,10 @@ let main(): i32 = { Option() }
         let errors = resolve_sources(&[unit(
             "src/lib.sc",
             &[],
-            "let Hidden = struct()\n\
-             pub let Wrapper(T: type) = struct()\n\
+            "let Hidden = struct {}\n\
+             pub let Wrapper (T: type) = struct {}\n\
              pub let expose(value: Wrapper(Hidden)): Hidden = { value }\n\
-             pub let shared: Hidden = Hidden()\n",
+             pub let shared: Hidden = Hidden {}\n",
             true,
         )])
         .unwrap_err();
@@ -4020,7 +4175,7 @@ let main(): i32 = { Option() }
             "src/lib.sc",
             &[],
             "let Hidden = trait {}\n\
-             pub let Cell(T: type) = struct(pub value: T)\n\
+             pub let Cell (T: type) = struct { pub value: T }\n\
              extend(T: type) Cell(T) where T: Hidden {\n\
                let take(move self)(): T = { self.value }\n\
              }\n",
@@ -4043,15 +4198,15 @@ let main(): i32 = { Option() }
             unit(
                 "src/main.sc",
                 &[],
-                "let RootSecret = struct()\n\
-                 pub(package) let PackageSecret = struct()\n\
+                "let RootSecret = struct {}\n\
+                 pub(package) let PackageSecret = struct {}\n\
                  let main(): i32 = { 0 }\n",
                 true,
             ),
             unit(
                 "src/child.sc",
                 &["child"],
-                "let ChildSecret = struct()\n\
+                "let ChildSecret = struct {}\n\
                  pub(package) let package_ok(value: RootSecret): RootSecret = { value }\n\
                  let private_ok(value: RootSecret): RootSecret = { value }\n\
                  pub(package) let package_bad(value: ChildSecret): i32 = { 0 }\n\
@@ -4077,8 +4232,8 @@ let main(): i32 = { Option() }
         let errors = resolve_sources(&[unit(
             "src/lib.sc",
             &[],
-            "let Hidden = struct()\n\
-             pub let Record = struct(pub visible: Hidden, private: Hidden)\n\
+            "let Hidden = struct {}\n\
+             pub let Record = struct { pub visible: Hidden, private: Hidden }\n\
              pub let Choice = enum {\n\
                Positional(Hidden),\n\
                Named(pub visible: Hidden, private: Hidden),\n\
@@ -4122,7 +4277,7 @@ let main(): i32 = { Option() }
         let errors = resolve_sources(&[unit(
             "src/invalid.sc",
             &[],
-            "let Hidden = struct()\n\
+            "let Hidden = struct {}\n\
              pub let Expose = trait {\n\
                let Output: type = Hidden\n\
                let convert(borrow self)(value: Hidden): Hidden\n\
@@ -4170,10 +4325,10 @@ let main(): i32 = { Option() }
             "operator.sc",
             &[],
             "use core.ops.Add as Plus\n\
-             let Number = struct(value: i32)\n\
+             let Number = struct { value: i32 }\n\
              extend Number: Plus(Number) {\n\
                let Output = Number\n\
-               let add(move self)(move rhs: Number): Number = { Number(self.value + rhs.value) }\n\
+               let add(move self)(move rhs: Number): Number = { Number { value: self.value + rhs.value } }\n\
              }\n",
             true,
         )])
@@ -4189,15 +4344,13 @@ let main(): i32 = { Option() }
             &[],
             "use core.effects.Async\n\
              use core.algebra.{Semigroup, Monoid}\n\
-             let Number = struct(value: i32)\n\
+             let Number = struct { value: i32 }\n\
              let suspended(): i32 with(Async) = { 0 }\n\
              let invoke(move action: (): i32 with(Async)): i32 with(Async) = { action() }\n\
              extend Number: Semigroup {\n\
-               let combine(move left: Number, move right: Number): Number = { Number(left.value + right.value) }\n\
-             }\n\
+               let combine(move left: Number, move right: Number): Number = { Number { value: left.value + right.value } }\n}\n\
              extend Number: Monoid {\n\
-               let empty(): Number = { Number(0) }\n\
-             }\n",
+               let empty(): Number = { Number { value: 0 } }\n}\n",
             true,
         )])
         .unwrap();
@@ -4239,7 +4392,7 @@ let main(): i32 = { Option() }
         let bare_operator = resolve_sources(&[unit(
             "operator.sc",
             &[],
-            "let Number = struct(value: i32)\n\
+            "let Number = struct { value: i32 }\n\
              extend Number: Add(Number) {\n\
                let Output = Number\n\
                let add(move self)(move rhs: Number): Number = { self }\n\
@@ -4267,10 +4420,9 @@ let main(): i32 = { Option() }
         let bare_algebra = resolve_sources(&[unit(
             "algebra.sc",
             &[],
-            "let Number = struct(value: i32)\n\
+            "let Number = struct { value: i32 }\n\
              extend Number: Semigroup {\n\
-               let combine(move left: Number, move right: Number): Number = { left }\n\
-             }\n",
+               let combine(move left: Number, move right: Number): Number = { left }\n}\n",
             true,
         )])
         .unwrap_err();
@@ -4282,7 +4434,7 @@ let main(): i32 = { Option() }
         let bare_functional = resolve_sources(&[unit(
             "functional.sc",
             &[],
-            "let Number = struct(value: i32)\n\
+            "let Number = struct { value: i32 }\n\
              extend Number: Functor {}\n",
             true,
         )])
@@ -4434,6 +4586,15 @@ let main(): i32 = { Option() }
                     visit(callee, names);
                     for argument in arguments {
                         visit(&argument.value, names);
+                    }
+                }
+                Expr::StructLiteral {
+                    constructor,
+                    fields,
+                } => {
+                    visit(constructor, names);
+                    for field in fields {
+                        visit(&field.value, names);
                     }
                 }
                 Expr::Member(base, _) => visit(base, names),

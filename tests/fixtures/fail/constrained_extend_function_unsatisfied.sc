@@ -1,9 +1,9 @@
-let Resource = struct(value: i32)
-let Cell(T: type) = struct(value: T)
+let Resource = struct { value: i32 }
+let Cell (T: type) = struct { value: T }
 
 extend(T: type) Cell(T)
 where T: Copy {
-  let new(copy value: T): Cell(T) = { Cell(value) }
+  let new(copy value: T): Cell(T) = { Cell { value: value } }
 }
 
-let main(): i32 = { Cell.new(Resource(42)).value.value }
+let main(): i32 = { Cell.new(Resource { value: 42 }).value.value }

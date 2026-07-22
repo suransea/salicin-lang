@@ -1,6 +1,6 @@
 let I32_SIZE: u64 = size_of(i32)
 
-let Padded = struct(flag: bool, value: i64)
+let Padded = struct { flag: bool, value: i64 }
 
 let main(): i32 = { if I32_SIZE == 4 &&
   size_of(Padded) == 16 &&

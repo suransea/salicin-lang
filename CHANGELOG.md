@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.183.0 - 2026-07-22
+
+- Changed struct declarations and value construction to the braced form: `let A = struct { ... }`
+  and `A { field: value }`. Parenthesized `A(...)` is no longer a built-in struct constructor.
+- Added `struct(derive: Copy) { ... }`, lowering supported derives through ordinary source-backed
+  trait implementations.
+- Allowed an ordinary function and a type to share the same top-level name, so libraries can offer
+  explicit same-name constructor functions such as `let Pair(left: i32, right: i32): Pair = { ... }`.
+- Fixed generic struct literal type-head inference for unit type arguments such as `Box(()) { ... }`.
+- Updated core/alloc libraries, fixtures, and documentation for braced struct literals while keeping
+  standard effects and protocols outside the prelude.
+
 ## 0.182.0 - 2026-07-22
 
 - Split trait parameters from the implemented subject by adding explicit trait self-kind headers

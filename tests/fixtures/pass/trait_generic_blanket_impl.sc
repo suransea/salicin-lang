@@ -2,13 +2,13 @@ let Read = trait {
   let read(borrow self)(): i32
 }
 
-let Leaf = struct(value: i32)
+let Leaf = struct { value: i32 }
 
 extend Leaf: Read {
   let read(borrow self)(): i32 = { self.value }
 }
 
-let Cell(T: type) = struct(value: T)
+let Cell (T: type) = struct { value: T }
 
 extend(T: type) Cell(T): Read
 where T: Read {
@@ -29,9 +29,9 @@ extend(T: type) Cell(T): Value {
 }
 
 let main(): i32 = {
-  let cell = Cell(Leaf(42))
+  let cell = Cell { value: Leaf { value: 42 } }
   let read = read_cell(cell)
   let leaf = cell.take()
-  let wrapped = Cell(leaf)
+  let wrapped = Cell { value: leaf }
   wrapped.read() + read - 42
 }

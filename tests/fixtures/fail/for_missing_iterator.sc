@@ -1,15 +1,14 @@
 use core.iter.IntoIterator
 
-let Iterable = struct()
-let Iter = struct()
+let Iterable = struct {}
+let Iter = struct {}
 
 extend Iterable: IntoIterator {
   let IntoIter = Iter
-  let into_iter(move self)(): Iter = { Iter() }
-}
+  let into_iter(move self)(): Iter = { Iter {} }}
 
 let main(): i32 = {
-  for value in Iterable() {
+  for value in Iterable {} {
     value
   }
   0

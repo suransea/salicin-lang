@@ -68,12 +68,14 @@ do {
 
 ### 3.2 顶层声明类别
 
-名字位于不同的语义类别，但名称查找使用同一命名空间，避免 `A` 同时指类型和值：
+名字位于不同的语义类别。类型、trait、effect、access、模块和全局值使用同一顶层声明冲突规则；
+普通具名函数有独立的函数重载集，因此可以和类型同名，用作显式 constructor/factory：
 
 ```sc
 let n = 1                         // 值
 let add(x: i32)(y: i32) = { x + y } // 具名闭包声明
-let Point = struct(x: i32, y: i32) // 类型
+let Point = struct { x: i32, y: i32 } // 类型
+let Point(x: i32, y: i32): Point = { Point { x: x, y: y } } // 同名普通函数
 let Display = trait { ... }       // trait
 let Math = struct { ... }         // 模块
 ```
@@ -84,8 +86,9 @@ let Math = struct { ... }         // 模块
 依赖图必须无环。
 
 `let` 右侧的 kind 决定绑定类别：`let Index = usize` 建立类型别名，`let n = 1` 建立值。
-同一名字不能跨类别重复；同名具名函数可以按第 18 节形成重载集。具名函数在自身函数体中可见以
-支持递归；普通值绑定在 initializer 完成前不可见。
+同一名字不能重复绑定两个类型/模块/全局值类别；类型名和具名函数名可以相同。此时 `Point { ... }`
+总是结构体字面量，`Point(...)` 总是普通函数调用。具名函数还可以按第 18 节形成重载集。具名函数
+在自身函数体中可见以支持递归；普通值绑定在 initializer 完成前不可见。
 
 ### 3.3 可见性
 
@@ -93,7 +96,7 @@ let Math = struct { ... }         // 模块
 
 ```sc
 pub let f(x: i32) = { x }
-pub let Point = struct(pub x: i32, pub y: i32)
+pub let Point = struct { pub x: i32, pub y: i32 }
 ```
 
 公开声明不能在签名或公开字段中泄漏可见性更低的类型。导入不会提升可见性；`pub use` 是显式
@@ -146,20 +149,20 @@ debug 构建中检查，release 构建默认二进制补码回绕；可另行提
 内建整数 `/` 与 `%` 在除数为零时 trap；对有符号整数，`MIN / -1` 与 `MIN % -1` 也 trap，避免
 进入 LLVM 的未定义算术。编译期常量求值会直接拒绝这些情况，而不是生成只能在运行期失败的值。
 
-类型构造使用普通调用外形：
+类型应用使用普通调用外形；结构体值构造使用第 8 节的 braced literal：
 
 ```sc
 Option(i32)
 Result(i32, IoError)
 Future(i32)
-A(i32)
+A
 ```
 
 类型构造子的编译期参数名也是调用标签。类型位置可以用具名实参消歧或提高可读性：
 
 ```sc
-let Pair(K: type, V: type) = struct(key: K, value: V)
-let pair: Pair(V: bool, K: i32) = Pair(K: i32, V: bool)(key: 1, value: true)
+let Pair (K: type, V: type) = struct { key: K, value: V }
+let pair: Pair(V: bool, K: i32) = Pair(K: i32, V: bool) { key: 1, value: true }
 ```
 
 标签按构造子的声明参数匹配并在类型检查前归一化到声明顺序；归一化后
@@ -803,18 +806,37 @@ where F: FnMut((move _: T): T) = { function(function(value)) }
 ### 8.1 名义结构体
 
 ```sc
-let A = struct(foo: i32, bar: u32)
-let a = A(foo: 1, bar: 2)
-let b = A(1, 2)
+let A = struct { foo: i32, bar: u32 }
+let a = A { foo: 1, bar: 2 }
 ```
 
-结构体是名义类型。构造时允许全标签形式或全位置形式，不允许混用。标签形式不依赖字段顺序，
-并且推荐用于公开 API。所有字段都必须初始化且每个字段只能出现一次。
+结构体是名义类型。结构体值只能用 braced literal 构造，字段必须具名；不提供内建位置构造器。
+所有字段都必须初始化且每个字段只能出现一次。字段顺序不影响语义，公开 API 推荐保持字段名稳定。
+
+需要位置式或简短构造时，声明一个普通同名函数：
+
+```sc
+let Pair = struct { left: i32, right: i32 }
+let Pair(left: i32, right: i32): Pair = { Pair { left: left, right: right } }
+
+let pair = Pair(40, 2)
+```
+
+这个 `Pair(...)` 不具有结构体特权，只是普通函数调用；它可以使用具名参数参与函数重载消歧。
+
+结构体声明可以带有限的编译期选项。当前实现支持：
+
+```sc
+let Pixel = struct(derive: Copy) { value: i32 }
+```
+
+`derive: Copy` 降低为普通 `Copy` trait 实现；泛型结构体会为每个类型参数生成对应 `T: Copy`
+约束。
 
 字段默认模块私有、不可通过不可变绑定修改。若结构体值位于可变绑定中，可修改其可见字段：
 
 ```sc
-let mut a = A(1, 2)
+let mut a = A { foo: 1, bar: 2 }
 a.foo = 3
 ```
 
@@ -868,20 +890,27 @@ let exclusive = boxed.view(mut)()
 重新声明同名外层编译期参数。
 
 `Self` 在 `extend` 成员的类型和表达式位置都表示当前扩展目标，因此构造器、关联成员、限定方法
-调用和 enum pattern 可分别写成 `Self(value)`、`Self.member`、`Self.method(self: value)()` 与
+调用和 enum pattern 可分别写成 `Self { value: value }`、`Self.member`、`Self.method(self: value)()` 与
 `Self.Some(value)`。它也适用于泛型扩展、trait 实现和默认 trait 方法；在 `extend` 外使用表达式级
 `Self` 是错误。
 
 ### 8.3 泛型结构体
 
 ```sc
-let Box(T: type) = struct(value: T)
-let a = Box(i32)(value: 10)
-let b = Box(20)
+let Box (T: type) = struct { value: T }
+let a = Box(i32) { value: 10 }
+let b: Box(i32) = Box { value: 20 }
 ```
 
-`Box(i32)` 是类型，随后一组括号才调用其构造器。`Box(20)` 省略编译期参数组，`T` 由构造实参
-推断为 `i32`。类型构造器只在编译期求值，并对实际使用的类型组合单态化。
+`Box(i32)` 是类型头，随后 `{ ... }` 构造该类型的值。`Box { value: 20 }` 可以从期望类型推断
+省略的编译期参数；没有期望类型时写 `Box(i32) { value: 20 }`，或提供一个显式同名函数：
+
+```sc
+let Box(T: type)(value: T): Box(T) = { Box(T) { value: value } }
+let c = Box(20)
+```
+
+类型构造器只在编译期求值，并对实际使用的类型组合单态化。
 
 #### 8.3.1 类型别名与类型构造子
 
@@ -928,24 +957,22 @@ let Functor = trait(Self: (Value: type): type) {
   ): Self(B) with(E)
 }
 
-let Carrier(T: type) = struct(value: T)
+let Carrier (T: type) = struct { value: T }
 
-extend Carrier: Functor {
-  let map(E: effect, A: type, B: type)(
+extend Carrier: Functor{let map(E: effect, A: type, B: type)(
     move self: Carrier(A),
   )(
     move transform: (A): B with(E),
   ): Carrier(B) with(E) = {
-    Carrier(B)(transform(self.value))
-  }
-}
+    Carrier(B) { value: transform(self.value) }
+  }}
 ```
 
 method implementation 会注册为 generic function template，并由普通模板验证路径检查函数体。
 receiver-style constructor trait 方法可以从具体 nominal 实例分派：
 
 ```sc
-let value = Carrier(i32)(41).map(add_one)
+let value = Carrier(i32) { value: 41 }.map(add_one)
 ```
 
 如果多个 constructor trait receiver method 共享同名 member，仍按命名重载规则用具名参数消歧。
@@ -956,9 +983,7 @@ trait 声明可以在 `trait` 后、`{` 前写继承约束：
 
 ```sc
 let Applicative = trait(Self: (Value: type): type)
-where Self: Functor {
-  ...
-}
+where Self: Functor(...)
 ```
 
 这里 `Self: Functor` 使用构造器 subject 规则：当前 trait 的 `Self` 构造子必须也实现
@@ -971,7 +996,7 @@ where M: Monad = {
   value
 }
 
-let kept = keep(M: Carrier)(Carrier(i32)(42))
+let kept = keep(M: Carrier)(Carrier(i32) { value: 42 })
 ```
 
 关联类型 lowering 和完整构造子方程求解仍是后续语义能力；不能唯一决定时仍通过省略编译期参数组和
@@ -992,12 +1017,12 @@ nominal 构造子的别名也能省略编译期参数组，由普通构造实参
 枚举使用与其他类型一致的 `let` 声明：
 
 ```sc
-let Option(T: type) = enum {
+let Option (T: type) = enum {
   Some(T),
   None,
 }
 
-let Result(T: type, E: type) = enum {
+let Result (T: type, E: type) = enum {
   Ok(T),
   Err(E),
 }
@@ -1036,8 +1061,8 @@ variant 之间必须使用逗号分隔，允许最后一个 variant 后保留尾
 
 ### 8.5 类型与成员命名空间
 
-`struct(...)` 创建运行时名义数据类型，包括零字段的 `struct()`；`struct { ... }` 创建编译期模块。
-两者在首版都只能直接出现在命名 `let` 声明的右侧，不支持匿名名义类型。
+`struct { ... }` 在字段上下文创建运行时名义数据类型，包括零字段的 `struct {}`；在声明上下文创建
+编译期模块。两者在首版都只能直接出现在命名 `let` 声明的右侧，不支持匿名名义类型。
 
 实例字段与固有实例方法共享实例成员命名空间，同名时报错，避免 callable 字段与方法调用产生
 歧义。关联成员通过 `A.member` 访问，可以与实例字段同名。多个 trait 提供同名方法且上下文无法
@@ -1072,7 +1097,7 @@ let value: Box(i64) = Box(10)
 let made: Product = make(10)
 ```
 
-类型位置本身没有运行时实参提供证据，因此泛型类型必须写全，例如 `Box(i64)`。`Box(_)`、
+类型位置本身没有运行时实参提供证据，因此泛型类型必须写全，例如 `Box(i64)`。`Box { pointer: _ }`、
 `identity(_)(20)`、`identity(T: _)(20)` 和独立表达式 `_` 都是语法错误。数组长度等非类型
 编译期参数同样不能写 `_`；需要推断时省略整个编译期参数组，并可用真实的命名参数消歧。
 
@@ -1158,10 +1183,10 @@ where T: Display {
 ```
 
 ```sc
-let Cell(T: type) = struct(value: T)
+let Cell (T: type) = struct { value: T }
 
 extend(T: type) Cell(T) {
-  let new(move value: T): Cell(T) = { Cell(value) }
+  let new(move value: T): Cell(T) = { Cell { value: value } }
   let take(move self)(): T = { self.value }
 }
 
@@ -1275,7 +1300,7 @@ let one = Math.inc(Math.zero)
 模块成员默认私有。`pub(package)` 对当前包公开，`pub` 同时对依赖该包的代码公开：
 
 ```sc
-pub let Client = struct(...)
+pub let Client = struct { ... }
 pub(package) let parse_header(text: Str) = { ... }
 let validate_internal_state() = { ... }
 ```
@@ -1763,7 +1788,7 @@ C 可表示的签名和布局。
 
 ```sc
 @repr(C)
-pub let Point = struct(x: f64, y: f64)
+pub let Point = struct { x: f64, y: f64 }
 
 extern "C" {
   @link_name("puts")

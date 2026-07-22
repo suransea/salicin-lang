@@ -5,7 +5,7 @@ let Select = trait {
   let make(right: i32): i32
 }
 
-let Counter = struct(value: i32)
+let Counter = struct { value: i32 }
 
 extend Counter: Select {
   let pick(borrow self)(left: i32): i32 = { self.value + left }
@@ -15,5 +15,5 @@ extend Counter: Select {
 }
 
 let main(): i32 = {
-  Counter(0).pick(right: 20) + Counter.make(right: 20)
+  Counter { value: 0 }.pick(right: 20) + Counter.make(right: 20)
 }

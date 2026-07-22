@@ -1,4 +1,4 @@
-let Pair(K: type, V: type) = struct(key: K, value: V)
+let Pair (K: type, V: type) = struct { key: K, value: V }
 
 let PairAlias: (Key: type, Value: type): type = Pair
 
@@ -17,7 +17,7 @@ where T: Holds(Item: i32)
 }
 
 let make(): PairAlias(Value: bool, Key: i32) = {
-  Pair(K: i32, V: bool)(key: 41, value: true)
+  Pair(K: i32, V: bool) { key: 41, value: true }
 }
 
 let main(): i32 = {

@@ -3,20 +3,20 @@ let Read = trait {
   let doubled(borrow self)(): i32 = { self.read() + self.read() }
 }
 
-let Number = struct(value: i32)
+let Number = struct { value: i32 }
 
 extend Number: Read {
   let read(borrow self)(): i32 = { self.value }
 }
 
-let Override = struct()
+let Override = struct {}
 
 extend Override: Read {
   let read(borrow self)(): i32 = { 0 }
   let doubled(borrow self)(): i32 = { 42 }
 }
 
-let Cell(T: type) = struct(value: T)
+let Cell (T: type) = struct { value: T }
 
 extend(T: type) Cell(T): Read
 where T: Read {
@@ -29,7 +29,7 @@ let Take = trait {
   let forward(move self)(): Item = { self.take() }
 }
 
-let Boxed = struct(value: i32)
+let Boxed = struct { value: i32 }
 
 extend Boxed: Take {
   let Item = i32
@@ -37,9 +37,9 @@ extend Boxed: Take {
 }
 
 let main(): i32 = {
-  let number = Number(21)
-  let cell = Cell(number)
-  let overridden = Override()
-  let boxed = Boxed(42)
+  let number = Number { value: 21 }
+  let cell = Cell { value: number }
+  let overridden = Override {}
+  let boxed = Boxed { value: 42 }
   cell.doubled() + overridden.doubled() + boxed.forward() - 84
 }

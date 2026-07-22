@@ -1,11 +1,10 @@
-let Resource = struct(value: i32)
+let Resource = struct { value: i32 }
 
 extend Resource: Drop {
   let drop(borrow(mut) self)(): () = {
     let checked = 1 / self.value
     self.value = 0
-  }
-}
+  }}
 
 let consume(move value: Resource): () = { () }
 
@@ -20,27 +19,27 @@ let finish_curried(move resource: Resource)(left: i32)(right: i32): i32 = {
 }
 
 let invoke(): i32 = {
-  let pending = finish(Resource(1))
+  let pending = finish(Resource { value: 1 })
   pending(42)
 }
 
 let continue_partial(): i32 = {
-  let first = finish_curried(Resource(1))
+  let first = finish_curried(Resource { value: 1 })
   let second = first(20)
   second(22)
 }
 
 let abandon(): () = {
-  let pending = finish(Resource(1))
+  let pending = finish(Resource { value: 1 })
 }
 
 let conditional(flag: bool): () = {
-  let pending = finish(Resource(1))
+  let pending = finish(Resource { value: 1 })
   if flag { pending(0); }
 }
 
 let early(): i32 = {
-  let pending = finish(Resource(1))
+  let pending = finish(Resource { value: 1 })
   pending(return 42)
 }
 

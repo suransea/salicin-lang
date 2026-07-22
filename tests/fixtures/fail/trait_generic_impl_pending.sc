@@ -2,7 +2,7 @@ let Read = trait {
   let read(borrow self)(): i32
 }
 
-let Cell(T: type) = struct(value: T)
+let Cell (T: type) = struct { value: T }
 
 extend Cell: Read {
   let read(borrow self)(): i32 = { 0 }

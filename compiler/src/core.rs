@@ -1083,7 +1083,7 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
                 && definition.fields.is_empty();
             if !valid {
                 diagnostics.push(
-                    "lang item `Continuation` must have shape `pub let Continuation(Input: type, Output: type) = struct()`"
+                    "lang item `Continuation` must have shape `pub let Continuation (Input: type, Output: type) = struct {}`"
                         .to_owned(),
                 );
             }
@@ -1098,7 +1098,7 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
                 && definition.fields.is_empty();
             if !valid {
                 diagnostics.push(
-                    "lang item `EffectCallable` must have shape `pub let EffectCallable(Input: type, Output: type, Answer: type) = struct()`"
+                    "lang item `EffectCallable` must have shape `pub let EffectCallable (Input: type, Output: type, Answer: type) = struct {}`"
                         .to_owned(),
                 );
             }
@@ -1615,7 +1615,7 @@ fn validate_option(definition: &EnumDef, diagnostics: &mut Vec<String>) {
     ];
     if definition.compile_groups != expected_groups || definition.variants != expected_variants {
         diagnostics.push(
-            "lang item `Option` must have shape `pub let Option(T: type) = enum { Some(T), None }`"
+            "lang item `Option` must have shape `pub let Option (T: type) = enum { Some(T), None }`"
                 .to_owned(),
         );
     }
@@ -1629,7 +1629,7 @@ fn validate_result(definition: &EnumDef, diagnostics: &mut Vec<String>) {
     ];
     if definition.compile_groups != expected_groups || definition.variants != expected_variants {
         diagnostics.push(
-            "lang item `Result` must have shape `pub let Result(T: type, E: type) = enum { Ok(T), Err(E) }`"
+            "lang item `Result` must have shape `pub let Result (T: type, E: type) = enum { Ok(T), Err(E) }`"
                 .to_owned(),
         );
     }
@@ -1868,8 +1868,8 @@ mod tests {
     fn core_source_with_copy(copy_declaration: &str) -> String {
         [
             r#"
-pub let Option(T: type) = enum { Some(T), None }
-pub let Result(T: type, E: type) = enum { Ok(T), Err(E) }
+pub let Option (T: type) = enum { Some(T), None }
+pub let Result (T: type, E: type) = enum { Ok(T), Err(E) }
 pub let Never = enum {}
 "#,
             copy_declaration,
@@ -2113,8 +2113,8 @@ pub let Shr(Rhs: type) = trait {
             .any(|diagnostic| diagnostic.contains("lang item `unsafe`")));
 
         let malformed = EDITION_2026_CONTROL.replace(
-            "pub let EffectCallable(Input: type, Output: type, Answer: type) = struct()",
-            "pub let EffectCallable(Input: type, Output: type) = struct()",
+            "pub let EffectCallable (Input: type, Output: type, Answer: type) = struct {}",
+            "pub let EffectCallable (Input: type, Output: type) = struct {}",
         );
         let error = CoreBundle::from_modules(
             Edition::Edition2026,
@@ -2262,8 +2262,8 @@ pub let Add(Rhs: type) = trait {
   let add(move self)(move rhs: Rhs): Output
 }
 pub let Never = enum {}
-pub let Option(T: type) = enum { Some(T), None }
-pub let Result(T: type, E: type) = enum { Ok(T), Err(E) }
+pub let Option (T: type) = enum { Some(T), None }
+pub let Result (T: type, E: type) = enum { Ok(T), Err(E) }
 pub let Div(Rhs: type) = trait {
   let Output: type
   let div(move self)(move rhs: Rhs): Output
@@ -2346,8 +2346,8 @@ pub let Shr(Rhs: type) = trait {
     #[test]
     fn rejects_wrong_visibility_kind_shape_and_extra_items_deterministically() {
         let source = r#"
-let Option(T: type) = enum { Some(T), None }
-pub let Result = struct(value: i32)
+let Option (T: type) = enum { Some(T), None }
+pub let Result = struct { value: i32 }
 pub let Never = enum { Reachable }
 pub let Copy(T: type) = trait {}
 pub let Add(Rhs: type) = trait {
@@ -2431,8 +2431,8 @@ pub let Drop = trait {
     #[test]
     fn rejects_missing_and_duplicate_lang_items_in_fixed_role_order() {
         let source = r#"
-pub let Option(T: type) = enum { Some(T), None }
-pub let Option(T: type) = enum { Some(T), None }
+pub let Option (T: type) = enum { Some(T), None }
+pub let Option (T: type) = enum { Some(T), None }
 pub let Never = enum {}
 pub let Add(Rhs: type) = trait {
   let Output: type
@@ -2550,8 +2550,8 @@ pub let Shr(Rhs: type) = trait {
     #[test]
     fn rejects_malformed_operator_traits_in_fixed_role_order() {
         let source = r#"
-pub let Option(T: type) = enum { Some(T), None }
-pub let Result(T: type, E: type) = enum { Ok(T), Err(E) }
+pub let Option (T: type) = enum { Some(T), None }
+pub let Result (T: type, E: type) = enum { Ok(T), Err(E) }
 pub let Never = enum {}
 pub let Copy = trait {}
 pub let Drop = trait {

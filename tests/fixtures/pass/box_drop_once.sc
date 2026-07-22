@@ -1,19 +1,18 @@
 use alloc.boxed.box_new
 
-let Resource = struct(counter: MutPtr(i32))
+let Resource = struct { counter: MutPtr(i32) }
 
 extend Resource: Drop {
   let drop(borrow(mut) self)(): () = { unsafe {
     *self.counter = *self.counter + 1
   }
-  }
-}
+  }}
 
 let main(): i32 = {
   let mut count = 0
   do {
     let counter = MutPtr(borrow(mut) count)
-    let first = box_new(Resource(counter))
+    let first = box_new(T: Resource)(Resource { counter: counter })
     let second = first
   }
   41 + count

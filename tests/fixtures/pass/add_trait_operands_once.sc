@@ -1,15 +1,15 @@
 use core.ops.Add
 
-let Number = struct(value: i32)
+let Number = struct { value: i32 }
 
 extend Number: Add(Number) {
   let Output = Number
-  let add(move self)(move rhs: Number): Number = { Number(self.value + rhs.value) }
+  let add(move self)(move rhs: Number): Number = { Number { value: self.value + rhs.value } }
 }
 
 let tick(borrow(mut) count: i32)(value: i32): Number = {
   count = count + 1
-  Number(value)
+  Number { value: value }
 }
 
 let main(): i32 = {

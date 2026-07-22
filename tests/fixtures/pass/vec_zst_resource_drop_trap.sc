@@ -1,16 +1,15 @@
 use alloc.vec.Vec
 
-let Bomb = struct()
+let Bomb = struct {}
 
 extend Bomb: Drop {
   let drop(borrow(mut) self)(): () = { unsafe {
     raw_trap()
   }
-  }
-}
+  }}
 
 let main(): i32 = {
   let mut values: Vec(Bomb) = Vec(Bomb).new()
-  values.push(Bomb())
+  values.push(Bomb {})
   0
 }

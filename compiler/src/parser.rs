@@ -1292,13 +1292,57 @@ impl Parser {
         compile_groups: Vec<Vec<CompileParam>>,
     ) -> Result<StructDef, ParseError> {
         self.expect(&TokenKind::Struct, "`struct`")?;
-        self.expect(&TokenKind::LParen, "`(` after `struct`")?;
-        let fields = self.named_type_fields()?;
+        let derives = self.struct_options()?;
+        self.expect(&TokenKind::LBrace, "`{` after `struct`")?;
+        let fields = self.braced_type_fields()?;
         Ok(StructDef {
             name,
             compile_groups,
+            derives,
             fields,
         })
+    }
+
+    fn struct_options(&mut self) -> Result<Vec<String>, ParseError> {
+        if !self.take(&TokenKind::LParen) {
+            return Ok(Vec::new());
+        }
+        let mut derives = Vec::new();
+        if self.take(&TokenKind::RParen) {
+            return Ok(derives);
+        }
+        loop {
+            let option = self.expect_ident("a struct option name")?;
+            self.expect(&TokenKind::Colon, "`:` after struct option name")?;
+            match option.as_str() {
+                "derive" => {
+                    let derive = self.expect_ident("a derive name")?;
+                    if derive != "Copy" {
+                        return Err(self.error_here(format!(
+                            "unsupported struct derive `{derive}`; only `Copy` is supported"
+                        )));
+                    }
+                    if derives.iter().any(|existing| existing == &derive) {
+                        return Err(self.error_here(format!("duplicate struct derive `{derive}`")));
+                    }
+                    derives.push(derive);
+                }
+                _ => {
+                    return Err(self.error_here(format!(
+                        "unknown struct option `{option}`; expected `derive`"
+                    )));
+                }
+            }
+            if self.take(&TokenKind::Comma) {
+                if self.take(&TokenKind::RParen) {
+                    break;
+                }
+            } else {
+                self.expect(&TokenKind::RParen, "`)` after struct options")?;
+                break;
+            }
+        }
+        Ok(derives)
     }
 
     fn enum_definition(
@@ -1624,11 +1668,30 @@ impl Parser {
         self.type_expr()
     }
 
-    fn named_type_fields(&mut self) -> Result<Vec<Field>, ParseError> {
-        if self.take(&TokenKind::RParen) {
+    fn braced_type_fields(&mut self) -> Result<Vec<Field>, ParseError> {
+        if self.take(&TokenKind::RBrace) {
             return Ok(Vec::new());
         }
-        self.named_type_fields_after_open()
+        let mut fields = Vec::new();
+        loop {
+            let visibility = self.visibility()?;
+            let name = self.expect_ident("a field name")?;
+            self.expect(&TokenKind::Colon, "`:` after field name")?;
+            fields.push(Field {
+                visibility,
+                name,
+                ty: self.type_expr()?,
+            });
+            if self.take(&TokenKind::Comma) {
+                if self.take(&TokenKind::RBrace) {
+                    break;
+                }
+            } else {
+                self.expect(&TokenKind::RBrace, "`}` after fields")?;
+                break;
+            }
+        }
+        Ok(fields)
     }
 
     fn named_type_fields_after_open(&mut self) -> Result<Vec<Field>, ParseError> {
@@ -2379,6 +2442,13 @@ impl Parser {
             } else if self.take(&TokenKind::QuestionDot) {
                 let member = self.expect_ident("a member name after `?.`")?;
                 expression = Expr::ChainMember(Box::new(expression), member);
+            } else if self.struct_literal_follows(&expression) {
+                let fields = self.struct_literal_fields()?;
+                expression = Expr::StructLiteral {
+                    constructor: Box::new(expression),
+                    fields,
+                };
+                has_call_group = false;
             } else if allow_trailing_closure
                 && has_call_group
                 && !used_trailing_closure
@@ -2399,6 +2469,58 @@ impl Parser {
         }
 
         Ok(expression)
+    }
+
+    fn struct_literal_follows(&self, expression: &Expr) -> bool {
+        self.at(&TokenKind::LBrace)
+            && Self::expression_can_head_struct_literal(expression)
+            && (self.at_offset(1, &TokenKind::RBrace)
+                || matches!(
+                    (
+                        self.tokens.get(self.index + 1).map(|token| &token.kind),
+                        self.tokens.get(self.index + 2).map(|token| &token.kind),
+                    ),
+                    (Some(TokenKind::Ident(_)), Some(TokenKind::Colon))
+                ))
+    }
+
+    fn expression_can_head_struct_literal(expression: &Expr) -> bool {
+        let root = Self::struct_literal_root(expression);
+        root.chars().next().is_some_and(char::is_uppercase)
+    }
+
+    fn struct_literal_root(expression: &Expr) -> &str {
+        match expression {
+            Expr::Name(name) => name,
+            Expr::Call(callee, _) => Self::struct_literal_root(callee),
+            Expr::Member(_, member) => member,
+            _ => "",
+        }
+    }
+
+    fn struct_literal_fields(&mut self) -> Result<Vec<CallArg>, ParseError> {
+        self.expect(&TokenKind::LBrace, "`{` before struct fields")?;
+        let mut fields = Vec::new();
+        if self.take(&TokenKind::RBrace) {
+            return Ok(fields);
+        }
+        loop {
+            let label = self.expect_ident("a struct literal field name")?;
+            self.expect(&TokenKind::Colon, "`:` after struct literal field name")?;
+            fields.push(CallArg {
+                label: Some(label),
+                value: self.expression(true)?,
+            });
+            if self.take(&TokenKind::Comma) {
+                if self.take(&TokenKind::RBrace) {
+                    break;
+                }
+            } else {
+                self.expect(&TokenKind::RBrace, "`}` after struct literal fields")?;
+                break;
+            }
+        }
+        Ok(fields)
     }
 
     fn primary(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
@@ -3504,6 +3626,16 @@ fn validate_expr_accesses(expression: &Expr, accesses: &HashSet<String>) -> Resu
             }
             Ok(())
         }
+        Expr::StructLiteral {
+            constructor,
+            fields,
+        } => {
+            validate_expr_accesses(constructor, accesses)?;
+            for field in fields {
+                validate_expr_accesses(&field.value, accesses)?;
+            }
+            Ok(())
+        }
         Expr::Member(base, _) | Expr::ChainMember(base, _) => {
             validate_expr_accesses(base, accesses)
         }
@@ -3679,6 +3811,16 @@ fn validate_expr_regions(expression: &Expr, regions: &HashSet<String>) -> Result
             validate_expr_regions(callee, regions)?;
             for argument in arguments {
                 validate_expr_regions(&argument.value, regions)?;
+            }
+            Ok(())
+        }
+        Expr::StructLiteral {
+            constructor,
+            fields,
+        } => {
+            validate_expr_regions(constructor, regions)?;
+            for field in fields {
+                validate_expr_regions(&field.value, regions)?;
             }
             Ok(())
         }
@@ -4262,7 +4404,7 @@ mod tests {
     #[test]
     fn parses_generic_structs_and_enums() {
         let program = parse(
-            "let Cell(T: type) = struct(value: T)\n\
+            "let Cell (T: type) = struct { value: T }\n\
              let Maybe(T: type) = enum {\n\
                Some(T),\n\
                Named(value: T),\n\
@@ -4395,10 +4537,10 @@ mod tests {
     #[test]
     fn rejects_removed_underscore_inference_syntax() {
         for source in [
-            "let value: Cell(_) = Cell(i32)(20)\n",
-            "let value = Cell(_)(20)\n",
-            "let value = Cell(T: _)(20)\n",
-            "let value = Cell(Cell(_))(Cell(i32)(20))\n",
+            "let value: Cell(_) = Cell(i32) { value: 20 }\n",
+            "let value = Cell(_) { value: 20 }\n",
+            "let value = Cell(T: _) { value: 20 }\n",
+            "let value = Cell(Cell(_)) { value: Cell(i32) { value: 20 } }\n",
             "let value = _\n",
             "let value: Array(i32, _) = []\n",
         ] {
@@ -4453,8 +4595,8 @@ mod tests {
         }
 
         let program = parse(
-            "let cell = Cell(i32)(value: 42)\n\
-             let nested = Cell(Cell(i32))(value: 42)\n\
+            "let cell = Cell(i32) { value: 42 }\n\
+             let nested = Cell(Cell(i32)) { value: 42 }\n\
              let some = Maybe(i32).Some(42)\n\
              let none = Maybe(i32).None\n",
         )
@@ -4465,10 +4607,10 @@ mod tests {
         };
         assert_eq!(
             cell.value,
-            Expr::Call(
-                Box::new(type_head("Cell", Expr::Name("i32".into()))),
-                vec![argument(Some("value"), Expr::Integer(42))],
-            )
+            Expr::StructLiteral {
+                constructor: Box::new(type_head("Cell", Expr::Name("i32".into()))),
+                fields: vec![argument(Some("value"), Expr::Integer(42))],
+            }
         );
 
         let Item::Global(nested) = &program.items[1] else {
@@ -4476,13 +4618,13 @@ mod tests {
         };
         assert_eq!(
             nested.value,
-            Expr::Call(
-                Box::new(type_head(
+            Expr::StructLiteral {
+                constructor: Box::new(type_head(
                     "Cell",
                     type_head("Cell", Expr::Name("i32".into())),
                 )),
-                vec![argument(Some("value"), Expr::Integer(42))],
-            )
+                fields: vec![argument(Some("value"), Expr::Integer(42))],
+            }
         );
 
         let Item::Global(some) = &program.items[2] else {
@@ -4553,7 +4695,7 @@ mod tests {
 
     #[test]
     fn rejects_runtime_parameters_on_generic_data_and_extend_headers() {
-        let data = parse("let Bad(T: type)(value: T) = struct(value: T)\n").unwrap_err();
+        let data = parse("let Bad(T: type)(value: T) = struct { value: T }\n").unwrap_err();
         assert!(data.message.contains("runtime parameters"));
 
         let extension = parse("extend(value: i32) Cell(i32) {}\n").unwrap_err();
@@ -4846,7 +4988,7 @@ mod tests {
     #[test]
     fn parses_structs_and_enum_field_shapes() {
         let program = parse(
-            "let Point = struct(x: i32, pub(package) y: i32, pub z: i32)\n\
+            "let Point = struct { x: i32, pub(package) y: i32, pub z: i32 }\n\
              let Shape = enum {\n\
                Circle(pub radius: i32, pub(package) center: Point, label: i32),\n\
                Pair(i32, i32),\n\
@@ -4895,9 +5037,9 @@ mod tests {
     #[test]
     fn parses_labeled_construction_member_access_and_assignment() {
         let program = parse(
-            "let Point = struct(x: i32, y: i32)\n\
+            "let Point = struct { x: i32, y: i32 }\n\
              let main(): i32 = {\n\
-               let mut point = Point(x: 1, y: 2)\n\
+               let mut point = Point { x: 1, y: 2 }\n\
                point.x = 3\n\
                point.x\n\
              }\n",
@@ -4915,8 +5057,8 @@ mod tests {
         };
         assert!(matches!(
             &binding.value,
-            Expr::Call(_, arguments)
-                if arguments.iter().map(|argument| argument.label.as_deref()).collect::<Vec<_>>()
+            Expr::StructLiteral { fields, .. }
+                if fields.iter().map(|argument| argument.label.as_deref()).collect::<Vec<_>>()
                     == vec![Some("x"), Some("y")]
         ));
         assert!(matches!(
@@ -5001,7 +5143,7 @@ mod tests {
 
     #[test]
     fn rejects_mixed_labeled_and_positional_arguments() {
-        let error = parse("let point = Point(x: 1, 2)\n").unwrap_err();
+        let error = parse("let value = call(x: 1, 2)\n").unwrap_err();
         assert!(error.message.contains("cannot be mixed"));
     }
 
@@ -5270,7 +5412,7 @@ mod tests {
         );
         assert_eq!(combined.effects.parameters, vec!["E"]);
 
-        let error = parse("let Box(E: effect) = struct(value: i32)\n").unwrap_err();
+        let error = parse("let Box (E: effect) = struct { value: i32 }\n").unwrap_err();
         assert!(error
             .message
             .contains("effect parameters belong to functions"));
@@ -5457,7 +5599,7 @@ mod tests {
 
     #[test]
     fn rejects_passing_parameters_on_data_declarations() {
-        let error = parse("let Wrapper(P: passing) = struct(value: i32)\n").unwrap_err();
+        let error = parse("let Wrapper (P: passing) = struct { value: i32 }\n").unwrap_err();
         assert!(error
             .message
             .contains("passing parameters belong to functions"));
@@ -5615,11 +5757,11 @@ mod tests {
     #[test]
     fn parses_extend_methods_associated_functions_constants_and_trait_refs() {
         let program = parse(
-            "let A = struct(value: i32)\n\
+            "let A = struct { value: i32 }\n\
              extend A: Foo {\n\
                let reset(borrow(mut) self)(): () = {}\n\
                let answer: i32 = 42\n\
-               let make(value: i32): A = { A(value) }\n\
+               let make(value: i32): A = { A { value: value } }\n\
              }\n",
         )
         .unwrap();
@@ -5696,11 +5838,10 @@ mod tests {
     #[test]
     fn parses_compile_parameters_on_extend_headers() {
         let program = parse(
-            "let Cell(T: type) = struct(value: T)\n\
+            "let Cell(T: type) = struct { value: T }\n\
              extend(T: type) Cell(T)\n\
              where T: Copy {\n\
-               let get(borrow self)(): T = { self.value }\n\
-             }\n",
+               let get(borrow self)(): T = { self.value }\n}\n",
         )
         .unwrap();
 
@@ -5783,7 +5924,7 @@ mod tests {
         let program = parse(
             "extend A {\n\
                let inspect(borrow self)(): i32 = { self.value }\n\
-               let replace(move self)(value: i32)(other: i32): A = { A(value + other) }\n\
+               let replace(move self)(value: i32)(other: i32): A = { A { value: value + other } }\n\
              }\n",
         )
         .unwrap();
@@ -5812,7 +5953,7 @@ mod tests {
         let mutable = parse("extend A { let mut answer = 42 }\n").unwrap_err();
         assert!(mutable.message.contains("let mut"));
 
-        let data = parse("extend A { let Nested = struct(value: i32) }\n").unwrap_err();
+        let data = parse("extend A { let Nested = struct { value: i32 } }\n").unwrap_err();
         assert!(data.message.contains("data declarations"));
 
         let missing = parse("extend A { let answer: i32\n}\n").unwrap_err();
@@ -5872,8 +6013,7 @@ mod tests {
              }\n\
              let Applicative = trait(Self: (Value: type): type)\n\
              where Self: Functor {\n\
-               let pure(A: type)(move value: A): Self(A)\n\
-             }\n",
+               let pure(A: type)(move value: A): Self(A)\n}\n",
         )
         .unwrap();
 

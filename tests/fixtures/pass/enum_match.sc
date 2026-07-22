@@ -1,12 +1,12 @@
 let Answer = enum {
-  Value(i32),
+  Value( value: i32 ),
   Empty,
 }
 
 let read(value: Answer): i32 = { value match {
-  Answer.Value(number) => number,
+  Answer.Value( value: number ) => number,
   Answer.Empty => 0,
 }
 }
 
-let main(): i32 = { read(Answer.Value(42)) }
+let main(): i32 = { read(Answer.Value( value: 42 )) }

@@ -1,7 +1,7 @@
 let Marker = trait {}
-let Value = struct(value: i32)
+let Value = struct { value: i32 }
 extend Value: Copy {}
-extend Value: Marker {}
+extend Value: Marker() {}
 
 let duplicate(T: type)(copy value: T): T
 where T: Copy,
@@ -10,4 +10,4 @@ where T: Copy,
   value
 }
 
-let main(): i32 = { duplicate(Value(42)).value }
+let main(): i32 = { duplicate(Value { value: 42 }).value }

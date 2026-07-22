@@ -1,6 +1,6 @@
 use core.iter.{Iterator, IntoIterator}
 
-let Counter = struct(current: i32, end: i32)
+let Counter = struct { current: i32, end: i32 }
 
 extend Counter: Iterator {
   let Item = i32
@@ -13,17 +13,15 @@ extend Counter: Iterator {
     } else {
       None
     }
-  }
-}
+  }}
 
 extend Counter: IntoIterator {
   let IntoIter = Counter
-  let into_iter(move self)(): Counter = { self }
-}
+  let into_iter(move self)(): Counter = { self }}
 
 let main(): i32 = {
   let mut total = 21
-  for value in Counter(current: 0, end: 7) {
+  for value in Counter { current: 0, end: 7 } {
     total = total + value
   }
   total

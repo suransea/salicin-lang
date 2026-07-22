@@ -1,11 +1,10 @@
-let Resource = struct(value: i32)
+let Resource = struct { value: i32 }
 
 extend Resource: Drop {
   let drop(borrow(mut) self)(): () = {
     let checked = 1 / self.value
     self.value = 0
-  }
-}
+  }}
 
 let consume(move resource: Resource): () = { () }
 
@@ -15,7 +14,7 @@ let finish(move resource: Resource)(value: i32): i32 = {
 }
 
 let make() = {
-  let pending = finish(Resource(1))
+  let pending = finish(Resource { value: 1 })
   pending
 }
 

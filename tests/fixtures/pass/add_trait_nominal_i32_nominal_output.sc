@@ -1,13 +1,13 @@
 use core.ops.Add
 
-let Number = struct(value: i32)
+let Number = struct { value: i32 }
 
 extend Number: Add(i32) {
   let Output = Number
-  let add(move self)(move rhs: i32): Number = { Number(self.value + rhs) }
+  let add(move self)(move rhs: i32): Number = { Number { value: self.value + rhs } }
 }
 
 let main(): i32 = {
-  let answer = Number(40) + 2
+  let answer = Number { value: 40 } + 2
   answer.value
 }

@@ -1,6 +1,6 @@
 use alloc.vec.Vec
 
-let Resource = struct(counter: MutPtr(i32), value: i32)
+let Resource = struct { counter: MutPtr(i32), value: i32 }
 
 extend Resource {
   let read(borrow self)(): i32 = { self.value }
@@ -10,8 +10,7 @@ extend Resource: Drop {
   let drop(borrow(mut) self)(): () = { unsafe {
     *self.counter = *self.counter + 1
   }
-  }
-}
+  }}
 
 let main(): i32 = {
   let counter = unsafe {
@@ -26,10 +25,10 @@ let main(): i32 = {
     empty.reverse()
 
     let mut values: Vec(Resource) = Vec(Resource).new()
-    values.push(Resource(counter, 1))
-    values.push(Resource(counter, 2))
-    values.push(Resource(counter, 3))
-    values.push(Resource(counter, 4))
+    values.push(Resource { counter: counter, value: 1 })
+    values.push(Resource { counter: counter, value: 2 })
+    values.push(Resource { counter: counter, value: 3 })
+    values.push(Resource { counter: counter, value: 4 })
     values.swap(0, 3)
     values.swap(1, 1)
     values.reverse()

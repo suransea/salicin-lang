@@ -1,4 +1,4 @@
-let A = struct(value: i32)
+let A = struct { value: i32 }
 
 extend A: Foo {
   let answer = 42

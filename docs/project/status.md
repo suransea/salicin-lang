@@ -104,7 +104,7 @@ outer call arguments still require the general callable-to-function bridge. The 
 type): type`. Constructor-valued implementations register matching generic nominal constructors and
 validate method bodies as generic function templates. Receiver-style constructor trait methods
 dispatch from concrete nominal instances, so implementations such as `extend Carrier: Functor` can
-expose `Carrier(i32)(41).map(...)` through the ordinary generic function instance pipeline. Generic
+expose `Carrier(i32) { value: 41 }.map(...)` through the ordinary generic function instance pipeline. Generic
 functions can take explicit type-constructor arguments and constructor predicates such as
 `where M: Monad`. Trait-level `where` inheritance is implemented for the standard
 `Applicative where Self: Functor` and `Monad where Self: Applicative` relationships. The remaining

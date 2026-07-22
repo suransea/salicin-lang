@@ -1,15 +1,15 @@
 use core.ops.Mul
 
-let Number = struct(value: i32)
+let Number = struct { value: i32 }
 
 extend Number: Mul(Number) {
   let Output = Number
-  let mul(move self)(move rhs: Number): Number = { Number(self.value * rhs.value) }
+  let mul(move self)(move rhs: Number): Number = { Number { value: self.value * rhs.value } }
 }
 
 let tick(borrow(mut) count: i32)(value: i32): Number = {
   count = count + 1
-  Number(value)
+  Number { value: value }
 }
 
 let main(): i32 = {

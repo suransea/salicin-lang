@@ -1,6 +1,6 @@
 use core.ops.Mul
 
-let Number = struct(value: i32)
+let Number = struct { value: i32 }
 
 extend Number: Mul(i32) {
   let Output = i32
@@ -9,6 +9,6 @@ extend Number: Mul(i32) {
 
 let main(): i32 = {
   let right = 2
-  let answer = Number(21) * right
+  let answer = Number { value: 21 } * right
   answer + right
 }

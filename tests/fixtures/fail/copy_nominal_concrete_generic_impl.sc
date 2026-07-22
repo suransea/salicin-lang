@@ -1,4 +1,4 @@
-let Cell(T: type) = struct(value: T)
+let Cell (T: type) = struct { value: T }
 
 extend Cell(i32): Copy {}
 

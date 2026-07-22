@@ -1,8 +1,8 @@
-let Boxed = struct(value: i32)
+let Boxed = struct { value: i32 }
 
 let make(borrow(mut) count: i32): Option(Boxed) = {
   count = count + 1
-  Option(Boxed).Some(Boxed(42))
+  Option(Boxed).Some(Boxed { value: 42 })
 }
 
 let main(): i32 = {

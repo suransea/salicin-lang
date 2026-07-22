@@ -1,4 +1,4 @@
-let Number = struct(value: i32)
+let Number = struct { value: i32 }
 
 extend Number {
   let descend(borrow self)(remaining: i32): i32 = {
@@ -11,6 +11,6 @@ extend Number {
 }
 
 let main(): i32 = {
-  let number = Number(42)
+  let number = Number { value: 42 }
   number.descend(3)
 }

@@ -1,13 +1,12 @@
 use alloc.boxed.{box_new, box_replace}
 
-let Resource = struct(counter: MutPtr(i32), value: i32)
+let Resource = struct { counter: MutPtr(i32), value: i32 }
 
 extend Resource: Drop {
   let drop(borrow(mut) self)(): () = { unsafe {
     *self.counter = *self.counter + 1
   }
-  }
-}
+  }}
 
 let main(): i32 = {
   let counter = unsafe {
@@ -17,9 +16,9 @@ let main(): i32 = {
     *counter = 0
   }
   do {
-    let mut boxed = box_new(Resource(counter, 10))
+    let mut boxed = box_new(T: Resource)(Resource { counter: counter, value: 10 })
     do {
-      let previous = box_replace(boxed)(Resource(counter, 20))
+      let previous = box_replace(boxed)(Resource { counter: counter, value: 20 })
     }
   }
   let drops = unsafe {

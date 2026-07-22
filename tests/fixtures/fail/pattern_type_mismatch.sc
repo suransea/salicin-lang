@@ -1,13 +1,13 @@
 let Number = enum {
-  Value(i32),
+  Value( value: i32 ),
   Empty,
 }
 
 let classify(value: Number): i32 = { value match {
-  Number.Value(true) => 42,
-  Number.Value(_) => 0,
+  Number.Value( value: true ) => 42,
+  Number.Value( value: _ ) => 0,
   Number.Empty => 0,
 }
 }
 
-let main(): i32 = { classify(Number.Value(42)) }
+let main(): i32 = { classify(Number.Value( value: 42 )) }

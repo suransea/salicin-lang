@@ -1,6 +1,5 @@
-let Payload = struct(value: i32)
-let Bundle = struct(
-  f00: Payload,
+let Payload = struct { value: i32 }
+let Bundle = struct { f00: Payload,
   f01: Payload,
   f02: Payload,
   f03: Payload,
@@ -13,8 +12,7 @@ let Bundle = struct(
   f10: Payload,
   f11: Payload,
   f12: Payload,
-  f13: Payload,
-)
+  f13: Payload, }
 
 let consume(move value: Payload): () = { () }
 
@@ -34,22 +32,7 @@ let stress(
   b12: bool,
   b13: bool,
 ): i32 = {
-  let mut bundle = Bundle(
-    Payload(0),
-    Payload(1),
-    Payload(2),
-    Payload(3),
-    Payload(4),
-    Payload(5),
-    Payload(6),
-    Payload(7),
-    Payload(8),
-    Payload(9),
-    Payload(10),
-    Payload(11),
-    Payload(12),
-    Payload(13),
-  )
+  let mut bundle = Bundle { left: Payload { value: 0 }, right: Payload { value: 1 }, field2: Payload { value: 2 }, field3: Payload { value: 3 }, field4: Payload { value: 4 }, field5: Payload { value: 5 }, field6: Payload { value: 6 }, field7: Payload { value: 7 }, field8: Payload { value: 8 }, field9: Payload { value: 9 }, field10: Payload { value: 10 }, field11: Payload { value: 11 }, field12: Payload { value: 12 }, field13: Payload { value: 13 } }
   if b00 { consume(bundle.f00) }
   if b01 { consume(bundle.f01) }
   if b02 { consume(bundle.f02) }
