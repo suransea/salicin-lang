@@ -3,13 +3,97 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::ast::{BinaryOp, Binding, CallArg, Expr, Function, FunctionEffects, Param, Stmt, Type};
+use crate::core::LangItemKind;
 
+use super::compile_time::{source_effect_identities, source_effect_source_map};
 use super::source_rewrite::{source_effect_expression_identity, source_type_expression_name};
 use super::{flatten_call, Analyzer};
 
 pub(super) type SourceContinuation = Rc<dyn Fn(&mut Analyzer, Expr) -> Result<Expr, ()>>;
 pub(super) type SourceArgumentsContinuation =
     Rc<dyn Fn(&mut Analyzer, Vec<CallArg>) -> Result<Expr, ()>>;
+
+impl Analyzer {
+    pub(super) fn is_standard_unsafe_effect_source(&self, effect: &Type) -> bool {
+        matches!(
+            effect,
+            Type::Named(name, arguments)
+                if name == self.lang_item_name(LangItemKind::UnsafeEffect)
+                    && arguments.is_empty()
+        )
+    }
+
+    pub(super) fn source_effects_include_standard_unsafe(&self, effects: &[Type]) -> bool {
+        effects
+            .iter()
+            .any(|effect| self.is_standard_unsafe_effect_source(effect))
+    }
+
+    pub(super) fn custom_effect_sources_without_standard_unsafe(
+        &self,
+        effects: &[Type],
+    ) -> Vec<Type> {
+        effects
+            .iter()
+            .filter(|effect| !self.is_standard_unsafe_effect_source(effect))
+            .cloned()
+            .collect()
+    }
+
+    pub(super) fn custom_effect_identities_without_standard_unsafe(
+        &self,
+        effects: &[Type],
+    ) -> Vec<String> {
+        source_effect_identities(&self.custom_effect_sources_without_standard_unsafe(effects))
+    }
+
+    pub(super) fn custom_effect_source_map_without_standard_unsafe(
+        &self,
+        effects: &[Type],
+    ) -> HashMap<String, Type> {
+        source_effect_source_map(&self.custom_effect_sources_without_standard_unsafe(effects))
+    }
+
+    pub(super) fn function_effects_unsafe(&self, effects: &FunctionEffects) -> bool {
+        effects.unsafe_effect || self.source_effects_include_standard_unsafe(&effects.custom)
+    }
+
+    pub(super) fn strip_authorized_unsafe_effects(&self, effects: &mut FunctionEffects) {
+        effects.unsafe_effect = false;
+        effects
+            .custom
+            .retain(|effect| !self.is_standard_unsafe_effect_source(effect));
+    }
+
+    pub(super) fn effect_abi_result_source(
+        &self,
+        logical: Type,
+        effects: &FunctionEffects,
+    ) -> Type {
+        match effects.throws.as_deref() {
+            Some(error) => Type::Named(
+                self.lang_item_name(LangItemKind::Result).to_owned(),
+                vec![error.clone(), logical],
+            ),
+            None => logical,
+        }
+    }
+
+    pub(super) fn function_effects_custom_identities(
+        &self,
+        effects: &FunctionEffects,
+    ) -> Vec<String> {
+        self.custom_effect_identities_without_standard_unsafe(&effects.custom)
+    }
+
+    pub(super) fn function_effects_custom_source_map(
+        &self,
+        effects: &FunctionEffects,
+    ) -> HashMap<String, Type> {
+        self.custom_effect_source_map_without_standard_unsafe(&effects.custom)
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct AlgebraicHandlerClause {
     pub(super) parameters: Vec<Param>,
