@@ -88,23 +88,23 @@ aliases and the former prefix spelling are intentionally absent before 1.0.
 Passing keyword generics are also implemented for functions and generic inherent members:
 `P: passing` accepts `auto`, `copy`, or `move` and can be referenced directly in parameter keyword
 position. Functions and trait methods place a contextual `with(...)` clause after the result type:
-`: T with(unsafe)` adds the checked unsafe call requirement, while `: T with(Throws(E))` declares the
+`: T with(Unsafe)` adds the checked unsafe call requirement, while `: T with(Throws(E))` declares the
 standard recoverable-error effect. `try { ... }` handles that effect and produces an explicit
 `Result`. Without a contextual result type, direct ordinary `Throws(E)` calls can infer
 `Result(T, E)` when the success type and unique error type are probeable; postfix `.try` and
 `with(try...)` are removed.
 Callable source types use the same shape, such as
-`(i32): i32 with(unsafe)`; the clause is not a runtime or currying group. Complete direct, method,
-aliased, and partially applied unsafe calls require an
-enclosing unsafe function or `unsafe { ... }` handler. `do` forwards the implemented unsafe effect
-into nested immediate calls. `let UI = effect` declares a nominal, module-visible marker effect.
+`(i32): i32 with(Unsafe)`; the clause is not a runtime or currying group. Complete direct, method,
+aliased, and partially applied unsafe calls require an enclosing `with(Unsafe)` function or
+`unsafe { ... }` handler. `do` forwards the implemented `Unsafe` effect into nested immediate
+calls. `let UI = effect` declares a nominal, module-visible marker effect.
 Parameterized user effects may declare typed operation requirements. Operation calls use an exact
 instantiated identity such as `State(i32)`, propagate through the existing row machinery, and are
 checked for parameter modes, result types, arity, visibility, and missing row requirements.
 Operations share the language's name-only overload rule: runtime label shapes must differ, calls
 use named arguments, and repeated handler labels select signatures through clause parameter names.
 Handling removes only the selected nominal identity: operation gates and generated resumable frames
-retain residual `unsafe`, `throws`, and other nominal requirements, including the distinct logical
+retain residual `Unsafe`, `throws`, and other nominal requirements, including the distinct logical
 success and `Result` ABI types needed by throwing continuations.
 Derived handlers support typed one-shot resumption, abandonment, `done:` answer conversion, named-call
 propagation, direct recursion, and resumable loop backedges. Cross-function abandonment and
@@ -158,7 +158,7 @@ Different user-defined handlers compose lexically through action, clause, and ge
 closure boundaries; nested handlers of the same identity retain nearest-boundary selection.
 Function and generic inherent-member `E: effect` parameters represent complete rows, default to pure,
 participate in monomorphization, forward through ordinary compile-time calls such as
-`callee(E)(value)`, and infer pure, unsafe, custom, or standard `Throws(Error)` rows from
+`callee(E)(value)`, and infer pure, Unsafe, custom, or standard `Throws(Error)` rows from
 higher-order callable arguments. A selected `Throws(Error)` row preserves its error type through
 forwarding and specialization.
 Named non-capturing functions can be passed and invoked through the native function-pointer ABI.
@@ -180,7 +180,7 @@ residual-handler, and mixed unsafe/error lowering still use the older internal c
 that implementation is unified. Ordinary `Option` and `Result` functions require explicit variant
 construction; the removed `Try`, `FromResidual`, `FromError`, and `ControlFlow` language protocols no
 longer participate in return completion or propagation. `do` transparently forwards the complete
-active row through its immediate closure boundary, including recoverable-error, `unsafe`,
+active row through its immediate closure boundary, including recoverable-error, `Unsafe`,
 and nominal marker effects. Capturing closure values, generic trait methods, the remaining general
 algebraic-continuation ABI, and async color lowering remain design or implementation work.
 

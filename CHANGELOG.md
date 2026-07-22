@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.165.0 - 2026-07-22
+
+- Made `Unsafe` the public standard effect spelling in `with(...)` rows and effect compile-time
+  arguments; lowercase `with(unsafe)` now reports a migration diagnostic instead of being accepted.
+- Changed the validated `core.control.unsafe` contract to require `core.effects.Unsafe`, then
+  normalized that standard effect identity onto the existing checked-unsafe semantic bit so raw
+  pointer checks, callable rows, method signatures, and generic effect arguments continue to use one
+  enforcement path.
+- Updated public fixtures, docs, and diagnostics to use `Unsafe` while keeping the remaining
+  lowercase `throws(E)` carrier tests explicit as implementation debt until those paths are fully
+  migrated to ordinary `Throws(E)`.
+
 ## 0.164.0 - 2026-07-22
 
 - Extended context-free `try { ... }` inference to ordinary standard `Throws(E)` function calls:

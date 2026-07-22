@@ -1,4 +1,6 @@
-let read(fail: bool): i32 with(throws(bool), unsafe) = {
+use core.effects.Unsafe
+
+let read(fail: bool): i32 with(throws(bool), Unsafe) = {
   if fail { throw true }
   42
 }

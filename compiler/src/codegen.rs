@@ -608,10 +608,10 @@ impl fmt::Display for Ty {
                 write!(f, "{}", function.result)?;
                 let mut effects = function.custom_effects.clone();
                 if function.unsafe_effect {
-                    effects.insert(0, "unsafe".to_owned());
+                    effects.insert(0, "Unsafe".to_owned());
                 }
                 if let Some(error) = &function.throws_error {
-                    effects.push(format!("throws({error})"));
+                    effects.push(format!("Throws({error})"));
                 }
                 if !effects.is_empty() {
                     write!(f, " with({})", effects.join(", "))?;
@@ -634,10 +634,10 @@ impl fmt::Display for Ty {
             } => {
                 let mut effects = custom_effects.clone();
                 if *unsafe_effect {
-                    effects.insert(0, "unsafe".to_owned());
+                    effects.insert(0, "Unsafe".to_owned());
                 }
                 if let Some(error) = throws_error {
-                    effects.push(format!("throws({error})"));
+                    effects.push(format!("Throws({error})"));
                 }
                 if effects.is_empty() {
                     f.write_str("pure")
@@ -2107,6 +2107,55 @@ impl Analyzer {
         self.lang_items.get(kind).canonical_name()
     }
 
+    fn is_standard_unsafe_effect_source(&self, effect: &Type) -> bool {
+        matches!(
+            effect,
+            Type::Named(name, arguments)
+                if name == self.lang_item_name(LangItemKind::UnsafeEffect)
+                    && arguments.is_empty()
+        )
+    }
+
+    fn source_effects_include_standard_unsafe(&self, effects: &[Type]) -> bool {
+        effects
+            .iter()
+            .any(|effect| self.is_standard_unsafe_effect_source(effect))
+    }
+
+    fn custom_effect_sources_without_standard_unsafe(&self, effects: &[Type]) -> Vec<Type> {
+        effects
+            .iter()
+            .filter(|effect| !self.is_standard_unsafe_effect_source(effect))
+            .cloned()
+            .collect()
+    }
+
+    fn custom_effect_identities_without_standard_unsafe(&self, effects: &[Type]) -> Vec<String> {
+        source_effect_identities(&self.custom_effect_sources_without_standard_unsafe(effects))
+    }
+
+    fn custom_effect_source_map_without_standard_unsafe(
+        &self,
+        effects: &[Type],
+    ) -> HashMap<String, Type> {
+        source_effect_source_map(&self.custom_effect_sources_without_standard_unsafe(effects))
+    }
+
+    fn function_effects_unsafe(&self, effects: &FunctionEffects) -> bool {
+        effects.unsafe_effect || self.source_effects_include_standard_unsafe(&effects.custom)
+    }
+
+    fn function_effects_custom_identities(&self, effects: &FunctionEffects) -> Vec<String> {
+        self.custom_effect_identities_without_standard_unsafe(&effects.custom)
+    }
+
+    fn function_effects_custom_source_map(
+        &self,
+        effects: &FunctionEffects,
+    ) -> HashMap<String, Type> {
+        self.custom_effect_source_map_without_standard_unsafe(&effects.custom)
+    }
+
     fn fallible_type_name(&self, kind: BuiltinFallibleKind) -> &str {
         match kind {
             BuiltinFallibleKind::Option => self.lang_item_name(LangItemKind::Option),
@@ -2475,9 +2524,9 @@ impl Analyzer {
                 name,
                 FunctionSig {
                     groups,
-                    unsafe_effect: function.effects.unsafe_effect,
+                    unsafe_effect: self.function_effects_unsafe(&function.effects),
                     throws_error,
-                    custom_effects: source_effect_identities(&function.effects.custom),
+                    custom_effects: self.function_effects_custom_identities(&function.effects),
                     result,
                 },
             );
@@ -2519,16 +2568,20 @@ impl Analyzer {
                     else {
                         continue;
                     };
-                    if effects.unsafe_effect
+                    if self.function_effects_unsafe(effects)
                         || effects.throws.is_some()
                         || !effects.parameters.is_empty()
-                        || effects.custom.len() != 1
+                        || self.function_effects_custom_identities(effects).len() != 1
                         || groups.len() != 1
                         || groups[0].len() > 1
                     {
                         continue;
                     }
-                    let effect = source_effect_identity(&effects.custom[0]);
+                    let effect = self
+                        .function_effects_custom_identities(effects)
+                        .into_iter()
+                        .next()
+                        .expect("exactly one normalized custom effect");
                     let root = effect.split('(').next().unwrap_or(&effect);
                     if self
                         .effect_defs
@@ -2538,6 +2591,7 @@ impl Analyzer {
                             .effects
                             .custom
                             .iter()
+                            .filter(|candidate| !self.is_standard_unsafe_effect_source(candidate))
                             .any(|candidate| source_effect_identity(candidate) == effect)
                         || !expression_handles_effect(body, &effect)
                     {
@@ -4305,9 +4359,9 @@ impl Analyzer {
                 canonical.clone(),
                 FunctionSig {
                     groups,
-                    unsafe_effect: function.effects.unsafe_effect,
+                    unsafe_effect: self.function_effects_unsafe(&function.effects),
                     throws_error,
-                    custom_effects: source_effect_identities(&function.effects.custom),
+                    custom_effects: self.function_effects_custom_identities(&function.effects),
                     result,
                 },
             );
@@ -4586,9 +4640,9 @@ impl Analyzer {
                     canonical.clone(),
                     FunctionSig {
                         groups,
-                        unsafe_effect: function.effects.unsafe_effect,
+                        unsafe_effect: self.function_effects_unsafe(&function.effects),
                         throws_error,
-                        custom_effects: source_effect_identities(&function.effects.custom),
+                        custom_effects: self.function_effects_custom_identities(&function.effects),
                         result,
                     },
                 );
@@ -4805,9 +4859,10 @@ impl Analyzer {
                             canonical.clone(),
                             FunctionSig {
                                 groups,
-                                unsafe_effect: function.effects.unsafe_effect,
+                                unsafe_effect: self.function_effects_unsafe(&function.effects),
                                 throws_error,
-                                custom_effects: source_effect_identities(&function.effects.custom),
+                                custom_effects: self
+                                    .function_effects_custom_identities(&function.effects),
                                 result,
                             },
                         );
@@ -6657,13 +6712,13 @@ impl Analyzer {
                 .return_type
                 .as_ref()
                 .map(|ty| self.lower_source_type(ty));
-            let unsafe_effect = function.effects.unsafe_effect;
+            let unsafe_effect = self.function_effects_unsafe(&function.effects);
             let throws_error = function
                 .effects
                 .throws
                 .as_deref()
                 .map(|error| self.lower_source_type(error));
-            let custom_effects = source_effect_identities(&function.effects.custom);
+            let custom_effects = self.function_effects_custom_identities(&function.effects);
             self.functions.insert(validation_name.clone(), function);
             self.function_origins.insert(
                 validation_name.clone(),
@@ -6794,9 +6849,9 @@ impl Analyzer {
                     canonical.clone(),
                     FunctionSig {
                         groups,
-                        unsafe_effect: method.effects.unsafe_effect,
+                        unsafe_effect: self.function_effects_unsafe(&method.effects),
                         throws_error,
-                        custom_effects: source_effect_identities(&method.effects.custom),
+                        custom_effects: self.function_effects_custom_identities(&method.effects),
                         result,
                     },
                 );
@@ -7057,12 +7112,12 @@ impl Analyzer {
                         .iter()
                         .map(|group| group.iter().map(|ty| self.lower_source_type(ty)).collect())
                         .collect(),
-                    unsafe_effect: effects.unsafe_effect,
+                    unsafe_effect: self.function_effects_unsafe(effects),
                     throws_error: effects
                         .throws
                         .as_deref()
                         .map(|error| Box::new(self.lower_source_type(error))),
-                    custom_effects: source_effect_identities(&effects.custom),
+                    custom_effects: self.function_effects_custom_identities(effects),
                     result: Box::new(self.lower_source_type(result)),
                 })
             }
@@ -7507,7 +7562,7 @@ impl Analyzer {
                 rendered.push_str(&self.diagnostic_type_name(&function.result));
                 let mut effects = function.custom_effects.clone();
                 if function.unsafe_effect {
-                    effects.insert(0, "unsafe".to_owned());
+                    effects.insert(0, "Unsafe".to_owned());
                 }
                 if !effects.is_empty() {
                     rendered.push_str(" with(");
@@ -7617,12 +7672,52 @@ impl Analyzer {
             },
             CompileParamKind::Effect => match expression {
                 Expr::Name(name) if name == "pure" => Some(effect_row_source(false, None, &[])),
-                Expr::Name(name) if name == "unsafe" => Some(effect_row_source(true, None, &[])),
+                Expr::Name(name) if name == self.lang_item_name(LangItemKind::UnsafeEffect) => {
+                    Some(effect_row_source(true, None, &[]))
+                }
                 Expr::Name(name) if self.effects.contains(name) => {
                     Some(effect_row_source(false, None, std::slice::from_ref(name)))
                 }
                 Expr::Name(name) if effect_row_from_marker(name).is_some() => {
                     Some(Type::Named(name.clone(), Vec::new()))
+                }
+                Expr::Call(callee, arguments)
+                    if matches!(
+                        callee.as_ref(),
+                        Expr::Name(name)
+                            if name == self.lang_item_name(LangItemKind::UnsafeEffect)
+                                && arguments.is_empty()
+                    ) =>
+                {
+                    Some(effect_row_source(true, None, &[]))
+                }
+                Expr::Call(callee, arguments)
+                    if matches!(
+                        callee.as_ref(),
+                        Expr::Name(name) if self.effects.contains(name)
+                    ) =>
+                {
+                    let Expr::Name(name) = callee.as_ref() else {
+                        unreachable!()
+                    };
+                    let mut source_arguments = Vec::new();
+                    for argument in arguments {
+                        if argument.label.is_some() {
+                            return None;
+                        }
+                        source_arguments
+                            .push(self.probe_type_argument_source(&argument.value, substitutions)?);
+                    }
+                    let effect = Type::Named(name.clone(), source_arguments);
+                    if self.is_standard_unsafe_effect_source(&effect) {
+                        Some(effect_row_source(true, None, &[]))
+                    } else {
+                        Some(effect_row_source(
+                            false,
+                            None,
+                            &[source_effect_identity(&effect)],
+                        ))
+                    }
                 }
                 Expr::Call(callee, arguments)
                     if matches!(callee.as_ref(), Expr::Name(name) if name == "throws")
@@ -7683,12 +7778,12 @@ impl Analyzer {
                                 .collect::<Option<Vec<_>>>()
                         })
                         .collect::<Option<Vec<_>>>()?,
-                    unsafe_effect: effects.unsafe_effect,
+                    unsafe_effect: self.function_effects_unsafe(effects),
                     throws_error: match effects.throws.as_deref() {
                         Some(error) => Some(Box::new(self.probe_source_ty(error)?)),
                         None => None,
                     },
-                    custom_effects: source_effect_identities(&effects.custom),
+                    custom_effects: self.function_effects_custom_identities(effects),
                     result: Box::new(self.probe_source_ty(result)?),
                 }))
             }
@@ -8051,9 +8146,10 @@ impl Analyzer {
                     ),
                     _ => return Err(mismatch()),
                 };
-                let fixed_custom = source_effect_identities(&effects.custom);
+                let template_unsafe = self.function_effects_unsafe(effects);
+                let fixed_custom = self.function_effects_custom_identities(effects);
                 if effects.parameters.is_empty()
-                    && ((actual_function.unsafe_effect && !effects.unsafe_effect)
+                    && ((actual_function.unsafe_effect && !template_unsafe)
                         || actual_function
                             .custom_effects
                             .iter()
@@ -8062,7 +8158,7 @@ impl Analyzer {
                     return Err(mismatch());
                 }
                 let mut changed = throws_changed;
-                let selected_unsafe = actual_function.unsafe_effect && !effects.unsafe_effect;
+                let selected_unsafe = actual_function.unsafe_effect && !template_unsafe;
                 let selected_custom = actual_function
                     .custom_effects
                     .iter()
@@ -8279,7 +8375,7 @@ impl Analyzer {
                 effects,
                 result,
             } => {
-                let mut unsafe_effect = effects.unsafe_effect;
+                let mut unsafe_effect = self.function_effects_unsafe(effects);
                 let mut throws_error = match effects.throws.as_deref() {
                     Some(error) => Some(Box::new(self.resolved_template_ty(
                         error,
@@ -8288,7 +8384,7 @@ impl Analyzer {
                     )?)),
                     None => None,
                 };
-                let mut custom_effects = source_effect_identities(&effects.custom);
+                let mut custom_effects = self.function_effects_custom_identities(effects);
                 for parameter in &effects.parameters {
                     let Ty::EffectRow {
                         unsafe_effect: selected_unsafe,
@@ -10118,9 +10214,9 @@ impl Analyzer {
             };
             return TypeProbe::Known(Ty::Function(FunctionTy {
                 groups,
-                unsafe_effect: function.effects.unsafe_effect,
+                unsafe_effect: self.function_effects_unsafe(&function.effects),
                 throws_error,
-                custom_effects: source_effect_identities(&function.effects.custom),
+                custom_effects: self.function_effects_custom_identities(&function.effects),
                 result: Box::new(result),
             }));
         }
@@ -10401,9 +10497,10 @@ impl Analyzer {
                         };
                         return TypeProbe::Known(Ty::Function(FunctionTy {
                             groups,
-                            unsafe_effect: template.effects.unsafe_effect,
+                            unsafe_effect: self.function_effects_unsafe(&template.effects),
                             throws_error,
-                            custom_effects: source_effect_identities(&template.effects.custom),
+                            custom_effects: self
+                                .function_effects_custom_identities(&template.effects),
                             result: Box::new(result),
                         }));
                     }
@@ -10574,12 +10671,56 @@ impl Analyzer {
                     },
                     CompileParamKind::Effect => match &argument.value {
                         Expr::Name(name) if name == "pure" => effect_row_source(false, None, &[]),
-                        Expr::Name(name) if name == "unsafe" => effect_row_source(true, None, &[]),
+                        Expr::Name(name)
+                            if name == self.lang_item_name(LangItemKind::UnsafeEffect) =>
+                        {
+                            effect_row_source(true, None, &[])
+                        }
                         Expr::Name(name) if self.effects.contains(name) => {
                             effect_row_source(false, None, std::slice::from_ref(name))
                         }
                         Expr::Name(name) if effect_row_from_marker(name).is_some() => {
                             Type::Named(name.clone(), Vec::new())
+                        }
+                        Expr::Call(callee, arguments)
+                            if matches!(
+                                callee.as_ref(),
+                                Expr::Name(name)
+                                    if name == self.lang_item_name(LangItemKind::UnsafeEffect)
+                                        && arguments.is_empty()
+                            ) =>
+                        {
+                            effect_row_source(true, None, &[])
+                        }
+                        Expr::Call(callee, arguments)
+                            if matches!(
+                                callee.as_ref(),
+                                Expr::Name(name) if self.effects.contains(name)
+                            ) =>
+                        {
+                            let Expr::Name(name) = callee.as_ref() else {
+                                unreachable!()
+                            };
+                            let mut source_arguments = Vec::new();
+                            for argument in arguments {
+                                if argument.label.is_some() {
+                                    self.error(format!(
+                                        "effect argument `{}` in `{owner}` does not support labeled constructor arguments yet",
+                                        parameter.name
+                                    ));
+                                    return None;
+                                }
+                                source_arguments.push(self.type_argument_from_expr(
+                                    &argument.value,
+                                    &context.type_substitutions,
+                                )?);
+                            }
+                            let effect = Type::Named(name.clone(), source_arguments);
+                            if self.is_standard_unsafe_effect_source(&effect) {
+                                effect_row_source(true, None, &[])
+                            } else {
+                                effect_row_source(false, None, &[source_effect_identity(&effect)])
+                            }
                         }
                         Expr::Call(callee, arguments)
                             if matches!(callee.as_ref(), Expr::Name(name) if name == "throws")
@@ -10611,7 +10752,7 @@ impl Analyzer {
                         }
                         _ => {
                             self.error(format!(
-                                "invalid effect argument for `{}` in `{owner}`; expected `pure`, `unsafe`, `throws(Error)`, or a declared custom effect",
+                                "invalid effect argument for `{}` in `{owner}`; expected `pure`, `Unsafe`, `Throws(Error)`, or a declared custom effect",
                                 parameter.name
                             ));
                             return None;
@@ -10811,13 +10952,19 @@ impl Analyzer {
     fn expression_is_explicit_effect_argument(&self, expression: &Expr) -> bool {
         match expression {
             Expr::Name(name) => {
-                matches!(name.as_str(), "pure" | "unsafe")
+                name == "pure"
+                    || name == self.lang_item_name(LangItemKind::UnsafeEffect)
                     || self.effects.contains(name)
                     || effect_row_from_marker(name).is_some()
             }
             Expr::Call(callee, arguments) => {
-                matches!(callee.as_ref(), Expr::Name(name)
-                    if name == "throws" || effect_row_from_marker(name).is_some())
+                let Expr::Name(name) = callee.as_ref() else {
+                    return false;
+                };
+                if self.effects.contains(name) {
+                    return arguments.iter().all(|argument| argument.label.is_none());
+                }
+                (name == "throws" || effect_row_from_marker(name).is_some())
                     && arguments.len() == 1
                     && arguments[0].label.is_none()
             }
@@ -11106,9 +11253,9 @@ impl Analyzer {
             canonical.clone(),
             FunctionSig {
                 groups,
-                unsafe_effect: function.effects.unsafe_effect,
+                unsafe_effect: self.function_effects_unsafe(&function.effects),
                 throws_error,
-                custom_effects: source_effect_identities(&function.effects.custom),
+                custom_effects: self.function_effects_custom_identities(&function.effects),
                 result,
             },
         );
@@ -11218,9 +11365,10 @@ impl Analyzer {
                 .cloned()
                 .expect("every registered function has source provenance"),
         );
-        context.unsafe_depth = usize::from(function.effects.unsafe_effect);
+        context.unsafe_depth = usize::from(self.function_effects_unsafe(&function.effects));
         context.active_throws_error = signature.throws_error.clone();
-        context.active_custom_effect_sources = source_effect_source_map(&function.effects.custom);
+        context.active_custom_effect_sources =
+            self.function_effects_custom_source_map(&function.effects);
         context.active_custom_effects = context
             .active_custom_effect_sources
             .keys()
@@ -12051,9 +12199,9 @@ impl Analyzer {
                                         .annotation
                                         .as_ref()
                                         .and_then(|annotation| match annotation {
-                                            Type::Function { effects, .. } => {
-                                                Some(source_effect_source_map(&effects.custom))
-                                            }
+                                            Type::Function { effects, .. } => Some(
+                                                self.function_effects_custom_source_map(effects),
+                                            ),
                                             _ => None,
                                         })
                                         .unwrap_or_default();
@@ -21295,13 +21443,13 @@ impl Analyzer {
                             .collect()
                     })
                     .collect(),
-                unsafe_effect: function.effects.unsafe_effect,
+                unsafe_effect: self.function_effects_unsafe(&function.effects),
                 throws_error: function
                     .effects
                     .throws
                     .as_deref()
                     .map(|error| self.lower_source_type(error)),
-                custom_effects: source_effect_identities(&function.effects.custom),
+                custom_effects: self.function_effects_custom_identities(&function.effects),
                 result: function
                     .return_type
                     .as_ref()
@@ -23821,13 +23969,13 @@ impl Analyzer {
                         .collect()
                 })
                 .collect(),
-            unsafe_effect: specialized.effects.unsafe_effect,
+            unsafe_effect: self.function_effects_unsafe(&specialized.effects),
             throws_error: specialized
                 .effects
                 .throws
                 .as_deref()
                 .map(|error| self.lower_source_type(error)),
-            custom_effects: source_effect_identities(&specialized.effects.custom),
+            custom_effects: self.function_effects_custom_identities(&specialized.effects),
             result: specialized
                 .return_type
                 .as_ref()
@@ -24080,13 +24228,13 @@ impl Analyzer {
                             .collect()
                     })
                     .collect(),
-                unsafe_effect: function.effects.unsafe_effect,
+                unsafe_effect: self.function_effects_unsafe(&function.effects),
                 throws_error: function
                     .effects
                     .throws
                     .as_deref()
                     .map(|error| self.lower_source_type(error)),
-                custom_effects: source_effect_identities(&function.effects.custom),
+                custom_effects: self.function_effects_custom_identities(&function.effects),
                 result: function
                     .return_type
                     .as_ref()
@@ -24237,13 +24385,13 @@ impl Analyzer {
                         .collect()
                 })
                 .collect(),
-            unsafe_effect: specialized.effects.unsafe_effect,
+            unsafe_effect: self.function_effects_unsafe(&specialized.effects),
             throws_error: specialized
                 .effects
                 .throws
                 .as_deref()
                 .map(|error| self.lower_source_type(error)),
-            custom_effects: source_effect_identities(&specialized.effects.custom),
+            custom_effects: self.function_effects_custom_identities(&specialized.effects),
             result: specialized
                 .return_type
                 .as_ref()
@@ -25339,12 +25487,12 @@ impl Analyzer {
         else {
             return;
         };
-        if effects.unsafe_effect && context.unsafe_depth == 0 {
+        if self.function_effects_unsafe(&effects) && context.unsafe_depth == 0 {
             self.error(format!(
                 "call to unsafe function `{name}` requires an `unsafe` handler"
             ));
         }
-        let required = source_effect_identities(&effects.custom);
+        let required = self.function_effects_custom_identities(&effects);
         let missing = required
             .iter()
             .filter(|effect| !context.active_custom_effects.contains(*effect))
@@ -25396,10 +25544,13 @@ impl Analyzer {
         if signature.groups.len() != 1 || !signature.groups[0].is_empty() {
             self.error("`main` must have exactly one empty parameter group: `main()`");
         }
-        if self.functions["main"].effects.unsafe_effect {
+        if self.function_effects_unsafe(&self.functions["main"].effects) {
             self.error("`main` cannot expose an unhandled `unsafe` effect");
         }
-        if !self.functions["main"].effects.custom.is_empty() {
+        if !self
+            .function_effects_custom_identities(&self.functions["main"].effects)
+            .is_empty()
+        {
             self.error("`main` cannot expose unhandled custom effects");
         }
         if let Some(error) = &signature.throws_error {
@@ -36087,6 +36238,11 @@ mod tests {
         compile_library(&program)
     }
 
+    fn compile_resolved_library_text(source: &str) -> Result<String, Vec<Diagnostic>> {
+        let program = resolve_text(source);
+        compile_library(&program)
+    }
+
     fn cleanup_plan_text(source: &str, function_name: &str) -> CleanupPlan {
         let program = crate::parser::parse(source).expect("cleanup-plan source must parse");
         let mut analyzer = Analyzer::new(&program);
@@ -39568,15 +39724,17 @@ let main(): i32 = { loop {
 
     #[test]
     fn do_transparently_forwards_throws_unsafe_and_custom_effects() {
-        let ir = compile_text(
+        let ir = compile_resolved_text(
             r#"
+use core.effects.Unsafe
+
 let UI = effect
 let fail(flag: bool): i32 with(throws(bool)) = {
   if flag { throw true }
   40
 }
 let render(value: i32): i32 with(UI) = { value }
-let combined(pointer: Ptr(i32)): i32 with(throws(bool), unsafe, UI) = { do {
+let combined(pointer: Ptr(i32)): i32 with(throws(bool), Unsafe, UI) = { do {
   let attempted = fail(false)
   let value = render(attempted)
   if value == 40 { return *pointer }
@@ -39735,9 +39893,11 @@ let main(): i32 = { run() }
             .iter()
             .any(|error| error.message.contains("requires custom effect `IO`")));
 
-        compile_text(
+        compile_resolved_text(
             r#"
-let AskUnsafe = effect { let value(): i32 with(unsafe) }
+use core.effects.Unsafe
+
+let AskUnsafe = effect { let value(): i32 with(Unsafe) }
 let unsafe_run(): i32 = { unsafe { AskUnsafe.handle(value: { (resume) -> resume(42) }) {
   AskUnsafe.value()
 } } }
@@ -39755,9 +39915,11 @@ let main(): i32 = { 0 }
         )
         .expect("unsafe and throws requirements should survive operation handling");
 
-        let missing_unsafe = compile_text(
+        let missing_unsafe = compile_resolved_text(
             r#"
-let Ask = effect { let value(): i32 with(unsafe) }
+use core.effects.Unsafe
+
+let Ask = effect { let value(): i32 with(Unsafe) }
 let run(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) { Ask.value() } }
 let main(): i32 = { run() }
 "#,
@@ -40126,10 +40288,12 @@ let main(): i32 = { 0 }
                 && error.message.contains("found `(): i32 with(UI)`")
         }));
 
-        compile_text(
+        compile_resolved_text(
             r#"
+use core.effects.Unsafe
+
 let pure(): i32 = { 42 }
-let accept_unsafe(action: (): i32 with(unsafe))(): i32 with(unsafe) = { action() }
+let accept_unsafe(action: (): i32 with(Unsafe))(): i32 with(Unsafe) = { action() }
 let main(): i32 = { unsafe { accept_unsafe(pure)() } }
 "#,
         )
@@ -40138,10 +40302,12 @@ let main(): i32 = { unsafe { accept_unsafe(pure)() } }
 
     #[test]
     fn unsafe_effects_are_declared_forwarded_and_handled_at_calls() {
-        let ir = compile_text(
+        let ir = compile_resolved_text(
             r#"
-let read(pointer: Ptr(i32)): i32 with(unsafe) = { *pointer }
-let forward(pointer: Ptr(i32)): i32 with(unsafe) = { read(pointer) }
+use core.effects.Unsafe
+
+let read(pointer: Ptr(i32)): i32 with(Unsafe) = { *pointer }
+let forward(pointer: Ptr(i32)): i32 with(Unsafe) = { read(pointer) }
 let main(): i32 = {
   let value = 42
   unsafe { forward(Ptr(borrow value)) }
@@ -40151,9 +40317,11 @@ let main(): i32 = {
         .expect("an unsafe handler should discharge the declared effect");
         assert!(ir.contains(&format!("call i32 @{}(", function_symbol("forward"))));
 
-        let errors = compile_text(
+        let errors = compile_resolved_text(
             r#"
-let read(pointer: Ptr(i32)): i32 with(unsafe) = { *pointer }
+use core.effects.Unsafe
+
+let read(pointer: Ptr(i32)): i32 with(Unsafe) = { *pointer }
 let main(): i32 = {
   let value = 42
   read(Ptr(borrow value))
@@ -40170,9 +40338,11 @@ let main(): i32 = {
 
     #[test]
     fn unsafe_effect_checks_survive_aliasing_and_partial_application() {
-        let errors = compile_text(
+        let errors = compile_resolved_text(
             r#"
-let read(pointer: Ptr(i32))(offset: i32): i32 with(unsafe) = { *pointer + offset }
+use core.effects.Unsafe
+
+let read(pointer: Ptr(i32))(offset: i32): i32 with(Unsafe) = { *pointer + offset }
 let main(): i32 = {
   let value = 40
   let named = read
@@ -40186,9 +40356,11 @@ let main(): i32 = {
             .iter()
             .any(|error| { error.message.contains("requires an `unsafe` handler") }));
 
-        compile_text(
+        compile_resolved_text(
             r#"
-let read(pointer: Ptr(i32))(offset: i32): i32 with(unsafe) = { *pointer + offset }
+use core.effects.Unsafe
+
+let read(pointer: Ptr(i32))(offset: i32): i32 with(Unsafe) = { *pointer + offset }
 let main(): i32 = {
   let value = 40
   let pending = read(Ptr(borrow value))
@@ -40201,14 +40373,16 @@ let main(): i32 = {
 
     #[test]
     fn unsafe_effects_participate_in_method_and_trait_signatures() {
-        compile_text(
+        compile_resolved_text(
             r#"
+use core.effects.Unsafe
+
 let Reader = struct(pointer: Ptr(i32))
 let Read = trait {
-  let read(borrow self)(): i32 with(unsafe)
+  let read(borrow self)(): i32 with(Unsafe)
 }
 extend Reader: Read {
-  let read(borrow self)(): i32 with(unsafe) = { *self.pointer }
+  let read(borrow self)(): i32 with(Unsafe) = { *self.pointer }
 }
 let main(): i32 = {
   let value = 42
@@ -40219,11 +40393,13 @@ let main(): i32 = {
         )
         .expect("methods should carry their declared unsafe effect");
 
-        let errors = compile_text(
+        let errors = compile_resolved_text(
             r#"
+use core.effects.Unsafe
+
 let Reader = struct(pointer: Ptr(i32))
 let Read = trait {
-  let read(borrow self)(): i32 with(unsafe)
+  let read(borrow self)(): i32 with(Unsafe)
 }
 extend Reader: Read {
   let read(borrow self)(): i32 = { unsafe { *self.pointer } }
@@ -40239,7 +40415,10 @@ let main(): i32 = { 0 }
 
     #[test]
     fn entry_point_cannot_export_an_unsafe_effect() {
-        let errors = compile_text("let main(): i32 with(unsafe) = { 42 }\n").unwrap_err();
+        let errors = compile_resolved_text(
+            "use core.effects.Unsafe\nlet main(): i32 with(Unsafe) = { 42 }\n",
+        )
+        .unwrap_err();
         assert!(errors.iter().any(|error| {
             error
                 .message
@@ -40249,28 +40428,34 @@ let main(): i32 = { 0 }
 
     #[test]
     fn effect_compile_parameters_select_pure_or_unsafe_instances() {
-        compile_text(
+        compile_resolved_text(
             r#"
+use core.effects.Unsafe
+
 let tagged(E: effect)(value: i32): i32 with(E) = { value }
 let forward(E: effect)(value: i32): i32 with(E) = { tagged(E)(value) }
-let main(): i32 = { forward(20) + forward(pure)(20) + unsafe { forward(E: unsafe)(2) } }
+let main(): i32 = { forward(20) + forward(pure)(20) + unsafe { forward(E: Unsafe)(2) } }
 "#,
         )
         .expect("effect arguments should specialize the function call requirement");
 
-        compile_text(
+        compile_resolved_text(
             r#"
+use core.effects.Unsafe
+
 let identity(E: effect, T: type)(value: T): T with(E) = { value }
-let main(): i32 = { identity(20) + unsafe { identity(E: unsafe, T: i32)(22) } }
+let main(): i32 = { identity(20) + unsafe { identity(E: Unsafe, T: i32)(22) } }
 "#,
         )
         .expect("effect and type parameters should coexist in one inferred compile group");
 
-        let errors = compile_text(
+        let errors = compile_resolved_text(
             r#"
+use core.effects.Unsafe
+
 let tagged(E: effect)(value: i32): i32 with(E) = { value }
 let forward(E: effect)(value: i32): i32 with(E) = { tagged(E)(value) }
-let main(): i32 = { forward(unsafe)(42) }
+let main(): i32 = { forward(Unsafe)(42) }
 "#,
         )
         .unwrap_err();
@@ -40281,19 +40466,23 @@ let main(): i32 = { forward(unsafe)(42) }
             "{errors:?}"
         );
 
-        compile_text(
+        compile_resolved_text(
             r#"
+use core.effects.Unsafe
+
 let read(E: effect)(pointer: Ptr(i32)): i32 with(E) = { *pointer }
 let main(): i32 = {
   let value = 42
-  unsafe { read(unsafe)(Ptr(borrow value)) }
+  unsafe { read(Unsafe)(Ptr(borrow value)) }
 }
 "#,
         )
         .expect("the selected unsafe row should authorize the generic body");
 
-        let errors = compile_text(
+        let errors = compile_resolved_text(
             r#"
+use core.effects.Unsafe
+
 let read(E: effect)(pointer: Ptr(i32)): i32 with(E) = { *pointer }
 let main(): i32 = {
   let value = 42
@@ -40320,9 +40509,11 @@ let main(): i32 = { tagged(E: copy)(42) }
             .iter()
             .any(|error| error.message.contains("invalid effect argument")));
 
-        let errors = compile_text(
+        let errors = compile_resolved_text(
             r#"
-let always(E: effect)(value: i32): i32 with(unsafe, E) = { value }
+use core.effects.Unsafe
+
+let always(E: effect)(value: i32): i32 with(Unsafe, E) = { value }
 let main(): i32 = { always(pure)(42) }
 "#,
         )
@@ -40334,15 +40525,17 @@ let main(): i32 = { always(pure)(42) }
 
     #[test]
     fn effect_parameters_specialize_inherent_methods() {
-        compile_text(
+        compile_resolved_text(
             r#"
+use core.effects.Unsafe
+
 let Value = struct(value: i32)
 extend Value {
   let tagged(E: effect)(borrow self)(): i32 with(E) = { self.value }
 }
 let main(): i32 = {
   let value = Value(42)
-  unsafe { value.tagged(unsafe)() }
+  unsafe { value.tagged(Unsafe)() }
 }
 "#,
         )
@@ -40367,22 +40560,26 @@ let main(): i32 = {
 
     #[test]
     fn throws_and_unsafe_share_one_effect_row() {
-        let ir = compile_library_text(
+        let ir = compile_resolved_library_text(
             r#"
-let read(pointer: Ptr(i32), fail: bool): i32 with(throws(bool), unsafe) = {
+use core.effects.Unsafe
+
+let read(pointer: Ptr(i32), fail: bool): i32 with(throws(bool), Unsafe) = {
   if fail { throw true }
   *pointer
 }
-let forward(pointer: Ptr(i32), fail: bool): i32 with(throws(bool), unsafe) = {
+let forward(pointer: Ptr(i32), fail: bool): i32 with(throws(bool), Unsafe) = {
   read(pointer, fail) }
 "#,
         )
         .expect("throws should propagate while unsafe remains a separate call requirement");
         assert!(ir.contains("define internal %sali.type."));
 
-        let errors = compile_text(
+        let errors = compile_resolved_text(
             r#"
-let read(pointer: Ptr(i32)): i32 with(throws(bool), unsafe) = { *pointer }
+use core.effects.Unsafe
+
+let read(pointer: Ptr(i32)): i32 with(throws(bool), Unsafe) = { *pointer }
 let main(): i32 = {
   let value = 42
   read(Ptr(borrow value))
@@ -40397,12 +40594,14 @@ let main(): i32 = {
 
     #[test]
     fn try_handles_throws_while_forwarding_unsafe_and_custom_effects() {
-        compile_text(
+        compile_resolved_text(
             r#"
+use core.effects.Unsafe
+
 let UI = effect
 let render(value: i32): i32 with(UI) = { value }
-let read(pointer: Ptr(i32)): i32 with(unsafe) = { *pointer }
-let handle(pointer: Ptr(i32)): Result(i32, bool) with(unsafe, UI) = { try {
+let read(pointer: Ptr(i32)): i32 with(Unsafe) = { *pointer }
+let handle(pointer: Ptr(i32)): Result(i32, bool) with(Unsafe, UI) = { try {
   let value = read(pointer)
   return render(value)
 } }

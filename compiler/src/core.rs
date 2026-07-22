@@ -1307,7 +1307,7 @@ fn valid_try(function: &Function) -> bool {
 
 fn valid_unsafe(function: &Function) -> bool {
     let effects = crate::ast::FunctionEffects {
-        unsafe_effect: true,
+        custom: vec![Type::Named("core.effects.Unsafe".to_owned(), Vec::new())],
         parameters: vec!["E".to_owned()],
         ..crate::ast::FunctionEffects::default()
     };
@@ -1872,7 +1872,7 @@ pub let Shr(Rhs: type) = trait {
     #[test]
     fn rejects_malformed_control_contracts() {
         let malformed = EDITION_2026_CONTROL.replace(
-            "pub let unsafe(E: effect, T: type)(move action: (): T with(unsafe, E)): T with(E)",
+            "pub let unsafe(E: effect, T: type)(move action: (): T with(core.effects.Unsafe, E)): T with(E)",
             "pub let unsafe(E: effect, T: type)(move action: (): T with(E)): T with(E)",
         );
         let error = CoreBundle::from_modules(

@@ -1503,16 +1503,13 @@ impl Parser {
 
         self.advance();
         self.expect(&TokenKind::LParen, "`(` after `with`")?;
-        let mut unsafe_effect = false;
+        let unsafe_effect = false;
         let mut throws_error: Option<Type> = None;
         let mut effect_parameters = Vec::new();
         let mut custom = Vec::new();
         loop {
             if self.take(&TokenKind::Unsafe) {
-                if unsafe_effect {
-                    return Err(self.error_here("duplicate `unsafe` effect in `with(...)`"));
-                }
-                unsafe_effect = true;
+                return Err(self.error_here("`with(unsafe)` was removed; use `with(Unsafe)`"));
             } else if self.take(&TokenKind::Try) {
                 return Err(
                     self.error_here("`with(try...)` was removed; use `with(Throws(Error))`")
@@ -1597,7 +1594,7 @@ impl Parser {
                 }
             } else {
                 return Err(self.error_here(
-                    "expected `Throws(Error)`, `unsafe`, an effect parameter, or a custom effect name in `with(...)`",
+                    "expected `Throws(Error)`, `Unsafe`, an effect parameter, or a custom effect name in `with(...)`",
                 ));
             }
 
@@ -3921,11 +3918,15 @@ mod tests {
     #[test]
     fn parses_function_effects_and_rejects_them_on_values() {
         let program =
-            parse("let read(pointer: Ptr(i32)): i32 with(unsafe) = { *pointer }\n").unwrap();
+            parse("let read(pointer: Ptr(i32)): i32 with(Unsafe) = { *pointer }\n").unwrap();
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };
-        assert!(function.effects.unsafe_effect);
+        assert!(!function.effects.unsafe_effect);
+        assert_eq!(
+            function.effects.custom,
+            vec![Type::Named("Unsafe".to_owned(), Vec::new())]
+        );
 
         let error = parse("let answer(unsafe): i32 = { 42 }\n").unwrap_err();
         assert!(error
@@ -3941,23 +3942,24 @@ mod tests {
         assert!(error.message.contains("`!` effect syntax was removed"));
 
         let program =
-            parse("let fallible(): i32 with(throws(bool), unsafe) = { throw true }\n").unwrap();
+            parse("let fallible(): i32 with(Throws(bool), Unsafe) = { throw true }\n").unwrap();
         let Item::Function(fallible) = &program.items[0] else {
             panic!("expected fallible function");
         };
+        assert_eq!(fallible.return_type, Some(Type::I32));
+        assert!(!fallible.effects.unsafe_effect);
+        assert_eq!(fallible.effects.throws, None);
         assert_eq!(
-            fallible.return_type,
-            Some(Type::Named(
-                "Result".to_owned(),
-                vec![Type::I32, Type::Bool]
-            ))
+            fallible.effects.custom,
+            vec![
+                Type::Named("Throws".to_owned(), vec![Type::Bool]),
+                Type::Named("Unsafe".to_owned(), Vec::new())
+            ]
         );
-        assert!(fallible.effects.unsafe_effect);
-        assert_eq!(fallible.effects.throws.as_deref(), Some(&Type::Bool));
 
         for source in [
-            "let f(): i32 with(unsafe, unsafe) = { 0 }\n",
-            "let f(): i32 with(throws(bool), throws(bool)) = { 0 }\n",
+            "let f(): i32 with(Unsafe, Unsafe) = { 0 }\n",
+            "let f(): i32 with(Throws(bool), Throws(bool)) = { 0 }\n",
         ] {
             let error = parse(source).unwrap_err();
             assert!(error.message.contains("duplicate"));
@@ -5280,7 +5282,7 @@ mod tests {
     fn parses_effect_parameters_in_with_clauses() {
         let program = parse(
             "let tagged(E: effect)(value: i32): i32 with(E) = { value }\n\
-             let combined(E: effect)(value: i32): i32 with(unsafe, E) = { value }\n",
+             let combined(E: effect)(value: i32): i32 with(Unsafe, E) = { value }\n",
         )
         .unwrap();
         let Item::Function(function) = &program.items[0] else {
@@ -5291,7 +5293,10 @@ mod tests {
         let Item::Function(combined) = &program.items[1] else {
             panic!("expected function");
         };
-        assert!(combined.effects.unsafe_effect);
+        assert_eq!(
+            combined.effects.custom,
+            vec![Type::Named("Unsafe".to_owned(), Vec::new())]
+        );
         assert_eq!(combined.effects.parameters, vec!["E"]);
 
         let error = parse("let Box(E: effect) = struct(value: i32)\n").unwrap_err();
@@ -5452,8 +5457,9 @@ mod tests {
                     && result.as_ref() == &Type::I32
         ));
 
-        let old = parse("let apply(action: (i32): i32(unsafe))(value: i32): i32 = { value }\n")
-            .unwrap_err();
+        let old =
+            parse("let apply(E: effect)(action: (i32): i32(E))(value: i32): i32 = { value }\n")
+                .unwrap_err();
         assert!(old.message.contains("bare effect groups were removed"));
     }
 

@@ -142,11 +142,11 @@ pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E)
 pub let try(F: effect, T: type, E: type)
   (move action: (): T with(core.effects.Throws(E), F)): Result(T, E) with(F)
 pub let unsafe(E: effect, T: type)
-  (move action: (): T with(unsafe, E)): T with(E)
+  (move action: (): T with(core.effects.Unsafe, E)): T with(E)
 pub let loop(E: effect, T: type)(move body: (): () with(E)): T with(E)
 ```
 
-Here `try` removes only `Throws(E)`, `unsafe` removes only the unsafe requirement, and both forward
+Here `try` removes only `Throws(E)`, `unsafe` removes only the `Unsafe` requirement, and both forward
 the remainder row. `do` and `loop` forward the whole row.
 
 `core.iter` owns iteration rather than the prelude:

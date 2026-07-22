@@ -1,12 +1,14 @@
+use core.effects.Unsafe
+
 let Supply = effect {
   let seed(): i32
 }
 
 let Ask = effect {
-  let value(): i32 with(Supply, throws(bool), unsafe)
+  let value(): i32 with(Supply, throws(bool), Unsafe)
 }
 
-let request(): i32 with(Ask, Supply, throws(bool), unsafe) = {
+let request(): i32 with(Ask, Supply, throws(bool), Unsafe) = {
   Ask.value()
 }
 
