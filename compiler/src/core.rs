@@ -1146,7 +1146,8 @@ fn validate_assignment_operator(
     let method = kind
         .assignment_operator_method()
         .expect("assignment operator lang item has a method");
-    let valid = definition.compile_groups == vec![vec![type_parameter("Rhs")]]
+    let valid = trait_has_default_self(definition)
+        && definition.compile_groups == vec![vec![type_parameter("Rhs")]]
         && matches!(
             definition.members.as_slice(),
             [TraitMember::Function(function)]
@@ -1184,7 +1185,8 @@ fn valid_assignment_operator_method(function: &Function, method: &str) -> bool {
 }
 
 fn validate_iterator(definition: &TraitDef, diagnostics: &mut Vec<String>) {
-    let valid = definition.compile_groups.is_empty()
+    let valid = trait_has_default_self(definition)
+        && definition.compile_groups.is_empty()
         && matches!(
             definition.members.as_slice(),
             [
@@ -1208,7 +1210,8 @@ fn validate_iterator(definition: &TraitDef, diagnostics: &mut Vec<String>) {
 }
 
 fn validate_into_iterator(definition: &TraitDef, diagnostics: &mut Vec<String>) {
-    let valid = definition.compile_groups.is_empty()
+    let valid = trait_has_default_self(definition)
+        && definition.compile_groups.is_empty()
         && matches!(
             definition.members.as_slice(),
             [
@@ -1251,7 +1254,8 @@ fn valid_iteration_method(function: &Function, name: &str, mode: PassMode, resul
 }
 
 fn validate_chain(definition: &TraitDef, diagnostics: &mut Vec<String>) {
-    let valid = definition.compile_groups.is_empty()
+    let valid = trait_has_default_self(definition)
+        && definition.compile_groups.is_empty()
         && matches!(
             definition.members.as_slice(),
             [
@@ -1303,7 +1307,8 @@ fn valid_chain_method(function: &Function) -> bool {
 }
 
 fn validate_coalesce(definition: &TraitDef, diagnostics: &mut Vec<String>) {
-    let valid = definition.compile_groups.is_empty()
+    let valid = trait_has_default_self(definition)
+        && definition.compile_groups.is_empty()
         && matches!(
             definition.members.as_slice(),
             [
@@ -1560,6 +1565,11 @@ fn type_parameter(name: &str) -> CompileParam {
     }
 }
 
+fn trait_has_default_self(definition: &TraitDef) -> bool {
+    definition.self_parameter.name == "Self"
+        && definition.self_parameter.kind == CompileParamKind::Type
+}
+
 fn compile_effect_parameter(name: &str) -> CompileParam {
     CompileParam {
         name: name.to_owned(),
@@ -1654,7 +1664,9 @@ fn validate_copy(definition: &TraitDef, diagnostics: &mut Vec<String>) {
 
 /// Check the marker contract shared by core bootstrapping and ownership lowering.
 pub(crate) fn copy_trait_has_required_shape(definition: &TraitDef) -> bool {
-    definition.compile_groups.is_empty() && definition.members.is_empty()
+    trait_has_default_self(definition)
+        && definition.compile_groups.is_empty()
+        && definition.members.is_empty()
 }
 
 fn validate_drop(definition: &TraitDef, diagnostics: &mut Vec<String>) {
@@ -1677,7 +1689,8 @@ pub(crate) fn drop_trait_has_required_shape(definition: &TraitDef) -> bool {
     let [receiver] = receiver_group.as_slice() else {
         return false;
     };
-    definition.compile_groups.is_empty()
+    trait_has_default_self(definition)
+        && definition.compile_groups.is_empty()
         && function.name == "drop"
         && function.compile_groups.is_empty()
         && function.return_type == Some(Type::Unit)
@@ -1728,6 +1741,7 @@ pub(crate) fn unary_operator_trait_has_required_shape(
     definition: &TraitDef,
 ) -> bool {
     if !matches!(kind, LangItemKind::Neg | LangItemKind::Not)
+        || !trait_has_default_self(definition)
         || !definition.compile_groups.is_empty()
     {
         return false;
@@ -1768,7 +1782,8 @@ pub(crate) fn operator_trait_has_required_shape(kind: LangItemKind, definition: 
     let Some(method) = kind.operator_method() else {
         return false;
     };
-    let valid_groups = definition.compile_groups == vec![vec![type_parameter("Rhs")]];
+    let valid_groups = trait_has_default_self(definition)
+        && definition.compile_groups == vec![vec![type_parameter("Rhs")]];
     let valid_members = if matches!(kind, LangItemKind::Eq | LangItemKind::PartialOrd) {
         match definition.members.as_slice() {
             [TraitMember::Function(function)] => valid_borrowing_comparison_method(function, kind),

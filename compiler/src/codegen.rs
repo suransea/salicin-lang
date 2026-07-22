@@ -167,6 +167,7 @@ const PASSING_MOVE_MARKER: &str = "$passing$move";
 const EFFECT_PURE_MARKER: &str = "$effect$pure";
 const EFFECT_UNSAFE_MARKER: &str = "$effect$unsafe";
 const EFFECT_ROW_MARKER_PREFIX: &str = "$effect$row$";
+const TYPE_CONSTRUCTOR_MARKER_PREFIX: &str = "$type$constructor$";
 
 fn effect_row_marker(unsafe_effect: bool, custom: &[String]) -> String {
     let mut custom = custom.to_vec();
@@ -226,6 +227,7 @@ fn effect_row_from_source(source: &Type) -> Option<(bool, Option<Type>, Vec<Stri
 
 fn is_compile_value_marker(name: &str) -> bool {
     name.starts_with(EFFECT_ROW_MARKER_PREFIX)
+        || name.starts_with(TYPE_CONSTRUCTOR_MARKER_PREFIX)
         || matches!(
             name,
             ACCESS_SHARED_MARKER
@@ -236,6 +238,16 @@ fn is_compile_value_marker(name: &str) -> bool {
                 | EFFECT_PURE_MARKER
                 | EFFECT_UNSAFE_MARKER
         )
+}
+
+fn type_constructor_marker(name: &str) -> String {
+    format!("{TYPE_CONSTRUCTOR_MARKER_PREFIX}{name}")
+}
+
+fn type_constructor_from_marker(marker: &str) -> Option<String> {
+    marker
+        .strip_prefix(TYPE_CONSTRUCTOR_MARKER_PREFIX)
+        .map(ToOwned::to_owned)
 }
 
 fn source_effect_identity(effect: &Type) -> String {
@@ -1906,6 +1918,7 @@ fn assignment_operator_trait(operator: BinaryOp) -> Option<LangItemKind> {
 
 #[derive(Debug, Clone)]
 struct TraitSchema {
+    self_parameter: CompileParam,
     compile_parameters: Vec<CompileParam>,
     where_predicates: Vec<crate::ast::WherePredicate>,
     associated_types: Vec<String>,
@@ -3151,6 +3164,24 @@ impl Analyzer {
             ));
             valid = false;
         }
+        if definition.self_parameter.name != "Self" {
+            self.error(format!(
+                "trait `{}` self kind parameter must be named `Self`",
+                definition.name
+            ));
+            valid = false;
+        }
+        if !matches!(
+            definition.self_parameter.kind,
+            CompileParamKind::Type | CompileParamKind::TypeConstructor { .. }
+        ) {
+            self.error(format!(
+                "trait `{}` self kind must be `type` or a type-constructor kind, found {}",
+                definition.name,
+                describe_compile_param_kind(definition.self_parameter.kind)
+            ));
+            valid = false;
+        }
         let compile_parameters = definition
             .compile_groups
             .iter()
@@ -3304,6 +3335,7 @@ impl Analyzer {
         self.traits.insert(
             definition.name,
             TraitSchema {
+                self_parameter: definition.self_parameter,
                 compile_parameters,
                 where_predicates: definition.where_predicates,
                 associated_types,
@@ -3327,7 +3359,7 @@ impl Analyzer {
                 .iter()
                 .map(|parameter| (parameter.name.clone(), parameter.kind))
                 .collect::<HashMap<_, _>>();
-            compile_parameter_kinds.insert("Self".to_owned(), CompileParamKind::Type);
+            compile_parameter_kinds.insert("Self".to_owned(), schema.self_parameter.kind);
             compile_parameter_kinds.extend(
                 schema
                     .associated_types
@@ -3402,7 +3434,7 @@ impl Analyzer {
         let mut compile_parameters = schema.compile_parameters.clone();
         compile_parameters.push(CompileParam {
             name: self_parameter.clone(),
-            kind: crate::ast::CompileParamKind::Type,
+            kind: schema.self_parameter.kind,
         });
         compile_parameters.extend(schema.associated_types.iter().map(|name| CompileParam {
             name: name.clone(),
@@ -3950,11 +3982,8 @@ impl Analyzer {
         };
         self.traits.get(name).is_some_and(|schema| {
             matches!(
-                schema
-                    .compile_parameters
-                    .first()
-                    .map(|parameter| parameter.kind),
-                Some(CompileParamKind::TypeConstructor { .. })
+                schema.self_parameter.kind,
+                CompileParamKind::TypeConstructor { .. }
             )
         })
     }
@@ -3972,6 +4001,12 @@ impl Analyzer {
             return None;
         };
         if !schema.valid {
+            return None;
+        }
+        if schema.self_parameter.kind != CompileParamKind::Type {
+            self.error(format!(
+                "trait `{name}` expects a type-constructor implementation target"
+            ));
             return None;
         }
         if source_arguments.len() != schema.compile_parameters.len() {
@@ -4689,13 +4724,8 @@ impl Analyzer {
         if !schema.valid {
             return;
         }
-        let Some(subject_parameter) = schema.compile_parameters.first() else {
-            self.error(format!(
-                "trait `{trait_name}` does not accept a type-constructor implementation target"
-            ));
-            return;
-        };
-        let CompileParamKind::TypeConstructor { parameter_count } = subject_parameter.kind else {
+        let CompileParamKind::TypeConstructor { parameter_count } = schema.self_parameter.kind
+        else {
             self.error(format!(
                 "trait `{trait_name}` does not accept a type-constructor implementation target"
             ));
@@ -4710,10 +4740,10 @@ impl Analyzer {
             ));
             return;
         }
-        let expected_arguments = schema.compile_parameters.len().saturating_sub(1);
+        let expected_arguments = schema.compile_parameters.len();
         if source_arguments.len() != expected_arguments {
             self.error(format!(
-                "trait argument count mismatch for `{trait_name}`: expected {expected_arguments}, found {} after the constructor target",
+                "trait argument count mismatch for `{trait_name}`: expected {expected_arguments}, found {}",
                 source_arguments.len()
             ));
             return;
@@ -4721,12 +4751,7 @@ impl Analyzer {
 
         let mut trait_arguments = Vec::new();
         let mut trait_argument_sources = Vec::new();
-        for (parameter, source_argument) in schema
-            .compile_parameters
-            .iter()
-            .skip(1)
-            .zip(source_arguments)
-        {
+        for (parameter, source_argument) in schema.compile_parameters.iter().zip(source_arguments) {
             if parameter.kind != CompileParamKind::Type {
                 self.error(format!(
                     "constructor trait implementation argument `{}` for `{trait_name}` has unsupported compile-time kind {}",
@@ -4786,15 +4811,10 @@ impl Analyzer {
 
         let mut substitutions = HashMap::new();
         substitutions.insert(
-            subject_parameter.name.clone(),
+            "Self".to_owned(),
             Type::Named(key.target.name.clone(), Vec::new()),
         );
-        for (parameter, argument) in schema
-            .compile_parameters
-            .iter()
-            .skip(1)
-            .zip(trait_argument_sources)
-        {
+        for (parameter, argument) in schema.compile_parameters.iter().zip(trait_argument_sources) {
             substitutions.insert(parameter.name.clone(), argument);
         }
 
@@ -6718,12 +6738,34 @@ impl Analyzer {
                 }
             }
         }
-        if self.nominal_instance_states.iter().any(|(active, state)| {
-            *state == NominalInstanceState::Building
-                && active.kind == kind
-                && active.template == template_name
-                && !active.arguments.is_empty()
-        }) {
+        let growing_recursive_instance =
+            self.nominal_instance_states.iter().any(|(active, state)| {
+                if *state != NominalInstanceState::Building
+                    || active.kind != kind
+                    || active.template != template_name
+                    || active.arguments.is_empty()
+                {
+                    return false;
+                }
+                let Some(active_canonical) = self.nominal_instance_names.get(active) else {
+                    return false;
+                };
+                let active_complexity = active
+                    .arguments
+                    .iter()
+                    .map(|argument| self.nominal_type_complexity(argument))
+                    .sum::<usize>();
+                let next_complexity = key
+                    .arguments
+                    .iter()
+                    .map(|argument| self.nominal_type_complexity(argument))
+                    .sum::<usize>();
+                key.arguments
+                    .iter()
+                    .any(|argument| ty_contains_nominal(argument, active_canonical))
+                    || next_complexity >= active_complexity
+            });
+        if growing_recursive_instance {
             self.error(format!(
                 "recursive generic value layout has infinite size while instantiating `{template_name}` with growing type arguments"
             ));
@@ -6816,7 +6858,6 @@ impl Analyzer {
 
         match kind {
             NominalKind::Struct => {
-                self.struct_order.push(canonical.clone());
                 self.struct_layouts.insert(
                     canonical.clone(),
                     StructLayout {
@@ -6831,9 +6872,9 @@ impl Analyzer {
                 self.struct_defs
                     .insert(canonical.clone(), definition.clone());
                 self.build_struct_layout(&canonical, definition);
+                self.struct_order.push(canonical.clone());
             }
             NominalKind::Enum => {
-                self.enum_order.push(canonical.clone());
                 self.enum_layouts.insert(
                     canonical.clone(),
                     EnumLayout {
@@ -6847,6 +6888,7 @@ impl Analyzer {
                 definition.compile_groups.clear();
                 self.enum_defs.insert(canonical.clone(), definition.clone());
                 self.build_enum_layout(&canonical, definition);
+                self.enum_order.push(canonical.clone());
             }
         }
         self.nominal_instance_states
@@ -6880,6 +6922,81 @@ impl Analyzer {
             }
         }
         Some(canonical)
+    }
+
+    fn nominal_type_complexity(&self, ty: &Ty) -> usize {
+        let mut seen = HashSet::new();
+        self.nominal_type_complexity_with_seen(ty, &mut seen)
+    }
+
+    fn nominal_type_complexity_with_seen(&self, ty: &Ty, seen: &mut HashSet<String>) -> usize {
+        match ty {
+            Ty::Struct(name) | Ty::Enum(name) => {
+                if !seen.insert(name.clone()) {
+                    return 1;
+                }
+                let nominal_complexity = canonical_type_encoding(ty).len();
+                let arguments = self
+                    .nominal_instances
+                    .get(name)
+                    .map(|instance| instance.key.arguments.as_slice())
+                    .unwrap_or(&[]);
+                nominal_complexity
+                    + arguments
+                        .iter()
+                        .map(|argument| self.nominal_type_complexity_with_seen(argument, seen))
+                        .sum::<usize>()
+            }
+            Ty::Pointer { pointee, .. } | Ty::Reference { pointee, .. } | Ty::Array(pointee, _) => {
+                1 + self.nominal_type_complexity_with_seen(pointee, seen)
+            }
+            Ty::Function(function) => 1 + self.function_type_complexity(function, seen),
+            Ty::Callable(callable) => {
+                1 + self.function_type_complexity(&callable.signature, seen)
+                    + callable
+                        .captures
+                        .iter()
+                        .map(|capture| self.nominal_type_complexity_with_seen(&capture.ty, seen))
+                        .sum::<usize>()
+            }
+            Ty::Continuation { input, output } => {
+                1 + self.nominal_type_complexity_with_seen(input, seen)
+                    + self.nominal_type_complexity_with_seen(output, seen)
+            }
+            Ty::EffectCallable {
+                input,
+                output,
+                answer,
+            } => {
+                1 + self.nominal_type_complexity_with_seen(input, seen)
+                    + self.nominal_type_complexity_with_seen(output, seen)
+                    + self.nominal_type_complexity_with_seen(answer, seen)
+            }
+            Ty::EffectRow { throws_error, .. } => {
+                1 + throws_error
+                    .as_deref()
+                    .map(|error| self.nominal_type_complexity_with_seen(error, seen))
+                    .unwrap_or(0)
+            }
+            Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool | Ty::Unit | Ty::Never | Ty::Error => {
+                1
+            }
+        }
+    }
+
+    fn function_type_complexity(&self, function: &FunctionTy, seen: &mut HashSet<String>) -> usize {
+        function
+            .groups
+            .iter()
+            .flatten()
+            .map(|parameter| self.nominal_type_complexity_with_seen(parameter, seen))
+            .sum::<usize>()
+            + function
+                .throws_error
+                .as_deref()
+                .map(|error| self.nominal_type_complexity_with_seen(error, seen))
+                .unwrap_or(0)
+            + self.nominal_type_complexity_with_seen(&function.result, seen)
     }
 
     fn validate_nominal_layouts(&mut self) {
@@ -7048,9 +7165,17 @@ impl Analyzer {
             ) {
                 continue;
             }
+            if template.compile_groups.iter().flatten().any(|parameter| {
+                matches!(
+                    parameter.kind,
+                    CompileParamKind::TypeConstructor { .. }
+                        | CompileParamKind::EffectConstructor { .. }
+                )
+            }) {
+                continue;
+            }
 
             let mut substitutions = HashMap::new();
-            let mut unsupported_constructor_parameters = false;
             for (index, parameter) in template.compile_groups.iter().flatten().enumerate() {
                 let marker = match parameter.kind {
                     CompileParamKind::Type => {
@@ -7067,14 +7192,9 @@ impl Analyzer {
                     CompileParamKind::Effect => EFFECT_UNSAFE_MARKER.to_owned(),
                     CompileParamKind::Region => continue,
                     CompileParamKind::TypeConstructor { .. }
-                    | CompileParamKind::EffectConstructor { .. } => {
-                        unsupported_constructor_parameters = true;
-                        self.error(format!(
-                            "constructor compile-time parameter `{}` in generic function `{template_name}` is parsed but not supported by semantic analysis yet",
-                            parameter.name
-                        ));
-                        continue;
-                    }
+                    | CompileParamKind::EffectConstructor { .. } => unreachable!(
+                        "constructor parameters are validated through concrete instances"
+                    ),
                 };
                 if substitutions
                     .insert(parameter.name.clone(), Type::Named(marker, Vec::new()))
@@ -7085,9 +7205,6 @@ impl Analyzer {
                         parameter.name
                     ));
                 }
-            }
-            if unsupported_constructor_parameters {
-                continue;
             }
 
             let functions_before = self.functions.clone();
@@ -7329,7 +7446,7 @@ impl Analyzer {
         &mut self,
         owner: &str,
         predicates: &[crate::ast::WherePredicate],
-        compile_parameter_kinds: &HashMap<String, CompileParamKind>,
+        _compile_parameter_kinds: &HashMap<String, CompileParamKind>,
     ) -> bool {
         let mut valid = true;
         let mut seen = HashSet::new();
@@ -7351,11 +7468,7 @@ impl Analyzer {
                 valid = false;
                 continue;
             };
-            let expected_arguments = self.where_predicate_expected_trait_arguments(
-                predicate,
-                &schema,
-                compile_parameter_kinds,
-            );
+            let expected_arguments = schema.compile_parameters.len();
             if arguments.len() != expected_arguments {
                 self.error(format!(
                     "trait argument count mismatch for `{name}` in where predicate of {owner}: expected {expected_arguments}, found {}",
@@ -7387,44 +7500,6 @@ impl Analyzer {
             }
         }
         valid
-    }
-
-    fn where_predicate_expected_trait_arguments(
-        &self,
-        predicate: &crate::ast::WherePredicate,
-        schema: &TraitSchema,
-        compile_parameter_kinds: &HashMap<String, CompileParamKind>,
-    ) -> usize {
-        if self.where_predicate_uses_constructor_subject(predicate, schema, compile_parameter_kinds)
-        {
-            schema.compile_parameters.len().saturating_sub(1)
-        } else {
-            schema.compile_parameters.len()
-        }
-    }
-
-    fn where_predicate_uses_constructor_subject(
-        &self,
-        predicate: &crate::ast::WherePredicate,
-        schema: &TraitSchema,
-        compile_parameter_kinds: &HashMap<String, CompileParamKind>,
-    ) -> bool {
-        let Type::Named(subject, subject_arguments) = &predicate.subject else {
-            return false;
-        };
-        if !subject_arguments.is_empty() {
-            return false;
-        }
-        let Some(subject_kind) = compile_parameter_kinds.get(subject).copied() else {
-            return false;
-        };
-        matches!(
-            subject_kind,
-            CompileParamKind::TypeConstructor { .. } | CompileParamKind::EffectConstructor { .. }
-        ) && schema
-            .compile_parameters
-            .first()
-            .is_some_and(|parameter| parameter.kind == subject_kind)
     }
 
     fn validate_trait_inheritance_implementations(&mut self) {
@@ -7526,15 +7601,13 @@ impl Analyzer {
         key: &ConstructorTraitImplKey,
     ) -> Option<Vec<crate::ast::WherePredicate>> {
         let mut substitutions = HashMap::new();
-        let subject = schema.compile_parameters.first()?;
         substitutions.insert(
-            subject.name.clone(),
+            "Self".to_owned(),
             Type::Named(key.target.name.clone(), Vec::new()),
         );
         for (parameter, argument) in schema
             .compile_parameters
             .iter()
-            .skip(1)
             .zip(&key.trait_ref.arguments)
         {
             substitutions.insert(parameter.name.clone(), self.source_type_for_ty(argument)?);
@@ -7564,7 +7637,7 @@ impl Analyzer {
             return None;
         };
         let schema = self.traits.get(trait_name).cloned()?;
-        let expected = schema.compile_parameters.len().saturating_sub(1);
+        let expected = schema.compile_parameters.len();
         if source_arguments.len() != expected {
             return None;
         }
@@ -7591,6 +7664,16 @@ impl Analyzer {
     ) -> bool {
         let mut valid = true;
         for predicate in predicates {
+            if let Some(required) = self.constructor_trait_impl_key_from_predicate(predicate) {
+                if !self.constructor_trait_impl_headers.contains(&required) {
+                    self.error(format!(
+                        "where predicate `{}: {}` is not satisfied while instantiating `{function}`",
+                        required.target.name, required.trait_ref.name
+                    ));
+                    valid = false;
+                }
+                continue;
+            }
             let subject = self.lower_source_type(&predicate.subject);
             let Type::Named(name, source_arguments) = &predicate.trait_ref else {
                 valid = false;
@@ -7658,6 +7741,9 @@ impl Analyzer {
     }
 
     fn concrete_where_predicate_holds(&mut self, predicate: &crate::ast::WherePredicate) -> bool {
+        if let Some(required) = self.constructor_trait_impl_key_from_predicate(predicate) {
+            return self.constructor_trait_impl_headers.contains(&required);
+        }
         let subject = self.lower_source_type(&predicate.subject);
         let Type::Named(name, source_arguments) = &predicate.trait_ref else {
             return false;
@@ -8034,6 +8120,38 @@ impl Analyzer {
         }
     }
 
+    fn type_constructor_argument_from_expr(
+        &mut self,
+        expression: &Expr,
+        parameter_count: usize,
+        owner: &str,
+        parameter: &str,
+    ) -> Option<String> {
+        let Expr::Name(name) = expression else {
+            self.error(format!(
+                "invalid type-constructor argument for `{parameter}` in `{owner}`; expected a generic type constructor"
+            ));
+            return None;
+        };
+        let Some(target) =
+            self.type_constructor_impl_target(&Type::Named(name.clone(), Vec::new()))
+        else {
+            self.error(format!(
+                "invalid type-constructor argument `{name}` for `{parameter}` in `{owner}`; expected a generic type constructor"
+            ));
+            return None;
+        };
+        if target.parameter_count != parameter_count {
+            self.error(format!(
+                "type-constructor argument `{name}` for `{parameter}` in `{owner}` has {} parameter{}, expected {parameter_count}",
+                target.parameter_count,
+                if target.parameter_count == 1 { "" } else { "s" }
+            ));
+            return None;
+        }
+        Some(name.clone())
+    }
+
     fn source_type_for_ty(&self, ty: &Ty) -> Option<Type> {
         match ty {
             Ty::I32 => Some(Type::I32),
@@ -8062,6 +8180,9 @@ impl Analyzer {
             }),
             Ty::Struct(name) | Ty::Enum(name) => {
                 if is_compile_value_marker(name) {
+                    if let Some(constructor) = type_constructor_from_marker(name) {
+                        return Some(Type::Named(constructor, Vec::new()));
+                    }
                     return Some(Type::Named(name.clone(), Vec::new()));
                 }
                 if let Some(instance) = self.nominal_instances.get(name) {
@@ -8386,10 +8507,75 @@ impl Analyzer {
                 }
                 _ => None,
             },
-            CompileParamKind::Region
-            | CompileParamKind::TypeConstructor { .. }
-            | CompileParamKind::EffectConstructor { .. } => None,
+            CompileParamKind::TypeConstructor { parameter_count } => {
+                let Expr::Name(name) = expression else {
+                    return None;
+                };
+                let source = Type::Named(name.clone(), Vec::new());
+                self.type_constructor_impl_target(&source)
+                    .filter(|target| target.parameter_count == parameter_count)
+                    .map(|_| source)
+            }
+            CompileParamKind::Region | CompileParamKind::EffectConstructor { .. } => None,
         }
+    }
+
+    fn probe_compile_argument_ty(&self, parameter: &CompileParam, source: &Type) -> Option<Ty> {
+        match parameter.kind {
+            CompileParamKind::TypeConstructor { parameter_count } => {
+                let Type::Named(name, arguments) = source else {
+                    return None;
+                };
+                if !arguments.is_empty() {
+                    return None;
+                }
+                self.type_constructor_impl_target(source)
+                    .filter(|target| target.parameter_count == parameter_count)
+                    .map(|_| Ty::Struct(type_constructor_marker(name)))
+            }
+            CompileParamKind::Type
+            | CompileParamKind::Access
+            | CompileParamKind::Passing
+            | CompileParamKind::Effect => self.probe_source_ty(source),
+            CompileParamKind::Region | CompileParamKind::EffectConstructor { .. } => None,
+        }
+    }
+
+    fn probe_compile_group_sources(
+        &self,
+        parameters: &[CompileParam],
+        supplied: &[CallArg],
+        substitutions: &HashMap<String, Type>,
+    ) -> Option<Vec<Type>> {
+        if parameters.len() != supplied.len() {
+            return None;
+        }
+        let labeled = supplied
+            .first()
+            .is_some_and(|argument| argument.label.is_some());
+        let mut sources = vec![None; parameters.len()];
+        for (position, argument) in supplied.iter().enumerate() {
+            let parameter_index = if labeled {
+                let label = argument.label.as_ref()?;
+                parameters
+                    .iter()
+                    .position(|parameter| parameter.name == *label)?
+            } else {
+                if argument.label.is_some() {
+                    return None;
+                }
+                position
+            };
+            if sources[parameter_index].is_some() {
+                return None;
+            }
+            let parameter = &parameters[parameter_index];
+            let source =
+                self.probe_compile_argument_source(parameter, &argument.value, substitutions)?;
+            self.probe_compile_argument_ty(parameter, &source)?;
+            sources[parameter_index] = Some(source);
+        }
+        sources.into_iter().collect()
     }
 
     fn probe_source_ty(&self, source: &Type) -> Option<Ty> {
@@ -8616,6 +8802,9 @@ impl Analyzer {
         inferred: &mut HashMap<String, InferredTypeArgument>,
         origin: &str,
     ) -> Result<bool, String> {
+        let mismatch = || {
+            format!("type inference constraint from {origin} does not match actual type `{actual}`")
+        };
         if let Type::Named(name, arguments) = template {
             if arguments.is_empty() && compile_parameters.contains(name) {
                 if let Some(previous) = inferred.get_mut(name) {
@@ -8649,11 +8838,81 @@ impl Analyzer {
                 );
                 return Ok(true);
             }
+            if !arguments.is_empty() && compile_parameters.contains(name) {
+                let (actual_template, actual_sources, actual_types) = match actual_source {
+                    Some(Type::Named(actual_template, actual_sources))
+                        if !actual_sources.is_empty() =>
+                    {
+                        let actual_types = actual_sources
+                            .iter()
+                            .map(|source| self.probe_source_ty(source))
+                            .collect::<Option<Vec<_>>>()
+                            .ok_or_else(mismatch)?;
+                        (
+                            actual_template.clone(),
+                            actual_sources.clone(),
+                            actual_types,
+                        )
+                    }
+                    _ => {
+                        let actual_name = match actual {
+                            Ty::Struct(name) | Ty::Enum(name) => name,
+                            _ => return Err(mismatch()),
+                        };
+                        let Some(instance) = self.nominal_instances.get(actual_name) else {
+                            return Err(mismatch());
+                        };
+                        let actual_sources = instance
+                            .key
+                            .arguments
+                            .iter()
+                            .map(|argument| self.source_type_for_ty(argument))
+                            .collect::<Option<Vec<_>>>()
+                            .ok_or_else(mismatch)?;
+                        (
+                            instance.key.template.clone(),
+                            actual_sources,
+                            instance.key.arguments.clone(),
+                        )
+                    }
+                };
+                if actual_sources.len() != arguments.len() {
+                    return Err(mismatch());
+                }
+                let selected = InferredTypeArgument {
+                    ty: Ty::Struct(type_constructor_marker(&actual_template)),
+                    source: Some(Type::Named(actual_template.clone(), Vec::new())),
+                    origin: origin.to_owned(),
+                };
+                match inferred.get(name) {
+                    Some(previous) if previous.ty != selected.ty => {
+                        return Err(format!(
+                            "conflicting inference for type-constructor parameter `{name}` from {} and {origin}",
+                            previous.origin
+                        ));
+                    }
+                    Some(_) => {}
+                    None => {
+                        inferred.insert(name.clone(), selected);
+                    }
+                }
+                let mut changed = false;
+                for ((template_argument, actual_ty), actual_source) in
+                    arguments.iter().zip(&actual_types).zip(&actual_sources)
+                {
+                    changed |= self.unify_template_ty(
+                        template_argument,
+                        actual_ty,
+                        Some(actual_source),
+                        compile_parameters,
+                        inferred,
+                        origin,
+                    )?;
+                }
+                return Ok(changed);
+            }
         }
 
-        let mismatch = || {
-            format!("type inference constraint from {origin} does not match actual type `{actual}`")
-        };
         match template {
             Type::I32 => (*actual == Ty::I32).then_some(false).ok_or_else(mismatch),
             Type::I64 => (*actual == Ty::I64).then_some(false).ok_or_else(mismatch),
@@ -9781,6 +10040,58 @@ impl Analyzer {
             .collect()
     }
 
+    fn constructor_trait_method_function_candidates(
+        &self,
+        receiver: &Ty,
+        member: &str,
+        origin: &ItemOrigin,
+    ) -> Vec<(ConstructorTraitImplKey, String)> {
+        let (receiver_name, receiver_kind) = match receiver {
+            Ty::Struct(name) => (name, NominalKind::Struct),
+            Ty::Enum(name) => (name, NominalKind::Enum),
+            _ => return Vec::new(),
+        };
+        let Some(instance) = self.nominal_instances.get(receiver_name) else {
+            return Vec::new();
+        };
+        let mut candidates = self
+            .constructor_trait_impl_methods
+            .iter()
+            .filter_map(|(key, methods)| {
+                if key.target.name != instance.key.template || key.target.kind != receiver_kind {
+                    return None;
+                }
+                let schema = self.traits.get(&key.trait_ref.name)?;
+                let method_ids = schema
+                    .method_overloads
+                    .get(member)
+                    .cloned()
+                    .unwrap_or_else(|| vec![member.to_owned()]);
+                Some(
+                    method_ids
+                        .into_iter()
+                        .filter(|method_id| {
+                            schema
+                                .methods
+                                .get(method_id)
+                                .is_some_and(schema_function_has_receiver)
+                        })
+                        .filter_map(|method_id| methods.get(&method_id).cloned())
+                        .filter(|canonical| {
+                            self.function_accesses
+                                .get(canonical)
+                                .is_some_and(|access| Self::access_boundary_allows(origin, access))
+                        })
+                        .map(|canonical| (key.clone(), canonical))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        candidates.sort_by(|(_, left), (_, right)| left.cmp(right));
+        candidates
+    }
+
     fn has_inaccessible_constructor_trait_associated_function(
         &self,
         target: &str,
@@ -10844,22 +11155,12 @@ impl Analyzer {
             .iter()
             .zip(groups.iter().take(compile_group_count))
         {
-            if parameters.len() != supplied.len()
-                || supplied.iter().any(|argument| argument.label.is_some())
-            {
+            let Some(sources) =
+                self.probe_compile_group_sources(parameters, supplied, &context.type_substitutions)
+            else {
                 return TypeProbe::Unsupported;
-            }
-            for (parameter, argument) in parameters.iter().zip(*supplied) {
-                let Some(source) = self.probe_compile_argument_source(
-                    parameter,
-                    &argument.value,
-                    &context.type_substitutions,
-                ) else {
-                    return TypeProbe::Unsupported;
-                };
-                if self.probe_source_ty(&source).is_none() {
-                    return TypeProbe::Unsupported;
-                }
+            };
+            for (parameter, source) in parameters.iter().zip(sources) {
                 substitutions.insert(parameter.name.clone(), source);
             }
         }
@@ -11126,24 +11427,15 @@ impl Analyzer {
                     .iter()
                     .zip(groups.iter().take(compile_group_count))
                 {
-                    if parameters.len() != supplied.len()
-                        || supplied.iter().any(|argument| argument.label.is_some())
-                    {
+                    let Some(sources) = self.probe_compile_group_sources(
+                        parameters,
+                        supplied,
+                        &context.type_substitutions,
+                    ) else {
                         valid = false;
                         break;
-                    }
-                    for (parameter, argument) in parameters.iter().zip(*supplied) {
-                        let Some(source) = self.probe_type_argument_source(
-                            &argument.value,
-                            &context.type_substitutions,
-                        ) else {
-                            valid = false;
-                            break;
-                        };
-                        if self.probe_source_ty(&source).is_none() {
-                            valid = false;
-                            break;
-                        }
+                    };
+                    for (parameter, source) in parameters.iter().zip(sources) {
                         substitutions.insert(parameter.name.clone(), source);
                     }
                 }
@@ -11267,7 +11559,12 @@ impl Analyzer {
         let compile_parameters: HashSet<_> = compile_groups
             .iter()
             .flatten()
-            .filter(|parameter| parameter.kind == CompileParamKind::Type)
+            .filter(|parameter| {
+                matches!(
+                    parameter.kind,
+                    CompileParamKind::Type | CompileParamKind::TypeConstructor { .. }
+                )
+            })
             .map(|parameter| parameter.name.clone())
             .collect();
         let mut inferred = HashMap::new();
@@ -11448,8 +11745,16 @@ impl Analyzer {
                         self.error("region arguments are erased before semantic analysis");
                         return None;
                     }
-                    CompileParamKind::TypeConstructor { .. }
-                    | CompileParamKind::EffectConstructor { .. } => {
+                    CompileParamKind::TypeConstructor { parameter_count } => {
+                        let constructor = self.type_constructor_argument_from_expr(
+                            &argument.value,
+                            parameter_count,
+                            owner,
+                            &parameter.name,
+                        )?;
+                        Type::Named(constructor, Vec::new())
+                    }
+                    CompileParamKind::EffectConstructor { .. } => {
                         self.error(format!(
                             "constructor compile-time argument `{}` in `{owner}` is parsed but not supported by semantic analysis yet",
                             parameter.name
@@ -11457,12 +11762,21 @@ impl Analyzer {
                         return None;
                     }
                 };
-                let Some(ty) = self.probe_source_ty(&source) else {
-                    self.error(format!(
-                        "invalid explicit type argument for `{}` in `{owner}`",
-                        parameter.name
-                    ));
-                    return None;
+                let ty = if matches!(parameter.kind, CompileParamKind::TypeConstructor { .. }) {
+                    let Type::Named(name, arguments) = &source else {
+                        unreachable!("type constructor argument helper returns a named source")
+                    };
+                    debug_assert!(arguments.is_empty());
+                    Ty::Struct(type_constructor_marker(name))
+                } else {
+                    let Some(ty) = self.probe_source_ty(&source) else {
+                        self.error(format!(
+                            "invalid explicit type argument for `{}` in `{owner}`",
+                            parameter.name
+                        ));
+                        return None;
+                    };
+                    ty
                 };
                 inferred.insert(
                     parameter.name.clone(),
@@ -11629,10 +11943,25 @@ impl Analyzer {
                     if matches!(name.as_str(), "auto" | "copy" | "move"))
             }
             CompileParamKind::Effect => self.expression_is_explicit_effect_argument(expression),
+            CompileParamKind::TypeConstructor { parameter_count } => {
+                self.expression_is_explicit_type_constructor_argument(expression, parameter_count)
+            }
             CompileParamKind::Region => false,
-            CompileParamKind::TypeConstructor { .. }
-            | CompileParamKind::EffectConstructor { .. } => false,
+            CompileParamKind::EffectConstructor { .. } => false,
         }
+    }
+
+    fn expression_is_explicit_type_constructor_argument(
+        &self,
+        expression: &Expr,
+        parameter_count: usize,
+    ) -> bool {
+        let Expr::Name(name) = expression else {
+            return false;
+        };
+        let source = Type::Named(name.clone(), Vec::new());
+        self.type_constructor_impl_target(&source)
+            .is_some_and(|target| target.parameter_count == parameter_count)
     }
 
     fn expression_is_explicit_effect_argument(&self, expression: &Expr) -> bool {
@@ -23662,9 +23991,8 @@ impl Analyzer {
             .flatten()
             .cloned()
             .collect::<Vec<_>>();
-        let (source_arguments, _) =
+        let (source_arguments, arguments) =
             self.finish_type_argument_inference(name, &ordered_parameters, &inferred, unsupported)?;
-        let arguments = self.materialize_type_arguments(&source_arguments)?;
         self.ensure_nominal_instance(NominalKind::Enum, name, source_arguments, arguments)
     }
 
@@ -23795,9 +24123,8 @@ impl Analyzer {
             .flatten()
             .cloned()
             .collect::<Vec<_>>();
-        let (source_arguments, _) =
+        let (source_arguments, arguments) =
             self.finish_type_argument_inference(name, &ordered_parameters, &inferred, unsupported)?;
-        let arguments = self.materialize_type_arguments(&source_arguments)?;
         let canonical =
             self.ensure_nominal_instance(NominalKind::Struct, name, source_arguments, arguments)?;
         Some((canonical, runtime_start))
@@ -23824,9 +24151,8 @@ impl Analyzer {
             return None;
         }
         let ordered_parameters = compile_groups.into_iter().flatten().collect::<Vec<_>>();
-        let (source_arguments, _) =
+        let (source_arguments, arguments) =
             self.finish_type_argument_inference(name, &ordered_parameters, &inferred, false)?;
-        let arguments = self.materialize_type_arguments(&source_arguments)?;
         debug_assert!(compile_parameters
             .iter()
             .all(|parameter| inferred.contains_key(parameter)));
@@ -23908,11 +24234,12 @@ impl Analyzer {
                         })
                     } else if next_compile_group < expected_groups.len()
                         && !arguments.is_empty()
-                        && arguments.iter().all(|argument| {
-                            matches!(argument.value, Expr::Unit)
-                                || self
-                                    .expression_is_explicit_type_argument(&argument.value, context)
-                        })
+                        && self.group_is_explicit_compile_application(
+                            &expected_groups[next_compile_group],
+                            arguments,
+                            context,
+                            true,
+                        )
                     {
                         Some(next_compile_group)
                     } else {
@@ -24044,13 +24371,12 @@ impl Analyzer {
             .flatten()
             .cloned()
             .collect::<Vec<_>>();
-        let (source_arguments, _) = self.finish_type_argument_inference(
+        let (source_arguments, arguments) = self.finish_type_argument_inference(
             name,
             &ordered_parameters,
             &inferred,
             unsupported_argument,
         )?;
-        let arguments = self.materialize_type_arguments(&source_arguments)?;
         let canonical = self.ensure_function_instance(name, source_arguments, arguments)?;
         Some((canonical, runtime_start))
     }
@@ -24138,9 +24464,15 @@ impl Analyzer {
         } else {
             let mut candidates =
                 self.trait_method_function_candidates(&receiver_place.ty, member, &context.origin);
+            let mut constructor_candidates = self.constructor_trait_method_function_candidates(
+                &receiver_place.ty,
+                member,
+                &context.origin,
+            );
             if let Some(kind) = forced_trait {
                 let trait_name = self.lang_item_name(kind);
                 candidates.retain(|(key, _)| key.trait_ref.name == trait_name);
+                constructor_candidates.retain(|(key, _)| key.trait_ref.name == trait_name);
                 if kind.assignment_operator_method().is_some() {
                     if let Some(argument) = match groups {
                         [group] if group.len() == 1 => Some(&group[0]),
@@ -24159,22 +24491,35 @@ impl Analyzer {
                     }
                 }
             }
-            if candidates.len() == 1 {
-                if self.is_drop_impl(&candidates[0].0) {
+            let total_candidates = candidates.len() + constructor_candidates.len();
+            if total_candidates == 1 {
+                if candidates
+                    .first()
+                    .is_some_and(|(key, _)| self.is_drop_impl(key))
+                {
                     self.error("`Drop.drop` cannot be called directly; destruction is automatic");
                     return error_expr();
                 }
-                let implementation = &self.trait_impls[&candidates[0].0];
-                debug_assert_eq!(implementation.key, candidates[0].0);
-                debug_assert!(implementation
-                    .associated_types
-                    .values()
-                    .all(|ty| *ty != Ty::Error));
-                candidates[0].1.clone()
-            } else if candidates.len() > 1 {
+                if let Some((key, canonical)) = candidates.first() {
+                    let implementation = &self.trait_impls[key];
+                    debug_assert_eq!(implementation.key, *key);
+                    debug_assert!(implementation
+                        .associated_types
+                        .values()
+                        .all(|ty| *ty != Ty::Error));
+                    canonical.clone()
+                } else {
+                    constructor_candidates[0].1.clone()
+                }
+            } else if total_candidates > 1 {
                 let canonicals = candidates
                     .iter()
                     .map(|(_, canonical)| canonical.clone())
+                    .chain(
+                        constructor_candidates
+                            .iter()
+                            .map(|(_, canonical)| canonical.clone()),
+                    )
                     .collect::<Vec<_>>();
                 if !groups
                     .iter()
@@ -28950,6 +29295,54 @@ fn nominal_name(ty: &Ty) -> Option<&str> {
         Ty::Array(element, _) => nominal_name(element),
         _ => None,
     }
+}
+
+fn ty_contains_nominal(ty: &Ty, nominal: &str) -> bool {
+    match ty {
+        Ty::Struct(name) | Ty::Enum(name) => name == nominal,
+        Ty::Pointer { pointee, .. } | Ty::Reference { pointee, .. } | Ty::Array(pointee, _) => {
+            ty_contains_nominal(pointee, nominal)
+        }
+        Ty::Function(function) => function_ty_contains_nominal(function, nominal),
+        Ty::Callable(callable) => {
+            function_ty_contains_nominal(&callable.signature, nominal)
+                || callable
+                    .captures
+                    .iter()
+                    .any(|capture| ty_contains_nominal(&capture.ty, nominal))
+        }
+        Ty::Continuation { input, output } => {
+            ty_contains_nominal(input, nominal) || ty_contains_nominal(output, nominal)
+        }
+        Ty::EffectCallable {
+            input,
+            output,
+            answer,
+        } => {
+            ty_contains_nominal(input, nominal)
+                || ty_contains_nominal(output, nominal)
+                || ty_contains_nominal(answer, nominal)
+        }
+        Ty::EffectRow { throws_error, .. } => throws_error
+            .as_deref()
+            .is_some_and(|error| ty_contains_nominal(error, nominal)),
+        Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool | Ty::Unit | Ty::Never | Ty::Error => {
+            false
+        }
+    }
+}
+
+fn function_ty_contains_nominal(function: &FunctionTy, nominal: &str) -> bool {
+    function
+        .groups
+        .iter()
+        .flatten()
+        .any(|parameter| ty_contains_nominal(parameter, nominal))
+        || function
+            .throws_error
+            .as_deref()
+            .is_some_and(|error| ty_contains_nominal(error, nominal))
+        || ty_contains_nominal(&function.result, nominal)
 }
 
 fn is_unconstrained_integer(expression: &Expr) -> bool {
@@ -42715,12 +43108,13 @@ let main(): i32 = {
     fn higher_kinded_trait_method_signatures_validate() {
         let program = crate::parser::parse(
             r#"
-	let Functor(F: (Value: type): type) = trait {
-	  let map(E: effect, A: type, B: type)(
-	    move value: F(A),
-	    move transform: (A): B with(E),
-	  ): F(B) with(E)
-	}
+		let Functor = trait(Self: (Value: type): type) {
+		  let map(E: effect, A: type, B: type)(
+		    move self: Self(A),
+		  )(
+		    move transform: (A): B with(E),
+		  ): Self(B) with(E)
+		}
 	let Chain = trait {
 	  let Item: type
 	  let Rebind(Value: type): type
@@ -42742,7 +43136,7 @@ let main(): i32 = {
             analyzer.diagnostics
         );
         assert_eq!(
-            analyzer.traits["Functor"].compile_parameters[0].kind,
+            analyzer.traits["Functor"].self_parameter.kind,
             CompileParamKind::TypeConstructor { parameter_count: 1 }
         );
 
@@ -42752,15 +43146,16 @@ let main(): i32 = {
     #[test]
     fn higher_kinded_trait_inheritance_requires_constructor_supertraits() {
         let source = r#"
-let Functor(F: (Value: type): type) = trait {
-  let map(E: effect, A: type, B: type)(
-    move value: F(A),
-    move transform: (A): B with(E),
-  ): F(B) with(E)
-}
-let Applicative(F: (Value: type): type) = trait
-where F: Functor {
-  let pure(A: type)(move value: A): F(A)
+	let Functor = trait(Self: (Value: type): type) {
+	  let map(E: effect, A: type, B: type)(
+	    move self: Self(A),
+	  )(
+	    move transform: (A): B with(E),
+	  ): Self(B) with(E)
+	}
+let Applicative = trait(Self: (Value: type): type)
+where Self: Functor {
+  let pure(A: type)(move value: A): Self(A)
 }
 let Carrier(T: type) = struct(value: T)
 extend Carrier: Applicative {
@@ -42778,15 +43173,16 @@ let main(): i32 = { 0 }
 
         compile_text(
             r#"
-let Functor(F: (Value: type): type) = trait {
-  let map(E: effect, A: type, B: type)(
-    move value: F(A),
-    move transform: (A): B with(E),
-  ): F(B) with(E)
-}
-let Applicative(F: (Value: type): type) = trait
-where F: Functor {
-  let pure(A: type)(move value: A): F(A)
+	let Functor = trait(Self: (Value: type): type) {
+	  let map(E: effect, A: type, B: type)(
+	    move self: Self(A),
+	  )(
+	    move transform: (A): B with(E),
+	  ): Self(B) with(E)
+	}
+let Applicative = trait(Self: (Value: type): type)
+where Self: Functor {
+  let pure(A: type)(move value: A): Self(A)
 }
 let Carrier(T: type) = struct(value: T)
 extend Carrier: Applicative {
@@ -42794,14 +43190,15 @@ extend Carrier: Applicative {
     Carrier(A)(value)
   }
 }
-extend Carrier: Functor {
-  let map(E: effect, A: type, B: type)(
-    move value: Carrier(A),
-    move transform: (A): B with(E),
-  ): Carrier(B) with(E) = {
-    Carrier(B)(transform(value.value))
-  }
-}
+	extend Carrier: Functor {
+	  let map(E: effect, A: type, B: type)(
+	    move self: Carrier(A),
+	  )(
+	    move transform: (A): B with(E),
+	  ): Carrier(B) with(E) = {
+	    Carrier(B)(transform(self.value))
+	  }
+	}
 let main(): i32 = { 0 }
 "#,
         )
@@ -42809,12 +43206,41 @@ let main(): i32 = { 0 }
     }
 
     #[test]
+    fn generic_functions_accept_explicit_type_constructor_arguments() {
+        let ir = compile_text(
+            r#"
+let Monad = trait(Self: (Value: type): type) {}
+let Carrier(T: type) = struct(value: T)
+extend Carrier: Monad {}
+
+let keep(M: (Value: type): type, A: type)(move value: M(A)): M(A)
+where M: Monad = {
+  value
+}
+
+let main(): i32 = {
+  let kept = keep(M: Carrier)(Carrier(i32)(42))
+  kept.value
+}
+"#,
+        )
+        .expect("generic function should accept explicit constructor arguments");
+        let identity = function_instance_name(&FunctionInstanceKey {
+            template: "keep".into(),
+            arguments: vec![Ty::Struct(type_constructor_marker("Carrier")), Ty::I32],
+        });
+        let symbol = function_symbol(&identity);
+        assert!(ir.contains("define internal %sali.type"));
+        assert!(ir.contains(&symbol));
+    }
+
+    #[test]
     fn higher_kinded_trait_method_signatures_report_kind_errors() {
         for (source, expected) in [
             (
                 r#"
-let Bad(F: (Value: type): type) = trait {
-  let read(move value: F): ()
+let Bad = trait(Self: (Value: type): type) {
+  let read(move value: Self): ()
 }
 let main(): i32 = { 0 }
 "#,
@@ -42831,10 +43257,9 @@ let main(): i32 = { 0 }
             ),
             (
                 r#"
-let Bad(E: (Error: type): effect) = trait {
-  let read(): () with(E)
+let Bad = trait(Self: type) {
+  let read(E: (Error: type): effect)(): () with(E)
 }
-let main(): i32 = { 0 }
 "#,
                 "expects 1 type arguments, found 0",
             ),
@@ -42860,8 +43285,8 @@ let main(): i32 = { 0 }
     fn constructor_trait_implementation_headers_support_marker_traits() {
         let program = crate::parser::parse(
             r#"
-let Higher(F: (Value: type): type) = trait {}
-let Tagged(F: (Value: type): type, Tag: type) = trait {}
+let Higher = trait(Self: (Value: type): type) {}
+let Tagged(Tag: type) = trait(Self: (Value: type): type) {}
 let Carrier(T: type) = struct(value: T)
 extend Carrier: Higher {}
 extend Carrier: Tagged(i32) {}
@@ -42895,21 +43320,23 @@ let main(): i32 = { 0 }
     fn constructor_trait_implementation_methods_register_generic_templates() {
         let program = crate::parser::parse(
             r#"
-let Functor(F: (Value: type): type) = trait {
-  let map(E: effect, A: type, B: type)(
-    move value: F(A),
-    move transform: (A): B with(E),
-  ): F(B) with(E)
-}
+	let Functor = trait(Self: (Value: type): type) {
+	  let map(E: effect, A: type, B: type)(
+	    move self: Self(A),
+	  )(
+	    move transform: (A): B with(E),
+	  ): Self(B) with(E)
+	}
 let Carrier(T: type) = struct(value: T)
-extend Carrier: Functor {
-  let map(E: effect, A: type, B: type)(
-    move value: Carrier(A),
-    move transform: (A): B with(E),
-  ): Carrier(B) with(E) = {
-    Carrier(B)(transform(value.value))
-  }
-}
+	extend Carrier: Functor {
+	  let map(E: effect, A: type, B: type)(
+	    move self: Carrier(A),
+	  )(
+	    move transform: (A): B with(E),
+	  ): Carrier(B) with(E) = {
+	    Carrier(B)(transform(self.value))
+	  }
+	}
 let main(): i32 = { 0 }
 "#,
         )
@@ -42945,27 +43372,29 @@ let main(): i32 = { 0 }
     }
 
     #[test]
-    fn constructor_trait_associated_functions_dispatch_from_constructor() {
+    fn constructor_trait_receiver_methods_dispatch_from_instances() {
         let program = crate::parser::parse(
             r#"
-let Functor(F: (Value: type): type) = trait {
-  let map(E: effect, A: type, B: type)(
-    move value: F(A),
-    move transform: (A): B with(E),
-  ): F(B) with(E)
-}
+	let Functor = trait(Self: (Value: type): type) {
+	  let map(E: effect, A: type, B: type)(
+	    move self: Self(A),
+	  )(
+	    move transform: (A): B with(E),
+	  ): Self(B) with(E)
+	}
 let Carrier(T: type) = struct(value: T)
-extend Carrier: Functor {
-  let map(E: effect, A: type, B: type)(
-    move value: Carrier(A),
-    move transform: (A): B with(E),
-  ): Carrier(B) with(E) = {
-    Carrier(B)(transform(value.value))
-  }
-}
+	extend Carrier: Functor {
+	  let map(E: effect, A: type, B: type)(
+	    move self: Carrier(A),
+	  )(
+	    move transform: (A): B with(E),
+	  ): Carrier(B) with(E) = {
+	    Carrier(B)(transform(self.value))
+	  }
+	}
 let add_one(x: i32): i32 = { x + 1 }
 let main(): i32 = {
-  let value = Carrier.map(Carrier(i32)(41), add_one)
+	  let value = Carrier(i32)(41).map(add_one)
   value.value
 }
 "#,
@@ -43012,7 +43441,7 @@ let main(): i32 = {
         for (source, expected) in [
             (
                 r#"
-let Higher(F: (Value: type): type) = trait {}
+let Higher = trait(Self: (Value: type): type) {}
 let Carrier(T: type) = struct(value: T)
 extend Carrier: Higher {}
 extend Carrier: Higher {}
@@ -43022,7 +43451,7 @@ let main(): i32 = { 0 }
             ),
             (
                 r#"
-let Higher(F: (Left: type, Right: type): type) = trait {}
+let Higher = trait(Self: (Left: type, Right: type): type) {}
 let Carrier(T: type) = struct(value: T)
 extend Carrier: Higher {}
 let main(): i32 = { 0 }
@@ -43031,12 +43460,13 @@ let main(): i32 = { 0 }
             ),
             (
                 r#"
-let Functor(F: (Value: type): type) = trait {
-  let map(E: effect, A: type, B: type)(
-    move value: F(A),
-    move transform: (A): B with(E),
-  ): F(B) with(E)
-}
+	let Functor = trait(Self: (Value: type): type) {
+	  let map(E: effect, A: type, B: type)(
+	    move self: Self(A),
+	  )(
+	    move transform: (A): B with(E),
+	  ): Self(B) with(E)
+	}
 let Carrier(T: type) = struct(value: T)
 extend Carrier: Functor {}
 let main(): i32 = { 0 }
@@ -43112,33 +43542,31 @@ extend Number: Rem(Number) {
   let rem(move self)(move rhs: Number): Number = { Number(self.value % rhs.value) }
 }
 let main(): i32 = {
-  let difference = Number(50) - Number(8)
-  let product = Number(6) * Number(7)
-  let quotient = Number(84) / Number(2)
-  let remainder = Number(85) % Number(43)
-  difference.value + product.value + quotient.value + remainder.value
+  let a = Number(18)
+  let b = Number(5)
+  (((a - b) * Number(2)) / Number(3) % Number(4)).value
 }
 "#,
         );
-        let ir = compile(&program).expect("all core arithmetic traits must compile");
-
+        let ir = compile(&program).expect("arithmetic trait dispatch must compile");
         for (trait_name, method) in [
-            ("Sub", "sub"),
-            ("Mul", "mul"),
-            ("Div", "div"),
-            ("Rem", "rem"),
+            ("core::ops::Sub", "sub"),
+            ("core::ops::Mul", "mul"),
+            ("core::ops::Div", "div"),
+            ("core::ops::Rem", "rem"),
         ] {
             let key = TraitImplKey {
                 self_ty: Ty::Struct("Number".into()),
                 trait_ref: TraitRefKey {
-                    name: format!("core::ops::{trait_name}"),
+                    name: trait_name.into(),
                     arguments: vec![Ty::Struct("Number".into())],
                 },
             };
             let symbol = function_symbol(&trait_method_name(&key, method));
             assert!(
-                ir.contains(&format!("call %sali.type.4e756d626572 @{symbol}(")),
-                "operator must statically call {trait_name}.{method}"
+                ir.lines()
+                    .any(|line| line.contains(" = call ") && line.contains(&format!("@{symbol}("))),
+                "expected lowered call to {method} trait method"
             );
         }
     }

@@ -210,13 +210,13 @@ magic in advance.
 `core.algebra` contains first-order algebra protocols rather than putting them in the prelude:
 
 ```sc
-pub let Semigroup(T: type) = trait {
-  let combine(move left: T, move right: T): T
+pub let Semigroup = trait {
+  let combine(move left: Self, move right: Self): Self
 }
 
-pub let Monoid(T: type) = trait {
-  let empty(): T
-  let combine(move left: T, move right: T): T
+pub let Monoid = trait
+where Self: Semigroup {
+  let empty(): Self
 }
 ```
 
@@ -226,41 +226,47 @@ The compiler does not prove algebraic laws.
 part of the prelude:
 
 ```sc
-pub let Functor(F: (Value: type): type) = trait {
+pub let Functor = trait(Self: (Value: type): type) {
   let map(E: effect, A: type, B: type)(
-    move value: F(A),
+    move self: Self(A),
+  )(
     move transform: (A): B with(E),
-  ): F(B) with(E)
+  ): Self(B) with(E)
 }
 
-pub let Applicative(F: (Value: type): type) = trait
-where F: Functor {
-  let pure(A: type)(move value: A): F(A)
+pub let Applicative = trait(Self: (Value: type): type)
+where Self: Functor {
+  let pure(A: type)(move value: A): Self(A)
 
   let apply(E: effect, A: type, B: type)(
-    move transform: F((A): B with(E)),
-    move value: F(A),
-  ): F(B) with(E)
+    move self: Self((A): B with(E)),
+  )(
+    move value: Self(A),
+  ): Self(B) with(E)
 }
 
-pub let Monad(M: (Value: type): type) = trait
-where M: Applicative {
+pub let Monad = trait(Self: (Value: type): type)
+where Self: Applicative {
   let flat_map(E: effect, A: type, B: type)(
-    move value: M(A),
-    move next: (A): M(B) with(E),
-  ): M(B) with(E)
+    move self: Self(A),
+  )(
+    move next: (A): Self(B) with(E),
+  ): Self(B) with(E)
 }
 ```
 
-These declarations use constructor kinds such as `(Value: type): type`. Traits with a matching
-constructor subject can already be implemented for generic nominal constructors. Method
-implementations are registered as generic function templates and validated, for example
-`extend Carrier: Functor { let map(E, A, B)... }`. Constructor trait associated functions without a
-receiver can be called from the bare constructor, for example `Carrier.map(...)`; dispatch then uses
-the existing generic function instance pipeline. Trait-level `where` constraints express protocol
-inheritance, so an `Applicative(F)` implementation also requires `Functor(F)`, and `Monad(M)`
-requires `Applicative(M)`. Associated-type lowering, receiver-style HKT methods, and full HKT
-equation solving remain future semantic work.
+These declarations use constructor kinds such as `(Value: type): type` on the trait `Self` subject,
+not as ordinary trait parameters. Traits with a matching constructor subject can be implemented for
+generic nominal constructors. Method implementations are registered as generic function templates
+and validated, for example `extend Carrier: Functor { let map(E, A, B)... }`. Receiver methods
+dispatch from concrete nominal instances, so `Carrier(i32)(41).map(add_one)` selects the
+`Carrier: Functor` implementation and instantiates the generic method template. Constructor
+associated functions without a receiver can still be called from the bare constructor; for example,
+`Carrier.pure(...)` is available once `Carrier` implements `Applicative`. Trait-level `where`
+constraints express protocol inheritance, so a
+`Carrier: Applicative` implementation also requires `Carrier: Functor`, and `Carrier: Monad`
+requires `Carrier: Applicative`. Associated-type lowering and broader constructor equation solving
+remain future semantic work.
 
 `ControlFlow`, the old propagation `Try`, `FromResidual`, and `FromError` were removed together with postfix `.try`. `Option` and
 `Result` are ordinary enum values and require explicit constructors. Language error propagation is

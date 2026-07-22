@@ -98,17 +98,19 @@ the same no-capture transform limit; simple field access is covered, while trans
 outer call arguments still require the general callable-to-function bridge. The built-in
 `Option`/`Result` paths remain available.
 
-`core.algebra` currently provides first-order `Semigroup(T)` and `Monoid(T)` protocols outside the
-prelude. `core.functional` now provides higher-kinded `Functor`, `Applicative`, and `Monad`
-protocol declarations over constructor kinds such as `(Value: type): type`. Constructor-valued
-implementations currently register matching generic nominal constructors and validate method bodies
-as generic function templates. Constructor trait associated functions without a receiver can dispatch
-from the bare constructor, so implementations such as `extend Option: Functor` can expose
-`Option.map(...)` through the ordinary generic function instance pipeline. The remaining HKT work is
-associated-type lowering, receiver-style HKT methods, broader constructor equation solving, and
-ordinary generic function lowering for constructor parameters. Trait-level `where` inheritance is
-implemented for the standard `Applicative(F) where F: Functor` and `Monad(M) where M: Applicative`
-relationships.
+`core.algebra` currently provides first-order `Semigroup` and `Monoid` protocols over the default
+`Self: type` subject outside the prelude. `core.functional` now provides higher-kinded `Functor`,
+`Applicative`, and `Monad` protocol declarations over `Self` constructor kinds such as `(Value:
+type): type`. Constructor-valued implementations register matching generic nominal constructors and
+validate method bodies as generic function templates. Receiver-style constructor trait methods
+dispatch from concrete nominal instances, so implementations such as `extend Carrier: Functor` can
+expose `Carrier(i32)(41).map(...)` through the ordinary generic function instance pipeline. Generic
+functions can take explicit type-constructor arguments and constructor predicates such as
+`where M: Monad`. Trait-level `where` inheritance is implemented for the standard
+`Applicative where Self: Functor` and `Monad where Self: Applicative` relationships. The remaining
+HKT work is
+associated-type lowering, broader constructor equation solving, and partial constructor
+applications.
 
 Access keyword generics are implemented for functions and generic inherent members: `A: access` accepts `shared` or `mut`,
 defaults to shared when omitted, participates in monomorphization, and can drive parameter modes,

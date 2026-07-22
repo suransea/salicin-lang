@@ -1,11 +1,11 @@
 use std::{collections::HashSet, fmt};
 
 use crate::ast::{
-    AccessDef, AssociatedTypeBinding, BinaryOp, Binding, CallArg, CompileParam, CompileParamKind,
-    EffectDef, EnumDef, Expr, ExtendDef, ExtendMember, Field, Function, FunctionEffects, Item,
-    MatchArm, Param, PassMode, Pattern, PatternField, PatternFields, Program, Stmt, StructDef,
-    TraitDef, TraitMember, Type, TypeAliasDef, TypeArg, UnaryOp, UseDecl, VariantDef,
-    VariantFields, Visibility, WherePredicate,
+    default_trait_self_parameter, AccessDef, AssociatedTypeBinding, BinaryOp, Binding, CallArg,
+    CompileParam, CompileParamKind, EffectDef, EnumDef, Expr, ExtendDef, ExtendMember, Field,
+    Function, FunctionEffects, Item, MatchArm, Param, PassMode, Pattern, PatternField,
+    PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember, Type, TypeAliasDef, TypeArg,
+    UnaryOp, UseDecl, VariantDef, VariantFields, Visibility, WherePredicate,
 };
 use crate::lexer::{lex, LexError, Token, TokenKind};
 
@@ -1167,12 +1167,11 @@ impl Parser {
                         "contextual `self` receivers are only allowed in extend or trait methods",
                     ));
                 }
-                if self.at(&TokenKind::Colon) {
-                    return Err(self.error_here(
-                        "method receiver is contextual `self` and cannot have an explicit type",
-                    ));
+                if self.take(&TokenKind::Colon) {
+                    self.type_expr()?
+                } else {
+                    Type::Named("Self".into(), Vec::new())
                 }
-                Type::Named("Self".into(), Vec::new())
             } else {
                 self.expect(&TokenKind::Colon, "`:` after parameter name")?;
                 self.type_expr()?
@@ -1371,6 +1370,20 @@ impl Parser {
         compile_groups: Vec<Vec<CompileParam>>,
     ) -> Result<TraitDef, ParseError> {
         self.expect(&TokenKind::Trait, "`trait`")?;
+        let self_parameter = if self.at(&TokenKind::LParen) {
+            let group = self.compile_parameter_group()?;
+            let [parameter] = group.as_slice() else {
+                return Err(
+                    self.error_here("trait self kind must declare exactly one `Self` parameter")
+                );
+            };
+            if parameter.name != "Self" {
+                return Err(self.error_here("trait self kind parameter must be named `Self`"));
+            }
+            parameter.clone()
+        } else {
+            default_trait_self_parameter()
+        };
         self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::LBrace]);
         let where_predicates = self.where_clause()?;
         self.take_newlines_if_followed_by(&[TokenKind::LBrace]);
@@ -1392,6 +1405,7 @@ impl Parser {
 
         Ok(TraitDef {
             name,
+            self_parameter,
             compile_groups,
             where_predicates,
             members,
@@ -5737,10 +5751,6 @@ mod tests {
     fn rejects_invalid_extend_receivers() {
         let cases = [
             (
-                "extend A { let invalid(self: A)(): () = {} }\n",
-                "cannot have an explicit type",
-            ),
-            (
                 "extend A { let invalid(self, value: i32)(): () = {} }\n",
                 "only parameter",
             ),
@@ -5857,12 +5867,12 @@ mod tests {
         let program = parse(
             "let Use(F: (Element: type): type)(move value: F(i32)): F(i32) = { value }\n\
              let Effects(E: (Error: type): effect)(move action: (): i32 with(E(bool))): i32 with(E(bool)) = { action() }\n\
-             let Functor(F: (Value: type): type) = trait {\n\
-               let map(E: effect, A: type, B: type)(move value: F(A), move transform: (A): B with(E)): F(B) with(E)\n\
+             let Functor = trait(Self: (Value: type): type) {\n\
+               let map(E: effect, A: type, B: type)(move self: Self(A))(move transform: (A): B with(E)): Self(B) with(E)\n\
              }\n\
-             let Applicative(F: (Value: type): type) = trait\n\
-             where F: Functor {\n\
-               let pure(A: type)(move value: A): F(A)\n\
+             let Applicative = trait(Self: (Value: type): type)\n\
+             where Self: Functor {\n\
+               let pure(A: type)(move value: A): Self(A)\n\
              }\n",
         )
         .unwrap();
@@ -5895,9 +5905,10 @@ mod tests {
             panic!("expected trait");
         };
         assert_eq!(
-            trait_def.compile_groups[0][0].kind,
+            trait_def.self_parameter.kind,
             CompileParamKind::TypeConstructor { parameter_count: 1 }
         );
+        assert!(trait_def.compile_groups.is_empty());
 
         let Item::Trait(applicative) = &program.items[3] else {
             panic!("expected inherited trait");
@@ -5905,7 +5916,7 @@ mod tests {
         assert_eq!(applicative.where_predicates.len(), 1);
         assert_eq!(
             applicative.where_predicates[0].subject,
-            Type::Named("F".into(), Vec::new())
+            Type::Named("Self".into(), Vec::new())
         );
         assert_eq!(
             applicative.where_predicates[0].trait_ref,

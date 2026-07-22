@@ -900,11 +900,12 @@ let Constructor: (T: type): type = Box
 编译期参数也可以声明构造子 kind：
 
 ```sc
-let Use(F: (Value: type): type) = trait {
+let Use = trait(Self: (Value: type): type) {
   let map(E: effect, A: type, B: type)(
-    move value: F(A),
+    move self: Self(A),
+  )(
     move transform: (A): B with(E),
-  ): F(B) with(E)
+  ): Self(B) with(E)
 }
 
 let Handles(E: (Error: type): effect) = trait {
@@ -913,49 +914,68 @@ let Handles(E: (Error: type): effect) = trait {
 ```
 
 `(Value: type): type` 是类型构造子 kind，`(Error: type): effect` 是 effect 构造子 kind。
-当前实现支持这类参数出现在 trait 与 trait 方法签名中，供 `core.functional` 等标准库协议表达。
-匹配 arity 的泛型 nominal 构造子可以实现这类 trait：
+`let TraitName(...) = trait(Self: Kind)` 将名称旁参数保留为真正的 trait 参数；`trait(Self:
+Kind)` 单独声明被实现主体的 kind。省略 self kind 时等价于 `trait(Self: type)`。当前实现支持
+这类参数出现在 trait self kind、trait 参数和 trait 方法签名中，供 `core.functional` 等标准库
+协议表达。匹配 arity 的泛型 nominal 构造子可以实现 `Self` 为构造子 kind 的 trait：
 
 ```sc
-let Functor(F: (Value: type): type) = trait {
+let Functor = trait(Self: (Value: type): type) {
   let map(E: effect, A: type, B: type)(
-    move value: F(A),
+    move self: Self(A),
+  )(
     move transform: (A): B with(E),
-  ): F(B) with(E)
+  ): Self(B) with(E)
 }
 
 let Carrier(T: type) = struct(value: T)
 
 extend Carrier: Functor {
   let map(E: effect, A: type, B: type)(
-    move value: Carrier(A),
+    move self: Carrier(A),
+  )(
     move transform: (A): B with(E),
   ): Carrier(B) with(E) = {
-    Carrier(B)(transform(value.value))
+    Carrier(B)(transform(self.value))
   }
 }
 ```
 
-method implementation 会注册为 generic function template，并由普通模板验证路径检查函数体。无
-receiver 的 constructor trait associated function 可以通过裸构造子调用：
+method implementation 会注册为 generic function template，并由普通模板验证路径检查函数体。
+receiver-style constructor trait 方法可以从具体 nominal 实例分派：
 
 ```sc
-let value = Carrier.map(Carrier(i32)(41), add_one)
+let value = Carrier(i32)(41).map(add_one)
 ```
 
-如果多个 constructor trait associated function 共享同名 member，仍按命名重载规则用具名参数消歧。
+如果多个 constructor trait receiver method 共享同名 member，仍按命名重载规则用具名参数消歧。
+没有 receiver 的 constructor trait associated function 仍可以通过裸构造子调用，例如
+实现 `Applicative` 后的 `Carrier.pure(...)`。
+
 trait 声明可以在 `trait` 后、`{` 前写继承约束：
 
 ```sc
-let Applicative(F: (Value: type): type) = trait
-where F: Functor {
+let Applicative = trait(Self: (Value: type): type)
+where Self: Functor {
   ...
 }
 ```
 
-这里 `F: Functor` 使用构造器 subject 规则：`F` 填充 `Functor` 的第一个构造器参数，右侧只写剩余
-trait 参数。关联类型、receiver-style HKT 方法和完整构造子方程求解仍是后续语义能力；不能唯一决定时
-仍通过省略编译期参数组和命名参数由上下文消歧，不会恢复 `_` 推断占位。
+这里 `Self: Functor` 使用构造器 subject 规则：当前 trait 的 `Self` 构造子必须也实现
+`Functor`；右侧只写 `Functor` 自己的 trait 参数。普通泛型函数也可以接收显式构造子参数并写
+constructor trait 约束：
+
+```sc
+let keep(M: (Value: type): type, A: type)(move value: M(A)): M(A)
+where M: Monad = {
+  value
+}
+
+let kept = keep(M: Carrier)(Carrier(i32)(42))
+```
+
+关联类型 lowering 和完整构造子方程求解仍是后续语义能力；不能唯一决定时仍通过省略编译期参数组和
+命名参数由上下文消歧，不会恢复 `_` 推断占位。
 
 带名称旁参数的形式定义类型族，右侧必须产生具体的 `type`：
 

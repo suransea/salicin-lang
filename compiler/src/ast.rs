@@ -117,9 +117,17 @@ pub struct AccessDef {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TraitDef {
     pub name: String,
+    pub self_parameter: CompileParam,
     pub compile_groups: Vec<Vec<CompileParam>>,
     pub where_predicates: Vec<WherePredicate>,
     pub members: Vec<TraitMember>,
+}
+
+pub fn default_trait_self_parameter() -> CompileParam {
+    CompileParam {
+        name: "Self".to_owned(),
+        kind: CompileParamKind::Type,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -2,27 +2,30 @@
 // traits over compile-time type constructors, not prelude items. Law
 // documentation belongs in the standard library docs and tests; the compiler
 // does not prove these laws.
-pub let Functor(F: (Value: type): type) = trait {
+pub let Functor = trait(Self: (Value: type): type) {
   let map(E: effect, A: type, B: type)(
-    move value: F(A),
+    move self: Self(A),
+  )(
     move transform: (A): B with(E),
-  ): F(B) with(E)
+  ): Self(B) with(E)
 }
 
-pub let Applicative(F: (Value: type): type) = trait
-where F: Functor {
-  let pure(A: type)(move value: A): F(A)
+pub let Applicative = trait(Self: (Value: type): type)
+where Self: Functor {
+  let pure(A: type)(move value: A): Self(A)
 
   let apply(E: effect, A: type, B: type)(
-    move transform: F((A): B with(E)),
-    move value: F(A),
-  ): F(B) with(E)
+    move self: Self((A): B with(E)),
+  )(
+    move value: Self(A),
+  ): Self(B) with(E)
 }
 
-pub let Monad(M: (Value: type): type) = trait
-where M: Applicative {
+pub let Monad = trait(Self: (Value: type): type)
+where Self: Applicative {
   let flat_map(E: effect, A: type, B: type)(
-    move value: M(A),
-    move next: (A): M(B) with(E),
-  ): M(B) with(E)
+    move self: Self(A),
+  )(
+    move next: (A): Self(B) with(E),
+  ): Self(B) with(E)
 }

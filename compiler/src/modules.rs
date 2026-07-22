@@ -4192,12 +4192,11 @@ let main(): i32 = { Option() }
              let Number = struct(value: i32)\n\
              let suspended(): i32 with(Async) = { 0 }\n\
              let invoke(move action: (): i32 with(Async)): i32 with(Async) = { action() }\n\
-             extend Number: Semigroup(Number) {\n\
+             extend Number: Semigroup {\n\
                let combine(move left: Number, move right: Number): Number = { Number(left.value + right.value) }\n\
              }\n\
-             extend Number: Monoid(Number) {\n\
+             extend Number: Monoid {\n\
                let empty(): Number = { Number(0) }\n\
-               let combine(move left: Number, move right: Number): Number = { Number(left.value + right.value) }\n\
              }\n",
             true,
         )])
@@ -4269,7 +4268,7 @@ let main(): i32 = { Option() }
             "algebra.sc",
             &[],
             "let Number = struct(value: i32)\n\
-             extend Number: Semigroup(Number) {\n\
+             extend Number: Semigroup {\n\
                let combine(move left: Number, move right: Number): Number = { left }\n\
              }\n",
             true,

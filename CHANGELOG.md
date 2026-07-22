@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.182.0 - 2026-07-22
+
+- Split trait parameters from the implemented subject by adding explicit trait self-kind headers
+  such as `trait(Self: type)` and `trait(Self: (Value: type): type)`. Omitting the header still
+  means `Self: type`, so `let Copy = trait {}` remains the simple first-order form.
+- Migrated `core.algebra` to `Self`-subject protocols, with `Monoid where Self: Semigroup`.
+- Migrated `core.functional` to higher-kinded `Self` subjects. `map`, `apply`, and `flat_map` are
+  receiver methods on `Self(...)` values, while `pure` remains a constructor associated function.
+- Added constructor-receiver trait method dispatch from concrete nominal instances and allowed
+  generic functions to take explicit type-constructor arguments with constructor predicates such as
+  `where M: Monad`.
+
 ## 0.181.0 - 2026-07-22
 
 - Added trait-level `where` constraints so higher-kinded standard protocols can express

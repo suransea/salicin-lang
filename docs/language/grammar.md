@@ -126,11 +126,13 @@ constructor_kind = compile_parameter_group,
   (T: type): type = Target` 直接绑定类型构造子。前者的 RHS 必须是已应用的具体类型，不进行隐式
   eta 应用。
 - 编译期参数 kind 可以写成构造子签名，例如 `F: (Value: type): type` 与
-  `E: (Error: type): effect`。当前语义支持它们进入 trait 方法签名和标准库协议声明。匹配 arity
-  的泛型 nominal 构造子可以实现这类 trait；method implementation 会注册为 generic function
-  template 并接受模板验证。无 receiver 的 constructor trait associated function 可以通过裸构造子
-  调用，例如 `Carrier.map(...)`。关联类型、`where` 子句、receiver-style HKT 方法和完整 HKT 方程
-  求解仍会被显式拒绝或留待后续。
+  `E: (Error: type): effect`。`let TraitName(...) = trait(Self: Kind)` 中名称旁参数是真正的
+  trait 参数；`trait(Self: Kind)` 声明被实现主体的 kind，省略时为 `Self: type`。匹配 arity 的
+  泛型 nominal 构造子可以实现 `Self` 为构造子 kind 的 trait；method implementation 会注册为
+  generic function template 并接受模板验证。receiver-style constructor trait 方法可以从具体
+  nominal 实例分派，例如 `Carrier(i32)(41).map(add_one)`；无 receiver 的 constructor trait
+  associated function 可以通过裸构造子调用。关联类型 lowering 与完整 HKT 方程求解仍会被显式
+  拒绝或留待后续。
 - 具名函数的参数类型必须显式；首版 `let` 名称位置不接受解构 pattern。
 - trait 声明体中的无 initializer `let` 是 requirement。
 
