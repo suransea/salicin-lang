@@ -38,8 +38,8 @@ use core.Option
 use core.Result
 ```
 
-Operator traits belong to `core.ops`, effect identities belong to `core.effects`, access identities
-belong to `core.access`, compiler-lowered control contracts belong to `core.control`, algebra
+Operator traits belong to `core.ops`, effect identities belong to `core.effects`, compile-time
+domains belong to `core.access`, compiler-lowered control contracts belong to `core.control`, algebra
 protocols belong to `core.algebra`, higher-kinded functional protocols belong to `core.functional`,
 iteration protocols belong to `core.iter`, and owning containers belong to `alloc.boxed` and
 `alloc.vec`. Alloc declarations must be named through their module or imported explicitly with
@@ -65,7 +65,8 @@ those module exports as ordinary unqualified names. The former control-container
 been removed.
 Effect identities use uppercase nominal spelling, including user-defined effects; row parameters
 such as `E: effect` remain ordinary parameter names.
-`Shared`/`Mutable` require `use core.access...` when named as standard-library declarations.
+The `effect`, `access`, and `passing` compile-time domains use contextual names such as `pure`,
+`shared`, `mut`, `auto`, `copy`, and `move` in parameter positions.
 `Semigroup` and `Monoid` require `use core.algebra...` when named.
 `Functor`, `Applicative`, and `Monad` require `use core.functional...` when named.
 `Iterator` and `IntoIterator` require an ordinary `use core.iter...` when named in an implementation

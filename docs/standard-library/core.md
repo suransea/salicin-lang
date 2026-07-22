@@ -152,15 +152,27 @@ probeable and the escaping error type is unique. `Async` currently exposes only 
 async/Future lowering will add its handler contracts in the same implementation slice rather than
 pretending `await` already works.
 
-`core.access` owns standard access identities, also outside the prelude:
+`core.access` owns standard compile-time domains, also outside the prelude:
 
 ```sc
-pub let Shared = access
-pub let Mutable = access
+pub let type = domain
+pub let region = domain
+pub let effect = domain
+
+pub let access = domain {
+  shared
+  mut
+}
+
+pub let passing = domain {
+  auto
+  copy
+  move
+}
 ```
 
-The language still writes borrow types as `borrow T` and `borrow(mut) T`; naming these declarations
-directly requires an ordinary `use core.access...`.
+The language still writes borrow types as `borrow T` and `borrow(mut) T`; `borrow(A)` and generic
+passing modes refer to these domains in compile-time parameter positions.
 
 `core.control` owns the edition-pinned contracts for compiler-lowered control functions. It is not
 part of the prelude. `do`, `try`, and `throw` are ordinary source-backed functions over the standard

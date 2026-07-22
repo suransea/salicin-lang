@@ -1,8 +1,8 @@
 use std::{collections::HashSet, fmt};
 
 use crate::ast::{
-    default_trait_self_parameter, AccessDef, AssociatedTypeBinding, BinaryOp, Binding, CallArg,
-    CompileParam, CompileParamKind, EffectDef, EnumDef, Expr, ExtendDef, ExtendMember, Field,
+    default_trait_self_parameter, AssociatedTypeBinding, BinaryOp, Binding, CallArg, CompileParam,
+    CompileParamKind, DomainDef, EffectDef, EnumDef, Expr, ExtendDef, ExtendMember, Field,
     Function, FunctionEffects, Item, MatchArm, Param, PassMode, Pattern, PatternField,
     PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember, Type, TypeAliasDef, TypeArg,
     UnaryOp, UseDecl, VariantDef, VariantFields, Visibility, WherePredicate,
@@ -291,7 +291,7 @@ impl Parser {
                 .map(Item::Effect);
         }
 
-        if self.at_context_ident("access") {
+        if self.at_context_ident("domain") {
             if mutable
                 || annotation.is_some()
                 || has_effect_group
@@ -300,11 +300,11 @@ impl Parser {
                 || !where_predicates.is_empty()
             {
                 return Err(self.error_here(
-                    "access declarations cannot be mutable, generic, annotated, or have parameters",
+                    "domain declarations cannot be mutable, generic, annotated, or have parameters",
                 ));
             }
             self.advance();
-            return Ok(Item::Access(AccessDef { name }));
+            return self.domain_definition(name).map(Item::Domain);
         }
 
         if self.at(&TokenKind::Struct) || self.at(&TokenKind::Enum) || self.at(&TokenKind::Trait) {
@@ -535,6 +535,8 @@ impl Parser {
     fn declaration_name(&mut self) -> Result<String, ParseError> {
         let name = match &self.current().kind {
             TokenKind::Ident(name) => name.clone(),
+            TokenKind::Type => "type".to_owned(),
+            TokenKind::Region => "region".to_owned(),
             TokenKind::Do => "do".to_owned(),
             TokenKind::Try => "try".to_owned(),
             TokenKind::Throw => "throw".to_owned(),
@@ -545,6 +547,51 @@ impl Parser {
                     "expected a declaration name, found {}",
                     describe(&self.current().kind)
                 )))
+            }
+        };
+        self.advance();
+        Ok(name)
+    }
+
+    fn domain_definition(&mut self, name: String) -> Result<DomainDef, ParseError> {
+        let members = if self.take(&TokenKind::LBrace) {
+            self.skip_newlines();
+            let mut members = Vec::new();
+            let mut seen = HashSet::new();
+            while !self.take(&TokenKind::RBrace) {
+                let member = self.domain_member_name()?;
+                if !seen.insert(member.clone()) {
+                    return Err(self.error_here(format!("duplicate domain member `{member}`")));
+                }
+                members.push(member);
+
+                self.take(&TokenKind::Comma);
+                self.skip_newlines();
+            }
+            Some(members)
+        } else {
+            None
+        };
+        Ok(DomainDef { name, members })
+    }
+
+    fn domain_member_name(&mut self) -> Result<String, ParseError> {
+        let token = self.current().clone();
+        let name = match token.kind {
+            TokenKind::Ident(name) if name != "_" => name,
+            TokenKind::Mut => "mut".to_owned(),
+            TokenKind::Copy => "copy".to_owned(),
+            TokenKind::Move => "move".to_owned(),
+            TokenKind::Type => "type".to_owned(),
+            TokenKind::Region => "region".to_owned(),
+            _ => {
+                return Err(self.error_at(
+                    &token,
+                    format!(
+                        "expected a domain member name, found {}",
+                        describe(&token.kind)
+                    ),
+                ))
             }
         };
         self.advance();
@@ -3254,7 +3301,7 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
                     validate_function_scopes(operation, &regions, &accesses)?;
                 }
             }
-            Item::Access(_) => {}
+            Item::Domain(_) => {}
             Item::Struct(definition) => {
                 reject_passing_parameters(
                     &definition.compile_groups,
@@ -5475,11 +5522,16 @@ mod tests {
     }
 
     #[test]
-    fn parses_compiler_provided_control_contract_declarations() {
+    fn parses_compiler_provided_domain_and_control_contract_declarations() {
         let program = parse(
             "pub let Unsafe = effect {}\n\
              pub let Throws(Error: type) = effect { let raise(move error: Error): Never }\n\
-             pub let Shared = access\n\
+             pub let type = domain\n\
+             pub let effect = domain\n\
+             pub let access = domain {\n\
+               shared\n\
+               mut\n\
+             }\n\
              pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E)\n",
         )
         .unwrap();
@@ -5491,9 +5543,23 @@ mod tests {
             &program.items[1],
             Item::Effect(effect) if effect.compile_groups.len() == 1 && effect.operations.len() == 1
         ));
-        assert!(matches!(&program.items[2], Item::Access(_)));
+        assert!(matches!(
+            &program.items[2],
+            Item::Domain(domain) if domain.name == "type" && domain.members.is_none()
+        ));
         assert!(matches!(
             &program.items[3],
+            Item::Domain(domain) if domain.name == "effect" && domain.members.is_none()
+        ));
+        assert!(matches!(
+            &program.items[4],
+            Item::Domain(domain) if domain.name == "access"
+                && domain.members.as_ref().is_some_and(|members| members.len() == 2
+                    && members[0] == "shared"
+                    && members[1] == "mut")
+        ));
+        assert!(matches!(
+            &program.items[5],
             Item::Function(function) if function.name == "do" && function.body.is_none()
         ));
     }

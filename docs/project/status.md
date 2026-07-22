@@ -28,10 +28,11 @@ compile-time parameter names, normalized to declaration order, and erased before
 
 Compiler-lowered capabilities are now source-backed by validated declarations in ordinary core
 modules: `core.effects` owns `Unsafe`, `Throws(Error)` with `raise(move error: Error): Never`, and
-an ordinary `Async` effect with a minimal `suspend(): ()` operation; `core.access` owns `Shared` and
-`Mutable`; `core.control` owns source definitions for `do`, `try`, and `throw`, plus the remaining
-bodyless intrinsic signatures for `unsafe` and `loop`; `core.ops` owns the standard `Chain` and
-`Coalesce` protocol declarations for `?.` and `??`. These exports remain outside the prelude. `await` is
+an ordinary `Async` effect with a minimal `suspend(): ()` operation; `core.access` owns the
+`type`, `region`, `effect`, `access`, and `passing` compile-time domains; `core.control` owns source
+definitions for `do`, `try`, and `throw`, plus the remaining bodyless intrinsic signatures for
+`unsafe` and `loop`; `core.ops` owns the standard `Chain` and `Coalesce` protocol declarations for
+`?.` and `??`. These exports remain outside the prelude. `await` is
 intentionally absent until the async/Future lowering slice is implemented, at which point its
 executable standard-library contract must land with the implementation.
 `Never`-returning algebraic operations are handled as abort operations whose clauses omit `resume`,
@@ -116,12 +117,12 @@ from ordinary library files. Curried constructors and partially applied transpar
 act as HKT implementation targets; the remaining HKT work is associated-type lowering and broader
 constructor equation solving.
 
-Access keyword generics are implemented for functions and generic inherent members: `A: access` accepts `shared` or `mut`,
+Access domain generics are implemented for functions and generic inherent members: `A: access` accepts `shared` or `mut`,
 defaults to shared when omitted, participates in monomorphization, and can drive parameter modes,
 borrow types, borrow expressions, and raw pointer borrows. The alloc free functions and methods use
 this path. Mutable borrowing has one source spelling, `borrow(mut)`; separately named mutable alloc
 aliases and the former prefix spelling are intentionally absent before 1.0.
-Passing keyword generics are also implemented for functions and generic inherent members:
+Passing domain generics are also implemented for functions and generic inherent members:
 `P: passing` accepts `auto`, `copy`, or `move` and can be referenced directly in parameter keyword
 position. Functions and trait methods place a contextual `with(...)` clause after the result type:
 `: T with(Unsafe)` adds the checked unsafe call requirement, while `: T with(Throws(E))` declares the

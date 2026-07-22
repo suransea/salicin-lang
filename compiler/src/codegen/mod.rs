@@ -2058,7 +2058,7 @@ fn top_level_namespace(item: &Item) -> TopLevelNamespace {
     match item {
         Item::Function(_) => TopLevelNamespace::Function,
         Item::Struct(_) | Item::Enum(_) | Item::TypeAlias(_) => TopLevelNamespace::Type,
-        Item::Global(_) | Item::Trait(_) | Item::Effect(_) | Item::Access(_) | Item::Extend(_) => {
+        Item::Global(_) | Item::Trait(_) | Item::Effect(_) | Item::Domain(_) | Item::Extend(_) => {
             TopLevelNamespace::Other
         }
     }
@@ -2422,7 +2422,7 @@ impl Analyzer {
                 Item::Struct(definition) => &definition.name,
                 Item::Enum(definition) => &definition.name,
                 Item::Effect(definition) => &definition.name,
-                Item::Access(definition) => &definition.name,
+                Item::Domain(definition) => &definition.name,
                 Item::TypeAlias(definition) => &definition.name,
                 Item::Trait(definition) => &definition.name,
                 Item::Extend(extension) => {
@@ -2639,16 +2639,7 @@ impl Analyzer {
                     self.effect_defs
                         .insert(definition.name.clone(), definition.clone());
                 }
-                Item::Access(definition) => {
-                    if definition.name != self.lang_item_name(LangItemKind::SharedAccess)
-                        && definition.name != self.lang_item_name(LangItemKind::MutableAccess)
-                    {
-                        self.error(format!(
-                            "access value `{}` can only be declared by `core.access`",
-                            definition.name
-                        ));
-                    }
-                }
+                Item::Domain(_) => {}
                 Item::TypeAlias(_) => {
                     unreachable!("type aliases are expanded before item collection")
                 }
@@ -2851,7 +2842,7 @@ impl Analyzer {
                         ExtendMember::Const(_) => None,
                     })
                     .collect(),
-                Item::Global(_) | Item::Struct(_) | Item::Enum(_) | Item::Access(_) => Vec::new(),
+                Item::Global(_) | Item::Struct(_) | Item::Enum(_) | Item::Domain(_) => Vec::new(),
                 Item::Effect(definition) => definition.operations.iter().collect(),
                 Item::TypeAlias(_) => Vec::new(),
             }
@@ -30778,7 +30769,7 @@ fn normalize_labeled_type_arguments<const N: usize>(programs: [&mut Program; N])
                 Item::Effect(definition) => (&definition.name, &definition.compile_groups),
                 Item::Trait(definition) => (&definition.name, &definition.compile_groups),
                 Item::TypeAlias(definition) => (&definition.name, &definition.compile_groups),
-                Item::Function(_) | Item::Global(_) | Item::Access(_) | Item::Extend(_) => {
+                Item::Function(_) | Item::Global(_) | Item::Domain(_) | Item::Extend(_) => {
                     return None;
                 }
             };
@@ -30958,7 +30949,7 @@ fn normalize_item_labeled_type_arguments(
             constructor_parameters,
             diagnostics,
         ),
-        Item::Access(_) => {}
+        Item::Domain(_) => {}
     }
 }
 
@@ -31531,7 +31522,7 @@ fn expand_item_aliases(
                 expand_function_aliases(operation, aliases, diagnostics);
             }
         }
-        Item::Access(_) => {}
+        Item::Domain(_) => {}
         Item::TypeAlias(_) => unreachable!("aliases are removed before item expansion"),
     }
 }
@@ -31878,7 +31869,7 @@ fn erase_region_parameters(program: &mut Program) {
                     erase_function(operation);
                 }
             }
-            Item::Access(_) => {}
+            Item::Domain(_) => {}
             Item::Struct(definition) => erase_groups(&mut definition.compile_groups),
             Item::Enum(definition) => erase_groups(&mut definition.compile_groups),
             Item::Trait(definition) => {

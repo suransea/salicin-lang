@@ -1919,15 +1919,6 @@ fn reserves_compiler_provided_control_contracts_for_core() {
         .contains("control lang-item name `throw` is reserved")));
 
     let errors = compile_text(
-        "let Local = access\n\
-         let main(): i32 = { 0 }\n",
-    )
-    .unwrap_err();
-    assert!(errors.iter().any(|diagnostic| diagnostic
-        .message
-        .contains("access value `Local` can only be declared")));
-
-    let errors = compile_text(
         "let external(value: i32): i32\n\
          let main(): i32 = { 0 }\n",
     )
@@ -1935,6 +1926,15 @@ fn reserves_compiler_provided_control_contracts_for_core() {
     assert!(errors
         .iter()
         .any(|diagnostic| diagnostic.message.contains("has no body")));
+}
+
+#[test]
+fn custom_domain_declarations_are_allowed() {
+    compile_text(
+        "let Local = domain { one two }\n\
+         let main(): i32 = { 0 }\n",
+    )
+    .expect("ordinary source can declare domains");
 }
 
 #[test]

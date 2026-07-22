@@ -94,12 +94,16 @@ let_decl = "let", [ "mut" ], IDENT,
 with_clause = IDENT("with"), "(", effect, { ",", effect }, [ "," ], ")" ;
 effect = IDENT, [ "(", type_expr, { ",", type_expr }, [ "," ], ")" ] ;
 
-initializer = expression | effect_decl | "access" | struct_decl | enum_decl | trait_decl | module_decl ;
+initializer = expression | effect_decl | domain_decl | struct_decl | enum_decl | trait_decl | module_decl ;
 
 effect_decl = "effect", [ "{", separators,
               { effect_operation, separators }, "}" ] ;
 effect_operation = "let", IDENT, parameter_group, { parameter_group },
                    ":", type_expr, [ with_clause ] ;
+
+domain_decl = "domain", [ "{", separators,
+              { domain_member, separators }, "}" ] ;
+domain_member = IDENT | "mut" | "copy" | "move" | "type" | "region" ;
 
 constructor_kind = compile_parameter_group,
                    { compile_parameter_group }, ":", ( "type" | IDENT("effect") ) ;
@@ -114,11 +118,12 @@ constructor_kind = compile_parameter_group,
   `with(Unsafe)` 增加当前内建 `Unsafe` 调用要求。
 - `with` 和声明右侧的 `effect` 是上下文词，不是全局关键字。`let UI = effect` 声明名义 marker；
   `let Unsafe = effect {}` 是等价的显式空 operation 形式；`let State(S: type) = effect { ... }`
-  还可声明无函数体的 operation requirements。旧的
+  还可声明无函数体的 operation requirements。这些声明向 `effect` domain 引入成员。旧的
   `(effect): T`、`T(effect)` 与 `T ! effect` 都不属于语法。
-- 声明右侧的 `access` 同样是上下文词，仅用于 core bundle 声明内建 access 身份。access 身份位于
+- 声明右侧的 `domain` 同样是上下文词，用于声明编译期参数域。无 body 的 `domain` 是开放域；
+  `domain { ... }` 是封闭域。标准 `type`、`region`、`effect`、`access` 与 `passing` domain 位于
   `core.access`；effect 身份位于 `core.effects`；控制 lang item 可在声明名位置使用 `do`、`try`、
-  `unsafe`、`loop`；普通源码不能重新声明这些名字。
+  `unsafe`、`loop`。
 - `let f(x: T) = { body }` 是把参数提升到名称旁边的具名闭包声明；RHS 必须有花括号。
 - `let f: (x: T): R = { body }` 是带名签名的具名闭包声明：所有槽必须有名字。
 - `let f: (T): R = { (x: T) -> body }` 是普通函数值绑定。
@@ -263,11 +268,11 @@ type_argument  = [ IDENT, ":" ], type_expr | INTEGER ;
 `_` 不是类型实参。调用中的编译期参数组可整体省略，并由运行时实参和期望类型推断；显式消歧使用
 普通的 `IDENT ":" expression` 命名实参，不增加另一套括号或关键字。
 类型位置的构造子实参同样可以写 `IDENT ":" type_expr` 标签；一个实参组不能混用具名和位置形式。
-`access` 是编译期 kind；其内建实参为 `shared` 与 `mut`。`borrow(A)` 和
+`access` 是 `core.access` 声明的封闭编译期 domain；其内建实参为 `shared` 与 `mut`。`borrow(A)` 和
 `borrow(A, 'a)` 分别携带 access 参数以及 access/region 参数组合。
-`passing` 是函数编译期 kind；其内建实参为 `auto`、`copy` 与 `move`，并在参数模式位置以
+`passing` 是函数编译期 domain；其内建实参为 `auto`、`copy` 与 `move`，并在参数模式位置以
 已声明的参数名引用，例如 `(P value: T)`。
-`effect` 是函数编译期 kind；实参是完整 effect row：`pure`、`Unsafe`、名义 marker 或其组合。
+`effect` 是函数编译期 domain；实参是完整 effect row：`pure`、`Unsafe`、名义 marker 或其组合。
 默认值为 `pure`。参数名只可出现在函数签名的 `with(...)` 子句和其他 effect 编译期实参位置，
 例如 `with(E)` 与 `forward(E)(value)`；它也可由 callable 实参或期望类型推断。
 

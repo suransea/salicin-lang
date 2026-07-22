@@ -383,7 +383,7 @@ const CORE_OPS_EXPORTS: &[&str] = &[
     "Coalesce",
 ];
 const CORE_EFFECTS_EXPORTS: &[&str] = &["Unsafe", "Throws", "Async"];
-const CORE_ACCESS_EXPORTS: &[&str] = &["Shared", "Mutable"];
+const CORE_ACCESS_EXPORTS: &[&str] = &["type", "region", "effect", "access", "passing"];
 const CORE_CONTROL_EXPORTS: &[&str] = &[
     "Continuation",
     "EffectCallable",
@@ -1642,7 +1642,7 @@ fn validate_api_visibility(program: &Program, item_source_paths: &[String]) -> V
                 Item::Enum(definition) => &definition.name,
                 Item::Trait(definition) => &definition.name,
                 Item::Effect(definition) => &definition.name,
-                Item::Access(definition) => &definition.name,
+                Item::Domain(definition) => &definition.name,
                 Item::Function(_) | Item::Global(_) | Item::TypeAlias(_) | Item::Extend(_) => {
                     return None
                 }
@@ -1740,7 +1740,7 @@ fn validate_item_api(
                 );
             }
         }
-        Item::Access(_) => {}
+        Item::Domain(_) => {}
         Item::Struct(definition) => {
             let bound_types = compile_parameter_names(&definition.compile_groups, &no_bound_types);
             for field in &definition.fields {
@@ -2220,7 +2220,7 @@ fn declaration_name(item: &Item) -> Option<&str> {
         Item::Enum(definition) => Some(&definition.name),
         Item::Trait(definition) => Some(&definition.name),
         Item::Effect(definition) => Some(&definition.name),
-        Item::Access(definition) => Some(&definition.name),
+        Item::Domain(definition) => Some(&definition.name),
         Item::TypeAlias(definition) => Some(&definition.name),
         Item::Extend(_) => None,
     }
@@ -2230,7 +2230,7 @@ fn declaration_namespace(item: &Item) -> DeclarationNamespace {
     match item {
         Item::Function(_) => DeclarationNamespace::Function,
         Item::Struct(_) | Item::Enum(_) | Item::TypeAlias(_) => DeclarationNamespace::Type,
-        Item::Global(_) | Item::Trait(_) | Item::Effect(_) | Item::Access(_) | Item::Extend(_) => {
+        Item::Global(_) | Item::Trait(_) | Item::Effect(_) | Item::Domain(_) | Item::Extend(_) => {
             DeclarationNamespace::Other
         }
     }
@@ -2302,7 +2302,7 @@ impl Resolver {
                     self.rewrite_function(operation, context, &type_scope);
                 }
             }
-            Item::Access(definition) => {
+            Item::Domain(definition) => {
                 definition.name = canonical_name(context.module_path, &definition.name);
             }
             Item::Extend(extension) => self.rewrite_extend(extension, context),

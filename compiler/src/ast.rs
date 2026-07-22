@@ -89,7 +89,7 @@ pub enum Item {
     Struct(StructDef),
     Enum(EnumDef),
     Effect(EffectDef),
-    Access(AccessDef),
+    Domain(DomainDef),
     TypeAlias(TypeAliasDef),
     Trait(TraitDef),
     Extend(ExtendDef),
@@ -110,8 +110,9 @@ pub struct EffectDef {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AccessDef {
+pub struct DomainDef {
     pub name: String,
+    pub members: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

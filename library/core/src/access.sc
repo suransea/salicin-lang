@@ -1,5 +1,15 @@
-// Compiler-recognized access identities used by parameter passing and borrow
-// types. The surface syntax still uses `borrow` and `borrow(mut)`, while the
-// type checker resolves the underlying compile-time access values here.
-pub let Shared = access
-pub let Mutable = access
+// Compile-time domains used by parameter passing, regions, and borrow types.
+pub let type = domain
+pub let region = domain
+pub let effect = domain
+
+pub let access = domain {
+  shared
+  mut
+}
+
+pub let passing = domain {
+  auto
+  copy
+  move
+}

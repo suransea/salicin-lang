@@ -102,8 +102,11 @@ pub enum LangItemKind {
     Coalesce,
     UnsafeEffect,
     ThrowsEffect,
-    SharedAccess,
-    MutableAccess,
+    TypeDomain,
+    RegionDomain,
+    AccessDomain,
+    PassingDomain,
+    EffectDomain,
     Continuation,
     EffectCallable,
     Handle,
@@ -117,7 +120,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 46] = [
+    const ALL: [Self; 49] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -152,8 +155,11 @@ impl LangItemKind {
         Self::Coalesce,
         Self::UnsafeEffect,
         Self::ThrowsEffect,
-        Self::SharedAccess,
-        Self::MutableAccess,
+        Self::TypeDomain,
+        Self::RegionDomain,
+        Self::AccessDomain,
+        Self::PassingDomain,
+        Self::EffectDomain,
         Self::Continuation,
         Self::EffectCallable,
         Self::Handle,
@@ -202,8 +208,11 @@ impl LangItemKind {
             Self::Coalesce => "Coalesce",
             Self::UnsafeEffect => "Unsafe",
             Self::ThrowsEffect => "Throws",
-            Self::SharedAccess => "Shared",
-            Self::MutableAccess => "Mutable",
+            Self::TypeDomain => "type",
+            Self::RegionDomain => "region",
+            Self::AccessDomain => "access",
+            Self::PassingDomain => "passing",
+            Self::EffectDomain => "effect",
             Self::Continuation => "Continuation",
             Self::EffectCallable => "EffectCallable",
             Self::Handle => "Handle",
@@ -222,7 +231,11 @@ impl LangItemKind {
             Self::Option | Self::Result | Self::Never | Self::PartialOrdering => "enum",
             Self::Continuation | Self::EffectCallable => "struct",
             Self::UnsafeEffect | Self::ThrowsEffect => "effect",
-            Self::SharedAccess | Self::MutableAccess => "access",
+            Self::TypeDomain
+            | Self::RegionDomain
+            | Self::AccessDomain
+            | Self::PassingDomain
+            | Self::EffectDomain => "domain",
             Self::Do | Self::Try | Self::Throw | Self::Unsafe | Self::Loop => "function",
             Self::Handle
             | Self::Copy
@@ -294,8 +307,11 @@ impl LangItemKind {
             | Self::Coalesce
             | Self::UnsafeEffect
             | Self::ThrowsEffect
-            | Self::SharedAccess
-            | Self::MutableAccess
+            | Self::TypeDomain
+            | Self::RegionDomain
+            | Self::AccessDomain
+            | Self::PassingDomain
+            | Self::EffectDomain
             | Self::Continuation
             | Self::EffectCallable
             | Self::Handle
@@ -400,8 +416,11 @@ pub struct LangItems {
     coalesce: LangItem,
     unsafe_effect: LangItem,
     throws_effect: LangItem,
-    shared_access: LangItem,
-    mutable_access: LangItem,
+    type_domain: LangItem,
+    region_domain: LangItem,
+    access_domain: LangItem,
+    passing_domain: LangItem,
+    effect_domain: LangItem,
     continuation: LangItem,
     effect_callable: LangItem,
     handle: LangItem,
@@ -539,11 +558,20 @@ impl LangItems {
     pub const fn throws_effect(&self) -> &LangItem {
         &self.throws_effect
     }
-    pub const fn shared_access(&self) -> &LangItem {
-        &self.shared_access
+    pub const fn type_domain(&self) -> &LangItem {
+        &self.type_domain
     }
-    pub const fn mutable_access(&self) -> &LangItem {
-        &self.mutable_access
+    pub const fn region_domain(&self) -> &LangItem {
+        &self.region_domain
+    }
+    pub const fn access_domain(&self) -> &LangItem {
+        &self.access_domain
+    }
+    pub const fn passing_domain(&self) -> &LangItem {
+        &self.passing_domain
+    }
+    pub const fn effect_domain(&self) -> &LangItem {
+        &self.effect_domain
     }
     pub const fn continuation(&self) -> &LangItem {
         &self.continuation
@@ -612,8 +640,11 @@ impl LangItems {
             LangItemKind::Coalesce => &self.coalesce,
             LangItemKind::UnsafeEffect => &self.unsafe_effect,
             LangItemKind::ThrowsEffect => &self.throws_effect,
-            LangItemKind::SharedAccess => &self.shared_access,
-            LangItemKind::MutableAccess => &self.mutable_access,
+            LangItemKind::TypeDomain => &self.type_domain,
+            LangItemKind::RegionDomain => &self.region_domain,
+            LangItemKind::AccessDomain => &self.access_domain,
+            LangItemKind::PassingDomain => &self.passing_domain,
+            LangItemKind::EffectDomain => &self.effect_domain,
             LangItemKind::Continuation => &self.continuation,
             LangItemKind::EffectCallable => &self.effect_callable,
             LangItemKind::Handle => &self.handle,
@@ -786,8 +817,11 @@ impl CoreBundle {
             &mut lang_items.coalesce,
             &mut lang_items.unsafe_effect,
             &mut lang_items.throws_effect,
-            &mut lang_items.shared_access,
-            &mut lang_items.mutable_access,
+            &mut lang_items.type_domain,
+            &mut lang_items.region_domain,
+            &mut lang_items.access_domain,
+            &mut lang_items.passing_domain,
+            &mut lang_items.effect_domain,
             &mut lang_items.handle,
             &mut lang_items.do_function,
             &mut lang_items.try_function,
@@ -879,7 +913,7 @@ pub const fn embedded_effects_source(edition: Edition) -> &'static str {
     }
 }
 
-/// Return the access protocol source compiled into this compiler.
+/// Return the compile-time domain source compiled into this compiler.
 pub const fn embedded_access_source(edition: Edition) -> &'static str {
     match edition {
         Edition::Edition2026 => EDITION_2026_ACCESS,
@@ -1027,8 +1061,11 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         coalesce: item(LangItemKind::Coalesce),
         unsafe_effect: item(LangItemKind::UnsafeEffect),
         throws_effect: item(LangItemKind::ThrowsEffect),
-        shared_access: item(LangItemKind::SharedAccess),
-        mutable_access: item(LangItemKind::MutableAccess),
+        type_domain: item(LangItemKind::TypeDomain),
+        region_domain: item(LangItemKind::RegionDomain),
+        access_domain: item(LangItemKind::AccessDomain),
+        passing_domain: item(LangItemKind::PassingDomain),
+        effect_domain: item(LangItemKind::EffectDomain),
         continuation: item(LangItemKind::Continuation),
         effect_callable: item(LangItemKind::EffectCallable),
         handle: item(LangItemKind::Handle),
@@ -1049,7 +1086,7 @@ fn item_name(item: &Item) -> Option<&str> {
         Item::Struct(definition) => Some(&definition.name),
         Item::Enum(definition) => Some(&definition.name),
         Item::Effect(definition) => Some(&definition.name),
-        Item::Access(definition) => Some(&definition.name),
+        Item::Domain(definition) => Some(&definition.name),
         Item::TypeAlias(definition) => Some(&definition.name),
         Item::Trait(definition) => Some(&definition.name),
         Item::Extend(_) => None,
@@ -1070,7 +1107,7 @@ fn item_kind(item: &Item) -> &'static str {
         Item::Struct(_) => "struct",
         Item::Enum(_) => "enum",
         Item::Effect(_) => "effect",
-        Item::Access(_) => "access",
+        Item::Domain(_) => "domain",
         Item::TypeAlias(_) => "type alias",
         Item::Trait(_) => "trait",
         Item::Extend(_) => "extension",
@@ -1098,7 +1135,14 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         (LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect, Item::Effect(definition)) => {
             validate_effect(kind, definition, diagnostics)
         }
-        (LangItemKind::SharedAccess | LangItemKind::MutableAccess, Item::Access(_)) => {}
+        (
+            LangItemKind::TypeDomain
+            | LangItemKind::RegionDomain
+            | LangItemKind::AccessDomain
+            | LangItemKind::PassingDomain
+            | LangItemKind::EffectDomain,
+            Item::Domain(definition),
+        ) => validate_domain(kind, definition, diagnostics),
         (LangItemKind::Continuation, Item::Struct(definition)) => {
             let valid = definition.compile_groups
                 == vec![vec![type_parameter("Input"), type_parameter("Output")]]
@@ -1158,6 +1202,39 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
             kind.expected_kind(),
             item_kind(item)
         )),
+    }
+}
+
+fn validate_domain(
+    kind: LangItemKind,
+    definition: &crate::ast::DomainDef,
+    diagnostics: &mut Vec<String>,
+) {
+    let valid = match kind {
+        LangItemKind::TypeDomain | LangItemKind::RegionDomain | LangItemKind::EffectDomain => {
+            definition.members.is_none()
+        }
+        LangItemKind::AccessDomain => definition.members.as_ref().is_some_and(|members| {
+            members.len() == 2 && members[0] == "shared" && members[1] == "mut"
+        }),
+        LangItemKind::PassingDomain => definition.members.as_ref().is_some_and(|members| {
+            members.len() == 3
+                && members[0] == "auto"
+                && members[1] == "copy"
+                && members[2] == "move"
+        }),
+        _ => unreachable!("validate_domain called for non-domain lang item"),
+    };
+    if !valid {
+        let shape = match kind {
+            LangItemKind::TypeDomain => "pub let type = domain",
+            LangItemKind::RegionDomain => "pub let region = domain",
+            LangItemKind::EffectDomain => "pub let effect = domain",
+            LangItemKind::AccessDomain => "pub let access = domain { shared, mut }",
+            LangItemKind::PassingDomain => "pub let passing = domain { auto, copy, move }",
+            _ => unreachable!("validate_domain called for non-domain lang item"),
+        };
+        diagnostics.push(format!("lang item `{kind}` must have shape `{shape}`"));
     }
 }
 
@@ -2035,9 +2112,11 @@ pub let Shr(Rhs: type) = trait {
                 LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect => {
                     format!("core::effects::{}", kind.source_name())
                 }
-                LangItemKind::SharedAccess | LangItemKind::MutableAccess => {
-                    format!("core::access::{}", kind.source_name())
-                }
+                LangItemKind::TypeDomain
+                | LangItemKind::RegionDomain
+                | LangItemKind::AccessDomain
+                | LangItemKind::PassingDomain
+                | LangItemKind::EffectDomain => format!("core::access::{}", kind.source_name()),
                 LangItemKind::Continuation
                 | LangItemKind::EffectCallable
                 | LangItemKind::Handle
@@ -2094,7 +2173,11 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::Chain
                 | LangItemKind::Coalesce => "ops",
                 LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect => "effects",
-                LangItemKind::SharedAccess | LangItemKind::MutableAccess => "access",
+                LangItemKind::TypeDomain
+                | LangItemKind::RegionDomain
+                | LangItemKind::AccessDomain
+                | LangItemKind::PassingDomain
+                | LangItemKind::EffectDomain => "access",
                 LangItemKind::Continuation
                 | LangItemKind::EffectCallable
                 | LangItemKind::Handle
