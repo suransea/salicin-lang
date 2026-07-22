@@ -159,6 +159,14 @@ evaluated once at the binding, then dispatched at each call into the selected re
 the same caller continuation. Escaping closures and open-ended callable values still require the
 general handler-aware runtime ABI and are rejected explicitly.
 
+A function that defines a handler may itself accept an effectful callable parameter. When a call
+supplies a named function or an immutable alias with no captured runtime environment, the
+compiler creates a handler-function specialization, substitutes that target before selective CPS,
+and removes the callable from the specialization's runtime parameter groups. Other arguments and
+supplied or remaining curried groups stay runtime values, so the specialized call may still be
+partially applied. A genuinely unknown callable parameter is not silently invoked
+through the direct function-pointer ABI; it remains pending the erased handler-aware callable ABI.
+
 Selective CPS removes only the handled nominal identity. Residual `unsafe`, `throws(Error)`, and
 other nominal requirements remain on generated resumable frames. Intercepted operations also retain
 their explicitly declared residual row through a compiler-created capability gate, so replacing an

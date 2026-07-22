@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.143.0 - 2026-07-22
+
+- Specialized reusable handler functions at their call sites when an algebraic-effect callable
+  parameter is supplied by a statically known named function or immutable function alias.
+- Removed specialized callable parameters from the runtime ABI and rewrote their uses before the
+  handler's selective-CPS pass, so the operation body receives the handler's real continuation.
+- Preserved remaining curried groups, named-argument ordering, ordinary runtime arguments, effect-row
+  compatibility checks, and distinct specializations for different action functions.
+- Replaced a previously invalid native path—which emitted a reference to an intentionally absent
+  direct-style effectful function—with a runnable reusable-handler regression producing 42.
+
 ## 0.142.0 - 2026-07-22
 
 - Forwarded capturing callable environments through a suspended nested dynamic selector instead of

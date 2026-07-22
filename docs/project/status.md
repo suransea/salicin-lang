@@ -68,8 +68,12 @@ success and `Result` ABI types needed by throwing continuations.
 Derived handlers support typed one-shot resumption, abandonment, `done:` answer conversion, named-call
 propagation, direct recursion, and resumable loop backedges. Cross-function abandonment and
 computation after `resume` use explicit CPS continuation closures. Direct and mutually recursive
-frames share an erased call/drop-entry plus environment ABI with a runtime one-shot flag. Inferred
-immutable local aliases of statically known effectful functions are resolved through the same CPS
+frames share an erased call/drop-entry plus environment ABI with a runtime one-shot flag.
+Reusable handler functions may accept an algebraic-effect callable parameter. Calls with a known
+named function or immutable function alias create a deduplicated static specialization, erase that
+parameter from the runtime groups, and run the substituted action through the handler's ordinary CPS
+pass. Truly unknown runtime callable parameters still require the general handler-aware callable ABI.
+Inferred immutable local aliases of statically known effectful functions are resolved through the same CPS
 path, including chained aliases. Statically known function arguments also specialize higher-order
 effectful frames and are erased from those frames' runtime parameter lists. Explicitly typed
 capturing local closures use a hidden erased continuation argument while lexically enclosed by the

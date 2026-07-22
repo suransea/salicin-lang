@@ -139,6 +139,7 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
         "algebraic_effect_function_propagation.sc",
         "algebraic_effect_function_alias.sc",
         "algebraic_effect_static_higher_order.sc",
+        "algebraic_effect_reusable_handler.sc",
         "algebraic_effect_capturing_closure.sc",
         "algebraic_effect_capturing_closure_drop.sc",
         "algebraic_effect_fn_mut_closure.sc",

@@ -21171,6 +21171,20 @@ impl Analyzer {
         expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
+        if let Some((specialized, specialized_groups)) =
+            self.specialize_static_handler_call(name, groups, context)
+        {
+            let specialized_group_refs = specialized_groups
+                .iter()
+                .map(Vec::as_slice)
+                .collect::<Vec<_>>();
+            return self.lower_named_function_call(
+                &specialized,
+                &specialized_group_refs,
+                expected,
+                context,
+            );
+        }
         let function_ty = self.function_type(name);
         let Ty::Function(function_ty) = function_ty else {
             return error_expr();
@@ -21281,6 +21295,159 @@ impl Analyzer {
             }
         };
         self.wrap_call_argument_temporaries(call, &mut arguments, temporary_bindings, context)
+    }
+
+    fn specialize_static_handler_call(
+        &mut self,
+        name: &str,
+        groups: &[&[CallArg]],
+        context: &LowerCtx,
+    ) -> Option<(String, Vec<Vec<CallArg>>)> {
+        let mut function = self.functions.get(name)?.clone();
+        if groups.len() > function.groups.len() {
+            return None;
+        }
+
+        let mut replacements = HashMap::new();
+        let mut omitted = Vec::with_capacity(groups.len());
+        let mut specialized_groups = Vec::with_capacity(groups.len());
+        let mut key = String::new();
+        for (group_index, (parameters, arguments)) in function.groups.iter().zip(groups).enumerate()
+        {
+            if parameters.len() != arguments.len() {
+                return None;
+            }
+            let ordered = if arguments.iter().all(|argument| argument.label.is_none()) {
+                Some(arguments.iter().collect::<Vec<_>>())
+            } else if arguments.iter().all(|argument| argument.label.is_some()) {
+                parameters
+                    .iter()
+                    .map(|parameter| {
+                        let mut matches = arguments.iter().filter(|argument| {
+                            argument.label.as_deref() == Some(parameter.name.as_str())
+                        });
+                        let argument = matches.next()?;
+                        matches.next().is_none().then_some(argument)
+                    })
+                    .collect::<Option<Vec<_>>>()
+            } else {
+                None
+            }?;
+            let mut omitted_group = vec![false; parameters.len()];
+            let mut runtime_arguments = Vec::new();
+            for (index, (parameter, argument)) in parameters.iter().zip(ordered).enumerate() {
+                let Type::Function { effects, .. } = &parameter.ty else {
+                    runtime_arguments.push(argument.clone());
+                    continue;
+                };
+                let has_algebraic_effect = effects.custom.iter().any(|effect| {
+                    let identity = source_effect_identity(effect);
+                    let root = identity.split('(').next().unwrap_or(&identity);
+                    self.effect_defs
+                        .get(root)
+                        .is_some_and(|definition| !definition.operations.is_empty())
+                });
+                if !has_algebraic_effect {
+                    runtime_arguments.push(argument.clone());
+                    continue;
+                }
+                let Expr::Name(source_target) = &argument.value else {
+                    runtime_arguments.push(argument.clone());
+                    continue;
+                };
+                let target = if self.functions.contains_key(source_target) {
+                    source_target.clone()
+                } else if let Some(target) = context.lookup(source_target).and_then(|local| {
+                    local.partial.as_ref().and_then(|partial| {
+                        (partial.consumed_groups == 0 && partial.capture_count == 0)
+                            .then(|| partial.function.clone())
+                    })
+                }) {
+                    target
+                } else {
+                    runtime_arguments.push(argument.clone());
+                    continue;
+                };
+                let Some(target_function) = self.functions.get(&target) else {
+                    runtime_arguments.push(argument.clone());
+                    continue;
+                };
+                if !target_function.compile_groups.is_empty() {
+                    runtime_arguments.push(argument.clone());
+                    continue;
+                }
+                let actual = self.function_type(&target);
+                let expected = self.lower_source_type(&parameter.ty);
+                if !type_is_assignable(&actual, &expected) {
+                    runtime_arguments.push(argument.clone());
+                    continue;
+                }
+                omitted_group[index] = true;
+                replacements.insert(parameter.name.clone(), target.clone());
+                key.push_str(&format!("{group_index}:{index}:{};", hex_name(&target)));
+            }
+            omitted.push(omitted_group);
+            specialized_groups.push(runtime_arguments);
+        }
+        omitted.extend(
+            function.groups[groups.len()..]
+                .iter()
+                .map(|group| vec![false; group.len()]),
+        );
+        if replacements.is_empty() {
+            return None;
+        }
+
+        let canonical = format!("$static$handler${}${}", hex_name(name), hex_name(&key));
+        if !self.functions.contains_key(&canonical) {
+            for (group, omitted) in function.groups.iter_mut().zip(&omitted) {
+                let mut index = 0;
+                group.retain(|_| {
+                    let keep = !omitted[index];
+                    index += 1;
+                    keep
+                });
+            }
+            if let Some(body) = &mut function.body {
+                rewrite_static_function_values(body, &replacements);
+            }
+            function.name = canonical.clone();
+            let signature = FunctionSig {
+                groups: function
+                    .groups
+                    .iter()
+                    .map(|group| {
+                        group
+                            .iter()
+                            .map(|parameter| ParamSig {
+                                name: parameter.name.clone(),
+                                ty: self.lower_source_type(&parameter.ty),
+                                mode: parameter.mode,
+                            })
+                            .collect()
+                    })
+                    .collect(),
+                unsafe_effect: function.effects.unsafe_effect,
+                throws_error: function
+                    .effects
+                    .throws
+                    .as_deref()
+                    .map(|error| self.lower_source_type(error)),
+                custom_effects: source_effect_identities(&function.effects.custom),
+                result: function
+                    .return_type
+                    .as_ref()
+                    .map(|result| self.lower_source_type(result)),
+            };
+            self.functions.insert(canonical.clone(), function);
+            self.signatures.insert(canonical.clone(), signature);
+            self.function_origins
+                .insert(canonical.clone(), self.function_origins[name].clone());
+            self.function_accesses
+                .insert(canonical.clone(), self.function_accesses[name].clone());
+            self.function_order.push(canonical.clone());
+        }
+        Some((canonical, specialized_groups))
     }
 
     #[allow(clippy::too_many_arguments)]
