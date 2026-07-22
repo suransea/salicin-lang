@@ -64,9 +64,10 @@ cannot intercept operator lowering.
 `core.algebra` currently provides first-order `Semigroup(T)` and `Monoid(T)` protocols outside the
 prelude. `core.functional` now provides higher-kinded `Functor`, `Applicative`, and `Monad`
 protocol declarations over constructor kinds such as `(Value: type): type`. Constructor-valued
-implementations currently register marker-trait headers for matching generic nominal constructors.
-The remaining HKT work is generic method/associated-type lowering for implementations such as
-`extend Option: Functor`, trait inheritance constraints, and broader constructor equation solving.
+implementations currently register matching generic nominal constructors and validate method bodies
+as generic function templates. The remaining HKT work is associated-type lowering, callable HKT trait
+dispatch for implementations such as `extend Option: Functor`, trait inheritance constraints, and
+broader constructor equation solving.
 
 Access keyword generics are implemented for functions and generic inherent members: `A: access` accepts `shared` or `mut`,
 defaults to shared when omitted, participates in monomorphization, and can drive parameter modes,

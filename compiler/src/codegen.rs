@@ -1955,6 +1955,7 @@ struct Analyzer {
     effect_defs: HashMap<String, EffectDef>,
     trait_impl_headers: HashSet<TraitImplKey>,
     constructor_trait_impl_headers: HashSet<ConstructorTraitImplKey>,
+    constructor_trait_impl_methods: HashMap<ConstructorTraitImplKey, HashMap<String, String>>,
     trait_impls: HashMap<TraitImplKey, TraitImplInfo>,
     trait_methods_by_receiver: HashMap<(Ty, String), Vec<TraitImplKey>>,
     copy_nominals: HashSet<Ty>,
@@ -2028,6 +2029,7 @@ impl Analyzer {
             effect_defs: HashMap::new(),
             trait_impl_headers: HashSet::new(),
             constructor_trait_impl_headers: HashSet::new(),
+            constructor_trait_impl_methods: HashMap::new(),
             trait_impls: HashMap::new(),
             trait_methods_by_receiver: HashMap::new(),
             copy_nominals: HashSet::new(),
@@ -4386,6 +4388,7 @@ impl Analyzer {
         }
 
         let mut trait_arguments = Vec::new();
+        let mut trait_argument_sources = Vec::new();
         for (parameter, source_argument) in schema
             .compile_parameters
             .iter()
@@ -4411,6 +4414,7 @@ impl Analyzer {
             if argument == Ty::Error {
                 return;
             }
+            trait_argument_sources.push(source_argument.clone());
             trait_arguments.push(argument);
         }
 
@@ -4426,21 +4430,6 @@ impl Analyzer {
             ));
             return;
         }
-        if !schema.associated_types.is_empty() || !schema.method_order.is_empty() {
-            self.error(format!(
-                "constructor trait implementation of `{trait_name}` for `{}` is limited to marker traits for now; generic methods and associated types are not supported yet",
-                target.name
-            ));
-            return;
-        }
-        if !extension.members.is_empty() {
-            self.error(format!(
-                "constructor marker trait implementation of `{trait_name}` for `{}` must not declare members",
-                target.name
-            ));
-            return;
-        }
-
         let key = ConstructorTraitImplKey {
             target,
             trait_ref: ConstructorTraitRefKey {
@@ -4453,7 +4442,159 @@ impl Analyzer {
                 "duplicate constructor trait implementation of `{}` for `{}`",
                 key.trait_ref.name, key.target.name
             ));
+            return;
         }
+        if !schema.associated_types.is_empty() {
+            self.error(format!(
+                "constructor trait implementation of `{trait_name}` for `{}` does not support associated types yet",
+                key.target.name
+            ));
+            return;
+        }
+
+        let mut substitutions = HashMap::new();
+        substitutions.insert(
+            subject_parameter.name.clone(),
+            Type::Named(key.target.name.clone(), Vec::new()),
+        );
+        for (parameter, argument) in schema
+            .compile_parameters
+            .iter()
+            .skip(1)
+            .zip(trait_argument_sources)
+        {
+            substitutions.insert(parameter.name.clone(), argument);
+        }
+
+        let mut supplied_methods = HashMap::new();
+        let mut valid = true;
+        for member in extension.members {
+            match member {
+                ExtendMember::Const(binding) => {
+                    self.error(format!(
+                        "unknown constructor trait member `{}.{}`",
+                        key.trait_ref.name, binding.name
+                    ));
+                    valid = false;
+                }
+                ExtendMember::Function(function) => {
+                    let method_name = function.name.clone();
+                    let Some(method_id) = trait_method_identity(&schema, &function) else {
+                        self.error(format!(
+                            "unknown constructor trait member `{}.{method_name}`",
+                            key.trait_ref.name
+                        ));
+                        valid = false;
+                        continue;
+                    };
+                    if supplied_methods.insert(method_id, function).is_some() {
+                        self.error(format!(
+                            "duplicate constructor trait method `{}.{method_name}`",
+                            key.trait_ref.name
+                        ));
+                        valid = false;
+                    }
+                }
+            }
+        }
+
+        let target_access = self.nominal_access_or_internal(&key.target.name);
+        let mut implementation_access =
+            Self::intersect_access_boundaries(&schema.access, &target_access, &origin);
+        for argument in &key.trait_ref.arguments {
+            implementation_access =
+                self.restrict_access_boundary_to_type(&implementation_access, argument, &origin);
+        }
+
+        let mut registered_methods = HashMap::new();
+        for method_id in &schema.method_order {
+            let declaration = &schema.methods[method_id];
+            let method_name = &declaration.name;
+            let mut expected = declaration.clone();
+            substitute_function_types(&mut expected, &substitutions);
+            let (mut function, function_origin) = supplied_methods
+                .get(method_id)
+                .cloned()
+                .map(|function| (function, origin.clone()))
+                .unwrap_or_else(|| (declaration.clone(), schema.access.origin.clone()));
+            if function.body.is_none() {
+                self.error(format!(
+                    "constructor trait method `{}.{method_name}` requires a body in implementation for `{}`",
+                    key.trait_ref.name, key.target.name
+                ));
+                valid = false;
+                continue;
+            }
+            substitute_function_types(&mut function, &substitutions);
+            if schema_function_has_receiver(&expected) != schema_function_has_receiver(&function)
+                || !compile_parameter_groups_match(
+                    &expected.compile_groups,
+                    &function.compile_groups,
+                )
+                || !source_function_shapes_match(&expected, &function)
+            {
+                self.error(format!(
+                    "constructor trait method `{}.{method_name}` signature mismatch in implementation for `{}`",
+                    key.trait_ref.name, key.target.name
+                ));
+                valid = false;
+                continue;
+            }
+            let canonical = constructor_trait_method_name(&key, method_id);
+            function.name = canonical.clone();
+            if function.compile_groups.is_empty() {
+                let groups = function
+                    .groups
+                    .iter()
+                    .map(|group| {
+                        group
+                            .iter()
+                            .map(|parameter| ParamSig {
+                                name: parameter.name.clone(),
+                                ty: self.lower_source_type(&parameter.ty),
+                                mode: parameter.mode,
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let result = function
+                    .return_type
+                    .as_ref()
+                    .map(|result| self.lower_source_type(result));
+                let throws_error = function
+                    .effects
+                    .throws
+                    .as_deref()
+                    .map(|error| self.lower_source_type(error));
+                self.signatures.insert(
+                    canonical.clone(),
+                    FunctionSig {
+                        groups,
+                        unsafe_effect: function.effects.unsafe_effect,
+                        throws_error,
+                        custom_effects: source_effect_identities(&function.effects.custom),
+                        result,
+                    },
+                );
+                self.function_order.push(canonical.clone());
+                self.functions.insert(canonical.clone(), function);
+                self.function_origins
+                    .insert(canonical.clone(), function_origin);
+            } else {
+                self.function_template_order.push(canonical.clone());
+                self.function_templates.insert(canonical.clone(), function);
+                self.function_template_origins
+                    .insert(canonical.clone(), function_origin);
+            }
+            self.function_accesses
+                .insert(canonical.clone(), implementation_access.clone());
+            registered_methods.insert(method_id.clone(), canonical);
+        }
+        if !valid {
+            return;
+        }
+        self.constructor_trait_impl_methods
+            .insert(key, registered_methods);
     }
 
     fn collect_extension(&mut self, extension: ExtendDef, origin: ItemOrigin) {
@@ -34181,6 +34322,16 @@ fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<String, Typ
                 *ty = replacement.clone();
             }
         }
+        Type::Named(name, arguments) if substitutions.contains_key(name) => {
+            for argument in arguments.iter_mut() {
+                substitute_type_parameters(argument, substitutions);
+            }
+            if let Some(Type::Named(replacement, replacement_arguments)) = substitutions.get(name) {
+                if replacement_arguments.is_empty() {
+                    *name = replacement.clone();
+                }
+            }
+        }
         Type::Borrow {
             mutable,
             access,
@@ -34349,6 +34500,19 @@ fn source_function_shapes_match(expected: &Function, actual: &Function) -> bool 
             })
         && expected.return_type == actual.return_type
         && expected.effects == actual.effects
+}
+
+fn compile_parameter_groups_match(
+    expected: &[Vec<CompileParam>],
+    actual: &[Vec<CompileParam>],
+) -> bool {
+    expected.len() == actual.len()
+        && expected.iter().zip(actual).all(|(expected, actual)| {
+            expected.len() == actual.len()
+                && expected.iter().zip(actual).all(|(expected, actual)| {
+                    expected.name == actual.name && expected.kind == actual.kind
+                })
+        })
 }
 
 fn generic_trait_pattern_overlaps_concrete(
@@ -34790,6 +34954,21 @@ fn trait_method_name(key: &TraitImplKey, member: &str) -> String {
     let mut canonical = String::from("$trait$impl$");
     push_canonical_component(&mut canonical, &key.trait_ref.name);
     push_canonical_component(&mut canonical, &canonical_type_encoding(&key.self_ty));
+    canonical.push_str(&key.trait_ref.arguments.len().to_string());
+    canonical.push(':');
+    for argument in &key.trait_ref.arguments {
+        push_canonical_component(&mut canonical, &canonical_type_encoding(argument));
+    }
+    push_canonical_component(&mut canonical, member);
+    canonical
+}
+
+fn constructor_trait_method_name(key: &ConstructorTraitImplKey, member: &str) -> String {
+    let mut canonical = String::from("$trait$constructor$impl$");
+    push_canonical_component(&mut canonical, &key.trait_ref.name);
+    push_canonical_component(&mut canonical, &key.target.name);
+    canonical.push_str(&key.target.parameter_count.to_string());
+    canonical.push(':');
     canonical.push_str(&key.trait_ref.arguments.len().to_string());
     canonical.push(':');
     for argument in &key.trait_ref.arguments {
@@ -39649,6 +39828,59 @@ let main(): i32 = { 0 }
     }
 
     #[test]
+    fn constructor_trait_implementation_methods_register_generic_templates() {
+        let program = crate::parser::parse(
+            r#"
+let Functor(F: (Value: type): type) = trait {
+  let map(E: effect, A: type, B: type)(
+    move value: F(A),
+    move transform: (A): B with(E),
+  ): F(B) with(E)
+}
+let Carrier(T: type) = struct(value: T)
+extend Carrier: Functor {
+  let map(E: effect, A: type, B: type)(
+    move value: Carrier(A),
+    move transform: (A): B with(E),
+  ): Carrier(B) with(E) = {
+    Carrier(B)(transform(value.value))
+  }
+}
+let main(): i32 = { 0 }
+"#,
+        )
+        .expect("constructor trait method implementation source must parse");
+        let analyzer = Analyzer::new(&program);
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected constructor trait method diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        assert_eq!(analyzer.constructor_trait_impl_headers.len(), 1);
+        let key = analyzer
+            .constructor_trait_impl_headers
+            .iter()
+            .next()
+            .expect("constructor trait impl header")
+            .clone();
+        let canonical = constructor_trait_method_name(&key, "map");
+        assert_eq!(
+            analyzer.constructor_trait_impl_methods[&key]["map"],
+            canonical
+        );
+        assert!(analyzer.function_templates.contains_key(&canonical));
+        assert_eq!(
+            analyzer.function_templates[&canonical].return_type,
+            Some(Type::Named(
+                "Carrier".into(),
+                vec![Type::Named("B".into(), Vec::new())]
+            ))
+        );
+
+        compile(&program).expect("constructor trait method templates must validate");
+    }
+
+    #[test]
     fn constructor_trait_implementation_headers_report_current_limits() {
         for (source, expected) in [
             (
@@ -39682,7 +39914,7 @@ let Carrier(T: type) = struct(value: T)
 extend Carrier: Functor {}
 let main(): i32 = { 0 }
 "#,
-                "limited to marker traits",
+                "requires a body",
             ),
         ] {
             let program = crate::parser::parse(source)

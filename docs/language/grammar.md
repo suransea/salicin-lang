@@ -126,9 +126,9 @@ constructor_kind = compile_parameter_group,
   eta 应用。
 - 编译期参数 kind 可以写成构造子签名，例如 `F: (Value: type): type` 与
   `E: (Error: type): effect`。当前语义支持它们进入 trait 方法签名和标准库协议声明；泛型函数
-  实例化和完整 HKT 方程求解仍是后续工作。无 requirement 的 marker trait 已可由匹配 arity 的
-  泛型 nominal 构造子实现；带 generic method、关联类型或 `where` 的构造子 trait implementation
-  仍会被显式拒绝。
+  实例化和完整 HKT 方程求解仍是后续工作。匹配 arity 的泛型 nominal 构造子可以实现这类 trait；
+  method implementation 会注册为 generic function template 并接受模板验证。关联类型、`where`
+  子句和可调用 HKT trait dispatch 仍会被显式拒绝或留待后续。
 - 具名函数的参数类型必须显式；首版 `let` 名称位置不接受解构 pattern。
 - trait 声明体中的无 initializer `let` 是 requirement。
 

@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.158.0 - 2026-07-22
+
+- Registered constructor trait implementation methods as ordinary generic function templates, so
+  implementations such as `extend Carrier: Functor { let map(E, A, B)... }` are shape-checked and
+  their bodies are validated by the existing generic template pipeline.
+- Added constructor-kind substitution for applied type constructors, allowing trait signatures using
+  `F(A)` to normalize to implementation signatures such as `Carrier(A)`.
+- Added storage for constructor trait implementation method identities, leaving callable HKT trait
+  dispatch as the next semantic slice rather than routing through runtime `Ty`-based trait tables.
+
 ## 0.157.0 - 2026-07-22
 
 - Added a dedicated constructor-trait-implementation header table so generic nominal constructors can

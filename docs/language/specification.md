@@ -902,19 +902,31 @@ let Handles(E: (Error: type): effect) = trait {
 
 `(Value: type): type` 是类型构造子 kind，`(Error: type): effect` 是 effect 构造子 kind。
 当前实现支持这类参数出现在 trait 与 trait 方法签名中，供 `core.functional` 等标准库协议表达。
-无 requirement 的 marker trait 可以由匹配 arity 的泛型 nominal 构造子实现：
+匹配 arity 的泛型 nominal 构造子可以实现这类 trait：
 
 ```sali
-let Higher(F: (Value: type): type) = trait {}
+let Functor(F: (Value: type): type) = trait {
+  let map(E: effect, A: type, B: type)(
+    move value: F(A),
+    move transform: (A): B with(E),
+  ): F(B) with(E)
+}
+
 let Carrier(T: type) = struct(value: T)
 
-extend Carrier: Higher {}
+extend Carrier: Functor {
+  let map(E: effect, A: type, B: type)(
+    move value: Carrier(A),
+    move transform: (A): B with(E),
+  ): Carrier(B) with(E) = {
+    Carrier(B)(transform(value.value))
+  }
+}
 ```
 
-带 generic method、关联类型或 `where` 子句的构造子 trait implementation 仍会被拒绝。因此
-`extend Option: Functor` 目前可被识别为正确的实现形态，但还不能提供可调用的 `map` 实现。泛型函数
-实例化和完整 HKT 方程求解仍是后续语义能力；不能唯一决定时仍通过省略编译期参数组和命名参数由上下文
-消歧，不会恢复 `_` 推断占位。
+method implementation 会注册为 generic function template，并由普通模板验证路径检查函数体。
+关联类型、`where` 子句和通过 trait dispatch 调用这些 HKT methods 仍是后续语义能力；不能唯一决定时
+仍通过省略编译期参数组和命名参数由上下文消歧，不会恢复 `_` 推断占位。
 
 带名称旁参数的形式定义类型族，右侧必须产生具体的 `type`：
 
