@@ -235,11 +235,6 @@ impl Parser {
             }
         }
 
-        if self.effect_group_starts_here() {
-            return Err(self.error_here(
-                "bare function effect groups were removed; write the result type followed by `with(...)`",
-            ));
-        }
         let logical_result = if self.take(&TokenKind::Colon) {
             Some(self.function_result_type()?)
         } else {
@@ -614,11 +609,6 @@ impl Parser {
         let (compile_groups, groups) = self.declaration_groups(true)?;
         self.validate_receiver_groups(&groups)?;
 
-        if self.effect_group_starts_here() {
-            return Err(self.error_here(
-                "bare function effect groups were removed; write the result type followed by `with(...)`",
-            ));
-        }
         let logical_result = if self.take(&TokenKind::Colon) {
             Some(self.function_result_type()?)
         } else {
@@ -785,7 +775,7 @@ impl Parser {
         let mut runtime_groups = Vec::new();
         let mut saw_runtime_group = false;
 
-        while self.at(&TokenKind::LParen) && !self.effect_group_starts_here() {
+        while self.at(&TokenKind::LParen) {
             if saw_runtime_group && self.group_starts_with_compile_parameter() {
                 return Err(self.error_here(
                     "compile-time parameter groups must precede runtime parameter groups",
@@ -1411,11 +1401,6 @@ impl Parser {
         let (compile_groups, groups) = self.declaration_groups(true)?;
         self.validate_receiver_groups(&groups)?;
 
-        if self.effect_group_starts_here() {
-            return Err(self.error_here(
-                "bare function effect groups were removed; write the result type followed by `with(...)`",
-            ));
-        }
         let logical_result = if self.take(&TokenKind::Colon) {
             if self.take(&TokenKind::Type) {
                 if !groups.is_empty() {
@@ -1612,26 +1597,7 @@ impl Parser {
     }
 
     fn function_result_type(&mut self) -> Result<Type, ParseError> {
-        let output = self.type_expr()?;
-        if self.effect_group_starts_here() {
-            return Err(self.error_here(
-                "bare effect groups were removed; write `with(...)` after the result type",
-            ));
-        }
-        Ok(output)
-    }
-
-    fn effect_group_starts_here(&self) -> bool {
-        self.at(&TokenKind::LParen)
-            && matches!(
-                self.tokens.get(self.index + 1).map(|token| &token.kind),
-                Some(TokenKind::Unsafe | TokenKind::Try)
-            )
-            || self.at(&TokenKind::LParen)
-                && matches!(
-                    self.tokens.get(self.index + 1).map(|token| &token.kind),
-                    Some(TokenKind::Ident(name)) if self.effect_parameters_in_scope.contains(name)
-                )
+        self.type_expr()
     }
 
     fn named_type_fields(&mut self) -> Result<Vec<Field>, ParseError> {
@@ -1792,10 +1758,7 @@ impl Parser {
         }
 
         let mut arguments = Vec::new();
-        if !self.effect_group_starts_here()
-            && self.take(&TokenKind::LParen)
-            && !self.take(&TokenKind::RParen)
-        {
+        if self.take(&TokenKind::LParen) && !self.take(&TokenKind::RParen) {
             let mut labeled = 0;
             loop {
                 let label = if matches!(self.current().kind, TokenKind::Ident(_))
@@ -1876,7 +1839,7 @@ impl Parser {
         }
         groups.push(group);
 
-        while self.at(&TokenKind::LParen) && !self.effect_group_starts_here() {
+        while self.at(&TokenKind::LParen) {
             self.expect(
                 &TokenKind::LParen,
                 "`(` before function type parameter group",
@@ -1905,11 +1868,6 @@ impl Parser {
             groups.push(group);
         }
 
-        if self.effect_group_starts_here() {
-            return Err(self.error_here(
-                "bare function effect groups were removed; write the result type followed by `with(...)`",
-            ));
-        }
         if !self.take(&TokenKind::Colon) {
             if groups.len() == 1 && groups[0].is_empty() {
                 return Ok(Type::Unit);
@@ -3904,14 +3862,20 @@ mod tests {
         );
 
         let error = parse("let answer(unsafe): i32 = { 42 }\n").unwrap_err();
-        assert!(error
-            .message
-            .contains("bare function effect groups were removed"));
+        assert!(
+            error.message.contains("expected a parameter name"),
+            "{}",
+            error.message
+        );
+        assert!(!error.message.contains("was removed"));
 
         let error = parse("let answer(try): i32 = { 42 }\n").unwrap_err();
-        assert!(error
-            .message
-            .contains("bare function effect groups were removed"));
+        assert!(
+            error.message.contains("expected a parameter name"),
+            "{}",
+            error.message
+        );
+        assert!(!error.message.contains("was removed"));
 
         let error = parse("let f(): i32 ! unsafe = { 42 }\n").unwrap_err();
         assert!(error.message.contains("expected a newline or `;`"));
@@ -5291,7 +5255,14 @@ mod tests {
         assert!(error.message.contains("cannot be used as a runtime type"));
 
         let error = parse("let old(E: effect)(value: i32): i32(E) = { value }\n").unwrap_err();
-        assert!(error.message.contains("bare effect groups were removed"));
+        assert!(
+            error
+                .message
+                .contains("effect parameter `E` cannot be used as a runtime type"),
+            "{}",
+            error.message
+        );
+        assert!(!error.message.contains("was removed"));
     }
 
     #[test]
@@ -5451,7 +5422,13 @@ mod tests {
         let old =
             parse("let apply(E: effect)(action: (i32): i32(E))(value: i32): i32 = { value }\n")
                 .unwrap_err();
-        assert!(old.message.contains("bare effect groups were removed"));
+        assert!(
+            old.message
+                .contains("effect parameter `E` cannot be used as a runtime type"),
+            "{}",
+            old.message
+        );
+        assert!(!old.message.contains("was removed"));
     }
 
     #[test]

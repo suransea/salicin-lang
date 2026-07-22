@@ -6,6 +6,11 @@ subset.
 
 ## Unreleased
 
+## 0.180.0 - 2026-07-22
+
+- Removed dedicated parser migration diagnostics for removed bare effect groups such as
+  `let f(unsafe): T`, `let f(try): T`, and return-type forms like `T(E)`.
+
 ## 0.179.0 - 2026-07-22
 
 - Removed dedicated `!` effect-syntax migration diagnostics; old `T ! Effect` forms now fail
