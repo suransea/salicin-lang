@@ -1,3 +1,5 @@
+use core.Option
+
 let next(): Option(i32) = { None }
 
 let main(): i32 = {

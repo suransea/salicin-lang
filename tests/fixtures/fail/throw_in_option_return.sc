@@ -1,5 +1,7 @@
+use core.Option
+
 let fail(): Option(i32) = {
-  throw true
+  throw(true)
 }
 
 let main(): i32 = { 42 }

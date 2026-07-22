@@ -1,4 +1,4 @@
 let main(): i32 = {
-  let fail = { () -> throw true }
+  let fail = { () -> throw(true) }
   fail()
 }

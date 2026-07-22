@@ -1,3 +1,5 @@
+use core.Option
+
 let Adder = struct { base: i32 }
 
 extend Adder {

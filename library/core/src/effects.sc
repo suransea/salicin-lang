@@ -1,7 +1,7 @@
 // Compiler-recognized and standard effect identities. These declarations use
 // the same source-level effect forms as user code; only their validated core
 // identity gives them language-item behavior.
-// `throw error` can also target the ordinary `Throws(E).raise(error)` operation
+// `throw(error)` can also target the ordinary `Throws(E).raise(error)` operation
 // when a single standard `Throws(E)` custom effect is active.
 // Contextual `try { ... }` can materialize that ordinary effect as `Result(T, E)`.
 pub let Unsafe = effect {}

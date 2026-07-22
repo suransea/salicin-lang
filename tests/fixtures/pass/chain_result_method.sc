@@ -1,3 +1,5 @@
+use core.Result
+
 let Number = struct { value: i32 }
 
 extend Number {

@@ -1,3 +1,6 @@
+use core.Option
+use core.Result
+
 let main(): i32 = {
   let option_number = Option(i32).Some(20)
   let option_flag = Option(bool).Some(true)

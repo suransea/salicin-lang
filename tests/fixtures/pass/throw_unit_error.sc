@@ -1,7 +1,8 @@
+use core.Result
 use core.effects.Throws
 
 let fail(): i32 with(Throws(())) = {
-  throw ()
+  throw(())
 }
 
 let main(): i32 = {

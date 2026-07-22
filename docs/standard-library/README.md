@@ -11,6 +11,7 @@ Source is organized by public module rather than accumulated in a release-orient
 ```text
 library/
   core/src/
+    root.sc
     prelude.sc
     ops.sc
     effects.sc
@@ -19,6 +20,8 @@ library/
     iter.sc
     algebra.sc
     functional.sc
+    option_monad.sc
+    result_monad.sc
   alloc/src/
     boxed.sc
     vec.sc
@@ -26,14 +29,22 @@ library/
 
 ## Prelude policy
 
-The edition prelude must stay small. It is intended for universally useful language-level names,
-currently `Option`, `Result`, `Never`, `Copy`, and `Drop`. Operator traits belong to `core.ops`,
-effect identities belong to `core.effects`, access identities belong to `core.access`,
-compiler-lowered control contracts belong to `core.control`, algebra protocols belong to
-`core.algebra`, higher-kinded functional protocols belong to `core.functional`, iteration protocols
-belong to `core.iter`, and owning containers belong to `alloc.boxed` and `alloc.vec`. Alloc
-declarations must be named through their module or imported
-explicitly with ordinary `use`; for example:
+The edition prelude must stay small. It is intended only for names that the language constantly
+produces or needs as universal contracts, currently `Never`, `Copy`, and `Drop`. `Option`,
+`Result`, and `ResultWith` live at the `core` root and require ordinary imports when named:
+
+```sc
+use core.Option
+use core.Result
+use core.ResultWith
+```
+
+Operator traits belong to `core.ops`, effect identities belong to `core.effects`, access identities
+belong to `core.access`, compiler-lowered control contracts belong to `core.control`, algebra
+protocols belong to `core.algebra`, higher-kinded functional protocols belong to `core.functional`,
+iteration protocols belong to `core.iter`, and owning containers belong to `alloc.boxed` and
+`alloc.vec`. Alloc declarations must be named through their module or imported explicitly with
+ordinary `use`; for example:
 
 ```sc
 use alloc.boxed.Box
@@ -57,7 +68,7 @@ Effect identities use uppercase nominal spelling, including user-defined effects
 such as `E: effect` remain ordinary parameter names.
 `Shared`/`Mutable` require `use core.access...` when named as standard-library declarations.
 `Semigroup` and `Monoid` require `use core.algebra...` when named.
-`Functor`, `Applicative`, `Monad`, and `ResultWith` require `use core.functional...` when named.
+`Functor`, `Applicative`, and `Monad` require `use core.functional...` when named.
 `Iterator` and `IntoIterator` require an ordinary `use core.iter...` when named in an implementation
 or bound. Writing `for pattern in value { ... }` binds to their validated lang-item identities
 without importing them and cannot be redirected by same-named inherent methods or traits.

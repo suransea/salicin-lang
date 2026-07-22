@@ -8,9 +8,29 @@ validates declarations that have language-defined roles.
 
 `core.prelude` contains the deliberately small implicit surface:
 
-- `Option(T)` and `Result(T, E)`
 - the uninhabited `Never` type
 - the `Copy` and `Drop` traits
+
+The `core` root contains fundamental ordinary data types that are intentionally not prelude names:
+
+```sc
+pub let Option(T: type) = enum {
+  Some(T),
+  None,
+}
+
+pub let Result(T: type, E: type) = enum {
+  Ok(T),
+  Err(E),
+}
+
+pub let ResultWith(Error: type)(Value: type): type = Result(Value, Error)
+```
+
+Naming them requires an ordinary root import such as `use core.Option`, `use core.Result`, or
+`use core.ResultWith`. Operators and syntax that lower through these identities use the validated
+standard-library declarations directly; importing is only required when source code writes the
+names.
 
 `core.ops` contains the arithmetic protocols `Add`, `Sub`, `Mul`, `Div`, and `Rem`, the equality
 protocol `Eq`, the ordering protocol `PartialOrd`, the unary protocols `Neg` and `Not`, the bitwise
@@ -102,8 +122,8 @@ concrete and generic nominal trait implementations. `??` dispatches non-`Option`
 values through `Coalesce` when the fallback can be represented as a no-capture lifted function. `?.`
 dispatches non-`Option`/`Result` nominal values through `Chain` when the synthesized transform
 closure can be represented in the same way; simple field access is supported, while transforms that
-capture outer method-call arguments still require the general callable-to-function bridge. The
-built-in `Option`/`Result` paths remain available.
+capture outer method-call arguments still require the general callable-to-function bridge. The root
+`core.Option`/`core.Result` paths remain available as standard-library specializations.
 
 `core.effects` owns standard effect identities. It is not part of the prelude:
 
@@ -125,7 +145,7 @@ effect operation and can be handled with a normal abort clause such as `raise: {
 Standard and user effect identities use type-like nominal spelling: effect declarations and the
 final segment of a `with(...)` effect path must start with an uppercase letter. Effect row parameters
 such as `E: effect` are still resolved as parameters rather than nominal effects.
-Source `throw error` targets this ordinary operation when the current effect row has exactly one
+Source `throw(error)` targets this ordinary operation when the current effect row has exactly one
 active `Throws(Error)`. Contextual `try { ... }` with an expected `Result(T, Error)` handles
 ordinary `Throws(Error)` through the same algebraic handler path, using `done -> Ok` and
 `raise -> Err`. Without an explicit `Result` context, direct calls and local function-value calls
@@ -146,9 +166,10 @@ The language still writes borrow types as `borrow T` and `borrow(mut) T`; naming
 directly requires an ordinary `use core.access...`.
 
 `core.control` owns the edition-pinned contracts for compiler-lowered control functions. It is not
-part of the prelude. The module declares the compiler-provided `do`, `try`, `throw`, `unsafe`, and
-`loop` control functions. Their bodyless signatures are permitted only for validated core lang
-items; ordinary package functions still require `= { ... }` bodies.
+part of the prelude. `do`, `try`, and `throw` are ordinary source-backed functions over the standard
+effect declarations. `unsafe` and `loop` still need compiler authority and primitive lowering, so
+their bodyless signatures are permitted only for validated core lang items; ordinary package
+functions still require `= { ... }` bodies.
 
 It also declares two compiler-owned erased runtime contracts:
 
@@ -169,7 +190,7 @@ entry. These low-level operations are not source-level standard-library function
 ```sc
 pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E)
 pub let try(F: effect, T: type, E: type)
-  (move action: (): T with(core.effects.Throws(E), F)): Result(T, E) with(F)
+  (move action: (): T with(core.effects.Throws(E), F)): core.Result(T, E) with(F)
 pub let throw(Error: type)(move error: Error): Never with(core.effects.Throws(Error))
 pub let unsafe(E: effect, T: type)
   (move action: (): T with(core.effects.Unsafe, E)): T with(E)
@@ -178,14 +199,34 @@ pub let loop(E: effect, T: type)(move body: (): () with(E)): T with(E)
 
 Here `try` removes only `Throws(E)`, `unsafe` removes only the `Unsafe` requirement, and both forward
 the remainder row. `throw` introduces the standard `Throws(Error)` requirement, while `do` and
-`loop` forward the whole row.
+`loop` forward the whole row. The source definitions are intentionally simple:
+
+```sc
+pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E) = {
+  action()
+}
+
+pub let try(F: effect, T: type, E: type)
+  (move action: (): T with(core.effects.Throws(E), F)): core.Result(T, E) with(F) = {
+  core.effects.Throws(E).handle(
+    raise: { (error) -> core.Result.Err(error) },
+    done: { (value) -> core.Result.Ok(value) },
+  ) {
+    action()
+  }
+}
+
+pub let throw(Error: type)(move error: Error): Never with(core.effects.Throws(Error)) = {
+  core.effects.Throws(Error).raise(error)
+}
+```
 
 `core.iter` owns iteration rather than the prelude:
 
 ```sc
 pub let Iterator = trait {
   let Item: type
-  let next(borrow(mut) self)(): Option(Item)
+  let next(borrow(mut) self)(): core.Option(Item)
 }
 
 pub let IntoIterator = trait {
@@ -247,8 +288,6 @@ where Self: Applicative{let flat_map(E: effect, A: type, B: type)(
   )(
     move next: (A): Self(B) with(E),
   ): Self(B) with(E)}
-
-pub let ResultWith(Error: type)(Value: type): type = Result(Value, Error)
 ```
 
 These declarations use constructor kinds such as `(Value: type): type` on the trait `Self` subject,
@@ -263,12 +302,14 @@ constraints express protocol inheritance, so a
 `Carrier: Applicative` implementation also requires `Carrier: Functor`, and `Carrier: Monad`
 requires `Carrier: Applicative`.
 
-The standard library implements `Functor`, `Applicative`, and `Monad` for `Option` and for
-`ResultWith(Error)`, the unary constructor adapter for `Result(Value, Error)`. `ResultWith` is a
-normal non-prelude item:
+The standard library implements `Functor`, `Applicative`, and `Monad` for `core.Option` and for
+`core.ResultWith(Error)`, the unary constructor adapter for `core.Result(Value, Error)`.
+`ResultWith` is a normal non-prelude root item:
 
 ```sc
-use core.functional.{Monad, ResultWith}
+use core.Result
+use core.ResultWith
+use core.functional.Monad
 
 let next(value: i32): Result(i32, bool) = {
   Result(i32, bool).Ok(value + 1)

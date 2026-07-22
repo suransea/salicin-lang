@@ -2601,7 +2601,16 @@ impl Parser {
             }
             TokenKind::If => self.if_expression(),
             TokenKind::Return => self.return_expression(allow_trailing_closure),
-            TokenKind::Throw => self.throw_expression(allow_trailing_closure),
+            TokenKind::Throw => {
+                self.advance();
+                if !self.at(&TokenKind::LParen) && !self.at_control_expression_boundary() {
+                    return Err(self.error_at(
+                        &token,
+                        "`throw` is a function; write `throw(error)`",
+                    ));
+                }
+                Ok(Self::core_control_function("throw"))
+            }
             TokenKind::While => self.while_expression(),
             TokenKind::For => self.for_expression(),
             TokenKind::Loop => self.loop_expression(),
@@ -2709,15 +2718,6 @@ impl Parser {
             let value = self.expression(allow_trailing_closure)?;
             Ok(Expr::Return(Some(Box::new(value))))
         }
-    }
-
-    fn throw_expression(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
-        self.expect(&TokenKind::Throw, "`throw`")?;
-        if self.at_control_expression_boundary() {
-            return Err(self.error_here("expected an expression after `throw`"));
-        }
-        let value = self.expression(allow_trailing_closure)?;
-        Ok(Expr::Throw(Box::new(value)))
     }
 
     fn while_expression(&mut self) -> Result<Expr, ParseError> {
@@ -2869,6 +2869,16 @@ impl Parser {
     fn block(&mut self) -> Result<Expr, ParseError> {
         self.expect(&TokenKind::LBrace, "`{`")?;
         self.block_contents()
+    }
+
+    fn core_control_function(name: &str) -> Expr {
+        Expr::Member(
+            Box::new(Expr::Member(
+                Box::new(Expr::Name("core".to_owned())),
+                "control".to_owned(),
+            )),
+            name.to_owned(),
+        )
     }
 
     fn block_contents(&mut self) -> Result<Expr, ParseError> {
@@ -3708,7 +3718,12 @@ fn validate_expr_accesses(expression: &Expr, accesses: &HashSet<String>) -> Resu
             }
             Ok(())
         }
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => Ok(()),
+        Expr::Type(_)
+        | Expr::Unit
+        | Expr::Integer(_)
+        | Expr::Bool(_)
+        | Expr::Name(_)
+        | Expr::Continue => Ok(()),
     }
 }
 
@@ -3775,7 +3790,12 @@ fn validate_region_name(region: &str, regions: &HashSet<String>) -> Result<(), S
 
 fn validate_expr_regions(expression: &Expr, regions: &HashSet<String>) -> Result<(), String> {
     match expression {
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => Ok(()),
+        Expr::Type(_)
+        | Expr::Unit
+        | Expr::Integer(_)
+        | Expr::Bool(_)
+        | Expr::Name(_)
+        | Expr::Continue => Ok(()),
         Expr::Unary(_, value)
         | Expr::Try(value)
         | Expr::Throw(value)
@@ -4047,7 +4067,7 @@ mod tests {
         assert!(error.message.contains("expected a newline or `;`"));
 
         let program =
-            parse("let fallible(): i32 with(Throws(bool), Unsafe) = { throw true }\n").unwrap();
+            parse("let fallible(): i32 with(Throws(bool), Unsafe) = { throw(true) }\n").unwrap();
         let Item::Function(fallible) = &program.items[0] else {
             panic!("expected fallible function");
         };
@@ -4889,18 +4909,30 @@ mod tests {
     }
 
     #[test]
-    fn parses_throw_with_a_required_operand() {
-        let program = parse("let fail(): Result(i32, bool) = { throw false }\n").unwrap();
+    fn parses_throw_as_a_core_control_function() {
+        let program = parse("let fail(): Result(i32, bool) = { throw(false) }\n").unwrap();
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };
         assert_eq!(
             function_tail(function),
-            &Expr::Throw(Box::new(Expr::Bool(false)))
+            &Expr::Call(
+                Box::new(Expr::Member(
+                    Box::new(Expr::Member(
+                        Box::new(Expr::Name("core".to_owned())),
+                        "control".to_owned(),
+                    )),
+                    "throw".to_owned(),
+                )),
+                vec![CallArg {
+                    label: None,
+                    value: Expr::Bool(false),
+                }],
+            )
         );
 
-        let error = parse("let fail(): Result(i32, bool) = { throw\n}\n").unwrap_err();
-        assert!(error.message.contains("expression after `throw`"));
+        let error = parse("let fail(): Result(i32, bool) = { throw false }\n").unwrap_err();
+        assert!(error.message.contains("`throw` is a function"));
     }
 
     #[test]

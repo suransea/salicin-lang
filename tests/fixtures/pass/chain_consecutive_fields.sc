@@ -1,3 +1,5 @@
+use core.Option
+
 let Inner = struct { answer: i32 }
 let Middle = struct { inner: Inner }
 let Outer = struct { middle: Middle }

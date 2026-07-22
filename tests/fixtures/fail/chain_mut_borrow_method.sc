@@ -1,3 +1,5 @@
+use core.Option
+
 let Counter = struct { value: i32 }
 
 extend Counter {

@@ -1,3 +1,6 @@
+use core.Option
+use core.Result
+
 let option_tail(): Option(i32) = { Option(i32).Some(10) }
 
 let option_return(): Option(i32) = {

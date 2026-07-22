@@ -1,7 +1,8 @@
+use core.Result
 use core.effects.Throws
 
-let fail(): Never with(Throws(i32), Throws(bool)) = {
-  throw 0
+let fail(Error: type)(move error: Error): Never with(Throws(i32), Throws(bool)) = {
+  throw(error)
 }
 
 let main(): i32 = {

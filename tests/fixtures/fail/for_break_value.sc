@@ -1,3 +1,5 @@
+use core.Option
+
 use core.iter.{Iterator, IntoIterator}
 
 let Once = struct { done: bool }

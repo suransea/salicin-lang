@@ -1,5 +1,5 @@
 let fail() = {
-  throw true
+  throw(true)
 }
 
 let main(): i32 = { 42 }

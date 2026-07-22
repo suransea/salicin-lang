@@ -1,3 +1,5 @@
+use core.Option
+
 let choose(value: Option(i32)): i32 = {
   if let Some(found) = value {
     found

@@ -304,6 +304,45 @@ fn source_effect_source_map(effects: &[Type]) -> HashMap<String, Type> {
         .collect()
 }
 
+fn source_type_mentions_any_name(source: &Type, names: &HashSet<String>) -> bool {
+    match source {
+        Type::Named(name, arguments) => {
+            (arguments.is_empty() && names.contains(name))
+                || arguments
+                    .iter()
+                    .any(|argument| source_type_mentions_any_name(argument, names))
+        }
+        Type::NamedArgs(name, arguments) => {
+            (arguments.is_empty() && names.contains(name))
+                || arguments
+                    .iter()
+                    .any(|argument| source_type_mentions_any_name(&argument.ty, names))
+        }
+        Type::Borrow { pointee, .. } => source_type_mentions_any_name(pointee, names),
+        Type::Array(element, _) => source_type_mentions_any_name(element, names),
+        Type::Function {
+            groups,
+            effects,
+            result,
+        } => {
+            groups
+                .iter()
+                .flatten()
+                .any(|argument| source_type_mentions_any_name(argument, names))
+                || effects
+                    .throws
+                    .as_deref()
+                    .is_some_and(|error| source_type_mentions_any_name(error, names))
+                || effects
+                    .custom
+                    .iter()
+                    .any(|effect| source_type_mentions_any_name(effect, names))
+                || source_type_mentions_any_name(result, names)
+        }
+        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => false,
+    }
+}
+
 fn source_type_from_identity(identity: &str) -> Option<Type> {
     match identity {
         "i32" => return Some(Type::I32),
@@ -4201,27 +4240,44 @@ impl Analyzer {
             ));
             return false;
         };
-        if !arguments.is_empty() {
-            self.error(format!(
-                "associated type constructor `{trait_name}.{associated}` must name a generic type constructor, found an applied type"
-            ));
-            return false;
-        }
-        let Some(target) = self.type_constructor_impl_target(source) else {
+
+        let actual_count = if arguments.is_empty() {
+            self.type_constructor_impl_target(source)
+                .map(|target| target.parameter_count)
+        } else {
+            self.remaining_type_alias_constructor_parameter_count(source)
+        };
+        let Some(actual_count) = actual_count else {
             self.error(format!(
                 "associated type constructor `{trait_name}.{associated}` must name a generic type constructor"
             ));
             return false;
         };
-        if target.parameter_count != expected_count {
+        if actual_count != expected_count {
             self.error(format!(
                 "associated type constructor `{trait_name}.{associated}` expects {expected_count} type parameter{}, but `{name}` has {}",
                 if expected_count == 1 { "" } else { "s" },
-                target.parameter_count
+                actual_count
             ));
             return false;
         }
         true
+    }
+
+    fn remaining_type_alias_constructor_parameter_count(&self, source: &Type) -> Option<usize> {
+        let Type::Named(name, arguments) = source else {
+            return None;
+        };
+        let alias = self.type_aliases.get(name)?;
+        let parameters = alias.compile_groups.iter().flatten().collect::<Vec<_>>();
+        if parameters
+            .iter()
+            .any(|parameter| parameter.kind != CompileParamKind::Type)
+            || arguments.len() >= parameters.len()
+        {
+            return None;
+        }
+        Some(parameters.len() - arguments.len())
     }
 
     fn trait_ref_has_constructor_subject(&self, source: &Type) -> bool {
@@ -4793,6 +4849,13 @@ impl Analyzer {
             let method_name = declaration.name.clone();
             let mut expected = declaration.clone();
             substitute_function_types(&mut expected, &substitutions);
+            if !self.expand_function_aliases_after_substitution(
+                &mut expected,
+                "trait expected signature",
+            ) {
+                valid = false;
+                continue;
+            }
 
             let (mut function, function_origin) = supplied_methods
                 .get(method_id)
@@ -4817,6 +4880,13 @@ impl Analyzer {
                 continue;
             }
             substitute_function_types(&mut function, &substitutions);
+            if !self.expand_function_aliases_after_substitution(
+                &mut function,
+                "trait implementation signature",
+            ) {
+                valid = false;
+                continue;
+            }
             if let Some(body) = &mut function.body {
                 let target_name =
                     nominal_name(&target).expect("concrete trait implementation target is nominal");
@@ -6238,6 +6308,13 @@ impl Analyzer {
             let method_name = &declaration.name;
             let mut expected = declaration.clone();
             substitute_function_types(&mut expected, &expected_substitutions);
+            if !self.expand_function_aliases_after_substitution(
+                &mut expected,
+                "generic trait expected signature",
+            ) {
+                valid = false;
+                continue;
+            }
             let mut actual = actual.clone();
             if !compile_parameter_groups_match(&expected.compile_groups, &actual.compile_groups) {
                 self.error(format!(
@@ -6254,6 +6331,13 @@ impl Analyzer {
                 continue;
             }
             substitute_function_types(&mut actual, &actual_self);
+            if !self.expand_function_aliases_after_substitution(
+                &mut actual,
+                "generic trait implementation signature",
+            ) {
+                valid = false;
+                continue;
+            }
             if !source_function_shapes_match(&expected, &actual) {
                 self.error(format!(
                     "trait method `{trait_name}.{method_name}` signature mismatch in generic implementation"
@@ -8611,6 +8695,11 @@ impl Analyzer {
         substitutions: &HashMap<String, Type>,
     ) -> Option<Type> {
         match expression {
+            Expr::Type(source) => {
+                let mut source = source.clone();
+                substitute_type_parameters(&mut source, substitutions);
+                Some(source)
+            }
             Expr::Unit => Some(Type::Unit),
             Expr::Name(name) => {
                 if let Some(replacement) = substitutions.get(name) {
@@ -8663,7 +8752,9 @@ impl Analyzer {
                 }
             }
             _ => {
-                self.error("generic type arguments must be type names or type applications");
+                self.error(format!(
+                    "generic type arguments must be type names or type applications, found `{expression:?}`"
+                ));
                 None
             }
         }
@@ -9784,6 +9875,55 @@ impl Analyzer {
             Type::NamedArgs(name, _) => Err(format!(
                 "internal error: labeled type arguments for `{name}` were not normalized before type inference"
             )),
+        }
+    }
+
+    fn unify_source_template(
+        &self,
+        template: &Type,
+        actual: &Type,
+        compile_parameters: &HashSet<String>,
+        inferred: &mut HashMap<String, InferredTypeArgument>,
+        origin: &str,
+    ) -> Result<bool, String> {
+        if let Some(actual_ty) = self.probe_source_ty(actual) {
+            return self.unify_template_ty(
+                template,
+                &actual_ty,
+                Some(actual),
+                compile_parameters,
+                inferred,
+                origin,
+            );
+        }
+        let mismatch = || {
+            format!(
+                "source type inference constraint from {origin} does not match `{}`",
+                source_effect_identity(actual)
+            )
+        };
+        match (template, actual) {
+            (
+                Type::Named(template_name, template_arguments),
+                Type::Named(actual_name, actual_arguments),
+            ) if template_name == actual_name
+                && template_arguments.len() == actual_arguments.len() =>
+            {
+                let mut changed = false;
+                for (template_argument, actual_argument) in
+                    template_arguments.iter().zip(actual_arguments)
+                {
+                    changed |= self.unify_source_template(
+                        template_argument,
+                        actual_argument,
+                        compile_parameters,
+                        inferred,
+                        origin,
+                    )?;
+                }
+                Ok(changed)
+            }
+            _ => Err(mismatch()),
         }
     }
 
@@ -11070,10 +11210,19 @@ impl Analyzer {
         else {
             return None;
         };
-        if !arguments.is_empty() {
+        let mut result_arguments = arguments.clone();
+        result_arguments.push(output_source.clone());
+        let mut result_source = Type::Named(rebind.clone(), result_arguments);
+        let mut alias_diagnostics = Vec::new();
+        expand_alias_type(
+            &mut result_source,
+            &self.type_aliases,
+            &mut Vec::new(),
+            &mut alias_diagnostics,
+        );
+        if !alias_diagnostics.is_empty() {
             return None;
         }
-        let result_source = Type::Named(rebind.clone(), vec![output_source.clone()]);
         let result_ty = self.probe_source_ty(&result_source)?;
         Some(CustomChainPlan {
             item_source,
@@ -11360,6 +11509,7 @@ impl Analyzer {
 
     fn probe_expr_ty(&self, expression: &Expr, hint: Option<&Ty>, context: &LowerCtx) -> TypeProbe {
         match expression {
+            Expr::Type(_) => TypeProbe::Unsupported,
             Expr::Integer(_) => hint
                 .filter(|ty| ty.is_integer())
                 .cloned()
@@ -12458,6 +12608,115 @@ impl Analyzer {
         Some((compile_parameters, inferred, source_index))
     }
 
+    fn probe_type_argument_inference_seed(
+        &self,
+        compile_groups: &[Vec<CompileParam>],
+        groups: &[&[CallArg]],
+        context: &LowerCtx,
+        unit_is_type: bool,
+    ) -> Option<(
+        HashSet<String>,
+        HashMap<String, InferredTypeArgument>,
+        usize,
+    )> {
+        let compile_parameters: HashSet<_> = compile_groups
+            .iter()
+            .flatten()
+            .filter(|parameter| {
+                matches!(
+                    parameter.kind,
+                    CompileParamKind::Type | CompileParamKind::TypeConstructor { .. }
+                )
+            })
+            .map(|parameter| parameter.name.clone())
+            .collect();
+        let mut inferred = HashMap::new();
+        let mut compile_index = 0;
+        let mut source_index = 0;
+        while compile_index < compile_groups.len() && source_index < groups.len() {
+            let arguments = groups[source_index];
+            let labeled = arguments
+                .first()
+                .is_some_and(|argument| argument.label.is_some());
+            let target = if labeled {
+                (compile_index..compile_groups.len()).find(|index| {
+                    arguments.iter().all(|argument| {
+                        argument.label.as_ref().is_some_and(|label| {
+                            compile_groups[*index]
+                                .iter()
+                                .any(|parameter| parameter.name == *label)
+                        })
+                    })
+                })
+            } else if !arguments.is_empty()
+                && self.group_is_explicit_compile_application(
+                    &compile_groups[compile_index],
+                    arguments,
+                    context,
+                    unit_is_type,
+                )
+            {
+                Some(compile_index)
+            } else {
+                None
+            };
+            let Some(target) = target else {
+                break;
+            };
+            let parameters = &compile_groups[target];
+            let sources = self.probe_compile_group_sources(
+                parameters,
+                arguments,
+                &context.type_substitutions,
+            )?;
+            for (parameter, source) in parameters.iter().zip(sources) {
+                let ty = self.probe_compile_argument_ty(parameter, &source)?;
+                inferred.insert(
+                    parameter.name.clone(),
+                    InferredTypeArgument {
+                        ty,
+                        source: Some(source),
+                        origin: "explicit type argument".to_owned(),
+                    },
+                );
+            }
+            source_index += 1;
+            compile_index = target + 1;
+        }
+        for parameter in compile_groups.iter().flatten() {
+            if parameter.kind == CompileParamKind::Access {
+                inferred
+                    .entry(parameter.name.clone())
+                    .or_insert_with(|| InferredTypeArgument {
+                        ty: Ty::Struct(ACCESS_SHARED_MARKER.to_owned()),
+                        source: Some(Type::Named(ACCESS_SHARED_MARKER.to_owned(), Vec::new())),
+                        origin: "default shared access".to_owned(),
+                    });
+            } else if parameter.kind == CompileParamKind::Passing {
+                inferred
+                    .entry(parameter.name.clone())
+                    .or_insert_with(|| InferredTypeArgument {
+                        ty: Ty::Struct(PASSING_AUTO_MARKER.to_owned()),
+                        source: Some(Type::Named(PASSING_AUTO_MARKER.to_owned(), Vec::new())),
+                        origin: "default automatic passing".to_owned(),
+                    });
+            } else if parameter.kind == CompileParamKind::Effect {
+                inferred
+                    .entry(parameter.name.clone())
+                    .or_insert_with(|| InferredTypeArgument {
+                        ty: Ty::EffectRow {
+                            unsafe_effect: false,
+                            throws_error: None,
+                            custom_effects: Vec::new(),
+                        },
+                        source: Some(effect_row_source(false, None, &[])),
+                        origin: "default pure effect".to_owned(),
+                    });
+            }
+        }
+        Some((compile_parameters, inferred, source_index))
+    }
+
     fn group_is_explicit_compile_application(
         &self,
         parameters: &[CompileParam],
@@ -12704,17 +12963,6 @@ impl Analyzer {
             arguments.push(inferred.ty.clone());
         }
         Some((source_arguments, arguments))
-    }
-
-    fn materialize_type_arguments(&mut self, source_arguments: &[Type]) -> Option<Vec<Ty>> {
-        let arguments = source_arguments
-            .iter()
-            .map(|source| self.lower_source_type(source))
-            .collect::<Vec<_>>();
-        arguments
-            .iter()
-            .all(|argument| *argument != Ty::Error)
-            .then_some(arguments)
     }
 
     fn infer_from_expression_constraints(
@@ -13402,6 +13650,10 @@ impl Analyzer {
         context: &mut LowerCtx,
     ) -> HirExpr {
         let lowered = match expression {
+            Expr::Type(_) => {
+                self.error("compile-time type expression cannot be used as a runtime value");
+                error_expr()
+            }
             Expr::Integer(value) => {
                 let ty = match expected {
                     Some(ty) if ty.is_integer() => ty.clone(),
@@ -15488,7 +15740,7 @@ impl Analyzer {
         captures: &mut Vec<ClosureCaptureUse>,
     ) -> bool {
         match expression {
-            Expr::Unit | Expr::Integer(_) | Expr::Bool(_) => true,
+            Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) => true,
             Expr::Name(name) => {
                 if !bound.contains(name) && outer.lookup(name).is_some() {
                     record_closure_capture(captures, name, ClosureCaptureMode::Shared);
@@ -17830,8 +18082,12 @@ impl Analyzer {
         errors: &mut HashSet<Ty>,
     ) {
         match expression {
-            Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Closure(_, _) => {
-            }
+            Expr::Type(_)
+            | Expr::Unit
+            | Expr::Integer(_)
+            | Expr::Bool(_)
+            | Expr::Name(_)
+            | Expr::Closure(_, _) => {}
             Expr::Try(_) => {}
             Expr::Throw(value) => {
                 match self.probe_expr_ty(value, None, context) {
@@ -18364,7 +18620,7 @@ impl Analyzer {
                             .expression_uses_standard_throws_identity(&arm.body, identity, context)
                     })
             }
-            Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => false,
+            Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => false,
         }
     }
 
@@ -18502,7 +18758,7 @@ impl Analyzer {
                         }) || self.try_body_uses_dedicated_throws_call(&arm.body, context)
                     })
             }
-            Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => false,
+            Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => false,
         }
     }
 
@@ -18715,33 +18971,86 @@ impl Analyzer {
         context: &LowerCtx,
     ) -> Option<Vec<Type>> {
         let template = self.function_templates.get(name)?;
-        let compile_group_count = template.compile_groups.len();
-        if groups.len() != compile_group_count + template.groups.len() {
+        let (compile_parameters, mut inferred, runtime_group_start) = self
+            .probe_type_argument_inference_seed(&template.compile_groups, groups, context, false)?;
+        let runtime_groups = &groups[runtime_group_start..];
+        if runtime_groups.len() != template.groups.len() {
             return None;
         }
-        let mut substitutions = HashMap::new();
-        for (parameters, supplied) in template
-            .compile_groups
-            .iter()
-            .zip(groups.iter().take(compile_group_count))
-        {
-            if parameters.len() != supplied.len()
-                || supplied.iter().any(|argument| argument.label.is_some())
-            {
+        for (arguments, parameters) in runtime_groups.iter().zip(&template.groups) {
+            if arguments.len() != parameters.len() {
                 return None;
             }
-            for (parameter, argument) in parameters.iter().zip(*supplied) {
-                let source = self.probe_compile_argument_source(
-                    parameter,
-                    &argument.value,
-                    &context.type_substitutions,
-                )?;
-                substitutions.insert(parameter.name.clone(), source);
+            let ordered = if arguments.iter().all(|argument| argument.label.is_none()) {
+                arguments.iter().collect::<Vec<_>>()
+            } else if arguments.iter().all(|argument| argument.label.is_some()) {
+                let mut ordered = Vec::with_capacity(arguments.len());
+                for parameter in parameters {
+                    ordered.push(arguments.iter().find(|argument| {
+                        argument
+                            .label
+                            .as_ref()
+                            .is_some_and(|label| label == &parameter.name)
+                    })?);
+                }
+                ordered
+            } else {
+                return None;
+            };
+            for (argument, parameter) in ordered.into_iter().zip(parameters) {
+                let hint = self.resolved_template_ty(&parameter.ty, &compile_parameters, &inferred);
+                match self.probe_expr_ty(&argument.value, hint.as_ref(), context) {
+                    TypeProbe::Known(actual) | TypeProbe::Defaultable(actual) => {
+                        self.unify_template_ty(
+                            &parameter.ty,
+                            &actual,
+                            None,
+                            &compile_parameters,
+                            &mut inferred,
+                            "argument effect probe",
+                        )
+                        .ok()?;
+                    }
+                    TypeProbe::KnownSource(actual, source) => {
+                        self.unify_template_ty(
+                            &parameter.ty,
+                            &actual,
+                            Some(&source),
+                            &compile_parameters,
+                            &mut inferred,
+                            "argument effect probe",
+                        )
+                        .ok()?;
+                    }
+                    TypeProbe::Unsupported => {}
+                }
             }
         }
+        let substitutions = inferred
+            .iter()
+            .filter_map(|(name, inferred)| {
+                inferred
+                    .source
+                    .clone()
+                    .or_else(|| self.source_type_for_ty(&inferred.ty))
+                    .map(|source| (name.clone(), source))
+            })
+            .collect::<HashMap<_, _>>();
         let mut effects = template.effects.custom.clone();
         for effect in &mut effects {
             substitute_type_parameters(effect, &substitutions);
+        }
+        let unresolved = template
+            .compile_groups
+            .iter()
+            .flatten()
+            .map(|parameter| parameter.name.clone())
+            .collect::<HashSet<_>>();
+        if effects
+            .iter()
+            .any(|effect| source_type_mentions_any_name(effect, &unresolved))
+        {
+            return None;
         }
         Some(effects)
     }
@@ -22730,52 +23039,118 @@ impl Analyzer {
         &mut self,
         name: &str,
         groups: &[&[CallArg]],
-        handled_identity: &str,
+        handled_effect: &Type,
     ) -> Option<Result<(String, Function, usize), ()>> {
         let template = self.function_templates.get(name)?.clone();
-        let compile_group_count = template.compile_groups.len();
-        if groups.len() < compile_group_count
-            || groups.len() > compile_group_count + template.groups.len()
-        {
+        if groups.len() > template.compile_groups.len() + template.groups.len() {
             return None;
         }
-        let mut substitutions = HashMap::new();
-        let mut source_arguments = Vec::new();
-        for (parameters, supplied) in template
+        let inference_context = LowerCtx::for_global(ItemOrigin::default());
+        let (compile_parameters, mut inferred, runtime_group_start) = match self
+            .seed_type_argument_inference(
+                name,
+                &template.compile_groups,
+                groups,
+                &inference_context,
+                false,
+            ) {
+            Some(inferred) => inferred,
+            None => return Some(Err(())),
+        };
+        let mut matched_effect = false;
+        for effect in &template.effects.custom {
+            let mut effect = effect.clone();
+            let substitutions = inferred
+                .iter()
+                .filter_map(|(name, inferred)| {
+                    inferred
+                        .source
+                        .clone()
+                        .or_else(|| self.source_type_for_ty(&inferred.ty))
+                        .map(|source| (name.clone(), source))
+                })
+                .collect::<HashMap<_, _>>();
+            substitute_type_parameters(&mut effect, &substitutions);
+            let mut candidate = inferred.clone();
+            if self
+                .unify_source_template(
+                    &effect,
+                    handled_effect,
+                    &compile_parameters,
+                    &mut candidate,
+                    "handled effect",
+                )
+                .is_ok()
+            {
+                inferred = candidate;
+                matched_effect = true;
+                break;
+            }
+        }
+        if !matched_effect {
+            return None;
+        }
+        let runtime_groups = &groups[runtime_group_start..];
+        if runtime_groups.len() > template.groups.len() {
+            return None;
+        }
+        let mut ordered_runtime_groups = Vec::new();
+        for (group_index, (arguments, parameters)) in
+            runtime_groups.iter().zip(&template.groups).enumerate()
+        {
+            let parameter_names = parameters
+                .iter()
+                .map(|parameter| parameter.name.clone())
+                .collect::<Vec<_>>();
+            let Some(ordered) =
+                self.ordered_call_arguments(name, group_index + 1, arguments, &parameter_names)
+            else {
+                return Some(Err(()));
+            };
+            ordered_runtime_groups.push(ordered);
+        }
+        let constraints = ordered_runtime_groups
+            .iter()
+            .zip(&template.groups)
+            .enumerate()
+            .flat_map(|(group_index, (arguments, parameters))| {
+                arguments
+                    .iter()
+                    .zip(parameters)
+                    .map(move |(argument, parameter)| {
+                        (
+                            parameter.ty.clone(),
+                            argument.value.clone(),
+                            format!(
+                                "argument for parameter `{}` in group {}",
+                                parameter.name,
+                                group_index + 1
+                            ),
+                        )
+                    })
+            })
+            .collect::<Vec<_>>();
+        let unsupported = match self.infer_from_expression_constraints(
+            &constraints,
+            &compile_parameters,
+            &mut inferred,
+            &inference_context,
+        ) {
+            Some(unsupported) => unsupported,
+            None => return Some(Err(())),
+        };
+        let ordered_parameters = template
             .compile_groups
             .iter()
-            .zip(groups.iter().take(compile_group_count))
-        {
-            if parameters.len() != supplied.len()
-                || supplied.iter().any(|argument| argument.label.is_some())
-            {
-                return None;
-            }
-            for (parameter, argument) in parameters.iter().zip(*supplied) {
-                let source = match parameter.kind {
-                    CompileParamKind::Type => {
-                        match self.type_argument_from_expr(&argument.value, &HashMap::new()) {
-                            Some(source) => source,
-                            None => return Some(Err(())),
-                        }
-                    }
-                    _ => return None,
-                };
-                substitutions.insert(parameter.name.clone(), source.clone());
-                source_arguments.push(source);
-            }
-        }
-        let mut effects = template.effects.custom.clone();
-        for effect in &mut effects {
-            substitute_type_parameters(effect, &substitutions);
-        }
-        if !effects
-            .iter()
-            .any(|effect| source_effect_identity(effect) == handled_identity)
-        {
-            return None;
-        }
-        let arguments = match self.materialize_type_arguments(&source_arguments) {
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+        let (source_arguments, arguments) = match self.finish_type_argument_inference(
+            name,
+            &ordered_parameters,
+            &inferred,
+            unsupported,
+        ) {
             Some(arguments) => arguments,
             None => return Some(Err(())),
         };
@@ -22788,7 +23163,7 @@ impl Analyzer {
             .get(&canonical)
             .cloned()
             .expect("created generic function instance is registered");
-        Some(Ok((canonical, function, compile_group_count)))
+        Some(Ok((canonical, function, runtime_group_start)))
     }
 
     fn transform_effectful_named_call(
@@ -22810,7 +23185,7 @@ impl Analyzer {
             if let Some(function) = self.functions.get(selected_name).cloned() {
                 (selected_name.to_owned(), function, 0)
             } else if let Some(resolved) =
-                self.explicit_generic_handler_function(selected_name, &groups, &handler.identity)
+                self.explicit_generic_handler_function(selected_name, &groups, &handler.source)
             {
                 match resolved {
                     Ok(resolved) => resolved,
@@ -24466,7 +24841,7 @@ impl Analyzer {
                 &template.compile_groups,
                 type_groups,
                 context,
-                false,
+                true,
             )?;
         if consumed_groups != type_groups.len() {
             self.error(format!("invalid type argument group in `{name}`"));
@@ -24987,16 +25362,18 @@ impl Analyzer {
                     } else {
                         result
                     };
-                    if let Err(message) = self.unify_template_ty(
-                        logical_result,
-                        expected,
-                        None,
-                        &compile_parameters,
-                        &mut inferred,
-                        "expected result type",
-                    ) {
-                        self.error(message);
-                        return None;
+                    if !source_type_is_never(logical_result) {
+                        if let Err(message) = self.unify_template_ty(
+                            logical_result,
+                            expected,
+                            None,
+                            &compile_parameters,
+                            &mut inferred,
+                            "expected result type",
+                        ) {
+                            self.error(message);
+                            return None;
+                        }
                     }
                 }
             }
@@ -28081,7 +28458,7 @@ fn do_block_requires_function_boundary(expression: &Expr) -> bool {
                         || do_block_requires_function_boundary(&arm.body)
                 })
         }
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => false,
+        Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => false,
     }
 }
 
@@ -28545,7 +28922,12 @@ fn rewrite_handler_loop_control(
                 );
             }
         }
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => {}
+        Expr::Type(_)
+        | Expr::Unit
+        | Expr::Integer(_)
+        | Expr::Bool(_)
+        | Expr::Name(_)
+        | Expr::Continue => {}
     }
 }
 
@@ -28650,7 +29032,12 @@ fn collect_internal_recursion_tokens(expression: &Expr, tokens: &mut HashSet<Str
                 collect_internal_recursion_tokens(&arm.body, tokens);
             }
         }
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => {}
+        Expr::Type(_)
+        | Expr::Unit
+        | Expr::Integer(_)
+        | Expr::Bool(_)
+        | Expr::Name(_)
+        | Expr::Continue => {}
     }
 }
 
@@ -28906,7 +29293,8 @@ fn handler_expression_children(expression: &Expr) -> Vec<&Expr> {
             }
             children
         }
-        Expr::Unit
+        Expr::Type(_)
+        | Expr::Unit
         | Expr::Integer(_)
         | Expr::Bool(_)
         | Expr::Name(_)
@@ -29174,7 +29562,12 @@ fn rewrite_handler_chain_wrappers(
                 );
             }
         }
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => {}
+        Expr::Type(_)
+        | Expr::Unit
+        | Expr::Integer(_)
+        | Expr::Bool(_)
+        | Expr::Name(_)
+        | Expr::Continue => {}
     }
 }
 
@@ -29416,7 +29809,12 @@ fn rewrite_handler_returns(expression: &mut Expr, return_name: &str) {
                 rewrite_handler_returns(&mut arm.body, return_name);
             }
         }
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => {}
+        Expr::Type(_)
+        | Expr::Unit
+        | Expr::Integer(_)
+        | Expr::Bool(_)
+        | Expr::Name(_)
+        | Expr::Continue => {}
     }
 }
 
@@ -29532,7 +29930,7 @@ fn rewrite_static_function_values(expression: &mut Expr, replacements: &HashMap<
                 rewrite_static_function_values(&mut arm.body, replacements);
             }
         }
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
+        Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
     }
 }
 
@@ -29729,7 +30127,7 @@ fn hygienic_rename_expr(
                 scopes.pop();
             }
         }
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
+        Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
     }
 }
 
@@ -29960,7 +30358,7 @@ fn expression_mentions_any_name(expression: &Expr, names: &HashSet<String>) -> b
                         || expression_mentions_any_name(&arm.body, names)
                 })
         }
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => false,
+        Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => false,
     }
 }
 
@@ -36778,7 +37176,12 @@ fn normalize_expr_labeled_type_arguments(
     diagnostics: &mut Vec<String>,
 ) {
     match expression {
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => {}
+        Expr::Type(_)
+        | Expr::Unit
+        | Expr::Integer(_)
+        | Expr::Bool(_)
+        | Expr::Name(_)
+        | Expr::Continue => {}
         Expr::Unary(_, operand)
         | Expr::Try(operand)
         | Expr::Throw(operand)
@@ -37390,7 +37793,7 @@ fn expand_expr_aliases(
                 }
             }
         }
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
+        Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
         Expr::Unary(_, operand)
         | Expr::Try(operand)
         | Expr::Throw(operand)
@@ -37624,7 +38027,7 @@ fn substitute_function_types(function: &mut Function, substitutions: &HashMap<St
                 return;
             };
             function.return_type = Some(Type::Named(
-                "Result".to_owned(),
+                "core::Result".to_owned(),
                 vec![result, error.clone()],
             ));
         }
@@ -37675,7 +38078,12 @@ fn substitute_parameter_types(parameter: &mut Param, substitutions: &HashMap<Str
 fn substitute_self_expression_target(expression: &mut Expr, target: &str) {
     match expression {
         Expr::Name(name) if name == "Self" => *name = target.to_owned(),
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => {}
+        Expr::Type(_)
+        | Expr::Unit
+        | Expr::Integer(_)
+        | Expr::Bool(_)
+        | Expr::Name(_)
+        | Expr::Continue => {}
         Expr::Unary(_, operand)
         | Expr::Try(operand)
         | Expr::Throw(operand)
@@ -37829,7 +38237,12 @@ fn rewrite_abstract_self_qualified_methods(expression: &mut Expr) {
                 *expression = replacement;
             }
         }
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) | Expr::Continue => {}
+        Expr::Type(_)
+        | Expr::Unit
+        | Expr::Integer(_)
+        | Expr::Bool(_)
+        | Expr::Name(_)
+        | Expr::Continue => {}
         Expr::Unary(_, operand)
         | Expr::Try(operand)
         | Expr::Throw(operand)
@@ -37953,7 +38366,7 @@ fn substitute_expr_types(expression: &mut Expr, substitutions: &HashMap<String, 
                 }
             }
         }
-        Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
+        Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
         Expr::Unary(_, operand)
         | Expr::Try(operand)
         | Expr::Throw(operand)
@@ -38012,9 +38425,14 @@ fn substitute_expr_types(expression: &mut Expr, substitutions: &HashMap<String, 
                 substitute_expr_types(&mut field.value, substitutions);
             }
         }
-        Expr::Member(base, _) | Expr::ChainMember(base, _) => {
-            substitute_expr_types(base, substitutions)
+        Expr::Member(base, _) => {
+            if matches!(base.as_ref(), Expr::Call(_, _) | Expr::StructLiteral { .. }) {
+                substitute_type_expression_parameters(base, substitutions);
+            } else {
+                substitute_expr_types(base, substitutions);
+            }
         }
+        Expr::ChainMember(base, _) => substitute_expr_types(base, substitutions),
         Expr::Array(elements) => {
             for element in elements {
                 substitute_expr_types(element, substitutions);
@@ -38117,8 +38535,7 @@ fn source_type_expression(source: &Type) -> Expr {
         Type::U32 => Expr::Name("u32".to_owned()),
         Type::U64 => Expr::Name("u64".to_owned()),
         Type::Bool => Expr::Name("bool".to_owned()),
-        Type::Borrow { .. } => Expr::Name("<borrow-type>".to_owned()),
-        Type::Function { .. } => Expr::Name("<function-type>".to_owned()),
+        Type::Borrow { .. } | Type::Function { .. } => Expr::Type(source.clone()),
         Type::Array(element, length) => Expr::Call(
             Box::new(Expr::Name("Array".to_owned())),
             vec![
@@ -38232,8 +38649,10 @@ fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<String, Typ
             if !had_throws {
                 if let Some(error) = effects.throws.as_deref() {
                     let logical_result = std::mem::replace(result.as_mut(), Type::Unit);
-                    **result =
-                        Type::Named("Result".to_owned(), vec![logical_result, error.clone()]);
+                    **result = Type::Named(
+                        "core::Result".to_owned(),
+                        vec![logical_result, error.clone()],
+                    );
                 }
             }
         }
@@ -38920,6 +39339,16 @@ mod tests {
         compile(&program)
     }
 
+    fn compile_resolved_with_origins(
+        source: &str,
+        origins: Vec<ItemOrigin>,
+    ) -> Result<String, Vec<Diagnostic>> {
+        let mut program = resolve_text(source);
+        assert_eq!(program.items.len(), origins.len());
+        program.item_origins = origins;
+        compile(&program)
+    }
+
     fn origin(package: usize, module_path: &[&str]) -> ItemOrigin {
         ItemOrigin {
             package,
@@ -39436,10 +39865,10 @@ let main(): i32 = {
         );
         assert_eq!(
             &analyzer.enum_template_order[..2],
-            &["Option".to_owned(), "Result".to_owned()]
+            &["core::Option".to_owned(), "core::Result".to_owned()]
         );
 
-        let option = &analyzer.enum_templates["Option"];
+        let option = &analyzer.enum_templates["core::Option"];
         assert_eq!(option.compile_groups.len(), 1);
         assert_eq!(option.compile_groups[0].len(), 1);
         assert_eq!(option.compile_groups[0][0].name, "T");
@@ -39452,7 +39881,7 @@ let main(): i32 = {
         assert_eq!(option.variants[1].name, "None");
         assert_eq!(option.variants[1].fields, VariantFields::Unit);
 
-        let result = &analyzer.enum_templates["Result"];
+        let result = &analyzer.enum_templates["core::Result"];
         assert_eq!(result.compile_groups.len(), 1);
         assert_eq!(
             result.compile_groups[0]
@@ -39601,9 +40030,12 @@ let main(): i32 = {
     }
 
     #[test]
-    fn constructs_infers_and_matches_prelude_option_and_result() {
-        let ir = compile_text(
+    fn constructs_infers_and_matches_core_option_and_result() {
+        let ir = compile_resolved_text(
             r#"
+use core.Option
+use core.Result
+
 let unwrap_option(move value: Option(i32)): i32 = { value match {
   Some(item) => item,
   None => 0,
@@ -39621,15 +40053,15 @@ let main(): i32 = {
 }
 "#,
         )
-        .expect("prelude Option and Result program must compile");
+        .expect("core Option and Result program must compile");
         let option = NominalInstanceKey {
             kind: NominalKind::Enum,
-            template: "Option".into(),
+            template: "core::Option".into(),
             arguments: vec![Ty::I32],
         };
         let result = NominalInstanceKey {
             kind: NominalKind::Enum,
-            template: "Result".into(),
+            template: "core::Result".into(),
             arguments: vec![Ty::I32, Ty::Bool],
         };
         assert!(ir.contains(&hex_name(&nominal_instance_name(&option))));
@@ -39657,8 +40089,11 @@ let choose(flag: bool): i32 = { if flag { 42 } else { stop() } }
 
     #[test]
     fn coalesce_lowers_option_and_result_through_lazy_match_control_flow() {
-        let ir = compile_text(
+        let ir = compile_resolved_text(
             r#"
+use core.Option
+use core.Result
+
 let make(borrow(mut) count: i32): Option(i32) = {
   count = count + 1
   Option(i32).Some(20)
@@ -39693,10 +40128,11 @@ let main(): i32 = {
     fn throw_returns_the_enclosing_throws_error_variant() {
         let ir = compile_resolved_text(
             r#"
+use core.Result
 use core.effects.Throws
 
 let answer(fail: bool): i32 with(Throws(bool)) = {
-  if fail { throw true }
+  if fail { throw(true) }
   42
 }
 let main(): i32 = {
@@ -39705,7 +40141,7 @@ let main(): i32 = {
 }
 "#,
         )
-        .expect("throw in a throws function must compile");
+        .expect("throw(in) a throws function must compile");
         assert!(ir.contains("switch i32"));
         assert!(ir.contains("ret %sali.type."));
     }
@@ -39714,10 +40150,11 @@ let main(): i32 = {
     fn throws_calls_propagate_automatically_and_try_handles_them() {
         let ir = compile_resolved_text(
             r#"
+use core.Result
 use core.effects.Throws
 
 let read(fail: bool): i32 with(Throws(bool)) = {
-  if fail { throw true }
+  if fail { throw(true) }
   40
 }
 let forward(fail: bool): i32 with(Throws(bool)) = { read(fail) + 2 }
@@ -39737,9 +40174,10 @@ let main(): i32 = {
 
         let unhandled = compile_resolved_text(
             r#"
+use core.Result
 use core.effects.Throws
 
-let read(): i32 with(Throws(bool)) = { throw true }
+let read(): i32 with(Throws(bool)) = { throw(true) }
 let main(): i32 = { read() }
 "#,
         )
@@ -39753,9 +40191,10 @@ let main(): i32 = { read() }
     fn try_infers_a_unique_escaping_throws_source_without_context() {
         let ir = compile_resolved_text(
             r#"
+use core.Result
 use core.effects.Throws
 
-let fail(flag: bool): i32 with(Throws(bool)) = { if flag { throw true } else { 41 } }
+let fail(flag: bool): i32 with(Throws(bool)) = { if flag { throw(true) } else { 41 } }
 let main(): i32 = {
   let action = fail
   let direct = try { fail(false) }
@@ -39769,12 +40208,13 @@ let main(): i32 = {
 
         compile_resolved_text(
             r#"
+use core.Result
 use core.effects.Throws
 
 let Failure = struct { code: i32 }
 extend Failure: Copy {}
 extend Failure {
-  let raise(borrow self)(): i32 with(Throws(bool)) = { throw true }
+  let raise(borrow self)(): i32 with(Throws(bool)) = { throw(true) }
 }
 let main(): i32 = {
   let failure = Failure { code: 1 }
@@ -39787,10 +40227,11 @@ let main(): i32 = {
 
         let ambiguous = compile_resolved_text(
             r#"
+use core.Result
 use core.effects.Throws
 
-let left(): i32 with(Throws(bool)) = { throw true }
-let right(): i32 with(Throws(i64)) = { throw 1 }
+let left(): i32 with(Throws(bool)) = { throw(true) }
+let right(): i32 with(Throws(i64)) = { throw(1) }
 let main(): i32 = {
   let result = try { if true { left() } else { right() } }
   result ?? 0
@@ -39806,9 +40247,10 @@ let main(): i32 = {
 
         let handled = compile_resolved_text(
             r#"
+use core.Result
 use core.effects.Throws
 
-let fail(): i32 with(Throws(bool)) = { throw true }
+let fail(): i32 with(Throws(bool)) = { throw(true) }
 let main(): i32 = {
   let inner = try { fail() }
   let outer = try { inner }
@@ -39885,9 +40327,10 @@ let main(): i32 = {
 
         compile_resolved_text(
             r#"
+use core.Result
 use core.effects.Throws
 
-let choose(fail: bool): i32 with(Throws(bool)) = { if fail { throw true } else { 42 } }
+let choose(fail: bool): i32 with(Throws(bool)) = { if fail { throw(true) } else { 42 } }
 let choose(value: i32): i32 = { value }
 let main(): i32 = {
   let result = try { choose(fail: false) }
@@ -39957,13 +40400,14 @@ let main(): i32 = { Counter { value: 40 }.add(2) }
 
         compile_resolved_text(
             r#"
+use core.Result
 use core.effects.Throws
 
 let Counter = struct { value: i32 }
 extend Counter: Copy {}
 extend Counter {
   let read(borrow self)(fail: bool): i32 with(Throws(bool)) = {
-    if fail { throw true } else { self.value }
+    if fail { throw(true) } else { self.value }
   }
   let read(borrow self)(fallback: i32): i32 = { fallback }
 }
@@ -40120,10 +40564,11 @@ let main(): i32 = { 0 }
     fn effect_parameters_infer_forward_and_explicitly_select_throws_rows() {
         let ir = compile_resolved_text(
             r#"
+use core.Result
 use core.effects.Throws
 
 let invoke(E: effect)(action: (): i32 with(E))(): i32 with(E) = { action() }
-let fail(): i32 with(Throws(bool)) = { throw true }
+let fail(): i32 with(Throws(bool)) = { throw(true) }
 let forward(): i32 with(Throws(bool)) = { invoke(fail)() }
 let explicit(): i32 with(Throws(bool)) = { invoke(Throws(bool))(fail)() }
 let main(): i32 = {
@@ -40141,29 +40586,26 @@ let main(): i32 = {
     fn throw_requires_an_exact_active_throws_boundary() {
         for (source, expected) in [
             (
-                "let fail(): i32 with(Throws(bool)) = { throw 0 }\nlet main(): i32 = { 0 }\n",
-                "where `bool` is expected",
+                "let fail(): i32 with(Throws(bool)) = { throw(0) }\nlet main(): i32 = { 0 }\n",
+                "requires `core::effects::Throws(i32)`",
             ),
             (
-                "let fail(): Option(i32) = { throw false }\nlet main(): i32 = { 0 }\n",
-                "requires an enclosing `with(Throws(Error))`",
+                "let fail(): Option(i32) = { throw(false) }\nlet main(): i32 = { 0 }\n",
+                "handle it with `try { ... }`",
             ),
             (
-                "let fail(): i32 = { throw false }\nlet main(): i32 = { 0 }\n",
-                "requires an enclosing `with(Throws(Error))`",
+                "let fail(): i32 = { throw(false) }\nlet main(): i32 = { 0 }\n",
+                "handle it with `try { ... }`",
             ),
             (
-                "let fail() = { throw false }\nlet main(): i32 = { 0 }\n",
-                "requires an enclosing `with(Throws(Error))`",
+                "let fail() = { throw(false) }\nlet main(): i32 = { 0 }\n",
+                "handle it with `try { ... }`",
             ),
         ] {
-            let source = if source.contains("with(Throws") {
-                format!("use core.effects.Throws\n{source}")
-            } else {
-                source.to_owned()
-            };
+            let source =
+                format!("use core.Option\nuse core.Result\nuse core.effects.Throws\n{source}");
             let errors =
-                compile_resolved_text(&source).expect_err("invalid throw must be rejected");
+                compile_resolved_text(&source).expect_err("invalid throw(must) be rejected");
             assert!(
                 errors.iter().any(|error| error.message.contains(expected)),
                 "missing `{expected}` diagnostic in {errors:?}"
@@ -40173,13 +40615,14 @@ let main(): i32 = {
 
     #[test]
     fn coalesce_hir_keeps_the_fallback_call_in_the_residual_arm() {
-        let program = crate::parser::parse(
+        let program = resolve_text(
             r#"
+use core.Option
+
 let fallback(): i32 = { 42 }
 let main(): i32 = { Option(i32).Some(20) ?? fallback() }
 "#,
-        )
-        .expect("coalesce source must parse");
+        );
         let mut analyzer = Analyzer::new(&program);
         let hir = analyzer.analyze().expect("coalesce HIR must lower");
         assert!(
@@ -40506,8 +40949,11 @@ let main(): i32 = {
 
     #[test]
     fn coalesce_probe_participates_in_outer_inference_and_nests_right_associatively() {
-        compile_text(
+        compile_resolved_text(
             r#"
+use core.Option
+use core.Result
+
 let identity(T: type)(move value: T): T = { value }
 let Boxed (T: type) = struct { value: T }
 let main(): i32 = {
@@ -40525,8 +40971,11 @@ let main(): i32 = {
 
     #[test]
     fn coalesce_infers_empty_builtin_variants_from_expected_or_rhs_payloads() {
-        compile_text(
+        compile_resolved_text(
             r#"
+use core.Option
+use core.Result
+
 let main(): i32 = {
   let inferred_option = Option.None ?? 40
   let inferred_result = Result(E: bool).Err(false) ?? 2
@@ -40544,11 +40993,13 @@ let main(): i32 = {
 
     #[test]
     fn coalesce_does_not_guess_an_unconstrained_result_error_type() {
-        let errors = compile_text("let main(): i32 = { Result.Ok(40) ?? 2 }\n").unwrap_err();
+        let errors =
+            compile_resolved_text("use core.Result\nlet main(): i32 = { Result.Ok(40) ?? 2 }\n")
+                .unwrap_err();
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.message.contains("cannot infer type argument")
                 && diagnostic.message.contains("`E`")
-                && diagnostic.message.contains("`Result`")
+                && diagnostic.message.contains("`core::Result`")
         }));
     }
 
@@ -40558,14 +41009,18 @@ let main(): i32 = {
         assert!(non_container.iter().any(|diagnostic| diagnostic.message
             == "operator `??` requires `Option(T)` or `Result(T, E)` on the left, found `i32`"));
 
-        let mismatch =
-            compile_text("let main(): i32 = { Option(i32).None ?? true }\n").unwrap_err();
+        let mismatch = compile_resolved_text(
+            "use core.Option\nlet main(): i32 = { Option(i32).None ?? true }\n",
+        )
+        .unwrap_err();
         assert!(mismatch
             .iter()
             .any(|diagnostic| diagnostic.message.contains("type mismatch")));
 
-        let moved = compile_text(
+        let moved = compile_resolved_text(
             r#"
+use core.Result
+
 let main(): i32 = {
   let value = Result(i32, bool).Ok(42)
   let answer = value ?? 0
@@ -40581,8 +41036,10 @@ let main(): i32 = {
 
     #[test]
     fn coalesce_joins_a_fallback_only_move_as_possibly_moved() {
-        let errors = compile_text(
+        let errors = compile_resolved_text(
             r#"
+use core.Option
+
 let Boxed = struct { value: i32 }
 let consume(move value: Boxed): i32 = { value.value }
 let main(): i32 = {
@@ -40603,9 +41060,12 @@ let main(): i32 = {
     }
 
     #[test]
-    fn keeps_prelude_nominal_instances_structurally_isolated() {
-        let program = crate::parser::parse(
+    fn keeps_core_nominal_instances_structurally_isolated() {
+        let program = resolve_text(
             r#"
+use core.Option
+use core.Result
+
 let main(): i32 = {
   let number = Option.Some(42)
   let flag = Option.Some(true)
@@ -40618,8 +41078,7 @@ let main(): i32 = {
   if enabled { value + left - right - 42 } else { 0 }
 }
 "#,
-        )
-        .expect("multiple prelude instances source must parse");
+        );
         let mut analyzer = Analyzer::new(&program);
         analyzer.analyze().expect("multiple prelude instances HIR");
         assert!(
@@ -40630,12 +41089,12 @@ let main(): i32 = {
 
         let option_i32 = NominalInstanceKey {
             kind: NominalKind::Enum,
-            template: "Option".into(),
+            template: "core::Option".into(),
             arguments: vec![Ty::I32],
         };
         let option_bool = NominalInstanceKey {
             kind: NominalKind::Enum,
-            template: "Option".into(),
+            template: "core::Option".into(),
             arguments: vec![Ty::Bool],
         };
         let option_i32_name = analyzer.nominal_instance_names[&option_i32].clone();
@@ -40653,7 +41112,7 @@ let main(): i32 = {
         let result_keys = analyzer
             .nominal_instances
             .values()
-            .filter(|instance| instance.key.template == "Result")
+            .filter(|instance| instance.key.template == "core::Result")
             .map(|instance| instance.key.arguments.clone())
             .collect::<HashSet<_>>();
         assert_eq!(
@@ -40663,7 +41122,7 @@ let main(): i32 = {
     }
 
     #[test]
-    fn rejects_user_redefinitions_of_prelude_nominal_names() {
+    fn allows_user_redefinitions_of_unimported_core_nominal_names() {
         for (source, name) in [
             (
                 "let Option = struct { value: i32 }\nlet main(): i32 = { 42 }\n",
@@ -40676,22 +41135,11 @@ let main(): i32 = {
         ] {
             let program = crate::parser::parse(source).expect("reserved-name source must parse");
             let analyzer = Analyzer::new(&program);
-            assert!(analyzer.diagnostics.iter().any(|diagnostic| {
-                diagnostic.message == format!("duplicate top-level name `{name}`")
-            }));
-            let retained = &analyzer.enum_templates[name];
-            let retained_variants = retained
-                .variants
-                .iter()
-                .map(|variant| variant.name.as_str())
-                .collect::<Vec<_>>();
-            assert_eq!(
-                retained_variants,
-                if name == "Option" {
-                    vec!["Some", "None"]
-                } else {
-                    vec!["Ok", "Err"]
-                }
+            assert!(
+                !analyzer.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.message == format!("duplicate top-level name `{name}`")
+                }),
+                "unimported core item `{name}` should not reserve a user top-level name"
             );
         }
 
@@ -41175,8 +41623,10 @@ let main(): i32 = { allowed() }
 
     #[test]
     fn rejects_inferred_public_function_and_global_types_that_leak_private_nominals() {
-        let errors = compile_with_origins(
+        let errors = compile_resolved_with_origins(
             r#"
+use core.Option
+
 let Hidden = struct {}
 pub let expose() = { Hidden {} }
 pub let wrapped() = { Option(Hidden).Some(Hidden {}) }
@@ -41221,8 +41671,10 @@ let main(): i32 = { 0 }
 
     #[test]
     fn rejects_private_generic_fields_before_inference_and_through_optional_chaining() {
-        let errors = compile_with_origins(
+        let errors = compile_resolved_with_origins(
             r#"
+use core.Option
+
 pub let Cell (T: type) = struct { value: T }
 pub let make(): Option(Cell(i32)) = { Option(Cell(i32)).Some(Cell(i32) { value: 42 }) }
 let infer(): Cell(i32) = { Cell { value: 0 } }
@@ -42727,7 +43179,7 @@ use core.effects.{Throws, Unsafe}
 
 let UI = effect
 let fail(flag: bool): i32 with(Throws(bool)) = {
-  if flag { throw true }
+  if flag { throw(true) }
   40
 }
 let render(value: i32): i32 with(UI) = { value }
@@ -42744,9 +43196,10 @@ let main(): i32 = { 0 }
 
         let errors = compile_resolved_text(
             r#"
+use core.Result
 use core.effects.Throws
 
-let fail(): i32 with(Throws(i64)) = { throw 1 }
+let fail(): i32 with(Throws(i64)) = { throw(1) }
 let outer(): i32 with(Throws(bool)) = { do { return fail() } }
 let main(): i32 = { 0 }
 "#,
@@ -42843,6 +43296,7 @@ let main(): i32 = {
 
         compile_resolved_text(
             r#"
+use core.Result
 use core.effects.Throws
 
 let Supply = effect { let seed(): i32 }
@@ -42916,6 +43370,7 @@ let main(): i32 = { 0 }
 
         let missing_unsafe = compile_resolved_text(
             r#"
+use core.Result
 use core.effects.Unsafe
 
 let Ask = effect { let value(): i32 with(Unsafe) }
@@ -42930,6 +43385,7 @@ let main(): i32 = { run() }
 
         let missing_throws = compile_resolved_text(
             r#"
+use core.Result
 use core.effects.Throws
 
 let Ask = effect { let value(): i32 with(Throws(bool)) }
@@ -43550,9 +44006,10 @@ let main(): i32 = {
     fn throws_effects_lower_to_result_boundaries_and_propagate() {
         let ir = compile_resolved_text(
             r#"
+use core.Result
 use core.effects.Throws
 
-let fail(flag: bool): i32 with(Throws(bool)) = { if flag { throw true } else { 41 } }
+let fail(flag: bool): i32 with(Throws(bool)) = { if flag { throw(true) } else { 41 } }
 let forward(flag: bool): i32 with(Throws(bool)) = { fail(flag) }
 let main(): i32 = {
   let result: Result(i32, bool) = try { forward(false) }
@@ -43571,7 +44028,7 @@ let main(): i32 = {
 use core.effects.{Throws, Unsafe}
 
 let read(pointer: Ptr(i32), fail: bool): i32 with(Throws(bool), Unsafe) = {
-  if fail { throw true }
+  if fail { throw(true) }
   *pointer
 }
 let forward(pointer: Ptr(i32), fail: bool): i32 with(Throws(bool), Unsafe) = {
@@ -43603,6 +44060,7 @@ let main(): i32 = {
     fn try_handles_throws_while_forwarding_unsafe_and_custom_effects() {
         compile_resolved_text(
             r#"
+use core.Result
 use core.effects.Unsafe
 
 let UI = effect
@@ -44301,6 +44759,8 @@ let main(): i32 = {
     fn core_option_and_result_implement_monad() {
         compile_resolved_text(
             r#"
+use core.Option
+use core.Result
 use core.functional.Monad
 
 let add_one(value: i32): i32 = {
@@ -45087,11 +45547,12 @@ let main(): i32 = { Number.construct(42).value }
     fn nominal_error_types_propagate_through_throws() {
         let ir = compile_resolved_text(
             r#"
+use core.Result
 use core.effects.Throws
 
 let Failure = struct { code: i32 }
 let read(fail: bool): i32 with(Throws(Failure)) = {
-  if fail { throw Failure { code: 1 } } else { 40 } }
+  if fail { throw(Failure { code: 1 }) } else { 40 } }
 let run(fail: bool): i32 with(Throws(Failure)) = { read(fail) + 2 }
 let main(): i32 = {
   let result: Result(i32, Failure) = try { run(false) }
@@ -45432,7 +45893,8 @@ let main(): i32 = {
     #[test]
     fn lowers_for_through_validated_iteration_lang_items() {
         let ir = compile_resolved_text(
-            "use core.iter.{Iterator, IntoIterator}\n\
+            "use core.Option\n\
+             use core.iter.{Iterator, IntoIterator}\n\
              let Counter = struct { current: i32, end: i32 }\n\
              extend Counter {\n\
                let into_iter(borrow self)(): i32 = { self.current }\n\
@@ -45514,8 +45976,11 @@ let main(): i32 = {
 
     #[test]
     fn lowers_builtin_optional_fields_and_methods_without_flattening() {
-        let ir = compile_text(
+        let ir = compile_resolved_text(
             r#"
+use core.Option
+use core.Result
+
 let Payload = struct { value: i32, nested: Option(i32) }
 extend Payload {
   let add(borrow self)(amount: i32): i32 = { self.value + amount }
@@ -45538,8 +46003,10 @@ let main(): i32 = {
 
     #[test]
     fn optional_chain_expected_result_only_constrains_the_base_error_type() {
-        compile_text(
+        compile_resolved_text(
             r#"
+use core.Result
+
 let Boxed = struct { value: i32 }
 let read(): Result(i32, bool) = { Result.Ok(Boxed { value: 42 })?.value }
 let main(): i32 = { read() ?? 0 }
@@ -45587,7 +46054,8 @@ let main(): i32 = { 0 }
             ),
         ];
         for (source, expected) in cases {
-            let errors = compile_text(source).unwrap_err();
+            let source = format!("use core.Option\n{source}");
+            let errors = compile_resolved_text(&source).unwrap_err();
             assert!(
                 errors.iter().any(|error| error.message.contains(expected)),
                 "expected `{expected}` in {errors:?}"
@@ -45934,12 +46402,13 @@ let replace(borrow(mut) target: Pair, move replacement: Payload): () = {
     fn cleanup_plan_try_and_throw_returns_exit_match_arm_scopes() {
         let plan = cleanup_plan_text(
             r#"
+use core.Result
 use core.effects.Throws
 
-let read(fail: bool): i32 with(Throws(bool)) = { if fail { throw true } else { 42 } }
+let read(fail: bool): i32 with(Throws(bool)) = { if fail { throw(true) } else { 42 } }
 let propagate(fail: bool): i32 with(Throws(bool)) = {
   let item = read(fail)
-  if item == 0 { throw true }
+  if item == 0 { throw(true) }
   item
 }
 let main(): i32 = {

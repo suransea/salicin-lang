@@ -1,3 +1,5 @@
+use core.Option
+
 pub let Vec (T: type) = struct { pointer: MutPtr(T),
   length: u64,
   storage_capacity: u64, }

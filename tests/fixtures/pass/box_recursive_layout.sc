@@ -1,3 +1,5 @@
+use core.Option
+
 use alloc.boxed.{Box, box_new}
 
 let Node = struct { value: i32, next: Option(Box(Node)) }

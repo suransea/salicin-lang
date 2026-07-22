@@ -83,7 +83,7 @@ pub fn resolve_sources(sources: &[SourceUnit]) -> Result<Program, Vec<String>> {
 /// internal, non-source-spellable namespace while each package keeps its own
 /// `root`, `super`, dependency aliases, and `pub(package)` boundary.
 pub fn resolve_packages(packages: &[SourcePackage]) -> Result<Program, Vec<String>> {
-    resolve_packages_impl(packages, true)
+    resolve_packages_impl(packages, StandardLibraryExposure::user())
 }
 
 /// Resolve compiler-owned source modules without exposing the standard
@@ -96,16 +96,33 @@ pub(crate) fn resolve_embedded_sources(sources: &[SourceUnit]) -> Result<Program
             dependencies: BTreeMap::new(),
             sources: sources.to_vec(),
         }],
-        false,
+        StandardLibraryExposure::none_for_embedded(),
+    )
+}
+
+/// Resolve compiler-owned `alloc` modules while exposing the already-validated
+/// `core` namespace. This keeps `alloc` as ordinary library source without
+/// making it depend on its own public `alloc.*` facade.
+pub(crate) fn resolve_embedded_alloc_sources(
+    sources: &[SourceUnit],
+) -> Result<Program, Vec<String>> {
+    resolve_packages_impl(
+        &[SourcePackage {
+            id: PackageId(0),
+            is_primary: true,
+            dependencies: BTreeMap::new(),
+            sources: sources.to_vec(),
+        }],
+        StandardLibraryExposure::core_for_embedded(),
     )
 }
 
 fn resolve_packages_impl(
     packages: &[SourcePackage],
-    expose_standard_library: bool,
+    standard_library: StandardLibraryExposure,
 ) -> Result<Program, Vec<String>> {
     let (prepared, dependencies, mut diagnostics) =
-        validate_package_layout(packages, !expose_standard_library);
+        validate_package_layout(packages, standard_library.allow_source_standard_modules);
     let mut parsed = Vec::with_capacity(prepared.len());
 
     for unit in prepared {
@@ -127,12 +144,13 @@ fn resolve_packages_impl(
 
     let (mut symbols, mut module_paths, mut collection_diagnostics) =
         collect_symbols(&parsed, &dependencies);
-    let required_imports = if expose_standard_library {
+    let required_imports = if standard_library.expose_core || standard_library.expose_alloc {
         install_standard_namespaces(
             &parsed,
             &mut symbols,
             &mut module_paths,
             &mut collection_diagnostics,
+            standard_library,
         )
     } else {
         HashMap::new()
@@ -257,6 +275,39 @@ enum DeclarationNamespace {
     Other,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct StandardLibraryExposure {
+    expose_core: bool,
+    expose_alloc: bool,
+    allow_source_standard_modules: bool,
+}
+
+impl StandardLibraryExposure {
+    const fn user() -> Self {
+        Self {
+            expose_core: true,
+            expose_alloc: true,
+            allow_source_standard_modules: false,
+        }
+    }
+
+    const fn none_for_embedded() -> Self {
+        Self {
+            expose_core: false,
+            expose_alloc: false,
+            allow_source_standard_modules: true,
+        }
+    }
+
+    const fn core_for_embedded() -> Self {
+        Self {
+            expose_core: true,
+            expose_alloc: false,
+            allow_source_standard_modules: true,
+        }
+    }
+}
+
 /// Direct dependency aliases keyed by the internal root of the declaring
 /// package. Target roots are internal and cannot be written in source code.
 type DependencyTable = HashMap<Vec<String>, BTreeMap<String, Vec<String>>>;
@@ -300,7 +351,8 @@ const ALLOC_EXPORTS: &[(&str, &str)] = &[
     ("vec", "vec_write"),
 ];
 
-const CORE_PRELUDE_EXPORTS: &[&str] = &["Option", "Result", "Never", "Copy", "Drop"];
+const CORE_PRELUDE_EXPORTS: &[&str] = &["Never", "Copy", "Drop"];
+const CORE_ROOT_EXPORTS: &[&str] = &["Option", "Result", "ResultWith"];
 const CORE_OPS_EXPORTS: &[&str] = &[
     "Add",
     "Sub",
@@ -343,7 +395,7 @@ const CORE_CONTROL_EXPORTS: &[&str] = &[
 ];
 const CORE_ITER_EXPORTS: &[&str] = &["Iterator", "IntoIterator"];
 const CORE_ALGEBRA_EXPORTS: &[&str] = &["Semigroup", "Monoid"];
-const CORE_FUNCTIONAL_EXPORTS: &[&str] = &["Functor", "Applicative", "Monad", "ResultWith"];
+const CORE_FUNCTIONAL_EXPORTS: &[&str] = &["Functor", "Applicative", "Monad"];
 
 fn validate_package_layout(
     packages: &[SourcePackage],
@@ -804,6 +856,7 @@ fn install_standard_namespaces(
     symbols: &mut SymbolTable,
     module_paths: &mut HashSet<Vec<String>>,
     diagnostics: &mut Vec<String>,
+    exposure: StandardLibraryExposure,
 ) -> HashMap<String, String> {
     let package_roots = parsed
         .iter()
@@ -811,229 +864,275 @@ fn install_standard_namespaces(
         .collect::<BTreeSet<_>>();
     let mut required_imports = HashMap::new();
 
-    for (module, name) in ALLOC_EXPORTS {
-        required_imports.insert((*name).to_owned(), format!("alloc.{module}.{name}"));
+    if exposure.expose_alloc {
+        for (module, name) in ALLOC_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("alloc.{module}.{name}"));
+        }
     }
-    for name in CORE_OPS_EXPORTS {
-        required_imports.insert((*name).to_owned(), format!("core.ops.{name}"));
-    }
-    for name in CORE_EFFECTS_EXPORTS {
-        required_imports.insert((*name).to_owned(), format!("core.effects.{name}"));
-    }
-    for name in CORE_ACCESS_EXPORTS {
-        required_imports.insert((*name).to_owned(), format!("core.access.{name}"));
-    }
-    for name in CORE_ALGEBRA_EXPORTS {
-        required_imports.insert((*name).to_owned(), format!("core.algebra.{name}"));
-    }
-    for name in CORE_FUNCTIONAL_EXPORTS {
-        required_imports.insert((*name).to_owned(), format!("core.functional.{name}"));
-    }
-    for name in CORE_ITER_EXPORTS {
-        required_imports.insert((*name).to_owned(), format!("core.iter.{name}"));
+    if exposure.expose_core {
+        for name in CORE_ROOT_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.{name}"));
+        }
+        for name in CORE_OPS_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.ops.{name}"));
+        }
+        for name in CORE_EFFECTS_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.effects.{name}"));
+        }
+        for name in CORE_ACCESS_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.access.{name}"));
+        }
+        for name in CORE_ALGEBRA_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.algebra.{name}"));
+        }
+        for name in CORE_FUNCTIONAL_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.functional.{name}"));
+        }
+        for name in CORE_ITER_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.iter.{name}"));
+        }
     }
 
     for package_root in package_roots {
-        let mut core_root = package_root.clone();
-        core_root.push("core".to_owned());
-        if module_paths.contains(&core_root) {
-            diagnostics.push(
-                "<package>: error: top-level module `core` conflicts with the standard-library namespace"
-                    .to_owned(),
-            );
-        } else if let Some(symbol) = symbols.get(&core_root) {
-            diagnostics.push(format!(
-                "{}: error: root declaration `core` conflicts with the standard-library namespace",
-                symbol.source_path
-            ));
-        } else {
-            module_paths.insert(core_root.clone());
-            for module in [
-                "prelude",
-                "ops",
-                "effects",
-                "access",
-                "control",
-                "iter",
-                "algebra",
-                "functional",
-            ] {
-                let mut module_path = core_root.clone();
-                module_path.push(module.to_owned());
-                module_paths.insert(module_path);
-            }
-            for name in CORE_PRELUDE_EXPORTS {
-                let mut module_path = core_root.clone();
-                module_path.push("prelude".to_owned());
-                let mut logical_path = module_path.clone();
-                logical_path.push((*name).to_owned());
-                symbols.insert(
-                    logical_path,
-                    Symbol {
-                        canonical: (*name).to_owned(),
-                        module_path,
-                        package_root: package_root.clone(),
-                        visibility: Visibility::Public,
-                        source_path: "<core>".to_owned(),
-                    },
-                );
-            }
-            for name in CORE_OPS_EXPORTS {
-                let mut module_path = core_root.clone();
-                module_path.push("ops".to_owned());
-                let mut logical_path = module_path.clone();
-                logical_path.push((*name).to_owned());
-                symbols.insert(
-                    logical_path,
-                    Symbol {
-                        canonical: format!("core::ops::{name}"),
-                        module_path,
-                        package_root: package_root.clone(),
-                        visibility: Visibility::Public,
-                        source_path: "<core>".to_owned(),
-                    },
-                );
-            }
-            for name in CORE_EFFECTS_EXPORTS {
-                let mut module_path = core_root.clone();
-                module_path.push("effects".to_owned());
-                let mut logical_path = module_path.clone();
-                logical_path.push((*name).to_owned());
-                symbols.insert(
-                    logical_path,
-                    Symbol {
-                        canonical: format!("core::effects::{name}"),
-                        module_path,
-                        package_root: package_root.clone(),
-                        visibility: Visibility::Public,
-                        source_path: "<core>".to_owned(),
-                    },
-                );
-            }
-            for name in CORE_ACCESS_EXPORTS {
-                let mut module_path = core_root.clone();
-                module_path.push("access".to_owned());
-                let mut logical_path = module_path.clone();
-                logical_path.push((*name).to_owned());
-                symbols.insert(
-                    logical_path,
-                    Symbol {
-                        canonical: format!("core::access::{name}"),
-                        module_path,
-                        package_root: package_root.clone(),
-                        visibility: Visibility::Public,
-                        source_path: "<core>".to_owned(),
-                    },
-                );
-            }
-            for name in CORE_CONTROL_EXPORTS {
-                let mut module_path = core_root.clone();
-                module_path.push("control".to_owned());
-                let mut logical_path = module_path.clone();
-                logical_path.push((*name).to_owned());
-                symbols.insert(
-                    logical_path,
-                    Symbol {
-                        canonical: format!("core::control::{name}"),
-                        module_path,
-                        package_root: package_root.clone(),
-                        visibility: Visibility::Public,
-                        source_path: "<core>".to_owned(),
-                    },
-                );
-            }
-            for name in CORE_ALGEBRA_EXPORTS {
-                let mut module_path = core_root.clone();
-                module_path.push("algebra".to_owned());
-                let mut logical_path = module_path.clone();
-                logical_path.push((*name).to_owned());
-                symbols.insert(
-                    logical_path,
-                    Symbol {
-                        canonical: format!("core::algebra::{name}"),
-                        module_path,
-                        package_root: package_root.clone(),
-                        visibility: Visibility::Public,
-                        source_path: "<core>".to_owned(),
-                    },
-                );
-            }
-            for name in CORE_FUNCTIONAL_EXPORTS {
-                let mut module_path = core_root.clone();
-                module_path.push("functional".to_owned());
-                let mut logical_path = module_path.clone();
-                logical_path.push((*name).to_owned());
-                symbols.insert(
-                    logical_path,
-                    Symbol {
-                        canonical: format!("core::functional::{name}"),
-                        module_path,
-                        package_root: package_root.clone(),
-                        visibility: Visibility::Public,
-                        source_path: "<core>".to_owned(),
-                    },
-                );
-            }
-            for name in CORE_ITER_EXPORTS {
-                let mut module_path = core_root.clone();
-                module_path.push("iter".to_owned());
-                let mut logical_path = module_path.clone();
-                logical_path.push((*name).to_owned());
-                symbols.insert(
-                    logical_path,
-                    Symbol {
-                        canonical: format!("core::iter::{name}"),
-                        module_path,
-                        package_root: package_root.clone(),
-                        visibility: Visibility::Public,
-                        source_path: "<core>".to_owned(),
-                    },
-                );
-            }
+        if exposure.expose_core {
+            install_core_namespace(symbols, module_paths, diagnostics, &package_root);
         }
 
-        let mut alloc_root = package_root.clone();
-        alloc_root.push("alloc".to_owned());
-        if module_paths.contains(&alloc_root) {
-            diagnostics.push(
-                "<package>: error: top-level module `alloc` conflicts with the standard-library namespace"
-                    .to_owned(),
-            );
-            continue;
+        if exposure.expose_alloc {
+            install_alloc_namespace(symbols, module_paths, diagnostics, &package_root);
         }
-        if let Some(symbol) = symbols.get(&alloc_root) {
-            diagnostics.push(format!(
-                "{}: error: root declaration `alloc` conflicts with the standard-library namespace",
-                symbol.source_path
-            ));
-            continue;
-        }
+    }
 
-        module_paths.insert(alloc_root.clone());
-        for module in ["boxed", "vec"] {
-            let mut module_path = alloc_root.clone();
+    required_imports
+}
+
+fn install_core_namespace(
+    symbols: &mut SymbolTable,
+    module_paths: &mut HashSet<Vec<String>>,
+    diagnostics: &mut Vec<String>,
+    package_root: &[String],
+) {
+    let mut core_root = package_root.to_vec();
+    core_root.push("core".to_owned());
+    if module_paths.contains(&core_root) {
+        diagnostics.push(
+            "<package>: error: top-level module `core` conflicts with the standard-library namespace"
+                .to_owned(),
+        );
+    } else if let Some(symbol) = symbols.get(&core_root) {
+        diagnostics.push(format!(
+            "{}: error: root declaration `core` conflicts with the standard-library namespace",
+            symbol.source_path
+        ));
+    } else {
+        module_paths.insert(core_root.clone());
+        for module in [
+            "prelude",
+            "ops",
+            "effects",
+            "access",
+            "control",
+            "iter",
+            "algebra",
+            "functional",
+            "option_monad",
+            "result_monad",
+        ] {
+            let mut module_path = core_root.clone();
             module_path.push(module.to_owned());
             module_paths.insert(module_path);
         }
-        for (module, name) in ALLOC_EXPORTS {
-            let mut module_path = alloc_root.clone();
-            module_path.push((*module).to_owned());
+        for name in CORE_PRELUDE_EXPORTS {
+            let mut module_path = core_root.clone();
+            module_path.push("prelude".to_owned());
             let mut logical_path = module_path.clone();
             logical_path.push((*name).to_owned());
             symbols.insert(
                 logical_path,
                 Symbol {
-                    canonical: format!("alloc::{module}::{name}"),
+                    canonical: (*name).to_owned(),
                     module_path,
-                    package_root: package_root.clone(),
+                    package_root: package_root.to_vec(),
                     visibility: Visibility::Public,
-                    source_path: "<alloc>".to_owned(),
+                    source_path: "<core>".to_owned(),
+                },
+            );
+        }
+        for name in CORE_ROOT_EXPORTS {
+            let module_path = core_root.clone();
+            let mut logical_path = module_path.clone();
+            logical_path.push((*name).to_owned());
+            symbols.insert(
+                logical_path,
+                Symbol {
+                    canonical: format!("core::{name}"),
+                    module_path,
+                    package_root: package_root.to_vec(),
+                    visibility: Visibility::Public,
+                    source_path: "<core>".to_owned(),
+                },
+            );
+        }
+        for name in CORE_OPS_EXPORTS {
+            let mut module_path = core_root.clone();
+            module_path.push("ops".to_owned());
+            let mut logical_path = module_path.clone();
+            logical_path.push((*name).to_owned());
+            symbols.insert(
+                logical_path,
+                Symbol {
+                    canonical: format!("core::ops::{name}"),
+                    module_path,
+                    package_root: package_root.to_vec(),
+                    visibility: Visibility::Public,
+                    source_path: "<core>".to_owned(),
+                },
+            );
+        }
+        for name in CORE_EFFECTS_EXPORTS {
+            let mut module_path = core_root.clone();
+            module_path.push("effects".to_owned());
+            let mut logical_path = module_path.clone();
+            logical_path.push((*name).to_owned());
+            symbols.insert(
+                logical_path,
+                Symbol {
+                    canonical: format!("core::effects::{name}"),
+                    module_path,
+                    package_root: package_root.to_vec(),
+                    visibility: Visibility::Public,
+                    source_path: "<core>".to_owned(),
+                },
+            );
+        }
+        for name in CORE_ACCESS_EXPORTS {
+            let mut module_path = core_root.clone();
+            module_path.push("access".to_owned());
+            let mut logical_path = module_path.clone();
+            logical_path.push((*name).to_owned());
+            symbols.insert(
+                logical_path,
+                Symbol {
+                    canonical: format!("core::access::{name}"),
+                    module_path,
+                    package_root: package_root.to_vec(),
+                    visibility: Visibility::Public,
+                    source_path: "<core>".to_owned(),
+                },
+            );
+        }
+        for name in CORE_CONTROL_EXPORTS {
+            let mut module_path = core_root.clone();
+            module_path.push("control".to_owned());
+            let mut logical_path = module_path.clone();
+            logical_path.push((*name).to_owned());
+            symbols.insert(
+                logical_path,
+                Symbol {
+                    canonical: format!("core::control::{name}"),
+                    module_path,
+                    package_root: package_root.to_vec(),
+                    visibility: Visibility::Public,
+                    source_path: "<core>".to_owned(),
+                },
+            );
+        }
+        for name in CORE_ALGEBRA_EXPORTS {
+            let mut module_path = core_root.clone();
+            module_path.push("algebra".to_owned());
+            let mut logical_path = module_path.clone();
+            logical_path.push((*name).to_owned());
+            symbols.insert(
+                logical_path,
+                Symbol {
+                    canonical: format!("core::algebra::{name}"),
+                    module_path,
+                    package_root: package_root.to_vec(),
+                    visibility: Visibility::Public,
+                    source_path: "<core>".to_owned(),
+                },
+            );
+        }
+        for name in CORE_FUNCTIONAL_EXPORTS {
+            let mut module_path = core_root.clone();
+            module_path.push("functional".to_owned());
+            let mut logical_path = module_path.clone();
+            logical_path.push((*name).to_owned());
+            symbols.insert(
+                logical_path,
+                Symbol {
+                    canonical: format!("core::functional::{name}"),
+                    module_path,
+                    package_root: package_root.to_vec(),
+                    visibility: Visibility::Public,
+                    source_path: "<core>".to_owned(),
+                },
+            );
+        }
+        for name in CORE_ITER_EXPORTS {
+            let mut module_path = core_root.clone();
+            module_path.push("iter".to_owned());
+            let mut logical_path = module_path.clone();
+            logical_path.push((*name).to_owned());
+            symbols.insert(
+                logical_path,
+                Symbol {
+                    canonical: format!("core::iter::{name}"),
+                    module_path,
+                    package_root: package_root.to_vec(),
+                    visibility: Visibility::Public,
+                    source_path: "<core>".to_owned(),
                 },
             );
         }
     }
+}
 
-    required_imports
+fn install_alloc_namespace(
+    symbols: &mut SymbolTable,
+    module_paths: &mut HashSet<Vec<String>>,
+    diagnostics: &mut Vec<String>,
+    package_root: &[String],
+) {
+    let mut alloc_root = package_root.to_vec();
+    alloc_root.push("alloc".to_owned());
+    if module_paths.contains(&alloc_root) {
+        diagnostics.push(
+            "<package>: error: top-level module `alloc` conflicts with the standard-library namespace"
+                .to_owned(),
+        );
+        return;
+    }
+    if let Some(symbol) = symbols.get(&alloc_root) {
+        diagnostics.push(format!(
+            "{}: error: root declaration `alloc` conflicts with the standard-library namespace",
+            symbol.source_path
+        ));
+        return;
+    }
+
+    module_paths.insert(alloc_root.clone());
+    for module in ["boxed", "vec"] {
+        let mut module_path = alloc_root.clone();
+        module_path.push(module.to_owned());
+        module_paths.insert(module_path);
+    }
+    for (module, name) in ALLOC_EXPORTS {
+        let mut module_path = alloc_root.clone();
+        module_path.push((*module).to_owned());
+        let mut logical_path = module_path.clone();
+        logical_path.push((*name).to_owned());
+        symbols.insert(
+            logical_path,
+            Symbol {
+                canonical: format!("alloc::{module}::{name}"),
+                module_path,
+                package_root: package_root.to_vec(),
+                visibility: Visibility::Public,
+                source_path: "<alloc>".to_owned(),
+            },
+        );
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -2590,7 +2689,7 @@ impl Resolver {
                     self.rewrite_match_arm(arm, context, type_scope, value_scope);
                 }
             }
-            Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
+            Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
         }
     }
 
@@ -3141,7 +3240,8 @@ mod tests {
             unit(
                 "src/main.sc",
                 &[],
-                "let keep(math: i32): i32 = {\n\
+                "use core.Option\n\
+                 let keep(math: i32): i32 = {\n\
                    let local = { (math: i32) -> math }\n\
                    Option.Some(math) match { Option.Some(math) => local(math), _ => math }\n\
                  }\n",
@@ -4501,6 +4601,7 @@ let main(): i32 = { Option {} }
         let expected_core = CORE_PRELUDE_EXPORTS
             .iter()
             .map(|name| ("prelude", *name))
+            .chain(CORE_ROOT_EXPORTS.iter().map(|name| ("core", *name)))
             .chain(CORE_OPS_EXPORTS.iter().map(|name| ("ops", *name)))
             .chain(CORE_EFFECTS_EXPORTS.iter().map(|name| ("effects", *name)))
             .chain(CORE_ACCESS_EXPORTS.iter().map(|name| ("access", *name)))
@@ -4648,7 +4749,7 @@ let main(): i32 = { Option {} }
                         visit(&arm.body, names);
                     }
                 }
-                Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
+                Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
             }
         }
 

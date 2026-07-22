@@ -1,3 +1,5 @@
+use core.Option
+
 use core.iter.{Iterator, IntoIterator}
 
 let Counter = struct { current: i32, end: i32 }

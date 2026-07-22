@@ -1,3 +1,5 @@
+use core.Result
+
 use core.effects.{Throws, Async}
 
 let fail_with_answer(): Never with(Throws(i32)) = {
@@ -5,11 +7,11 @@ let fail_with_answer(): Never with(Throws(i32)) = {
 }
 
 let fail_with_throw_sugar(): Never with(Throws(i32)) = {
-  throw 42
+  throw(42)
 }
 
 let choose_with_throw_sugar(fail: bool): i32 with(Throws(i32)) = {
-  if fail { throw 42 } else { 1 }
+  if fail { throw(42) } else { 1 }
 }
 
 let handled_throw(): i32 = {
@@ -32,7 +34,7 @@ let handled_throw_sugar_action(): i32 = {
   Throws(i32).handle(
     raise: { (error) -> error },
   ) {
-    throw 42
+    throw(42)
   }
 }
 
@@ -48,7 +50,7 @@ let tried_throw_sugar_function(): i32 = {
 
 let tried_throw_sugar_action(): i32 = {
   let result: Result(i32, i32) = try {
-    throw 42
+    throw(42)
   }
   result match {
     Ok(value) => value,

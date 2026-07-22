@@ -1,3 +1,5 @@
+use core.Result
+
 use core.effects.{Throws, Unsafe}
 
 let Supply = effect {

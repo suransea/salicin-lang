@@ -18,6 +18,7 @@ use crate::modules::{self, PackageId, SourceUnit};
 use crate::parser;
 
 const EDITION_2026_PRELUDE: &str = include_str!("../../library/core/src/prelude.sc");
+const EDITION_2026_ROOT: &str = include_str!("../../library/core/src/root.sc");
 const EDITION_2026_OPS: &str = include_str!("../../library/core/src/ops.sc");
 const EDITION_2026_EFFECTS: &str = include_str!("../../library/core/src/effects.sc");
 const EDITION_2026_ACCESS: &str = include_str!("../../library/core/src/access.sc");
@@ -25,8 +26,10 @@ const EDITION_2026_CONTROL: &str = include_str!("../../library/core/src/control.
 const EDITION_2026_ITER: &str = include_str!("../../library/core/src/iter.sc");
 const EDITION_2026_ALGEBRA: &str = include_str!("../../library/core/src/algebra.sc");
 const EDITION_2026_FUNCTIONAL: &str = include_str!("../../library/core/src/functional.sc");
+const EDITION_2026_OPTION_MONAD: &str = include_str!("../../library/core/src/option_monad.sc");
+const EDITION_2026_RESULT_MONAD: &str = include_str!("../../library/core/src/result_monad.sc");
 
-const NON_LANG_ITEM_CORE_MODULES: &[&str] = &["effects", "algebra", "functional"];
+const NON_LANG_ITEM_CORE_MODULES: &[&str] = &["core", "effects", "algebra", "functional"];
 
 #[cfg(test)]
 const TEST_ASSIGNMENT_OPS: &str = r#"
@@ -631,6 +634,7 @@ impl CoreBundle {
                 edition,
                 &[
                     ("prelude", EDITION_2026_PRELUDE),
+                    ("core", EDITION_2026_ROOT),
                     ("ops", EDITION_2026_OPS),
                     ("effects", EDITION_2026_EFFECTS),
                     ("access", EDITION_2026_ACCESS),
@@ -638,6 +642,8 @@ impl CoreBundle {
                     ("iter", EDITION_2026_ITER),
                     ("algebra", EDITION_2026_ALGEBRA),
                     ("functional", EDITION_2026_FUNCTIONAL),
+                    ("option_monad", EDITION_2026_OPTION_MONAD),
+                    ("result_monad", EDITION_2026_RESULT_MONAD),
                 ],
             ),
         }
@@ -713,11 +719,7 @@ impl CoreBundle {
             .iter()
             .map(|(module, source)| SourceUnit {
                 path: format!("<core/{module}>"),
-                module_path: if *module == "prelude" {
-                    Vec::new()
-                } else {
-                    vec!["core".to_owned(), (*module).to_owned()]
-                },
+                module_path: core_source_module_path(module),
                 source: (*source).to_owned(),
                 is_root: *module == "prelude",
             })
@@ -793,6 +795,14 @@ impl CoreBundle {
             program,
             lang_items,
         })
+    }
+}
+
+fn core_source_module_path(module: &str) -> Vec<String> {
+    match module {
+        "prelude" => Vec::new(),
+        "core" => vec!["core".to_owned()],
+        module => vec!["core".to_owned(), module.to_owned()],
     }
 }
 
@@ -890,7 +900,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
     let mut diagnostics = Vec::new();
 
     if !program.uses.is_empty() {
-        diagnostics.push("embedded prelude must not contain `use` declarations".to_owned());
+        diagnostics.push("embedded core bundle must not contain `use` declarations".to_owned());
     }
     if program.items.len() != program.item_visibilities.len()
         || program.items.len() != program.item_origins.len()
@@ -1198,7 +1208,7 @@ fn validate_iterator(definition: &TraitDef, diagnostics: &mut Vec<String>) {
                     function,
                     "next",
                     PassMode::MutBorrow,
-                    Type::Named("Option".to_owned(), vec![named_type("Item")]),
+                    Type::Named("core.Option".to_owned(), vec![named_type("Item")]),
                 )
         );
     if !valid {
@@ -1405,8 +1415,7 @@ fn validate_control_function(
     function: &Function,
     diagnostics: &mut Vec<String>,
 ) {
-    let valid = function.body.is_none()
-        && function.where_predicates.is_empty()
+    let valid = function.where_predicates.is_empty()
         && match kind {
             LangItemKind::Do => valid_do(function),
             LangItemKind::Try => valid_try(function),
@@ -1417,7 +1426,7 @@ fn validate_control_function(
         };
     if !valid {
         diagnostics.push(format!(
-            "lang item `{kind}` has an invalid compiler-provided control signature"
+            "lang item `{kind}` has an invalid validated control signature"
         ));
     }
 }
@@ -1437,10 +1446,14 @@ fn valid_do(function: &Function) -> bool {
         && !function.effects.unsafe_effect
         && function.effects.throws.is_none()
         && function.effects.custom.is_empty()
+        && function.body.is_some()
 }
 
 fn valid_try(function: &Function) -> bool {
-    let result = Type::Named("Result".to_owned(), vec![named_type("T"), named_type("E")]);
+    let result = Type::Named(
+        "core.Result".to_owned(),
+        vec![named_type("T"), named_type("E")],
+    );
     let effects = crate::ast::FunctionEffects {
         custom: vec![Type::Named(
             "core.effects.Throws".to_owned(),
@@ -1464,6 +1477,7 @@ fn valid_try(function: &Function) -> bool {
         && !function.effects.unsafe_effect
         && function.effects.throws.is_none()
         && function.effects.custom.is_empty()
+        && function.body.is_some()
 }
 
 fn valid_throw(function: &Function) -> bool {
@@ -1478,6 +1492,7 @@ fn valid_throw(function: &Function) -> bool {
         && single_moved_parameter(function, "error", named_type("Error"))
         && function.return_type == Some(named_type("Never"))
         && function.effects == effects
+        && function.body.is_some()
 }
 
 fn valid_unsafe(function: &Function) -> bool {
@@ -1500,6 +1515,7 @@ fn valid_unsafe(function: &Function) -> bool {
         && !function.effects.unsafe_effect
         && function.effects.throws.is_none()
         && function.effects.custom.is_empty()
+        && function.body.is_none()
 }
 
 fn valid_loop(function: &Function) -> bool {
@@ -1517,6 +1533,7 @@ fn valid_loop(function: &Function) -> bool {
         && !function.effects.unsafe_effect
         && function.effects.throws.is_none()
         && function.effects.custom.is_empty()
+        && function.body.is_none()
 }
 
 fn effect_parameter(name: &str) -> crate::ast::FunctionEffects {
@@ -1942,16 +1959,16 @@ pub let Shr(Rhs: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 13);
+        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 17);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
             let canonical = match kind {
-                LangItemKind::Option
-                | LangItemKind::Result
-                | LangItemKind::Never
-                | LangItemKind::Copy
-                | LangItemKind::Drop => kind.source_name().to_owned(),
+                LangItemKind::Option => "core::Option".to_owned(),
+                LangItemKind::Result => "core::Result".to_owned(),
+                LangItemKind::Never | LangItemKind::Copy | LangItemKind::Drop => {
+                    kind.source_name().to_owned()
+                }
                 LangItemKind::Add
                 | LangItemKind::Sub
                 | LangItemKind::Mul
@@ -2010,11 +2027,8 @@ pub let Shr(Rhs: type) = trait {
             };
             assert_eq!(lang_item.canonical_name(), expected_lang_item_name);
             let module = match kind {
-                LangItemKind::Option
-                | LangItemKind::Result
-                | LangItemKind::Never
-                | LangItemKind::Copy
-                | LangItemKind::Drop => "prelude",
+                LangItemKind::Option | LangItemKind::Result => "core",
+                LangItemKind::Never | LangItemKind::Copy | LangItemKind::Drop => "prelude",
                 LangItemKind::Add
                 | LangItemKind::Sub
                 | LangItemKind::Mul
@@ -2099,6 +2113,7 @@ pub let Shr(Rhs: type) = trait {
             Edition::Edition2026,
             &[
                 ("prelude", EDITION_2026_PRELUDE),
+                ("core", EDITION_2026_ROOT),
                 ("ops", EDITION_2026_OPS),
                 ("effects", EDITION_2026_EFFECTS),
                 ("access", EDITION_2026_ACCESS),
@@ -2120,6 +2135,7 @@ pub let Shr(Rhs: type) = trait {
             Edition::Edition2026,
             &[
                 ("prelude", EDITION_2026_PRELUDE),
+                ("core", EDITION_2026_ROOT),
                 ("ops", EDITION_2026_OPS),
                 ("effects", EDITION_2026_EFFECTS),
                 ("access", EDITION_2026_ACCESS),
@@ -2141,6 +2157,7 @@ pub let Shr(Rhs: type) = trait {
             Edition::Edition2026,
             &[
                 ("prelude", EDITION_2026_PRELUDE),
+                ("core", EDITION_2026_ROOT),
                 ("ops", EDITION_2026_OPS),
                 ("effects", EDITION_2026_EFFECTS),
                 ("access", EDITION_2026_ACCESS),
@@ -2158,13 +2175,14 @@ pub let Shr(Rhs: type) = trait {
     #[test]
     fn rejects_malformed_iteration_contracts() {
         let malformed = EDITION_2026_ITER.replace(
-            "let next(borrow(mut) self)(): Option(Item)",
-            "let next(borrow self)(): Option(Item)",
+            "let next(borrow(mut) self)(): core.Option(Item)",
+            "let next(borrow self)(): core.Option(Item)",
         );
         let error = CoreBundle::from_modules(
             Edition::Edition2026,
             &[
                 ("prelude", EDITION_2026_PRELUDE),
+                ("core", EDITION_2026_ROOT),
                 ("ops", EDITION_2026_OPS),
                 ("effects", EDITION_2026_EFFECTS),
                 ("access", EDITION_2026_ACCESS),
@@ -2189,6 +2207,7 @@ pub let Shr(Rhs: type) = trait {
             Edition::Edition2026,
             &[
                 ("prelude", EDITION_2026_PRELUDE),
+                ("core", EDITION_2026_ROOT),
                 ("ops", &malformed),
                 ("effects", EDITION_2026_EFFECTS),
                 ("access", EDITION_2026_ACCESS),
@@ -2211,6 +2230,7 @@ pub let Shr(Rhs: type) = trait {
             Edition::Edition2026,
             &[
                 ("prelude", EDITION_2026_PRELUDE),
+                ("core", EDITION_2026_ROOT),
                 ("ops", &malformed),
                 ("effects", EDITION_2026_EFFECTS),
                 ("access", EDITION_2026_ACCESS),
@@ -2232,6 +2252,7 @@ pub let Shr(Rhs: type) = trait {
             Edition::Edition2026,
             &[
                 ("prelude", EDITION_2026_PRELUDE),
+                ("core", EDITION_2026_ROOT),
                 ("ops", &malformed),
                 ("effects", EDITION_2026_EFFECTS),
                 ("access", EDITION_2026_ACCESS),

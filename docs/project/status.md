@@ -7,13 +7,16 @@ source-backed core traits and containers, cleanup lowering, raw allocation primi
 
 A current design goal is to keep compiler-backed language features source-shaped wherever possible:
 standard control capabilities should be declared as ordinary core effects, traits, or protocols,
-then validated as lang items and lowered by the compiler. `Throws(Error)` already follows this
-model as a normal effect with `raise`; future work should extend the same rule to customizable
-operators such as `throw` rather than adding closed compiler-only cases for each type.
+then validated as lang items and lowered by the compiler. `Throws(Error)` follows this model as a
+normal effect with `raise`, and `do`, `try`, and `throw` are now ordinary source definitions over
+those effects. The remaining compiler-only surface should stay limited to features that genuinely
+need authority or primitive control-flow lowering.
 
 The unit type has one source spelling, `()`; the former `void` alias is removed before 1.0. The
 uninhabited prelude enum is spelled `Never`; the former lowercase `never` spelling has no
 compatibility alias.
+`Option`, `Result`, and `ResultWith` are ordinary root `core` definitions rather than prelude
+exports, so source that names them imports `core.Option`, `core.Result`, or `core.ResultWith`.
 
 Transparent type aliases and type-constructor aliases are implemented. `let Scalar = i32`,
 `let Family(T: type): type = Box(T)`, and `let Constructor: (T: type): type = Box` all expand before
@@ -24,27 +27,26 @@ compile-time parameter names, normalized to declaration order, and erased before
 
 Compiler-lowered capabilities are now source-backed by validated declarations in ordinary core
 modules: `core.effects` owns `Unsafe`, `Throws(Error)` with `raise(move error: Error): Never`, and
-an ordinary `Async` effect with a minimal `suspend(): ()` operation;
-`core.access` owns `Shared` and `Mutable`; `core.control` owns the bodyless intrinsic signatures for
-`do`, `try`, `throw`, `unsafe`, and `loop`; `core.ops` owns the standard `Chain` and `Coalesce`
-protocol declarations for `?.` and `??`. These exports remain outside the prelude. `await` is
+an ordinary `Async` effect with a minimal `suspend(): ()` operation; `core.access` owns `Shared` and
+`Mutable`; `core.control` owns source definitions for `do`, `try`, and `throw`, plus the remaining
+bodyless intrinsic signatures for `unsafe` and `loop`; `core.ops` owns the standard `Chain` and
+`Coalesce` protocol declarations for `?.` and `??`. These exports remain outside the prelude. `await` is
 intentionally absent until the async/Future lowering slice is implemented, at which point its
 executable standard-library contract must land with the implementation.
 `Never`-returning algebraic operations are handled as abort operations whose clauses omit `resume`,
 so `Throws(Error).raise` can now be exercised through the same handler path as user-defined effects.
-`throw error` reads the validated `core.control.throw` effect declaration and then desugars to that
-ordinary operation when the active row has a unique standard `Throws(Error)` effect.
-`core.control.try` now declares its action requirement as `Throws(E)`, and contextual `try { ... }`
-with an expected `Result(T, Error)` materializes ordinary `Throws(Error)` as `Result` through a
-generated `Throws(Error).handle`. Context-free ordinary `Throws` inference now
+`throw(error)` reads the validated source-backed `core.control.throw` function and then calls the
+ordinary `Throws(Error).raise` operation when the active row has a unique standard `Throws(Error)`
+effect. `core.control.try` is likewise source-backed: it declares its action requirement as
+`Throws(E)` and materializes ordinary `Throws(Error)` as `core.Result(T, Error)` through
+`Throws(Error).handle`. Context-free ordinary `Throws` inference now
 covers direct standard-effect function calls, local function values, explicitly instantiated generic
 calls such as `fail(bool)(...)`, and `do` return boundaries forwarding standard `Throws(Error)` into
 a contextual `try { ... }`, provided the success type is probeable and the escaping error type is
 unique. Mixed `Throws(Error)` plus `Unsafe` rows now run through the standard effect spelling while
 preserving `unsafe { ... }` authorization across generated CPS frames. Concrete residual-handler
-paths also compose through ordinary `Throws(Error)` rows. `Never`-only actions, enum-variant error
-construction inside generated standard handler frames, and fully generic residual-row cases remain
-future work.
+paths also compose through ordinary `Throws(Error)` rows. `Never`-only actions and fully generic
+residual-row cases remain future work.
 `core.control` also defines `Continuation(Input, Output)` and
 `EffectCallable(Input, Output, Answer)` as validated empty source contracts. The latter has a
 distinct owned semantic type plus a four-pointer LLVM call/drop/environment/flag layout and guarded
@@ -95,8 +97,8 @@ constructor equation solving remain future work. `??` now dispatches non-`Option
 values through `core.ops.Coalesce` when its fallback can be represented as a no-capture lifted
 function. `?.` now dispatches non-`Option`/`Result` nominal values through `core.ops.Chain` under
 the same no-capture transform limit; simple field access is covered, while transforms that capture
-outer call arguments still require the general callable-to-function bridge. The built-in
-`Option`/`Result` paths remain available.
+outer call arguments still require the general callable-to-function bridge. The root
+`core.Option`/`core.Result` paths remain available.
 
 `core.algebra` currently provides first-order `Semigroup` and `Monoid` protocols over the default
 `Self: type` subject outside the prelude. `core.functional` now provides higher-kinded `Functor`,
@@ -107,10 +109,10 @@ dispatch from concrete nominal instances, so implementations such as `extend Car
 expose `Carrier(i32) { value: 41 }.map(...)` through the ordinary generic function instance pipeline. Generic
 functions can take explicit type-constructor arguments and constructor predicates such as
 `where M: Monad`. Trait-level `where` inheritance is implemented for the standard
-`Applicative where Self: Functor` and `Monad where Self: Applicative` relationships. `Option` and
-the `ResultWith(Error)` adapter implement the standard functional protocols. Partially applied
-transparent type aliases can act as HKT implementation targets; the remaining HKT work is
-associated-type lowering and broader constructor equation solving.
+`Applicative where Self: Functor` and `Monad where Self: Applicative` relationships. `core.Option`
+and the `core.ResultWith(Error)` adapter implement the standard functional protocols from ordinary
+library files. Partially applied transparent type aliases can act as HKT implementation targets; the
+remaining HKT work is associated-type lowering and broader constructor equation solving.
 
 Access keyword generics are implemented for functions and generic inherent members: `A: access` accepts `shared` or `mut`,
 defaults to shared when omitted, participates in monomorphization, and can drive parameter modes,

@@ -1,7 +1,9 @@
+use core.Result
+
 use core.effects.{Throws, Unsafe}
 
 let read(fail: bool): i32 with(Throws(bool), Unsafe) = {
-  if fail { throw true }
+  if fail { throw(true) }
   42
 }
 

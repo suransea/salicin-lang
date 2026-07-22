@@ -1,3 +1,6 @@
+use core.Option
+use core.Result
+
 let Read = effect {
   let option_base(present: bool): Option(Adder)
   let result_base(present: bool): Result(Adder, bool)

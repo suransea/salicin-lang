@@ -1,3 +1,5 @@
+use core.Result
+
 let Boxed = struct { value: i32 }
 
 extend Boxed {

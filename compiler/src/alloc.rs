@@ -61,7 +61,7 @@ impl AllocBundle {
             source: source.to_owned(),
             is_root: false,
         }));
-        let mut program = modules::resolve_embedded_sources(&sources)
+        let mut program = modules::resolve_embedded_alloc_sources(&sources)
             .map_err(|diagnostics| AllocBundleError::new(edition, diagnostics))?;
         for origin in &mut program.item_origins {
             origin.package = PackageId::ALLOC.0;
@@ -114,9 +114,6 @@ impl Error for AllocBundleError {}
 
 fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBundleError> {
     let mut diagnostics = Vec::new();
-    if !program.uses.is_empty() {
-        diagnostics.push("embedded alloc must not contain `use` declarations".to_owned());
-    }
     if program.items.len() != 38
         || program.item_visibilities.len() != 38
         || program.item_origins.len() != 38

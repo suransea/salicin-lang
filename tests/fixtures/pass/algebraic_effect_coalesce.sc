@@ -1,3 +1,6 @@
+use core.Option
+use core.Result
+
 let Query = effect {
   let option(present: bool): Option(bool)
   let result(present: bool): Result(bool, ())

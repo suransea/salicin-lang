@@ -1,3 +1,6 @@
+use core.Option
+use core.Result
+
 let Boxed = struct { value: i32 }
 
 let option_value(): Option(i32) = { Option.Some(Boxed { value: 20 })?.value }

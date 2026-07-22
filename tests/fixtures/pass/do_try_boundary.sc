@@ -1,13 +1,14 @@
+use core.Result
 use core.effects.Throws
 
-let read(fail: bool): i32 with(Throws(bool)) = { if fail { throw true } else { 40 } }
+let read(fail: bool): i32 with(Throws(bool)) = { if fail { throw(true) } else { 40 } }
 
 let main(): i32 = {
   let propagated: Result(i32, bool) = try {
     read(true) + 2
   }
   let thrown: Result(i32, bool) = try {
-    throw true
+    throw(true)
   }
   let success: Result(i32, bool) = try {
     read(false) + 2

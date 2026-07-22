@@ -10,11 +10,26 @@ pub let Continuation (Input: type, Output: type) = struct {}
 // `Continuation(Output, Answer)`; `Answer` is the surrounding handler result.
 pub let EffectCallable (Input: type, Output: type, Answer: type) = struct {}
 
-// Control syntax uses trailing-closure call notation and lowers through these
-// signatures. Their bodies are supplied by the compiler because they delimit
-// or transform control flow rather than behaving like ordinary calls.
-pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E)
-pub let try(F: effect, T: type, E: type)(move action: (): T with(core.effects.Throws(E), F)): Result(T, E) with(F)
-pub let throw(Error: type)(move error: Error): Never with(core.effects.Throws(Error))
+// Control syntax uses trailing-closure call notation and targets these
+// validated functions. Most control helpers are ordinary source definitions;
+// the compiler only keeps syntax-directed shortcuts and the few places that
+// need authority or primitive control-flow lowering.
+pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E) = {
+  action()
+}
+
+pub let try(F: effect, T: type, E: type)(move action: (): T with(core.effects.Throws(E), F)): core.Result(T, E) with(F) = {
+  core.effects.Throws(E).handle(
+    raise: { (error) -> core.Result.Err(error) },
+    done: { (value) -> core.Result.Ok(value) },
+  ) {
+    action()
+  }
+}
+
+pub let throw(Error: type)(move error: Error): Never with(core.effects.Throws(Error)) = {
+  core.effects.Throws(Error).raise(error)
+}
+
 pub let unsafe(E: effect, T: type)(move action: (): T with(core.effects.Unsafe, E)): T with(E)
 pub let loop(E: effect, T: type)(move body: (): () with(E)): T with(E)

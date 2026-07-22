@@ -1,6 +1,6 @@
 pub let Iterator = trait {
   let Item: type
-  let next(borrow(mut) self)(): Option(Item)
+  let next(borrow(mut) self)(): core.Option(Item)
 }
 
 pub let IntoIterator = trait {

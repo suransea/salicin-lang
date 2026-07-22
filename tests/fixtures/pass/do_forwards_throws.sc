@@ -1,6 +1,7 @@
+use core.Result
 use core.effects.Throws
 
-let reject(): i32 with(Throws(bool)) = { throw true }
+let reject(): i32 with(Throws(bool)) = { throw(true) }
 
 let choose(flag: bool): i32 with(Throws(bool)) = { do {
   if flag { return reject() }

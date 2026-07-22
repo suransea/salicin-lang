@@ -1,3 +1,4 @@
+use core.Result
 use core.effects.Throws
 
 let make_error(borrow(mut) count: i32): bool = {
@@ -7,7 +8,7 @@ let make_error(borrow(mut) count: i32): bool = {
 
 let fail(): i32 with(Throws(bool)) = {
   let mut count = 0
-  throw make_error(count)
+  throw(make_error(count))
 }
 
 let main(): i32 = {

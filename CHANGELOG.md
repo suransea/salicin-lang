@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.185.0 - 2026-07-23
+
+- Moved `Option(T)`, `Result(T, E)`, and `ResultWith(Error)` to the `core` root so source writes
+  `use core.Option`, `use core.Result`, and `use core.ResultWith` instead of reaching through
+  submodules or the prelude.
+- Shrunk the edition prelude to `Never`, `Copy`, and `Drop`; `Option` and `Result` are now ordinary
+  core definitions that must be imported when named.
+- Made standard `Option`/`Result` chaining, coalescing, and `Monad` implementations source-backed
+  around the root `core` identities.
+- Replaced the remaining `throw expr` syntax with the ordinary `throw(error)` function path and
+  made `do`, `try`, and `throw` real source definitions in `core.control`; only `unsafe` and `loop`
+  remain bodyless compiler-authorized control contracts.
+
 ## 0.184.0 - 2026-07-23
 
 - Added standard `Functor`, `Applicative`, and `Monad` implementations for `Option` and for the
@@ -13,7 +26,7 @@ subset.
 - Added semantic support for partially applied transparent type aliases as higher-kinded
   constructor trait implementation targets, enabling source-level adapters such as
   `extend(Error: type) ResultWith(Error): Monad`.
-- Exported `core.functional.ResultWith` as a normal non-prelude standard-library item.
+- Exported `ResultWith` as a normal non-prelude standard-library item.
 
 ## 0.183.0 - 2026-07-22
 

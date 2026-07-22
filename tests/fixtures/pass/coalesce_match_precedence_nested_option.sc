@@ -1,3 +1,5 @@
+use core.Option
+
 let main(): i32 = {
   let inner = Option(i32).Some(42)
   let outer = Option(Option(i32)).Some(inner)

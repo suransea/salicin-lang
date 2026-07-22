@@ -131,6 +131,7 @@ pub fn default_trait_self_parameter() -> CompileParam {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum TraitMember {
     Function(Function),
     AssociatedType {
@@ -367,6 +368,9 @@ pub struct PatternField {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Unit,
+    /// Compiler-internal representation of a compile-time type argument after
+    /// substitution. User source does not parse directly to this node.
+    Type(Type),
     Integer(i128),
     Bool(bool),
     Name(String),

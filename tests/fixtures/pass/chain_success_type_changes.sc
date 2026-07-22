@@ -1,3 +1,5 @@
+use core.Result
+
 let Boxed = struct { answer: bool }
 
 let main(): i32 = {

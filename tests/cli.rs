@@ -223,19 +223,6 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
 
     let output = salic()
         .arg("check")
-        .arg(fixture("fail", "standard_throw_ambiguous_throws.sc"))
-        .output()
-        .expect("reject throw sugar when multiple ordinary Throws rows are active");
-    assert!(!output.status.success(), "{}", output_text(&output));
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("requires exactly one active `Throws(Error)` row"),
-        "{}",
-        output_text(&output)
-    );
-
-    let output = salic()
-        .arg("check")
         .arg(fixture("fail", "algebraic_effect_missing_clause.sc"))
         .output()
         .expect("reject an incomplete handler");
@@ -2492,15 +2479,15 @@ fn arithmetic_trait_errors_report_their_cause() {
 }
 
 #[test]
-fn m2_option_and_result_prelude_programs_run_with_expected_result() {
+fn m2_core_option_and_result_programs_run_with_expected_result() {
     for name in [
-        "prelude_option_some.sc",
-        "prelude_option_none.sc",
-        "prelude_result_ok.sc",
-        "prelude_result_err.sc",
-        "prelude_nested_option_result.sc",
-        "prelude_multiple_instances.sc",
-        "prelude_inferred_variants.sc",
+        "core_option_some.sc",
+        "core_option_none.sc",
+        "core_result_ok.sc",
+        "core_result_err.sc",
+        "core_nested_option_result.sc",
+        "core_multiple_instances.sc",
+        "core_inferred_variants.sc",
     ] {
         let output = salic()
             .arg("run")
@@ -2517,17 +2504,17 @@ fn m2_option_and_result_prelude_programs_run_with_expected_result() {
 }
 
 #[test]
-fn m2_option_and_result_prelude_errors_report_their_cause() {
+fn m2_core_option_and_result_errors_report_their_cause() {
     for (name, expected) in [
-        ("prelude_redefine_option.sc", "Option"),
-        ("prelude_redefine_result.sc", "Result"),
-        ("prelude_option_arity.sc", "argument count"),
-        ("prelude_result_arity.sc", "argument count"),
-        ("prelude_option_payload_mismatch.sc", "conflicting"),
-        ("prelude_result_ok_payload_mismatch.sc", "conflicting"),
-        ("prelude_result_err_payload_mismatch.sc", "conflicting"),
-        ("prelude_option_expected_mismatch.sc", "conflicting"),
-        ("prelude_result_expected_mismatch.sc", "conflicting"),
+        ("core_redefine_option.sc", "Option"),
+        ("core_redefine_result.sc", "Result"),
+        ("core_option_arity.sc", "argument count"),
+        ("core_result_arity.sc", "argument count"),
+        ("core_option_payload_mismatch.sc", "conflicting"),
+        ("core_result_ok_payload_mismatch.sc", "conflicting"),
+        ("core_result_err_payload_mismatch.sc", "conflicting"),
+        ("core_option_expected_mismatch.sc", "conflicting"),
+        ("core_result_expected_mismatch.sc", "conflicting"),
     ] {
         let output = salic()
             .arg("check")
@@ -2794,13 +2781,22 @@ fn throws_programs_run_with_expected_result() {
 #[test]
 fn throws_errors_report_their_cause() {
     for (name, expected) in [
-        ("throw_in_option_return.sc", "with(Throws(Error))"),
-        ("throw_in_plain_return.sc", "with(Throws(Error))"),
+        ("throw_in_option_return.sc", "handle it with `try { ... }`"),
+        ("throw_in_plain_return.sc", "handle it with `try { ... }`"),
         ("throw_in_global.sc", "global"),
-        ("throw_in_closure.sc", "with(Throws(Error))"),
-        ("throw_omitted_return_type.sc", "with(Throws(Error))"),
-        ("throw_error_type_mismatch.sc", "expected"),
-        ("throw_without_value.sc", "expression"),
+        ("throw_in_closure.sc", "handle it with `try { ... }`"),
+        (
+            "throw_omitted_return_type.sc",
+            "handle it with `try { ... }`",
+        ),
+        (
+            "throw_error_type_mismatch.sc",
+            "requires `core::effects::Throws(i32)`",
+        ),
+        (
+            "throw_without_value.sc",
+            "requires explicit type argument groups",
+        ),
     ] {
         let output = salic()
             .arg("check")
@@ -3269,7 +3265,9 @@ dep = { path = "../dep" }
     );
     workspace.write(
         "dep/src/lib.sc",
-        r#"pub let Number = struct { value: i32 }
+        r#"use core.Option
+
+pub let Number = struct { value: i32 }
 let Secret = trait {
   let reveal(borrow self)(): i32
 }
@@ -3368,7 +3366,8 @@ dep = { path = "../dep" }
     );
     workspace.write(
         "dep/src/lib.sc",
-        r#"use core.ops.Add
+        r#"use core.Option
+use core.ops.Add
 
 pub let Number = struct { value: i32 }
 extend Number: Add(Number) {
@@ -3859,11 +3858,13 @@ fn prelude_never_coerces_through_diverging_calls() {
     let temporary = TestDirectory::new();
     let source = temporary.write(
         "never.sc",
-        r#"use core.effects.Throws
+        r#"use core.Result
+use core.effects.Throws
 let stop(): Never = { loop {} }
 let absurd(move value: Never): i32 = { value }
 let propagate(move value: Never): Result(i32, ()) = { value }
-let throw_never(move value: Never): i32 with(Throws(())) = { throw value }
+let raise_unit(): Never with(Throws(())) = { throw(Error: ())(()) }
+let throw_never(): i32 with(Throws(())) = { raise_unit() }
 let Empty = enum {}
 let Holder = struct { value: Empty }
 let project(move holder: Holder): i32 = { holder.value }

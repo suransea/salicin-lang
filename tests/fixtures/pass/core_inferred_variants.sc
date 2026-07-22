@@ -1,3 +1,6 @@
+use core.Option
+use core.Result
+
 let main(): i32 = {
   let some = Option.Some(20)
   let none: Option(i32) = Option.None

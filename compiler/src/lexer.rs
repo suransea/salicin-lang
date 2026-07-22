@@ -470,7 +470,7 @@ mod tests {
 
     #[test]
     fn recognizes_arrow_keywords_and_comments() {
-        let tokens = lex("{ (x: i32) -> x + 1 } // hi\nif true { throw false } else {}").unwrap();
+        let tokens = lex("{ (x: i32) -> x + 1 } // hi\nif true { throw(false) } else {}").unwrap();
         assert!(tokens.iter().any(|t| t.kind == TokenKind::Arrow));
         assert!(tokens.iter().any(|t| t.kind == TokenKind::Plus));
         assert!(tokens.iter().any(|t| t.kind == TokenKind::If));

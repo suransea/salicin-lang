@@ -1,8 +1,9 @@
+use core.Result
 use core.effects.Throws
 
 let choose(flag: bool): i32 with(Throws(bool)) = {
   if flag {
-    throw true
+    throw(true)
   } else {
     42
   }
