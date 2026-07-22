@@ -2,6 +2,8 @@
 // `with(unsafe)` and `throws(E)` bind to the validated `Unsafe` and `Throws(E)`
 // declarations rather than to user declarations with the same spelling, but the
 // declarations themselves use the same source-level effect forms as user code.
+// `throw error` can also target the ordinary `Throws(E).raise(error)` operation
+// when a single standard `Throws(E)` custom effect is active.
 pub let Unsafe = effect {}
 
 pub let Throws(Error: type) = effect {

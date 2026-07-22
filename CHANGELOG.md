@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.161.0 - 2026-07-22
+
+- Allowed `throw error` to target the ordinary standard `Throws(Error)` effect when no dedicated
+  `with(throws(Error))` ABI boundary is active, desugaring it through `Throws(Error).raise(error)`.
+- Reused algebraic handler source transformation for `throw` inside `Throws(Error).handle { ... }`,
+  so handler clauses see the same abort operation as an explicit `Throws.raise` call.
+- Added source-backed active effect metadata so closure and handler lowering can preserve the exact
+  standard effect instance needed for ordinary `Throws` sugar, while rejecting ambiguous multiple
+  `Throws(Error)` rows instead of guessing.
+
 ## 0.160.0 - 2026-07-22
 
 - Treated `Never`-returning algebraic effect operations as abort operations: their handler clauses

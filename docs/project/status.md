@@ -25,6 +25,8 @@ absent until the async/Future lowering slice is implemented, at which point its 
 standard-library contract must land with the implementation.
 `Never`-returning algebraic operations are handled as abort operations whose clauses omit `resume`,
 so `Throws(Error).raise` can now be exercised through the same handler path as user-defined effects.
+`throw error` also desugars to that ordinary operation when the active row is the standard
+`Throws(Error)` custom effect rather than the dedicated lowercase `throws(Error)` Result ABI.
 `core.control` also defines `Continuation(Input, Output)` and
 `EffectCallable(Input, Output, Answer)` as validated empty source contracts. The latter has a
 distinct owned semantic type plus a four-pointer LLVM call/drop/environment/flag layout and guarded

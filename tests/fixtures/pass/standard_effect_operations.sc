@@ -4,11 +4,31 @@ let fail_with_answer(): Never with(Throws(i32)) = {
   Throws(i32).raise(42)
 }
 
+let fail_with_throw_sugar(): Never with(Throws(i32)) = {
+  throw 42
+}
+
 let handled_throw(): i32 = {
   Throws(i32).handle(
     raise: { (error) -> error },
   ) {
     fail_with_answer()
+  }
+}
+
+let handled_throw_sugar_function(): i32 = {
+  Throws(i32).handle(
+    raise: { (error) -> error },
+  ) {
+    fail_with_throw_sugar()
+  }
+}
+
+let handled_throw_sugar_action(): i32 = {
+  Throws(i32).handle(
+    raise: { (error) -> error },
+  ) {
+    throw 42
   }
 }
 
@@ -27,5 +47,5 @@ let handled_async(): i32 = {
 }
 
 let main(): i32 = {
-  handled_throw() + handled_async() - 42
+  handled_throw() + handled_throw_sugar_function() + handled_throw_sugar_action() + handled_async() - 126
 }

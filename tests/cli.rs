@@ -223,6 +223,19 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
 
     let output = salic()
         .arg("check")
+        .arg(fixture("fail", "standard_throw_ambiguous_throws.sc"))
+        .output()
+        .expect("reject throw sugar when multiple ordinary Throws rows are active");
+    assert!(!output.status.success(), "{}", output_text(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("requires exactly one active `Throws(Error)` row"),
+        "{}",
+        output_text(&output)
+    );
+
+    let output = salic()
+        .arg("check")
         .arg(fixture("fail", "algebraic_effect_missing_clause.sc"))
         .output()
         .expect("reject an incomplete handler");

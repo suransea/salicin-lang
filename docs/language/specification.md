@@ -396,7 +396,10 @@ implementation 必须具有相同的 effect。
 细节，不是调用点显式解包的普通返回类型。
 `core.effects.Throws(Error)` 同时声明普通 operation `raise(move error: Error): Never`。这个
 operation 使用代数 effect 的普通 handler 规则；它的 clause 不带 `resume`，直接产生 handler
-答案。`throw` 是当前较高层的 lowering 糖，目标是在后续切片继续收敛到这个普通 operation 形态。
+答案。在没有专用 `with(throws(E))` ABI 边界时，如果当前普通 custom effect row 中有且只有一个
+`Throws(E)`，`throw error` 会按 `Throws(E).raise(error)` 处理；存在多个 `Throws` row 时必须显式
+调用对应的 `Throws(E).raise`。`try` 仍是当前较高层的 Result ABI handler，目标是在后续切片继续
+收敛到这个普通 operation 形态。
 
 `try { body }` 是 handler：它移除 `body` 的 `throws(E)` 要求并产生 `Result(T, E)`。handler 内的
 正常尾值成为 `Ok`，传播出的错误成为 `Err`。当上下文没有给出结果类型时，只要 body 有且仅有一种

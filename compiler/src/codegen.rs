@@ -285,6 +285,13 @@ fn source_effect_identities(effects: &[Type]) -> Vec<String> {
     identities
 }
 
+fn source_effect_source_map(effects: &[Type]) -> HashMap<String, Type> {
+    effects
+        .iter()
+        .map(|effect| (source_effect_identity(effect), effect.clone()))
+        .collect()
+}
+
 fn effect_identity_sources(effects: &[String]) -> Vec<Type> {
     effects
         .iter()
@@ -406,6 +413,7 @@ struct AlgebraicHandlerClause {
 #[derive(Clone)]
 struct AlgebraicHandler {
     identity: String,
+    source: Type,
     clauses: HashMap<String, AlgebraicHandlerClause>,
     operations: HashMap<String, Vec<AlgebraicHandlerOperation>>,
     function_aliases: Rc<RefCell<HashMap<String, String>>>,
@@ -1281,7 +1289,9 @@ struct ClosureEffectContext {
     unsafe_depth: usize,
     throws_error: Option<Ty>,
     custom_effects: HashSet<String>,
+    custom_effect_sources: HashMap<String, Type>,
     lexical_handler_effects: HashSet<String>,
+    lexical_handler_effect_sources: HashMap<String, Type>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1357,7 +1367,9 @@ struct LowerCtx {
     unsafe_depth: usize,
     active_throws_error: Option<Ty>,
     active_custom_effects: HashSet<String>,
+    active_custom_effect_sources: HashMap<String, Type>,
     lexical_handler_effects: HashSet<String>,
+    lexical_handler_effect_sources: HashMap<String, Type>,
     recursive_frame_calls: HashMap<String, RecursiveFrameCall>,
     source_closures: HashMap<LocalId, Binding>,
 }
@@ -1384,7 +1396,9 @@ impl LowerCtx {
             unsafe_depth: 0,
             active_throws_error: None,
             active_custom_effects: HashSet::new(),
+            active_custom_effect_sources: HashMap::new(),
             lexical_handler_effects: HashSet::new(),
+            lexical_handler_effect_sources: HashMap::new(),
             recursive_frame_calls: HashMap::new(),
             source_closures: HashMap::new(),
         }
@@ -1411,7 +1425,9 @@ impl LowerCtx {
             unsafe_depth: 0,
             active_throws_error: None,
             active_custom_effects: HashSet::new(),
+            active_custom_effect_sources: HashMap::new(),
             lexical_handler_effects: HashSet::new(),
+            lexical_handler_effect_sources: HashMap::new(),
             recursive_frame_calls: HashMap::new(),
             source_closures: HashMap::new(),
         }
@@ -11204,8 +11220,11 @@ impl Analyzer {
         );
         context.unsafe_depth = usize::from(function.effects.unsafe_effect);
         context.active_throws_error = signature.throws_error.clone();
-        context.active_custom_effects = source_effect_identities(&function.effects.custom)
-            .into_iter()
+        context.active_custom_effect_sources = source_effect_source_map(&function.effects.custom);
+        context.active_custom_effects = context
+            .active_custom_effect_sources
+            .keys()
+            .cloned()
             .collect();
         if function.return_type.is_some() {
             context.return_boundary = signature.throws_error.as_ref().and_then(|error| {
@@ -12028,6 +12047,16 @@ impl Analyzer {
                             };
                             let value = match &binding.value {
                                 Expr::Closure(params, body) => {
+                                    let annotation_custom_effect_sources = binding
+                                        .annotation
+                                        .as_ref()
+                                        .and_then(|annotation| match annotation {
+                                            Type::Function { effects, .. } => {
+                                                Some(source_effect_source_map(&effects.custom))
+                                            }
+                                            _ => None,
+                                        })
+                                        .unwrap_or_default();
                                     let (declared_result, mut effects) = match annotation.as_ref() {
                                         Some(Ty::Function(function)) => (
                                             Some((*function.result).clone()),
@@ -12042,7 +12071,10 @@ impl Analyzer {
                                                     .iter()
                                                     .cloned()
                                                     .collect(),
+                                                custom_effect_sources:
+                                                    annotation_custom_effect_sources,
                                                 lexical_handler_effects: HashSet::new(),
+                                                lexical_handler_effect_sources: HashMap::new(),
                                             },
                                         ),
                                         Some(other) => {
@@ -12057,6 +12089,8 @@ impl Analyzer {
                                     if is_internal_handler_closure_binding(&binding.name) {
                                         effects.lexical_handler_effects =
                                             context.lexical_handler_effects.clone();
+                                        effects.lexical_handler_effect_sources =
+                                            context.lexical_handler_effect_sources.clone();
                                     }
                                     self.lower_local_closure(
                                         params,
@@ -13250,10 +13284,15 @@ impl Analyzer {
         context.unsafe_depth = effects.unsafe_depth;
         context.active_throws_error = effects.throws_error.clone();
         context.active_custom_effects = effects.custom_effects.clone();
+        context.active_custom_effect_sources = effects.custom_effect_sources.clone();
         context
             .active_custom_effects
             .extend(effects.lexical_handler_effects.iter().cloned());
+        context
+            .active_custom_effect_sources
+            .extend(effects.lexical_handler_effect_sources.clone());
         context.lexical_handler_effects = effects.lexical_handler_effects.clone();
+        context.lexical_handler_effect_sources = effects.lexical_handler_effect_sources.clone();
         context.recursive_frame_calls = outer.recursive_frame_calls.clone();
         context.return_boundary = effects.throws_error.as_ref().and_then(|error| {
             declared_result
@@ -16028,7 +16067,9 @@ impl Analyzer {
                 unsafe_depth: context.unsafe_depth,
                 throws_error: Some(error),
                 custom_effects: context.active_custom_effects.clone(),
+                custom_effect_sources: context.active_custom_effect_sources.clone(),
                 lexical_handler_effects: context.lexical_handler_effects.clone(),
+                lexical_handler_effect_sources: context.lexical_handler_effect_sources.clone(),
             },
             context,
         );
@@ -16112,7 +16153,9 @@ impl Analyzer {
                 unsafe_depth: context.unsafe_depth,
                 throws_error: active_throws_error.clone(),
                 custom_effects: context.active_custom_effects.clone(),
+                custom_effect_sources: context.active_custom_effect_sources.clone(),
                 lexical_handler_effects: context.lexical_handler_effects.clone(),
+                lexical_handler_effect_sources: context.lexical_handler_effect_sources.clone(),
             },
             context,
         );
@@ -16221,6 +16264,9 @@ impl Analyzer {
 
     fn lower_throw(&mut self, value: &Expr, context: &mut LowerCtx) -> HirExpr {
         let Some(error_ty) = context.active_throws_error.clone() else {
+            if let Some(lowered) = self.lower_standard_throws_raise(value, context) {
+                return lowered;
+            }
             let _ = self.lower_expr(value, None, context);
             self.error(
                 "`throw` requires an enclosing `with(throws(Error))` function or `try { ... }` handler",
@@ -16250,6 +16296,73 @@ impl Analyzer {
             ty: Ty::Never,
             kind: HirExprKind::Return(Some(Box::new(result))),
         }
+    }
+
+    fn lower_standard_throws_raise(
+        &mut self,
+        value: &Expr,
+        context: &mut LowerCtx,
+    ) -> Option<HirExpr> {
+        let mut candidates = self
+            .active_standard_throws_error_sources(context)
+            .into_iter()
+            .collect::<Vec<_>>();
+        match candidates.len() {
+            0 => None,
+            1 => {
+                let error_source = candidates.pop().expect("one candidate");
+                let throws_name = self.lang_item_name(LangItemKind::ThrowsEffect).to_owned();
+                let Some(definition) = self.effect_defs.get(&throws_name).cloned() else {
+                    self.error("compiler core did not register its validated `Throws` effect");
+                    return Some(error_expr());
+                };
+                let instance = Type::Named(throws_name, vec![error_source]);
+                let arguments = vec![CallArg {
+                    label: None,
+                    value: value.clone(),
+                }];
+                let groups = vec![arguments.as_slice()];
+                Some(self.lower_effect_operation_call(
+                    &definition,
+                    &instance,
+                    "raise",
+                    &groups,
+                    None,
+                    context,
+                ))
+            }
+            _ => {
+                let _ = self.lower_expr(value, None, context);
+                let mut rendered = candidates
+                    .into_iter()
+                    .map(|source| source_effect_identity(&source))
+                    .collect::<Vec<_>>();
+                rendered.sort();
+                self.error(format!(
+                    "`throw` under ordinary `Throws` effects requires exactly one active `Throws(Error)` row; found {}: {}",
+                    rendered.len(),
+                    rendered
+                        .iter()
+                        .map(|source| format!("`{source}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+                Some(error_expr())
+            }
+        }
+    }
+
+    fn active_standard_throws_error_sources(&self, context: &LowerCtx) -> Vec<Type> {
+        let throws_name = self.lang_item_name(LangItemKind::ThrowsEffect);
+        let mut sources = context
+            .active_custom_effect_sources
+            .values()
+            .filter_map(|source| standard_throws_error_source(source, throws_name))
+            .map(|source| (source_effect_identity(&source), source))
+            .collect::<Vec<_>>();
+        sources.sort_by(|left, right| left.0.cmp(&right.0));
+        sources.dedup_by(|left, right| left.0 == right.0);
+        sources.into_iter().map(|(_, source)| source).collect()
     }
 
     fn lower_match_with_scrutinee(
@@ -18127,6 +18240,7 @@ impl Analyzer {
             .collect::<HashMap<_, _>>();
         let handler = Rc::new(AlgebraicHandler {
             identity: source_effect_identity(instance),
+            source: instance.clone(),
             clauses,
             operations: handler_operations,
             function_aliases: Rc::new(RefCell::new(HashMap::new())),
@@ -18175,15 +18289,45 @@ impl Analyzer {
         let newly_active = context
             .active_custom_effects
             .insert(handled_identity.clone());
+        let previous_active_source = context
+            .active_custom_effect_sources
+            .insert(handled_identity.clone(), instance.clone());
         let newly_lexical = context
             .lexical_handler_effects
             .insert(handled_identity.clone());
+        let previous_lexical_source = context
+            .lexical_handler_effect_sources
+            .insert(handled_identity.clone(), instance.clone());
         let lowered = self.lower_expr(&transformed, expected, context);
         if newly_active {
             context.active_custom_effects.remove(&handled_identity);
         }
+        match previous_active_source {
+            Some(source) => {
+                context
+                    .active_custom_effect_sources
+                    .insert(handled_identity.clone(), source);
+            }
+            None => {
+                context
+                    .active_custom_effect_sources
+                    .remove(&handled_identity);
+            }
+        }
         if newly_lexical {
             context.lexical_handler_effects.remove(&handled_identity);
+        }
+        match previous_lexical_source {
+            Some(source) => {
+                context
+                    .lexical_handler_effect_sources
+                    .insert(handled_identity, source);
+            }
+            None => {
+                context
+                    .lexical_handler_effect_sources
+                    .remove(&handled_identity);
+            }
         }
         lowered
     }
@@ -18843,6 +18987,24 @@ impl Analyzer {
                 )
             }
             Expr::Throw(value) => {
+                if standard_throws_error_source(
+                    &handler.source,
+                    self.lang_item_name(LangItemKind::ThrowsEffect),
+                )
+                .is_some()
+                {
+                    let operation = Expr::Call(
+                        Box::new(Expr::Member(
+                            Box::new(source_type_expression(&handler.source)),
+                            "raise".to_owned(),
+                        )),
+                        vec![CallArg {
+                            label: None,
+                            value: *value,
+                        }],
+                    );
+                    return self.transform_handler_expr(operation, handler, resume, continuation);
+                }
                 let identity: SourceContinuation =
                     Rc::new(|_, value| Ok(Expr::Throw(Box::new(value))));
                 self.transform_handler_expr(*value, handler, resume, identity)
@@ -26025,6 +26187,15 @@ fn source_type_is_never(source: &Type) -> bool {
 
 fn operation_resume_input_source(function: &Function) -> Option<Type> {
     logical_function_result_source(function).filter(|source| !source_type_is_never(source))
+}
+
+fn standard_throws_error_source(effect: &Type, throws_name: &str) -> Option<Type> {
+    match effect {
+        Type::Named(name, arguments) if name == throws_name && arguments.len() == 1 => {
+            Some(arguments[0].clone())
+        }
+        _ => None,
+    }
 }
 
 fn effect_abi_result_source(
