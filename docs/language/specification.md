@@ -499,6 +499,9 @@ effect、trait 或协议，再由编译器校验对应 lang item 并做 lowering
 `suspend(): ()` operation 的 `Async`；`core.access` 声明 `Shared` 与 `Mutable`；`core.control`
 声明 `do`、`try`、`throw`、`unsafe`、`loop` 的控制函数签名；`core.functional` 声明使用构造子 kind 的 `Functor`、
 `Applicative` 与 `Monad` 协议。编译器只对通过 core bundle 形状校验的声明赋予 lang-item 身份。
+effect 是类型级名义成员，声明名以及 `with(...)` 中路径的最后一段必须大写开头，例如 `UI`、
+`State(S)`、`core.effects.Throws(E)`；小写的 `with(foo)` 不会作为兼容拼法或隐式自定义 effect
+保留。effect row 参数（例如 `E: effect`）按参数名解析，不受该名义命名规则限制。
 控制函数的函数体由编译器提供，因为它们会建立、消除或转发非局部控制边界。普通包不能声明无函数体的
 顶层函数，也不能用同名声明获得特殊语义。`core.control` 还声明空结构契约 `Continuation(Input, Output)` 与
 `EffectCallable(Input, Output, Answer)`；前者表示一次性续体，后者表示携带 call/drop 入口、环境与

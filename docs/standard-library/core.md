@@ -122,6 +122,9 @@ pub let Async = effect {
 `Unsafe`, `Throws(Error)`, and `Async` are validated lang-item identities, but their declarations use
 the same source-level effect forms as user code. `Throws.raise` is an ordinary `Never`-returning
 effect operation and can be handled with a normal abort clause such as `raise: { (error) -> ... }`.
+Standard and user effect identities use type-like nominal spelling: effect declarations and the
+final segment of a `with(...)` effect path must start with an uppercase letter. Effect row parameters
+such as `E: effect` are still resolved as parameters rather than nominal effects.
 Source `throw error` targets this ordinary operation when the current effect row has exactly one
 active `Throws(Error)`. Contextual `try { ... }` with an expected `Result(T, Error)` handles
 ordinary `Throws(Error)` through the same algebraic handler path, using `done -> Ok` and

@@ -6,6 +6,12 @@ subset.
 
 ## Unreleased
 
+## 0.177.0 - 2026-07-22
+
+- Required effect declarations and nominal effect references in `with(...)` to use an uppercase
+  final name segment, keeping standard and user-defined effects aligned with type-like nominal
+  spelling and rejecting accidental lowercase custom effect names before semantic analysis.
+
 ## 0.176.0 - 2026-07-22
 
 - Allowed generic nominal trait implementations to bind direct generic associated constructors,

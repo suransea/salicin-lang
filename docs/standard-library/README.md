@@ -53,6 +53,8 @@ source that names them imports them normally. The control spellings `do`, `try`,
 and `loop` bind directly to validated lang-item declarations in `core.control`; they do not inject
 those module exports as ordinary unqualified names. The former control-container protocols have
 been removed.
+Effect identities use uppercase nominal spelling, including user-defined effects; row parameters
+such as `E: effect` remain ordinary parameter names.
 `Shared`/`Mutable` require `use core.access...` when named as standard-library declarations.
 `Semigroup` and `Monoid` require `use core.algebra...` when named.
 `Functor`, `Applicative`, and `Monad` require `use core.functional...` when named.

@@ -373,6 +373,9 @@ impl Parser {
         name: String,
         compile_groups: Vec<Vec<CompileParam>>,
     ) -> Result<EffectDef, ParseError> {
+        if !effect_name_is_uppercase(&name) {
+            return Err(self.error_here("effect declarations must use an uppercase nominal name"));
+        }
         if !self.take(&TokenKind::LBrace) {
             return Ok(EffectDef {
                 name,
@@ -1525,6 +1528,14 @@ impl Parser {
                     let mut path = vec![self.expect_ident("an effect name")?];
                     while self.take(&TokenKind::Dot) {
                         path.push(self.expect_ident("an effect path segment")?);
+                    }
+                    if !path
+                        .last()
+                        .is_some_and(|segment| effect_name_is_uppercase(segment))
+                    {
+                        return Err(
+                            self.error_here("effect names in `with(...)` must end with an uppercase nominal segment")
+                        );
                     }
                     let name = path.join(".");
                     let mut arguments = Vec::new();
@@ -3290,6 +3301,10 @@ fn reject_effect_parameters(groups: &[Vec<CompileParam>], owner: &str) -> Result
     } else {
         Ok(())
     }
+}
+
+fn effect_name_is_uppercase(name: &str) -> bool {
+    name.chars().next().is_some_and(char::is_uppercase)
 }
 
 fn declared_accesses(
@@ -5358,6 +5373,14 @@ mod tests {
 
         let duplicate = parse("let f(): i32 with(UI, UI) = { 0 }\n").unwrap_err();
         assert!(duplicate.message.contains("duplicate custom effect `UI`"));
+
+        let lowercase_declaration = parse("let ui = effect\n").unwrap_err();
+        assert!(lowercase_declaration
+            .message
+            .contains("uppercase nominal name"));
+
+        let lowercase_use = parse("let f(): i32 with(core.effects.ui) = { 0 }\n").unwrap_err();
+        assert!(lowercase_use.message.contains("uppercase nominal segment"));
     }
 
     #[test]
