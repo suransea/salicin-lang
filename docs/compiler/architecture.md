@@ -22,6 +22,8 @@ The implementation lives under `compiler/src`:
   - `mod.rs` keeps the public compile/check entry points, HIR data model, and the current `Analyzer`
     implementation.
   - `cleanup_plan.rs` adapts HIR into verified cleanup plans before emission.
+  - `compile_time.rs` encodes compiler-visible compile-time domain values, source effect
+    identities, and compile-parameter shape helpers.
   - `emitter.rs` evaluates global constants and emits textual LLVM IR.
   - `names.rs` centralizes stable symbol, monomorphization instance, trait-method, and canonical
     type encodings.
