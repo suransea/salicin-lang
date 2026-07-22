@@ -8070,33 +8070,6 @@ impl Analyzer {
         }
     }
 
-    fn explicit_type_argument_for_parameter<'a>(
-        &self,
-        owner: &str,
-        type_groups: &[&'a [CallArg]],
-        parameter_name: &str,
-    ) -> Option<&'a CallArg> {
-        if type_groups
-            .iter()
-            .flat_map(|group| group.iter())
-            .any(|argument| argument.label.is_some())
-        {
-            return type_groups
-                .iter()
-                .flat_map(|group| group.iter())
-                .find(|argument| argument.label.as_deref() == Some(parameter_name));
-        }
-        let position = self.enum_templates[owner]
-            .compile_groups
-            .iter()
-            .flatten()
-            .position(|parameter| parameter.name == parameter_name)?;
-        type_groups
-            .iter()
-            .flat_map(|group| group.iter())
-            .nth(position)
-    }
-
     fn probe_expr_ty(&self, expression: &Expr, hint: Option<&Ty>, context: &LowerCtx) -> TypeProbe {
         match expression {
             Expr::Type(_) => TypeProbe::Unsupported,
