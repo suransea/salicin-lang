@@ -29,7 +29,7 @@ The implementation lives under `compiler/src`:
     type encodings.
   - `source_rewrite.rs` owns source-level rewrites before semantic lowering, including labeled
     type-argument normalization, type-alias expansion, region-parameter erasure, and generic
-    type substitution.
+    type substitution, plus AST hygiene helpers used by handler and static-function specialization.
   - `tests.rs` contains the large codegen regression suite.
 - `main.rs` implements the `salic` command-line interface.
 
