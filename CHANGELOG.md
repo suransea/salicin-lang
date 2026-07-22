@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.144.0 - 2026-07-22
+
+- Allowed a complete reusable-handler call to receive a finite nested `if` selection between known
+  algebraic-effect functions as its first action parameter.
+- Distributed the call across target-specific handler specializations instead of materializing
+  direct-style effectful function pointers that have no native body.
+- Preserved selector-before-later-group evaluation order, named argument binding, branch laziness,
+  curried runtime arguments, immutable aliases, resumption, and abandonment.
+- Added a native nested-selection and side-effect-order regression producing 42.
+
 ## 0.143.0 - 2026-07-22
 
 - Specialized reusable handler functions at their call sites when an algebraic-effect callable

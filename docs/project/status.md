@@ -72,7 +72,10 @@ frames share an erased call/drop-entry plus environment ABI with a runtime one-s
 Reusable handler functions may accept an algebraic-effect callable parameter. Calls with a known
 named function or immutable function alias create a deduplicated static specialization, erase that
 parameter from the runtime groups, and run the substituted action through the handler's ordinary CPS
-pass. Truly unknown runtime callable parameters still require the general handler-aware callable ABI.
+pass. A complete call may select that leading action through a nested conditional tree; the call is
+distributed into target-specific specializations after evaluating the selector and before later
+curried arguments. Truly unknown runtime callable parameters still require the general handler-aware
+callable ABI.
 Inferred immutable local aliases of statically known effectful functions are resolved through the same CPS
 path, including chained aliases. Statically known function arguments also specialize higher-order
 effectful frames and are erased from those frames' runtime parameter lists. Explicitly typed

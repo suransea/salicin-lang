@@ -21171,6 +21171,9 @@ impl Analyzer {
         expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
+        if let Some(distributed) = self.distribute_static_handler_selection(name, groups, context) {
+            return self.lower_expr(&distributed, expected, context);
+        }
         if let Some((specialized, specialized_groups)) =
             self.specialize_static_handler_call(name, groups, context)
         {
@@ -21295,6 +21298,86 @@ impl Analyzer {
             }
         };
         self.wrap_call_argument_temporaries(call, &mut arguments, temporary_bindings, context)
+    }
+
+    fn distribute_static_handler_selection(
+        &mut self,
+        name: &str,
+        groups: &[&[CallArg]],
+        context: &LowerCtx,
+    ) -> Option<Expr> {
+        let function = self.functions.get(name)?.clone();
+        if groups.len() != function.groups.len() || function.groups.first()?.is_empty() {
+            return None;
+        }
+        let Type::Function { effects, .. } = &function.groups[0][0].ty else {
+            return None;
+        };
+        if !effects.custom.iter().any(|effect| {
+            let identity = source_effect_identity(effect);
+            let root = identity.split('(').next().unwrap_or(&identity);
+            self.effect_defs
+                .get(root)
+                .is_some_and(|definition| !definition.operations.is_empty())
+        }) {
+            return None;
+        }
+
+        let mut ordered_groups = Vec::with_capacity(groups.len());
+        for (parameters, arguments) in function.groups.iter().zip(groups) {
+            if parameters.len() != arguments.len() {
+                return None;
+            }
+            let ordered = if arguments.iter().all(|argument| argument.label.is_none()) {
+                Some(arguments.to_vec())
+            } else if arguments.iter().all(|argument| argument.label.is_some()) {
+                parameters
+                    .iter()
+                    .map(|parameter| {
+                        let mut matches = arguments.iter().filter(|argument| {
+                            argument.label.as_deref() == Some(parameter.name.as_str())
+                        });
+                        let argument = matches.next()?.clone();
+                        matches.next().is_none().then_some(argument)
+                    })
+                    .collect::<Option<Vec<_>>>()
+            } else {
+                None
+            }?;
+            ordered_groups.push(ordered);
+        }
+
+        let mut targets = Vec::new();
+        let selection = static_callable_selection(&ordered_groups[0][0].value, &mut targets)?;
+        if targets.len() < 2
+            || targets.iter().any(|target| {
+                !self.functions.contains_key(target)
+                    && context.lookup(target).is_none_or(|local| {
+                        local.partial.as_ref().is_none_or(|partial| {
+                            partial.consumed_groups != 0 || partial.capture_count != 0
+                        })
+                    })
+            })
+        {
+            return None;
+        }
+
+        let calls = targets
+            .into_iter()
+            .map(|target| {
+                let mut target_groups = ordered_groups.clone();
+                target_groups[0][0] = CallArg {
+                    label: None,
+                    value: Expr::Name(target),
+                };
+                let mut call = Expr::Name(name.to_owned());
+                for group in target_groups {
+                    call = Expr::Call(Box::new(call), group);
+                }
+                call
+            })
+            .collect::<Vec<_>>();
+        Some(replace_static_selection_leaves(selection, &calls))
     }
 
     fn specialize_static_handler_call(
@@ -23294,6 +23377,28 @@ fn static_callable_selection(expression: &Expr, targets: &mut Vec<String>) -> Op
             else_branch: Some(Box::new(static_callable_selection(else_branch, targets)?)),
         }),
         _ => None,
+    }
+}
+
+fn replace_static_selection_leaves(selection: Expr, calls: &[Expr]) -> Expr {
+    match selection {
+        Expr::Integer(index) => calls
+            .get(index as usize)
+            .cloned()
+            .expect("selection leaf has a matching specialized call"),
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch: Some(else_branch),
+        } => Expr::If {
+            condition,
+            then_branch: Box::new(replace_static_selection_leaves(*then_branch, calls)),
+            else_branch: Some(Box::new(replace_static_selection_leaves(
+                *else_branch,
+                calls,
+            ))),
+        },
+        _ => unreachable!("static callable selection contains only conditions and integer leaves"),
     }
 }
 

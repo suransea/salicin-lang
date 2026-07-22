@@ -166,6 +166,10 @@ and removes the callable from the specialization's runtime parameter groups. Oth
 supplied or remaining curried groups stay runtime values, so the specialized call may still be
 partially applied. A genuinely unknown callable parameter is not silently invoked
 through the direct function-pointer ABI; it remains pending the erased handler-aware callable ABI.
+For a complete call whose first parameter is that callable, a nested conditional selection between
+known targets is distributed into one specialized call per leaf. The selector is evaluated before
+later parameter groups, only the selected branch evaluates its remaining arguments, and every leaf
+enters the same ordinary handler CPS and cleanup path.
 
 Selective CPS removes only the handled nominal identity. Residual `unsafe`, `throws(Error)`, and
 other nominal requirements remain on generated resumable frames. Intercepted operations also retain
