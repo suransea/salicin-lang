@@ -31,6 +31,8 @@ The implementation lives under `compiler/src`:
   - `flow.rs` tracks local scopes, move initialization alternatives, lexical loans, and lowering
     context state used by ownership and borrow checks.
   - `hir.rs` defines typed IR structs, semantic types, places, signatures, and helper predicates.
+  - `lower.rs` defines shared expression-lowering data and HIR construction helpers used by
+    multiple lowering paths.
   - `names.rs` centralizes stable symbol, monomorphization instance, trait-method, and canonical
     type encodings.
   - `operators.rs` centralizes operator-syntax bindings to validated lang-item protocols.
@@ -56,13 +58,10 @@ resolved AST
   -> LLVM emission
 ```
 
-Useful future `codegen/` modules are:
-
-- `lower.rs` for expression and statement lowering into HIR;
-
-The practical rule is: first move code behind a small `pub(super)` boundary with no behavior
-changes, then make data ownership cleaner. Large semantic rewrites should come after the module
-shape is visible.
+The remaining splits should move method bodies out of `Analyzer` along the same boundaries,
+especially expression and statement lowering that now depends on `lower.rs` helpers. The practical
+rule is: first move code behind a small `pub(super)` boundary with no behavior changes, then make
+data ownership cleaner. Large semantic rewrites should come after the module shape is visible.
 
 The compiler embeds edition-matched sources from `library/core`, `library/alloc`, and the C allocator
 from `runtime`. Embedded Salicin declarations still pass through the normal parser and semantic
