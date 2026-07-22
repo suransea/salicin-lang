@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.157.0 - 2026-07-22
+
+- Added a dedicated constructor-trait-implementation header table so generic nominal constructors can
+  implement marker traits whose first compile-time parameter is a matching type-constructor kind.
+- Allowed declarations such as `extend Carrier: Higher {}` and `extend Carrier: Tagged(i32) {}` when
+  `Higher`/`Tagged` abstract over `F: (Value: type): type`, including duplicate, arity, orphan, and
+  unsupported-member diagnostics.
+- Kept constructor trait implementations limited to marker traits for now; generic method lowering,
+  associated types, `where` clauses, and executable implementations of `Functor`/`Applicative`/`Monad`
+  remain future work.
+
 ## 0.156.0 - 2026-07-22
 
 - Added constructor compile-time kinds such as `F: (Value: type): type` and
@@ -17,8 +28,9 @@ subset.
 - Added non-prelude `core.functional.Functor`, `core.functional.Applicative`, and
   `core.functional.Monad` source definitions over HKT constructor kinds, and mounted
   `core.functional` in the standard-library namespace with ordinary `use` diagnostics.
-- Documented the current HKT boundary: standard protocols can be declared, but trait inheritance,
-  `extend Option: Functor`, and broad constructor equation solving remain future semantic work.
+- Documented the current HKT boundary: standard protocols can be declared, while trait inheritance,
+  executable `Functor`/`Applicative`/`Monad` implementations, and broad constructor equation solving
+  remain future semantic work.
 
 ## 0.155.0 - 2026-07-22
 

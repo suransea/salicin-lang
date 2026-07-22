@@ -1536,6 +1536,25 @@ struct TraitImplKey {
     trait_ref: TraitRefKey,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct TypeConstructorImplTarget {
+    name: String,
+    kind: NominalKind,
+    parameter_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ConstructorTraitRefKey {
+    name: String,
+    arguments: Vec<Ty>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ConstructorTraitImplKey {
+    target: TypeConstructorImplTarget,
+    trait_ref: ConstructorTraitRefKey,
+}
+
 #[derive(Debug, Clone)]
 struct TraitImplInfo {
     key: TraitImplKey,
@@ -1935,6 +1954,7 @@ struct Analyzer {
     effects: HashSet<String>,
     effect_defs: HashMap<String, EffectDef>,
     trait_impl_headers: HashSet<TraitImplKey>,
+    constructor_trait_impl_headers: HashSet<ConstructorTraitImplKey>,
     trait_impls: HashMap<TraitImplKey, TraitImplInfo>,
     trait_methods_by_receiver: HashMap<(Ty, String), Vec<TraitImplKey>>,
     copy_nominals: HashSet<Ty>,
@@ -2007,6 +2027,7 @@ impl Analyzer {
             effects: HashSet::new(),
             effect_defs: HashMap::new(),
             trait_impl_headers: HashSet::new(),
+            constructor_trait_impl_headers: HashSet::new(),
             trait_impls: HashMap::new(),
             trait_methods_by_receiver: HashMap::new(),
             copy_nominals: HashSet::new(),
@@ -3652,6 +3673,45 @@ impl Analyzer {
         }
     }
 
+    fn type_constructor_impl_target(&self, source: &Type) -> Option<TypeConstructorImplTarget> {
+        let Type::Named(name, arguments) = source else {
+            return None;
+        };
+        if !arguments.is_empty() {
+            return None;
+        }
+        if let Some(template) = self.struct_templates.get(name) {
+            return Some(TypeConstructorImplTarget {
+                name: name.clone(),
+                kind: NominalKind::Struct,
+                parameter_count: template.compile_groups.iter().flatten().count(),
+            });
+        }
+        if let Some(template) = self.enum_templates.get(name) {
+            return Some(TypeConstructorImplTarget {
+                name: name.clone(),
+                kind: NominalKind::Enum,
+                parameter_count: template.compile_groups.iter().flatten().count(),
+            });
+        }
+        None
+    }
+
+    fn trait_ref_has_constructor_subject(&self, source: &Type) -> bool {
+        let Type::Named(name, _) = source else {
+            return false;
+        };
+        self.traits.get(name).is_some_and(|schema| {
+            matches!(
+                schema
+                    .compile_parameters
+                    .first()
+                    .map(|parameter| parameter.kind),
+                Some(CompileParamKind::TypeConstructor { .. })
+            )
+        })
+    }
+
     fn resolve_trait_impl_ref(
         &mut self,
         source: &Type,
@@ -3899,6 +3959,16 @@ impl Analyzer {
     }
 
     fn collect_trait_extension(&mut self, extension: ExtendDef, origin: ItemOrigin) {
+        if let Some(target) = self.type_constructor_impl_target(&extension.target) {
+            if extension
+                .trait_ref
+                .as_ref()
+                .is_some_and(|trait_ref| self.trait_ref_has_constructor_subject(trait_ref))
+            {
+                self.collect_constructor_trait_extension(extension, origin, target);
+                return;
+            }
+        }
         let target_source = extension.target.clone();
         let Some(target) = self.resolve_trait_impl_target(&target_source) else {
             return;
@@ -4254,6 +4324,135 @@ impl Analyzer {
         );
         if is_copy && self.copy_impls_finalized {
             self.validate_dynamic_copy_implementation(&key);
+        }
+    }
+
+    fn collect_constructor_trait_extension(
+        &mut self,
+        extension: ExtendDef,
+        origin: ItemOrigin,
+        target: TypeConstructorImplTarget,
+    ) {
+        if !extension.where_predicates.is_empty() {
+            self.error(format!(
+                "constructor trait implementation for `{}` does not support `where` clauses yet",
+                target.name
+            ));
+            return;
+        }
+        let trait_source = extension
+            .trait_ref
+            .as_ref()
+            .expect("constructor trait extension has a trait reference");
+        let Type::Named(trait_name, source_arguments) = trait_source else {
+            self.error("constructor trait implementation must reference a named trait");
+            return;
+        };
+        let Some(schema) = self.traits.get(trait_name).cloned() else {
+            self.error(format!("unknown trait `{trait_name}`"));
+            return;
+        };
+        if !schema.valid {
+            return;
+        }
+        let Some(subject_parameter) = schema.compile_parameters.first() else {
+            self.error(format!(
+                "trait `{trait_name}` does not accept a type-constructor implementation target"
+            ));
+            return;
+        };
+        let CompileParamKind::TypeConstructor { parameter_count } = subject_parameter.kind else {
+            self.error(format!(
+                "trait `{trait_name}` does not accept a type-constructor implementation target"
+            ));
+            return;
+        };
+        if parameter_count != target.parameter_count {
+            self.error(format!(
+                "type constructor `{}` has {} parameter{}, but trait `{trait_name}` expects a constructor with {parameter_count}",
+                target.name,
+                target.parameter_count,
+                if target.parameter_count == 1 { "" } else { "s" }
+            ));
+            return;
+        }
+        let expected_arguments = schema.compile_parameters.len().saturating_sub(1);
+        if source_arguments.len() != expected_arguments {
+            self.error(format!(
+                "trait argument count mismatch for `{trait_name}`: expected {expected_arguments}, found {} after the constructor target",
+                source_arguments.len()
+            ));
+            return;
+        }
+
+        let mut trait_arguments = Vec::new();
+        for (parameter, source_argument) in schema
+            .compile_parameters
+            .iter()
+            .skip(1)
+            .zip(source_arguments)
+        {
+            if parameter.kind != CompileParamKind::Type {
+                self.error(format!(
+                    "constructor trait implementation argument `{}` for `{trait_name}` has unsupported compile-time kind {}",
+                    parameter.name,
+                    describe_compile_param_kind(parameter.kind)
+                ));
+                return;
+            }
+            if !self.source_type_is_concrete(source_argument) {
+                self.error(format!(
+                    "constructor trait implementation argument `{}` for `{trait_name}` must be a concrete type",
+                    parameter.name
+                ));
+                return;
+            }
+            let argument = self.lower_source_type(source_argument);
+            if argument == Ty::Error {
+                return;
+            }
+            trait_arguments.push(argument);
+        }
+
+        let target_package = self
+            .nominal_accesses
+            .get(&target.name)
+            .map(|access| access.origin.package);
+        if target_package != Some(origin.package) && schema.access.origin.package != origin.package
+        {
+            self.error(format!(
+                "constructor trait implementation of `{trait_name}` for `{}` must be declared in the package that defines the trait or the type constructor",
+                target.name
+            ));
+            return;
+        }
+        if !schema.associated_types.is_empty() || !schema.method_order.is_empty() {
+            self.error(format!(
+                "constructor trait implementation of `{trait_name}` for `{}` is limited to marker traits for now; generic methods and associated types are not supported yet",
+                target.name
+            ));
+            return;
+        }
+        if !extension.members.is_empty() {
+            self.error(format!(
+                "constructor marker trait implementation of `{trait_name}` for `{}` must not declare members",
+                target.name
+            ));
+            return;
+        }
+
+        let key = ConstructorTraitImplKey {
+            target,
+            trait_ref: ConstructorTraitRefKey {
+                name: trait_name.clone(),
+                arguments: trait_arguments,
+            },
+        };
+        if !self.constructor_trait_impl_headers.insert(key.clone()) {
+            self.error(format!(
+                "duplicate constructor trait implementation of `{}` for `{}`",
+                key.trait_ref.name, key.target.name
+            ));
         }
     }
 
@@ -39405,6 +39604,94 @@ let main(): i32 = { 0 }
                     .collect::<Vec<_>>(),
                 Err(error) => vec![error.message],
             };
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.contains(expected)),
+                "missing `{expected}` in {diagnostics:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn constructor_trait_implementation_headers_support_marker_traits() {
+        let program = crate::parser::parse(
+            r#"
+let Higher(F: (Value: type): type) = trait {}
+let Tagged(F: (Value: type): type, Tag: type) = trait {}
+let Carrier(T: type) = struct(value: T)
+extend Carrier: Higher {}
+extend Carrier: Tagged(i32) {}
+let main(): i32 = { 0 }
+"#,
+        )
+        .expect("constructor trait implementation source must parse");
+        let analyzer = Analyzer::new(&program);
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected constructor trait implementation diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        assert_eq!(analyzer.constructor_trait_impl_headers.len(), 2);
+        assert!(analyzer.constructor_trait_impl_headers.iter().any(|key| {
+            key.target.name == "Carrier"
+                && key.target.parameter_count == 1
+                && key.trait_ref.name == "Higher"
+                && key.trait_ref.arguments.is_empty()
+        }));
+        assert!(analyzer.constructor_trait_impl_headers.iter().any(|key| {
+            key.target.name == "Carrier"
+                && key.trait_ref.name == "Tagged"
+                && key.trait_ref.arguments == vec![Ty::I32]
+        }));
+
+        compile(&program).expect("marker constructor trait implementations must compile");
+    }
+
+    #[test]
+    fn constructor_trait_implementation_headers_report_current_limits() {
+        for (source, expected) in [
+            (
+                r#"
+let Higher(F: (Value: type): type) = trait {}
+let Carrier(T: type) = struct(value: T)
+extend Carrier: Higher {}
+extend Carrier: Higher {}
+let main(): i32 = { 0 }
+"#,
+                "duplicate constructor trait implementation",
+            ),
+            (
+                r#"
+let Higher(F: (Left: type, Right: type): type) = trait {}
+let Carrier(T: type) = struct(value: T)
+extend Carrier: Higher {}
+let main(): i32 = { 0 }
+"#,
+                "expects a constructor with 2",
+            ),
+            (
+                r#"
+let Functor(F: (Value: type): type) = trait {
+  let map(E: effect, A: type, B: type)(
+    move value: F(A),
+    move transform: (A): B with(E),
+  ): F(B) with(E)
+}
+let Carrier(T: type) = struct(value: T)
+extend Carrier: Functor {}
+let main(): i32 = { 0 }
+"#,
+                "limited to marker traits",
+            ),
+        ] {
+            let program = crate::parser::parse(source)
+                .expect("constructor trait implementation error source must parse");
+            let diagnostics = Analyzer::new(&program)
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.message.clone())
+                .collect::<Vec<_>>();
             assert!(
                 diagnostics
                     .iter()

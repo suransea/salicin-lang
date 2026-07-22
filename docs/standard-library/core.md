@@ -205,9 +205,12 @@ pub let Monad(M: (Value: type): type) = trait {
 }
 ```
 
-These declarations use constructor kinds such as `(Value: type): type`. Trait inheritance
-constraints such as `Applicative where F: Functor`, constructor-valued trait implementations such as
-`extend Option: Functor`, and full HKT equation solving remain future semantic work.
+These declarations use constructor kinds such as `(Value: type): type`. Marker traits with a matching
+constructor subject can already be implemented for generic nominal constructors, for example
+`extend Carrier: Higher {}` when `Higher(F: (Value: type): type)` has no requirements. Trait
+inheritance constraints such as `Applicative where F: Functor`, generic method/associated-type
+lowering for constructor implementations such as `extend Option: Functor`, and full HKT equation
+solving remain future semantic work.
 
 `ControlFlow`, the old propagation `Try`, `FromResidual`, and `FromError` were removed together with postfix `.try`. `Option` and
 `Result` are ordinary enum values and require explicit constructors. Language error propagation is
