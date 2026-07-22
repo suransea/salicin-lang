@@ -3,6 +3,7 @@ use crate::ast::{
 };
 use crate::core::LangItemKind;
 
+use super::effects::rewrite_handler_chain_wrappers;
 use super::fallible::{StandardFallibleInfo, StandardFallibleKind};
 use super::flow::LowerCtx;
 use super::hir::{HirExpr, LocalCapability, Ty};
@@ -379,6 +380,122 @@ impl Analyzer {
             return None;
         };
         Some((*function_ty.result).clone())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn lower_handler_chain_call(
+        &mut self,
+        source_scrutinee: &Expr,
+        payload: &str,
+        error: &str,
+        member: &str,
+        source_groups: &[Vec<CallArg>],
+        source_success: &Expr,
+        source_residual: &Expr,
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let borrowed = matches!(source_scrutinee, Expr::Borrow { .. })
+            || place_root_name(source_scrutinee)
+                .and_then(|name| context.lookup(name))
+                .is_some_and(|local| local.capability != LocalCapability::Owned);
+        let scrutinee = self.lower_expr(source_scrutinee, None, context);
+        if borrowed {
+            self.error("optional chaining requires an owned `Option` or `Result` value");
+            return error_expr();
+        }
+        if scrutinee.ty == Ty::Error {
+            return error_expr();
+        }
+        let Some(info) = self.standard_fallible_info_for_ty(&scrutinee.ty) else {
+            self.error(format!(
+                "operator `?.` requires an owned `Option(T)` or `Result(E)(T)`, found `{}`",
+                scrutinee.ty
+            ));
+            return error_expr();
+        };
+        let groups = source_groups.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        let Some(output) =
+            self.chain_access_ty(&info.payload, member, Some(&groups), &context.origin)
+        else {
+            return error_expr();
+        };
+        if matches!(output, Ty::Function(_)) {
+            self.error(
+                "optional chaining does not support partial applications or callable fields",
+            );
+            return error_expr();
+        }
+        let template = self.fallible_type_name(info.kind).to_owned();
+        let mut arguments = Vec::new();
+        if info.kind == StandardFallibleKind::Result {
+            arguments.push(info.error.clone().expect("Result has an error type"));
+        }
+        arguments.push(output);
+        let Some(source_arguments) = arguments
+            .iter()
+            .map(|argument| self.source_type_for_ty(argument))
+            .collect::<Option<Vec<_>>>()
+        else {
+            self.error("optional chaining result cannot be represented as a standard container");
+            return error_expr();
+        };
+        let Some(canonical) =
+            self.ensure_nominal_instance(NominalKind::Enum, &template, source_arguments, arguments)
+        else {
+            return error_expr();
+        };
+        let success_variant = match info.kind {
+            StandardFallibleKind::Option => "Some",
+            StandardFallibleKind::Result => "Ok",
+        };
+        let mut success = source_success.clone();
+        rewrite_handler_chain_wrappers(
+            &mut success,
+            &canonical,
+            success_variant,
+            match info.kind {
+                StandardFallibleKind::Option => "None",
+                StandardFallibleKind::Result => "Err",
+            },
+        );
+        let mut residual = source_residual.clone();
+        rewrite_handler_chain_wrappers(
+            &mut residual,
+            &canonical,
+            success_variant,
+            match info.kind {
+                StandardFallibleKind::Option => "None",
+                StandardFallibleKind::Result => "Err",
+            },
+        );
+        let mut arms = vec![MatchArm {
+            pattern: Pattern::Constructor {
+                path: vec![success_variant.to_owned()],
+                fields: PatternFields::Positional(vec![Pattern::Binding(payload.to_owned())]),
+            },
+            guard: None,
+            body: success,
+        }];
+        arms.push(match info.kind {
+            StandardFallibleKind::Option => MatchArm {
+                pattern: Pattern::Constructor {
+                    path: vec!["None".to_owned()],
+                    fields: PatternFields::Unit,
+                },
+                guard: None,
+                body: residual,
+            },
+            StandardFallibleKind::Result => MatchArm {
+                pattern: Pattern::Constructor {
+                    path: vec!["Err".to_owned()],
+                    fields: PatternFields::Positional(vec![Pattern::Binding(error.to_owned())]),
+                },
+                guard: None,
+                body: residual,
+            },
+        });
+        self.lower_match_with_scrutinee(scrutinee, &arms, expected, context)
     }
 
     pub(super) fn lower_chain(

@@ -22,7 +22,8 @@ The implementation lives under `compiler/src`:
   - `mod.rs` keeps the public compile/check entry points and the current `Analyzer` implementation.
   - `access.rs` owns visibility boundary checks, effective member access, and public API leak
     validation over lowered types.
-  - `chain.rs` owns `?.` and custom `Chain` protocol type probing, access typing, and lowering.
+  - `chain.rs` owns `?.` and custom `Chain` protocol type probing, access typing, and
+    handler-aware lowering.
   - `cleanup_plan.rs` adapts HIR into verified cleanup plans before emission.
   - `compile_time.rs` encodes compiler-visible compile-time domain values, source effect
     identities, and compile-parameter shape helpers.
