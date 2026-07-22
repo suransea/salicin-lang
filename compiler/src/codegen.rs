@@ -292,10 +292,86 @@ fn source_effect_source_map(effects: &[Type]) -> HashMap<String, Type> {
         .collect()
 }
 
+fn source_type_from_identity(identity: &str) -> Option<Type> {
+    match identity {
+        "i32" => return Some(Type::I32),
+        "i64" => return Some(Type::I64),
+        "u32" => return Some(Type::U32),
+        "u64" => return Some(Type::U64),
+        "bool" => return Some(Type::Bool),
+        "()" => return Some(Type::Unit),
+        _ => {}
+    }
+    let Some(open) = top_level_call_open(identity) else {
+        return Some(Type::Named(identity.to_owned(), Vec::new()));
+    };
+    let name = identity[..open].to_owned();
+    let inner = &identity[open + 1..identity.len() - 1];
+    let arguments = split_top_level_arguments(inner)?
+        .into_iter()
+        .map(source_type_from_identity)
+        .collect::<Option<Vec<_>>>()?;
+    Some(Type::Named(name, arguments))
+}
+
+fn top_level_call_open(identity: &str) -> Option<usize> {
+    if !identity.ends_with(')') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut open = None;
+    for (index, character) in identity.char_indices() {
+        match character {
+            '(' => {
+                if depth == 0 {
+                    open = Some(index);
+                }
+                depth += 1;
+            }
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 && index + character.len_utf8() != identity.len() {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+    }
+    (depth == 0).then_some(open?)
+}
+
+fn split_top_level_arguments(arguments: &str) -> Option<Vec<&str>> {
+    if arguments.trim().is_empty() {
+        return Some(Vec::new());
+    }
+    let mut result = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (index, character) in arguments.char_indices() {
+        match character {
+            '(' => depth += 1,
+            ')' => depth = depth.checked_sub(1)?,
+            ',' if depth == 0 => {
+                result.push(arguments[start..index].trim());
+                start = index + character.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    if depth != 0 {
+        return None;
+    }
+    result.push(arguments[start..].trim());
+    Some(result)
+}
+
 fn effect_identity_sources(effects: &[String]) -> Vec<Type> {
     effects
         .iter()
-        .map(|effect| Type::Named(effect.clone(), Vec::new()))
+        .map(|effect| {
+            source_type_from_identity(effect)
+                .unwrap_or_else(|| Type::Named(effect.clone(), Vec::new()))
+        })
         .collect()
 }
 
@@ -6682,6 +6758,9 @@ impl Analyzer {
             let instances_before = self.function_instances.clone();
             let type_substitutions_before = self.function_type_substitutions.clone();
             let lifted_functions_before = self.lifted_functions.clone();
+            let handler_frame_parameter_modes_before = self.handler_frame_parameter_modes.clone();
+            let continuation_adapters_before = self.continuation_adapters.clone();
+            let effect_callable_adapters_before = self.effect_callable_adapters.clone();
             let next_closure = self.next_closure;
             let inherent_members_before = self.inherent_members.clone();
             let copy_nominals_before = self.copy_nominals.clone();
@@ -6769,6 +6848,9 @@ impl Analyzer {
             self.function_instances = instances_before;
             self.function_type_substitutions = type_substitutions_before;
             self.lifted_functions = lifted_functions_before;
+            self.handler_frame_parameter_modes = handler_frame_parameter_modes_before;
+            self.continuation_adapters = continuation_adapters_before;
+            self.effect_callable_adapters = effect_callable_adapters_before;
             self.next_closure = next_closure;
             self.inherent_members = inherent_members_before;
             self.copy_nominals = copy_nominals_before;
@@ -7736,15 +7818,6 @@ impl Analyzer {
                             &[source_effect_identity(&effect)],
                         ))
                     }
-                }
-                Expr::Call(callee, arguments)
-                    if matches!(callee.as_ref(), Expr::Name(name) if name == "throws")
-                        && arguments.len() == 1
-                        && arguments[0].label.is_none() =>
-                {
-                    let error =
-                        self.probe_type_argument_source(&arguments[0].value, substitutions)?;
-                    Some(effect_row_source(false, Some(error), &[]))
                 }
                 Expr::Call(callee, arguments)
                     if matches!(callee.as_ref(), Expr::Name(name) if effect_row_from_marker(name).is_some())
@@ -10741,17 +10814,6 @@ impl Analyzer {
                             }
                         }
                         Expr::Call(callee, arguments)
-                            if matches!(callee.as_ref(), Expr::Name(name) if name == "throws")
-                                && arguments.len() == 1
-                                && arguments[0].label.is_none() =>
-                        {
-                            let error = self.type_argument_from_expr(
-                                &arguments[0].value,
-                                &context.type_substitutions,
-                            )?;
-                            effect_row_source(false, Some(error), &[])
-                        }
-                        Expr::Call(callee, arguments)
                             if matches!(callee.as_ref(), Expr::Name(name) if effect_row_from_marker(name).is_some())
                                 && arguments.len() <= 1
                                 && arguments.iter().all(|argument| argument.label.is_none()) =>
@@ -10982,7 +11044,7 @@ impl Analyzer {
                 if self.effects.contains(name) {
                     return arguments.iter().all(|argument| argument.label.is_none());
                 }
-                (name == "throws" || effect_row_from_marker(name).is_some())
+                effect_row_from_marker(name).is_some()
                     && arguments.len() == 1
                     && arguments[0].label.is_none()
             }
@@ -11515,6 +11577,9 @@ impl Analyzer {
                 .is_some()
             });
         let lifted_functions_before = self.lifted_functions.len();
+        let continuation_adapters_before = self.continuation_adapters.len();
+        let effect_callable_adapters_before = self.effect_callable_adapters.len();
+        let handler_frame_parameter_modes_before = self.handler_frame_parameter_modes.clone();
         let boundary = context.return_boundary.clone();
         let lowered_body = if let Some(boundary) = &boundary {
             self.lower_return_value(body, boundary, &mut context)
@@ -11566,6 +11631,11 @@ impl Analyzer {
             );
         } else if standard_throws_requires_handler_lowering {
             self.lifted_functions.truncate(lifted_functions_before);
+            self.continuation_adapters
+                .truncate(continuation_adapters_before);
+            self.effect_callable_adapters
+                .truncate(effect_callable_adapters_before);
+            self.handler_frame_parameter_modes = handler_frame_parameter_modes_before;
         }
         self.function_states
             .insert(name.to_owned(), ResolutionState::Resolved);
@@ -16735,19 +16805,104 @@ impl Analyzer {
     ) -> Option<Vec<String>> {
         let mut groups = Vec::new();
         let root = flatten_call(expression, &mut groups);
-        let Expr::Name(name) = root else {
+        if let Expr::Name(name) = root {
+            if let Some(local) = context.lookup(name) {
+                let function = match &local.ty {
+                    Ty::Function(function) => function,
+                    Ty::Callable(callable) => &callable.signature,
+                    _ => return None,
+                };
+                return (groups.len() == function.groups.len())
+                    .then(|| function.custom_effects.clone());
+            }
+            if let Some(candidates) = self.function_overloads.get(name) {
+                if !groups
+                    .iter()
+                    .flat_map(|group| group.iter())
+                    .any(|argument| argument.label.is_some())
+                {
+                    return None;
+                }
+                let matches = self.matching_function_overloads(candidates, &groups, 0);
+                let [selected] = matches.as_slice() else {
+                    return None;
+                };
+                let signature = self.signatures.get(selected)?;
+                return (groups.len() == signature.groups.len())
+                    .then(|| signature.custom_effects.clone());
+            }
+            if let Some(sources) =
+                self.generic_template_call_custom_effect_sources(name, &groups, context)
+            {
+                return Some(source_effect_identities(&sources));
+            }
+            let signature = self.signatures.get(name)?;
+            return (groups.len() == signature.groups.len())
+                .then(|| signature.custom_effects.clone());
+        }
+
+        let Expr::Member(base, member) = root else {
             return None;
         };
-        if let Some(local) = context.lookup(name) {
-            let function = match &local.ty {
-                Ty::Function(function) => function,
-                Ty::Callable(callable) => &callable.signature,
+        if let Some((_, ty, _)) = self.probe_nominal_type_head(base, context) {
+            let target = match &ty {
+                Ty::Struct(target) | Ty::Enum(target) => target.clone(),
                 _ => return None,
             };
-            return (groups.len() == function.groups.len())
-                .then(|| function.custom_effects.clone());
+            let overload_key = (target.clone(), member.clone(), false);
+            let canonical = if let Some(candidates) = self.inherent_overloads.get(&overload_key) {
+                if !groups
+                    .iter()
+                    .flat_map(|group| group.iter())
+                    .any(|argument| argument.label.is_some())
+                {
+                    return None;
+                }
+                let matches = self.matching_function_overloads(candidates, &groups, 0);
+                let [selected] = matches.as_slice() else {
+                    return None;
+                };
+                selected.clone()
+            } else if let Some(canonical) = self
+                .inherent_members
+                .get(&target)
+                .and_then(|members| members.functions.get(member))
+            {
+                canonical.clone()
+            } else {
+                let candidates =
+                    self.trait_associated_function_candidates(&ty, member, &context.origin);
+                match candidates.as_slice() {
+                    [canonical] => canonical.clone(),
+                    [_, _, ..]
+                        if groups
+                            .iter()
+                            .flat_map(|group| group.iter())
+                            .any(|argument| argument.label.is_some()) =>
+                    {
+                        let matches = self.matching_function_overloads(&candidates, &groups, 0);
+                        let [selected] = matches.as_slice() else {
+                            return None;
+                        };
+                        selected.clone()
+                    }
+                    _ => return None,
+                }
+            };
+            let signature = self.signatures.get(&canonical)?;
+            return (groups.len() == signature.groups.len())
+                .then(|| signature.custom_effects.clone());
         }
-        if let Some(candidates) = self.function_overloads.get(name) {
+        let receiver = match self.probe_expr_ty(base, None, context) {
+            TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) => ty,
+            TypeProbe::Defaultable(_) | TypeProbe::Unsupported => return None,
+        };
+        let target = match &receiver {
+            Ty::Struct(target) | Ty::Enum(target) => target,
+            _ => return None,
+        };
+        let overload_key = (target.clone(), member.clone(), true);
+        let inherent = if let Some(candidates) = self.inherent_overloads.get(&overload_key) {
             if !groups
                 .iter()
                 .flat_map(|group| group.iter())
@@ -16755,21 +16910,45 @@ impl Analyzer {
             {
                 return None;
             }
-            let matches = self.matching_function_overloads(candidates, &groups, 0);
+            let matches = self.matching_function_overloads(candidates, &groups, 1);
             let [selected] = matches.as_slice() else {
                 return None;
             };
-            let signature = self.signatures.get(selected)?;
-            return (groups.len() == signature.groups.len())
-                .then(|| signature.custom_effects.clone());
-        }
-        if let Some(sources) =
-            self.generic_template_call_custom_effect_sources(name, &groups, context)
-        {
-            return Some(source_effect_identities(&sources));
-        }
-        let signature = self.signatures.get(name)?;
-        (groups.len() == signature.groups.len()).then(|| signature.custom_effects.clone())
+            Some(selected.clone())
+        } else {
+            self.inherent_members
+                .get(target)
+                .and_then(|members| members.methods.get(member))
+                .cloned()
+        };
+        let canonical = if let Some(canonical) = inherent {
+            canonical
+        } else {
+            let candidates =
+                self.trait_method_function_candidates(&receiver, member, &context.origin);
+            match candidates.as_slice() {
+                [(_, canonical)] => canonical.clone(),
+                [_, _, ..]
+                    if groups
+                        .iter()
+                        .flat_map(|group| group.iter())
+                        .any(|argument| argument.label.is_some()) =>
+                {
+                    let canonicals = candidates
+                        .iter()
+                        .map(|(_, canonical)| canonical.clone())
+                        .collect::<Vec<_>>();
+                    let matches = self.matching_function_overloads(&canonicals, &groups, 1);
+                    let [selected] = matches.as_slice() else {
+                        return None;
+                    };
+                    selected.clone()
+                }
+                _ => return None,
+            }
+        };
+        let signature = self.signatures.get(&canonical)?;
+        (groups.len() + 1 == signature.groups.len()).then(|| signature.custom_effects.clone())
     }
 
     fn call_custom_effect_sources(
@@ -16782,8 +16961,14 @@ impl Analyzer {
         let Expr::Name(name) = root else {
             return None;
         };
-        if context.lookup(name).is_some() {
-            return None;
+        if let Some(local) = context.lookup(name) {
+            let function = match &local.ty {
+                Ty::Function(function) => function,
+                Ty::Callable(callable) => &callable.signature,
+                _ => return None,
+            };
+            return (groups.len() == function.groups.len())
+                .then(|| effect_identity_sources(&function.custom_effects));
         }
         let canonical = if let Some(candidates) = self.function_overloads.get(name) {
             if !groups
@@ -16954,7 +17139,7 @@ impl Analyzer {
     ) -> HirExpr {
         let Some(active_error) = context.active_throws_error.clone() else {
             self.error(format!(
-                "call requires `throws({thrown_error})`; propagate it from the current function or handle it with `try {{ ... }}`"
+                "call requires `Throws({thrown_error})`; propagate it from the current function or handle it with `try {{ ... }}`"
             ));
             return error_expr();
         };
@@ -20316,22 +20501,28 @@ impl Analyzer {
         let transformed_inner_callee =
             Expr::Call(Box::new((**handler_head).clone()), transformed_clauses);
 
-        let identity: SourceContinuation = Rc::new(|_, value| Ok(value));
-        let transformed_action =
-            match self.transform_handler_expr((**action_body).clone(), handler, resume, identity) {
-                Ok(transformed) => transformed,
-                Err(()) => return Some(Err(())),
-            };
-        Some(continuation(
-            self,
-            Expr::Call(
-                Box::new(transformed_inner_callee),
-                vec![CallArg {
-                    label: None,
-                    value: Expr::Closure(Vec::new(), Box::new(transformed_action)),
-                }],
-            ),
-        ))
+        let wrap_in_unsafe = handler.lexical_unsafe_depth.get() > 0;
+        let transformed_action = match self.transform_handler_expr(
+            (**action_body).clone(),
+            handler,
+            resume,
+            continuation,
+        ) {
+            Ok(transformed) => transformed,
+            Err(()) => return Some(Err(())),
+        };
+        let call = Expr::Call(
+            Box::new(transformed_inner_callee),
+            vec![CallArg {
+                label: None,
+                value: Expr::Closure(Vec::new(), Box::new(transformed_action)),
+            }],
+        );
+        Some(Ok(if wrap_in_unsafe {
+            Expr::Unsafe(Box::new(call))
+        } else {
+            call
+        }))
     }
 
     fn transform_handler_arguments(
@@ -23557,11 +23748,7 @@ impl Analyzer {
             .cloned()
             .collect::<Vec<_>>();
         if !missing.is_empty() {
-            self.error(format!(
-                "call to closure `{local_name}` requires custom effect{} `{}`",
-                if missing.len() == 1 { "" } else { "s" },
-                missing.join(", ")
-            ));
+            self.report_missing_custom_effects(format!("call to closure `{local_name}`"), missing);
         }
 
         let callable = HirPlace {
@@ -23726,11 +23913,7 @@ impl Analyzer {
             .cloned()
             .collect::<Vec<_>>();
         if !missing.is_empty() {
-            self.error(format!(
-                "indirect call `{local_name}` requires custom effect{} `{}`",
-                if missing.len() == 1 { "" } else { "s" },
-                missing.join(", ")
-            ));
+            self.report_missing_custom_effects(format!("indirect call `{local_name}`"), missing);
         }
 
         let mut temporary_loans = Vec::new();
@@ -24242,8 +24425,20 @@ impl Analyzer {
         self.signatures.insert(canonical.clone(), signature);
         self.function_origins
             .insert(canonical.clone(), self.function_origins[target].clone());
-        self.function_accesses
-            .insert(canonical.clone(), self.function_accesses[target].clone());
+        let origin = self
+            .function_origins
+            .get(target)
+            .cloned()
+            .unwrap_or_default();
+        let access = self
+            .function_accesses
+            .get(target)
+            .cloned()
+            .unwrap_or(AccessBoundary {
+                visibility: Visibility::Private,
+                origin,
+            });
+        self.function_accesses.insert(canonical.clone(), access);
         self.function_order.push(canonical.clone());
 
         let mut groups = group_refs
@@ -24501,8 +24696,16 @@ impl Analyzer {
             self.signatures.insert(canonical.clone(), signature);
             self.function_origins
                 .insert(canonical.clone(), self.function_origins[name].clone());
-            self.function_accesses
-                .insert(canonical.clone(), self.function_accesses[name].clone());
+            let origin = self.function_origins.get(name).cloned().unwrap_or_default();
+            let access = self
+                .function_accesses
+                .get(name)
+                .cloned()
+                .unwrap_or(AccessBoundary {
+                    visibility: Visibility::Private,
+                    origin,
+                });
+            self.function_accesses.insert(canonical.clone(), access);
             self.function_order.push(canonical.clone());
         }
         Some((canonical, specialized_groups))
@@ -24658,11 +24861,23 @@ impl Analyzer {
         self.signatures.insert(canonical.clone(), signature);
         self.function_origins
             .insert(canonical.clone(), self.function_origins[name].clone());
-        self.function_accesses
-            .insert(canonical.clone(), self.function_accesses[name].clone());
+        let origin = self.function_origins.get(name).cloned().unwrap_or_default();
+        let access = self
+            .function_accesses
+            .get(name)
+            .cloned()
+            .unwrap_or(AccessBoundary {
+                visibility: Visibility::Private,
+                origin,
+            });
+        self.function_accesses.insert(canonical.clone(), access);
         self.function_order.push(canonical.clone());
         self.lifted_functions
             .retain(|function| function.name != closure.function);
+        self.continuation_adapters
+            .retain(|adapter| adapter.function != closure.function);
+        self.effect_callable_adapters
+            .retain(|adapter| adapter.function != closure.function);
 
         let callable = HirPlace {
             local: local.id,
@@ -25756,12 +25971,30 @@ impl Analyzer {
             .cloned()
             .collect::<Vec<_>>();
         if !missing.is_empty() {
-            self.error(format!(
-                "call to `{name}` requires custom effect{} `{}`",
-                if missing.len() == 1 { "" } else { "s" },
-                missing.join(", ")
-            ));
+            self.report_missing_custom_effects(format!("call to `{name}`"), missing);
         }
+    }
+
+    fn report_missing_custom_effects(&mut self, prefix: String, missing: Vec<String>) {
+        if missing.len() == 1 && self.effect_identity_is_standard_throws(&missing[0]) {
+            self.error(format!(
+                "{prefix} requires `{}`; handle it with `try {{ ... }}` or propagate it from the current function",
+                missing[0]
+            ));
+            return;
+        }
+        self.error(format!(
+            "{prefix} requires custom effect{} `{}`",
+            if missing.len() == 1 { "" } else { "s" },
+            missing.join(", ")
+        ));
+    }
+
+    fn effect_identity_is_standard_throws(&self, identity: &str) -> bool {
+        source_type_from_identity(identity).is_some_and(|source| {
+            standard_throws_error_source(&source, self.lang_item_name(LangItemKind::ThrowsEffect))
+                .is_some()
+        })
     }
 
     fn unify_types(&mut self, left: &Ty, right: &Ty, context: impl fmt::Display) -> Ty {
@@ -25812,7 +26045,7 @@ impl Analyzer {
         }
         if let Some(error) = &signature.throws_error {
             self.error(format!(
-                "`main` cannot expose unhandled `throws({error})`; handle it with `try {{ ... }}`"
+                "`main` cannot expose unhandled `Throws({error})`; handle it with `try {{ ... }}`"
             ));
         }
         if !matches!(result, Ty::Unit | Ty::I32 | Ty::Error) {
@@ -36490,7 +36723,7 @@ mod tests {
     }
 
     fn cleanup_plan_text(source: &str, function_name: &str) -> CleanupPlan {
-        let program = crate::parser::parse(source).expect("cleanup-plan source must parse");
+        let program = resolve_text(source);
         let mut analyzer = Analyzer::new(&program);
         let hir = match analyzer.analyze_target(false) {
             Some(hir) => hir,
@@ -37247,9 +37480,11 @@ let main(): i32 = {
 
     #[test]
     fn throw_returns_the_enclosing_throws_error_variant() {
-        let ir = compile_text(
+        let ir = compile_resolved_text(
             r#"
-let answer(fail: bool): i32 with(throws(bool)) = {
+use core.effects.Throws
+
+let answer(fail: bool): i32 with(Throws(bool)) = {
   if fail { throw true }
   42
 }
@@ -37266,14 +37501,16 @@ let main(): i32 = {
 
     #[test]
     fn throws_calls_propagate_automatically_and_try_handles_them() {
-        let ir = compile_text(
+        let ir = compile_resolved_text(
             r#"
-let read(fail: bool): i32 with(throws(bool)) = {
+use core.effects.Throws
+
+let read(fail: bool): i32 with(Throws(bool)) = {
   if fail { throw true }
   40
 }
-let forward(fail: bool): i32 with(throws(bool)) = { read(fail) + 2 }
-let invoke(action: (bool): i32 with(throws(bool)))(fail: bool): i32 with(throws(bool)) = {
+let forward(fail: bool): i32 with(Throws(bool)) = { read(fail) + 2 }
+let invoke(action: (bool): i32 with(Throws(bool)))(fail: bool): i32 with(Throws(bool)) = {
   action(fail) }
 let main(): i32 = {
   let result: Result(i32, bool) = try { invoke(forward)(false) }
@@ -37287,9 +37524,11 @@ let main(): i32 = {
         .expect("throws calls should branch automatically and try should produce Result");
         assert!(ir.contains("switch"));
 
-        let unhandled = compile_text(
+        let unhandled = compile_resolved_text(
             r#"
-let read(): i32 with(throws(bool)) = { throw true }
+use core.effects.Throws
+
+let read(): i32 with(Throws(bool)) = { throw true }
 let main(): i32 = { read() }
 "#,
         )
@@ -37301,9 +37540,11 @@ let main(): i32 = { read() }
 
     #[test]
     fn try_infers_a_unique_escaping_throws_source_without_context() {
-        let ir = compile_text(
+        let ir = compile_resolved_text(
             r#"
-let fail(flag: bool): i32 with(throws(bool)) = { if flag { throw true } else { 41 } }
+use core.effects.Throws
+
+let fail(flag: bool): i32 with(Throws(bool)) = { if flag { throw true } else { 41 } }
 let main(): i32 = {
   let action = fail
   let direct = try { fail(false) }
@@ -37315,26 +37556,30 @@ let main(): i32 = {
         .expect("try should infer Result from a unique direct or indirect throws source");
         assert!(ir.contains("switch"));
 
-        compile_text(
+        compile_resolved_text(
             r#"
+use core.effects.Throws
+
 let Failure = struct(code: i32)
 extend Failure: Copy {}
 extend Failure {
-  let raise(borrow self)(): i32 with(throws(bool)) = { throw true }
+  let raise(borrow self)(): i32 with(Throws(bool)) = { throw true }
 }
 let main(): i32 = {
   let failure = Failure(1)
-  let result = try { failure.raise() }
+  let result: Result(i32, bool) = try { failure.raise() }
   result ?? 42
 }
 "#,
         )
-        .expect("try inference should see a complete throwing method call");
+        .expect("contextual try should handle a complete throwing method call");
 
-        let ambiguous = compile_text(
+        let ambiguous = compile_resolved_text(
             r#"
-let left(): i32 with(throws(bool)) = { throw true }
-let right(): i32 with(throws(i64)) = { throw 1 }
+use core.effects.Throws
+
+let left(): i32 with(Throws(bool)) = { throw true }
+let right(): i32 with(Throws(i64)) = { throw 1 }
 let main(): i32 = {
   let result = try { if true { left() } else { right() } }
   result ?? 0
@@ -37348,9 +37593,11 @@ let main(): i32 = {
                 .contains("multiple escaping error types: `bool`, `i64`")
         }));
 
-        let handled = compile_text(
+        let handled = compile_resolved_text(
             r#"
-let fail(): i32 with(throws(bool)) = { throw true }
+use core.effects.Throws
+
+let fail(): i32 with(Throws(bool)) = { throw true }
 let main(): i32 = {
   let inner = try { fail() }
   let outer = try { inner }
@@ -37425,9 +37672,11 @@ let main(): i32 = {
         )
         .expect("a local closure should retain named overload selection");
 
-        compile_text(
+        compile_resolved_text(
             r#"
-let choose(fail: bool): i32 with(throws(bool)) = { if fail { throw true } else { 42 } }
+use core.effects.Throws
+
+let choose(fail: bool): i32 with(Throws(bool)) = { if fail { throw true } else { 42 } }
 let choose(value: i32): i32 = { value }
 let main(): i32 = {
   let result = try { choose(fail: false) }
@@ -37495,19 +37744,21 @@ let main(): i32 = { Counter(40).add(2) }
             .iter()
             .any(|error| error.message.contains("requires named arguments")));
 
-        compile_text(
+        compile_resolved_text(
             r#"
+use core.effects.Throws
+
 let Counter = struct(value: i32)
 extend Counter: Copy {}
 extend Counter {
-  let read(borrow self)(fail: bool): i32 with(throws(bool)) = {
+  let read(borrow self)(fail: bool): i32 with(Throws(bool)) = {
     if fail { throw true } else { self.value }
   }
   let read(borrow self)(fallback: i32): i32 = { fallback }
 }
 let main(): i32 = {
   let counter = Counter(42)
-  let result = try { counter.read(fail: false) }
+  let result: Result(i32, bool) = try { counter.read(fail: false) }
   result ?? 0
 }
 "#,
@@ -37656,12 +37907,14 @@ let main(): i32 = { 0 }
 
     #[test]
     fn effect_parameters_infer_forward_and_explicitly_select_throws_rows() {
-        let ir = compile_text(
+        let ir = compile_resolved_text(
             r#"
+use core.effects.Throws
+
 let invoke(E: effect)(action: (): i32 with(E))(): i32 with(E) = { action() }
-let fail(): i32 with(throws(bool)) = { throw true }
-let forward(): i32 with(throws(bool)) = { invoke(fail)() }
-let explicit(): i32 with(throws(bool)) = { invoke(throws(bool))(fail)() }
+let fail(): i32 with(Throws(bool)) = { throw true }
+let forward(): i32 with(Throws(bool)) = { invoke(fail)() }
+let explicit(): i32 with(Throws(bool)) = { invoke(Throws(bool))(fail)() }
 let main(): i32 = {
   let inferred: Result(i32, bool) = try { forward() }
   let selected: Result(i32, bool) = try { explicit() }
@@ -37677,7 +37930,7 @@ let main(): i32 = {
     fn throw_requires_an_exact_active_throws_boundary() {
         for (source, expected) in [
             (
-                "let fail(): i32 with(throws(bool)) = { throw 0 }\nlet main(): i32 = { 0 }\n",
+                "let fail(): i32 with(Throws(bool)) = { throw 0 }\nlet main(): i32 = { 0 }\n",
                 "where `bool` is expected",
             ),
             (
@@ -37693,7 +37946,13 @@ let main(): i32 = {
                 "requires an enclosing `with(Throws(Error))`",
             ),
         ] {
-            let errors = compile_text(source).expect_err("invalid throw must be rejected");
+            let source = if source.contains("with(Throws") {
+                format!("use core.effects.Throws\n{source}")
+            } else {
+                source.to_owned()
+            };
+            let errors =
+                compile_resolved_text(&source).expect_err("invalid throw must be rejected");
             assert!(
                 errors.iter().any(|error| error.message.contains(expected)),
                 "missing `{expected}` diagnostic in {errors:?}"
@@ -40004,7 +40263,7 @@ let main(): i32 = { 0 }
         assert!(errors.iter().any(|error| {
             error
                 .message
-                .contains("requires custom effect `core::effects::Throws(i64)`")
+                .contains("requires `core::effects::Throws(i64)`")
         }));
     }
 
@@ -40090,12 +40349,14 @@ let main(): i32 = {
         )
         .expect("lexical handler capabilities should cross generated named CPS frames");
 
-        compile_text(
+        compile_resolved_text(
             r#"
+use core.effects.Throws
+
 let Supply = effect { let seed(): i32 }
-let Ask = effect { let value(): i32 with(Supply, throws(bool)) }
-let request(): i32 with(Ask, Supply, throws(bool)) = { Ask.value() }
-let inner(): i32 with(Supply, throws(bool)) = {
+let Ask = effect { let value(): i32 with(Supply, Throws(bool)) }
+let request(): i32 with(Ask, Supply, Throws(bool)) = { Ask.value() }
+let inner(): i32 with(Supply, Throws(bool)) = {
   Ask.handle(value: { (resume) -> resume(42) }) { request() }
 }
 let main(): i32 = {
@@ -40141,19 +40402,19 @@ let main(): i32 = { run() }
 
         compile_resolved_text(
             r#"
-use core.effects.Unsafe
+use core.effects.{Throws, Unsafe}
 
 let AskUnsafe = effect { let value(): i32 with(Unsafe) }
 let unsafe_run(): i32 = { unsafe { AskUnsafe.handle(value: { (resume) -> resume(42) }) {
   AskUnsafe.value()
 } } }
-let AskThrows = effect { let value(): i32 with(throws(bool)) }
-let throwing_run(): i32 with(throws(bool)) = {
+let AskThrows = effect { let value(): i32 with(Throws(bool)) }
+let throwing_run(): i32 with(Throws(bool)) = {
   AskThrows.handle(value: { (resume) -> resume(42) }) { AskThrows.value() }
 }
 let AskFrame = effect { let value(): i32 }
-let throwing_request(): i32 with(AskFrame, throws(bool)) = { AskFrame.value() }
-let throwing_frame(): i32 with(throws(bool)) = {
+let throwing_request(): i32 with(AskFrame, Throws(bool)) = { AskFrame.value() }
+let throwing_frame(): i32 with(Throws(bool)) = {
   AskFrame.handle(value: { (resume) -> resume(42) }) { throwing_request() }
 }
 let main(): i32 = { 0 }
@@ -40175,17 +40436,22 @@ let main(): i32 = { run() }
             .iter()
             .any(|error| error.message.contains("requires an `unsafe` handler")));
 
-        let missing_throws = compile_text(
+        let missing_throws = compile_resolved_text(
             r#"
-let Ask = effect { let value(): i32 with(throws(bool)) }
+use core.effects.Throws
+
+let Ask = effect { let value(): i32 with(Throws(bool)) }
 let run(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) { Ask.value() } }
 let main(): i32 = { run() }
 "#,
         )
         .expect_err("handling an operation must not erase its throws requirement");
-        assert!(missing_throws
-            .iter()
-            .any(|error| error.message.contains("call requires `throws(bool)`")));
+        assert!(missing_throws.iter().any(|error| {
+            error
+                .message
+                .contains("requires `core::effects::Throws(bool)`")
+                && error.message.contains("core::effects::Throws(bool)")
+        }));
     }
 
     #[test]
@@ -40790,10 +41056,12 @@ let main(): i32 = {
 
     #[test]
     fn throws_effects_lower_to_result_boundaries_and_propagate() {
-        let ir = compile_text(
+        let ir = compile_resolved_text(
             r#"
-let fail(flag: bool): i32 with(throws(bool)) = { if flag { throw true } else { 41 } }
-let forward(flag: bool): i32 with(throws(bool)) = { fail(flag) }
+use core.effects.Throws
+
+let fail(flag: bool): i32 with(Throws(bool)) = { if flag { throw true } else { 41 } }
+let forward(flag: bool): i32 with(Throws(bool)) = { fail(flag) }
 let main(): i32 = {
   let result: Result(i32, bool) = try { forward(false) }
   result ?? 0
@@ -42176,10 +42444,12 @@ let main(): i32 = { Number.construct(42).value }
     fn nominal_error_types_propagate_through_throws() {
         let ir = compile_resolved_text(
             r#"
-let Failure = enum { Stop(bool) }
-let read(fail: bool): i32 with(throws(Failure)) = {
-  if fail { throw Stop(true) } else { 40 } }
-let run(fail: bool): i32 with(throws(Failure)) = { read(fail) + 2 }
+use core.effects.Throws
+
+let Failure = struct(code: i32)
+let read(fail: bool): i32 with(Throws(Failure)) = {
+  if fail { throw Failure(1) } else { 40 } }
+let run(fail: bool): i32 with(Throws(Failure)) = { read(fail) + 2 }
 let main(): i32 = {
   let result: Result(i32, Failure) = try { run(false) }
   result match { Ok(value) => value, Err(_) => 0 }
@@ -43021,14 +43291,20 @@ let replace(borrow(mut) target: Pair, move replacement: Payload): () = {
     fn cleanup_plan_try_and_throw_returns_exit_match_arm_scopes() {
         let plan = cleanup_plan_text(
             r#"
-let read(fail: bool): i32 with(throws(bool)) = { if fail { throw true } else { 42 } }
-let propagate(fail: bool): i32 with(throws(bool)) = {
+use core.effects.Throws
+
+let read(fail: bool): i32 with(Throws(bool)) = { if fail { throw true } else { 42 } }
+let propagate(fail: bool): i32 with(Throws(bool)) = {
   let item = read(fail)
   if item == 0 { throw true }
   item
 }
+let main(): i32 = {
+  let result: Result(i32, bool) = try { propagate(false) }
+  result ?? 0
+}
 "#,
-            "propagate",
+            "main",
         );
         let match_arm_scopes: HashSet<_> = plan
             .scopes
@@ -43038,11 +43314,23 @@ let propagate(fail: bool): i32 with(throws(bool)) = {
             .collect();
         assert!(!match_arm_scopes.is_empty());
         assert!(plan.blocks.iter().any(|block| {
-            matches!(
-                &block.terminator,
-                Some(CleanupTerminator::Return { exited_scopes })
-                    if exited_scopes.iter().any(|scope| match_arm_scopes.contains(scope))
-            )
+            let exits_match_arm = |edge: &CleanupEdge| {
+                edge.exited_scopes
+                    .iter()
+                    .any(|scope| match_arm_scopes.contains(scope))
+            };
+            match &block.terminator {
+                Some(CleanupTerminator::Goto(edge)) => exits_match_arm(edge),
+                Some(CleanupTerminator::Branch {
+                    then_edge,
+                    else_edge,
+                    ..
+                }) => exits_match_arm(then_edge) || exits_match_arm(else_edge),
+                Some(CleanupTerminator::Return { exited_scopes }) => exited_scopes
+                    .iter()
+                    .any(|scope| match_arm_scopes.contains(scope)),
+                _ => false,
+            }
         }));
         assert!(plan.blocks.iter().any(|block| {
             block.operations.iter().any(|operation| {

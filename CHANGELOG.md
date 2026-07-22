@@ -6,6 +6,29 @@ subset.
 
 ## Unreleased
 
+## 0.169.0 - 2026-07-22
+
+- Migrated the public residual-handler fixture from lowercase `throws(E)` to ordinary
+  `core.effects.Throws(E)`, leaving public pass/fail fixtures on the standard effect spelling.
+- Removed the remaining accepted lowercase `with(throws(E))` and explicit `throws(E)` effect-row
+  argument paths; lowercase `throws` no longer has parser/codegen special handling, while
+  `Throws(E)` is kept as an ordinary standard effect identity.
+- Threaded an outer handler continuation into nested handler action closures, so residual
+  `Throws(E)` rows exposed by inner algebraic handlers compose through the ordinary handler/CPS
+  path instead of relying on the older carrier.
+- Reconstructed effect identity strings back into source effect applications when generic effect
+  rows, cached signatures, or local function values need their original arguments, allowing
+  standard `Throws(E)` rows to forward like user-defined effect rows.
+- Taught contextual standard `try { ... }` detection to recognize method and associated-function
+  calls that require `Throws(E)`, and improved missing-standard-`Throws(E)` diagnostics to suggest
+  handling with `try { ... }` or propagating the effect.
+- Kept generated nested handler calls lexically inside `unsafe { ... }` after CPS rewriting and
+  rolled back validation/specialization continuation adapters together with discarded lifted
+  closures, preventing stale adapter references in final IR.
+- Documented the design rule that compiler-backed capabilities should be expressed as validated
+  source-level effects, traits, or protocols first; compiler lowering should be the implementation
+  hook rather than a separate magical surface.
+
 ## 0.168.0 - 2026-07-22
 
 - Migrated the public mixed unsafe/error fixture from lowercase `throws(E)` to the ordinary

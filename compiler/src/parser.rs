@@ -1504,7 +1504,7 @@ impl Parser {
         self.advance();
         self.expect(&TokenKind::LParen, "`(` after `with`")?;
         let unsafe_effect = false;
-        let mut throws_error: Option<Type> = None;
+        let throws_error: Option<Type> = None;
         let mut effect_parameters = Vec::new();
         let mut custom = Vec::new();
         loop {
@@ -1516,15 +1516,7 @@ impl Parser {
                 );
             } else if let TokenKind::Ident(name) = &self.current().kind {
                 let name = name.clone();
-                if name == "throws" && !self.at_offset(1, &TokenKind::Dot) {
-                    self.advance();
-                    if throws_error.is_some() {
-                        return Err(self.error_here("duplicate `throws` effect in `with(...)`"));
-                    }
-                    self.expect(&TokenKind::LParen, "`(` after `throws`")?;
-                    throws_error = Some(self.type_expr()?);
-                    self.expect(&TokenKind::RParen, "`)` after the thrown error type")?;
-                } else if self.effect_parameters_in_scope.contains(&name)
+                if self.effect_parameters_in_scope.contains(&name)
                     && !self.at_offset(1, &TokenKind::Dot)
                 {
                     self.advance();

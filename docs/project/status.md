@@ -5,6 +5,12 @@ compiler pipeline, project manifests and local dependencies, ownership and borro
 source-backed core traits and containers, cleanup lowering, raw allocation primitives, and a growing
 `Box`/`Vec` allocation library.
 
+A current design goal is to keep compiler-backed language features source-shaped wherever possible:
+standard control capabilities should be declared as ordinary core effects, traits, or protocols,
+then validated as lang items and lowered by the compiler. `Throws(Error)` already follows this
+model as a normal effect with `raise`; future work should extend the same rule to customizable
+operators such as `throw` rather than adding closed compiler-only cases for each type.
+
 The unit type has one source spelling, `()`; the former `void` alias is removed before 1.0. The
 uninhabited prelude enum is spelled `Never`; the former lowercase `never` spelling has no
 compatibility alias.
@@ -29,11 +35,14 @@ so `Throws(Error).raise` can now be exercised through the same handler path as u
 `Throws(Error)` effect. `core.control.try` now declares its action requirement as `Throws(E)`, and
 contextual `try { ... }` with an expected `Result(T, Error)` materializes ordinary `Throws(Error)`
 as `Result` through a generated `Throws(Error).handle`. Context-free ordinary `Throws` inference now
-covers direct standard-effect function calls with a probeable success type, explicitly instantiated
-generic calls such as `fail(bool)(...)`, and `do` return boundaries forwarding standard
-`Throws(Error)` into a contextual `try { ... }`. Mixed `Throws(Error)` plus `Unsafe` rows now run
-through the standard effect spelling while preserving `unsafe { ... }` authorization across
-generated CPS frames. `Never`-only actions and residual handlers remain future work.
+covers direct standard-effect function calls, local function values, explicitly instantiated generic
+calls such as `fail(bool)(...)`, and `do` return boundaries forwarding standard `Throws(Error)` into
+a contextual `try { ... }`, provided the success type is probeable and the escaping error type is
+unique. Mixed `Throws(Error)` plus `Unsafe` rows now run through the standard effect spelling while
+preserving `unsafe { ... }` authorization across generated CPS frames. Concrete residual-handler
+paths also compose through ordinary `Throws(Error)` rows. `Never`-only actions, enum-variant error
+construction inside generated standard handler frames, and fully generic residual-row cases remain
+future work.
 `core.control` also defines `Continuation(Input, Output)` and
 `EffectCallable(Input, Output, Answer)` as validated empty source contracts. The latter has a
 distinct owned semantic type plus a four-pointer LLVM call/drop/environment/flag layout and guarded
@@ -93,9 +102,9 @@ Passing keyword generics are also implemented for functions and generic inherent
 position. Functions and trait methods place a contextual `with(...)` clause after the result type:
 `: T with(Unsafe)` adds the checked unsafe call requirement, while `: T with(Throws(E))` declares the
 standard recoverable-error effect. `try { ... }` handles that effect and produces an explicit
-`Result`. Without a contextual result type, direct ordinary `Throws(E)` calls can infer
-`Result(T, E)` when the success type and unique error type are probeable; postfix `.try` and
-`with(try...)` are removed.
+`Result`. Without a contextual result type, direct ordinary `Throws(E)` calls and local function
+values can infer `Result(T, E)` when the success type and unique error type are probeable; postfix
+`.try`, lowercase `with(throws...)`, and `with(try...)` are removed.
 Callable source types use the same shape, such as
 `(i32): i32 with(Unsafe)`; the clause is not a runtime or currying group. Complete direct, method,
 aliased, and partially applied unsafe calls require an enclosing `with(Unsafe)` function or
@@ -107,9 +116,9 @@ checked for parameter modes, result types, arity, visibility, and missing row re
 Operations share the language's name-only overload rule: runtime label shapes must differ, calls
 use named arguments, and repeated handler labels select signatures through clause parameter names.
 Handling removes only the selected nominal identity: operation gates and generated resumable frames
-retain residual `Unsafe`, `Throws(E)`, and other nominal requirements. Some residual throwing-frame
-paths still use the older internal carrier while they are being migrated to the ordinary standard
-effect.
+retain residual `Unsafe`, `Throws(E)`, and other nominal requirements. Concrete residual
+`Throws(E)` rows now compose through nested handlers using the ordinary standard effect path; fully
+effect-parameterized residual rows remain implementation work.
 Derived handlers support typed one-shot resumption, abandonment, `done:` answer conversion, named-call
 propagation, direct recursion, and resumable loop backedges. Cross-function abandonment and
 computation after `resume` use explicit CPS continuation closures. Direct and mutually recursive
@@ -179,10 +188,11 @@ custom-effect slot, while a value requiring additional effects cannot fill a nar
 slot's widened requirements remain checked at indirect calls, and generic row inference retains the
 callable's exact source row.
 Fixed ordinary `Throws(E)` direct calls, contextual `try` handling, `do` return-boundary
-forwarding, and mixed `Throws(E)`/`Unsafe` rows are implemented for the public direct, explicitly
-instantiated generic, and mixed-effect fixtures.
-Effect-parameterized residual-handler lowering still uses the older internal carrier path until
-that implementation is unified. Ordinary `Option` and `Result` functions require
+forwarding, mixed `Throws(E)`/`Unsafe` rows, and concrete residual-handler composition are
+implemented for the public direct, explicitly instantiated generic, mixed-effect, and residual
+fixtures.
+Effect-parameterized residual-handler lowering still needs full standard-row coverage. Ordinary
+`Option` and `Result` functions require
 explicit variant construction; the removed `Try`, `FromResidual`, `FromError`, and `ControlFlow`
 language protocols no
 longer participate in return completion or propagation. `do` transparently forwards the complete
