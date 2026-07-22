@@ -188,9 +188,10 @@ parameters of a target-specific handler specialization. It injects the closure i
 lexical action and then performs selective CPS, so no direct-style effectful closure symbol reaches
 native linking. Resumption and abandonment share the existing continuation cleanup path, including
 exactly-once destruction of moved resources. Consuming the action releases its stored capture loans
-before following evaluation continues. Callable aliases, conditional action values, direct closure
-literals, and actions crossing another function boundary still require the remaining general erased
-value integration.
+before following evaluation continues. Moving the callable through local alias chains retains the
+same source/action identity and relocates borrowed pointer slots separately from owned fields.
+Conditional action values, direct trailing-closure literals, and actions crossing another function
+boundary still require the remaining general erased value integration.
 
 Selective CPS removes only the handled nominal identity. Residual `unsafe`, `throws(Error)`, and
 other nominal requirements remain on generated resumable frames. Intercepted operations also retain

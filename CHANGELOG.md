@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.151.0 - 2026-07-22
+
+- Propagated original captured-action source metadata through immutable and mutable callable alias
+  moves, allowing alias chains to enter reusable-handler specialization without rebuilding captures.
+- Fixed callable-environment relocation to copy borrowed capture pointer slots as pointers rather
+  than loading them as the pointee value type; this removes a native `FnMut` alias crash.
+- Kept owned capture relocation and drop flags distinct from borrowed slots, preserving exactly-once
+  `FnOnce` cleanup through both resumed and abandoned aliased actions.
+- Promoted the former alias diagnostic to native `FnMut`/`FnOnce` coverage and retained a focused
+  diagnostic for direct trailing-closure action literals, the next unconnected source shape.
+
 ## 0.150.0 - 2026-07-22
 
 - Removed the adjacency restriction for directly bound captured actions passed to reusable

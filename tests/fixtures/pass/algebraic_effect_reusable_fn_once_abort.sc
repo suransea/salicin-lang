@@ -23,8 +23,9 @@ let execute(counter: MutPtr(i32)): i32 = {
   let action: (): i32 with(Abort) = { () ->
     Abort.stop() + consume(resource)
   }
+  let alias = action
   let padding = 0
-  let result = run(action) + padding
+  let result = run(alias) + padding
   let drops = unsafe { *counter }
   result + drops
 }

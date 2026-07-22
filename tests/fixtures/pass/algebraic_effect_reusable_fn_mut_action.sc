@@ -14,7 +14,8 @@ let main(): i32 = {
     total = total + input
     Ask.value() + total
   }
+  let mut alias = action
   let padding = 30
-  let result = 1 + run(action)(1) - 1
+  let result = 1 + run(alias)(1) - 1
   result + total + padding
 }

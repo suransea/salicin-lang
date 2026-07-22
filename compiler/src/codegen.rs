@@ -11235,6 +11235,12 @@ impl Analyzer {
                                 if matches!(binding.value, Expr::Closure(_, _)) && closure.is_some()
                                 {
                                     context.source_closures.insert(id, binding.clone());
+                                } else if let Some(source) = callable_source
+                                    .as_ref()
+                                    .and_then(|source| context.source_closures.get(&source.id))
+                                    .cloned()
+                                {
+                                    context.source_closures.insert(id, source);
                                 }
                                 context.insert_local(
                                     binding.name.clone(),
@@ -30478,7 +30484,11 @@ impl<'a> FunctionEmitter<'a> {
                                 if matches!(binding.ty, Ty::Function(_) | Ty::Callable(_))
                                     && self.partial_captures.contains_key(&place.local)
                                 {
-                                    self.relocate_callable_captures(place.local, binding.id)?;
+                                    self.relocate_callable_captures(
+                                        place.local,
+                                        binding.id,
+                                        &place.ty,
+                                    )?;
                                     continue;
                                 }
                             }
@@ -31604,18 +31614,41 @@ impl<'a> FunctionEmitter<'a> {
         &mut self,
         source: LocalId,
         destination: LocalId,
+        callable_ty: &Ty,
     ) -> Result<(), Diagnostic> {
+        let Ty::Callable(callable) = callable_ty else {
+            return Err(Diagnostic::new(
+                "internal error: relocated callable has no callable type",
+            ));
+        };
         let captures = self.partial_captures.remove(&source).ok_or_else(|| {
             Diagnostic::new(format!(
                 "internal error: callable local {source} has no stored environment"
             ))
         })?;
         let mut relocated = Vec::with_capacity(captures.len());
-        for capture in captures {
+        if captures.len() != callable.captures.len() {
+            return Err(Diagnostic::new(
+                "internal error: relocated callable capture shape changed",
+            ));
+        }
+        for (capture, capture_ty) in captures.into_iter().zip(&callable.captures) {
             let Some(capture) = capture else {
                 relocated.push(None);
                 continue;
             };
+            if matches!(capture_ty.mode, PassMode::Borrow | PassMode::MutBorrow) {
+                let value = self.fresh_register();
+                self.instruction(format!("{value} = load ptr, ptr {}", capture.pointer));
+                let pointer = self.entry_alloca("ptr", "moved borrowed callable capture");
+                self.instruction(format!("store ptr {value}, ptr {pointer}"));
+                relocated.push(Some(StoredCapture {
+                    ty: capture.ty,
+                    pointer,
+                    drop_flag: None,
+                }));
+                continue;
+            }
             let ty = llvm_value_type(&capture.ty)?;
             let value = self.fresh_register();
             self.instruction(format!("{value} = load {ty}, ptr {}", capture.pointer));
@@ -41292,27 +41325,25 @@ let main(): i32 = {
     }
 
     #[test]
-    fn reusable_handler_capturing_action_reports_unsupported_aliases() {
+    fn reusable_handler_capturing_action_reports_unsupported_direct_literals() {
         let errors = compile_text(
             r#"
 let Ask = effect { let value(): i32 }
-let run(move action: (i32): i32 with(Ask))(input: i32): i32 = {
-  Ask.handle(value: { (resume) -> resume(10) }) { action(input) }
+let run()(move action: (): i32 with(Ask)): i32 = {
+  Ask.handle(value: { (resume) -> resume(10) }) { action() }
 }
 let main(): i32 = {
   let mut base = 30
-  let mut action: (i32): i32 with(Ask) = { (input: i32) ->
+  run() { () ->
     base = base + 1
-    Ask.value() + input + base
+    Ask.value() + base
   }
-  let alias = action
-  run(alias)(1)
 }
 "#,
         )
-        .expect_err("captured action aliases remain outside the current reusable slice");
+        .expect_err("direct action literals remain outside the current reusable slice");
         assert!(errors
             .iter()
-            .any(|error| error.message.contains("passed directly from its original")));
+            .any(|error| error.message.contains("requires a local closure")));
     }
 }

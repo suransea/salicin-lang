@@ -29,8 +29,10 @@ created at the original declaration, then its shared and mutable `Copy` captures
 as `borrow` and `borrow(mut)`, while consuming owned roots are lifted as `move`; the closure is then
 injected before selective CPS. Native regressions cover `FnMut` resumption plus `FnOnce` cleanup on
 both resumption and abandonment, including state/drop observations in following evaluation.
-Callable aliases, conditional values, direct closure literals, cross-function transport, and fully
-general erased action construction remain the next implementation stages.
+Local callable alias moves now carry the original action metadata and relocate borrowed pointer
+slots without confusing them with owned pointee values. Conditional values, direct trailing-closure
+literals, cross-function transport, and fully general erased action construction remain the next
+implementation stages.
 
 Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
 `continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs
