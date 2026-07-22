@@ -4,7 +4,7 @@ let Ask = effect {
 
 let run(move action: (i32): i32 with(Ask))(input: i32): i32 = {
   Ask.handle(value: { (resume) -> resume(10) }) {
-    action(input) + 31
+    action(input)
   }
 }
 
@@ -14,5 +14,6 @@ let main(): i32 = {
     total = total + input
     Ask.value() + total
   }
-  run(action)(1)
+  let result = run(action)(1)
+  result + total + 30
 }

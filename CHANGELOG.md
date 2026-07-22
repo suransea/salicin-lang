@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.149.0 - 2026-07-22
+
+- Extended adjacent captured reusable-handler actions from block-tail calls to complete calls used
+  as ordinary `let` initializers or expression statements.
+- Rewrote the statement immediately following the action binding to the same capture-lifted handler
+  specialization while preserving the binding-time-to-call evaluation boundary.
+- Released lifted mutable borrows when the handler call returns, allowing subsequent statements to
+  observe `FnMut` state safely.
+- Strengthened the native `FnMut` and `FnOnce` regressions to inspect mutable state and exactly-once
+  drop counters immediately after resumed and abandoned non-tail calls; all still exit with 42.
+
 ## 0.148.0 - 2026-07-22
 
 - Extended captured reusable-handler actions from shared `Copy` environments to `FnMut` mutable

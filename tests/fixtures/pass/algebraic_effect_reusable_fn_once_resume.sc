@@ -23,7 +23,9 @@ let execute(counter: MutPtr(i32)): i32 = {
   let action: (): i32 with(Ask) = { () ->
     Ask.value() + consume(resource)
   }
-  run(action)
+  let result = run(action)
+  let drops = unsafe { *counter }
+  result + drops
 }
 
 let main(): i32 = {
@@ -32,9 +34,8 @@ let main(): i32 = {
   }
   unsafe { *counter = 0 }
   let result = execute(counter)
-  let drops = unsafe { *counter }
   unsafe {
     raw_dealloc(counter, size_of(i32), align_of(i32))
   }
-  result + drops
+  result
 }

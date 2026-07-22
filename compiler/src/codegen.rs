@@ -10999,18 +10999,30 @@ impl Analyzer {
             Expr::Block(statements, tail) => {
                 context.push_scope();
                 let mut lowered_statements = Vec::new();
-                let source_statements = statements.clone();
+                let mut source_statements = statements.clone();
                 let mut source_tail = tail.as_deref().cloned();
-                for (statement_index, statement) in source_statements.iter().enumerate() {
-                    match statement {
+                let mut statement_index = 0;
+                while statement_index < source_statements.len() {
+                    let statement = source_statements[statement_index].clone();
+                    match &statement {
                         Stmt::Let(binding) => {
-                            if statement_index + 1 == source_statements.len()
-                                && self.specialize_capturing_handler_action_binding(
-                                    binding,
-                                    &mut source_tail,
-                                    context,
+                            let specialized = if statement_index + 1 < source_statements.len() {
+                                let next = match &mut source_statements[statement_index + 1] {
+                                    Stmt::Let(next) => &mut next.value,
+                                    Stmt::Expr(next) => next,
+                                };
+                                self.specialize_capturing_handler_action_binding(
+                                    binding, next, context,
                                 )
-                            {
+                            } else if let Some(tail) = source_tail.as_mut() {
+                                self.specialize_capturing_handler_action_binding(
+                                    binding, tail, context,
+                                )
+                            } else {
+                                false
+                            };
+                            if specialized {
+                                statement_index += 1;
                                 continue;
                             }
                             let borrow_annotation = binding.annotation.as_ref().and_then(|ty| {
@@ -11242,6 +11254,7 @@ impl Analyzer {
                                 .push(HirStmt::Expr(self.lower_expr(expression, None, context)));
                         }
                     }
+                    statement_index += 1;
                 }
                 let lowered_tail = source_tail
                     .as_ref()
@@ -21738,7 +21751,7 @@ impl Analyzer {
                             })
                         }) {
                             self.error(
-                                "a source effect closure passed to a reusable handler must currently be the binding immediately before a complete block-tail call, with liftable Copy borrows or owned root captures",
+                                "a source effect closure passed to a reusable handler must currently be the binding immediately before a complete handler call, with liftable Copy borrows or owned root captures",
                             );
                             arguments.push(HirArgument::Move(error_expr()));
                             continue;
@@ -21850,16 +21863,13 @@ impl Analyzer {
     fn specialize_capturing_handler_action_binding(
         &mut self,
         binding: &Binding,
-        tail: &mut Option<Expr>,
+        call: &mut Expr,
         context: &LowerCtx,
     ) -> bool {
         let Some(Type::Function { effects, .. }) = binding.annotation.as_ref() else {
             return false;
         };
         let Expr::Closure(parameters, body) = &binding.value else {
-            return false;
-        };
-        let Some(call) = tail.as_ref() else {
             return false;
         };
         let mut group_refs = Vec::new();
@@ -22036,7 +22046,7 @@ impl Analyzer {
         for group in groups {
             rewritten = Expr::Call(Box::new(rewritten), group);
         }
-        *tail = Some(rewritten);
+        *call = rewritten;
         true
     }
 

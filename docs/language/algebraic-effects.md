@@ -178,14 +178,16 @@ known targets is distributed into one specialized call per leaf. The selector is
 later parameter groups, only the selected branch evaluates its remaining arguments, and every leaf
 enters the same ordinary handler CPS and cleanup path.
 
-The captured reusable-action slice accepts an explicitly typed closure binding as the final
-statement before a complete block-tail handler call. The compiler lifts shared `Copy` captures as
+The captured reusable-action slice accepts an explicitly typed closure binding immediately before
+a complete handler call. The call may be a block tail, an ordinary `let` initializer, or an
+expression statement. The compiler lifts shared `Copy` captures as
 `borrow`, mutable `Copy` captures as `borrow(mut)`, and consuming owned root captures as `move`
 parameters of a target-specific handler specialization. It injects the closure into the handler's
 lexical action and then performs selective CPS, so no direct-style effectful closure symbol reaches
 native linking. Resumption and abandonment share the existing continuation cleanup path, including
-exactly-once destruction of moved resources. Non-adjacent bindings and non-tail calls still require
-the remaining general erased-environment integration.
+exactly-once destruction of moved resources. A returned call releases lifted mutable borrows before
+the following statement. Non-adjacent bindings and nested call positions still require the remaining
+general erased-environment integration.
 
 Selective CPS removes only the handled nominal identity. Residual `unsafe`, `throws(Error)`, and
 other nominal requirements remain on generated resumable frames. Intercepted operations also retain
