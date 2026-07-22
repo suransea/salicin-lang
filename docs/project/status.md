@@ -81,8 +81,9 @@ Finite selections may target lexically registered capturing resumable closures w
 `FnMut` state, `FnOnce` consumption, and exactly-once cleanup. Escaping callables and open-ended
 dynamic targets remain implementation work and receive dedicated diagnostics. A finite selection tag
 may be copied through immutable handler-local aliases and forwarded into a specialized higher-order
-frame; mutable aliases remain rejected because assignment-aware target-set tracking is not yet
-available.
+frame. Mutable aliases accept assignments with the same signature and finite target set, remapping
+runtime tags across different target orders; incompatible sets are rejected before ordinary value
+lowering.
 Compiler-generated CPS closures carry a separate lexical handler-capability set, allowing an inner
 handler's residual algebraic row to compose through an already specialized outer named frame without
 publishing that capability on the closure type. Throwing handler tails return through their physical

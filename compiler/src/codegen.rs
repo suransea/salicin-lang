@@ -406,7 +406,7 @@ struct SourceResumableClosure {
     group_lengths: Vec<usize>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct SourceDynamicCallable {
     targets: Vec<String>,
     group_lengths: Vec<usize>,
@@ -17196,6 +17196,46 @@ impl Analyzer {
             }
             Expr::Assign(place, value) => {
                 let place = *place;
+                if let Expr::Name(destination) = &place {
+                    let destination_callable =
+                        handler.dynamic_callables.borrow().get(destination).cloned();
+                    if let Some(destination_callable) = destination_callable {
+                        let Expr::Name(source) = value.as_ref() else {
+                            self.error(format!(
+                                "dynamic effectful callable `{destination}` must be assigned from another compatible dynamic callable"
+                            ));
+                            return Err(());
+                        };
+                        let Some(source_callable) =
+                            handler.dynamic_callables.borrow().get(source).cloned()
+                        else {
+                            self.error(format!(
+                                "dynamic effectful callable `{destination}` cannot be assigned from `{source}`"
+                            ));
+                            return Err(());
+                        };
+                        if destination_callable.group_lengths != source_callable.group_lengths
+                            || destination_callable.targets.len() != source_callable.targets.len()
+                            || destination_callable.targets.iter().any(|target| {
+                                !source_callable
+                                    .targets
+                                    .iter()
+                                    .any(|source| source == target)
+                            })
+                        {
+                            self.error(format!(
+                                "dynamic effectful callable assignment from `{source}` to `{destination}` has an incompatible target set"
+                            ));
+                            return Err(());
+                        }
+                        let value = remap_dynamic_callable_tag(
+                            source,
+                            &source_callable.targets,
+                            &destination_callable.targets,
+                        );
+                        return continuation(self, Expr::Assign(Box::new(place), Box::new(value)));
+                    }
+                }
                 let next = continuation.clone();
                 self.transform_handler_expr(
                     *value,
@@ -18831,13 +18871,6 @@ impl Analyzer {
                 if let Expr::Name(target) = &binding.value {
                     let dynamic = handler.dynamic_callables.borrow().get(target).cloned();
                     if let Some(dynamic) = dynamic {
-                        if binding.mutable {
-                            self.error(format!(
-                                "dynamic effectful callable alias `{}` must be immutable",
-                                binding.name
-                            ));
-                            return Err(());
-                        }
                         let name = binding.name.clone();
                         binding.annotation = Some(Type::I32);
                         let previous = handler
@@ -22960,6 +22993,30 @@ fn handler_alias_reference(expression: &Expr, aliases: &HashMap<String, String>)
     handler_expression_children(expression)
         .into_iter()
         .find_map(|child| handler_alias_reference(child, aliases))
+}
+
+fn remap_dynamic_callable_tag(source: &str, from: &[String], to: &[String]) -> Expr {
+    let destination_tag = |target: &str| {
+        to.iter()
+            .position(|candidate| candidate == target)
+            .expect("compatible dynamic target sets") as i128
+    };
+    let mut remapped = Expr::Integer(destination_tag(
+        from.last()
+            .expect("dynamic callable has at least two targets"),
+    ));
+    for (source_tag, target) in from.iter().enumerate().rev().skip(1) {
+        remapped = Expr::If {
+            condition: Box::new(Expr::Binary(
+                Box::new(Expr::Name(source.to_owned())),
+                BinaryOp::Eq,
+                Box::new(Expr::Integer(source_tag as i128)),
+            )),
+            then_branch: Box::new(Expr::Integer(destination_tag(target))),
+            else_branch: Some(Box::new(remapped)),
+        };
+    }
+    remapped
 }
 
 fn static_callable_selection(expression: &Expr, targets: &mut Vec<String>) -> Option<Expr> {
@@ -35605,22 +35662,41 @@ let main(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) {
         )
         .expect("a dynamic selection tag may be copied into an immutable handler-local alias");
 
-        let mutable_alias = compile_text(
+        compile_text(
             r#"
 let Ask = effect { let value(): i32 }
 let ask_left(): i32 with(Ask) = { Ask.value() }
 let ask_right(): i32 with(Ask) = { Ask.value() }
 let main(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) {
   let action: (): i32 with(Ask) = if true { ask_left } else { ask_right }
+  let other: (): i32 with(Ask) = if true { ask_right } else { ask_left }
   let mut changed = action
+  changed = other
   changed()
 } }
 "#,
         )
-        .expect_err("mutable tag aliases require assignment-aware target-set tracking");
-        assert!(mutable_alias.iter().any(|error| error
-            .message
-            .contains("dynamic effectful callable alias `changed` must be immutable")));
+        .expect("mutable dynamic aliases remap assignments between equal finite target sets");
+
+        let incompatible_alias = compile_text(
+            r#"
+let Ask = effect { let value(): i32 }
+let first(): i32 with(Ask) = { Ask.value() }
+let second(): i32 with(Ask) = { Ask.value() }
+let third(): i32 with(Ask) = { Ask.value() }
+let main(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) {
+  let left: (): i32 with(Ask) = if true { first } else { second }
+  let right: (): i32 with(Ask) = if true { first } else { third }
+  let mut changed = left
+  changed = right
+  changed()
+} }
+"#,
+        )
+        .expect_err("mutable dynamic aliases require equal finite target sets");
+        assert!(incompatible_alias
+            .iter()
+            .any(|error| error.message.contains("incompatible target set")));
     }
 
     #[test]

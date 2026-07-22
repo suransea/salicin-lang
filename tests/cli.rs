@@ -146,6 +146,8 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
         "algebraic_effect_dynamic_fn_mut_closure.sc",
         "algebraic_effect_dynamic_fn_once_drop.sc",
         "algebraic_effect_dynamic_callable_alias.sc",
+        "algebraic_effect_dynamic_callable_assignment.sc",
+        "algebraic_effect_dynamic_assignment_drop.sc",
         "algebraic_effect_noncopy_wildcard_guard.sc",
         "algebraic_effect_noncopy_binding_guard.sc",
         "algebraic_effect_copy_binding_guard.sc",

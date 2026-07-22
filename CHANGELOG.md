@@ -6,6 +6,18 @@ subset.
 
 ## Unreleased
 
+## 0.140.0 - 2026-07-22
+
+- Allowed mutable handler-local dynamic callable aliases to be assigned from another callable with
+  the same call-group shape and finite target set.
+- Remapped runtime tags when source and destination metadata list the same targets in different
+  orders, preserving the selected callable rather than the raw integer index.
+- Rejected assignments with different targets or signatures before lowering them as ordinary `i32`
+  writes.
+- Preserved captured `FnOnce` environments across tag assignment; selected and unselected resources
+  still drop exactly once when the selected call aborts its continuation.
+- Added native named-target and capturing-drop assignment regressions, both producing exit code 42.
+
 ## 0.139.0 - 2026-07-22
 
 - Allowed finite dynamic effectful callable selection tags to be copied into immutable local aliases
