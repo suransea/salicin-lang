@@ -35,8 +35,8 @@ The implementation lives under `compiler/src`:
     multiple lowering paths.
   - `names.rs` centralizes stable symbol, monomorphization instance, trait-method, and canonical
     type encodings.
-  - `operators.rs` centralizes operator-syntax bindings, candidate selection, and type probes for
-    validated lang-item protocols.
+  - `operators.rs` centralizes operator-syntax bindings, candidate selection, type probes, and HIR
+    lowering for validated lang-item protocols.
   - `registry.rs` defines item, trait, overload, and generic-instance registry keys, schemas, and
     generic implementation pattern matching helpers.
   - `source_rewrite.rs` owns source-level rewrites before semantic lowering, including labeled
