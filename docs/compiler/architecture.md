@@ -27,6 +27,9 @@ The implementation lives under `compiler/src`:
   - `emitter.rs` evaluates global constants and emits textual LLVM IR.
   - `names.rs` centralizes stable symbol, monomorphization instance, trait-method, and canonical
     type encodings.
+  - `source_rewrite.rs` owns source-level rewrites before semantic lowering, including labeled
+    type-argument normalization, type-alias expansion, region-parameter erasure, and generic
+    type substitution.
   - `tests.rs` contains the large codegen regression suite.
 - `main.rs` implements the `salic` command-line interface.
 
@@ -48,8 +51,6 @@ resolved AST
 Useful future `codegen/` modules are:
 
 - `hir.rs` for typed IR structs, types, places, and helper predicates;
-- `source_rewrite.rs` for labeled type-argument normalization, alias expansion, region erasure,
-  and source substitution;
 - `registry.rs` for item collection, generic nominal/function instantiation, and trait impl maps;
 - `lower.rs` for expression and statement lowering into HIR;
 - `borrow.rs` for move/borrow flow checks that currently live inside `Analyzer`;
