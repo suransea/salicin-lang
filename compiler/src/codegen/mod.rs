@@ -8068,28 +8068,6 @@ impl Analyzer {
         }
     }
 
-    fn nominal_ty_from_probe(probe: &TypeProbe) -> Option<Ty> {
-        match probe {
-            TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _)
-                if matches!(ty, Ty::Struct(_) | Ty::Enum(_)) =>
-            {
-                Some(ty.clone())
-            }
-            TypeProbe::Known(_)
-            | TypeProbe::KnownSource(_, _)
-            | TypeProbe::Defaultable(_)
-            | TypeProbe::Unsupported => None,
-        }
-    }
-
-    fn probe_matches_type(probe: &TypeProbe, expected: &Ty) -> bool {
-        match probe {
-            TypeProbe::Known(actual) | TypeProbe::KnownSource(actual, _) => actual == expected,
-            TypeProbe::Defaultable(default) => default.is_integer() && expected.is_integer(),
-            TypeProbe::Unsupported => true,
-        }
-    }
-
     fn trait_method_candidates(
         &self,
         receiver: &Ty,

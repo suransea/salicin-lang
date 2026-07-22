@@ -6,6 +6,7 @@ use super::hir::{
     ClosureCaptureUse, ClosureInfo, FunctionTy, HirArgument, HirExpr, HirExprKind, HirPlace,
     LocalCapability, ParamSig, PartialInfo, Ty,
 };
+use super::Analyzer;
 
 #[derive(Debug, Clone)]
 pub(super) struct InferredTypeArgument {
@@ -20,6 +21,30 @@ pub(super) enum TypeProbe {
     KnownSource(Ty, Type),
     Defaultable(Ty),
     Unsupported,
+}
+
+impl Analyzer {
+    pub(super) fn nominal_ty_from_probe(probe: &TypeProbe) -> Option<Ty> {
+        match probe {
+            TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _)
+                if matches!(ty, Ty::Struct(_) | Ty::Enum(_)) =>
+            {
+                Some(ty.clone())
+            }
+            TypeProbe::Known(_)
+            | TypeProbe::KnownSource(_, _)
+            | TypeProbe::Defaultable(_)
+            | TypeProbe::Unsupported => None,
+        }
+    }
+
+    pub(super) fn probe_matches_type(probe: &TypeProbe, expected: &Ty) -> bool {
+        match probe {
+            TypeProbe::Known(actual) | TypeProbe::KnownSource(actual, _) => actual == expected,
+            TypeProbe::Defaultable(default) => default.is_integer() && expected.is_integer(),
+            TypeProbe::Unsupported => true,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
