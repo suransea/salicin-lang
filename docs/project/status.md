@@ -17,7 +17,8 @@ constructor arguments such as `Pair(V: bool, K: i32)`; labels are matched agains
 compile-time parameter names, normalized to declaration order, and erased before semantic lowering.
 
 Compiler-lowered capabilities are now source-backed by validated declarations in ordinary core
-modules: `core.effects` owns `Unsafe`, `Throws(E)`, and an ordinary `Async` marker effect;
+modules: `core.effects` owns `Unsafe`, `Throws(Error)` with `raise(move error: Error): Never`, and
+an ordinary `Async` effect with a minimal `suspend(): ()` operation;
 `core.access` owns `Shared` and `Mutable`; `core.control` owns the bodyless intrinsic signatures for
 `do`, `try`, `unsafe`, and `loop`. These exports remain outside the prelude. `await` is intentionally
 absent until the async/Future lowering slice is implemented, at which point its executable
@@ -65,9 +66,11 @@ cannot intercept operator lowering.
 prelude. `core.functional` now provides higher-kinded `Functor`, `Applicative`, and `Monad`
 protocol declarations over constructor kinds such as `(Value: type): type`. Constructor-valued
 implementations currently register matching generic nominal constructors and validate method bodies
-as generic function templates. The remaining HKT work is associated-type lowering, callable HKT trait
-dispatch for implementations such as `extend Option: Functor`, trait inheritance constraints, and
-broader constructor equation solving.
+as generic function templates. Constructor trait associated functions without a receiver can dispatch
+from the bare constructor, so implementations such as `extend Option: Functor` can expose
+`Option.map(...)` through the ordinary generic function instance pipeline. The remaining HKT work is
+associated-type lowering, receiver-style HKT methods, trait inheritance constraints, and broader
+constructor equation solving.
 
 Access keyword generics are implemented for functions and generic inherent members: `A: access` accepts `shared` or `mut`,
 defaults to shared when omitted, participates in monomorphization, and can drive parameter modes,

@@ -6,6 +6,21 @@ subset.
 
 ## Unreleased
 
+## 0.159.0 - 2026-07-22
+
+- Added callable dispatch for constructor trait associated functions, so a generic nominal
+  constructor with `extend Carrier: Functor { let map... }` can call `Carrier.map(...)` and route to
+  the registered implementation method template.
+- Reused the existing generic function instance pipeline for HKT associated methods, preserving
+  ordinary compile-time argument inference, named-argument overload selection, and effect checking.
+- Added conservative type probing for constructor trait associated function calls when compile-time
+  arguments are explicit, without adding side effects to the probe phase.
+- Rewrote `core.effects` declarations to use complete effect block syntax: `Unsafe` is an explicit
+  empty effect, `Throws(Error)` declares `raise(move error: Error): Never`, and `Async` declares a
+  minimal `suspend(): ()` operation.
+- Updated the core lang-item validator so `Throws` is checked by its ordinary operation shape rather
+  than by marker-effect special casing.
+
 ## 0.158.0 - 2026-07-22
 
 - Registered constructor trait implementation methods as ordinary generic function templates, so

@@ -5309,8 +5309,8 @@ mod tests {
     #[test]
     fn parses_compiler_provided_control_contract_declarations() {
         let program = parse(
-            "pub let Unsafe = effect\n\
-             pub let Throws(E: type) = effect\n\
+            "pub let Unsafe = effect {}\n\
+             pub let Throws(Error: type) = effect { let raise(move error: Error): Never }\n\
              pub let Shared = access\n\
              pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E)\n",
         )
@@ -5321,7 +5321,7 @@ mod tests {
         ));
         assert!(matches!(
             &program.items[1],
-            Item::Effect(effect) if effect.compile_groups.len() == 1
+            Item::Effect(effect) if effect.compile_groups.len() == 1 && effect.operations.len() == 1
         ));
         assert!(matches!(&program.items[2], Item::Access(_)));
         assert!(matches!(

@@ -112,8 +112,9 @@ constructor_kind = compile_parameter_group,
 - `let mut` 不能含参数组，且必须绑定运行时值。
 - `with(...)` 属于函数签名，位于返回类型之后；`with(throws(E))` 声明可传播错误 `E`，
   `with(unsafe)` 增加调用要求。
-- `with` 和 marker 声明右侧的 `effect` 是上下文词，不是全局关键字。`let UI = effect` 声明名义
-  marker；`let State(S: type) = effect { ... }` 还可声明无函数体的 operation requirements。旧的
+- `with` 和声明右侧的 `effect` 是上下文词，不是全局关键字。`let UI = effect` 声明名义 marker；
+  `let Unsafe = effect {}` 是等价的显式空 operation 形式；`let State(S: type) = effect { ... }`
+  还可声明无函数体的 operation requirements。旧的
   `(effect): T`、`T(effect)` 与 `T ! effect` 都不属于语法。
 - 声明右侧的 `access` 同样是上下文词，仅用于 core bundle 声明内建 access 身份。access 身份位于
   `core.access`；effect 身份位于 `core.effects`；控制 lang item 可在声明名位置使用 `do`、`try`、
@@ -125,10 +126,11 @@ constructor_kind = compile_parameter_group,
   (T: type): type = Target` 直接绑定类型构造子。前者的 RHS 必须是已应用的具体类型，不进行隐式
   eta 应用。
 - 编译期参数 kind 可以写成构造子签名，例如 `F: (Value: type): type` 与
-  `E: (Error: type): effect`。当前语义支持它们进入 trait 方法签名和标准库协议声明；泛型函数
-  实例化和完整 HKT 方程求解仍是后续工作。匹配 arity 的泛型 nominal 构造子可以实现这类 trait；
-  method implementation 会注册为 generic function template 并接受模板验证。关联类型、`where`
-  子句和可调用 HKT trait dispatch 仍会被显式拒绝或留待后续。
+  `E: (Error: type): effect`。当前语义支持它们进入 trait 方法签名和标准库协议声明。匹配 arity
+  的泛型 nominal 构造子可以实现这类 trait；method implementation 会注册为 generic function
+  template 并接受模板验证。无 receiver 的 constructor trait associated function 可以通过裸构造子
+  调用，例如 `Carrier.map(...)`。关联类型、`where` 子句、receiver-style HKT 方法和完整 HKT 方程
+  求解仍会被显式拒绝或留待后续。
 - 具名函数的参数类型必须显式；首版 `let` 名称位置不接受解构 pattern。
 - trait 声明体中的无 initializer `let` 是 requirement。
 

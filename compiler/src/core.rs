@@ -44,8 +44,8 @@ pub let ShrAssign(Rhs: type) = trait { let shr_assign(borrow(mut) self)(move rhs
 
 #[cfg(test)]
 const TEST_EFFECTS: &str = r#"
-pub let Unsafe = effect
-pub let Throws(E: type) = effect
+pub let Unsafe = effect {}
+pub let Throws(Error: type) = effect { let raise(move error: Error): Never }
 "#;
 
 /// A stable logical role fulfilled by one declaration in the edition's
@@ -1202,19 +1202,42 @@ fn validate_effect(
             definition.compile_groups.is_empty() && definition.operations.is_empty()
         }
         LangItemKind::ThrowsEffect => {
-            definition.compile_groups == vec![vec![type_parameter("E")]]
-                && definition.operations.is_empty()
+            definition.compile_groups == vec![vec![type_parameter("Error")]]
+                && matches!(
+                    definition.operations.as_slice(),
+                    [operation] if valid_throws_raise_operation(operation)
+                )
         }
         _ => false,
     };
     if !valid {
         let shape = match kind {
-            LangItemKind::UnsafeEffect => "pub let Unsafe = effect",
-            LangItemKind::ThrowsEffect => "pub let Throws(E: type) = effect",
+            LangItemKind::UnsafeEffect => "pub let Unsafe = effect {}",
+            LangItemKind::ThrowsEffect => {
+                "pub let Throws(Error: type) = effect { let raise(move error: Error): Never }"
+            }
             _ => unreachable!(),
         };
         diagnostics.push(format!("lang item `{kind}` must have shape `{shape}`"));
     }
+}
+
+fn valid_throws_raise_operation(function: &Function) -> bool {
+    let [group] = function.groups.as_slice() else {
+        return false;
+    };
+    let [error] = group.as_slice() else {
+        return false;
+    };
+    function.name == "raise"
+        && function.compile_groups.is_empty()
+        && function.return_type == Some(named_type("Never"))
+        && function.effects == crate::ast::FunctionEffects::default()
+        && function.where_predicates.is_empty()
+        && function.body.is_none()
+        && error.name == "error"
+        && error.mode == PassMode::Move
+        && error.ty == named_type("Error")
 }
 
 fn validate_control_function(
@@ -1815,6 +1838,32 @@ pub let Shr(Rhs: type) = trait {
                 }
             );
         }
+
+        let throws = &bundle.program().items[bundle.lang_items().throws_effect().item_index()];
+        assert!(matches!(
+            throws,
+            Item::Effect(definition)
+                if matches!(
+                    definition.operations.as_slice(),
+                    [operation]
+                        if operation.name == "raise"
+                            && operation.return_type == Some(named_type("Never"))
+                )
+        ));
+        let async_effect = bundle
+            .program()
+            .items
+            .iter()
+            .find(|item| item_name(item) == Some("core::effects::Async"))
+            .expect("core.effects.Async must be mounted");
+        assert!(matches!(
+            async_effect,
+            Item::Effect(definition)
+                if matches!(
+                    definition.operations.as_slice(),
+                    [operation] if operation.name == "suspend" && operation.return_type == Some(Type::Unit)
+                )
+        ));
     }
 
     #[test]

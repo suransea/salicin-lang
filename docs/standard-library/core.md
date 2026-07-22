@@ -83,15 +83,24 @@ member access.
 `core.effects` owns standard effect identities. It is not part of the prelude:
 
 ```sali
-pub let Unsafe = effect
-pub let Throws(E: type) = effect
-pub let Async = effect
+pub let Unsafe = effect {}
+
+pub let Throws(Error: type) = effect {
+  let raise(move error: Error): Never
+}
+
+pub let Async = effect {
+  let suspend(): ()
+}
 ```
 
-`Unsafe` and `Throws(E)` are validated lang-item identities behind the lowercase source spellings
-`with(unsafe)` and `throws(E)`. `Async` is currently an ordinary marker effect; executable
-async/Future lowering will add its handler contracts in the same implementation slice rather than
-pretending `await` already works.
+`Unsafe` and `Throws(Error)` are validated lang-item identities behind the lowercase source spellings
+`with(unsafe)` and `throws(Error)`, but their declarations use ordinary source-level effect forms.
+`Throws.raise` is the standard operation-level shape for error raising; the current `throw`/`try`
+lowering still has a compiler-provided ABI and will be reduced further in later slices. `Async`
+currently exposes only a minimal `suspend(): ()` operation; executable async/Future lowering will
+add its handler contracts in the same implementation slice rather than pretending `await` already
+works.
 
 `core.access` owns standard access identities, also outside the prelude:
 
@@ -208,8 +217,10 @@ pub let Monad(M: (Value: type): type) = trait {
 These declarations use constructor kinds such as `(Value: type): type`. Traits with a matching
 constructor subject can already be implemented for generic nominal constructors. Method
 implementations are registered as generic function templates and validated, for example
-`extend Carrier: Functor { let map(E, A, B)... }`. Trait inheritance constraints such as
-`Applicative where F: Functor`, associated-type lowering, callable HKT trait dispatch, and full HKT
+`extend Carrier: Functor { let map(E, A, B)... }`. Constructor trait associated functions without a
+receiver can be called from the bare constructor, for example `Carrier.map(...)`; dispatch then uses
+the existing generic function instance pipeline. Trait inheritance constraints such as
+`Applicative where F: Functor`, associated-type lowering, receiver-style HKT methods, and full HKT
 equation solving remain future semantic work.
 
 `ControlFlow`, the old propagation `Try`, `FromResidual`, and `FromError` were removed together with postfix `.try`. `Option` and

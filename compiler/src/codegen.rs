@@ -7570,6 +7570,77 @@ impl Analyzer {
         }
     }
 
+    fn probe_compile_argument_source(
+        &self,
+        parameter: &CompileParam,
+        expression: &Expr,
+        substitutions: &HashMap<String, Type>,
+    ) -> Option<Type> {
+        match parameter.kind {
+            CompileParamKind::Type => self.probe_type_argument_source(expression, substitutions),
+            CompileParamKind::Access => match expression {
+                Expr::Name(name) if name == "shared" => {
+                    Some(Type::Named(ACCESS_SHARED_MARKER.to_owned(), Vec::new()))
+                }
+                Expr::Name(name) if name == "mut" => {
+                    Some(Type::Named(ACCESS_MUT_MARKER.to_owned(), Vec::new()))
+                }
+                _ => None,
+            },
+            CompileParamKind::Passing => match expression {
+                Expr::Name(name) if name == "auto" => {
+                    Some(Type::Named(PASSING_AUTO_MARKER.to_owned(), Vec::new()))
+                }
+                Expr::Name(name) if name == "copy" => {
+                    Some(Type::Named(PASSING_COPY_MARKER.to_owned(), Vec::new()))
+                }
+                Expr::Name(name) if name == "move" => {
+                    Some(Type::Named(PASSING_MOVE_MARKER.to_owned(), Vec::new()))
+                }
+                _ => None,
+            },
+            CompileParamKind::Effect => match expression {
+                Expr::Name(name) if name == "pure" => Some(effect_row_source(false, None, &[])),
+                Expr::Name(name) if name == "unsafe" => Some(effect_row_source(true, None, &[])),
+                Expr::Name(name) if self.effects.contains(name) => {
+                    Some(effect_row_source(false, None, std::slice::from_ref(name)))
+                }
+                Expr::Name(name) if effect_row_from_marker(name).is_some() => {
+                    Some(Type::Named(name.clone(), Vec::new()))
+                }
+                Expr::Call(callee, arguments)
+                    if matches!(callee.as_ref(), Expr::Name(name) if name == "throws")
+                        && arguments.len() == 1
+                        && arguments[0].label.is_none() =>
+                {
+                    let error =
+                        self.probe_type_argument_source(&arguments[0].value, substitutions)?;
+                    Some(effect_row_source(false, Some(error), &[]))
+                }
+                Expr::Call(callee, arguments)
+                    if matches!(callee.as_ref(), Expr::Name(name) if effect_row_from_marker(name).is_some())
+                        && arguments.len() <= 1
+                        && arguments.iter().all(|argument| argument.label.is_none()) =>
+                {
+                    let Expr::Name(marker) = callee.as_ref() else {
+                        unreachable!()
+                    };
+                    let error = match arguments.first() {
+                        Some(argument) => {
+                            Some(self.probe_type_argument_source(&argument.value, substitutions)?)
+                        }
+                        None => None,
+                    };
+                    Some(Type::Named(marker.clone(), error.into_iter().collect()))
+                }
+                _ => None,
+            },
+            CompileParamKind::Region
+            | CompileParamKind::TypeConstructor { .. }
+            | CompileParamKind::EffectConstructor { .. } => None,
+        }
+    }
+
     fn probe_source_ty(&self, source: &Type) -> Option<Ty> {
         match source {
             Type::I32 => Some(Ty::I32),
@@ -8885,6 +8956,49 @@ impl Analyzer {
         candidates
     }
 
+    fn constructor_trait_associated_function_candidates(
+        &self,
+        target: &str,
+        member: &str,
+        origin: &ItemOrigin,
+    ) -> Vec<String> {
+        let mut candidates = self
+            .constructor_trait_impl_methods
+            .iter()
+            .filter_map(|(key, methods)| {
+                if key.target.name != target {
+                    return None;
+                }
+                let schema = self.traits.get(&key.trait_ref.name)?;
+                let method_ids = schema
+                    .method_overloads
+                    .get(member)
+                    .cloned()
+                    .unwrap_or_else(|| vec![member.to_owned()]);
+                Some(
+                    method_ids
+                        .into_iter()
+                        .filter(|method_id| {
+                            schema
+                                .methods
+                                .get(method_id)
+                                .is_some_and(|function| !schema_function_has_receiver(function))
+                        })
+                        .filter_map(|method_id| methods.get(&method_id).cloned())
+                        .filter(|canonical| {
+                            self.function_accesses
+                                .get(canonical)
+                                .is_some_and(|access| Self::access_boundary_allows(origin, access))
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        candidates.sort();
+        candidates
+    }
+
     fn trait_method_function_candidates(
         &self,
         receiver: &Ty,
@@ -8913,6 +9027,40 @@ impl Analyzer {
                     .collect::<Vec<_>>()
             })
             .collect()
+    }
+
+    fn has_inaccessible_constructor_trait_associated_function(
+        &self,
+        target: &str,
+        member: &str,
+        origin: &ItemOrigin,
+    ) -> bool {
+        self.constructor_trait_impl_methods
+            .iter()
+            .any(|(key, methods)| {
+                if key.target.name != target {
+                    return false;
+                }
+                let Some(schema) = self.traits.get(&key.trait_ref.name) else {
+                    return false;
+                };
+                let method_ids = schema
+                    .method_overloads
+                    .get(member)
+                    .cloned()
+                    .unwrap_or_else(|| vec![member.to_owned()]);
+                method_ids.into_iter().any(|method_id| {
+                    schema
+                        .methods
+                        .get(&method_id)
+                        .is_some_and(|function| !schema_function_has_receiver(function))
+                        && methods.get(&method_id).is_some_and(|canonical| {
+                            self.function_accesses
+                                .get(canonical)
+                                .is_some_and(|access| !Self::access_boundary_allows(origin, access))
+                        })
+                })
+            })
     }
 
     fn is_drop_impl(&self, key: &TraitImplKey) -> bool {
@@ -9829,6 +9977,140 @@ impl Analyzer {
         }
     }
 
+    fn probe_function_candidate_call_ty(
+        &self,
+        canonical: &str,
+        groups: &[&[CallArg]],
+        context: &LowerCtx,
+    ) -> TypeProbe {
+        if let Some(signature) = self.signatures.get(canonical) {
+            if groups.len() > signature.groups.len()
+                || groups
+                    .iter()
+                    .zip(&signature.groups)
+                    .any(|(arguments, parameters)| arguments.len() != parameters.len())
+            {
+                return TypeProbe::Unsupported;
+            }
+            if groups.len() == signature.groups.len() {
+                let Some(result) = signature.result.clone() else {
+                    return TypeProbe::Unsupported;
+                };
+                if signature.throws_error.is_some() {
+                    return self
+                        .builtin_fallible_info_for_ty(&result)
+                        .map_or(TypeProbe::Unsupported, |info| {
+                            TypeProbe::Known(info.payload)
+                        });
+                }
+                return TypeProbe::Known(result);
+            }
+            let Some(result) = signature.result.clone() else {
+                return TypeProbe::Unsupported;
+            };
+            return TypeProbe::Known(Ty::Function(FunctionTy {
+                groups: signature.groups[groups.len()..]
+                    .iter()
+                    .map(|group| group.iter().map(|parameter| parameter.ty.clone()).collect())
+                    .collect(),
+                unsafe_effect: signature.unsafe_effect,
+                throws_error: signature.throws_error.clone().map(Box::new),
+                custom_effects: signature.custom_effects.clone(),
+                result: Box::new(result),
+            }));
+        }
+
+        let Some(template) = self.function_templates.get(canonical) else {
+            return TypeProbe::Unsupported;
+        };
+        let compile_group_count = template.compile_groups.len();
+        if groups.len() < compile_group_count
+            || groups.len() > compile_group_count + template.groups.len()
+        {
+            return TypeProbe::Unsupported;
+        }
+        let mut substitutions = HashMap::new();
+        for (parameters, supplied) in template
+            .compile_groups
+            .iter()
+            .zip(groups.iter().take(compile_group_count))
+        {
+            if parameters.len() != supplied.len()
+                || supplied.iter().any(|argument| argument.label.is_some())
+            {
+                return TypeProbe::Unsupported;
+            }
+            for (parameter, argument) in parameters.iter().zip(*supplied) {
+                let Some(source) = self.probe_compile_argument_source(
+                    parameter,
+                    &argument.value,
+                    &context.type_substitutions,
+                ) else {
+                    return TypeProbe::Unsupported;
+                };
+                if self.probe_source_ty(&source).is_none() {
+                    return TypeProbe::Unsupported;
+                }
+                substitutions.insert(parameter.name.clone(), source);
+            }
+        }
+
+        let mut function = template.clone();
+        substitute_function_types(&mut function, &substitutions);
+        let runtime_groups = &groups[compile_group_count..];
+        if runtime_groups
+            .iter()
+            .zip(&function.groups)
+            .any(|(arguments, parameters)| arguments.len() != parameters.len())
+        {
+            return TypeProbe::Unsupported;
+        }
+        let Some(result_source) = function.return_type.clone() else {
+            return TypeProbe::Unsupported;
+        };
+        let Some(result) = self.probe_source_ty(&result_source) else {
+            return TypeProbe::Unsupported;
+        };
+        if runtime_groups.len() == function.groups.len() {
+            if function.effects.throws.is_some() {
+                let Some(info) = self.builtin_fallible_info_for_ty(&result) else {
+                    return TypeProbe::Unsupported;
+                };
+                return TypeProbe::Known(info.payload);
+            }
+            return TypeProbe::KnownSource(result, result_source);
+        }
+
+        let remaining = function.groups[runtime_groups.len()..]
+            .iter()
+            .map(|group| {
+                group
+                    .iter()
+                    .map(|parameter| self.probe_source_ty(&parameter.ty))
+                    .collect::<Option<Vec<_>>>()
+            })
+            .collect::<Option<Vec<_>>>();
+        if let Some(groups) = remaining {
+            let throws_error = match function.effects.throws.as_deref() {
+                Some(error) => {
+                    let Some(error) = self.probe_source_ty(error) else {
+                        return TypeProbe::Unsupported;
+                    };
+                    Some(Box::new(error))
+                }
+                None => None,
+            };
+            return TypeProbe::Known(Ty::Function(FunctionTy {
+                groups,
+                unsafe_effect: function.effects.unsafe_effect,
+                throws_error,
+                custom_effects: source_effect_identities(&function.effects.custom),
+                result: Box::new(result),
+            }));
+        }
+        TypeProbe::Unsupported
+    }
+
     fn probe_call_ty(
         &self,
         expression: &Expr,
@@ -9841,6 +10123,37 @@ impl Analyzer {
             return self.probe_chain_ty(base, member, Some(&groups), expected, context);
         }
         if let Expr::Member(base, variant) = root {
+            if let Expr::Name(target) = base.as_ref() {
+                if !context.shadows_top_level_name(target)
+                    && (self.struct_templates.contains_key(target)
+                        || self.enum_templates.contains_key(target))
+                {
+                    let candidates = self.constructor_trait_associated_function_candidates(
+                        target,
+                        variant,
+                        &context.origin,
+                    );
+                    let canonical = match candidates.as_slice() {
+                        [canonical] => Some(canonical.clone()),
+                        [_, _, ..]
+                            if groups
+                                .iter()
+                                .flat_map(|group| group.iter())
+                                .any(|argument| argument.label.is_some()) =>
+                        {
+                            let matches = self.matching_function_overloads(&candidates, &groups, 0);
+                            match matches.as_slice() {
+                                [selected] => Some(selected.clone()),
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    };
+                    if let Some(canonical) = canonical {
+                        return self.probe_function_candidate_call_ty(&canonical, &groups, context);
+                    }
+                }
+            }
             let Some((NominalKind::Enum, ty, source)) = self.probe_nominal_type_head(base, context)
             else {
                 return TypeProbe::Unsupported;
@@ -17275,6 +17588,21 @@ impl Analyzer {
                                 &canonical, &groups, expected, context,
                             );
                         }
+                        if self.struct_templates.contains_key(target_template)
+                            || self.enum_templates.contains_key(target_template)
+                        {
+                            if let Some(result) = self
+                                .lower_constructor_trait_associated_function_call(
+                                    target_template,
+                                    variant_name,
+                                    &groups,
+                                    expected,
+                                    context,
+                                )
+                            {
+                                return result;
+                            }
+                        }
                     }
                     if self.struct_templates.contains_key(target_template)
                         || self.enum_templates.contains_key(target_template)
@@ -20937,6 +21265,10 @@ impl Analyzer {
                 self.trait_associated_function_candidates(&self_ty, member, &context.origin);
             match associated.as_slice() {
                 [canonical] => {
+                    if self.function_templates.contains_key(canonical) {
+                        return self
+                            .lower_generic_function_call(canonical, groups, expected, context);
+                    }
                     return self.lower_named_function_call(canonical, groups, expected, context);
                 }
                 [_, _, ..] => {
@@ -20953,6 +21285,11 @@ impl Analyzer {
                     let matches = self.matching_function_overloads(&associated, groups, 0);
                     match matches.as_slice() {
                         [canonical] => {
+                            if self.function_templates.contains_key(canonical) {
+                                return self.lower_generic_function_call(
+                                    canonical, groups, expected, context,
+                                );
+                            }
                             return self.lower_named_function_call(
                                 canonical, groups, expected, context,
                             );
@@ -21044,6 +21381,67 @@ impl Analyzer {
                 "unknown associated member `{member}` on `{target}`"
             ));
             error_expr()
+        }
+    }
+
+    fn lower_constructor_trait_associated_function_call(
+        &mut self,
+        target: &str,
+        member: &str,
+        groups: &[&[CallArg]],
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> Option<HirExpr> {
+        let candidates =
+            self.constructor_trait_associated_function_candidates(target, member, &context.origin);
+        let canonical = match candidates.as_slice() {
+            [canonical] => canonical.clone(),
+            [_, _, ..] => {
+                if !groups
+                    .iter()
+                    .flat_map(|group| group.iter())
+                    .any(|argument| argument.label.is_some())
+                {
+                    self.error(format!(
+                        "ambiguous constructor trait associated function `{target}.{member}`; named arguments are required to select an overload"
+                    ));
+                    return Some(error_expr());
+                }
+                let matches = self.matching_function_overloads(&candidates, groups, 0);
+                match matches.as_slice() {
+                    [canonical] => canonical.clone(),
+                    [] => {
+                        self.error(format!(
+                            "no constructor trait associated function overload `{target}.{member}` matches the supplied named parameter groups"
+                        ));
+                        return Some(error_expr());
+                    }
+                    _ => {
+                        self.error(format!(
+                            "constructor trait associated function overload `{target}.{member}` remains ambiguous"
+                        ));
+                        return Some(error_expr());
+                    }
+                }
+            }
+            [] => {
+                if self.has_inaccessible_constructor_trait_associated_function(
+                    target,
+                    member,
+                    &context.origin,
+                ) {
+                    self.error(format!(
+                        "constructor trait associated function `{target}.{member}` is private or package-visible from another package"
+                    ));
+                    return Some(error_expr());
+                }
+                return None;
+            }
+        };
+        if self.function_templates.contains_key(&canonical) {
+            Some(self.lower_generic_function_call(&canonical, groups, expected, context))
+        } else {
+            Some(self.lower_named_function_call(&canonical, groups, expected, context))
         }
     }
 
@@ -39878,6 +40276,69 @@ let main(): i32 = { 0 }
         );
 
         compile(&program).expect("constructor trait method templates must validate");
+    }
+
+    #[test]
+    fn constructor_trait_associated_functions_dispatch_from_constructor() {
+        let program = crate::parser::parse(
+            r#"
+let Functor(F: (Value: type): type) = trait {
+  let map(E: effect, A: type, B: type)(
+    move value: F(A),
+    move transform: (A): B with(E),
+  ): F(B) with(E)
+}
+let Carrier(T: type) = struct(value: T)
+extend Carrier: Functor {
+  let map(E: effect, A: type, B: type)(
+    move value: Carrier(A),
+    move transform: (A): B with(E),
+  ): Carrier(B) with(E) = {
+    Carrier(B)(transform(value.value))
+  }
+}
+let add_one(x: i32): i32 = { x + 1 }
+let main(): i32 = {
+  let value = Carrier.map(Carrier(i32)(41), add_one)
+  value.value
+}
+"#,
+        )
+        .expect("constructor trait dispatch source must parse");
+        let mut analyzer = Analyzer::new(&program);
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected constructor trait dispatch diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        let key = analyzer
+            .constructor_trait_impl_headers
+            .iter()
+            .next()
+            .expect("constructor trait impl header");
+        let template = constructor_trait_method_name(key, "map");
+        analyzer
+            .analyze()
+            .expect("constructor trait dispatch program must lower");
+        assert!(
+            analyzer.diagnostics.is_empty(),
+            "unexpected constructor trait dispatch lowering diagnostics: {:?}",
+            analyzer.diagnostics
+        );
+        let instance = analyzer
+            .function_instances
+            .values()
+            .find(|instance| instance.key.template == template)
+            .expect("constructor trait method template must instantiate")
+            .canonical
+            .clone();
+        let ir = compile(&program).expect("constructor trait dispatch program must compile");
+        let symbol = function_symbol(&instance);
+        assert!(
+            ir.lines()
+                .any(|line| { line.contains(" = call ") && line.contains(&format!("@{symbol}(")) }),
+            "expected call to constructor trait method instance in IR:\n{ir}"
+        );
     }
 
     #[test]

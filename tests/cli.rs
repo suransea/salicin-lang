@@ -186,6 +186,7 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
         "algebraic_effect_cross_function_abort.sc",
         "algebraic_effect_continuation_drop.sc",
         "algebraic_effect_continuation_resume_drop.sc",
+        "standard_effect_operations.sc",
     ] {
         let output = salic()
             .arg("run")
