@@ -999,6 +999,14 @@ where M: Monad = {
 let kept = keep(M: Carrier)(Carrier(i32) { value: 42 })
 ```
 
+部分应用的透明类型别名可以作为 HKT 实现目标。例如标准库用 `ResultWith(Error)` 把二元
+`Result(Value, Error)` 适配成一元构造子，并为它实现 `Functor`、`Applicative` 与 `Monad`：
+
+```sc
+let ResultWith(Error: type)(Value: type): type = Result(Value, Error)
+extend(Error: type) ResultWith(Error): Monad { ... }
+```
+
 关联类型 lowering 和完整构造子方程求解仍是后续语义能力；不能唯一决定时仍通过省略编译期参数组和
 命名参数由上下文消歧，不会恢复 `_` 推断占位。
 

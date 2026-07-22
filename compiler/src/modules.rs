@@ -343,7 +343,7 @@ const CORE_CONTROL_EXPORTS: &[&str] = &[
 ];
 const CORE_ITER_EXPORTS: &[&str] = &["Iterator", "IntoIterator"];
 const CORE_ALGEBRA_EXPORTS: &[&str] = &["Semigroup", "Monoid"];
-const CORE_FUNCTIONAL_EXPORTS: &[&str] = &["Functor", "Applicative", "Monad"];
+const CORE_FUNCTIONAL_EXPORTS: &[&str] = &["Functor", "Applicative", "Monad", "ResultWith"];
 
 fn validate_package_layout(
     packages: &[SourcePackage],

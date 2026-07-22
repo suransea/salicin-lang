@@ -431,6 +431,12 @@ struct GenericTraitExtension {
     origin: ItemOrigin,
 }
 
+#[derive(Clone)]
+struct GenericConstructorTraitExtensionTarget {
+    target: TypeConstructorImplTarget,
+    self_constructor: Type,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ImplTypePattern {
     Variable(u8, usize),
@@ -2074,6 +2080,7 @@ struct Analyzer {
     enum_defs: HashMap<String, EnumDef>,
     struct_templates: HashMap<String, StructDef>,
     enum_templates: HashMap<String, EnumDef>,
+    type_aliases: HashMap<String, crate::ast::TypeAliasDef>,
     struct_template_order: Vec<String>,
     enum_template_order: Vec<String>,
     nominal_instance_names: HashMap<NominalInstanceKey, String>,
@@ -2148,6 +2155,7 @@ impl Analyzer {
             enum_defs: HashMap::new(),
             struct_templates: HashMap::new(),
             enum_templates: HashMap::new(),
+            type_aliases: HashMap::new(),
             struct_template_order: Vec::new(),
             enum_template_order: Vec::new(),
             nominal_instance_names: HashMap::new(),
@@ -2214,6 +2222,8 @@ impl Analyzer {
             analyzer.error(diagnostic);
         }
         promote_inferred_type_aliases([&mut core_program, &mut alloc_program, &mut source_program]);
+        analyzer.type_aliases =
+            collect_type_aliases([&core_program, &alloc_program, &source_program]);
         for diagnostic in
             expand_type_aliases([&mut core_program, &mut alloc_program, &mut source_program])
         {
@@ -4033,6 +4043,151 @@ impl Analyzer {
         None
     }
 
+    fn partial_alias_constructor_trait_target(
+        &mut self,
+        source: &Type,
+        declared_parameters: &[CompileParam],
+    ) -> Option<GenericConstructorTraitExtensionTarget> {
+        let Type::Named(alias_name, supplied_arguments) = source else {
+            return None;
+        };
+        let alias = self.type_aliases.get(alias_name).cloned()?;
+        let alias_parameters = alias
+            .compile_groups
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+        if supplied_arguments.is_empty() || supplied_arguments.len() >= alias_parameters.len() {
+            return None;
+        }
+        if alias_parameters
+            .iter()
+            .any(|parameter| parameter.kind != CompileParamKind::Type)
+        {
+            self.error(format!(
+                "constructor trait implementation target alias `{alias_name}` must contain only type parameters"
+            ));
+            return None;
+        }
+
+        let declared = declared_parameters
+            .iter()
+            .map(|parameter| parameter.name.clone())
+            .collect::<HashSet<_>>();
+        let mut determined = HashSet::new();
+        for argument in supplied_arguments {
+            let Type::Named(name, arguments) = argument else {
+                self.error(
+                    "generic constructor trait extend target arguments must be bare declared type parameters",
+                );
+                return None;
+            };
+            if !arguments.is_empty() || !declared.contains(name) || !determined.insert(name.clone())
+            {
+                self.error(
+                    "generic constructor trait extend target arguments must use every declared type parameter exactly once",
+                );
+                return None;
+            }
+        }
+        if determined.len() != declared_parameters.len() {
+            self.error(
+                "every generic constructor trait extend parameter must be determined by the target constructor",
+            );
+            return None;
+        }
+
+        let substitutions = alias_parameters
+            .iter()
+            .zip(supplied_arguments.iter())
+            .map(|(parameter, argument)| (parameter.name.clone(), argument.clone()))
+            .collect::<HashMap<_, _>>();
+        let remaining_parameters = alias_parameters
+            .iter()
+            .skip(supplied_arguments.len())
+            .enumerate()
+            .map(|(index, parameter)| (parameter.name.clone(), index))
+            .collect::<HashMap<_, _>>();
+        let mut target = alias.target.clone();
+        substitute_type_parameters(&mut target, &substitutions);
+        let Type::Named(target_name, target_arguments) = target else {
+            self.error(format!(
+                "constructor trait implementation target alias `{alias_name}` must expand to a nominal type constructor"
+            ));
+            return None;
+        };
+        let Some(base) =
+            self.type_constructor_impl_target(&Type::Named(target_name.clone(), Vec::new()))
+        else {
+            self.error(format!(
+                "constructor trait implementation target alias `{alias_name}` must expand to a generic nominal type constructor"
+            ));
+            return None;
+        };
+        let expected_arguments = match base.kind {
+            NominalKind::Struct => self.struct_templates[&target_name]
+                .compile_groups
+                .iter()
+                .flatten()
+                .count(),
+            NominalKind::Enum => self.enum_templates[&target_name]
+                .compile_groups
+                .iter()
+                .flatten()
+                .count(),
+        };
+        if target_arguments.len() != expected_arguments {
+            self.error(format!(
+                "constructor trait implementation target alias `{alias_name}` expands to `{target_name}` with {} argument{}, expected {expected_arguments}",
+                target_arguments.len(),
+                if target_arguments.len() == 1 { "" } else { "s" }
+            ));
+            return None;
+        }
+        let mut open_counts = vec![0_usize; remaining_parameters.len()];
+        for argument in &target_arguments {
+            if let Type::Named(name, arguments) = argument {
+                if arguments.is_empty() {
+                    if let Some(index) = remaining_parameters.get(name) {
+                        open_counts[*index] += 1;
+                    }
+                }
+            }
+        }
+        if open_counts.iter().any(|count| *count != 1) {
+            self.error(format!(
+                "constructor trait implementation target alias `{alias_name}` must use each remaining constructor parameter exactly once"
+            ));
+            return None;
+        }
+        Some(GenericConstructorTraitExtensionTarget {
+            target: TypeConstructorImplTarget {
+                name: target_name,
+                kind: base.kind,
+                parameter_count: remaining_parameters.len(),
+            },
+            self_constructor: source.clone(),
+        })
+    }
+
+    fn expand_function_aliases_after_substitution(
+        &mut self,
+        function: &mut Function,
+        context: &str,
+    ) -> bool {
+        let aliases = self.type_aliases.clone();
+        let mut diagnostics = Vec::new();
+        expand_function_aliases(function, &aliases, &mut diagnostics);
+        if diagnostics.is_empty() {
+            return true;
+        }
+        for diagnostic in diagnostics {
+            self.error(format!("{context}: {diagnostic}"));
+        }
+        false
+    }
+
     fn validate_associated_type_constructor(
         &mut self,
         trait_name: &str,
@@ -5045,6 +5200,14 @@ impl Analyzer {
     fn collect_extension(&mut self, extension: ExtendDef, origin: ItemOrigin) {
         if !extension.compile_groups.is_empty() {
             if extension.trait_ref.is_some() {
+                if extension
+                    .trait_ref
+                    .as_ref()
+                    .is_some_and(|trait_ref| self.trait_ref_has_constructor_subject(trait_ref))
+                {
+                    self.collect_generic_constructor_trait_extension(extension, origin);
+                    return;
+                }
                 self.collect_generic_trait_extension(extension, origin);
             } else {
                 self.collect_generic_inherent_extension(extension, origin);
@@ -5596,6 +5759,279 @@ impl Analyzer {
                 &template,
             );
         }
+    }
+
+    fn collect_generic_constructor_trait_extension(
+        &mut self,
+        extension: ExtendDef,
+        origin: ItemOrigin,
+    ) {
+        let compile_parameter_kinds = compile_parameter_kinds(&extension.compile_groups);
+        if !self.validate_where_predicate_shapes(
+            "generic constructor trait extension",
+            &extension.where_predicates,
+            &compile_parameter_kinds,
+        ) {
+            return;
+        }
+        if !extension.where_predicates.is_empty() {
+            self.error(
+                "generic constructor trait implementation does not support `where` clauses yet",
+            );
+            return;
+        }
+        let parameters = extension
+            .compile_groups
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+        if extension.compile_groups.len() != 1 || parameters.is_empty() {
+            self.error(
+                "generic constructor trait extend requires exactly one non-empty type parameter group",
+            );
+            return;
+        }
+        let mut declared = HashSet::new();
+        for parameter in &parameters {
+            if parameter.kind != CompileParamKind::Type
+                || parameter.name == "Self"
+                || !declared.insert(parameter.name.clone())
+            {
+                self.error(format!(
+                    "invalid or duplicate generic constructor extend parameter `{}`",
+                    parameter.name
+                ));
+                return;
+            }
+        }
+        let Some(target) =
+            self.partial_alias_constructor_trait_target(&extension.target, &parameters)
+        else {
+            self.error(
+                "generic constructor trait extend target must be a partially applied transparent type alias",
+            );
+            return;
+        };
+        let trait_source = extension
+            .trait_ref
+            .as_ref()
+            .expect("generic constructor trait extension has a trait reference");
+        let Type::Named(trait_name, source_arguments) = trait_source else {
+            self.error("generic constructor trait implementation must reference a named trait");
+            return;
+        };
+        let Some(schema) = self.traits.get(trait_name).cloned() else {
+            self.error(format!("unknown trait `{trait_name}`"));
+            return;
+        };
+        if !schema.valid {
+            return;
+        }
+        let CompileParamKind::TypeConstructor { parameter_count } = schema.self_parameter.kind
+        else {
+            self.error(format!(
+                "trait `{trait_name}` does not accept a type-constructor implementation target"
+            ));
+            return;
+        };
+        if parameter_count != target.target.parameter_count {
+            self.error(format!(
+                "type constructor `{}` has {} parameter{}, but trait `{trait_name}` expects a constructor with {parameter_count}",
+                target.target.name,
+                target.target.parameter_count,
+                if target.target.parameter_count == 1 { "" } else { "s" }
+            ));
+            return;
+        }
+        if source_arguments.len() != schema.compile_parameters.len() {
+            self.error(format!(
+                "trait argument count mismatch for `{trait_name}`: expected {}, found {}",
+                schema.compile_parameters.len(),
+                source_arguments.len()
+            ));
+            return;
+        }
+        for parameter in &schema.compile_parameters {
+            if parameter.kind != CompileParamKind::Type {
+                self.error(format!(
+                    "constructor trait implementation argument `{}` for `{trait_name}` has unsupported compile-time kind {}",
+                    parameter.name,
+                    describe_compile_param_kind(parameter.kind)
+                ));
+                return;
+            }
+        }
+        if !self.validate_generic_trait_members(trait_name, &schema, &extension.members) {
+            return;
+        }
+
+        let target_package = self
+            .nominal_accesses
+            .get(&target.target.name)
+            .map(|access| access.origin.package);
+        if target_package != Some(origin.package) && schema.access.origin.package != origin.package
+        {
+            self.error(format!(
+                "generic constructor trait implementation of `{trait_name}` for `{}` must be declared in the package that defines the trait or the type constructor",
+                target.target.name
+            ));
+            return;
+        }
+
+        let mut trait_arguments = Vec::new();
+        let mut trait_argument_sources = Vec::new();
+        for (parameter, source_argument) in schema.compile_parameters.iter().zip(source_arguments) {
+            if !self.source_type_is_concrete(source_argument) {
+                self.error(format!(
+                    "constructor trait implementation argument `{}` for `{trait_name}` must be a concrete type",
+                    parameter.name
+                ));
+                return;
+            }
+            let argument = self.lower_source_type(source_argument);
+            if argument == Ty::Error {
+                return;
+            }
+            trait_argument_sources.push(source_argument.clone());
+            trait_arguments.push(argument);
+        }
+
+        let key = ConstructorTraitImplKey {
+            target: target.target.clone(),
+            trait_ref: ConstructorTraitRefKey {
+                name: trait_name.clone(),
+                arguments: trait_arguments,
+            },
+        };
+        if !self.constructor_trait_impl_headers.insert(key.clone()) {
+            self.error(format!(
+                "duplicate constructor trait implementation of `{}` for `{}`",
+                key.trait_ref.name, key.target.name
+            ));
+            return;
+        }
+        if !schema.associated_types.is_empty() {
+            self.error(format!(
+                "constructor trait implementation of `{trait_name}` for `{}` does not support associated types yet",
+                key.target.name
+            ));
+            return;
+        }
+
+        let mut substitutions = HashMap::new();
+        substitutions.insert("Self".to_owned(), target.self_constructor.clone());
+        for (parameter, argument) in schema.compile_parameters.iter().zip(trait_argument_sources) {
+            substitutions.insert(parameter.name.clone(), argument);
+        }
+
+        let mut supplied_methods = HashMap::new();
+        let mut valid = true;
+        for member in extension.members {
+            match member {
+                ExtendMember::Const(binding) => {
+                    self.error(format!(
+                        "unknown constructor trait member `{}.{}`",
+                        key.trait_ref.name, binding.name
+                    ));
+                    valid = false;
+                }
+                ExtendMember::Function(function) => {
+                    let method_name = function.name.clone();
+                    let Some(method_id) = trait_method_identity(&schema, &function) else {
+                        self.error(format!(
+                            "unknown constructor trait member `{}.{method_name}`",
+                            key.trait_ref.name
+                        ));
+                        valid = false;
+                        continue;
+                    };
+                    if supplied_methods.insert(method_id, function).is_some() {
+                        self.error(format!(
+                            "duplicate constructor trait method `{}.{method_name}`",
+                            key.trait_ref.name
+                        ));
+                        valid = false;
+                    }
+                }
+            }
+        }
+
+        let target_access = self.nominal_access_or_internal(&key.target.name);
+        let mut implementation_access =
+            Self::intersect_access_boundaries(&schema.access, &target_access, &origin);
+        for argument in &key.trait_ref.arguments {
+            implementation_access =
+                self.restrict_access_boundary_to_type(&implementation_access, argument, &origin);
+        }
+
+        let mut registered_methods = HashMap::new();
+        for method_id in &schema.method_order {
+            let declaration = &schema.methods[method_id];
+            let method_name = &declaration.name;
+            let mut expected = declaration.clone();
+            substitute_function_types(&mut expected, &substitutions);
+            if !self.expand_function_aliases_after_substitution(
+                &mut expected,
+                "constructor trait expected signature",
+            ) {
+                valid = false;
+                continue;
+            }
+            let (mut function, function_origin) = supplied_methods
+                .get(method_id)
+                .cloned()
+                .map(|function| (function, origin.clone()))
+                .unwrap_or_else(|| (declaration.clone(), schema.access.origin.clone()));
+            if function.body.is_none() {
+                self.error(format!(
+                    "constructor trait method `{}.{method_name}` requires a body in implementation for `{}`",
+                    key.trait_ref.name, key.target.name
+                ));
+                valid = false;
+                continue;
+            }
+            substitute_function_types(&mut function, &substitutions);
+            if !self.expand_function_aliases_after_substitution(
+                &mut function,
+                "constructor trait implementation signature",
+            ) {
+                valid = false;
+                continue;
+            }
+            if schema_function_has_receiver(&expected) != schema_function_has_receiver(&function)
+                || !compile_parameter_groups_match(
+                    &expected.compile_groups,
+                    &function.compile_groups,
+                )
+                || !source_function_shapes_match(&expected, &function)
+            {
+                self.error(format!(
+                    "constructor trait method `{}.{method_name}` signature mismatch in implementation for `{}`",
+                    key.trait_ref.name, key.target.name
+                ));
+                valid = false;
+                continue;
+            }
+            let canonical = constructor_trait_method_name(&key, method_id);
+            function.name = canonical.clone();
+            let mut compile_groups = extension.compile_groups.clone();
+            compile_groups.extend(function.compile_groups.clone());
+            function.compile_groups = compile_groups;
+            function.where_predicates = extension.where_predicates.clone();
+            self.function_template_order.push(canonical.clone());
+            self.function_templates.insert(canonical.clone(), function);
+            self.function_template_origins
+                .insert(canonical.clone(), function_origin);
+            self.function_accesses
+                .insert(canonical.clone(), implementation_access.clone());
+            registered_methods.insert(method_id.clone(), canonical);
+        }
+        if !valid {
+            return;
+        }
+        self.constructor_trait_impl_methods
+            .insert(key, registered_methods);
     }
 
     fn validate_generic_trait_members(
@@ -7638,7 +8074,10 @@ impl Analyzer {
                 continue;
             };
             for predicate in predicates {
-                if let Some(required) = self.constructor_trait_impl_key_from_predicate(&predicate) {
+                if let Some(required) = self.constructor_trait_impl_key_from_predicate_for_target(
+                    &predicate,
+                    Some(&key.target),
+                ) {
                     if required == key {
                         continue;
                     }
@@ -7722,7 +8161,24 @@ impl Analyzer {
         &mut self,
         predicate: &crate::ast::WherePredicate,
     ) -> Option<ConstructorTraitImplKey> {
-        let target = self.type_constructor_impl_target(&predicate.subject)?;
+        self.constructor_trait_impl_key_from_predicate_for_target(predicate, None)
+    }
+
+    fn constructor_trait_impl_key_from_predicate_for_target(
+        &mut self,
+        predicate: &crate::ast::WherePredicate,
+        target_override: Option<&TypeConstructorImplTarget>,
+    ) -> Option<ConstructorTraitImplKey> {
+        let target = target_override
+            .filter(|target| {
+                matches!(
+                    &predicate.subject,
+                    Type::Named(name, arguments)
+                        if arguments.is_empty() && name == &target.name
+                )
+            })
+            .cloned()
+            .or_else(|| self.type_constructor_impl_target(&predicate.subject))?;
         if !self.trait_ref_has_constructor_subject(&predicate.trait_ref) {
             return None;
         }
@@ -36526,6 +36982,19 @@ fn expand_type_aliases<const N: usize>(mut programs: [&mut Program; N]) -> Vec<S
     diagnostics
 }
 
+fn collect_type_aliases<const N: usize>(
+    programs: [&Program; N],
+) -> HashMap<String, crate::ast::TypeAliasDef> {
+    programs
+        .iter()
+        .flat_map(|program| program.items.iter())
+        .filter_map(|item| match item {
+            Item::TypeAlias(definition) => Some((definition.name.clone(), definition.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
 fn promote_inferred_type_aliases<const N: usize>(programs: [&mut Program; N]) {
     let mut known_types = HashMap::from([
         ("i32".to_owned(), 0_usize),
@@ -36673,7 +37142,9 @@ fn expand_item_aliases(
             }
         }
         Item::Extend(extension) => {
-            expand_alias_type(&mut extension.target, aliases, &mut Vec::new(), diagnostics);
+            if !is_partial_alias_application(&extension.target, aliases) {
+                expand_alias_type(&mut extension.target, aliases, &mut Vec::new(), diagnostics);
+            }
             if let Some(trait_ref) = &mut extension.trait_ref {
                 expand_alias_type(trait_ref, aliases, &mut Vec::new(), diagnostics);
             }
@@ -36713,6 +37184,20 @@ fn expand_item_aliases(
         Item::Access(_) => {}
         Item::TypeAlias(_) => unreachable!("aliases are removed before item expansion"),
     }
+}
+
+fn is_partial_alias_application(
+    source: &Type,
+    aliases: &HashMap<String, crate::ast::TypeAliasDef>,
+) -> bool {
+    let Type::Named(name, arguments) = source else {
+        return false;
+    };
+    let Some(alias) = aliases.get(name) else {
+        return false;
+    };
+    let parameters = alias.compile_groups.iter().flatten().count();
+    !arguments.is_empty() && arguments.len() < parameters
 }
 
 fn expand_function_aliases(
@@ -37683,9 +38168,9 @@ fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<String, Typ
                 substitute_type_parameters(argument, substitutions);
             }
             if let Some(Type::Named(replacement, replacement_arguments)) = substitutions.get(name) {
-                if replacement_arguments.is_empty() {
-                    *name = replacement.clone();
-                }
+                let mut applied = replacement_arguments.clone();
+                applied.extend(arguments.clone());
+                *ty = Type::Named(replacement.clone(), applied);
             }
         }
         Type::Borrow {
@@ -43668,7 +44153,12 @@ let main(): i32 = { 0 }
             "unexpected constructor trait implementation diagnostics: {:?}",
             analyzer.diagnostics
         );
-        assert_eq!(analyzer.constructor_trait_impl_headers.len(), 2);
+        let carrier_headers = analyzer
+            .constructor_trait_impl_headers
+            .iter()
+            .filter(|key| key.target.name == "Carrier")
+            .collect::<Vec<_>>();
+        assert_eq!(carrier_headers.len(), 2);
         assert!(analyzer.constructor_trait_impl_headers.iter().any(|key| {
             key.target.name == "Carrier"
                 && key.target.parameter_count == 1
@@ -43714,11 +44204,16 @@ let main(): i32 = { 0 }
             "unexpected constructor trait method diagnostics: {:?}",
             analyzer.diagnostics
         );
-        assert_eq!(analyzer.constructor_trait_impl_headers.len(), 1);
+        let carrier_headers = analyzer
+            .constructor_trait_impl_headers
+            .iter()
+            .filter(|key| key.target.name == "Carrier")
+            .collect::<Vec<_>>();
+        assert_eq!(carrier_headers.len(), 1);
         let key = analyzer
             .constructor_trait_impl_headers
             .iter()
-            .next()
+            .find(|key| key.target.name == "Carrier")
             .expect("constructor trait impl header")
             .clone();
         let canonical = constructor_trait_method_name(&key, "map");
@@ -43775,7 +44270,7 @@ let main(): i32 = {
         let key = analyzer
             .constructor_trait_impl_headers
             .iter()
-            .next()
+            .find(|key| key.target.name == "Carrier")
             .expect("constructor trait impl header");
         let template = constructor_trait_method_name(key, "map");
         analyzer
@@ -43800,6 +44295,56 @@ let main(): i32 = {
                 .any(|line| { line.contains(" = call ") && line.contains(&format!("@{symbol}(")) }),
             "expected call to constructor trait method instance in IR:\n{ir}"
         );
+    }
+
+    #[test]
+    fn core_option_and_result_implement_monad() {
+        compile_resolved_text(
+            r#"
+use core.functional.Monad
+
+let add_one(value: i32): i32 = {
+  value + 1
+}
+
+let option_next(value: i32): Option(i32) = {
+  Option(i32).Some(value + 1)
+}
+
+let result_next(value: i32): Result(i32, bool) = {
+  Result(i32, bool).Ok(value + 2)
+}
+
+let read_option(value: Option(i32)): i32 = {
+  value match {
+    Some(number) => number,
+    None => 0,
+  }
+}
+
+let read_result(value: Result(i32, bool)): i32 = {
+  value match {
+    Ok(number) => number,
+    Err(_) => 0,
+  }
+}
+
+let main(): i32 = {
+  let option = Option(i32).Some(39).flat_map(option_next)
+  let result = Result(i32, bool).Ok(1).flat_map(result_next)
+  let mapped_option = Option(i32).Some(1).map(add_one)
+  let mapped_result = Result(i32, bool).Ok(2).map(add_one)
+  let pure_option: Option(i32) = Option.pure(3)
+  let pure_result: Result(i32, bool) = Result.pure(4)
+  let option_transform: Option((i32): i32) = Option.Some(add_one)
+  let result_transform: Result((i32): i32, bool) = Result.Ok(add_one)
+  let applied_option = option_transform.apply(Option(i32).Some(5))
+  let applied_result = result_transform.apply(Result(i32, bool).Ok(6))
+  read_option(option) + read_result(result) + read_option(mapped_option) + read_result(mapped_result) + read_option(pure_option) + read_result(pure_result) + read_option(applied_option) + read_result(applied_result) - 70
+}
+"#,
+        )
+        .expect("core Option and Result should dispatch Monad.flat_map");
     }
 
     #[test]

@@ -57,7 +57,7 @@ Effect identities use uppercase nominal spelling, including user-defined effects
 such as `E: effect` remain ordinary parameter names.
 `Shared`/`Mutable` require `use core.access...` when named as standard-library declarations.
 `Semigroup` and `Monoid` require `use core.algebra...` when named.
-`Functor`, `Applicative`, and `Monad` require `use core.functional...` when named.
+`Functor`, `Applicative`, `Monad`, and `ResultWith` require `use core.functional...` when named.
 `Iterator` and `IntoIterator` require an ordinary `use core.iter...` when named in an implementation
 or bound. Writing `for pattern in value { ... }` binds to their validated lang-item identities
 without importing them and cannot be redirected by same-named inherent methods or traits.

@@ -107,10 +107,10 @@ dispatch from concrete nominal instances, so implementations such as `extend Car
 expose `Carrier(i32) { value: 41 }.map(...)` through the ordinary generic function instance pipeline. Generic
 functions can take explicit type-constructor arguments and constructor predicates such as
 `where M: Monad`. Trait-level `where` inheritance is implemented for the standard
-`Applicative where Self: Functor` and `Monad where Self: Applicative` relationships. The remaining
-HKT work is
-associated-type lowering, broader constructor equation solving, and partial constructor
-applications.
+`Applicative where Self: Functor` and `Monad where Self: Applicative` relationships. `Option` and
+the `ResultWith(Error)` adapter implement the standard functional protocols. Partially applied
+transparent type aliases can act as HKT implementation targets; the remaining HKT work is
+associated-type lowering and broader constructor equation solving.
 
 Access keyword generics are implemented for functions and generic inherent members: `A: access` accepts `shared` or `mut`,
 defaults to shared when omitted, participates in monomorphization, and can drive parameter modes,

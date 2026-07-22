@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+## 0.184.0 - 2026-07-23
+
+- Added standard `Functor`, `Applicative`, and `Monad` implementations for `Option` and for the
+  `ResultWith(Error)` unary type-constructor adapter over `Result(Value, Error)`.
+- Added semantic support for partially applied transparent type aliases as higher-kinded
+  constructor trait implementation targets, enabling source-level adapters such as
+  `extend(Error: type) ResultWith(Error): Monad`.
+- Exported `core.functional.ResultWith` as a normal non-prelude standard-library item.
+
 ## 0.183.0 - 2026-07-22
 
 - Changed struct declarations and value construction to the braced form: `let A = struct { ... }`

@@ -247,6 +247,8 @@ where Self: Applicative{let flat_map(E: effect, A: type, B: type)(
   )(
     move next: (A): Self(B) with(E),
   ): Self(B) with(E)}
+
+pub let ResultWith(Error: type)(Value: type): type = Result(Value, Error)
 ```
 
 These declarations use constructor kinds such as `(Value: type): type` on the trait `Self` subject,
@@ -259,8 +261,25 @@ associated functions without a receiver can still be called from the bare constr
 `Carrier.pure(...)` is available once `Carrier` implements `Applicative`. Trait-level `where`
 constraints express protocol inheritance, so a
 `Carrier: Applicative` implementation also requires `Carrier: Functor`, and `Carrier: Monad`
-requires `Carrier: Applicative`. Associated-type lowering and broader constructor equation solving
-remain future semantic work.
+requires `Carrier: Applicative`.
+
+The standard library implements `Functor`, `Applicative`, and `Monad` for `Option` and for
+`ResultWith(Error)`, the unary constructor adapter for `Result(Value, Error)`. `ResultWith` is a
+normal non-prelude item:
+
+```sc
+use core.functional.{Monad, ResultWith}
+
+let next(value: i32): Result(i32, bool) = {
+  Result(i32, bool).Ok(value + 1)
+}
+
+let value = Result(i32, bool).Ok(41).flat_map(next)
+```
+
+Partially applied transparent type aliases may be used as constructor trait implementation targets,
+which is how `ResultWith(Error): Monad` is expressed without making `Result` special. Associated-type
+lowering and broader constructor equation solving remain future semantic work.
 
 `ControlFlow`, the old propagation `Try`, `FromResidual`, and `FromError` were removed together with postfix `.try`. `Option` and
 `Result` are ordinary enum values and require explicit constructors. Language error propagation is
