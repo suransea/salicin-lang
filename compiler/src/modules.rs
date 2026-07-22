@@ -2178,6 +2178,13 @@ impl Resolver {
             TraitMember::AssociatedType { name, .. } => Some(name.clone()),
             TraitMember::Function(_) => None,
         }));
+        for predicate in &mut definition.where_predicates {
+            self.rewrite_type(&mut predicate.subject, context, &trait_types);
+            self.rewrite_type(&mut predicate.trait_ref, context, &trait_types);
+            for binding in &mut predicate.associated_types {
+                self.rewrite_type(&mut binding.ty, context, &trait_types);
+            }
+        }
         for member in &mut definition.members {
             match member {
                 TraitMember::Function(function) => {

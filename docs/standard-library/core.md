@@ -233,7 +233,8 @@ pub let Functor(F: (Value: type): type) = trait {
   ): F(B) with(E)
 }
 
-pub let Applicative(F: (Value: type): type) = trait {
+pub let Applicative(F: (Value: type): type) = trait
+where F: Functor {
   let pure(A: type)(move value: A): F(A)
 
   let apply(E: effect, A: type, B: type)(
@@ -242,7 +243,8 @@ pub let Applicative(F: (Value: type): type) = trait {
   ): F(B) with(E)
 }
 
-pub let Monad(M: (Value: type): type) = trait {
+pub let Monad(M: (Value: type): type) = trait
+where M: Applicative {
   let flat_map(E: effect, A: type, B: type)(
     move value: M(A),
     move next: (A): M(B) with(E),
@@ -255,8 +257,9 @@ constructor subject can already be implemented for generic nominal constructors.
 implementations are registered as generic function templates and validated, for example
 `extend Carrier: Functor { let map(E, A, B)... }`. Constructor trait associated functions without a
 receiver can be called from the bare constructor, for example `Carrier.map(...)`; dispatch then uses
-the existing generic function instance pipeline. Trait inheritance constraints such as
-`Applicative where F: Functor`, associated-type lowering, receiver-style HKT methods, and full HKT
+the existing generic function instance pipeline. Trait-level `where` constraints express protocol
+inheritance, so an `Applicative(F)` implementation also requires `Functor(F)`, and `Monad(M)`
+requires `Applicative(M)`. Associated-type lowering, receiver-style HKT methods, and full HKT
 equation solving remain future semantic work.
 
 `ControlFlow`, the old propagation `Try`, `FromResidual`, and `FromError` were removed together with postfix `.try`. `Option` and

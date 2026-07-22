@@ -308,22 +308,28 @@ impl Parser {
         }
 
         if self.at(&TokenKind::Struct) || self.at(&TokenKind::Enum) || self.at(&TokenKind::Trait) {
-            if mutable
-                || annotation.is_some()
-                || has_effect_group
-                || !groups.is_empty()
-                || !where_predicates.is_empty()
-            {
+            if mutable || annotation.is_some() || has_effect_group || !groups.is_empty() {
                 return Err(self.error_here(
                     "data declarations cannot be mutable, annotated, or have runtime parameters",
                 ));
             }
             return if self.at(&TokenKind::Struct) {
+                if !where_predicates.is_empty() {
+                    return Err(self.error_here("struct declarations cannot use `where` clauses"));
+                }
                 self.struct_definition(name, compile_groups)
                     .map(Item::Struct)
             } else if self.at(&TokenKind::Enum) {
+                if !where_predicates.is_empty() {
+                    return Err(self.error_here("enum declarations cannot use `where` clauses"));
+                }
                 self.enum_definition(name, compile_groups).map(Item::Enum)
             } else {
+                if !where_predicates.is_empty() {
+                    return Err(self.error_here(
+                        "trait inheritance constraints are written after `trait`, before `{`",
+                    ));
+                }
                 self.trait_definition(name, compile_groups).map(Item::Trait)
             };
         }
@@ -1365,6 +1371,9 @@ impl Parser {
         compile_groups: Vec<Vec<CompileParam>>,
     ) -> Result<TraitDef, ParseError> {
         self.expect(&TokenKind::Trait, "`trait`")?;
+        self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::LBrace]);
+        let where_predicates = self.where_clause()?;
+        self.take_newlines_if_followed_by(&[TokenKind::LBrace]);
         self.expect(&TokenKind::LBrace, "`{` after `trait`")?;
         self.skip_separators();
 
@@ -1384,6 +1393,7 @@ impl Parser {
         Ok(TraitDef {
             name,
             compile_groups,
+            where_predicates,
             members,
         })
     }
@@ -5849,6 +5859,10 @@ mod tests {
              let Effects(E: (Error: type): effect)(move action: (): i32 with(E(bool))): i32 with(E(bool)) = { action() }\n\
              let Functor(F: (Value: type): type) = trait {\n\
                let map(E: effect, A: type, B: type)(move value: F(A), move transform: (A): B with(E)): F(B) with(E)\n\
+             }\n\
+             let Applicative(F: (Value: type): type) = trait\n\
+             where F: Functor {\n\
+               let pure(A: type)(move value: A): F(A)\n\
              }\n",
         )
         .unwrap();
@@ -5883,6 +5897,19 @@ mod tests {
         assert_eq!(
             trait_def.compile_groups[0][0].kind,
             CompileParamKind::TypeConstructor { parameter_count: 1 }
+        );
+
+        let Item::Trait(applicative) = &program.items[3] else {
+            panic!("expected inherited trait");
+        };
+        assert_eq!(applicative.where_predicates.len(), 1);
+        assert_eq!(
+            applicative.where_predicates[0].subject,
+            Type::Named("F".into(), Vec::new())
+        );
+        assert_eq!(
+            applicative.where_predicates[0].trait_ref,
+            Type::Named("Functor".into(), Vec::new())
         );
     }
 

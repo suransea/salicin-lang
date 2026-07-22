@@ -944,7 +944,17 @@ let value = Carrier.map(Carrier(i32)(41), add_one)
 ```
 
 如果多个 constructor trait associated function 共享同名 member，仍按命名重载规则用具名参数消歧。
-关联类型、`where` 子句、receiver-style HKT 方法和完整构造子方程求解仍是后续语义能力；不能唯一决定时
+trait 声明可以在 `trait` 后、`{` 前写继承约束：
+
+```sc
+let Applicative(F: (Value: type): type) = trait
+where F: Functor {
+  ...
+}
+```
+
+这里 `F: Functor` 使用构造器 subject 规则：`F` 填充 `Functor` 的第一个构造器参数，右侧只写剩余
+trait 参数。关联类型、receiver-style HKT 方法和完整构造子方程求解仍是后续语义能力；不能唯一决定时
 仍通过省略编译期参数组和命名参数由上下文消歧，不会恢复 `_` 推断占位。
 
 带名称旁参数的形式定义类型族，右侧必须产生具体的 `type`：

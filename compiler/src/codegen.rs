@@ -1907,6 +1907,7 @@ fn assignment_operator_trait(operator: BinaryOp) -> Option<LangItemKind> {
 #[derive(Debug, Clone)]
 struct TraitSchema {
     compile_parameters: Vec<CompileParam>,
+    where_predicates: Vec<crate::ast::WherePredicate>,
     associated_types: Vec<String>,
     associated_type_kinds: HashMap<String, CompileParamKind>,
     methods: HashMap<String, Function>,
@@ -1945,6 +1946,14 @@ fn describe_compile_param_kind(kind: CompileParamKind) -> String {
             )
         }
     }
+}
+
+fn compile_parameter_kinds(groups: &[Vec<CompileParam>]) -> HashMap<String, CompileParamKind> {
+    groups
+        .iter()
+        .flatten()
+        .map(|parameter| (parameter.name.clone(), parameter.kind))
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2593,6 +2602,7 @@ impl Analyzer {
         for (extension, origin) in remaining_extensions {
             self.collect_extension(extension, origin);
         }
+        self.validate_trait_inheritance_implementations();
 
         let never = self.lang_item_name(LangItemKind::Never);
         if !self.enum_defs.contains_key(never) {
@@ -3295,6 +3305,7 @@ impl Analyzer {
             definition.name,
             TraitSchema {
                 compile_parameters,
+                where_predicates: definition.where_predicates,
                 associated_types,
                 associated_type_kinds,
                 methods,
@@ -3324,6 +3335,11 @@ impl Analyzer {
                     .map(|name| (name.clone(), schema.associated_type_kinds[name])),
             );
             let mut valid = schema.valid;
+            valid &= self.validate_where_predicate_shapes(
+                &format!("trait `{trait_name}`"),
+                &schema.where_predicates,
+                &compile_parameter_kinds,
+            );
             for method_name in &schema.method_order {
                 let method = &schema.methods[method_name];
                 let mut method_compile_parameter_kinds = compile_parameter_kinds.clone();
@@ -5270,9 +5286,12 @@ impl Analyzer {
     }
 
     fn collect_generic_trait_extension(&mut self, extension: ExtendDef, origin: ItemOrigin) {
-        if !self
-            .validate_where_predicate_shapes("generic trait extension", &extension.where_predicates)
-        {
+        let compile_parameter_kinds = compile_parameter_kinds(&extension.compile_groups);
+        if !self.validate_where_predicate_shapes(
+            "generic trait extension",
+            &extension.where_predicates,
+            &compile_parameter_kinds,
+        ) {
             return;
         }
         let parameters = extension
@@ -5896,9 +5915,11 @@ impl Analyzer {
     }
 
     fn collect_generic_inherent_extension(&mut self, extension: ExtendDef, origin: ItemOrigin) {
+        let compile_parameter_kinds = compile_parameter_kinds(&extension.compile_groups);
         if !self.validate_where_predicate_shapes(
             "generic inherent extension",
             &extension.where_predicates,
+            &compile_parameter_kinds,
         ) {
             return;
         }
@@ -7019,7 +7040,12 @@ impl Analyzer {
                 ));
                 continue;
             }
-            if !self.validate_where_predicate_shapes(&template_name, &template.where_predicates) {
+            let compile_parameter_kinds = compile_parameter_kinds(&template.compile_groups);
+            if !self.validate_where_predicate_shapes(
+                &format!("generic function `{template_name}`"),
+                &template.where_predicates,
+                &compile_parameter_kinds,
+            ) {
                 continue;
             }
 
@@ -7301,37 +7327,38 @@ impl Analyzer {
 
     fn validate_where_predicate_shapes(
         &mut self,
-        function: &str,
+        owner: &str,
         predicates: &[crate::ast::WherePredicate],
+        compile_parameter_kinds: &HashMap<String, CompileParamKind>,
     ) -> bool {
         let mut valid = true;
         let mut seen = HashSet::new();
         for predicate in predicates {
             if !seen.insert((predicate.subject.clone(), predicate.trait_ref.clone())) {
-                self.error(format!(
-                    "duplicate where predicate in generic function `{function}`"
-                ));
+                self.error(format!("duplicate where predicate in {owner}"));
                 valid = false;
                 continue;
             }
             let Type::Named(name, arguments) = &predicate.trait_ref else {
-                self.error(format!(
-                    "where predicate in generic function `{function}` must reference a trait"
-                ));
+                self.error(format!("where predicate in {owner} must reference a trait"));
                 valid = false;
                 continue;
             };
             let Some(schema) = self.traits.get(name).cloned() else {
                 self.error(format!(
-                    "unknown trait `{name}` in where predicate of generic function `{function}`"
+                    "unknown trait `{name}` in where predicate of {owner}"
                 ));
                 valid = false;
                 continue;
             };
-            if arguments.len() != schema.compile_parameters.len() {
+            let expected_arguments = self.where_predicate_expected_trait_arguments(
+                predicate,
+                &schema,
+                compile_parameter_kinds,
+            );
+            if arguments.len() != expected_arguments {
                 self.error(format!(
-                    "trait argument count mismatch for `{name}` in where predicate of `{function}`: expected {}, found {}",
-                    schema.compile_parameters.len(),
+                    "trait argument count mismatch for `{name}` in where predicate of {owner}: expected {expected_arguments}, found {}",
                     arguments.len()
                 ));
                 valid = false;
@@ -7340,19 +7367,19 @@ impl Analyzer {
             for binding in &predicate.associated_types {
                 if !schema.associated_types.contains(&binding.name) {
                     self.error(format!(
-                        "unknown associated type `{name}.{}` in where predicate of `{function}`",
+                        "unknown associated type `{name}.{}` in where predicate of {owner}",
                         binding.name
                     ));
                     valid = false;
                 } else if schema.associated_type_kinds[&binding.name] != CompileParamKind::Type {
                     self.error(format!(
-                        "generic associated type equality `{name}.{}` in where predicate of `{function}` is not supported yet",
+                        "generic associated type equality `{name}.{}` in where predicate of {owner} is not supported yet",
                         binding.name
                     ));
                     valid = false;
                 } else if !associated.insert(binding.name.clone()) {
                     self.error(format!(
-                        "duplicate associated type equality `{name}.{}` in where predicate of `{function}`",
+                        "duplicate associated type equality `{name}.{}` in where predicate of {owner}",
                         binding.name
                     ));
                     valid = false;
@@ -7360,6 +7387,201 @@ impl Analyzer {
             }
         }
         valid
+    }
+
+    fn where_predicate_expected_trait_arguments(
+        &self,
+        predicate: &crate::ast::WherePredicate,
+        schema: &TraitSchema,
+        compile_parameter_kinds: &HashMap<String, CompileParamKind>,
+    ) -> usize {
+        if self.where_predicate_uses_constructor_subject(predicate, schema, compile_parameter_kinds)
+        {
+            schema.compile_parameters.len().saturating_sub(1)
+        } else {
+            schema.compile_parameters.len()
+        }
+    }
+
+    fn where_predicate_uses_constructor_subject(
+        &self,
+        predicate: &crate::ast::WherePredicate,
+        schema: &TraitSchema,
+        compile_parameter_kinds: &HashMap<String, CompileParamKind>,
+    ) -> bool {
+        let Type::Named(subject, subject_arguments) = &predicate.subject else {
+            return false;
+        };
+        if !subject_arguments.is_empty() {
+            return false;
+        }
+        let Some(subject_kind) = compile_parameter_kinds.get(subject).copied() else {
+            return false;
+        };
+        matches!(
+            subject_kind,
+            CompileParamKind::TypeConstructor { .. } | CompileParamKind::EffectConstructor { .. }
+        ) && schema
+            .compile_parameters
+            .first()
+            .is_some_and(|parameter| parameter.kind == subject_kind)
+    }
+
+    fn validate_trait_inheritance_implementations(&mut self) {
+        let trait_impl_headers = self.trait_impl_headers.iter().cloned().collect::<Vec<_>>();
+        for key in trait_impl_headers {
+            let Some(schema) = self.traits.get(&key.trait_ref.name).cloned() else {
+                continue;
+            };
+            let Some(predicates) = self.substituted_trait_where_predicates(&schema, &key) else {
+                continue;
+            };
+            for predicate in predicates {
+                if let Some(required) = self.constructor_trait_impl_key_from_predicate(&predicate) {
+                    if !self.constructor_trait_impl_headers.contains(&required) {
+                        let target = self.diagnostic_type_name(&key.self_ty);
+                        self.error(format!(
+                            "trait implementation of `{}` for `{target}` requires constructor trait `{}` for `{}`",
+                            key.trait_ref.name, required.trait_ref.name, required.target.name
+                        ));
+                    }
+                } else if !self.concrete_where_predicate_holds(&predicate) {
+                    let target = self.diagnostic_type_name(&key.self_ty);
+                    self.error(format!(
+                        "trait implementation of `{}` for `{target}` does not satisfy inherited where predicate",
+                        key.trait_ref.name
+                    ));
+                }
+            }
+        }
+
+        let constructor_headers = self
+            .constructor_trait_impl_headers
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        for key in constructor_headers {
+            let Some(schema) = self.traits.get(&key.trait_ref.name).cloned() else {
+                continue;
+            };
+            let Some(predicates) =
+                self.substituted_constructor_trait_where_predicates(&schema, &key)
+            else {
+                continue;
+            };
+            for predicate in predicates {
+                if let Some(required) = self.constructor_trait_impl_key_from_predicate(&predicate) {
+                    if required == key {
+                        continue;
+                    }
+                    if !self.constructor_trait_impl_headers.contains(&required) {
+                        self.error(format!(
+                            "constructor trait implementation of `{}` for `{}` requires `{}` for `{}`",
+                            key.trait_ref.name,
+                            key.target.name,
+                            required.trait_ref.name,
+                            required.target.name
+                        ));
+                    }
+                } else if !self.concrete_where_predicate_holds(&predicate) {
+                    self.error(format!(
+                        "constructor trait implementation of `{}` for `{}` does not satisfy inherited where predicate",
+                        key.trait_ref.name, key.target.name
+                    ));
+                }
+            }
+        }
+    }
+
+    fn substituted_trait_where_predicates(
+        &self,
+        schema: &TraitSchema,
+        key: &TraitImplKey,
+    ) -> Option<Vec<crate::ast::WherePredicate>> {
+        let mut substitutions = HashMap::new();
+        substitutions.insert("Self".to_owned(), self.source_type_for_ty(&key.self_ty)?);
+        for (parameter, argument) in schema
+            .compile_parameters
+            .iter()
+            .zip(&key.trait_ref.arguments)
+        {
+            substitutions.insert(parameter.name.clone(), self.source_type_for_ty(argument)?);
+        }
+        Some(
+            schema
+                .where_predicates
+                .iter()
+                .cloned()
+                .map(|mut predicate| {
+                    substitute_where_predicate(&mut predicate, &substitutions);
+                    predicate
+                })
+                .collect(),
+        )
+    }
+
+    fn substituted_constructor_trait_where_predicates(
+        &self,
+        schema: &TraitSchema,
+        key: &ConstructorTraitImplKey,
+    ) -> Option<Vec<crate::ast::WherePredicate>> {
+        let mut substitutions = HashMap::new();
+        let subject = schema.compile_parameters.first()?;
+        substitutions.insert(
+            subject.name.clone(),
+            Type::Named(key.target.name.clone(), Vec::new()),
+        );
+        for (parameter, argument) in schema
+            .compile_parameters
+            .iter()
+            .skip(1)
+            .zip(&key.trait_ref.arguments)
+        {
+            substitutions.insert(parameter.name.clone(), self.source_type_for_ty(argument)?);
+        }
+        Some(
+            schema
+                .where_predicates
+                .iter()
+                .cloned()
+                .map(|mut predicate| {
+                    substitute_where_predicate(&mut predicate, &substitutions);
+                    predicate
+                })
+                .collect(),
+        )
+    }
+
+    fn constructor_trait_impl_key_from_predicate(
+        &mut self,
+        predicate: &crate::ast::WherePredicate,
+    ) -> Option<ConstructorTraitImplKey> {
+        let target = self.type_constructor_impl_target(&predicate.subject)?;
+        if !self.trait_ref_has_constructor_subject(&predicate.trait_ref) {
+            return None;
+        }
+        let Type::Named(trait_name, source_arguments) = &predicate.trait_ref else {
+            return None;
+        };
+        let schema = self.traits.get(trait_name).cloned()?;
+        let expected = schema.compile_parameters.len().saturating_sub(1);
+        if source_arguments.len() != expected {
+            return None;
+        }
+        let arguments = source_arguments
+            .iter()
+            .map(|argument| self.lower_source_type(argument))
+            .collect::<Vec<_>>();
+        if arguments.contains(&Ty::Error) {
+            return None;
+        }
+        Some(ConstructorTraitImplKey {
+            target,
+            trait_ref: ConstructorTraitRefKey {
+                name: trait_name.clone(),
+                arguments,
+            },
+        })
     }
 
     fn validate_concrete_where_predicates(
@@ -35122,6 +35344,25 @@ fn normalize_item_labeled_type_arguments(
             }
         }
         Item::Trait(definition) => {
+            for predicate in &mut definition.where_predicates {
+                normalize_type_labeled_arguments(
+                    &mut predicate.subject,
+                    constructor_parameters,
+                    diagnostics,
+                );
+                normalize_type_labeled_arguments(
+                    &mut predicate.trait_ref,
+                    constructor_parameters,
+                    diagnostics,
+                );
+                for binding in &mut predicate.associated_types {
+                    normalize_type_labeled_arguments(
+                        &mut binding.ty,
+                        constructor_parameters,
+                        diagnostics,
+                    );
+                }
+            }
             for member in &mut definition.members {
                 match member {
                     TraitMember::Function(function) => normalize_function_labeled_type_arguments(
@@ -35670,6 +35911,23 @@ fn expand_item_aliases(
             }
         }
         Item::Trait(definition) => {
+            for predicate in &mut definition.where_predicates {
+                expand_alias_type(
+                    &mut predicate.subject,
+                    aliases,
+                    &mut Vec::new(),
+                    diagnostics,
+                );
+                expand_alias_type(
+                    &mut predicate.trait_ref,
+                    aliases,
+                    &mut Vec::new(),
+                    diagnostics,
+                );
+                for binding in &mut predicate.associated_types {
+                    expand_alias_type(&mut binding.ty, aliases, &mut Vec::new(), diagnostics);
+                }
+            }
             for member in &mut definition.members {
                 match member {
                     TraitMember::Function(function) => {
@@ -36155,6 +36413,17 @@ fn substitute_function_types(function: &mut Function, substitutions: &HashMap<St
     }
     if let Some(body) = &mut function.body {
         substitute_expr_types(body, substitutions);
+    }
+}
+
+fn substitute_where_predicate(
+    predicate: &mut crate::ast::WherePredicate,
+    substitutions: &HashMap<String, Type>,
+) {
+    substitute_type_parameters(&mut predicate.subject, substitutions);
+    substitute_type_parameters(&mut predicate.trait_ref, substitutions);
+    for binding in &mut predicate.associated_types {
+        substitute_type_parameters(&mut binding.ty, substitutions);
     }
 }
 
@@ -42478,6 +42747,65 @@ let main(): i32 = {
         );
 
         compile(&program).expect("higher-kinded trait declaration must compile");
+    }
+
+    #[test]
+    fn higher_kinded_trait_inheritance_requires_constructor_supertraits() {
+        let source = r#"
+let Functor(F: (Value: type): type) = trait {
+  let map(E: effect, A: type, B: type)(
+    move value: F(A),
+    move transform: (A): B with(E),
+  ): F(B) with(E)
+}
+let Applicative(F: (Value: type): type) = trait
+where F: Functor {
+  let pure(A: type)(move value: A): F(A)
+}
+let Carrier(T: type) = struct(value: T)
+extend Carrier: Applicative {
+  let pure(A: type)(move value: A): Carrier(A) = {
+    Carrier(A)(value)
+  }
+}
+let main(): i32 = { 0 }
+"#;
+        let errors = compile_text(source)
+            .expect_err("Applicative without its inherited Functor implementation must fail");
+        assert!(errors
+            .iter()
+            .any(|error| { error.message.contains("requires `Functor` for `Carrier`") }));
+
+        compile_text(
+            r#"
+let Functor(F: (Value: type): type) = trait {
+  let map(E: effect, A: type, B: type)(
+    move value: F(A),
+    move transform: (A): B with(E),
+  ): F(B) with(E)
+}
+let Applicative(F: (Value: type): type) = trait
+where F: Functor {
+  let pure(A: type)(move value: A): F(A)
+}
+let Carrier(T: type) = struct(value: T)
+extend Carrier: Applicative {
+  let pure(A: type)(move value: A): Carrier(A) = {
+    Carrier(A)(value)
+  }
+}
+extend Carrier: Functor {
+  let map(E: effect, A: type, B: type)(
+    move value: Carrier(A),
+    move transform: (A): B with(E),
+  ): Carrier(B) with(E) = {
+    Carrier(B)(transform(value.value))
+  }
+}
+let main(): i32 = { 0 }
+"#,
+        )
+        .expect("constructor supertrait implementations should be source-order independent");
     }
 
     #[test]

@@ -118,6 +118,7 @@ pub struct AccessDef {
 pub struct TraitDef {
     pub name: String,
     pub compile_groups: Vec<Vec<CompileParam>>,
+    pub where_predicates: Vec<WherePredicate>,
     pub members: Vec<TraitMember>,
 }
 

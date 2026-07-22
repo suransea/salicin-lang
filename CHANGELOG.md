@@ -6,6 +6,12 @@ subset.
 
 ## Unreleased
 
+## 0.181.0 - 2026-07-22
+
+- Added trait-level `where` constraints so higher-kinded standard protocols can express
+  inheritance, starting with `Applicative(F) where F: Functor` and
+  `Monad(M) where M: Applicative`.
+
 ## 0.180.0 - 2026-07-22
 
 - Removed dedicated parser migration diagnostics for removed bare effect groups such as

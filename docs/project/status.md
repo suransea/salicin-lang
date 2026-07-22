@@ -105,8 +105,10 @@ implementations currently register matching generic nominal constructors and val
 as generic function templates. Constructor trait associated functions without a receiver can dispatch
 from the bare constructor, so implementations such as `extend Option: Functor` can expose
 `Option.map(...)` through the ordinary generic function instance pipeline. The remaining HKT work is
-associated-type lowering, receiver-style HKT methods, trait inheritance constraints, and broader
-constructor equation solving.
+associated-type lowering, receiver-style HKT methods, broader constructor equation solving, and
+ordinary generic function lowering for constructor parameters. Trait-level `where` inheritance is
+implemented for the standard `Applicative(F) where F: Functor` and `Monad(M) where M: Applicative`
+relationships.
 
 Access keyword generics are implemented for functions and generic inherent members: `A: access` accepts `shared` or `mut`,
 defaults to shared when omitted, participates in monomorphization, and can drive parameter modes,
