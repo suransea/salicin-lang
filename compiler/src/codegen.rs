@@ -18779,30 +18779,77 @@ impl Analyzer {
                         if let Some(selection) =
                             static_callable_selection(&binding.value, &mut targets)
                         {
-                            let resolve = |target: String| {
-                                handler
+                            let group_lengths =
+                                callable_groups.iter().map(Vec::len).collect::<Vec<_>>();
+                            let mut union = Vec::new();
+                            let mut sources = Vec::new();
+                            let mut tag_bindings = Vec::new();
+                            let mut valid = true;
+                            for (index, target) in targets.into_iter().enumerate() {
+                                if let Some(dynamic) =
+                                    handler.dynamic_callables.borrow().get(&target).cloned()
+                                {
+                                    if dynamic.group_lengths != group_lengths {
+                                        valid = false;
+                                        break;
+                                    }
+                                    let hidden = format!(
+                                        "$handler$dynamic$tag${}${index}",
+                                        self.next_closure
+                                    );
+                                    tag_bindings.push(Stmt::Let(Binding {
+                                        mutable: false,
+                                        name: hidden.clone(),
+                                        annotation: Some(Type::I32),
+                                        value: Expr::Name(target),
+                                    }));
+                                    for candidate in &dynamic.targets {
+                                        if !union.contains(candidate) {
+                                            union.push(candidate.clone());
+                                        }
+                                    }
+                                    sources.push((hidden, dynamic.targets));
+                                    continue;
+                                }
+                                let resolved = handler
                                     .function_aliases
                                     .borrow()
                                     .get(&target)
                                     .cloned()
-                                    .unwrap_or(target)
-                            };
-                            let targets = targets.into_iter().map(resolve).collect::<Vec<_>>();
-                            if targets.len() >= 2
-                                && targets.iter().all(|target| {
-                                    self.functions.contains_key(target)
-                                        || handler.resumable_closures.borrow().contains_key(target)
-                                })
-                            {
+                                    .unwrap_or(target);
+                                if !(self.functions.contains_key(&resolved)
+                                    || handler.resumable_closures.borrow().contains_key(&resolved))
+                                {
+                                    valid = false;
+                                    break;
+                                }
+                                if !union.contains(&resolved) {
+                                    union.push(resolved.clone());
+                                }
+                                sources.push((String::new(), vec![resolved]));
+                            }
+                            if valid && union.len() >= 2 {
+                                if union.iter().any(|target| {
+                                    handler.resumable_closures.borrow().contains_key(target)
+                                }) && self
+                                    .handler_expression_may_suspend(&binding.value, &handler)
+                                {
+                                    self.error(
+                                        "a capturing dynamic callable union with an effectful selector requires the owned closure-environment ABI",
+                                    );
+                                    return Err(());
+                                }
+                                let selection =
+                                    expand_dynamic_callable_selection(selection, &sources, &union);
                                 let name = binding.name.clone();
                                 let callable = SourceDynamicCallable {
-                                    targets,
-                                    group_lengths: callable_groups.iter().map(Vec::len).collect(),
+                                    targets: union,
+                                    group_lengths,
                                 };
                                 let next_handler = handler.clone();
                                 let next_resume = resume.clone();
                                 let next_continuation = continuation.clone();
-                                return self.transform_handler_expr(
+                                let transformed = self.transform_handler_expr(
                                     selection,
                                     handler,
                                     resume,
@@ -18838,6 +18885,9 @@ impl Analyzer {
                                         ))
                                     }),
                                 );
+                                return transformed.map(|transformed| {
+                                    Expr::Block(tag_bindings, Some(Box::new(transformed)))
+                                });
                             }
                         }
                     }
@@ -23017,6 +23067,48 @@ fn remap_dynamic_callable_tag(source: &str, from: &[String], to: &[String]) -> E
         };
     }
     remapped
+}
+
+fn expand_dynamic_callable_selection(
+    selection: Expr,
+    sources: &[(String, Vec<String>)],
+    targets: &[String],
+) -> Expr {
+    match selection {
+        Expr::Integer(index) => {
+            let source = sources
+                .get(index as usize)
+                .expect("selection leaf has a matching source");
+            if source.1.len() == 1 {
+                return Expr::Integer(
+                    targets
+                        .iter()
+                        .position(|target| target == &source.1[0])
+                        .expect("selection target belongs to its union")
+                        as i128,
+                );
+            }
+            remap_dynamic_callable_tag(&source.0, &source.1, targets)
+        }
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch: Some(else_branch),
+        } => Expr::If {
+            condition,
+            then_branch: Box::new(expand_dynamic_callable_selection(
+                *then_branch,
+                sources,
+                targets,
+            )),
+            else_branch: Some(Box::new(expand_dynamic_callable_selection(
+                *else_branch,
+                sources,
+                targets,
+            ))),
+        },
+        _ => unreachable!("static callable selection contains only conditions and integer leaves"),
+    }
 }
 
 fn static_callable_selection(expression: &Expr, targets: &mut Vec<String>) -> Option<Expr> {
@@ -35697,6 +35789,32 @@ let main(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) {
         assert!(incompatible_alias
             .iter()
             .any(|error| error.message.contains("incompatible target set")));
+
+        let suspended_capturing_union = compile_text(
+            r#"
+let Ask = effect {
+  let choose(): bool
+  let value(): i32
+}
+let main(): i32 = { Ask.handle(
+  choose: { (resume) -> resume(false) },
+  value: { (resume) -> resume(40) },
+) {
+  let left_base = 1
+  let right_base = 2
+  let left: (): i32 with(Ask) = { () -> Ask.value() + left_base }
+  let right: (): i32 with(Ask) = { () -> Ask.value() + right_base }
+  let first: (): i32 with(Ask) = if true { left } else { right }
+  let second: (): i32 with(Ask) = if false { right } else { left }
+  let combined: (): i32 with(Ask) = if Ask.choose() { first } else { second }
+  combined()
+} }
+"#,
+        )
+        .expect_err("an effectful union selector cannot yet move capturing environments");
+        assert!(suspended_capturing_union
+            .iter()
+            .any(|error| error.message.contains("owned closure-environment ABI")));
     }
 
     #[test]

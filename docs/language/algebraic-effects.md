@@ -186,7 +186,10 @@ cleanup. The finite selection tag may be copied into immutable local aliases und
 handler; those aliases retain the target set, may be called directly, and may specialize a
 higher-order resumable frame. Mutable aliases may be reassigned between values with the same
 signature and finite target set; assignment remaps tags when target order differs. Values escaping
-that lexical handler and open-ended target sets remain dynamic-ABI work.
+that lexical handler and open-ended target sets remain dynamic-ABI work. Existing dynamic values may
+also form branches of another finite selection: their target sets are merged and their runtime tags
+are remapped into the union. The outer selector may suspend for named targets; forwarding capturing
+branch environments through that suspension still requires the owning closure-environment ABI.
 Operation and ordinary call arguments are traversed in source order, `done:` may change the answer
 type, and nested handlers of the same identity select the nearest matching boundary. Arguments of
 an effect-propagating named call enter CPS before its callee frame is built, so multiple suspended

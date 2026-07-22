@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.141.0 - 2026-07-22
+
+- Allowed finite dynamic callable selections to use existing dynamic callable values as branches.
+- Merged branch metadata into one deduplicated target-set union and remapped every branch tag into
+  the union's index space.
+- Snapshotted internal branch tags outside selective CPS so an effectful selector can suspend without
+  exposing those tags as ordinary callable values.
+- Preserved three capturing `FnOnce` environments through a non-suspending nested union and verified
+  selected plus unselected abandonment cleanup exactly once.
+- Added a dedicated diagnostic for a suspending selector over capturing dynamic branches until the
+  owning closure-environment ABI can forward those environments into its continuation.
+- Added named-target effectful-selector and capturing-drop native regressions, both exiting with 42.
+
 ## 0.140.0 - 2026-07-22
 
 - Allowed mutable handler-local dynamic callable aliases to be assigned from another callable with
