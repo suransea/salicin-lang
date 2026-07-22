@@ -2337,7 +2337,7 @@ impl Analyzer {
                     if origin.package != PackageId::CORE.0
                         && matches!(
                             source_name.rsplit("::").next(),
-                            Some("do" | "try" | "unsafe" | "loop")
+                            Some("do" | "try" | "throw" | "unsafe" | "loop")
                         )
                     {
                         self.error(format!(
@@ -6685,6 +6685,7 @@ impl Analyzer {
                 && [
                     LangItemKind::Do,
                     LangItemKind::Try,
+                    LangItemKind::Throw,
                     LangItemKind::Unsafe,
                     LangItemKind::Loop,
                 ]
@@ -38226,6 +38227,15 @@ let main(): i32 = {
         assert!(errors.iter().any(|diagnostic| diagnostic
             .message
             .contains("control lang-item name `do` is reserved")));
+
+        let errors = compile_text(
+            "let throw(Error: type)(move error: Error): Never = { loop { continue } }\n\
+             let main(): i32 = { 0 }\n",
+        )
+        .unwrap_err();
+        assert!(errors.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("control lang-item name `throw` is reserved")));
 
         let errors = compile_text(
             "let Local = access\n\

@@ -49,10 +49,10 @@ either standard namespace.
 traits require ordinary imports when
 named. Merely writing the corresponding operator token does not require importing its protocol.
 `Throws(E)`, `Unsafe`, and `Async` are ordinary standard effect declarations in `core.effects`;
-source that names them imports them normally. The control spellings `do`, `try`, `unsafe`, and
-`loop` bind directly to validated lang-item declarations in `core.control`; they do not inject those
-module exports as ordinary unqualified names. The former control-container protocols have been
-removed.
+source that names them imports them normally. The control spellings `do`, `try`, `throw`, `unsafe`,
+and `loop` bind directly to validated lang-item declarations in `core.control`; they do not inject
+those module exports as ordinary unqualified names. The former control-container protocols have
+been removed.
 `Shared`/`Mutable` require `use core.access...` when named as standard-library declarations.
 `Semigroup` and `Monoid` require `use core.algebra...` when named.
 `Functor`, `Applicative`, and `Monad` require `use core.functional...` when named.

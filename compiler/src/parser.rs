@@ -538,6 +538,7 @@ impl Parser {
             TokenKind::Ident(name) => name.clone(),
             TokenKind::Do => "do".to_owned(),
             TokenKind::Try => "try".to_owned(),
+            TokenKind::Throw => "throw".to_owned(),
             TokenKind::Unsafe => "unsafe".to_owned(),
             TokenKind::Loop => "loop".to_owned(),
             _ => {

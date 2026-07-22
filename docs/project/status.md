@@ -26,9 +26,9 @@ Compiler-lowered capabilities are now source-backed by validated declarations in
 modules: `core.effects` owns `Unsafe`, `Throws(Error)` with `raise(move error: Error): Never`, and
 an ordinary `Async` effect with a minimal `suspend(): ()` operation;
 `core.access` owns `Shared` and `Mutable`; `core.control` owns the bodyless intrinsic signatures for
-`do`, `try`, `unsafe`, and `loop`. These exports remain outside the prelude. `await` is intentionally
-absent until the async/Future lowering slice is implemented, at which point its executable
-standard-library contract must land with the implementation.
+`do`, `try`, `throw`, `unsafe`, and `loop`. These exports remain outside the prelude. `await` is
+intentionally absent until the async/Future lowering slice is implemented, at which point its
+executable standard-library contract must land with the implementation.
 `Never`-returning algebraic operations are handled as abort operations whose clauses omit `resume`,
 so `Throws(Error).raise` can now be exercised through the same handler path as user-defined effects.
 `throw error` desugars to that ordinary operation when the active row has a unique standard

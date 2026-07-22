@@ -328,6 +328,7 @@ const CORE_CONTROL_EXPORTS: &[&str] = &[
     "EffectCallable",
     "do",
     "try",
+    "throw",
     "unsafe",
     "loop",
 ];

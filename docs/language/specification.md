@@ -497,8 +497,7 @@ effect、trait 或协议，再由编译器校验对应 lang item 并做 lowering
 源码级契约，而不是为每个类型增加封闭的编译器特例。`core.effects` 声明普通 effect 形态的 `Unsafe`、
 带普通 abort operation `raise(move error: Error): Never` 的 `Throws(Error)`，以及带最小
 `suspend(): ()` operation 的 `Async`；`core.access` 声明 `Shared` 与 `Mutable`；`core.control`
-声明 `do`、`try`、
-`unsafe`、`loop` 的尾闭包函数签名；`core.functional` 声明使用构造子 kind 的 `Functor`、
+声明 `do`、`try`、`throw`、`unsafe`、`loop` 的控制函数签名；`core.functional` 声明使用构造子 kind 的 `Functor`、
 `Applicative` 与 `Monad` 协议。编译器只对通过 core bundle 形状校验的声明赋予 lang-item 身份。
 控制函数的函数体由编译器提供，因为它们会建立、消除或转发非局部控制边界。普通包不能声明无函数体的
 顶层函数，也不能用同名声明获得特殊语义。`core.control` 还声明空结构契约 `Continuation(Input, Output)` 与

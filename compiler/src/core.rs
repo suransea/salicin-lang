@@ -90,6 +90,7 @@ pub enum LangItemKind {
     EffectCallable,
     Do,
     Try,
+    Throw,
     Unsafe,
     Loop,
     Iterator,
@@ -97,7 +98,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 42] = [
+    const ALL: [Self; 43] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -136,6 +137,7 @@ impl LangItemKind {
         Self::EffectCallable,
         Self::Do,
         Self::Try,
+        Self::Throw,
         Self::Unsafe,
         Self::Loop,
         Self::Iterator,
@@ -182,6 +184,7 @@ impl LangItemKind {
             Self::EffectCallable => "EffectCallable",
             Self::Do => "do",
             Self::Try => "try",
+            Self::Throw => "throw",
             Self::Unsafe => "unsafe",
             Self::Loop => "loop",
             Self::Iterator => "Iterator",
@@ -195,7 +198,7 @@ impl LangItemKind {
             Self::Continuation | Self::EffectCallable => "struct",
             Self::UnsafeEffect | Self::ThrowsEffect => "effect",
             Self::SharedAccess | Self::MutableAccess => "access",
-            Self::Do | Self::Try | Self::Unsafe | Self::Loop => "function",
+            Self::Do | Self::Try | Self::Throw | Self::Unsafe | Self::Loop => "function",
             Self::Copy
             | Self::Drop
             | Self::Add
@@ -267,6 +270,7 @@ impl LangItemKind {
             | Self::EffectCallable
             | Self::Do
             | Self::Try
+            | Self::Throw
             | Self::Unsafe
             | Self::Loop => None,
             Self::Iterator | Self::IntoIterator => None,
@@ -369,6 +373,7 @@ pub struct LangItems {
     effect_callable: LangItem,
     do_function: LangItem,
     try_function: LangItem,
+    throw_function: LangItem,
     unsafe_function: LangItem,
     loop_function: LangItem,
     iterator: LangItem,
@@ -510,6 +515,9 @@ impl LangItems {
     pub const fn try_function(&self) -> &LangItem {
         &self.try_function
     }
+    pub const fn throw_function(&self) -> &LangItem {
+        &self.throw_function
+    }
     pub const fn unsafe_function(&self) -> &LangItem {
         &self.unsafe_function
     }
@@ -563,6 +571,7 @@ impl LangItems {
             LangItemKind::EffectCallable => &self.effect_callable,
             LangItemKind::Do => &self.do_function,
             LangItemKind::Try => &self.try_function,
+            LangItemKind::Throw => &self.throw_function,
             LangItemKind::Unsafe => &self.unsafe_function,
             LangItemKind::Loop => &self.loop_function,
             LangItemKind::Iterator => &self.iterator,
@@ -732,6 +741,7 @@ impl CoreBundle {
             &mut lang_items.mutable_access,
             &mut lang_items.do_function,
             &mut lang_items.try_function,
+            &mut lang_items.throw_function,
             &mut lang_items.unsafe_function,
             &mut lang_items.loop_function,
             &mut lang_items.iterator,
@@ -963,6 +973,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         effect_callable: item(LangItemKind::EffectCallable),
         do_function: item(LangItemKind::Do),
         try_function: item(LangItemKind::Try),
+        throw_function: item(LangItemKind::Throw),
         unsafe_function: item(LangItemKind::Unsafe),
         loop_function: item(LangItemKind::Loop),
         iterator: item(LangItemKind::Iterator),
@@ -1054,7 +1065,11 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
             }
         }
         (
-            LangItemKind::Do | LangItemKind::Try | LangItemKind::Unsafe | LangItemKind::Loop,
+            LangItemKind::Do
+            | LangItemKind::Try
+            | LangItemKind::Throw
+            | LangItemKind::Unsafe
+            | LangItemKind::Loop,
             Item::Function(function),
         ) => validate_control_function(kind, function, diagnostics),
         (LangItemKind::Iterator, Item::Trait(definition)) => {
@@ -1250,6 +1265,7 @@ fn validate_control_function(
         && match kind {
             LangItemKind::Do => valid_do(function),
             LangItemKind::Try => valid_try(function),
+            LangItemKind::Throw => valid_throw(function),
             LangItemKind::Unsafe => valid_unsafe(function),
             LangItemKind::Loop => valid_loop(function),
             _ => false,
@@ -1305,6 +1321,20 @@ fn valid_try(function: &Function) -> bool {
         && function.effects.custom.is_empty()
 }
 
+fn valid_throw(function: &Function) -> bool {
+    let effects = crate::ast::FunctionEffects {
+        custom: vec![Type::Named(
+            "core.effects.Throws".to_owned(),
+            vec![named_type("Error")],
+        )],
+        ..crate::ast::FunctionEffects::default()
+    };
+    function.compile_groups == vec![vec![type_parameter("Error")]]
+        && single_moved_parameter(function, "error", named_type("Error"))
+        && function.return_type == Some(named_type("Never"))
+        && function.effects == effects
+}
+
 fn valid_unsafe(function: &Function) -> bool {
     let effects = crate::ast::FunctionEffects {
         custom: vec![Type::Named("core.effects.Unsafe".to_owned(), Vec::new())],
@@ -1349,6 +1379,16 @@ fn effect_parameter(name: &str) -> crate::ast::FunctionEffects {
         parameters: vec![name.to_owned()],
         ..crate::ast::FunctionEffects::default()
     }
+}
+
+fn single_moved_parameter(function: &Function, name: &str, ty: Type) -> bool {
+    let [group] = function.groups.as_slice() else {
+        return false;
+    };
+    let [parameter] = group.as_slice() else {
+        return false;
+    };
+    parameter.name == name && parameter.mode == PassMode::Move && parameter.ty == ty
 }
 
 fn single_moved_callable(
@@ -1773,6 +1813,7 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::EffectCallable
                 | LangItemKind::Do
                 | LangItemKind::Try
+                | LangItemKind::Throw
                 | LangItemKind::Unsafe
                 | LangItemKind::Loop => format!("core::control::{}", kind.source_name()),
                 LangItemKind::Iterator | LangItemKind::IntoIterator => {
@@ -1829,6 +1870,7 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::EffectCallable
                 | LangItemKind::Do
                 | LangItemKind::Try
+                | LangItemKind::Throw
                 | LangItemKind::Unsafe
                 | LangItemKind::Loop => "control",
                 LangItemKind::Iterator | LangItemKind::IntoIterator => "iter",
@@ -1912,6 +1954,27 @@ pub let Shr(Rhs: type) = trait {
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.contains("lang item `EffectCallable`")));
+
+        let malformed = EDITION_2026_CONTROL.replace(
+            "pub let throw(Error: type)(move error: Error): Never with(core.effects.Throws(Error))",
+            "pub let throw(Error: type)(move error: Error): Never",
+        );
+        let error = CoreBundle::from_modules(
+            Edition::Edition2026,
+            &[
+                ("prelude", EDITION_2026_PRELUDE),
+                ("ops", EDITION_2026_OPS),
+                ("effects", EDITION_2026_EFFECTS),
+                ("access", EDITION_2026_ACCESS),
+                ("control", &malformed),
+                ("iter", EDITION_2026_ITER),
+            ],
+        )
+        .unwrap_err();
+        assert!(error
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.contains("lang item `throw`")));
     }
 
     #[test]

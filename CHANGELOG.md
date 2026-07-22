@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+## 0.170.0 - 2026-07-22
+
+- Added `core.control.throw` as an edition-validated compiler-provided control contract:
+  `throw(Error)(error): Never with(core.effects.Throws(Error))`.
+- Allowed the embedded core bundle to declare `throw` with the same keyword-declaration path used by
+  `do`, `try`, `unsafe`, and `loop`, and exported it from `core.control` rather than leaving
+  `throw` as a syntax-only compiler capability.
+- Reserved user-defined `throw` control contracts outside `core.control`, matching the existing
+  protection for compiler-lowered control spellings.
+
 ## 0.169.0 - 2026-07-22
 
 - Migrated the public residual-handler fixture from lowercase `throws(E)` to ordinary

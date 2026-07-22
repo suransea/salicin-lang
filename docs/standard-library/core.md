@@ -118,8 +118,8 @@ The language still writes borrow types as `borrow T` and `borrow(mut) T`; naming
 directly requires an ordinary `use core.access...`.
 
 `core.control` owns the edition-pinned contracts for compiler-lowered control functions. It is not
-part of the prelude. The module declares the compiler-provided `do`, `try`, `unsafe`, and `loop`
-trailing-closure functions. Their bodyless signatures are permitted only for validated core lang
+part of the prelude. The module declares the compiler-provided `do`, `try`, `throw`, `unsafe`, and
+`loop` control functions. Their bodyless signatures are permitted only for validated core lang
 items; ordinary package functions still require `= { ... }` bodies.
 
 It also declares two compiler-owned erased runtime contracts:
@@ -142,13 +142,15 @@ entry. These low-level operations are not source-level standard-library function
 pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E)
 pub let try(F: effect, T: type, E: type)
   (move action: (): T with(core.effects.Throws(E), F)): Result(T, E) with(F)
+pub let throw(Error: type)(move error: Error): Never with(core.effects.Throws(Error))
 pub let unsafe(E: effect, T: type)
   (move action: (): T with(core.effects.Unsafe, E)): T with(E)
 pub let loop(E: effect, T: type)(move body: (): () with(E)): T with(E)
 ```
 
 Here `try` removes only `Throws(E)`, `unsafe` removes only the `Unsafe` requirement, and both forward
-the remainder row. `do` and `loop` forward the whole row.
+the remainder row. `throw` introduces the standard `Throws(Error)` requirement, while `do` and
+`loop` forward the whole row.
 
 `core.iter` owns iteration rather than the prelude:
 
