@@ -24,6 +24,8 @@ The implementation lives under `compiler/src`:
   - `compile_time.rs` encodes compiler-visible compile-time domain values, source effect
     identities, and compile-parameter shape helpers.
   - `emitter.rs` evaluates global constants and emits textual LLVM IR.
+  - `effects.rs` owns source-level support state and AST helpers for algebraic-effect and control
+    lowering.
   - `fallible.rs` defines standard `Option`/`Result` short-circuit container metadata shared by
     `??`, `?.`, `try`, and `throw` lowering.
   - `flow.rs` tracks local scopes, move initialization alternatives, lexical loans, and lowering
@@ -57,7 +59,6 @@ resolved AST
 Useful future `codegen/` modules are:
 
 - `lower.rs` for expression and statement lowering into HIR;
-- `effects.rs` for algebraic-effect operation/handler CPS rewriting and residual-row logic.
 
 The practical rule is: first move code behind a small `pub(super)` boundary with no behavior
 changes, then make data ownership cleaner. Large semantic rewrites should come after the module
