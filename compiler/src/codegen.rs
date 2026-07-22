@@ -18829,6 +18829,41 @@ impl Analyzer {
                         .map(|rest| Expr::Block(vec![Stmt::Let(binding)], Some(Box::new(rest))));
                 }
                 if let Expr::Name(target) = &binding.value {
+                    let dynamic = handler.dynamic_callables.borrow().get(target).cloned();
+                    if let Some(dynamic) = dynamic {
+                        if binding.mutable {
+                            self.error(format!(
+                                "dynamic effectful callable alias `{}` must be immutable",
+                                binding.name
+                            ));
+                            return Err(());
+                        }
+                        let name = binding.name.clone();
+                        binding.annotation = Some(Type::I32);
+                        let previous = handler
+                            .dynamic_callables
+                            .borrow_mut()
+                            .insert(name.clone(), dynamic);
+                        let rest = self.transform_handler_block(
+                            statements,
+                            tail,
+                            handler.clone(),
+                            resume,
+                            continuation,
+                        );
+                        let mut callables = handler.dynamic_callables.borrow_mut();
+                        if let Some(previous) = previous {
+                            callables.insert(name, previous);
+                        } else {
+                            callables.remove(&name);
+                        }
+                        drop(callables);
+                        return rest.map(|rest| {
+                            Expr::Block(vec![Stmt::Let(binding)], Some(Box::new(rest)))
+                        });
+                    }
+                }
+                if let Expr::Name(target) = &binding.value {
                     let resolved_target = handler
                         .function_aliases
                         .borrow()
@@ -35549,13 +35584,14 @@ let ask_right(): i32 with(Ask) = { Ask.value() }
 let consume(action: (): i32 with(Ask)): i32 with(Ask) = { action() }
 let main(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) {
   let action: (): i32 with(Ask) = if true { ask_left } else { ask_right }
-  consume(action)
+  let forwarded = action
+  consume(forwarded)
 } }
 "#,
         )
-        .expect("a conditional named target should lower through runtime tag dispatch");
+        .expect("an aliased dynamic target should specialize a higher-order resumable frame");
 
-        let escaping = compile_text(
+        compile_text(
             r#"
 let Ask = effect { let value(): i32 }
 let ask_left(): i32 with(Ask) = { Ask.value() }
@@ -35563,14 +35599,28 @@ let ask_right(): i32 with(Ask) = { Ask.value() }
 let main(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) {
   let action: (): i32 with(Ask) = if true { ask_left } else { ask_right }
   let escaped = action
-  42
+  escaped()
 } }
 "#,
         )
-        .expect_err("a dynamic selection cannot escape as an ordinary function pointer");
-        assert!(escaping.iter().any(|error| error
+        .expect("a dynamic selection tag may be copied into an immutable handler-local alias");
+
+        let mutable_alias = compile_text(
+            r#"
+let Ask = effect { let value(): i32 }
+let ask_left(): i32 with(Ask) = { Ask.value() }
+let ask_right(): i32 with(Ask) = { Ask.value() }
+let main(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) {
+  let action: (): i32 with(Ask) = if true { ask_left } else { ask_right }
+  let mut changed = action
+  changed()
+} }
+"#,
+        )
+        .expect_err("mutable tag aliases require assignment-aware target-set tracking");
+        assert!(mutable_alias.iter().any(|error| error
             .message
-            .contains("dynamic effectful callable `action` cannot escape its handler")));
+            .contains("dynamic effectful callable alias `changed` must be immutable")));
     }
 
     #[test]

@@ -182,7 +182,10 @@ an effectful higher-order callable parameter or participate in a finite handler-
 The tag dispatches directly to the chosen closure environment, preserving
 `Fn`/`FnMut` state and `FnOnce` flow consumption; it does not create an escaping erased closure
 value. Selected and unselected owned environments remain covered by normal scope and abandonment
-cleanup; escaping closure selections remain dynamic-ABI work.
+cleanup. The finite selection tag may be copied into immutable local aliases under the same lexical
+handler; those aliases retain the target set, may be called directly, and may specialize a
+higher-order resumable frame. Mutable aliases, values escaping that lexical handler, and open-ended
+target sets remain dynamic-ABI work.
 Operation and ordinary call arguments are traversed in source order, `done:` may change the answer
 type, and nested handlers of the same identity select the nearest matching boundary. Arguments of
 an effect-propagating named call enter CPS before its callee frame is built, so multiple suspended

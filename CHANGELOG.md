@@ -6,6 +6,19 @@ subset.
 
 ## Unreleased
 
+## 0.139.0 - 2026-07-22
+
+- Allowed finite dynamic effectful callable selection tags to be copied into immutable local aliases
+  while remaining under their lexical handler.
+- Propagated the selected target set and call-group shape to each alias so direct calls continue to
+  use handler-aware resumable dispatch.
+- Allowed such aliases to specialize effectful higher-order named frames without falling back to an
+  ordinary function-pointer call.
+- Preserved the selected capturing closure environment, including repeated `FnMut` state updates,
+  across calls through the copied tag.
+- Kept mutable aliases rejected until assignments can update the target-set metadata together with
+  the runtime tag.
+
 ## 0.138.0 - 2026-07-22
 
 - Allowed suspended match guards to inspect referenced non-`Copy` payload bindings without copying
