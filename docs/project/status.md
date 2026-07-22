@@ -30,9 +30,10 @@ as `borrow` and `borrow(mut)`, while consuming owned roots are lifted as `move`;
 injected before selective CPS. Native regressions cover `FnMut` resumption plus `FnOnce` cleanup on
 both resumption and abandonment, including state/drop observations in following evaluation.
 Local callable alias moves now carry the original action metadata and relocate borrowed pointer
-slots without confusing them with owned pointee values. Conditional values, direct trailing-closure
-literals, cross-function transport, and fully general erased action construction remain the next
-implementation stages.
+slots without confusing them with owned pointee values. A direct trailing-closure action is also
+materialized automatically when it is the first runtime value evaluated by the complete handler
+call. Earlier runtime arguments, conditional values, cross-function transport, and fully general
+erased action construction remain the next implementation stages.
 
 Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
 `continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs

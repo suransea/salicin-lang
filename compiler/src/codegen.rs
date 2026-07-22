@@ -21707,6 +21707,9 @@ impl Analyzer {
         expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
+        if let Some(materialized) = self.materialize_direct_handler_action(name, groups) {
+            return self.lower_expr(&materialized, expected, context);
+        }
         if let Some(distributed) = self.distribute_static_handler_selection(name, groups, context) {
             return self.lower_expr(&distributed, expected, context);
         }
@@ -21877,6 +21880,61 @@ impl Analyzer {
         self.wrap_call_argument_temporaries(call, &mut arguments, temporary_bindings, context)
     }
 
+    fn materialize_direct_handler_action(
+        &mut self,
+        name: &str,
+        groups: &[&[CallArg]],
+    ) -> Option<Expr> {
+        let function = self.functions.get(name)?.clone();
+        if groups.len() != function.groups.len() {
+            return None;
+        }
+        for (candidate, group_index, parameter_index) in self.runtime_handler_actions.keys() {
+            if candidate != name || groups[..*group_index].iter().any(|group| !group.is_empty()) {
+                continue;
+            }
+            let arguments = groups.get(*group_index).copied()?;
+            let parameter = function.groups.get(*group_index)?.get(*parameter_index)?;
+            let argument_index = if arguments.iter().all(|argument| argument.label.is_none()) {
+                *parameter_index
+            } else {
+                arguments.iter().position(|argument| {
+                    argument.label.as_deref() == Some(parameter.name.as_str())
+                })?
+            };
+            if argument_index != 0 {
+                continue;
+            }
+            let Some(CallArg {
+                value: Expr::Closure(_, _),
+                ..
+            }) = arguments.get(argument_index)
+            else {
+                continue;
+            };
+            let id = self.next_closure;
+            self.next_closure += 1;
+            let local = format!("$handler$direct$action${id}");
+            let binding = Binding {
+                mutable: true,
+                name: local.clone(),
+                annotation: Some(parameter.ty.clone()),
+                value: arguments[argument_index].value.clone(),
+            };
+            let mut rewritten_groups = groups
+                .iter()
+                .map(|group| group.to_vec())
+                .collect::<Vec<_>>();
+            rewritten_groups[*group_index][argument_index].value = Expr::Name(local);
+            let mut call = Expr::Name(name.to_owned());
+            for group in rewritten_groups {
+                call = Expr::Call(Box::new(call), group);
+            }
+            return Some(Expr::Block(vec![Stmt::Let(binding)], Some(Box::new(call))));
+        }
+        None
+    }
+
     fn specialize_capturing_handler_action_binding(
         &mut self,
         binding: &Binding,
@@ -21929,11 +21987,14 @@ impl Analyzer {
                     *parameter_index,
                     argument_index,
                     action.clone(),
+                    parameter.name.clone(),
                 ));
                 break;
             }
         }
-        let Some((group_index, parameter_index, argument_index, action)) = action_position else {
+        let Some((group_index, parameter_index, argument_index, action, parameter_name)) =
+            action_position
+        else {
             return false;
         };
 
@@ -22007,6 +22068,7 @@ impl Analyzer {
             lifted_arguments.push((lifted, capture.name.clone()));
         }
         let mut injected = binding.clone();
+        injected.name = parameter_name;
         rewrite_static_function_values(&mut injected.value, &replacements);
         let Some(specialized_body) = specialized.body.as_mut() else {
             return false;
@@ -22360,6 +22422,7 @@ impl Analyzer {
                 *parameter_index,
                 argument_index,
                 action.clone(),
+                parameter.name.clone(),
                 local_name.clone(),
                 local,
                 closure,
@@ -22372,6 +22435,7 @@ impl Analyzer {
             parameter_index,
             argument_index,
             action,
+            parameter_name,
             local_name,
             local,
             closure,
@@ -22422,6 +22486,7 @@ impl Analyzer {
                 ),
             ));
         }
+        source.name = parameter_name;
         rewrite_static_function_values(&mut source.value, &replacements);
         let specialized_body = specialized.body.as_mut()?;
         if !inject_handler_action_binding(specialized_body, &action.effect, source) {
@@ -41325,15 +41390,15 @@ let main(): i32 = {
     }
 
     #[test]
-    fn reusable_handler_capturing_action_reports_unsupported_direct_literals() {
-        let errors = compile_text(
+    fn reusable_handler_capturing_action_materializes_direct_literals() {
+        let llvm = compile_text(
             r#"
 let Ask = effect { let value(): i32 }
 let run()(move action: (): i32 with(Ask)): i32 = {
   Ask.handle(value: { (resume) -> resume(10) }) { action() }
 }
 let main(): i32 = {
-  let mut base = 30
+  let mut base = 31
   run() { () ->
     base = base + 1
     Ask.value() + base
@@ -41341,9 +41406,7 @@ let main(): i32 = {
 }
 "#,
         )
-        .expect_err("direct action literals remain outside the current reusable slice");
-        assert!(errors
-            .iter()
-            .any(|error| error.message.contains("requires a local closure")));
+        .expect("direct trailing-closure actions must materialize before specialization");
+        assert!(llvm.contains("24636170747572696e672468616e646c657224"));
     }
 }

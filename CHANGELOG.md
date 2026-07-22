@@ -6,6 +6,17 @@ subset.
 
 ## Unreleased
 
+## 0.152.0 - 2026-07-22
+
+- Accepted a direct trailing-closure literal for a reusable handler action when no earlier runtime
+  argument requires evaluation.
+- Materialized the literal as a compiler-generated, explicitly typed local binding before entering
+  the same capture-lifting and selective-CPS path as named source closures.
+- Preserved capture acquisition at the action's call position and added a native mutable-capture
+  direct-action regression exiting with 42.
+- Renamed injected source bindings to the handler's declared action parameter, removing an implicit
+  assumption that caller locals were also named `action`.
+
 ## 0.151.0 - 2026-07-22
 
 - Propagated original captured-action source metadata through immutable and mutable callable alias
