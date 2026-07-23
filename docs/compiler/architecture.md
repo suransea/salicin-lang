@@ -36,7 +36,7 @@ The implementation lives under `compiler/src`:
   - `effects.rs` owns source-level support state, effect identity helpers, effect-forwarding
     `do` lowering, and AST helpers for algebraic-effect and control lowering.
   - `fallible.rs` defines standard `Option`/`Result` short-circuit container metadata, inference
-    helpers, and throws-result boundary helpers shared by `??`, `?.`, `try`, and `throw` lowering.
+    helpers, and throws-result return-boundary lowering shared by `??`, `?.`, `try`, and `throw`.
   - `flow.rs` tracks local scopes, move initialization alternatives, lexical loans, and lowering
     context state used by ownership and borrow checks.
   - `hir.rs` defines typed IR structs, semantic types, places, signatures, and helper predicates.

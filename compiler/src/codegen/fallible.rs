@@ -2,8 +2,8 @@ use crate::ast::{CallArg, CompileParam, Expr, Type, VariantFields};
 use crate::core::LangItemKind;
 
 use super::flow::LowerCtx;
-use super::hir::Ty;
-use super::lower::{flatten_call, TypeProbe};
+use super::hir::{HirExpr, HirExprKind, Ty};
+use super::lower::{error_expr, flatten_call, TypeProbe};
 use super::registry::NominalKind;
 use super::Analyzer;
 
@@ -142,6 +142,81 @@ impl Analyzer {
             success: standard.payload,
             error: Some(error.clone()),
         })
+    }
+
+    pub(super) fn lower_return_value(
+        &mut self,
+        expression: &Expr,
+        boundary: &ReturnBoundary,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let value = self.lower_expr(expression, Some(&boundary.success), context);
+        self.finish_return_value(value, boundary)
+    }
+
+    pub(super) fn finish_return_value(
+        &mut self,
+        value: HirExpr,
+        boundary: &ReturnBoundary,
+    ) -> HirExpr {
+        if value.ty == Ty::Error || self.is_uninhabited_type(&value.ty) {
+            return value;
+        }
+        if value.ty == boundary.success {
+            return self.construct_boundary_variant(boundary, true, Some(value));
+        }
+        self.error(format!(
+            "throws function has logical result `{}`, found `{}`",
+            boundary.success, value.ty
+        ));
+        error_expr()
+    }
+
+    pub(super) fn construct_boundary_variant(
+        &mut self,
+        boundary: &ReturnBoundary,
+        success: bool,
+        value: Option<HirExpr>,
+    ) -> HirExpr {
+        let Ty::Enum(enum_name) = &boundary.container else {
+            self.error("internal error: non-enum return boundary");
+            return error_expr();
+        };
+        let variant_name = match (boundary.kind, success) {
+            (Some(StandardFallibleKind::Option), true) => "Some",
+            (Some(StandardFallibleKind::Option), false) => "None",
+            (Some(StandardFallibleKind::Result), true) => "Ok",
+            (Some(StandardFallibleKind::Result), false) => "Err",
+            (None, _) => {
+                self.error("internal error: custom return boundary requires protocol conversion");
+                return error_expr();
+            }
+        };
+        let Some(layout) = self.enum_layout_or_diagnostic(enum_name) else {
+            return error_expr();
+        };
+        let Some(variant) = layout
+            .variants
+            .iter()
+            .position(|variant| variant.name == variant_name)
+        else {
+            self.error(format!(
+                "internal error: `{enum_name}` has no `{variant_name}` variant"
+            ));
+            return error_expr();
+        };
+        let fields = match value {
+            Some(value) => vec![(0, value)],
+            None => Vec::new(),
+        };
+        HirExpr {
+            ty: boundary.container.clone(),
+            kind: HirExprKind::ConstructEnum {
+                name: enum_name.clone(),
+                variant,
+                fields,
+            },
+        }
     }
 
     pub(super) fn ensure_throws_result_type(&mut self, payload: Ty, error: Ty) -> Option<Ty> {
