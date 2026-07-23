@@ -59,8 +59,8 @@ The implementation lives under `compiler/src`:
     variants, and field diagnostics.
   - `names.rs` centralizes stable symbol, monomorphization instance, trait-method, and canonical
     type encodings.
-  - `nominals.rs` owns generic nominal snapshots, type-head and constructor inference, instance
-    resolution, recursive validation, materialization, and nominal type-complexity guards.
+  - `nominals.rs` owns generic nominal snapshots, struct/enum constructor inference, type-head and
+    instance resolution, recursive validation, materialization, and nominal complexity guards.
   - `operators.rs` centralizes operator-syntax bindings, candidate selection, type probes, and HIR
     lowering for validated lang-item protocols.
   - `ownership.rs` centralizes Copy/drop type predicates, custom Drop crossing checks, and inferred

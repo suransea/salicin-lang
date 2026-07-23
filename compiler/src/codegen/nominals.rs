@@ -16,6 +16,140 @@ use super::source_rewrite::{substitute_enum_types, substitute_struct_types};
 use super::Analyzer;
 
 impl Analyzer {
+    pub(super) fn resolve_inferred_generic_struct_instance(
+        &mut self,
+        name: &str,
+        groups: &[&[CallArg]],
+        expected: Option<&Ty>,
+        context: &LowerCtx,
+    ) -> Option<(String, usize)> {
+        let template = self.struct_templates[name].clone();
+        if !self.require_source_fields_access(name, &template.fields, &context.origin) {
+            return None;
+        }
+        let (compile_parameters, mut inferred, runtime_start) = self.seed_type_argument_inference(
+            name,
+            &template.compile_groups,
+            groups,
+            context,
+            true,
+        )?;
+        let value_groups = &groups[runtime_start..];
+        if value_groups.len() != 1 {
+            self.error(format!(
+                "struct constructor `{name}` expects exactly one argument group"
+            ));
+            return None;
+        }
+
+        if let Some(expected) = expected.filter(|ty| **ty != Ty::Error) {
+            let result_template = Type::Named(
+                name.to_owned(),
+                template
+                    .compile_groups
+                    .iter()
+                    .flatten()
+                    .map(|parameter| Type::Named(parameter.name.clone(), Vec::new()))
+                    .collect(),
+            );
+            if let Err(message) = self.unify_template_ty(
+                &result_template,
+                expected,
+                None,
+                &compile_parameters,
+                &mut inferred,
+                "expected result type",
+            ) {
+                self.error(message);
+                return None;
+            }
+        }
+
+        let arguments = value_groups[0];
+        let labeled = arguments
+            .iter()
+            .filter(|argument| argument.label.is_some())
+            .count();
+        if labeled != 0 && labeled != arguments.len() {
+            self.error(format!(
+                "cannot mix labeled and positional arguments in struct `{name}`"
+            ));
+            return None;
+        }
+        let mut constraints = Vec::new();
+        if labeled == 0 {
+            if arguments.len() != template.fields.len() {
+                self.error(format!(
+                    "argument count mismatch for struct `{name}`: expected {}, found {}",
+                    template.fields.len(),
+                    arguments.len()
+                ));
+                return None;
+            }
+            for (argument, field) in arguments.iter().zip(&template.fields) {
+                constraints.push((
+                    field.ty.clone(),
+                    argument.value.clone(),
+                    format!("argument for field `{}`", field.name),
+                ));
+            }
+        } else {
+            let mut initialized = HashSet::new();
+            for argument in arguments {
+                let label = argument
+                    .label
+                    .as_deref()
+                    .expect("all arguments are labeled");
+                let Some((index, field)) = template
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .find(|(_, field)| field.name == label)
+                else {
+                    self.error(format!("unknown field `{label}` in struct `{name}`"));
+                    return None;
+                };
+                if !initialized.insert(index) {
+                    self.error(format!("duplicate field `{label}` in struct `{name}`"));
+                    return None;
+                }
+                constraints.push((
+                    field.ty.clone(),
+                    argument.value.clone(),
+                    format!("argument for field `{label}`"),
+                ));
+            }
+            if initialized.len() != template.fields.len() {
+                let missing = template
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .find(|(index, _)| !initialized.contains(index))
+                    .map(|(_, field)| field.name.as_str())
+                    .unwrap_or("<unknown>");
+                self.error(format!("missing field `{missing}` in struct `{name}`"));
+                return None;
+            }
+        }
+        let unsupported = self.infer_from_expression_constraints(
+            &constraints,
+            &compile_parameters,
+            &mut inferred,
+            context,
+        )?;
+        let ordered_parameters = template
+            .compile_groups
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+        let (source_arguments, arguments) =
+            self.finish_type_argument_inference(name, &ordered_parameters, &inferred, unsupported)?;
+        let canonical =
+            self.ensure_nominal_instance(NominalKind::Struct, name, source_arguments, arguments)?;
+        Some((canonical, runtime_start))
+    }
+
     pub(super) fn inferred_generic_enum_type_head<'a>(
         &self,
         expression: &'a Expr,
