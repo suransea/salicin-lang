@@ -596,8 +596,8 @@ let f(
 共享和排他访问是编译期能力值，可由 `access` domain 参数化：
 
 ```sc
-let identity(A: access, 'a: region, T: type)
-  (value: borrow(A)('a)(T)): borrow(A)('a)(T) = {
+let identity(A: access, R: region, T: type)
+  (value: borrow(A)(R)(T)): borrow(A)(R)(T) = {
   value
 }
 
@@ -634,7 +634,7 @@ let automatic = identity(resource) // P 默认 auto，T 由 value 推断
 passing 值不进入运行时，但参与单态化；可使用位置或命名编译期实参，省略时不需要 `_`。
 
 借用没有塞进 `passing`：借用还携带共享/排他能力、来源 region 和不同 ABI，由正交的
-`borrow(A)(T)` 表达。这样 `passing` 只改变调用方的按值所有权效果，`access` 只改变借用能力。
+`borrow(A)(R)(T)` 表达。这样 `passing` 只改变调用方的按值所有权效果，`access` 只改变借用能力。
 `P: passing` 当前只允许声明在函数或扩展成员上，不能作为数据类型、trait 或 extend header 参数。
 
 ### 6.4 借用值与生命周期
@@ -651,9 +651,9 @@ let first(values: borrow(Slice(i32))): borrow(i32) = { borrow(values[0]) }
 借用被保存进结构体、或公开 API 无法唯一推断时，必须显式声明 region 参数：
 
 ```sc
-let choose('a: region)
+let choose(R: region)
   (condition: bool)
-  (left: borrow('a)(T), right: borrow('a)(T)): borrow('a)(T) = {
+  (left: borrow(R)(T), right: borrow(R)(T)): borrow(R)(T) = {
   if condition { left } else { right }
 }
 ```

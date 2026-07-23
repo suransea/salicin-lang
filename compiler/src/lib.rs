@@ -154,8 +154,8 @@ mod tests {
     #[test]
     fn access_compile_parameters_select_shared_or_mutable_borrowing() {
         let source = "let inspect(A: access)(value: borrow(A)(i32)): i32 = { value }\n\
-                      let borrow_value(A: access, 'a: region, T: type)\n\
-                        (value: borrow(A)('a)(T)): borrow(A)('a)(T) = { borrow(A)(value) }\n\
+                      let borrow_value(A: access, R: region, T: type)\n\
+                        (value: borrow(A)(R)(T)): borrow(A)(R)(T) = { borrow(A)(value) }\n\
                       let main(): i32 = {\n\
                         let mut left = 20\n\
                         let right = 22\n\

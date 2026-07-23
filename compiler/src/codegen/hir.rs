@@ -147,7 +147,11 @@ impl fmt::Display for Ty {
             } => {
                 let qualifier = if *mutable { "borrow(mut)" } else { "borrow" };
                 if let Some(region) = region {
-                    write!(f, "{qualifier}('{region}) {pointee}")
+                    write!(
+                        f,
+                        "{qualifier}({}) {pointee}",
+                        display_region_argument(region)
+                    )
                 } else {
                     write!(f, "{qualifier} {pointee}")
                 }
@@ -209,6 +213,14 @@ impl fmt::Display for Ty {
                 }
             }
         }
+    }
+}
+
+fn display_region_argument(region: &str) -> String {
+    if region.chars().next().is_some_and(char::is_uppercase) {
+        region.to_owned()
+    } else {
+        format!("'{region}")
     }
 }
 

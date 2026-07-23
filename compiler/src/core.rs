@@ -1336,7 +1336,7 @@ fn validate_borrow_type_form(definition: &TypeFormDef, diagnostics: &mut Vec<Str
     let valid = definition.compile_groups == borrow_compile_groups();
     if !valid {
         diagnostics.push(
-            "lang item `borrow` type form must have shape `pub let borrow(A: access = shared)('r: region)(T: type): type`"
+            "lang item `borrow` type form must have shape `pub let borrow(A: access = shared)(R: region)(T: type): type`"
                 .to_owned(),
         );
     }
@@ -1344,7 +1344,7 @@ fn validate_borrow_type_form(definition: &TypeFormDef, diagnostics: &mut Vec<Str
 
 fn validate_borrow_value_form(function: &Function, diagnostics: &mut Vec<String>) {
     let valid = function.compile_groups == borrow_compile_groups()
-        && function.return_type == Some(borrow_type("A", "r", named_type("T")))
+        && function.return_type == Some(borrow_type("A", "R", named_type("T")))
         && function.effects == crate::ast::FunctionEffects::default()
         && function.where_predicates.is_empty()
         && function.body.is_none()
@@ -1354,12 +1354,12 @@ fn validate_borrow_value_form(function: &Function, diagnostics: &mut Vec<String>
                 group.as_slice(),
                 [parameter] if parameter.name == "value"
                     && parameter.mode == PassMode::Inferred
-                    && parameter.ty == borrow_type("A", "r", named_type("T"))
+                    && parameter.ty == named_type("T")
             )
         );
     if !valid {
         diagnostics.push(
-            "lang item `borrow` value form must have shape `pub let borrow(A: access = shared)('r: region)(T: type)(value: borrow(A)('r)(T)): borrow(A)('r)(T)`"
+            "lang item `borrow` value form must have shape `pub let borrow(A: access = shared)(R: region)(T: type)(value: T): borrow(A)(R)(T)`"
                 .to_owned(),
         );
     }
@@ -1833,7 +1833,7 @@ fn region_parameter(name: &str) -> CompileParam {
 fn borrow_compile_groups() -> Vec<Vec<CompileParam>> {
     vec![
         vec![access_parameter("A", Some("shared"))],
-        vec![region_parameter("r")],
+        vec![region_parameter("R")],
         vec![type_parameter("T")],
     ]
 }

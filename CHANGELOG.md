@@ -1323,8 +1323,9 @@ subset.
 
 - Added the compile-time `access` kind with `shared` and `mut` values, default-shared inference,
   named or positional explicit arguments, and distinct monomorphized instances.
-- Allowed `borrow(A)` and `borrow(A, 'a)` in parameter modes, borrow types, borrow expressions, and
-  unsafe raw pointer borrows, with access-aware substitution before ownership and borrow checking.
+- Allowed `borrow(A)` in parameter modes, borrow types, borrow expressions, and unsafe raw pointer
+  borrows, plus `borrow(A)(R)` for borrow types that also carry a region, with access-aware
+  substitution before ownership and borrow checking.
 - Unified the canonical free borrow APIs as `box_as_ref(A: access, ...)` and
   `vec_at(A: access, ...)`; retained the mutable free functions and methods as compatibility wrappers.
 - Added scope diagnostics for undeclared or duplicate access parameters and documented the boundary
@@ -1478,10 +1479,10 @@ subset.
 
 ## 0.55.0 - 2026-07-21
 
-- Added the `region` compile-time kind and apostrophe-prefixed region names, including predefined
-  `'static`, for region-only and mixed type/region parameter groups.
-- Parsed explicit regions on borrow pass modes and borrow types, such as `borrow('a) value: T` and
-  `borrow('a) T`, while erasing regions before monomorphization so they never become type arguments.
+- Added the `region` compile-time kind with uppercase region parameters such as `R: region`, while
+  keeping apostrophe-prefixed region entities such as `'static` reserved for concrete regions.
+- Parsed explicit regions on borrow pass modes and borrow types, such as `borrow(R) value: T` and
+  `borrow(R) T`, while erasing regions before monomorphization so they never become type arguments.
 - Added whole-item region scope validation for functions, local annotations, closures, nominal
   fields, traits, extensions, and where predicates, with diagnostics for undeclared, duplicate,
   malformed, or redeclared predefined regions.

@@ -1,7 +1,7 @@
 let Cell = struct { value: i32 }
 
 extend Cell {
-  let get('a: region)(self: borrow('a)(Self))(): borrow('a)(i32) = { borrow(self.value) }
+  let get(R: region)(self: borrow(R)(Self))(): borrow(R)(i32) = { borrow(self.value) }
 }
 
 let main(): i32 = {

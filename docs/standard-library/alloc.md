@@ -15,7 +15,7 @@ does not need to appear in `salicin.toml`.
 
 ## `alloc.boxed`
 
-`Box(T)` owns one heap allocation. `box_as_ref(A: access, 'a: region, T: type)` is the canonical free
+`Box(T)` owns one heap allocation. `box_as_ref(A: access, R: region, T: type)` is the canonical free
 borrow operation: omitted `A` selects shared access and `A: mut` selects exclusive access.
 The method form is `boxed.as_ref()` for shared access and `boxed.as_ref(mut)()` for exclusive access.
 There is no separately named mutable alias. The rest of the API covers construction, pointer access,
@@ -26,7 +26,7 @@ pointee before releasing storage.
 
 `Vec(T)` owns contiguous storage and supports both Copy and resource elements. Its API includes
 construction, capacity management, push/pop, insertion/removal, append, truncation, swaps, and
-in-place reversal. `vec_at(A: access, 'a: region, T: type)` is the canonical element-borrow function;
+in-place reversal. `vec_at(A: access, R: region, T: type)` is the canonical element-borrow function;
 the method forms are `values.at(index)` and `values.at(mut)(index)`. There is no separately named
 mutable alias. Bounds and allocation-layout failures trap.
 

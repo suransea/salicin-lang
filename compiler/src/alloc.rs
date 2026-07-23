@@ -488,7 +488,7 @@ fn valid_box_borrow(function: &Function) -> bool {
             if matches!(group.as_slice(), [access, region, element]
                 if access.name == "A"
                     && access.kind == CompileParamKind::Access
-                    && region.name == "a"
+                    && region.name == "R"
                     && region.kind == CompileParamKind::Region
                     && element.name == "T"
                     && element.kind == CompileParamKind::Type))
@@ -499,12 +499,12 @@ fn valid_box_borrow(function: &Function) -> bool {
                     && parameter.access.is_none()
                     && parameter.passing.is_none()
                     && parameter.region.is_none()
-                    && parameter.ty == borrow_type(false, Some("A"), Some("a"), applied("Box", named("T")))))
+                    && parameter.ty == borrow_type(false, Some("A"), Some("R"), applied("Box", named("T")))))
         && function.return_type
             == Some(Type::Borrow {
                 mutable: false,
                 access: Some("A".to_owned()),
-                region: Some("a".to_owned()),
+                region: Some("R".to_owned()),
                 pointee: Box::new(named("T")),
             })
         && function.where_predicates.is_empty()
@@ -712,7 +712,7 @@ fn valid_vec_at(function: &Function) -> bool {
             if matches!(group.as_slice(), [access, region, element]
                 if access.name == "A"
                     && access.kind == CompileParamKind::Access
-                    && region.name == "a"
+                    && region.name == "R"
                     && region.kind == CompileParamKind::Region
                     && element.name == "T"
                     && element.kind == CompileParamKind::Type))
@@ -723,13 +723,13 @@ fn valid_vec_at(function: &Function) -> bool {
                     && parameter.access.is_none()
                     && parameter.passing.is_none()
                     && parameter.region.is_none()
-                    && parameter.ty == borrow_type(false, Some("A"), Some("a"), applied("Vec", named("T"))))
+                    && parameter.ty == borrow_type(false, Some("A"), Some("R"), applied("Vec", named("T"))))
                 && has_parameter(index, "index", PassMode::Inferred, Type::U64))
         && function.return_type
             == Some(Type::Borrow {
                 mutable: false,
                 access: Some("A".to_owned()),
-                region: Some("a".to_owned()),
+                region: Some("R".to_owned()),
                 pointee: Box::new(named("T")),
             })
         && function.where_predicates.is_empty()

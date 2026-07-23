@@ -60,8 +60,8 @@ pub let box_replace(T: type)(boxed: borrow(mut)(Box(T)))(move value: T): T = {
 }
 
 /// Borrows the boxed value with the same access and region as `boxed`.
-pub let box_as_ref(A: access, 'a: region, T: type)
-  (boxed: borrow(A)('a)(Box(T))): borrow(A)('a)(T) = {
+pub let box_as_ref(A: access, R: region, T: type)
+  (boxed: borrow(A)(R)(Box(T))): borrow(A)(R)(T) = {
   unsafe {
     raw_borrow(A)(boxed.pointer, borrow(A)(boxed))
   }

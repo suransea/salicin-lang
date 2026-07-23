@@ -183,7 +183,7 @@ pub let passing = domain {
 ```
 
 Borrow types and values are written with the declared `borrow` form: `borrow(T)`,
-`borrow(mut)(T)`, and `borrow(A)('r)(T)`. `borrow(A)` and generic passing modes refer to these
+`borrow(mut)(T)`, and `borrow(A)(R)(T)`. `borrow(A)` and generic passing modes refer to these
 domains in compile-time parameter positions.
 
 `core.control` owns the edition-pinned contracts for compiler-lowered control functions. It is not

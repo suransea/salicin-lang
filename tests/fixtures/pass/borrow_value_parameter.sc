@@ -1,6 +1,6 @@
 let read(value: borrow(i32)): i32 = { value }
 
-let forward('a: region)(value: borrow('a)(i32)): borrow('a)(i32) = { value }
+let forward(R: region)(value: borrow(R)(i32)): borrow(R)(i32) = { value }
 
 let inferred_forward(value: borrow(i32)): borrow(i32) = { value }
 
@@ -23,7 +23,8 @@ let main(): i32 = {
     }
     let forwarded = forward(reference)
     let inferred = inferred_forward(forwarded)
-    read(inferred) + generic_read(reference) + generic_read(borrow(number)) - 40
+    read(inferred) + generic_read(reference) + generic_read(borrow(reference)) +
+      generic_read(borrow(number)) - 60
   }
   let after = do {
     let reference: borrow(mut)(i32) = borrow(mut)(number)

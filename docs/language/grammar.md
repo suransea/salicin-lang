@@ -157,7 +157,7 @@ access_or_region = IDENT | "shared" | "mut" | REGION ;
 参数模式位置的 `IDENT` 只有在它引用当前函数已声明的 `P: passing` 参数时才合法；否则第一个
 `IDENT` 就是参数名。这是上下文语法，不把 `passing`、`auto` 或参数名加入全局保留字集合。
 
-一个编译期参数组只含 `T: type`、`A: access`、`'a: region` 等编译期参数，并位于所有运行时参数组之前；同一组
+一个编译期参数组只含 `T: type`、`A: access`、`R: region` 等编译期参数，并位于所有运行时参数组之前；同一组
 不能混合编译期和运行时参数。忽略开头的编译期组后，实例方法的 `self` 独占第一个运行时组，
 并且后面至少还有一个显式运行时组。
 
@@ -265,7 +265,7 @@ type_argument  = [ IDENT, ":" ], type_expr | INTEGER ;
 普通的 `IDENT ":" expression` 命名实参，不增加另一套括号或关键字。
 类型位置的构造子实参同样可以写 `IDENT ":" type_expr` 标签；一个实参组不能混用具名和位置形式。
 `access` 是 `core.domains` 声明的封闭编译期 domain；其内建实参为 `shared` 与 `mut`。`borrow(A)(T)` 和
-`borrow(A)('a)(T)` 分别携带 access 参数以及 access/region 参数组合。
+`borrow(A)(R)(T)` 分别携带 access 参数以及 access/region 参数组合。
 `passing` 是函数编译期 domain；其内建实参为 `auto`、`copy` 与 `move`，并在参数模式位置以
 已声明的参数名引用，例如 `(P value: T)`。
 `effect` 是函数编译期 domain；实参是完整 effect row：`pure`、`Unsafe`、名义 marker 或其组合。

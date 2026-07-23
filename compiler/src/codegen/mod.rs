@@ -5613,14 +5613,8 @@ impl Analyzer {
                 }
             }
             Expr::Borrow { mutable, value, .. } => {
-                let pointee_hint = match hint {
-                    Some(Ty::Reference { pointee, .. }) => Some(pointee.as_ref()),
-                    _ => None,
-                };
-                let pointee = match self.probe_expr_ty(value, pointee_hint, context) {
-                    TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) => ty,
-                    TypeProbe::Defaultable(ty) => ty,
-                    TypeProbe::Unsupported => return TypeProbe::Unsupported,
+                let Some(pointee) = self.probe_place_ty(value, context) else {
+                    return TypeProbe::Unsupported;
                 };
                 TypeProbe::Known(Ty::Reference {
                     pointee: Box::new(pointee),
@@ -5879,6 +5873,39 @@ impl Analyzer {
             | Expr::Break(_)
             | Expr::Continue
             | Expr::Match { .. } => TypeProbe::Unsupported,
+        }
+    }
+
+    fn probe_place_ty(&self, expression: &Expr, context: &LowerCtx) -> Option<Ty> {
+        match expression {
+            Expr::Name(name) => {
+                let local = context.lookup(name)?;
+                if let Some(alias) = &local.alias {
+                    return Some(alias.ty.clone());
+                }
+                match &local.ty {
+                    Ty::Reference { pointee, .. } => Some(pointee.as_ref().clone()),
+                    ty => Some(ty.clone()),
+                }
+            }
+            Expr::Member(base, member) => {
+                let Ty::Struct(name) = self.probe_place_ty(base, context)? else {
+                    return None;
+                };
+                self.struct_layouts
+                    .get(&name)
+                    .and_then(|layout| layout.fields.iter().find(|field| field.name == *member))
+                    .filter(|field| Self::access_boundary_allows(&context.origin, &field.access))
+                    .map(|field| field.ty.clone())
+            }
+            Expr::Index { base, index } => {
+                let Ty::Array(element, length) = self.probe_place_ty(base, context)? else {
+                    return None;
+                };
+                let index = u64::try_from(integer_literal_value(index)?).ok()?;
+                (index < length).then(|| element.as_ref().clone())
+            }
+            _ => None,
         }
     }
 

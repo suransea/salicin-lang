@@ -24,13 +24,13 @@ pub let passing = domain {
   move
 }
 
-/// Type constructor for a borrow with access `A`, region `'r`, and pointee `T`.
+/// Type constructor for a borrow with access `A`, region `R`, and pointee `T`.
 pub let borrow(A: access = shared)
-  ('r: region)
+  (R: region)
   (T: type): type
 
-/// Reborrows an existing borrowed value with the same access, region, and pointee.
+/// Creates or reborrows a borrow of an addressable pointee.
 pub let borrow(A: access = shared)
-  ('r: region)
+  (R: region)
   (T: type)
-  (value: borrow(A)('r)(T)): borrow(A)('r)(T)
+  (value: T): borrow(A)(R)(T)

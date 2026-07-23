@@ -52,8 +52,8 @@ pub let vec_len(T: type)(values: borrow(Vec(T))): u64 = { values.length }
 pub let vec_capacity(T: type)(values: borrow(Vec(T))): u64 = { values.storage_capacity }
 
 /// Borrows the element at `index`, trapping if `index` is out of bounds.
-pub let vec_at(A: access, 'a: region, T: type)
-  (values: borrow(A)('a)(Vec(T)))(index: u64): borrow(A)('a)(T) = {
+pub let vec_at(A: access, R: region, T: type)
+  (values: borrow(A)(R)(Vec(T)))(index: u64): borrow(A)(R)(T) = {
   if index >= values.length {
     unsafe {
       raw_trap()

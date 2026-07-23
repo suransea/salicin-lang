@@ -1296,12 +1296,21 @@ fn explicit_borrow_type_errors_report_their_cause() {
 #[test]
 fn region_frontend_errors_report_their_cause() {
     for (name, expected) in [
-        ("region_undeclared_parameter.sc", "undeclared region `'a'"),
-        ("region_undeclared_type.sc", "undeclared region `'a'"),
-        ("region_duplicate.sc", "duplicate region parameter `'a'"),
+        (
+            "region_undeclared_parameter.sc",
+            "undeclared access or region parameter `R`",
+        ),
+        (
+            "region_undeclared_type.sc",
+            "undeclared access or region parameter `R`",
+        ),
+        ("region_duplicate.sc", "duplicate region parameter `R`"),
         ("region_static_redeclared.sc", "predefined"),
-        ("region_name_with_type_kind.sc", "must use the `region`"),
-        ("region_plain_name.sc", "must start with `'`"),
+        (
+            "region_name_with_type_kind.sc",
+            "region literals cannot be compile-time parameter names",
+        ),
+        ("region_plain_name.sc", "uppercase names like `R: region`"),
     ] {
         let output = salic()
             .arg("check")

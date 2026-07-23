@@ -216,10 +216,15 @@ pub(super) fn error_expr() -> HirExpr {
 }
 
 pub(super) fn display_region(region: Option<&str>) -> String {
-    region.map_or_else(
-        || "an inferred region".to_owned(),
-        |region| format!("'{region}"),
-    )
+    region.map_or_else(|| "an inferred region".to_owned(), display_region_argument)
+}
+
+pub(super) fn display_region_argument(region: &str) -> String {
+    if region.chars().next().is_some_and(char::is_uppercase) {
+        region.to_owned()
+    } else {
+        format!("'{region}")
+    }
 }
 
 pub(super) fn contextual_reference_result(result: &Ty, expected: Option<&Ty>) -> Ty {

@@ -566,13 +566,12 @@ mod tests {
 
     #[test]
     fn recognizes_region_parameters_and_names() {
-        let tokens =
-            lex("let choose('a: region)(value: borrow('a)(i32)): borrow('a)(i32)").unwrap();
+        let tokens = lex("let choose(R: region)(value: borrow(R)(i32)): borrow(R)(i32)").unwrap();
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Region));
         assert_eq!(
             tokens
                 .iter()
-                .filter(|token| token.kind == TokenKind::RegionName("a".to_owned()))
+                .filter(|token| token.kind == TokenKind::Ident("R".to_owned()))
                 .count(),
             3
         );

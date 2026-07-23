@@ -1,10 +1,10 @@
 let Cell = struct { value: i32 }
 
 extend Cell {
-  let get('a: region)(self: borrow('a)(Self))(): borrow('a)(i32) = { borrow(self.value) }
+  let get(R: region)(self: borrow(R)(Self))(): borrow(R)(i32) = { borrow(self.value) }
 }
 
-let bad('a: region)(seed: borrow('a)(i32)): borrow('a)(i32) = {
+let bad(R: region)(seed: borrow(R)(i32)): borrow(R)(i32) = {
   let cell = Cell { value: seed }
   cell.get()
 }

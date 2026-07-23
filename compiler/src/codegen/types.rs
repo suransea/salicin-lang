@@ -13,7 +13,7 @@ use super::compile_time::{
 };
 use super::flow::LowerCtx;
 use super::hir::{FunctionTy, Ty};
-use super::lower::flatten_call;
+use super::lower::{display_region_argument, flatten_call};
 use super::names::nominal_instance_name;
 use super::registry::{NominalInstanceKey, NominalKind};
 use super::source_rewrite::substitute_type_parameters;
@@ -364,9 +364,9 @@ impl Analyzer {
                 region,
             } => {
                 let mode = if *mutable { "borrow(mut)" } else { "borrow" };
-                let region = region
-                    .as_ref()
-                    .map_or_else(String::new, |region| format!("('{region})"));
+                let region = region.as_ref().map_or_else(String::new, |region| {
+                    format!("({})", display_region_argument(region))
+                });
                 format!("{mode}{region} {}", self.diagnostic_type_name(pointee))
             }
             Ty::Struct(name) | Ty::Enum(name) => {
