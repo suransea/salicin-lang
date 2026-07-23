@@ -22,7 +22,7 @@ const EDITION_2026_PRELUDE: &str = include_str!("../../library/core/src/prelude.
 const EDITION_2026_ROOT: &str = include_str!("../../library/core/src/root.sc");
 const EDITION_2026_OPS: &str = include_str!("../../library/core/src/ops.sc");
 const EDITION_2026_EFFECTS: &str = include_str!("../../library/core/src/effects.sc");
-const EDITION_2026_ACCESS: &str = include_str!("../../library/core/src/access.sc");
+const EDITION_2026_DOMAINS: &str = include_str!("../../library/core/src/domains.sc");
 const EDITION_2026_CONTROL: &str = include_str!("../../library/core/src/control.sc");
 const EDITION_2026_ITER: &str = include_str!("../../library/core/src/iter.sc");
 const EDITION_2026_ALGEBRA: &str = include_str!("../../library/core/src/algebra.sc");
@@ -715,7 +715,7 @@ impl CoreBundle {
                     ("core", EDITION_2026_ROOT),
                     ("ops", EDITION_2026_OPS),
                     ("effects", EDITION_2026_EFFECTS),
-                    ("access", EDITION_2026_ACCESS),
+                    ("domains", EDITION_2026_DOMAINS),
                     ("control", EDITION_2026_CONTROL),
                     ("iter", EDITION_2026_ITER),
                     ("algebra", EDITION_2026_ALGEBRA),
@@ -744,7 +744,7 @@ impl CoreBundle {
         // Most contract tests isolate one prelude/operator declaration. Keep
         // the independently tested control module present in those fixtures.
         let source = format!(
-            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{TEST_EFFECTS}\n{EDITION_2026_ACCESS}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}"
+            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{TEST_EFFECTS}\n{EDITION_2026_DOMAINS}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}"
         );
         let mut program = parser::parse(&source).map_err(|error| {
             CoreBundleError::new(
@@ -953,9 +953,9 @@ pub const fn embedded_effects_source(edition: Edition) -> &'static str {
 }
 
 /// Return the compile-time domain source compiled into this compiler.
-pub const fn embedded_access_source(edition: Edition) -> &'static str {
+pub const fn embedded_domains_source(edition: Edition) -> &'static str {
     match edition {
-        Edition::Edition2026 => EDITION_2026_ACCESS,
+        Edition::Edition2026 => EDITION_2026_DOMAINS,
     }
 }
 
@@ -2338,7 +2338,9 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::PassingDomain
                 | LangItemKind::EffectDomain
                 | LangItemKind::BorrowTypeForm
-                | LangItemKind::BorrowValueForm => format!("core::access::{}", kind.source_name()),
+                | LangItemKind::BorrowValueForm => {
+                    format!("core::domains::{}", kind.source_name())
+                }
                 LangItemKind::Continuation
                 | LangItemKind::EffectCallable
                 | LangItemKind::Handle
@@ -2401,7 +2403,7 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::PassingDomain
                 | LangItemKind::EffectDomain
                 | LangItemKind::BorrowTypeForm
-                | LangItemKind::BorrowValueForm => "access",
+                | LangItemKind::BorrowValueForm => "domains",
                 LangItemKind::Continuation
                 | LangItemKind::EffectCallable
                 | LangItemKind::Handle
@@ -2461,7 +2463,7 @@ pub let Shr(Rhs: type) = trait {
                 ("core", EDITION_2026_ROOT),
                 ("ops", EDITION_2026_OPS),
                 ("effects", EDITION_2026_EFFECTS),
-                ("access", EDITION_2026_ACCESS),
+                ("domains", EDITION_2026_DOMAINS),
                 ("control", &malformed),
                 ("iter", EDITION_2026_ITER),
             ],
@@ -2483,7 +2485,7 @@ pub let Shr(Rhs: type) = trait {
                 ("core", EDITION_2026_ROOT),
                 ("ops", EDITION_2026_OPS),
                 ("effects", EDITION_2026_EFFECTS),
-                ("access", EDITION_2026_ACCESS),
+                ("domains", EDITION_2026_DOMAINS),
                 ("control", &bodyless),
                 ("iter", EDITION_2026_ITER),
             ],
@@ -2505,7 +2507,7 @@ pub let Shr(Rhs: type) = trait {
                 ("core", EDITION_2026_ROOT),
                 ("ops", EDITION_2026_OPS),
                 ("effects", EDITION_2026_EFFECTS),
-                ("access", EDITION_2026_ACCESS),
+                ("domains", EDITION_2026_DOMAINS),
                 ("control", &malformed),
                 ("iter", EDITION_2026_ITER),
             ],
@@ -2527,7 +2529,7 @@ pub let Shr(Rhs: type) = trait {
                 ("core", EDITION_2026_ROOT),
                 ("ops", EDITION_2026_OPS),
                 ("effects", EDITION_2026_EFFECTS),
-                ("access", EDITION_2026_ACCESS),
+                ("domains", EDITION_2026_DOMAINS),
                 ("control", &malformed),
                 ("iter", EDITION_2026_ITER),
             ],
@@ -2549,7 +2551,7 @@ pub let Shr(Rhs: type) = trait {
                 ("core", EDITION_2026_ROOT),
                 ("ops", EDITION_2026_OPS),
                 ("effects", EDITION_2026_EFFECTS),
-                ("access", EDITION_2026_ACCESS),
+                ("domains", EDITION_2026_DOMAINS),
                 ("control", &malformed),
                 ("iter", EDITION_2026_ITER),
             ],
@@ -2574,7 +2576,7 @@ pub let Shr(Rhs: type) = trait {
                 ("core", EDITION_2026_ROOT),
                 ("ops", EDITION_2026_OPS),
                 ("effects", EDITION_2026_EFFECTS),
-                ("access", EDITION_2026_ACCESS),
+                ("domains", EDITION_2026_DOMAINS),
                 ("control", EDITION_2026_CONTROL),
                 ("iter", &malformed),
             ],
@@ -2599,7 +2601,7 @@ pub let Shr(Rhs: type) = trait {
                 ("core", EDITION_2026_ROOT),
                 ("ops", &malformed),
                 ("effects", EDITION_2026_EFFECTS),
-                ("access", EDITION_2026_ACCESS),
+                ("domains", EDITION_2026_DOMAINS),
                 ("control", EDITION_2026_CONTROL),
                 ("iter", EDITION_2026_ITER),
             ],
@@ -2622,7 +2624,7 @@ pub let Shr(Rhs: type) = trait {
                 ("core", EDITION_2026_ROOT),
                 ("ops", &malformed),
                 ("effects", EDITION_2026_EFFECTS),
-                ("access", EDITION_2026_ACCESS),
+                ("domains", EDITION_2026_DOMAINS),
                 ("control", EDITION_2026_CONTROL),
                 ("iter", EDITION_2026_ITER),
             ],
@@ -2644,7 +2646,7 @@ pub let Shr(Rhs: type) = trait {
                 ("core", EDITION_2026_ROOT),
                 ("ops", &malformed),
                 ("effects", EDITION_2026_EFFECTS),
-                ("access", EDITION_2026_ACCESS),
+                ("domains", EDITION_2026_DOMAINS),
                 ("control", EDITION_2026_CONTROL),
                 ("iter", EDITION_2026_ITER),
             ],

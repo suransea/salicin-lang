@@ -122,7 +122,7 @@ constructor_kind = compile_parameter_group,
   `(effect): T`、`T(effect)` 与 `T ! effect` 都不属于语法。
 - 声明右侧的 `domain` 同样是上下文词，用于声明编译期参数域。无 body 的 `domain` 是开放域；
   `domain { ... }` 是封闭域。标准 `type`、`region`、`effect`、`access` 与 `passing` domain 位于
-  `core.access`；effect 身份位于 `core.effects`；控制 lang item 可在声明名位置使用 `do`、`try`、
+  `core.domains`；effect 身份位于 `core.effects`；控制 lang item 可在声明名位置使用 `do`、`try`、
   `unsafe`、`loop`。
 - `let f(x: T) = { body }` 是把参数提升到名称旁边的具名闭包声明；RHS 必须有花括号。
 - `let f: (x: T): R = { body }` 是带名签名的具名闭包声明：所有槽必须有名字。
@@ -264,7 +264,7 @@ type_argument  = [ IDENT, ":" ], type_expr | INTEGER ;
 `_` 不是类型实参。调用中的编译期参数组可整体省略，并由运行时实参和期望类型推断；显式消歧使用
 普通的 `IDENT ":" expression` 命名实参，不增加另一套括号或关键字。
 类型位置的构造子实参同样可以写 `IDENT ":" type_expr` 标签；一个实参组不能混用具名和位置形式。
-`access` 是 `core.access` 声明的封闭编译期 domain；其内建实参为 `shared` 与 `mut`。`borrow(A)(T)` 和
+`access` 是 `core.domains` 声明的封闭编译期 domain；其内建实参为 `shared` 与 `mut`。`borrow(A)(T)` 和
 `borrow(A)('a)(T)` 分别携带 access 参数以及 access/region 参数组合。
 `passing` 是函数编译期 domain；其内建实参为 `auto`、`copy` 与 `move`，并在参数模式位置以
 已声明的参数名引用，例如 `(P value: T)`。

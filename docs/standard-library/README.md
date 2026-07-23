@@ -15,7 +15,7 @@ library/
     prelude.sc
     ops.sc
     effects.sc
-    access.sc
+    domains.sc
     control.sc
     iter.sc
     algebra.sc
@@ -39,7 +39,7 @@ use core.Result
 ```
 
 Operator traits belong to `core.ops`, effect identities belong to `core.effects`, compile-time
-domains belong to `core.access`, compiler-lowered control contracts belong to `core.control`, algebra
+domains belong to `core.domains`, compiler-lowered control contracts belong to `core.control`, algebra
 protocols belong to `core.algebra`, higher-kinded functional protocols belong to `core.functional`,
 iteration protocols belong to `core.iter`, and owning containers belong to `alloc.boxed` and
 `alloc.vec`. Alloc declarations must be named through their module or imported explicitly with

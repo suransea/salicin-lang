@@ -338,7 +338,7 @@ subset.
 - Renamed the prelude uninhabited type from `never` to `Never` without a compatibility alias, and
   updated parser reservations, diagnostics, tests, and documentation to use the source spelling.
 - Split validated core capabilities into ordinary standard-library modules: `core.effects` now owns
-  `Unsafe`, `Throws(E)`, and the ordinary `Async` marker; `core.access` owns `Shared` and `Mutable`;
+  `Unsafe`, `Throws(E)`, and the ordinary `Async` marker; `core.domains` owns access markers;
   `core.control` now contains only the control/runtime contracts for `do`, `try`, `unsafe`, `loop`,
   `Continuation`, and `EffectCallable`.
 - Added `core.algebra.Semigroup(T)` and `core.algebra.Monoid(T)` as first-order standard-library

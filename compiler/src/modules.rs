@@ -383,7 +383,7 @@ const CORE_OPS_EXPORTS: &[&str] = &[
     "Coalesce",
 ];
 const CORE_EFFECTS_EXPORTS: &[&str] = &["Unsafe", "Throws", "Async"];
-const CORE_ACCESS_EXPORTS: &[&str] = &["type", "region", "effect", "access", "passing", "borrow"];
+const CORE_DOMAIN_EXPORTS: &[&str] = &["type", "region", "effect", "access", "passing", "borrow"];
 const CORE_CONTROL_EXPORTS: &[&str] = &[
     "Continuation",
     "EffectCallable",
@@ -880,8 +880,8 @@ fn install_standard_namespaces(
         for name in CORE_EFFECTS_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.effects.{name}"));
         }
-        for name in CORE_ACCESS_EXPORTS {
-            required_imports.insert((*name).to_owned(), format!("core.access.{name}"));
+        for name in CORE_DOMAIN_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.domains.{name}"));
         }
         for name in CORE_ALGEBRA_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.algebra.{name}"));
@@ -931,7 +931,7 @@ fn install_core_namespace(
             "prelude",
             "ops",
             "effects",
-            "access",
+            "domains",
             "control",
             "iter",
             "algebra",
@@ -1006,15 +1006,15 @@ fn install_core_namespace(
                 },
             );
         }
-        for name in CORE_ACCESS_EXPORTS {
+        for name in CORE_DOMAIN_EXPORTS {
             let mut module_path = core_root.clone();
-            module_path.push("access".to_owned());
+            module_path.push("domains".to_owned());
             let mut logical_path = module_path.clone();
             logical_path.push((*name).to_owned());
             symbols.insert(
                 logical_path,
                 Symbol {
-                    canonical: format!("core::access::{name}"),
+                    canonical: format!("core::domains::{name}"),
                     module_path,
                     package_root: package_root.to_vec(),
                     visibility: Visibility::Public,
@@ -4622,7 +4622,7 @@ let main(): i32 = { Option {} }
             .chain(CORE_ROOT_EXPORTS.iter().map(|name| ("core", *name)))
             .chain(CORE_OPS_EXPORTS.iter().map(|name| ("ops", *name)))
             .chain(CORE_EFFECTS_EXPORTS.iter().map(|name| ("effects", *name)))
-            .chain(CORE_ACCESS_EXPORTS.iter().map(|name| ("access", *name)))
+            .chain(CORE_DOMAIN_EXPORTS.iter().map(|name| ("domains", *name)))
             .chain(CORE_CONTROL_EXPORTS.iter().map(|name| ("control", *name)))
             .chain(CORE_ITER_EXPORTS.iter().map(|name| ("iter", *name)))
             .chain(CORE_ALGEBRA_EXPORTS.iter().map(|name| ("algebra", *name)))

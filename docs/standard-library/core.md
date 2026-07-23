@@ -163,7 +163,7 @@ probeable and the escaping error type is unique. `Async` currently exposes only 
 async/Future lowering will add its handler contracts in the same implementation slice rather than
 pretending `await` already works.
 
-`core.access` owns standard compile-time domains, also outside the prelude:
+`core.domains` owns standard compile-time domains, also outside the prelude:
 
 ```sc
 pub let type = domain
