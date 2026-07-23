@@ -20,6 +20,7 @@ The implementation lives under `compiler/src`:
 - `cleanup.rs` models resource storage and destruction across control flow.
 - `codegen/` owns typed lowering and LLVM emission:
   - `mod.rs` keeps the public compile/check entry points and the current `Analyzer` implementation.
+  - `arrays.rs` lowers fixed-size array literals and static/dynamic array indexing.
   - `access.rs` owns visibility boundary checks, effective member access, and public API leak
     validation over lowered types.
   - `chain.rs` owns `?.` and custom `Chain` protocol type probing, access typing, and
