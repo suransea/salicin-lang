@@ -1,5 +1,5 @@
 let main(): i32 = {
-  while true {
+  while { true } {
     break 42
   }
   0

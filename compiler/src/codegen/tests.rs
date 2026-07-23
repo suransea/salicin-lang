@@ -3573,7 +3573,7 @@ let consume(move boxed: Boxed): i32 = { boxed.value }
 let main(): i32 = {
   let mut boxed = Boxed { value: 0 }
   let mut iteration = 0
-  while iteration < 2 {
+  while { iteration < 2 } {
 let previous = consume(boxed)
 boxed = Boxed { value: previous + 21 }
 iteration = iteration + 1
@@ -5126,6 +5126,38 @@ let main(): i32 = {
 }
 
 #[test]
+fn multiple_and_named_trailing_closures_lower_as_successive_calls() {
+    for call in [
+        "choose(0) { true } { 42 }",
+        "choose(0) condition: { true } body: { 42 }",
+    ] {
+        let program = crate::parser::parse(&format!(
+            r#"
+let choose(seed: i32)
+  (move condition: (): bool)
+  (move body: (): i32): i32 = {{
+  if condition() {{ body() }} else {{ seed }}
+}}
+let main(): i32 = {{ {call} }}
+"#
+        ))
+        .expect("multiple trailing closure source must parse");
+        compile(&program).expect("multiple trailing closures must lower as successive calls");
+    }
+
+    for while_expression in [
+        "while { value < 42 } { value += 1 }",
+        "while condition: { value < 42 } body: { value += 1 }",
+    ] {
+        let program = crate::parser::parse(&format!(
+            "let main(): i32 = {{ let mut value = 0; {while_expression}; value }}\n"
+        ))
+        .expect("multi-trailing-closure while source must parse");
+        compile(&program).expect("multi-trailing-closure while must lower");
+    }
+}
+
+#[test]
 fn registers_generic_trait_metadata_and_emits_static_method_dispatch() {
     let program = crate::parser::parse(
         r#"
@@ -6616,7 +6648,7 @@ fn rejects_an_outer_move_on_a_loop_backedge_even_for_a_copy_type() {
 let consume(move value: i32): () = { () }
 let main(): i32 = {
   let value = 42
-  while true {
+  while { true } {
 consume(value)
   }
   0
@@ -8225,7 +8257,7 @@ fn cleanup_plan_initializes_while_and_empty_break_results() {
     let while_plan = cleanup_plan_text(
         r#"
 let bind(): () = {
-  let done = while false {}
+  let done = while { false } {}
   done
 }
 "#,
@@ -8274,7 +8306,7 @@ let bind(): () = {
         r#"
 let assign(): () = {
   let mut done = ()
-  done = while false {}
+  done = while { false } {}
   done
 }
 "#,
@@ -8297,7 +8329,7 @@ let assign(): () = {
 fn cleanup_plan_restarts_iteration_temporary_lifetimes() {
     let while_plan = cleanup_plan_text(
         r#"
-let cycle(): () = { while false { 1; () } }
+let cycle(): () = { while { false } { 1; () } }
 "#,
         "cycle",
     );
@@ -8369,7 +8401,7 @@ fn cleanup_plan_keeps_condition_break_values_reachable() {
     let plan = cleanup_plan_text(
         r#"
 let bind(): () = {
-  let done = while loop { break false } {}
+  let done = while { loop { break false } } {}
   done
 }
 "#,
@@ -8425,7 +8457,7 @@ fn cleanup_plan_does_not_initialize_results_when_loop_inputs_diverge() {
         r#"
 let stop(): Never = { loop {} }
 let bind(): () = {
-  let done = while stop() {}
+  let done = while { stop() } {}
   done
 }
 "#,

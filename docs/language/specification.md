@@ -46,6 +46,9 @@
   选择原生表示和快速 lowering；`isize`、`usize` 的宽度来自目标指针宽度，不是 `i64`、`u64` 别名。
 - `let Name = type { value, ... }` 声明 primitive type form 的封闭值集合；标准布尔类型
   写作 `let bool = type { false, true }`。
+- 调用可以连续提供多个尾随闭包，每个闭包应用一个新的参数组；尾随闭包也可以写成
+  `label: { ... }` 以参与具名参数选择。标准 `while` 支持
+  `while { condition } { body }` 及对应的 `condition:`、`body:` 具名形式。
 - region 名以 `'` 开头，后接普通标识符主体，例如 `'a`、`'input`；`'static` 是预定义 region。
 
 ## 3. 声明与作用域
@@ -1498,8 +1501,8 @@ if let Some(value) = option {
 
 `if let` 不承担穷尽检查，绑定只在 then 块可见；需要处理全部情况时使用 `match`。
 
-在 `if`、`while` 和 `for` 的最外层控制头中禁用尾随闭包，第一个未被括号包围的 `{` 总是
-控制流主体。条件本身需要尾随闭包时必须加括号：
+在 `if`、`for` 和 `while let` 的最外层控制头中禁用尾随闭包，第一个未被括号包围的 `{`
+是控制流主体。普通 `while` 本身使用两个尾随闭包：
 
 ```sc
 if (validate(input) { (error: Error) -> log(error) }) {
@@ -1514,7 +1517,9 @@ loop {
   if ready() { break result }
 }
 
-while condition {
+while {
+  condition
+} {
   step()
 }
 

@@ -359,16 +359,21 @@ postfix_part = call_group
              | ".", IDENT
              | "?.", IDENT
              | "!", [ "!" ]
-             | trailing_closure ;
+             | trailing_closure
+             | named_trailing_closure ;
 
 call_group = "(", [ call_argument, { ",", call_argument }, [ "," ] ], ")" ;
 call_argument = expression | IDENT, ":", expression ;
 
 trailing_closure = closure_literal ;
+named_trailing_closure = IDENT, ":", closure_literal ;
 ```
 
-语义限制：尾随闭包必须在同一逻辑行跟随已有 `call_group`，一条调用链最多一个；它新建一个单元素
-参数组。`f(x) {}` 是 `Call(Call(f,[x]),[{}])`，`f(x,{})` 是 `Call(f,[x,{}])`。
+语义限制：尾随闭包跟随已有 `call_group`，每个尾随闭包新建一个单元素参数组；可以跨行连续提供
+多个位置或具名尾随闭包。`f(x) {} {}` 是 `Call(Call(Call(f,[x]),[{}]),[{}])`，
+`f(x) label: {}` 的最后一组则包含标签为 `label` 的闭包参数。普通名称后的 `{}` 仍优先解释为
+结构体字面量，因此无显式调用组的通用调用写作 `f() {}`；经过验证的控制形式可以提供更短写法，
+例如 `while { condition } { body }`。
 
 同一作用域中的具名函数可以形成重载集，但每个候选的运行时参数标签组必须不同。调用重载名时，
 至少一个实参必须写成 `label: expression`，所有已提供参数组共同筛选唯一候选；其他参数组仍可使用
@@ -448,7 +453,11 @@ if_expr = "if", ( expression | "let", pattern, "=", expression ), block,
           [ "else", ( block | if_expr ) ] ;
 
 loop_expr  = "loop", block ;
-while_expr = "while", ( expression | "let", pattern, "=", expression ), block ;
+while_expr = "while",
+             ( closure_literal, closure_literal
+             | "condition", ":", closure_literal,
+               "body", ":", closure_literal
+             | "let", pattern, "=", expression, block ) ;
 for_expr   = "for", pattern, "in", expression, block ;
 
 return_expr   = "return", [ expression ] ;
@@ -466,8 +475,8 @@ continue_expr = "continue" ;
 并原样转发其 effect/color；`try` 把 `Throws(E)` 处理为 `Result(E)(T)`；`unsafe` 处理闭包要求的
 `Unsafe` effect。
 
-解析 `if`、`while`、`for` 控制头的最外层时禁用尾随闭包；第一个未被括号包围的 `{` 是控制主体。
-条件要使用尾随闭包必须整体加括号。
+解析 `if`、`for` 和 `while let` 控制头的最外层时禁用尾随闭包；第一个未被括号包围的 `{`
+是控制主体。普通 `while` 则要求条件和主体各使用一个尾随闭包。
 
 ### 7.1 大括号上下文
 
@@ -475,7 +484,8 @@ continue_expr = "continue" ;
 |---|---|
 | `let f = {}` | 零参闭包 |
 | `let f(x: T) = { ... }` | 参数提升后的具名闭包体 |
-| `if`/`else`/`loop`/`while`/`for` 后 | 控制构造消费的主体闭包 |
+| `if`/`else`/`loop`/`for` 后 | 控制构造消费的主体闭包 |
+| `while` 后 | 依次提供条件与主体的两个零参闭包 |
 | `struct`/`enum`/`trait`/`extend` 后 | 声明体 |
 | `value match { ... }` | match arm 列表 |
 | 其他表达式位置 | 闭包 |

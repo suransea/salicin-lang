@@ -7,7 +7,7 @@ let main(): i32 = {
   Tick.handle(
     tick: { (resume) -> resume(1) },
   ) {
-    while count + Tick.tick() <= 2 {
+    while { count + Tick.tick() <= 2 } {
       count += 1
       if count == 1 { continue }
     }

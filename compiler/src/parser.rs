@@ -2751,8 +2751,7 @@ impl Parser {
 
     fn postfix(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
         let mut expression = self.primary(allow_trailing_closure)?;
-        let mut has_call_group = false;
-        let mut used_trailing_closure = false;
+        let mut can_take_trailing_closure = false;
 
         loop {
             if self.take(&TokenKind::LParen) {
@@ -2794,7 +2793,7 @@ impl Parser {
                     }
                 }
                 expression = Expr::Call(Box::new(expression), arguments);
-                has_call_group = true;
+                can_take_trailing_closure = true;
             } else if self.take(&TokenKind::LBracket) {
                 let index = self.expression(true)?;
                 self.expect(&TokenKind::RBracket, "`]` after index")?;
@@ -2836,10 +2835,8 @@ impl Parser {
                     constructor: Box::new(expression),
                     fields,
                 };
-                has_call_group = false;
             } else if allow_trailing_closure
-                && has_call_group
-                && !used_trailing_closure
+                && can_take_trailing_closure
                 && self.at(&TokenKind::LBrace)
             {
                 let closure = self.closure()?;
@@ -2850,13 +2847,52 @@ impl Parser {
                         value: closure,
                     }],
                 );
-                used_trailing_closure = true;
+            } else if allow_trailing_closure
+                && can_take_trailing_closure
+                && self.named_trailing_closure_follows()
+            {
+                let label = self.expect_ident("a trailing closure label")?;
+                self.expect(&TokenKind::Colon, "`:` after trailing closure label")?;
+                let closure = self.closure()?;
+                expression = Expr::Call(
+                    Box::new(expression),
+                    vec![CallArg {
+                        label: Some(label),
+                        value: closure,
+                    }],
+                );
+            } else if allow_trailing_closure
+                && can_take_trailing_closure
+                && self.at(&TokenKind::Newline)
+            {
+                let before_newlines = self.index;
+                while self.take(&TokenKind::Newline) {}
+                if self.at(&TokenKind::LBrace) || self.named_trailing_closure_follows() {
+                    continue;
+                }
+                self.index = before_newlines;
+                break;
             } else {
                 break;
             }
         }
 
         Ok(expression)
+    }
+
+    fn named_trailing_closure_follows(&self) -> bool {
+        matches!(
+            (
+                self.tokens.get(self.index).map(|token| &token.kind),
+                self.tokens.get(self.index + 1).map(|token| &token.kind),
+                self.tokens.get(self.index + 2).map(|token| &token.kind),
+            ),
+            (
+                Some(TokenKind::Ident(_)),
+                Some(TokenKind::Colon),
+                Some(TokenKind::LBrace)
+            )
+        )
     }
 
     fn struct_literal_follows(&self, expression: &Expr) -> bool {
@@ -3171,6 +3207,40 @@ impl Parser {
 
     fn while_expression(&mut self) -> Result<Expr, ParseError> {
         self.expect(&TokenKind::While, "`while`")?;
+        while self.take(&TokenKind::Newline) {}
+        if self.at(&TokenKind::LBrace)
+            || matches!(&self.current().kind, TokenKind::Ident(name) if name == "condition")
+                && self.named_trailing_closure_follows()
+        {
+            if self.named_trailing_closure_follows() {
+                let label = self.expect_ident("`condition`")?;
+                if label != "condition" {
+                    return Err(self.error_here(
+                        "the first named `while` trailing closure must be `condition`",
+                    ));
+                }
+                self.expect(&TokenKind::Colon, "`:` after `condition`")?;
+            }
+            let condition = self.zero_parameter_trailing_closure("while condition")?;
+            while self.take(&TokenKind::Newline) {}
+            if self.named_trailing_closure_follows() {
+                let label = self.expect_ident("`body`")?;
+                if label != "body" {
+                    return Err(
+                        self.error_here("the second named `while` trailing closure must be `body`")
+                    );
+                }
+                self.expect(&TokenKind::Colon, "`:` after `body`")?;
+            }
+            if !self.at(&TokenKind::LBrace) {
+                return Err(self.error_here("expected a second trailing closure for `while`"));
+            }
+            let body = self.zero_parameter_trailing_closure("while body")?;
+            return Ok(Expr::While {
+                condition: Box::new(condition),
+                body: Box::new(body),
+            });
+        }
         if self.take(&TokenKind::Let) {
             let pattern = self.pattern()?;
             self.expect(&TokenKind::Equal, "`=` after the while-let pattern")?;
@@ -3208,15 +3278,20 @@ impl Parser {
                 None,
             ));
         }
-        let condition = self.expression(false)?;
-        if !self.at(&TokenKind::LBrace) {
-            return Err(self.error_here("expected `{` after `while` condition"));
+        Err(self.error_here(
+            "`while` requires two trailing closures; write `while { condition } { body }`",
+        ))
+    }
+
+    fn zero_parameter_trailing_closure(&mut self, context: &str) -> Result<Expr, ParseError> {
+        let closure = self.closure()?;
+        let Expr::Closure(parameters, body) = closure else {
+            unreachable!("a closure parser always returns an outer closure")
+        };
+        if !parameters.is_empty() {
+            return Err(self.error_here(format!("{context} must be a zero-parameter closure")));
         }
-        let body = self.block()?;
-        Ok(Expr::While {
-            condition: Box::new(condition),
-            body: Box::new(body),
-        })
+        Ok(*body)
     }
 
     fn for_expression(&mut self) -> Result<Expr, ParseError> {
@@ -5784,6 +5859,49 @@ mod tests {
     }
 
     #[test]
+    fn multiple_trailing_closures_create_successive_call_groups() {
+        let program = parse(
+            "let value = choose()\n\
+               { true }\n\
+               { 1 }\n",
+        )
+        .unwrap();
+        let Item::Global(binding) = &program.items[0] else {
+            panic!("expected global");
+        };
+        let Expr::Call(second_call, second_group) = &binding.value else {
+            panic!("expected second trailing call group");
+        };
+        assert_eq!(second_group.len(), 1);
+        let Expr::Call(first_call, first_group) = second_call.as_ref() else {
+            panic!("expected first trailing call group");
+        };
+        assert_eq!(first_group.len(), 1);
+        assert!(matches!(first_call.as_ref(), Expr::Call(_, arguments) if arguments.is_empty()));
+    }
+
+    #[test]
+    fn named_trailing_closures_create_labeled_call_groups() {
+        let program = parse(
+            "let value = choose()\n\
+               condition: { true }\n\
+               body: { 1 }\n",
+        )
+        .unwrap();
+        let Item::Global(binding) = &program.items[0] else {
+            panic!("expected global");
+        };
+        let Expr::Call(first_call, body_group) = &binding.value else {
+            panic!("expected body group");
+        };
+        assert_eq!(body_group[0].label.as_deref(), Some("body"));
+        let Expr::Call(_, condition_group) = first_call.as_ref() else {
+            panic!("expected condition group");
+        };
+        assert_eq!(condition_group[0].label.as_deref(), Some("condition"));
+    }
+
+    #[test]
     fn every_brace_expression_is_a_closure() {
         let program = parse(
             "let answer = { 42 }\n\
@@ -6577,30 +6695,30 @@ mod tests {
     }
 
     #[test]
-    fn parses_while_without_treating_its_body_as_a_trailing_closure() {
-        let program = parse(
-            "let main(): i32 = {\n\
-               let mut value = 0\n\
-               while ready() {\n\
-                 value = value + 1\n\
-               }\n\
-               value\n\
-             }\n",
-        )
-        .unwrap();
-
-        let Item::Function(function) = &program.items[0] else {
-            panic!("expected function");
-        };
-        let Some(Expr::Block(statements, Some(_))) = &function.body else {
-            panic!("expected block");
-        };
-        assert!(matches!(
-            &statements[1],
-            Stmt::Expr(Expr::While { condition, body })
-                if matches!(condition.as_ref(), Expr::Call(_, arguments) if arguments.is_empty())
-                    && matches!(body.as_ref(), Expr::Block(_, _))
+    fn rejects_the_legacy_while_condition_form() {
+        let error = parse("let main(): () = { while ready() { work() } }\n").unwrap_err();
+        assert!(error.message.contains(
+            "`while` requires two trailing closures; write `while { condition } { body }`"
         ));
+    }
+
+    #[test]
+    fn parses_while_with_positional_or_named_trailing_closures() {
+        for source in [
+            "let main(): () = { while { ready() } { work() } }\n",
+            "let main(): () = {\n  while\n    condition: { ready() }\n    body: { work() }\n}\n",
+        ] {
+            let program = parse(source).unwrap();
+            let Item::Function(function) = &program.items[0] else {
+                panic!("expected function");
+            };
+            assert!(matches!(
+                function_tail(function),
+                Expr::While { condition, body }
+                    if matches!(condition.as_ref(), Expr::Block(_, _))
+                        && matches!(body.as_ref(), Expr::Block(_, _))
+            ));
+        }
     }
 
     #[test]
