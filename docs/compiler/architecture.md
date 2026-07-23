@@ -69,8 +69,8 @@ The implementation lives under `compiler/src`:
     bookkeeping over HIR places.
   - `raw.rs` lowers layout queries, raw pointer constructors, raw allocation primitives, raw
     borrow/take/offset/trap operations, and `forget`.
-  - `references.rs` lowers contextual reference values and validates explicit reference-return
-    escape sources, regions, and loans.
+  - `references.rs` lowers contextual reference values and reference call arguments, promotes
+    returned-reference loans, and validates explicit reference-return escape sources and regions.
   - `registry.rs` defines item, trait, overload, and generic-instance registry keys, schemas,
     candidate lookup, and generic implementation pattern matching helpers.
   - `source_rewrite.rs` owns source-level rewrites before semantic lowering, including labeled
