@@ -49,6 +49,8 @@ The implementation lives under `compiler/src`:
     reports missing nominal layout diagnostics.
   - `lower.rs` defines shared expression-lowering data, type-probe helpers, and HIR construction
     helpers used by multiple lowering paths.
+  - `members.rs` lowers value and type member access, including associated constants, unit enum
+    variants, and field diagnostics.
   - `names.rs` centralizes stable symbol, monomorphization instance, trait-method, and canonical
     type encodings.
   - `nominals.rs` owns generic nominal snapshots, recursive generic nominal validation, nominal
