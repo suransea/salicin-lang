@@ -25,6 +25,7 @@ The implementation lives under `compiler/src`:
   - `arrays.rs` lowers fixed-size array literals and static/dynamic array indexing.
   - `assignment.rs` lowers compound assignments through user-defined operator traits or builtin
     integer assignment paths.
+  - `calls.rs` resolves named overloads and canonicalizes labeled or positional call arguments.
   - `chain.rs` owns `?.` and custom `Chain` protocol type probing, access typing, and
     handler-aware lowering.
   - `coalesce.rs` owns `??` and custom `Coalesce` protocol type probing and lowering.
