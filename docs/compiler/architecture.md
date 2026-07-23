@@ -39,6 +39,8 @@ The implementation lives under `compiler/src`:
     helpers, and throws-result return-boundary lowering shared by `??`, `?.`, `try`, and `throw`.
   - `flow.rs` tracks local scopes, move initialization alternatives, lexical loans, and lowering
     context state used by ownership and borrow checks.
+  - `functions.rs` lowers function and global bodies, resolves function/global value types, and
+    validates binary entry-point shape.
   - `hir.rs` defines typed IR structs, semantic types, places, signatures, and helper predicates.
   - `lower.rs` defines shared expression-lowering data, type-probe helpers, and HIR construction
     helpers used by multiple lowering paths.
