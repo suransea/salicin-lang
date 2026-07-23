@@ -214,7 +214,7 @@ mod tests {
         let missing = "let Number = struct { value: i32 }\n\
                        extend Number: Add(Number) {\n\
                          let Output = Number\n\
-                         let add(move self)(move rhs: Number): Number = { Number { value: self.value + rhs.value } }\n\
+                         let add(self)(rhs: Number): Number = { Number { value: self.value + rhs.value } }\n\
                        }\n\
                        let main(): i32 = { 0 }\n";
         let errors = compile_source(missing).unwrap_err();
@@ -259,7 +259,7 @@ mod tests {
         let missing_unary = "let Number = struct { value: i32 }\n\
                              extend Number: Neg {\n\
                                let Output = Number\n\
-                               let neg(move self)(): Number = { self }\n}\n\
+                               let neg(self)(): Number = { self }\n}\n\
                              let main(): i32 = { 0 }\n";
         let errors = compile_source(missing_unary).unwrap_err();
         assert!(errors.iter().any(|diagnostic| {
@@ -276,7 +276,7 @@ mod tests {
         let missing_bitwise = "let Bits = struct { value: i32 }\n\
                                extend Bits: BitAnd(Bits) {\n\
                                  let Output = Bits\n\
-                                 let bit_and(move self)(move rhs: Bits): Bits = { Bits { value: self.value & rhs.value } }\n\
+                                 let bit_and(self)(rhs: Bits): Bits = { Bits { value: self.value & rhs.value } }\n\
                                }\n\
                                let main(): i32 = { 0 }\n";
         let errors = compile_source(missing_bitwise).unwrap_err();

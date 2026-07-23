@@ -41,15 +41,16 @@ declarations directly; importing is only required when source code writes the na
 `BitXor`, `Shl`, and `Shr`; `core.ops.assign` defines the compound-assignment protocols; and
 `core.cmp` defines `Eq`, `PartialOrdering`, and `PartialOrd`. The `std.ops` facade re-exports the
 operator-facing names for ordinary imports. They are not in the prelude.
-Arithmetic and bitwise protocols consume their operands and use an associated `Output` type:
+Arithmetic and bitwise protocols accept their operands with automatic passing and use an associated
+`Output` type. Copy operands remain usable; resource operands move:
 
 ```sc
 use std.ops.Add
 
 extend Number: Add(Number) {
   let Output = Number
-  let add(move self)
-    (move rhs: Number): Number = { ... }
+  let add(self)
+    (rhs: Number): Number = { ... }
 }
 ```
 
@@ -78,24 +79,25 @@ extend Number: PartialOrd(Number) {
 }
 ```
 
-`Neg` and `Not` consume their operand and define an associated `Output` type. Consequently an
+`Neg` and `Not` use automatic passing for their operand and define an associated `Output` type. Consequently an
 overloaded `!` may return a non-boolean result; only the built-in boolean operation is fixed to
 `bool`. Generic code can state the same output relationship in a normal where predicate.
 
-`BitAnd(Rhs)`, `BitOr(Rhs)`, `BitXor(Rhs)`, `Shl(Rhs)`, and `Shr(Rhs)` have the same two consuming
+`BitAnd(Rhs)`, `BitOr(Rhs)`, `BitXor(Rhs)`, `Shl(Rhs)`, and `Shr(Rhs)` have the same two automatic
 parameter groups and associated `Output` shape as arithmetic protocols. Built-in integer shifts use
 arithmetic right shift for signed integers and logical right shift for unsigned integers. Negative
 or out-of-width shift counts trap instead of exposing backend undefined behavior.
 
 `AddAssign(Rhs)`, `SubAssign(Rhs)`, `MulAssign(Rhs)`, `DivAssign(Rhs)`, `RemAssign(Rhs)`,
 `BitAndAssign(Rhs)`, `BitOrAssign(Rhs)`, `BitXorAssign(Rhs)`, `ShlAssign(Rhs)`, and
-`ShrAssign(Rhs)` are separate mutation protocols. Each mutably borrows `self`, consumes `rhs`, and
+`ShrAssign(Rhs)` are separate mutation protocols. Each mutably borrows `self`, accepts `rhs` with
+automatic passing, and
 returns `()`:
 
 ```sc
 pub let AddAssign(Rhs: type) = trait {
   let add_assign(self: borrow(mut)(Self))
-    (move rhs: Rhs): ()
+    (rhs: Rhs): ()
 }
 ```
 
@@ -117,16 +119,16 @@ pub let Chain = trait {
   let Rebind(Value: type): type
 
   let chain(E: effect, U: type)
-    (move self)
-    (move transform: (Item): U with(E)): Rebind(U) with(E)
+    (self)
+    (transform: (Item): U with(E)): Rebind(U) with(E)
 }
 
 pub let Coalesce = trait {
   let Item: type
 
   let coalesce(E: effect)
-    (move self)
-    (move fallback: (): Item with(E)): Item with(E)
+    (self)
+    (fallback: (): Item with(E)): Item with(E)
 }
 ```
 
@@ -308,7 +310,7 @@ magic in advance.
 
 ```sc
 pub let Semigroup = trait {
-  let combine(move left: Self, move right: Self): Self
+  let combine(left: Self, right: Self): Self
 }
 
 pub let Monoid = trait
@@ -323,25 +325,25 @@ part of the prelude:
 ```sc
 pub let Functor = trait(Self: (Value: type): type) {
   let map(E: effect, A: type, B: type)
-    (move self: Self(A))
-    (move transform: (A): B with(E)): Self(B) with(E)
+    (self: Self(A))
+    (transform: (A): B with(E)): Self(B) with(E)
 }
 
 pub let Applicative = trait(Self: (Value: type): type)
 where Self: Functor {
   let pure(A: type)
-    (move value: A): Self(A)
+    (value: A): Self(A)
 
   let apply(E: effect, A: type, B: type)
-    (move self: Self((A): B with(E)))
-    (move value: Self(A)): Self(B) with(E)
+    (self: Self((A): B with(E)))
+    (value: Self(A)): Self(B) with(E)
 }
 
 pub let Monad = trait(Self: (Value: type): type)
 where Self: Applicative {
   let flat_map(E: effect, A: type, B: type)
-    (move self: Self(A))
-    (move next: (A): Self(B) with(E)): Self(B) with(E)
+    (self: Self(A))
+    (next: (A): Self(B) with(E)): Self(B) with(E)
 }
 ```
 

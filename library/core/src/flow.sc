@@ -7,8 +7,8 @@ pub let Chain = trait {
 
   /// Applies `transform` to the successful payload or propagates the residual case.
   let chain(E: effect, U: type)
-    (move self)
-    (move transform: (Item): U with(E)): Rebind(U) with(E)
+    (self)
+    (transform: (Item): U with(E)): Rebind(U) with(E)
 }
 
 /// Trait used by `??` to extract a value or evaluate a fallback.
@@ -18,8 +18,8 @@ pub let Coalesce = trait {
 
   /// Returns the successful payload or evaluates `fallback`.
   let coalesce(E: effect)
-    (move self)
-    (move fallback: (): Item with(E)): Item with(E)
+    (self)
+    (fallback: (): Item with(E)): Item with(E)
 }
 
 /// Trait used by postfix `!!` to assert success and extract a payload.

@@ -4,7 +4,7 @@
 /// Types with an associative binary combination operation.
 pub let Semigroup = trait {
   /// Combines two values into one value of the same type.
-  let combine(move left: Self, move right: Self): Self
+  let combine(left: Self, right: Self): Self
 }
 
 /// Semigroups that also provide an identity element.

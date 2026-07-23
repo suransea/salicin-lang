@@ -45,25 +45,25 @@ const NON_LANG_ITEM_CORE_MODULES: &[&str] =
 #[cfg(test)]
 const TEST_ASSIGNMENT_OPS: &str = r#"
 pub let AddAssign(Rhs: type) = trait { let add_assign(self: borrow(mut)(Self))
-  (move rhs: Rhs): () }
+  (rhs: Rhs): () }
 pub let SubAssign(Rhs: type) = trait { let sub_assign(self: borrow(mut)(Self))
-  (move rhs: Rhs): () }
+  (rhs: Rhs): () }
 pub let MulAssign(Rhs: type) = trait { let mul_assign(self: borrow(mut)(Self))
-  (move rhs: Rhs): () }
+  (rhs: Rhs): () }
 pub let DivAssign(Rhs: type) = trait { let div_assign(self: borrow(mut)(Self))
-  (move rhs: Rhs): () }
+  (rhs: Rhs): () }
 pub let RemAssign(Rhs: type) = trait { let rem_assign(self: borrow(mut)(Self))
-  (move rhs: Rhs): () }
+  (rhs: Rhs): () }
 pub let BitAndAssign(Rhs: type) = trait { let bit_and_assign(self: borrow(mut)(Self))
-  (move rhs: Rhs): () }
+  (rhs: Rhs): () }
 pub let BitOrAssign(Rhs: type) = trait { let bit_or_assign(self: borrow(mut)(Self))
-  (move rhs: Rhs): () }
+  (rhs: Rhs): () }
 pub let BitXorAssign(Rhs: type) = trait { let bit_xor_assign(self: borrow(mut)(Self))
-  (move rhs: Rhs): () }
+  (rhs: Rhs): () }
 pub let ShlAssign(Rhs: type) = trait { let shl_assign(self: borrow(mut)(Self))
-  (move rhs: Rhs): () }
+  (rhs: Rhs): () }
 pub let ShrAssign(Rhs: type) = trait { let shr_assign(self: borrow(mut)(Self))
-  (move rhs: Rhs): () }
+  (rhs: Rhs): () }
 "#;
 
 #[cfg(test)]
@@ -73,15 +73,15 @@ pub let Chain = trait {
   let Rebind(Value: type): type
 
   let chain(E: effect, U: type)
-    (move self)
-    (move transform: (Item): U with(E)): Rebind(U) with(E)
+    (self)
+    (transform: (Item): U with(E)): Rebind(U) with(E)
 }
 pub let Coalesce = trait {
   let Item: type
 
   let coalesce(E: effect)
-    (move self)
-    (move fallback: (): Item with(E)): Item with(E)
+    (self)
+    (fallback: (): Item with(E)): Item with(E)
 }
 pub let Unwrap = trait {
   let Output: type
@@ -1668,7 +1668,7 @@ fn validate_assignment_operator(
         );
     if !valid {
         diagnostics.push(format!(
-            "lang item `{kind}` must have shape `pub let {kind}(Rhs: type) = trait {{ let {method}(self: borrow(mut)(Self))(move rhs: Rhs): () }}`"
+            "lang item `{kind}` must have shape `pub let {kind}(Rhs: type) = trait {{ let {method}(self: borrow(mut)(Self))(rhs: Rhs): () }}`"
         ));
     }
 }
@@ -1693,7 +1693,7 @@ fn valid_assignment_operator_method(function: &Function, method: &str) -> bool {
         && receiver.mode == PassMode::Inferred
         && receiver.ty == simple_borrow_type(true, named_type("Self"))
         && rhs.name == "rhs"
-        && rhs.mode == PassMode::Move
+        && rhs.mode == PassMode::Inferred
         && rhs.ty == named_type("Rhs")
 }
 
@@ -1803,7 +1803,7 @@ fn validate_chain(definition: &TraitDef, diagnostics: &mut Vec<String>) {
         );
     if !valid {
         diagnostics.push(
-            "lang item `Chain` must declare `Item`, `Rebind(Value: type): type`, and `chain(E: effect, U: type) (move self) (move transform: (Item): U with(E)): Rebind(U) with(E)`"
+            "lang item `Chain` must declare `Item`, `Rebind(Value: type): type`, and `chain(E: effect, U: type) (self) (transform: (Item): U with(E)): Rebind(U) with(E)`"
                 .to_owned(),
         );
     }
@@ -1824,10 +1824,10 @@ fn valid_chain_method(function: &Function) -> bool {
         && function.where_predicates.is_empty()
         && function.body.is_none()
         && receiver.name == "self"
-        && receiver.mode == PassMode::Move
+        && receiver.mode == PassMode::Inferred
         && receiver.ty == named_type("Self")
         && transform.name == "transform"
-        && transform.mode == PassMode::Move
+        && transform.mode == PassMode::Inferred
         && transform.ty == function_type(vec![vec![named_type("Item")]], named_type("U"), effects)
 }
 
@@ -1850,7 +1850,7 @@ fn validate_coalesce(definition: &TraitDef, diagnostics: &mut Vec<String>) {
         );
     if !valid {
         diagnostics.push(
-            "lang item `Coalesce` must declare `Item` and `coalesce(E: effect) (move self) (move fallback: (): Item with(E)): Item with(E)`"
+            "lang item `Coalesce` must declare `Item` and `coalesce(E: effect) (self) (fallback: (): Item with(E)): Item with(E)`"
                 .to_owned(),
         );
     }
@@ -1871,10 +1871,10 @@ fn valid_coalesce_method(function: &Function) -> bool {
         && function.where_predicates.is_empty()
         && function.body.is_none()
         && receiver.name == "self"
-        && receiver.mode == PassMode::Move
+        && receiver.mode == PassMode::Inferred
         && receiver.ty == named_type("Self")
         && fallback.name == "fallback"
-        && fallback.mode == PassMode::Move
+        && fallback.mode == PassMode::Inferred
         && fallback.ty == function_type(vec![Vec::new()], named_type("Item"), effects)
 }
 
@@ -2496,7 +2496,7 @@ fn validate_operator(kind: LangItemKind, definition: &TraitDef, diagnostics: &mu
                 "pub let PartialOrd(Rhs: type) = trait {{ let {method}(self: borrow(Self))(rhs: borrow(Rhs)): PartialOrdering }}"
             ),
             _ => format!(
-                "pub let {kind}(Rhs: type) = trait {{ let Output: type; let {method}(move self)(move rhs: Rhs): Output }}"
+                "pub let {kind}(Rhs: type) = trait {{ let Output: type; let {method}(self)(rhs: Rhs): Output }}"
             ),
         };
         diagnostics.push(format!("lang item `{kind}` must have shape `{shape}`"));
@@ -2513,7 +2513,7 @@ fn validate_unary_operator(
         .expect("unary operator lang items have a method");
     if !unary_operator_trait_has_required_shape(kind, definition) {
         diagnostics.push(format!(
-            "lang item `{kind}` must have shape `pub let {kind} = trait {{ let Output: type; let {method}(move self)(): Output }}`"
+            "lang item `{kind}` must have shape `pub let {kind} = trait {{ let Output: type; let {method}(self)(): Output }}`"
         ));
     }
 }
@@ -2554,7 +2554,7 @@ fn valid_unary_operator_method(function: &Function, method: &str) -> bool {
         && function.return_type == Some(named_type("Output"))
         && function.body.is_none()
         && receiver.name == "self"
-        && receiver.mode == PassMode::Move
+        && receiver.mode == PassMode::Inferred
         && receiver.ty == named_type("Self")
         && empty_group.is_empty()
 }
@@ -2637,10 +2637,10 @@ fn valid_operator_method(function: &Function, method: &str) -> bool {
         && function.return_type == Some(named_type("Output"))
         && function.body.is_none()
         && receiver.name == "self"
-        && receiver.mode == PassMode::Move
+        && receiver.mode == PassMode::Inferred
         && receiver.ty == named_type("Self")
         && rhs.name == "rhs"
-        && rhs.mode == PassMode::Move
+        && rhs.mode == PassMode::Inferred
         && rhs.ty == named_type("Rhs")
 }
 
@@ -2662,23 +2662,23 @@ pub let Drop = trait {
 }
 pub let Add(Rhs: type) = trait {
   let Output: type
-  let add(move self)(move rhs: Rhs): Output
+  let add(self)(rhs: Rhs): Output
 }
 pub let Sub(Rhs: type) = trait {
   let Output: type
-  let sub(move self)(move rhs: Rhs): Output
+  let sub(self)(rhs: Rhs): Output
 }
 pub let Mul(Rhs: type) = trait {
   let Output: type
-  let mul(move self)(move rhs: Rhs): Output
+  let mul(self)(rhs: Rhs): Output
 }
 pub let Div(Rhs: type) = trait {
   let Output: type
-  let div(move self)(move rhs: Rhs): Output
+  let div(self)(rhs: Rhs): Output
 }
 pub let Rem(Rhs: type) = trait {
   let Output: type
-  let rem(move self)(move rhs: Rhs): Output
+  let rem(self)(rhs: Rhs): Output
 }
 pub let Eq(Rhs: type) = trait {
   let eq(self: borrow(Self))(rhs: borrow(Rhs)): bool
@@ -2689,31 +2689,31 @@ pub let PartialOrd(Rhs: type) = trait {
 }
 pub let Neg = trait {
   let Output: type
-  let neg(move self)(): Output
+  let neg(self)(): Output
 }
 pub let Not = trait {
   let Output: type
-  let not(move self)(): Output
+  let not(self)(): Output
 }
 pub let BitAnd(Rhs: type) = trait {
   let Output: type
-  let bit_and(move self)(move rhs: Rhs): Output
+  let bit_and(self)(rhs: Rhs): Output
 }
 pub let BitOr(Rhs: type) = trait {
   let Output: type
-  let bit_or(move self)(move rhs: Rhs): Output
+  let bit_or(self)(rhs: Rhs): Output
 }
 pub let BitXor(Rhs: type) = trait {
   let Output: type
-  let bit_xor(move self)(move rhs: Rhs): Output
+  let bit_xor(self)(rhs: Rhs): Output
 }
 pub let Shl(Rhs: type) = trait {
   let Output: type
-  let shl(move self)(move rhs: Rhs): Output
+  let shl(self)(rhs: Rhs): Output
 }
 pub let Shr(Rhs: type) = trait {
   let Output: type
-  let shr(move self)(move rhs: Rhs): Output
+  let shr(self)(rhs: Rhs): Output
 }
 "#,
         ]
@@ -3063,8 +3063,8 @@ pub let Shr(Rhs: type) = trait {
     #[test]
     fn rejects_malformed_assignment_operator_contracts() {
         let malformed = EDITION_2026_OPS_ASSIGN.replace(
-            "let add_assign(self: borrow(mut)(Self))\n    (move rhs: Rhs): ()",
-            "let add_assign(self: borrow(Self))\n    (move rhs: Rhs): ()",
+            "let add_assign(self: borrow(mut)(Self))\n    (rhs: Rhs): ()",
+            "let add_assign(self: borrow(Self))\n    (rhs: Rhs): ()",
         );
         let modules = edition_2026_test_modules(&[("ops/assign", &malformed)]);
         let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
@@ -3086,7 +3086,7 @@ pub let Shr(Rhs: type) = trait {
             .any(|diagnostic| diagnostic.contains("lang item `Chain`")));
 
         let malformed = EDITION_2026_FLOW.replace(
-            "let coalesce(E: effect)\n    (move self)\n    (move fallback: (): Item with(E)): Item with(E)",
+            "let coalesce(E: effect)\n    (self)\n    (fallback: (): Item with(E)): Item with(E)",
             "let coalesce(move self)\n    (move fallback: (): Item): Item",
         );
         let modules = edition_2026_test_modules(&[("flow", &malformed)]);
@@ -3122,7 +3122,7 @@ pub let Shr(Rhs: type) = trait {
         let source = r#"
 pub let Rem(Rhs: type) = trait {
   let Output: type
-  let rem(move self)(move rhs: Rhs): Output
+  let rem(self)(rhs: Rhs): Output
 }
 pub let Copy = trait {}
 pub let Drop = trait {
@@ -3130,22 +3130,22 @@ pub let Drop = trait {
 }
 pub let Add(Rhs: type) = trait {
   let Output: type
-  let add(move self)(move rhs: Rhs): Output
+  let add(self)(rhs: Rhs): Output
 }
 pub let Never = enum {}
 pub let Option(T: type) = enum { Some(T), None }
 pub let Result(E: type)(T: type) = enum { Ok(T), Err(E) }
 pub let Div(Rhs: type) = trait {
   let Output: type
-  let div(move self)(move rhs: Rhs): Output
+  let div(self)(rhs: Rhs): Output
 }
 pub let Sub(Rhs: type) = trait {
   let Output: type
-  let sub(move self)(move rhs: Rhs): Output
+  let sub(self)(rhs: Rhs): Output
 }
 pub let Mul(Rhs: type) = trait {
   let Output: type
-  let mul(move self)(move rhs: Rhs): Output
+  let mul(self)(rhs: Rhs): Output
 }
 pub let Eq(Rhs: type) = trait {
   let eq(self: borrow(Self))(rhs: borrow(Rhs)): bool
@@ -3156,31 +3156,31 @@ pub let PartialOrd(Rhs: type) = trait {
 }
 pub let Neg = trait {
   let Output: type
-  let neg(move self)(): Output
+  let neg(self)(): Output
 }
 pub let Not = trait {
   let Output: type
-  let not(move self)(): Output
+  let not(self)(): Output
 }
 pub let BitAnd(Rhs: type) = trait {
   let Output: type
-  let bit_and(move self)(move rhs: Rhs): Output
+  let bit_and(self)(rhs: Rhs): Output
 }
 pub let BitOr(Rhs: type) = trait {
   let Output: type
-  let bit_or(move self)(move rhs: Rhs): Output
+  let bit_or(self)(rhs: Rhs): Output
 }
 pub let BitXor(Rhs: type) = trait {
   let Output: type
-  let bit_xor(move self)(move rhs: Rhs): Output
+  let bit_xor(self)(rhs: Rhs): Output
 }
 pub let Shl(Rhs: type) = trait {
   let Output: type
-  let shl(move self)(move rhs: Rhs): Output
+  let shl(self)(rhs: Rhs): Output
 }
 pub let Shr(Rhs: type) = trait {
   let Output: type
-  let shr(move self)(move rhs: Rhs): Output
+  let shr(self)(rhs: Rhs): Output
 }
 "#;
         let bundle = CoreBundle::from_source(Edition::Edition2026, source).unwrap();
@@ -3222,24 +3222,24 @@ pub let Result = struct { value: i32 }
 pub let Never = enum { Reachable }
 pub let Copy(T: type) = trait {}
 pub let Add(Rhs: type) = trait {
-  let add(move self)(move rhs: Rhs): Rhs
+  let add(self)(rhs: Rhs): Rhs
 }
 pub let Extra = enum {}
 pub let Sub(Rhs: type) = trait {
   let Output: type
-  let sub(move self)(move rhs: Rhs): Output
+  let sub(self)(rhs: Rhs): Output
 }
 pub let Mul(Rhs: type) = trait {
   let Output: type
-  let mul(move self)(move rhs: Rhs): Output
+  let mul(self)(rhs: Rhs): Output
 }
 pub let Div(Rhs: type) = trait {
   let Output: type
-  let div(move self)(move rhs: Rhs): Output
+  let div(self)(rhs: Rhs): Output
 }
 pub let Rem(Rhs: type) = trait {
   let Output: type
-  let rem(move self)(move rhs: Rhs): Output
+  let rem(self)(rhs: Rhs): Output
 }
 pub let Eq(Rhs: type) = trait {
   let eq(self: borrow(Self))(rhs: borrow(Rhs)): bool
@@ -3250,31 +3250,31 @@ pub let PartialOrd(Rhs: type) = trait {
 }
 pub let Neg = trait {
   let Output: type
-  let neg(move self)(): Output
+  let neg(self)(): Output
 }
 pub let Not = trait {
   let Output: type
-  let not(move self)(): Output
+  let not(self)(): Output
 }
 pub let BitAnd(Rhs: type) = trait {
   let Output: type
-  let bit_and(move self)(move rhs: Rhs): Output
+  let bit_and(self)(rhs: Rhs): Output
 }
 pub let BitOr(Rhs: type) = trait {
   let Output: type
-  let bit_or(move self)(move rhs: Rhs): Output
+  let bit_or(self)(rhs: Rhs): Output
 }
 pub let BitXor(Rhs: type) = trait {
   let Output: type
-  let bit_xor(move self)(move rhs: Rhs): Output
+  let bit_xor(self)(rhs: Rhs): Output
 }
 pub let Shl(Rhs: type) = trait {
   let Output: type
-  let shl(move self)(move rhs: Rhs): Output
+  let shl(self)(rhs: Rhs): Output
 }
 pub let Shr(Rhs: type) = trait {
   let Output: type
-  let shr(move self)(move rhs: Rhs): Output
+  let shr(self)(rhs: Rhs): Output
 }
 pub let Drop = trait {
   let drop(self: borrow(mut)(Self))(): ()
@@ -3290,12 +3290,12 @@ pub let Drop = trait {
                 "lang item `Result` must be enum, found struct",
                 "lang item `Never` must have shape `pub let Never = enum {}`",
                 "lang item `Copy` must have shape `pub let Copy = trait {}`",
-                "lang item `Add` must have shape `pub let Add(Rhs: type) = trait { let Output: type; let add(move self)(move rhs: Rhs): Output }`",
+                "lang item `Add` must have shape `pub let Add(Rhs: type) = trait { let Output: type; let add(self)(rhs: Rhs): Output }`",
             ]
         );
         assert_eq!(
             error.to_string(),
-            "invalid embedded core bundle for edition 2026\n- lang item `Option` must be `pub`, found private visibility\n- unexpected declaration `Extra` at item 6\n- lang item `Result` must be enum, found struct\n- lang item `Never` must have shape `pub let Never = enum {}`\n- lang item `Copy` must have shape `pub let Copy = trait {}`\n- lang item `Add` must have shape `pub let Add(Rhs: type) = trait { let Output: type; let add(move self)(move rhs: Rhs): Output }`"
+            "invalid embedded core bundle for edition 2026\n- lang item `Option` must be `pub`, found private visibility\n- unexpected declaration `Extra` at item 6\n- lang item `Result` must be enum, found struct\n- lang item `Never` must have shape `pub let Never = enum {}`\n- lang item `Copy` must have shape `pub let Copy = trait {}`\n- lang item `Add` must have shape `pub let Add(Rhs: type) = trait { let Output: type; let add(self)(rhs: Rhs): Output }`"
         );
     }
 
@@ -3307,23 +3307,23 @@ pub let Option(T: type) = enum { Some(T), None }
 pub let Never = enum {}
 pub let Add(Rhs: type) = trait {
   let Output: type
-  let add(move self)(move rhs: Rhs): Output
+  let add(self)(rhs: Rhs): Output
 }
 pub let Sub(Rhs: type) = trait {
   let Output: type
-  let sub(move self)(move rhs: Rhs): Output
+  let sub(self)(rhs: Rhs): Output
 }
 pub let Mul(Rhs: type) = trait {
   let Output: type
-  let mul(move self)(move rhs: Rhs): Output
+  let mul(self)(rhs: Rhs): Output
 }
 pub let Div(Rhs: type) = trait {
   let Output: type
-  let div(move self)(move rhs: Rhs): Output
+  let div(self)(rhs: Rhs): Output
 }
 pub let Rem(Rhs: type) = trait {
   let Output: type
-  let rem(move self)(move rhs: Rhs): Output
+  let rem(self)(rhs: Rhs): Output
 }
 pub let Eq(Rhs: type) = trait {
   let eq(self: borrow(Self))(rhs: borrow(Rhs)): bool
@@ -3334,31 +3334,31 @@ pub let PartialOrd(Rhs: type) = trait {
 }
 pub let Neg = trait {
   let Output: type
-  let neg(move self)(): Output
+  let neg(self)(): Output
 }
 pub let Not = trait {
   let Output: type
-  let not(move self)(): Output
+  let not(self)(): Output
 }
 pub let BitAnd(Rhs: type) = trait {
   let Output: type
-  let bit_and(move self)(move rhs: Rhs): Output
+  let bit_and(self)(rhs: Rhs): Output
 }
 pub let BitOr(Rhs: type) = trait {
   let Output: type
-  let bit_or(move self)(move rhs: Rhs): Output
+  let bit_or(self)(rhs: Rhs): Output
 }
 pub let BitXor(Rhs: type) = trait {
   let Output: type
-  let bit_xor(move self)(move rhs: Rhs): Output
+  let bit_xor(self)(rhs: Rhs): Output
 }
 pub let Shl(Rhs: type) = trait {
   let Output: type
-  let shl(move self)(move rhs: Rhs): Output
+  let shl(self)(rhs: Rhs): Output
 }
 pub let Shr(Rhs: type) = trait {
   let Output: type
-  let shr(move self)(move rhs: Rhs): Output
+  let shr(self)(rhs: Rhs): Output
 }
 "#;
         let error = CoreBundle::from_source(Edition::Edition2026, source).unwrap_err();
@@ -3430,57 +3430,57 @@ pub let Drop = trait {
 }
 pub let Add(Rhs: type) = trait {
   let Output: type
-  let add(move self)(move rhs: Rhs): Output
+  let add(self)(rhs: Rhs): Output
 }
 pub let Sub = trait {
   let Output: type
-  let sub(move self)(move rhs: Rhs): Output
+  let sub(self)(rhs: Rhs): Output
 }
 pub let Mul(Rhs: type) = trait {
-  let mul(move self)(move rhs: Rhs): Rhs
+  let mul(self)(rhs: Rhs): Rhs
 }
 pub let Div(Rhs: type) = trait {
   let Output: type
-  let divide(move self)(move rhs: Rhs): Output
+  let divide(self)(rhs: Rhs): Output
 }
 pub let Rem(Rhs: type) = trait {
   let Output: type
-  let rem(move self)(move rhs: Rhs): Output = { rhs }
+  let rem(self)(rhs: Rhs): Output = { rhs }
 }
 pub let Eq(Rhs: type) = trait {
-  let eq(move self)(move rhs: Rhs): bool
+  let eq(move self)(rhs: Rhs): bool
 }
 pub let PartialOrdering = enum { Less, Equal, Greater, Unordered }
 pub let PartialOrd(Rhs: type) = trait {
-  let partial_cmp(move self)(move rhs: Rhs): PartialOrdering
+  let partial_cmp(move self)(rhs: Rhs): PartialOrdering
 }
 pub let Neg = trait {
   let Output: type
-  let neg(move self)(): Output
+  let neg(self)(): Output
 }
 pub let Not = trait {
   let Output: type
-  let not(move self)(): Output
+  let not(self)(): Output
 }
 pub let BitAnd(Rhs: type) = trait {
   let Output: type
-  let bit_and(move self)(move rhs: Rhs): Output
+  let bit_and(self)(rhs: Rhs): Output
 }
 pub let BitOr(Rhs: type) = trait {
   let Output: type
-  let bit_or(move self)(move rhs: Rhs): Output
+  let bit_or(self)(rhs: Rhs): Output
 }
 pub let BitXor(Rhs: type) = trait {
   let Output: type
-  let bit_xor(move self)(move rhs: Rhs): Output
+  let bit_xor(self)(rhs: Rhs): Output
 }
 pub let Shl(Rhs: type) = trait {
   let Output: type
-  let shl(move self)(move rhs: Rhs): Output
+  let shl(self)(rhs: Rhs): Output
 }
 pub let Shr(Rhs: type) = trait {
   let Output: type
-  let shr(move self)(move rhs: Rhs): Output
+  let shr(self)(rhs: Rhs): Output
 }
 "#;
         let error = CoreBundle::from_source(Edition::Edition2026, source).unwrap_err();
@@ -3488,10 +3488,10 @@ pub let Shr(Rhs: type) = trait {
         assert_eq!(
             error.diagnostics(),
             [
-                "lang item `Sub` must have shape `pub let Sub(Rhs: type) = trait { let Output: type; let sub(move self)(move rhs: Rhs): Output }`",
-                "lang item `Mul` must have shape `pub let Mul(Rhs: type) = trait { let Output: type; let mul(move self)(move rhs: Rhs): Output }`",
-                "lang item `Div` must have shape `pub let Div(Rhs: type) = trait { let Output: type; let div(move self)(move rhs: Rhs): Output }`",
-                "lang item `Rem` must have shape `pub let Rem(Rhs: type) = trait { let Output: type; let rem(move self)(move rhs: Rhs): Output }`",
+                "lang item `Sub` must have shape `pub let Sub(Rhs: type) = trait { let Output: type; let sub(self)(rhs: Rhs): Output }`",
+                "lang item `Mul` must have shape `pub let Mul(Rhs: type) = trait { let Output: type; let mul(self)(rhs: Rhs): Output }`",
+                "lang item `Div` must have shape `pub let Div(Rhs: type) = trait { let Output: type; let div(self)(rhs: Rhs): Output }`",
+                "lang item `Rem` must have shape `pub let Rem(Rhs: type) = trait { let Output: type; let rem(self)(rhs: Rhs): Output }`",
                 "lang item `Eq` must have shape `pub let Eq(Rhs: type) = trait { let eq(self: borrow(Self))(rhs: borrow(Rhs)): bool }`",
                 "lang item `PartialOrd` must have shape `pub let PartialOrd(Rhs: type) = trait { let partial_cmp(self: borrow(Self))(rhs: borrow(Rhs)): PartialOrdering }`",
             ]
@@ -3523,14 +3523,14 @@ pub let Shr(Rhs: type) = trait {
     fn rejects_malformed_unary_operator_traits() {
         for (original, malformed, expected) in [
             (
-                "pub let Neg = trait {\n  let Output: type\n  let neg(move self)(): Output\n}",
-                "pub let Neg(Rhs: type) = trait { let neg(move self)(): i32 }",
-                "lang item `Neg` must have shape `pub let Neg = trait { let Output: type; let neg(move self)(): Output }`",
+                "pub let Neg = trait {\n  let Output: type\n  let neg(self)(): Output\n}",
+                "pub let Neg(Rhs: type) = trait { let neg(self)(): i32 }",
+                "lang item `Neg` must have shape `pub let Neg = trait { let Output: type; let neg(self)(): Output }`",
             ),
             (
-                "pub let Not = trait {\n  let Output: type\n  let not(move self)(): Output\n}",
+                "pub let Not = trait {\n  let Output: type\n  let not(self)(): Output\n}",
                 "pub let Not = trait { let Output: type; let not(self: borrow(Self))(): Output }",
-                "lang item `Not` must have shape `pub let Not = trait { let Output: type; let not(move self)(): Output }`",
+                "lang item `Not` must have shape `pub let Not = trait { let Output: type; let not(self)(): Output }`",
             ),
         ] {
             let source = core_source_with_copy("pub let Copy = trait {}").replacen(
@@ -3547,14 +3547,14 @@ pub let Shr(Rhs: type) = trait {
     fn rejects_malformed_bitwise_operator_traits() {
         for (original, malformed, expected) in [
             (
-                "pub let BitAnd(Rhs: type) = trait {\n  let Output: type\n  let bit_and(move self)(move rhs: Rhs): Output\n}",
+                "pub let BitAnd(Rhs: type) = trait {\n  let Output: type\n  let bit_and(self)(rhs: Rhs): Output\n}",
                 "pub let BitAnd = trait { let bit_and(self: borrow(Self))(move rhs: i32): i32 }",
-                "lang item `BitAnd` must have shape `pub let BitAnd(Rhs: type) = trait { let Output: type; let bit_and(move self)(move rhs: Rhs): Output }`",
+                "lang item `BitAnd` must have shape `pub let BitAnd(Rhs: type) = trait { let Output: type; let bit_and(self)(rhs: Rhs): Output }`",
             ),
             (
-                "pub let Shr(Rhs: type) = trait {\n  let Output: type\n  let shr(move self)(move rhs: Rhs): Output\n}",
-                "pub let Shr(Rhs: type) = trait { let Output: type; let shift(move self)(move rhs: Rhs): Output }",
-                "lang item `Shr` must have shape `pub let Shr(Rhs: type) = trait { let Output: type; let shr(move self)(move rhs: Rhs): Output }`",
+                "pub let Shr(Rhs: type) = trait {\n  let Output: type\n  let shr(self)(rhs: Rhs): Output\n}",
+                "pub let Shr(Rhs: type) = trait { let Output: type; let shift(move self)(rhs: Rhs): Output }",
+                "lang item `Shr` must have shape `pub let Shr(Rhs: type) = trait { let Output: type; let shr(self)(rhs: Rhs): Output }`",
             ),
         ] {
             let source = core_source_with_copy("pub let Copy = trait {}").replacen(

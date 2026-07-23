@@ -4086,7 +4086,7 @@ use root.fake as Never
 let Number = struct { value: i32 }
 extend Number: Add(Number) {
   let Output = i32
-  let add(move self)(move rhs: Number): i32 = { self.value + rhs.value }
+  let add(self)(rhs: Number): i32 = { self.value + rhs.value }
 }
 
 let stop(): Never = { loop {} }
@@ -4938,7 +4938,7 @@ let main(): i32 = { Option {} }
              let Number = struct { value: i32 }\n\
              extend Number: Plus(Number) {\n\
                let Output = Number\n\
-               let add(move self)(move rhs: Number): Number = { Number { value: self.value + rhs.value } }\n\
+               let add(self)(rhs: Number): Number = { Number { value: self.value + rhs.value } }\n\
              }\n",
             true,
         )])
@@ -5054,7 +5054,7 @@ let main(): i32 = { Option {} }
             "let Number = struct { value: i32 }\n\
              extend Number: Add(Number) {\n\
                let Output = Number\n\
-               let add(move self)(move rhs: Number): Number = { self }\n\
+               let add(self)(rhs: Number): Number = { self }\n\
              }\n",
             true,
         )])

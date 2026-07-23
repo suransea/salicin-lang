@@ -5,7 +5,7 @@ pub let Box(T: type) = struct {
 }
 
 /// Allocates heap storage and moves `value` into a new box.
-pub let box_new(T: type)(move value: T): Box(T) = {
+pub let box_new(T: type)(value: T): Box(T) = {
   let pointer = unsafe {
     raw_alloc(T)(size_of(T), align_of(T))
   }
@@ -48,7 +48,7 @@ pub let box_into_inner(T: type)(move boxed: Box(T)): T = {
 }
 
 /// Replaces the boxed value and returns the previous value.
-pub let box_replace(T: type)(boxed: borrow(mut)(Box(T)))(move value: T): T = {
+pub let box_replace(T: type)(boxed: borrow(mut)(Box(T)))(value: T): T = {
   let pointer = boxed.pointer
   let previous = unsafe {
     raw_take(pointer)
@@ -70,7 +70,7 @@ pub let box_as_ref(A: access, R: region, T: type)
 /// Provides inherent constructors and accessors for `Box`.
 extend(T: type) Box(T) {
   /// Allocates a new box containing `value`.
-  let new(move value: T): Box(T) = { box_new(value) }
+  let new(value: T): Box(T) = { box_new(value) }
   /// Returns the raw mutable pointer stored by this box.
   let as_mut_ptr(self: borrow(Self))(): MutPtr(T) = { box_ptr(self) }
   /// Borrows the boxed value with the requested access.
@@ -82,7 +82,7 @@ extend(T: type) Box(T) {
   /// Consumes this box and returns its owned value.
   let into_inner(move self)(): T = { box_into_inner(self) }
   /// Replaces the boxed value and returns the previous value.
-  let replace(self: borrow(mut)(Self))(move value: T): T = { box_replace(self)(value) }
+  let replace(self: borrow(mut)(Self))(value: T): T = { box_replace(self)(value) }
 }
 
 /// Provides copy-only value accessors for `Box`.

@@ -1089,7 +1089,7 @@ impl Analyzer {
                         "let PartialOrd(Rhs: type) = trait {{ let {method}(self: borrow(Self))(rhs: borrow(Rhs)): PartialOrdering }}"
                     ),
                     _ => format!(
-                        "let {trait_name}(Rhs: type) = trait {{ let Output: type; let {method}(move self)(move rhs: Rhs): Output }}"
+                        "let {trait_name}(Rhs: type) = trait {{ let Output: type; let {method}(self)(rhs: Rhs): Output }}"
                     ),
                 };
                 self.error(format!(
@@ -1107,7 +1107,7 @@ impl Analyzer {
                 let trait_name = operator.lang_item.source_name();
                 let method = operator.method();
                 self.error(format!(
-                    "`{trait_name}` language trait must have shape `let {trait_name} = trait {{ let Output: type; let {method}(move self)(): Output }}`"
+                    "`{trait_name}` language trait must have shape `let {trait_name} = trait {{ let Output: type; let {method}(self)(): Output }}`"
                 ));
                 valid = false;
             }

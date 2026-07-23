@@ -4,23 +4,23 @@ let Bits = struct { value: i32 }
 
 extend Bits: BitAnd(Bits) {
   let Output = Bits
-  let bit_and(move self)(move rhs: Bits): Bits = { Bits { value: self.value & rhs.value } }
+  let bit_and(self)(rhs: Bits): Bits = { Bits { value: self.value & rhs.value } }
 }
 extend Bits: BitOr(Bits) {
   let Output = Bits
-  let bit_or(move self)(move rhs: Bits): Bits = { Bits { value: self.value | rhs.value } }
+  let bit_or(self)(rhs: Bits): Bits = { Bits { value: self.value | rhs.value } }
 }
 extend Bits: BitXor(Bits) {
   let Output = Bits
-  let bit_xor(move self)(move rhs: Bits): Bits = { Bits { value: self.value ^ rhs.value } }
+  let bit_xor(self)(rhs: Bits): Bits = { Bits { value: self.value ^ rhs.value } }
 }
 extend Bits: Shl(Bits) {
   let Output = Bits
-  let shl(move self)(move rhs: Bits): Bits = { Bits { value: self.value << rhs.value } }
+  let shl(self)(rhs: Bits): Bits = { Bits { value: self.value << rhs.value } }
 }
 extend Bits: Shr(Bits) {
   let Output = Bits
-  let shr(move self)(move rhs: Bits): Bits = { Bits { value: self.value >> rhs.value } }
+  let shr(self)(rhs: Bits): Bits = { Bits { value: self.value >> rhs.value } }
 }
 
 let mask(T: type)(move left: T)(move right: T): T

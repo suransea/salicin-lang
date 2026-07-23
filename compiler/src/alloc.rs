@@ -161,7 +161,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
         match &program.items[1] {
             Item::Function(function) if valid_box_new(function) => {}
             _ => diagnostics.push(
-                "alloc box_new must be a generic owning constructor `(move value: T): Box(T)`"
+                "alloc box_new must be a generic owning constructor `(value: T): Box(T)`"
                     .to_owned(),
             ),
         }
@@ -412,7 +412,7 @@ fn valid_box_new(function: &Function) -> bool {
             [group]
                 if matches!(group.as_slice(), [parameter]
                     if parameter.name == "value"
-                        && parameter.mode == PassMode::Move
+                        && parameter.mode == PassMode::Inferred
                         && parameter.ty == named("T"))
         )
         && function.return_type == Some(applied("Box", named("T")))
@@ -489,7 +489,7 @@ fn valid_box_replace(function: &Function) -> bool {
                 if has_parameter(receiver, "boxed", PassMode::MutBorrow, applied("Box", named("T")))
                     && matches!(replacement.as_slice(), [parameter]
                         if parameter.name == "value"
-                            && parameter.mode == PassMode::Move
+                            && parameter.mode == PassMode::Inferred
                             && parameter.ty == named("T"))
         )
         && function.return_type == Some(named("T"))
@@ -541,7 +541,7 @@ fn valid_box_extension(extension: &crate::ast::ExtendDef) -> bool {
                 && matches!(function.groups.as_slice(), [group]
                     if matches!(group.as_slice(), [parameter]
                         if parameter.name == "value"
-                            && parameter.mode == PassMode::Move
+                            && parameter.mode == PassMode::Inferred
                             && parameter.ty == named("T")))
                 && function.return_type == Some(applied("Box", named("T")))
                 && function.body.is_some())
@@ -556,7 +556,7 @@ fn valid_box_extension(extension: &crate::ast::ExtendDef) -> bool {
             function,
             "replace",
             PassMode::MutBorrow,
-            &[("value", PassMode::Move, named("T"))],
+            &[("value", PassMode::Inferred, named("T"))],
             named("T"),
         ))
 }

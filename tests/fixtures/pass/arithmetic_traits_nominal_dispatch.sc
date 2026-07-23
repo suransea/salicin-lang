@@ -4,22 +4,22 @@ let Number = struct { value: i32 }
 
 extend Number: Sub(Number) {
   let Output = Number
-  let sub(move self)(move rhs: Number): Number = { Number { value: self.value - rhs.value } }
+  let sub(self)(rhs: Number): Number = { Number { value: self.value - rhs.value } }
 }
 
 extend Number: Mul(Number) {
   let Output = Number
-  let mul(move self)(move rhs: Number): Number = { Number { value: self.value * rhs.value } }
+  let mul(self)(rhs: Number): Number = { Number { value: self.value * rhs.value } }
 }
 
 extend Number: Div(Number) {
   let Output = Number
-  let div(move self)(move rhs: Number): Number = { Number { value: self.value / rhs.value } }
+  let div(self)(rhs: Number): Number = { Number { value: self.value / rhs.value } }
 }
 
 extend Number: Rem(Number) {
   let Output = Number
-  let rem(move self)(move rhs: Number): Number = { Number { value: self.value % rhs.value } }
+  let rem(self)(rhs: Number): Number = { Number { value: self.value % rhs.value } }
 }
 
 let main(): i32 = {

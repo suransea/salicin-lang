@@ -513,7 +513,7 @@ impl Analyzer {
             && signature.groups[0].len() == 1
             && signature.groups[1].is_empty()
             && signature.groups[0][0].ty == *receiver
-            && signature.groups[0][0].mode == PassMode::Move
+            && signature.groups[0][0].mode == PassMode::Inferred
             && signature.result.as_ref() == Some(&output);
         if !valid_signature {
             self.error(format!(
@@ -574,7 +574,7 @@ impl Analyzer {
                 );
             }
             if left_probe == TypeProbe::Unsupported
-                && operator_trait.parameter_mode == PassMode::Move
+                && operator_trait.parameter_mode == PassMode::Inferred
             {
                 let lowered_left = self.lower_expr(left, None, context);
                 if matches!(lowered_left.ty, Ty::Struct(_) | Ty::Enum(_))
@@ -756,70 +756,70 @@ pub(super) const BINARY_OPERATOR_TRAITS: [BinaryOperatorTrait; 16] = [
     BinaryOperatorTrait {
         operator: BinaryOp::Add,
         lang_item: LangItemKind::Add,
-        parameter_mode: PassMode::Move,
+        parameter_mode: PassMode::Inferred,
         method_output: OperatorMethodOutput::Associated,
         result_transform: OperatorResultTransform::Direct,
     },
     BinaryOperatorTrait {
         operator: BinaryOp::Sub,
         lang_item: LangItemKind::Sub,
-        parameter_mode: PassMode::Move,
+        parameter_mode: PassMode::Inferred,
         method_output: OperatorMethodOutput::Associated,
         result_transform: OperatorResultTransform::Direct,
     },
     BinaryOperatorTrait {
         operator: BinaryOp::Mul,
         lang_item: LangItemKind::Mul,
-        parameter_mode: PassMode::Move,
+        parameter_mode: PassMode::Inferred,
         method_output: OperatorMethodOutput::Associated,
         result_transform: OperatorResultTransform::Direct,
     },
     BinaryOperatorTrait {
         operator: BinaryOp::Div,
         lang_item: LangItemKind::Div,
-        parameter_mode: PassMode::Move,
+        parameter_mode: PassMode::Inferred,
         method_output: OperatorMethodOutput::Associated,
         result_transform: OperatorResultTransform::Direct,
     },
     BinaryOperatorTrait {
         operator: BinaryOp::Rem,
         lang_item: LangItemKind::Rem,
-        parameter_mode: PassMode::Move,
+        parameter_mode: PassMode::Inferred,
         method_output: OperatorMethodOutput::Associated,
         result_transform: OperatorResultTransform::Direct,
     },
     BinaryOperatorTrait {
         operator: BinaryOp::BitAnd,
         lang_item: LangItemKind::BitAnd,
-        parameter_mode: PassMode::Move,
+        parameter_mode: PassMode::Inferred,
         method_output: OperatorMethodOutput::Associated,
         result_transform: OperatorResultTransform::Direct,
     },
     BinaryOperatorTrait {
         operator: BinaryOp::BitOr,
         lang_item: LangItemKind::BitOr,
-        parameter_mode: PassMode::Move,
+        parameter_mode: PassMode::Inferred,
         method_output: OperatorMethodOutput::Associated,
         result_transform: OperatorResultTransform::Direct,
     },
     BinaryOperatorTrait {
         operator: BinaryOp::BitXor,
         lang_item: LangItemKind::BitXor,
-        parameter_mode: PassMode::Move,
+        parameter_mode: PassMode::Inferred,
         method_output: OperatorMethodOutput::Associated,
         result_transform: OperatorResultTransform::Direct,
     },
     BinaryOperatorTrait {
         operator: BinaryOp::Shl,
         lang_item: LangItemKind::Shl,
-        parameter_mode: PassMode::Move,
+        parameter_mode: PassMode::Inferred,
         method_output: OperatorMethodOutput::Associated,
         result_transform: OperatorResultTransform::Direct,
     },
     BinaryOperatorTrait {
         operator: BinaryOp::Shr,
         lang_item: LangItemKind::Shr,
-        parameter_mode: PassMode::Move,
+        parameter_mode: PassMode::Inferred,
         method_output: OperatorMethodOutput::Associated,
         result_transform: OperatorResultTransform::Direct,
     },

@@ -2476,6 +2476,8 @@ fn arithmetic_trait_programs_run_with_expected_result() {
         "arithmetic_traits_nominal_dispatch.sc",
         "arithmetic_trait_operands_once.sc",
         "arithmetic_trait_expected_output.sc",
+        "arithmetic_trait_scalar_rhs_auto_reuse.sc",
+        "add_trait_copy_operands_reusable.sc",
         "compound_assign_builtin.sc",
         "compound_assign_trait.sc",
     ] {
@@ -2499,7 +2501,6 @@ fn arithmetic_trait_errors_report_their_cause() {
         ("arithmetic_trait_ambiguous_literal.sc", "ambiguous"),
         ("arithmetic_trait_rhs_mismatch.sc", "Div"),
         ("arithmetic_trait_use_after_move.sc", "moved"),
-        ("arithmetic_trait_scalar_rhs_use_after_move.sc", "moved"),
         ("compound_assign_immutable.sc", "immutable"),
         ("compound_assign_missing_impl.sc", "AddAssign"),
     ] {
@@ -3413,7 +3414,7 @@ use std.ops.Add
 pub let Number = struct { value: i32 }
 extend Number: Add(Number) {
   let Output = Number
-  let add(move self)(move rhs: Number): Number = { Number { value: self.value + rhs.value } }
+  let add(self)(rhs: Number): Number = { Number { value: self.value + rhs.value } }
 }
 pub let make(value: i32): Number = { Number { value: value } }
 pub let value(move number: Number): i32 = { number.value }

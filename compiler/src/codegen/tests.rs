@@ -1475,8 +1475,8 @@ let Choice = enum { Present(i32), Missing }
 extend Choice: Coalesce {
   let Item = i32
   let coalesce(E: effect)
-    (move self)
-    (move fallback: (): i32 with(E)): i32 with(E) = {
+    (self)
+    (fallback: (): i32 with(E)): i32 with(E) = {
 self match {
   Present(value) => value,
   Missing => fallback(),
@@ -1530,8 +1530,8 @@ extend Maybe(Boxed): Chain {
   let Item = Boxed
   let Rebind = Maybe
   let chain(E: effect, U: type)
-    (move self)
-    (move transform: (Boxed): U with(E)): Maybe(U) with(E) = {
+    (self)
+    (transform: (Boxed): U with(E)): Maybe(U) with(E) = {
 self match {
   Some(value) => Maybe(U).Some(transform(value)),
   None => Maybe(U).None,
@@ -1596,8 +1596,8 @@ extend Maybe(Boxed): Chain {
   let Item = Boxed
   let Rebind = Maybe
   let chain(E: effect, U: type)
-    (move self)
-    (move transform: (Boxed): U with(E)): Maybe(U) with(E) = {
+    (self)
+    (transform: (Boxed): U with(E)): Maybe(U) with(E) = {
 self match {
   Some(value) => Maybe(U).Some(transform(value)),
   None => Maybe(U).None,
@@ -1654,8 +1654,8 @@ extend(T: type) Maybe(T): Chain {
   let Item = T
   let Rebind = Maybe
   let chain(E: effect, U: type)
-    (move self)
-    (move transform: (T): U with(E)): Maybe(U) with(E) = {
+    (self)
+    (transform: (T): U with(E)): Maybe(U) with(E) = {
 self match {
   Some(value) => Maybe(U).Some(transform(value)),
   None => Maybe(U).None,
@@ -5185,7 +5185,7 @@ fn higher_kinded_trait_method_signatures_validate() {
 		  let map(E: effect, A: type, B: type)(
 		    move self: Self(A),
 		  )(
-		    move transform: (A): B with(E),
+		    transform: (A): B with(E),
 		  ): Self(B) with(E)
 		}
 	let Chain = trait {
@@ -5194,7 +5194,7 @@ fn higher_kinded_trait_method_signatures_validate() {
 	  let chain(E: effect, U: type)(
 	    move self
 	  )(
-	    move transform: (Item): U with(E)
+	    transform: (Item): U with(E)
 	  ): Rebind(U) with(E)
 	}
 	let main(): i32 = { 0 }
@@ -5223,7 +5223,7 @@ fn higher_kinded_trait_inheritance_requires_constructor_supertraits() {
 	  let map(E: effect, A: type, B: type)(
 	    move self: Self(A),
 	  )(
-	    move transform: (A): B with(E),
+	    transform: (A): B with(E),
 	  ): Self(B) with(E)
 	}
 let Applicative = trait(Self: (Value: type): type)
@@ -5248,7 +5248,7 @@ let main(): i32 = { 0 }
 	  let map(E: effect, A: type, B: type)(
 	    move self: Self(A),
 	  )(
-	    move transform: (A): B with(E),
+	    transform: (A): B with(E),
 	  ): Self(B) with(E)
 	}
 let Applicative = trait(Self: (Value: type): type)
@@ -5263,7 +5263,7 @@ Carrier(A) { value: value }
   let map(E: effect, A: type, B: type)(
 	    move self: Carrier(A),
 	  )(
-	    move transform: (A): B with(E),
+	    transform: (A): B with(E),
 	  ): Carrier(B) with(E) = {
 	    Carrier(B) { value: transform(self.value) }
 	  }}
@@ -5396,7 +5396,7 @@ fn constructor_trait_implementation_methods_register_generic_templates() {
 	  let map(E: effect, A: type, B: type)(
 	    move self: Self(A),
 	  )(
-	    move transform: (A): B with(E),
+	    transform: (A): B with(E),
 	  ): Self(B) with(E)
 	}
 let Carrier(T: type) = struct { value: T }
@@ -5404,7 +5404,7 @@ let Carrier(T: type) = struct { value: T }
   let map(E: effect, A: type, B: type)(
 	    move self: Carrier(A),
 	  )(
-	    move transform: (A): B with(E),
+	    transform: (A): B with(E),
 	  ): Carrier(B) with(E) = {
 	    Carrier(B) { value: transform(self.value) }
 	  }}
@@ -5455,7 +5455,7 @@ fn constructor_trait_receiver_methods_dispatch_from_instances() {
 	  let map(E: effect, A: type, B: type)(
 	    move self: Self(A),
 	  )(
-	    move transform: (A): B with(E),
+	    transform: (A): B with(E),
 	  ): Self(B) with(E)
 	}
 let Carrier(T: type) = struct { value: T }
@@ -5463,7 +5463,7 @@ let Carrier(T: type) = struct { value: T }
   let map(E: effect, A: type, B: type)(
 	    move self: Carrier(A),
 	  )(
-	    move transform: (A): B with(E),
+	    transform: (A): B with(E),
 	  ): Carrier(B) with(E) = {
 	    Carrier(B) { value: transform(self.value) }
 	  }}
@@ -5591,7 +5591,7 @@ let main(): i32 = { 0 }
 	  let map(E: effect, A: type, B: type)(
 	    move self: Self(A),
 	  )(
-	    move transform: (A): B with(E),
+	    transform: (A): B with(E),
 	  ): Self(B) with(E)
 	}
 let Carrier(T: type) = struct { value: T }
@@ -5625,7 +5625,7 @@ use std.ops.Add
 let Number = struct { value: i32 }
 extend Number: Add(Number) {
   let Output = i32
-  let add(move self)(move rhs: Number): i32 = { self.value + rhs.value }
+  let add(self)(rhs: Number): i32 = { self.value + rhs.value }
 }
 let main(): i32 = { Number { value: 40 } + Number { value: 2 } }
 "#,
@@ -5654,19 +5654,19 @@ use std.ops.{Sub, Mul, Div, Rem}
 let Number = struct { value: i32 }
 extend Number: Sub(Number) {
   let Output = Number
-  let sub(move self)(move rhs: Number): Number = { Number { value: self.value - rhs.value } }
+  let sub(self)(rhs: Number): Number = { Number { value: self.value - rhs.value } }
 }
 extend Number: Mul(Number) {
   let Output = Number
-  let mul(move self)(move rhs: Number): Number = { Number { value: self.value * rhs.value } }
+  let mul(self)(rhs: Number): Number = { Number { value: self.value * rhs.value } }
 }
 extend Number: Div(Number) {
   let Output = Number
-  let div(move self)(move rhs: Number): Number = { Number { value: self.value / rhs.value } }
+  let div(self)(rhs: Number): Number = { Number { value: self.value / rhs.value } }
 }
 extend Number: Rem(Number) {
   let Output = Number
-  let rem(move self)(move rhs: Number): Number = { Number { value: self.value % rhs.value } }
+  let rem(self)(rhs: Number): Number = { Number { value: self.value % rhs.value } }
 }
 let main(): i32 = {
   let a = Number { value: 18 }
@@ -5770,7 +5770,7 @@ let main(): i32 = {
 }
 
 #[test]
-fn lowers_unary_operator_traits_to_consuming_static_calls() {
+fn lowers_unary_operator_traits_to_auto_static_calls() {
     let program = resolve_text(
         r#"
 use std.ops.{Neg, Not}
@@ -5778,10 +5778,10 @@ let Number = struct { value: i32 }
 let Flag = struct { value: bool }
 extend Number: Neg {
   let Output = i32
-  let neg(move self)(): i32 = { -self.value }}
+  let neg(self)(): i32 = { -self.value }}
 extend Flag: Not {
   let Output = i32
-  let not(move self)(): i32 = { if self.value { 0 } else { 42 } }
+  let not(self)(): i32 = { if self.value { 0 } else { 42 } }
 }
 let negate(T: type)(move value: T): T where T: Neg(Output = T) = { -value }
 let invert(T: type)(move value: T): T where T: Not(Output = T) = { !value }
@@ -5815,23 +5815,23 @@ use std.ops.{BitAnd, BitOr, BitXor, Shl, Shr}
 let Bits = struct { value: i32 }
 extend Bits: BitAnd(Bits) {
   let Output = Bits
-  let bit_and(move self)(move rhs: Bits): Bits = { Bits { value: self.value & rhs.value } }
+  let bit_and(self)(rhs: Bits): Bits = { Bits { value: self.value & rhs.value } }
 }
 extend Bits: BitOr(Bits) {
   let Output = Bits
-  let bit_or(move self)(move rhs: Bits): Bits = { Bits { value: self.value | rhs.value } }
+  let bit_or(self)(rhs: Bits): Bits = { Bits { value: self.value | rhs.value } }
 }
 extend Bits: BitXor(Bits) {
   let Output = Bits
-  let bit_xor(move self)(move rhs: Bits): Bits = { Bits { value: self.value ^ rhs.value } }
+  let bit_xor(self)(rhs: Bits): Bits = { Bits { value: self.value ^ rhs.value } }
 }
 extend Bits: Shl(Bits) {
   let Output = Bits
-  let shl(move self)(move rhs: Bits): Bits = { Bits { value: self.value << rhs.value } }
+  let shl(self)(rhs: Bits): Bits = { Bits { value: self.value << rhs.value } }
 }
 extend Bits: Shr(Bits) {
   let Output = Bits
-  let shr(move self)(move rhs: Bits): Bits = { Bits { value: self.value >> rhs.value } }
+  let shr(self)(rhs: Bits): Bits = { Bits { value: self.value >> rhs.value } }
 }
 let mask(T: type)(move left: T)(move right: T): T
 where T: BitAnd(T, Output = T) = { left & right }
@@ -5871,7 +5871,7 @@ let main(): i32 = {
 }
 
 #[test]
-fn unary_operator_traits_report_missing_output_and_move_errors() {
+fn unary_operator_traits_report_missing_output_and_auto_move_errors() {
     let missing = compile_resolved_text(
         "let Number = struct { value: i32 }\nlet main(): i32 = { (-Number { value: 1 }).value }\n",
     )
@@ -5888,7 +5888,7 @@ use std.ops.Neg
 let Number = struct { value: i32 }
 extend Number: Neg {
   let Output = i32
-  let neg(move self)(): i32 = { -self.value }}
+  let neg(self)(): i32 = { -self.value }}
 let main(): bool = { -Number { value: 1 } }
 "#,
     )
@@ -5905,7 +5905,7 @@ use std.ops.Neg
 let Resource = struct { value: i32 }
 extend Resource: Neg {
   let Output = Resource
-  let neg(move self)(): Resource = { self }}
+  let neg(self)(): Resource = { self }}
 let main(): i32 = {
   let value = Resource { value: 42 }
   let negated = -value
@@ -5985,7 +5985,7 @@ use std.ops.Add
 let Number = struct { value: i32 }
 extend Number: Add(i32) {
   let Output = bool
-  let add(move self)(move rhs: i32): bool = { self.value == rhs }
+  let add(self)(rhs: i32): bool = { self.value == rhs }
 }
 let main(): i32 = { Number { value: 42 } + 42 }
 "#,
@@ -6006,7 +6006,7 @@ use std.ops.Sub
 let Number = struct { value: i32 }
 extend Number: Sub(i32) {
   let Output = Never
-  let sub(move self)(move rhs: i32): Never = { loop {} }
+  let sub(self)(rhs: i32): Never = { loop {} }
 }
 let main(): i32 = { Number { value: 42 } - 1 }
 "#,
@@ -6022,11 +6022,11 @@ use std.ops.Sub
 let Number = struct { value: i32 }
 extend Number: Sub(i32) {
   let Output = Never
-  let sub(move self)(move rhs: i32): Never = { loop {} }
+  let sub(self)(rhs: i32): Never = { loop {} }
 }
 extend Number: Sub(i64) {
   let Output = i32
-  let sub(move self)(move rhs: i64): i32 = { 42 }
+  let sub(self)(rhs: i64): i32 = { 42 }
 }
 let main(): i32 = { Number { value: 42 } - 1 }
 "#,
@@ -6064,11 +6064,11 @@ use std.ops.Sub
 let Number = struct { value: i32 }
 extend Number: Sub(i32) {
   let Output = i32
-  let sub(move self)(move rhs: i32): i32 = { self.value - rhs }
+  let sub(self)(rhs: i32): i32 = { self.value - rhs }
 }
 extend Number: Sub(bool) {
   let Output = i32
-  let sub(move self)(move rhs: bool): i32 = { if rhs { 42 } else { 0 } }
+  let sub(self)(rhs: bool): i32 = { if rhs { 42 } else { 0 } }
 }
 let main(): i32 = { Number { value: 1 } - do {
   let flag = true
@@ -6109,7 +6109,7 @@ use std.ops.Sub
 let Number = struct { value: i32 }
 extend Number: Sub(i32) {
   let Output = i64
-  let sub(move self)(move rhs: i32): i64 = { 42 }
+  let sub(self)(rhs: i32): i64 = { 42 }
 }
 let identity(T: type)(move value: T): T = { value }
 let main(): i32 = {
@@ -6134,7 +6134,7 @@ use std.ops.Add
 let Number = struct { value: i32 }
 extend Number: Add(i32) {
   let Output = i32
-  let add(move self)(move rhs: i32): i32 = { self.value + rhs }
+  let add(self)(rhs: i32): i32 = { self.value + rhs }
 }
 let identity(T: type)(move value: T): T = { value }
 let main(): i32 = { identity(Number { value: 40 } + 2) }
@@ -6156,11 +6156,11 @@ use std.ops.Add
 let Number = struct { value: i32 }
 extend Number: Add(i32) {
   let Output = i64
-  let add(move self)(move rhs: i32): i64 = { 0 }
+  let add(self)(rhs: i32): i64 = { 0 }
 }
 extend Number: Add(i64) {
   let Output = i64
-  let add(move self)(move rhs: i64): i64 = { rhs }
+  let add(self)(rhs: i64): i64 = { rhs }
 }
 let main(): i32 = {
   let answer: i64 = Number { value: 0 } + do { 2147483648 }
@@ -6197,7 +6197,7 @@ use std.ops.Add
 let Number = struct { value: i32 }
 extend Number: Add(Number) {
   let Output = Number
-  let add(move self)(move rhs: Number): Number = { Number { value: self.value + rhs.value } }
+  let add(self)(rhs: Number): Number = { Number { value: self.value + rhs.value } }
 }
 let main(): i32 = {
   let answer = make() + Number { value: 2 }
@@ -6238,11 +6238,11 @@ use std.ops.Add
 let Number = struct { value: i32 }
 extend Number: Add(i32) {
   let Output = bool
-  let add(move self)(move rhs: i32): bool = { false }
+  let add(self)(rhs: i32): bool = { false }
 }
 extend Number: Add(i64) {
   let Output = bool
-  let add(move self)(move rhs: i64): bool = { true }
+  let add(self)(rhs: i64): bool = { true }
 }
 let main(): i32 = { Number { value: 40 } + 2 }
 "#,

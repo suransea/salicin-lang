@@ -5,11 +5,11 @@ let Flag = struct { value: bool }
 
 extend Number: Neg {
   let Output = i32
-  let neg(move self)(): i32 = { -self.value }}
+  let neg(self)(): i32 = { -self.value }}
 
 extend Flag: Not {
   let Output = i32
-  let not(move self)(): i32 = { if self.value { 0 } else { 42 } }
+  let not(self)(): i32 = { if self.value { 0 } else { 42 } }
 }
 
 let negate(T: type)(move value: T): T where T: Neg(Output = T) = { -value }

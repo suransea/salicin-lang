@@ -3,7 +3,7 @@ use std.Option
 let Adder = struct { base: i32 }
 
 extend Adder {
-  let add(move self)(value: i32): i32 = { self.base + value }
+  let add(self)(value: i32): i32 = { self.base + value }
 }
 
 let side_effect(count: borrow(mut)(i32)): i32 = {
