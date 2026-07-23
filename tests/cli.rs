@@ -2656,11 +2656,11 @@ fn explicit_result_values_and_throws_handlers_run_with_expected_result() {
 }
 
 #[test]
-fn removed_postfix_try_reports_a_syntax_error() {
+fn postfix_try_is_an_ordinary_member_name() {
     for (name, expected) in [
         (
             "try_non_container_operand.sc",
-            "expected a member name after `.`",
+            "member access requires a struct value",
         ),
         ("result_return_type_mismatch.sc", "type mismatch"),
         (
@@ -2836,7 +2836,7 @@ fn throws_errors_report_their_cause() {
         ),
         (
             "throw_without_value.sc",
-            "requires explicit type argument groups",
+            "standard-library item `throw` is not in the prelude",
         ),
     ] {
         let output = salic()

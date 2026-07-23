@@ -9,6 +9,7 @@ pub enum TokenKind {
     As,
     Root,
     Super,
+    // Parser-only contextual spellings. The lexer emits these words as Ident.
     Mut,
     Copy,
     Move,
@@ -136,18 +137,9 @@ fn keyword(text: &str) -> Option<TokenKind> {
         "as" => TokenKind::As,
         "root" => TokenKind::Root,
         "super" => TokenKind::Super,
-        "mut" => TokenKind::Mut,
-        "copy" => TokenKind::Copy,
-        "move" => TokenKind::Move,
-        "borrow" => TokenKind::Borrow,
-        "type" => TokenKind::Type,
-        "region" => TokenKind::Region,
-        "unsafe" => TokenKind::Unsafe,
-        "do" => TokenKind::Do,
         "if" => TokenKind::If,
         "else" => TokenKind::Else,
         "return" => TokenKind::Return,
-        "throw" => TokenKind::Throw,
         "while" => TokenKind::While,
         "for" => TokenKind::For,
         "in" => TokenKind::In,
@@ -160,7 +152,6 @@ fn keyword(text: &str) -> Option<TokenKind> {
         "trait" => TokenKind::Trait,
         "where" => TokenKind::Where,
         "match" => TokenKind::Match,
-        "try" => TokenKind::Try,
         "true" => TokenKind::True,
         "false" => TokenKind::False,
         _ => return None,
@@ -507,7 +498,9 @@ mod tests {
         assert!(tokens.iter().any(|t| t.kind == TokenKind::Plus));
         assert!(tokens.iter().any(|t| t.kind == TokenKind::If));
         assert!(tokens.iter().any(|t| t.kind == TokenKind::Else));
-        assert!(tokens.iter().any(|t| t.kind == TokenKind::Throw));
+        assert!(tokens
+            .iter()
+            .any(|t| t.kind == TokenKind::Ident("throw".to_owned())));
         assert!(tokens.iter().any(|t| t.kind == TokenKind::Newline));
     }
 
@@ -597,20 +590,26 @@ mod tests {
     fn recognizes_extend_as_a_keyword() {
         let tokens = lex("extend A { let identity(T: type)(value: T) = value }").unwrap();
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Extend));
-        assert!(tokens.iter().any(|token| token.kind == TokenKind::Type));
+        assert!(tokens
+            .iter()
+            .any(|token| token.kind == TokenKind::Ident("type".to_owned())));
     }
 
     #[test]
     fn recognizes_trait_as_a_keyword() {
         let tokens = lex("let Foo = trait { let Item: type }").unwrap();
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Trait));
-        assert!(tokens.iter().any(|token| token.kind == TokenKind::Type));
+        assert!(tokens
+            .iter()
+            .any(|token| token.kind == TokenKind::Ident("type".to_owned())));
     }
 
     #[test]
     fn recognizes_region_parameters_and_names() {
         let tokens = lex("let choose(R: region)(value: borrow(R)(i32)): borrow(R)(i32)").unwrap();
-        assert!(tokens.iter().any(|token| token.kind == TokenKind::Region));
+        assert!(tokens
+            .iter()
+            .any(|token| token.kind == TokenKind::Ident("region".to_owned())));
         assert_eq!(
             tokens
                 .iter()
@@ -652,12 +651,21 @@ mod tests {
     #[test]
     fn exposes_the_same_keyword_set_used_by_tokenization() {
         for text in [
-            "let", "pub", "package", "use", "as", "root", "super", "mut", "copy", "move", "borrow",
-            "type", "do", "if", "else", "return", "throw", "while", "for", "in", "loop", "break",
-            "extend", "struct", "enum", "trait", "match", "try", "true", "false",
+            "let", "pub", "package", "use", "as", "root", "super", "if", "else", "return", "while",
+            "for", "in", "loop", "break", "extend", "struct", "enum", "trait", "match", "true",
+            "false",
         ] {
             assert!(is_keyword(text), "`{text}` was not reported as a keyword");
             assert!(!matches!(lex(text).unwrap()[0].kind, TokenKind::Ident(_)));
+        }
+        for text in [
+            "mut", "copy", "move", "borrow", "type", "region", "do", "try", "throw", "unsafe",
+        ] {
+            assert!(!is_keyword(text), "`{text}` must remain an identifier");
+            assert_eq!(
+                lex(text).unwrap()[0].kind,
+                TokenKind::Ident(text.to_owned())
+            );
         }
         assert!(!is_keyword("module_name"));
     }

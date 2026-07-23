@@ -32,14 +32,15 @@
   边界。普通调用不能从下一逻辑行的 `(` 继续，因此 `f\n(x)` 是两个表达式而不是 `f(x)`。
 - 换行只分隔语句，不自动丢弃块尾值；显式 `;` 才强制丢弃表达式值。同一逻辑行包含多个语句时
   必须用 `;`。
-- 关键字至少包括：`let`、`mut`、`copy`、`move`、`borrow`、`type`、
-  `struct`、`enum`、`trait`、`extend`、`match`、`return`、`throw`、`if`、
-  `else`、`loop`、`while`、`for`、`in`、`break`、`continue`、`do`、`try`、
-  `async`、`pub`、`use`、`as`、`where`、`region`、`extern`、`unsafe`、`root`、
-  `super`、`package`。
+- 固定关键字包括：`let`、`struct`、`enum`、`trait`、`extend`、`match`、
+  `return`、`if`、`else`、`loop`、`while`、`for`、`in`、`break`、`continue`、
+  `pub`、`use`、`as`、`where`、`root`、`super`、`package`。
 - `self`、`Self`、`root`、`super`、`true`、`false` 是保留字。
-- `access`、`passing` 和 `effect` 只在编译期参数位置具有上下文含义，`domain` 只在声明右侧具有
-  上下文含义；它们不是全局保留字。
+- `type`、`region`、`effect`、`access`、`passing` 和 `parameters` 只在编译期参数位置具有
+  上下文含义，`domain` 只在声明右侧具有上下文含义；domain 成员 `mut`、`copy`、`move`、
+  `auto` 和 `shared` 也由使用位置与语义约束解释。它们都不是全局保留字。
+- `borrow` 是上下文识别的借用构造器；`do`、`try`、`throw` 和 `unsafe` 来自
+  `core.control`。这些拼写均词法化为普通标识符，不占用声明、成员或路径名称。
 - region 名以 `'` 开头，后接普通标识符主体，例如 `'a`、`'input`；`'static` 是预定义 region。
 
 ## 3. 声明与作用域

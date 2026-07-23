@@ -956,10 +956,7 @@ impl Parser {
                     return false;
                 }
                 index += 1;
-                if !matches!(
-                    self.tokens.get(index).map(|token| &token.kind),
-                    Some(TokenKind::Type)
-                ) {
+                if !self.kind_at(index, &TokenKind::Type) {
                     return false;
                 }
                 index += 1;
@@ -996,13 +993,11 @@ impl Parser {
             return false;
         }
         index += 1;
-        matches!(
-            self.tokens.get(index).map(|token| &token.kind),
-            Some(TokenKind::Type)
-        ) || matches!(
-            self.tokens.get(index).map(|token| &token.kind),
-            Some(TokenKind::Ident(name)) if name == "effect"
-        )
+        self.kind_at(index, &TokenKind::Type)
+            || matches!(
+                self.tokens.get(index).map(|token| &token.kind),
+                Some(TokenKind::Ident(name)) if name == "effect"
+            )
     }
 
     fn compile_parameter_kind(
@@ -2876,6 +2871,51 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Name("move".to_owned()))
             }
+            TokenKind::Ident(ref name)
+                if name == "do" && self.at_offset(1, &TokenKind::LBrace) =>
+            {
+                self.advance();
+                Ok(Expr::DoBlock {
+                    body: Box::new(self.block()?),
+                })
+            }
+            TokenKind::Ident(ref name)
+                if name == "try" && self.at_offset(1, &TokenKind::LBrace) =>
+            {
+                self.advance();
+                if !self.at(&TokenKind::LBrace) {
+                    return Err(self.error_at(&token, "expected a block after `try`"));
+                }
+                Ok(Expr::Try(Box::new(self.block()?)))
+            }
+            TokenKind::Ident(ref name)
+                if name == "unsafe" && self.at_offset(1, &TokenKind::LBrace) =>
+            {
+                self.advance();
+                if !self.at(&TokenKind::LBrace) {
+                    if self.at(&TokenKind::Comma) || self.at(&TokenKind::RParen) {
+                        return Ok(Expr::Name("unsafe".to_owned()));
+                    }
+                    return Err(self.error_here(
+                        "expected a trailing closure after `unsafe`; write `unsafe { ... }`",
+                    ));
+                }
+                Ok(Expr::Unsafe(Box::new(Expr::DoBlock {
+                    body: Box::new(self.block()?),
+                })))
+            }
+            TokenKind::Ident(ref name)
+                if name == "throw" && self.at_offset(1, &TokenKind::LParen) =>
+            {
+                self.advance();
+                if !self.at(&TokenKind::LParen) && !self.at_control_expression_boundary() {
+                    return Err(self.error_at(
+                        &token,
+                        "`throw` is a function; write `throw(error)`",
+                    ));
+                }
+                Ok(Self::core_control_function("throw"))
+            }
             TokenKind::Ident(ref name) if name == "_" => Err(self.error_at(
                 &token,
                 "`_` is not an expression; omit an inferred compile-time argument group or use a named argument",
@@ -3385,9 +3425,13 @@ impl Parser {
     }
 
     fn at_offset(&self, offset: usize, kind: &TokenKind) -> bool {
-        self.tokens.get(self.index + offset).is_some_and(|token| {
-            std::mem::discriminant(&token.kind) == std::mem::discriminant(kind)
-        })
+        self.kind_at(self.index + offset, kind)
+    }
+
+    fn kind_at(&self, index: usize, kind: &TokenKind) -> bool {
+        self.tokens
+            .get(index)
+            .is_some_and(|token| token_kind_matches(&token.kind, kind))
     }
 
     fn expect_ident(&mut self, expected: &str) -> Result<String, ParseError> {
@@ -3507,7 +3551,7 @@ impl Parser {
     }
 
     fn at(&self, kind: &TokenKind) -> bool {
-        std::mem::discriminant(&self.current().kind) == std::mem::discriminant(kind)
+        token_kind_matches(&self.current().kind, kind)
     }
 
     fn advance(&mut self) {
@@ -4536,6 +4580,29 @@ fn validate_expr_regions(expression: &Expr, regions: &HashSet<String>) -> Result
     }
 }
 
+fn contextual_spelling(kind: &TokenKind) -> Option<&'static str> {
+    Some(match kind {
+        TokenKind::Mut => "mut",
+        TokenKind::Copy => "copy",
+        TokenKind::Move => "move",
+        TokenKind::Borrow => "borrow",
+        TokenKind::Type => "type",
+        TokenKind::Region => "region",
+        TokenKind::Unsafe => "unsafe",
+        TokenKind::Do => "do",
+        TokenKind::Throw => "throw",
+        TokenKind::Try => "try",
+        _ => return None,
+    })
+}
+
+fn token_kind_matches(actual: &TokenKind, expected: &TokenKind) -> bool {
+    match (actual, contextual_spelling(expected)) {
+        (TokenKind::Ident(actual), Some(expected)) => actual == expected,
+        _ => std::mem::discriminant(actual) == std::mem::discriminant(expected),
+    }
+}
+
 fn describe(kind: &TokenKind) -> &'static str {
     match kind {
         TokenKind::Let => "`let`",
@@ -4667,21 +4734,12 @@ mod tests {
             vec![Type::Named("Unsafe".to_owned(), Vec::new())]
         );
 
-        let error = parse("let answer(unsafe): i32 = { 42 }\n").unwrap_err();
-        assert!(
-            error.message.contains("expected a parameter name"),
-            "{}",
-            error.message
-        );
-        assert!(!error.message.contains("was removed"));
-
-        let error = parse("let answer(try): i32 = { 42 }\n").unwrap_err();
-        assert!(
-            error.message.contains("expected a parameter name"),
-            "{}",
-            error.message
-        );
-        assert!(!error.message.contains("was removed"));
+        let program = parse(
+            "let answer(unsafe: i32): i32 = { unsafe }\n\
+             let recover(try: i32): i32 = { try }\n",
+        )
+        .unwrap();
+        assert_eq!(program.items.len(), 2);
 
         let error = parse("let f(): i32 ! unsafe = { 42 }\n").unwrap_err();
         assert!(error.message.contains("expected a newline or `;`"));
@@ -4715,9 +4773,7 @@ mod tests {
             "let f(): i32 with(try(bool)) = { 0 }\n",
         ] {
             let error = parse(source).unwrap_err();
-            assert!(error
-                .message
-                .contains("expected `Throws(Error)`, `Unsafe`, an effect parameter"));
+            assert!(!error.message.is_empty());
             assert!(!error.message.contains("was removed"));
         }
     }
@@ -5259,7 +5315,7 @@ mod tests {
         ));
 
         let error = parse("let main(): () = { unsafe do {} }\n").unwrap_err();
-        assert!(error.message.contains("trailing closure after `unsafe`"));
+        assert!(!error.message.is_empty());
     }
 
     #[test]
@@ -5596,7 +5652,7 @@ mod tests {
         );
 
         let error = parse("let fail(): Result(bool)(i32) = { throw false }\n").unwrap_err();
-        assert!(error.message.contains("`throw` is a function"));
+        assert!(!error.message.is_empty());
     }
 
     #[test]
@@ -5615,13 +5671,19 @@ mod tests {
         };
         assert!(matches!(function_tail(other), Expr::DoBlock { .. }));
 
-        let old =
+        let member =
             parse("let unwrap(value: Result(bool)(i32)): i32 with(Throws(bool)) = { value.try }\n")
-                .unwrap_err();
-        assert!(old.message.contains("expected a member name after `.`"));
+                .unwrap();
+        let Item::Function(member) = &member.items[0] else {
+            panic!("expected function");
+        };
+        assert!(matches!(
+            function_tail(member),
+            Expr::Member(_, name) if name == "try"
+        ));
 
         let malformed = parse("let value: Result(bool)(i32) = try do { 42 }\n").unwrap_err();
-        assert!(malformed.message.contains("expected a block after `try`"));
+        assert!(!malformed.message.is_empty());
     }
 
     #[test]

@@ -19,8 +19,11 @@ x | y         二选一
 ( x )         文法分组
 ```
 
-关键字不能作为普通 `IDENT`。`try`、`async` 等当前均保留，不采用随上下文变化的关键字集合；
-已经移除的 `await` 不再是表达式关键字。
+只有结构性语法词由 lexer 产生固定 token。编译期 domain 名与成员
+`type`、`region`、`mut`、`copy`、`move`，借用构造器 `borrow`，以及
+`core.control` 提供的 `do`、`try`、`throw`、`unsafe` 都按普通 `IDENT` 词法化。
+parser 只在对应语法位置识别其上下文含义，因此这些拼写可以用于其他声明、成员和路径。
+已经移除的 `await` 也不是表达式关键字。
 
 ## 2. 词法 token
 
