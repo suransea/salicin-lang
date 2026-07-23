@@ -47,9 +47,9 @@ The implementation lives under `compiler/src`:
   - `source_rewrite.rs` owns source-level rewrites before semantic lowering, including labeled
     type-argument normalization, type-alias expansion, region-parameter erasure, and generic
     type substitution, plus AST hygiene helpers used by handler and static-function specialization.
-  - `throws.rs` identifies dedicated and standard throws sources, infers context-free
-    `try { ... }` `Result(E)(T)` types, and lowers `try { ... }`, `throw`, and automatic
-    throws propagation return-boundary wrappers.
+  - `throws.rs` probes custom-effect call rows to identify dedicated and standard throws sources,
+    infers context-free `try { ... }` `Result(E)(T)` types, and lowers `try { ... }`, `throw`, and
+    automatic throws propagation return-boundary wrappers.
   - `tests.rs` contains the large codegen regression suite.
 - `main.rs` implements the `salic` command-line interface.
 
