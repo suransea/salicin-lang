@@ -43,8 +43,8 @@ The implementation lives under `compiler/src`:
     context state used by ownership and borrow checks.
   - `functions.rs` lowers function and global bodies, materializes generic function instances,
     resolves function/global value types, and validates binary entry-point shape.
-  - `handlers.rs` owns algebraic-handler state and AST source-rewrite helpers used by handler CPS
-    lowering.
+  - `handlers.rs` owns algebraic-handler state, CPS source transformation, and handler-specific
+    AST rewrite helpers.
   - `hir.rs` defines typed IR structs, semantic types, places, signatures, and helper predicates.
   - `inference.rs` owns generic type-argument seed, unification, template resolution, and
     expression-constraint inference helpers.
