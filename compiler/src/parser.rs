@@ -580,7 +580,7 @@ impl Parser {
 
     fn domain_definition(&mut self, name: String) -> Result<DomainDef, ParseError> {
         let members = if self.take(&TokenKind::LBrace) {
-            self.skip_newlines();
+            self.skip_separators();
             let mut members = Vec::new();
             let mut seen = HashSet::new();
             while !self.take(&TokenKind::RBrace) {
@@ -591,7 +591,7 @@ impl Parser {
                 members.push(member);
 
                 self.take(&TokenKind::Comma);
-                self.skip_newlines();
+                self.skip_separators();
             }
             Some(members)
         } else {
@@ -1505,6 +1505,7 @@ impl Parser {
 
             let variant_name = self.expect_ident("a variant name")?;
             let fields = if self.take(&TokenKind::LParen) {
+                self.skip_separators();
                 if self.take(&TokenKind::RParen) {
                     VariantFields::Positional(Vec::new())
                 } else if self.ident_followed_by_colon() || self.at(&TokenKind::Pub) {
@@ -1514,10 +1515,12 @@ impl Parser {
                     loop {
                         types.push(self.type_expr()?);
                         if self.take(&TokenKind::Comma) {
+                            self.skip_separators();
                             if self.take(&TokenKind::RParen) {
                                 break;
                             }
                         } else {
+                            self.skip_separators();
                             self.expect(&TokenKind::RParen, "`)` after variant fields")?;
                             break;
                         }
@@ -1825,6 +1828,7 @@ impl Parser {
     }
 
     fn braced_type_fields(&mut self) -> Result<Vec<Field>, ParseError> {
+        self.skip_separators();
         if self.take(&TokenKind::RBrace) {
             return Ok(Vec::new());
         }
@@ -1839,10 +1843,12 @@ impl Parser {
                 ty: self.type_expr()?,
             });
             if self.take(&TokenKind::Comma) {
+                self.skip_separators();
                 if self.take(&TokenKind::RBrace) {
                     break;
                 }
             } else {
+                self.skip_separators();
                 self.expect(&TokenKind::RBrace, "`}` after fields")?;
                 break;
             }
@@ -1851,6 +1857,7 @@ impl Parser {
     }
 
     fn named_type_fields_after_open(&mut self) -> Result<Vec<Field>, ParseError> {
+        self.skip_separators();
         let mut fields = Vec::new();
         loop {
             let visibility = self.visibility()?;
@@ -1862,10 +1869,12 @@ impl Parser {
                 ty: self.type_expr()?,
             });
             if self.take(&TokenKind::Comma) {
+                self.skip_separators();
                 if self.take(&TokenKind::RParen) {
                     break;
                 }
             } else {
+                self.skip_separators();
                 self.expect(&TokenKind::RParen, "`)` after fields")?;
                 break;
             }
@@ -5313,8 +5322,16 @@ mod tests {
     fn parses_structs_and_enum_field_shapes() {
         let program = parse(
             "let Point = struct { x: i32, pub(package) y: i32, pub z: i32 }\n\
+             let Documented = struct {\n\
+               /// A field with a documentation comment.\n\
+               value: i32,\n\
+             }\n\
              let Shape = enum {\n\
                Circle(pub radius: i32, pub(package) center: Point, label: i32),\n\
+               Record(\n\
+                 /// A named variant field with a documentation comment.\n\
+                 item: i32,\n\
+               ),\n\
                Pair(i32, i32),\n\
                Unit,\n\
              }\n",
@@ -5335,10 +5352,16 @@ mod tests {
             vec![Visibility::Private, Visibility::Package, Visibility::Public,]
         );
 
-        let Item::Enum(shape) = &program.items[1] else {
+        let Item::Struct(documented) = &program.items[1] else {
+            panic!("expected documented struct");
+        };
+        assert_eq!(documented.fields.len(), 1);
+        assert_eq!(documented.fields[0].name, "value");
+
+        let Item::Enum(shape) = &program.items[2] else {
             panic!("expected enum");
         };
-        assert_eq!(shape.variants.len(), 3);
+        assert_eq!(shape.variants.len(), 4);
         assert!(matches!(
             &shape.variants[0].fields,
             VariantFields::Named(fields)
@@ -5353,9 +5376,13 @@ mod tests {
         ));
         assert!(matches!(
             &shape.variants[1].fields,
+            VariantFields::Named(fields) if fields.len() == 1 && fields[0].name == "item"
+        ));
+        assert!(matches!(
+            &shape.variants[2].fields,
             VariantFields::Positional(types) if types == &vec![Type::I32, Type::I32]
         ));
-        assert_eq!(shape.variants[2].fields, VariantFields::Unit);
+        assert_eq!(shape.variants[3].fields, VariantFields::Unit);
     }
 
     #[test]
@@ -5801,7 +5828,9 @@ mod tests {
              pub let type = domain\n\
              pub let effect = domain\n\
              pub let access = domain {\n\
+               /// Shared read-only access.\n\
                shared\n\
+               /// Exclusive mutable access.\n\
                mut\n\
              }\n\
              pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E)\n",

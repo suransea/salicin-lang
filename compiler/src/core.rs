@@ -2519,8 +2519,8 @@ pub let Shr(Rhs: type) = trait {
             .any(|diagnostic| diagnostic.contains("lang item `EffectCallable`")));
 
         let malformed = EDITION_2026_CONTROL.replace(
-            "pub let Handle = trait(Self: effect) {\n  let Clauses(Value: type, Answer: type): type\n  let handle(Value: type, Answer: type, Rest: effect)\n    (move clauses: Clauses(Value, Answer))\n    (move action: (): Value with(Self, Rest)): Answer with(Rest)\n}",
-            "pub let Handle = trait { let Clauses(Value: type): type }",
+            "pub let Handle = trait(Self: effect)",
+            "pub let Handle = trait",
         );
         let error = CoreBundle::from_modules(
             Edition::Edition2026,
