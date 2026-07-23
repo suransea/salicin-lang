@@ -44,6 +44,8 @@ The implementation lives under `compiler/src`:
   - `hir.rs` defines typed IR structs, semantic types, places, signatures, and helper predicates.
   - `inference.rs` owns generic type-argument seed, unification, template resolution, and
     expression-constraint inference helpers.
+  - `layouts.rs` builds struct/enum field layouts, validates recursive value layout cycles, and
+    reports missing nominal layout diagnostics.
   - `lower.rs` defines shared expression-lowering data, type-probe helpers, and HIR construction
     helpers used by multiple lowering paths.
   - `names.rs` centralizes stable symbol, monomorphization instance, trait-method, and canonical
