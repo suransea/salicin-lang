@@ -983,6 +983,98 @@ pub(super) fn is_internal_handler_closure_binding(name: &str) -> bool {
 }
 
 impl Analyzer {
+    pub(super) fn materialize_direct_handler_action(
+        &mut self,
+        name: &str,
+        groups: &[&[CallArg]],
+    ) -> Option<Expr> {
+        let function = self.functions.get(name)?.clone();
+        if groups.len() != function.groups.len() {
+            return None;
+        }
+        let action_positions = self
+            .runtime_handler_actions
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        for (candidate, group_index, parameter_index) in action_positions {
+            if candidate != name {
+                continue;
+            }
+            let arguments = groups.get(group_index).copied()?;
+            let parameter = function.groups.get(group_index)?.get(parameter_index)?;
+            let argument_index = if arguments.iter().all(|argument| argument.label.is_none()) {
+                parameter_index
+            } else {
+                arguments.iter().position(|argument| {
+                    argument.label.as_deref() == Some(parameter.name.as_str())
+                })?
+            };
+            let Some(CallArg {
+                value: Expr::Closure(_, _),
+                ..
+            }) = arguments.get(argument_index)
+            else {
+                continue;
+            };
+            let mut rewritten_groups = groups
+                .iter()
+                .map(|group| group.to_vec())
+                .collect::<Vec<_>>();
+            let mut bindings = Vec::new();
+            for (earlier_group, rewritten_group) in rewritten_groups
+                .iter_mut()
+                .enumerate()
+                .take(group_index + 1)
+            {
+                let end = if earlier_group == group_index {
+                    argument_index
+                } else {
+                    rewritten_group.len()
+                };
+                for (earlier_argument, rewritten_argument) in
+                    rewritten_group.iter_mut().enumerate().take(end)
+                {
+                    let earlier_parameter =
+                        function.groups.get(earlier_group)?.get(earlier_argument)?;
+                    let parameter_ty = self.lower_source_type(&earlier_parameter.ty);
+                    if matches!(
+                        self.effective_pass_mode(earlier_parameter.mode, &parameter_ty),
+                        PassMode::Borrow | PassMode::MutBorrow
+                    ) {
+                        return None;
+                    }
+                    let id = self.next_closure;
+                    self.next_closure += 1;
+                    let local = format!("$handler$direct$argument${id}");
+                    bindings.push(Stmt::Let(Binding {
+                        mutable: false,
+                        name: local.clone(),
+                        annotation: Some(earlier_parameter.ty.clone()),
+                        value: rewritten_argument.value.clone(),
+                    }));
+                    rewritten_argument.value = Expr::Name(local);
+                }
+            }
+            let id = self.next_closure;
+            self.next_closure += 1;
+            let local = format!("$handler$direct$action${id}");
+            bindings.push(Stmt::Let(Binding {
+                mutable: true,
+                name: local.clone(),
+                annotation: Some(parameter.ty.clone()),
+                value: arguments[argument_index].value.clone(),
+            }));
+            rewritten_groups[group_index][argument_index].value = Expr::Name(local);
+            let mut call = Expr::Name(name.to_owned());
+            for group in rewritten_groups {
+                call = Expr::Call(Box::new(call), group);
+            }
+            return Some(Expr::Block(bindings, Some(Box::new(call))));
+        }
+        None
+    }
+
     pub(super) fn register_runtime_handler_actions(&mut self) {
         for function_name in self.function_order.clone() {
             let function = self.functions[&function_name].clone();
