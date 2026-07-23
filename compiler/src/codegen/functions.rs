@@ -1,10 +1,16 @@
+use std::collections::HashMap;
+
 use crate::ast::{PassMode, Type};
 use crate::core::LangItemKind;
 
 use super::effects::standard_throws_error_source;
 use super::flow::{LocalInfo, LowerCtx};
-use super::hir::{HirFunction, HirGlobal, HirParam, LocalCapability, ParamSig, Ty};
-use super::registry::ResolutionState;
+use super::hir::{FunctionSig, HirFunction, HirGlobal, HirParam, LocalCapability, ParamSig, Ty};
+use super::names::function_instance_name;
+use super::registry::{
+    FunctionInstanceInfo, FunctionInstanceKey, ResolutionState, MAX_FUNCTION_INSTANCES,
+};
+use super::source_rewrite::substitute_function_types;
 use super::Analyzer;
 
 impl Analyzer {
@@ -336,5 +342,119 @@ impl Analyzer {
                 "M0 `main` must return `()` or `i32`, found `{result}`"
             ));
         }
+    }
+    pub(super) fn ensure_function_instance(
+        &mut self,
+        template_name: &str,
+        source_arguments: Vec<Type>,
+        arguments: Vec<Ty>,
+    ) -> Option<String> {
+        let key = FunctionInstanceKey {
+            template: template_name.to_owned(),
+            arguments,
+        };
+        if let Some(canonical) = self.function_instance_names.get(&key) {
+            let info = &self.function_instances[canonical];
+            debug_assert_eq!(info.key, key);
+            debug_assert_eq!(info.canonical, *canonical);
+            return Some(canonical.clone());
+        }
+        if self.function_instances.len() >= MAX_FUNCTION_INSTANCES {
+            self.error(format!(
+                "generic function instance limit of {MAX_FUNCTION_INSTANCES} exceeded while instantiating `{template_name}`"
+            ));
+            return None;
+        }
+
+        let template = self.function_templates[template_name].clone();
+        let compile_parameters: Vec<_> = template.compile_groups.iter().flatten().collect();
+        if compile_parameters.len() != source_arguments.len() {
+            self.error(format!(
+                "internal error: invalid type argument count while instantiating `{template_name}`"
+            ));
+            return None;
+        }
+        let mut substitutions = HashMap::new();
+        for (parameter, argument) in compile_parameters.iter().zip(source_arguments) {
+            if substitutions
+                .insert(parameter.name.clone(), argument)
+                .is_some()
+            {
+                self.error(format!(
+                    "duplicate compile-time parameter `{}` in generic function `{template_name}`",
+                    parameter.name
+                ));
+                return None;
+            }
+        }
+
+        let mut function = template;
+        substitute_function_types(&mut function, &substitutions);
+        if !self.validate_concrete_where_predicates(template_name, &function.where_predicates) {
+            return None;
+        }
+
+        let canonical = function_instance_name(&key);
+        if let Some(existing) = self.function_instances.get(&canonical) {
+            self.error(format!(
+                "internal error: generic function instance name collision between `{}` and `{template_name}`",
+                existing.key.template
+            ));
+            return None;
+        }
+        self.function_instance_names
+            .insert(key.clone(), canonical.clone());
+        self.function_instances.insert(
+            canonical.clone(),
+            FunctionInstanceInfo {
+                key,
+                canonical: canonical.clone(),
+            },
+        );
+        self.function_type_substitutions
+            .insert(canonical.clone(), substitutions.clone());
+
+        function.name = canonical.clone();
+        function.compile_groups.clear();
+        let groups = function
+            .groups
+            .iter()
+            .map(|group| {
+                group
+                    .iter()
+                    .map(|param| ParamSig {
+                        name: param.name.clone(),
+                        ty: self.lower_source_type(&param.ty),
+                        mode: param.mode,
+                    })
+                    .collect()
+            })
+            .collect();
+        let result = function
+            .return_type
+            .as_ref()
+            .map(|ty| self.lower_source_type(ty));
+        let throws_error = function
+            .effects
+            .throws
+            .as_deref()
+            .map(|error| self.lower_source_type(error));
+        self.signatures.insert(
+            canonical.clone(),
+            FunctionSig {
+                groups,
+                unsafe_effect: self.function_effects_unsafe(&function.effects),
+                throws_error,
+                custom_effects: self.function_effects_custom_identities(&function.effects),
+                result,
+            },
+        );
+        self.functions.insert(canonical.clone(), function);
+        self.function_origins.insert(
+            canonical.clone(),
+            self.function_template_origins[template_name].clone(),
+        );
+        self.function_order.push(canonical.clone());
+        Some(canonical)
     }
 }
