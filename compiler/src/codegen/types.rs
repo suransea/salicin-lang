@@ -87,6 +87,29 @@ impl Analyzer {
                 }
             }
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => Ty::Unit,
+            Type::Named(name, arguments)
+                if arguments.is_empty()
+                    && [
+                        LangItemKind::Bool,
+                        LangItemKind::I32,
+                        LangItemKind::I64,
+                        LangItemKind::U32,
+                        LangItemKind::U64,
+                    ]
+                    .into_iter()
+                    .any(|kind| name == self.lang_item_name(kind)) =>
+            {
+                [
+                    (LangItemKind::Bool, Ty::Bool),
+                    (LangItemKind::I32, Ty::I32),
+                    (LangItemKind::I64, Ty::I64),
+                    (LangItemKind::U32, Ty::U32),
+                    (LangItemKind::U64, Ty::U64),
+                ]
+                .into_iter()
+                .find_map(|(kind, ty)| (name == self.lang_item_name(kind)).then_some(ty))
+                .expect("primitive lang-item guard matched")
+            }
             Type::Named(name, _) if effect_row_from_marker(name).is_some() => {
                 let Some((unsafe_effect, throws_error, custom_effects)) =
                     effect_row_from_source(source)

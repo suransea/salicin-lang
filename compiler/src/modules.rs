@@ -427,6 +427,9 @@ const CORE_OPS_EXPORTS: &[(&str, &str)] = &[
 const CORE_FLOW_EXPORTS: &[&str] = &["Chain", "Coalesce", "Unwrap", "Raise"];
 const CORE_EFFECT_EXPORTS: &[&str] = &["Unsafe", "Throws", "Async"];
 const CORE_EFFECT_HANDLER_EXPORTS: &[&str] = &["Continuation", "EffectCallable", "Handle"];
+const CORE_PRIMITIVE_EXPORTS: &[&str] = &[
+    "bool", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
+];
 const CORE_DOMAIN_EXPORTS: &[&str] = &[
     "type",
     "region",
@@ -1386,6 +1389,17 @@ fn install_core_namespace(
                 "effect.handler",
                 name,
                 &format!("core::effect::handler::{name}"),
+                "<core>",
+            );
+        }
+        for name in CORE_PRIMITIVE_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "primitives",
+                name,
+                &format!("core::primitives::{name}"),
                 "<core>",
             );
         }
@@ -5160,6 +5174,11 @@ let main(): i32 = { Option {} }
             .iter()
             .map(|name| ("never", *name))
             .chain(CORE_MARKER_EXPORTS.iter().map(|name| ("marker", *name)))
+            .chain(
+                CORE_PRIMITIVE_EXPORTS
+                    .iter()
+                    .map(|name| ("primitives", *name)),
+            )
             .chain([("option", "Option"), ("result", "Result")])
             .chain(CORE_CMP_EXPORTS.iter().map(|name| ("cmp", *name)))
             .chain(CORE_FLOW_EXPORTS.iter().map(|name| ("flow", *name)))

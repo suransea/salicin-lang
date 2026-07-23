@@ -280,6 +280,57 @@ impl Parser {
 
         self.expect(&TokenKind::Equal, "`=`")?;
 
+        if self.at(&TokenKind::Type) {
+            if mutable
+                || annotation.is_some()
+                || has_effect_group
+                || !compile_groups.is_empty()
+                || !groups.is_empty()
+                || !where_predicates.is_empty()
+            {
+                return Err(self.error_here(
+                    "opaque type declarations cannot be mutable, generic, annotated, or have parameters",
+                ));
+            }
+            self.advance();
+            let values = if self.take(&TokenKind::LBrace) {
+                let mut values = Vec::new();
+                while !self.take(&TokenKind::RBrace) {
+                    let value = match self.current().kind.clone() {
+                        TokenKind::True => "true".to_owned(),
+                        TokenKind::False => "false".to_owned(),
+                        TokenKind::Ident(value) => value,
+                        _ => {
+                            return Err(self
+                                .error_here("expected a value name in the closed type value set"));
+                        }
+                    };
+                    self.advance();
+                    if values.contains(&value) {
+                        return Err(self.error_here(format!(
+                            "duplicate value `{value}` in closed type value set"
+                        )));
+                    }
+                    values.push(value);
+                    if self.take(&TokenKind::RBrace) {
+                        break;
+                    }
+                    self.expect(&TokenKind::Comma, "`,` between closed type values")?;
+                    if self.take(&TokenKind::RBrace) {
+                        break;
+                    }
+                }
+                values
+            } else {
+                Vec::new()
+            };
+            return Ok(Item::TypeForm(TypeFormDef {
+                name,
+                compile_groups: Vec::new(),
+                values,
+            }));
+        }
+
         if self.at_context_ident("effect") {
             if mutable
                 || annotation.is_some()
@@ -517,6 +568,7 @@ impl Parser {
         Ok(Item::TypeForm(TypeFormDef {
             name,
             compile_groups,
+            values: Vec::new(),
         }))
     }
 
@@ -709,6 +761,17 @@ impl Parser {
             return Err(self.error_here("where clauses on extend members are not supported yet"));
         }
         self.take_newlines_if_followed_by(&[TokenKind::Equal]);
+        if !self.at(&TokenKind::Equal) && (!compile_groups.is_empty() || !groups.is_empty()) {
+            return Ok(ExtendMember::Function(Function {
+                name,
+                compile_groups,
+                groups,
+                return_type: annotation,
+                effects,
+                where_predicates,
+                body: None,
+            }));
+        }
         self.expect(&TokenKind::Equal, "`=` in extend member")?;
 
         if self.at(&TokenKind::Struct) || self.at(&TokenKind::Enum) || self.at(&TokenKind::Trait) {
@@ -6326,6 +6389,33 @@ mod tests {
             &program.items[5],
             Item::Function(function) if function.name == "do" && function.body.is_none()
         ));
+    }
+
+    #[test]
+    fn parses_opaque_type_declarations_from_the_type_domain() {
+        let program = parse("pub let i32 = type\npub let bool = type { false, true }\n").unwrap();
+        assert!(matches!(
+            &program.items[0],
+            Item::TypeForm(definition)
+                if definition.name == "i32"
+                    && definition.compile_groups.is_empty()
+                    && definition.values.is_empty()
+        ));
+        assert!(matches!(
+            &program.items[1],
+            Item::TypeForm(definition)
+                if definition.name == "bool"
+                    && definition.compile_groups.is_empty()
+                    && definition.values == ["false", "true"]
+        ));
+    }
+
+    #[test]
+    fn rejects_duplicate_closed_type_values() {
+        let error = parse("let bool = type { false, false }\n").unwrap_err();
+        assert!(error
+            .message
+            .contains("duplicate value `false` in closed type value set"));
     }
 
     #[test]

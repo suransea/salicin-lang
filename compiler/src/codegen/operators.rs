@@ -7,7 +7,7 @@ use super::lower::{
     error_expr, integer_fits, integer_literal_value, BinaryOperatorCandidate, TypeProbe,
 };
 use super::names::canonical_type_encoding;
-use super::Analyzer;
+use super::{primitive_scalar_type, Analyzer};
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct BinaryOperatorTrait {
@@ -87,27 +87,6 @@ pub(super) enum BinaryOperatorLeft<'a> {
 }
 
 impl Analyzer {
-    pub(super) fn builtin_unary_operator_output(
-        &self,
-        trait_name: &str,
-        subject: &Ty,
-        arguments: &[Ty],
-    ) -> Option<Ty> {
-        if !arguments.is_empty() {
-            return None;
-        }
-        if trait_name == self.lang_item_name(LangItemKind::Neg)
-            && subject.is_integer()
-            && subject.is_signed()
-        {
-            Some(subject.clone())
-        } else if trait_name == self.lang_item_name(LangItemKind::Not) && *subject == Ty::Bool {
-            Some(Ty::Bool)
-        } else {
-            None
-        }
-    }
-
     pub(super) fn binary_operator_candidates(
         &self,
         operator_trait: BinaryOperatorTrait,
@@ -160,7 +139,14 @@ impl Analyzer {
                     return None;
                 }
                 let right_probe = self.probe_expr_ty(right, Some(rhs), context);
-                Self::probe_matches_type(&right_probe, rhs).then(|| BinaryOperatorCandidate {
+                let matches_rhs = Self::probe_matches_type(&right_probe, rhs)
+                    || matches!(
+                        &right_probe,
+                        TypeProbe::Known(Ty::Reference { pointee, .. })
+                            | TypeProbe::KnownSource(Ty::Reference { pointee, .. }, _)
+                            if pointee.as_ref() == rhs && self.is_copy_type(rhs)
+                    );
+                matches_rhs.then(|| BinaryOperatorCandidate {
                     method: method.clone(),
                     rhs: rhs.clone(),
                     output: output.clone(),
@@ -390,6 +376,17 @@ impl Analyzer {
             ));
             return error_expr();
         }
+        if !self.functions.contains_key(&candidate.method) && primitive_scalar_type(receiver) {
+            let left = match left {
+                BinaryOperatorLeft::Source(left) => self.lower_expr(left, Some(receiver), context),
+                BinaryOperatorLeft::Lowered(left) => *left,
+            };
+            let right = self.lower_expr(right, Some(&candidate.rhs), context);
+            return HirExpr {
+                ty: operator_trait.expression_output(&candidate.output),
+                kind: HirExprKind::Binary(Box::new(left), operator_trait.operator, Box::new(right)),
+            };
+        }
         let receiver_parameter = signature.groups[0][0].clone();
         let rhs_parameter = signature.groups[1][0].clone();
         let mut temporary_loans = Vec::new();
@@ -525,6 +522,13 @@ impl Analyzer {
             ));
             return error_expr();
         }
+        if !self.functions.contains_key(&method) && primitive_scalar_type(receiver) {
+            let operand = self.lower_expr(operand, Some(receiver), context);
+            return HirExpr {
+                ty: output,
+                kind: HirExprKind::Unary(operator.operator, Box::new(operand)),
+            };
+        }
         let mut temporary_loans = Vec::new();
         let mut temporary_bindings = Vec::new();
         let argument = self.lower_call_argument(
@@ -573,7 +577,9 @@ impl Analyzer {
                 && operator_trait.parameter_mode == PassMode::Move
             {
                 let lowered_left = self.lower_expr(left, None, context);
-                if matches!(lowered_left.ty, Ty::Struct(_) | Ty::Enum(_)) {
+                if matches!(lowered_left.ty, Ty::Struct(_) | Ty::Enum(_))
+                    || primitive_scalar_type(&lowered_left.ty)
+                {
                     let receiver = lowered_left.ty.clone();
                     return self.lower_trait_binary(
                         operator_trait,
@@ -659,6 +665,22 @@ impl Analyzer {
                 (left, right, Ty::Bool)
             }
         };
+        if let Some(operator_trait) = binary_operator_trait(operator) {
+            let implemented = self.trait_impls.keys().any(|key| {
+                key.self_ty == left.ty
+                    && key.trait_ref.name == self.lang_item_name(operator_trait.lang_item)
+                    && key.trait_ref.arguments.as_slice() == [right.ty.clone()]
+            });
+            if !implemented && left.ty != Ty::Error && right.ty != Ty::Error {
+                self.error(format!(
+                    "type `{}` does not implement `{}` required by operator `{}`",
+                    self.diagnostic_type_name(&left.ty),
+                    operator_trait.lang_item.source_name(),
+                    binary_spelling(operator),
+                ));
+                return error_expr();
+            }
+        }
         HirExpr {
             ty,
             kind: HirExprKind::Binary(Box::new(left), operator, Box::new(right)),

@@ -27,7 +27,10 @@ impl Analyzer {
     pub(super) fn nominal_ty_from_probe(probe: &TypeProbe) -> Option<Ty> {
         match probe {
             TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _)
-                if matches!(ty, Ty::Struct(_) | Ty::Enum(_)) =>
+                if matches!(
+                    ty,
+                    Ty::Struct(_) | Ty::Enum(_) | Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool
+                ) =>
             {
                 Some(ty.clone())
             }

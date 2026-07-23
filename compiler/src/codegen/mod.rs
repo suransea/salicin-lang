@@ -69,6 +69,10 @@ use operators::*;
 use registry::*;
 use source_rewrite::*;
 
+fn primitive_scalar_type(ty: &Ty) -> bool {
+    matches!(ty, Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool)
+}
+
 #[cfg(test)]
 use cleanup_plan::{HirCleanupPlanner, MAX_CLEANUP_MOVE_PATHS};
 
@@ -1936,6 +1940,12 @@ impl Analyzer {
     }
 
     fn resolve_trait_impl_target(&mut self, source: &Type) -> Option<Ty> {
+        if matches!(
+            source,
+            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool
+        ) {
+            return Some(self.lower_source_type(source));
+        }
         let Type::Named(name, arguments) = source else {
             self.error("trait implementation target must be a nominal type");
             return None;
@@ -1958,6 +1968,7 @@ impl Analyzer {
         let target = self.lower_source_type(source);
         match target {
             Ty::Struct(_) | Ty::Enum(_) => Some(target),
+            _ if primitive_scalar_type(&target) => Some(target),
             Ty::Error => None,
             _ => {
                 self.error("trait implementation target must be a nominal type");
@@ -2543,10 +2554,10 @@ impl Analyzer {
         };
         let is_copy = key.trait_ref.name == self.lang_item_name(LangItemKind::Copy);
         let is_drop = key.trait_ref.name == self.lang_item_name(LangItemKind::Drop);
+        let target_nominal = nominal_name(&target);
         if (is_copy || is_drop)
-            && self
-                .nominal_accesses
-                .get(nominal_name(&target).expect("trait targets are nominal"))
+            && target_nominal
+                .and_then(|name| self.nominal_accesses.get(name))
                 .is_some_and(|access| access.origin.package != origin.package)
         {
             let target = self.diagnostic_type_name(&target);
@@ -2556,10 +2567,10 @@ impl Analyzer {
             ));
             return;
         }
-        let target_package = self
-            .nominal_accesses
-            .get(nominal_name(&target).expect("trait targets are nominal"))
-            .map(|access| access.origin.package);
+        let target_package = target_nominal
+            .and_then(|name| self.nominal_accesses.get(name))
+            .map(|access| access.origin.package)
+            .or_else(|| primitive_scalar_type(&target).then_some(PackageId::CORE.0));
         if target_package != Some(origin.package) && schema.access.origin.package != origin.package
         {
             let target = self.diagnostic_type_name(&target);
@@ -2838,7 +2849,9 @@ impl Analyzer {
                 .cloned()
                 .map(|function| (function, origin.clone()))
                 .unwrap_or_else(|| (declaration.clone(), schema.access.origin.clone()));
-            if function.body.is_none() {
+            let primitive_intrinsic =
+                origin.package == PackageId::CORE.0 && primitive_scalar_type(&target);
+            if function.body.is_none() && !primitive_intrinsic {
                 self.error(format!(
                     "trait implementation method `{}.{method_name}` requires a body",
                     key.trait_ref.name
@@ -2915,6 +2928,7 @@ impl Analyzer {
 
         let mut methods = HashMap::new();
         for (method_id, canonical, function, function_origin) in registered {
+            let primitive_intrinsic = function.body.is_none() && primitive_scalar_type(&target);
             if function.compile_groups.is_empty() {
                 let groups = function
                     .groups
@@ -2949,10 +2963,12 @@ impl Analyzer {
                         result,
                     },
                 );
-                self.function_order.push(canonical.clone());
-                self.functions.insert(canonical.clone(), function);
-                self.function_origins
-                    .insert(canonical.clone(), function_origin);
+                if !primitive_intrinsic {
+                    self.function_order.push(canonical.clone());
+                    self.functions.insert(canonical.clone(), function);
+                    self.function_origins
+                        .insert(canonical.clone(), function_origin);
+                }
             } else {
                 self.function_template_order.push(canonical.clone());
                 self.function_templates.insert(canonical.clone(), function);
@@ -2961,8 +2977,10 @@ impl Analyzer {
             }
             self.function_accesses
                 .insert(canonical.clone(), implementation_access.clone());
-            self.function_type_substitutions
-                .insert(canonical.clone(), substitutions.clone());
+            if !primitive_intrinsic {
+                self.function_type_substitutions
+                    .insert(canonical.clone(), substitutions.clone());
+            }
             methods.insert(method_id.clone(), canonical);
             let declaration = &schema.methods[&method_id];
             if schema_function_has_receiver(declaration) {
@@ -5036,6 +5054,9 @@ impl Analyzer {
             {
                 continue;
             }
+            if template.body.is_none() && template_name.starts_with("$trait$impl$") {
+                continue;
+            }
             if template.return_type.is_none() {
                 self.error(format!(
                     "generic function `{template_name}` requires an explicit return type"
@@ -5604,21 +5625,6 @@ impl Analyzer {
             let satisfied =
                 if name == self.lang_item_name(LangItemKind::Copy) && arguments.is_empty() {
                     self.is_copy_type(&subject)
-                } else if BINARY_OPERATOR_TRAITS
-                    .iter()
-                    .any(|operator| name == self.lang_item_name(operator.lang_item))
-                    && subject.is_integer()
-                    && arguments.as_slice() == [subject.clone()]
-                {
-                    associated_types
-                        .get("Output")
-                        .is_none_or(|output| output == &subject)
-                } else if let Some(output) =
-                    self.builtin_unary_operator_output(name, &subject, &arguments)
-                {
-                    associated_types
-                        .get("Output")
-                        .is_none_or(|expected| expected == &output)
                 } else {
                     self.trait_impls
                         .get(&TraitImplKey {
@@ -5671,21 +5677,6 @@ impl Analyzer {
         }
         if name == self.lang_item_name(LangItemKind::Copy) && arguments.is_empty() {
             return self.is_copy_type(&subject);
-        }
-        if BINARY_OPERATOR_TRAITS
-            .iter()
-            .any(|operator| name == self.lang_item_name(operator.lang_item))
-            && subject.is_integer()
-            && arguments.as_slice() == [subject.clone()]
-        {
-            return associated_types
-                .get("Output")
-                .is_none_or(|output| output == &subject);
-        }
-        if let Some(output) = self.builtin_unary_operator_output(name, &subject, &arguments) {
-            return associated_types
-                .get("Output")
-                .is_none_or(|expected| expected == &output);
         }
         self.trait_impls
             .get(&TraitImplKey {
@@ -6874,6 +6865,20 @@ impl Analyzer {
                                 "negative integer literal `-{value}` does not fit in `{ty}`"
                             ));
                         }
+                        let neg_name = self.lang_item_name(LangItemKind::Neg);
+                        if ty != Ty::Error
+                            && !self.trait_impls.keys().any(|key| {
+                                key.self_ty == ty
+                                    && key.trait_ref.name == neg_name
+                                    && key.trait_ref.arguments.is_empty()
+                            })
+                        {
+                            self.error(format!(
+                                "type `{}` does not implement `Neg` required by unary `-`",
+                                self.diagnostic_type_name(&ty)
+                            ));
+                            return error_expr();
+                        }
                         return HirExpr {
                             ty: ty.clone(),
                             kind: HirExprKind::Unary(
@@ -6892,6 +6897,21 @@ impl Analyzer {
                     UnaryOp::Deref => unreachable!(),
                 };
                 let operand = self.lower_expr(operand, operand_expected.as_ref(), context);
+                if let Some(operator_trait) = unary_operator_trait(*operator) {
+                    let implemented = self.trait_impls.keys().any(|key| {
+                        key.self_ty == operand.ty
+                            && key.trait_ref.name == self.lang_item_name(operator_trait.lang_item)
+                            && key.trait_ref.arguments.is_empty()
+                    });
+                    if !implemented && operand.ty != Ty::Error {
+                        self.error(format!(
+                            "type `{}` does not implement `{}` required by unary operator",
+                            self.diagnostic_type_name(&operand.ty),
+                            operator_trait.lang_item.source_name(),
+                        ));
+                        return error_expr();
+                    }
+                }
                 let ty = match operator {
                     UnaryOp::Not => {
                         self.require_same_type(&operand.ty, &Ty::Bool, "operand of `!`");

@@ -5151,8 +5151,11 @@ let main(): i32 = {
         "unexpected collection diagnostics: {:?}",
         analyzer.diagnostics
     );
-    assert_eq!(analyzer.trait_impls.len(), 1);
-    let (key, implementation) = analyzer.trait_impls.iter().next().unwrap();
+    let (key, implementation) = analyzer
+        .trait_impls
+        .iter()
+        .find(|(key, _)| key.trait_ref.name == "Convert")
+        .expect("program Convert implementation");
     assert_eq!(key.self_ty, Ty::Struct("Number".into()));
     assert_eq!(key.trait_ref.name, "Convert");
     assert_eq!(key.trait_ref.arguments, vec![Ty::I32]);

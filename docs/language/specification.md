@@ -41,6 +41,11 @@
   `auto` 和 `shared` 也由使用位置与语义约束解释。它们都不是全局保留字。
 - `borrow` 是上下文识别的借用构造器；`do`、`try`、`throw` 和 `unsafe` 来自
   `core.control`。这些拼写均词法化为普通标识符，不占用声明、成员或路径名称。
+- `let Name = type` 声明不透明名义类型。标准 `bool`、固定宽度有符号/无符号整数以及
+  `isize`、`usize` 由 `core.primitives` 以这种形式声明，并由经过验证的 lang-item identity
+  选择原生表示和快速 lowering；`isize`、`usize` 的宽度来自目标指针宽度，不是 `i64`、`u64` 别名。
+- `let Name = type { value, ... }` 声明 primitive type form 的封闭值集合；标准布尔类型
+  写作 `let bool = type { false, true }`。
 - region 名以 `'` 开头，后接普通标识符主体，例如 `'a`、`'input`；`'static` 是预定义 region。
 
 ## 3. 声明与作用域

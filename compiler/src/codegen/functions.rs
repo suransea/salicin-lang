@@ -158,6 +158,13 @@ impl Analyzer {
         }
 
         let Some(body) = function.body.as_ref() else {
+            if name.starts_with("$trait$impl$") {
+                self.function_states
+                    .insert(name.to_owned(), ResolutionState::Resolved);
+                let result = signature.result.clone().unwrap_or(Ty::Error);
+                self.set_function_result(name, result.clone());
+                return result;
+            }
             self.error(format!("function `{name}` has no body"));
             self.function_states
                 .insert(name.to_owned(), ResolutionState::Resolved);

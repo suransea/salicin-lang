@@ -10,6 +10,7 @@ use super::Analyzer;
 impl Analyzer {
     pub(super) fn copy_layout_is_valid(&self, target: &Ty, valid: &HashSet<Ty>) -> bool {
         match target {
+            Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool => true,
             Ty::Struct(name) => self.struct_layouts.get(name).is_some_and(|layout| {
                 layout
                     .fields
@@ -69,12 +70,7 @@ impl Analyzer {
 
     pub(super) fn type_is_copy_with_nominals(&self, ty: &Ty, valid: &HashSet<Ty>) -> bool {
         match ty {
-            Ty::I32
-            | Ty::I64
-            | Ty::U32
-            | Ty::U64
-            | Ty::Bool
-            | Ty::Unit
+            Ty::Unit
             | Ty::Pointer { .. }
             | Ty::Function(_)
             | Ty::EffectRow { .. }
@@ -83,7 +79,9 @@ impl Analyzer {
             Ty::Reference { mutable, .. } => !mutable,
             Ty::Array(element, _) => self.type_is_copy_with_nominals(element, valid),
             Ty::Enum(name) if name == self.lang_item_name(LangItemKind::Never) => true,
-            Ty::Struct(_) | Ty::Enum(_) => valid.contains(ty),
+            Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool | Ty::Struct(_) | Ty::Enum(_) => {
+                valid.contains(ty)
+            }
             Ty::Callable(_) | Ty::Continuation { .. } | Ty::EffectCallable { .. } => false,
         }
     }

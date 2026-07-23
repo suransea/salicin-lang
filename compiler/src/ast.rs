@@ -120,6 +120,7 @@ pub struct DomainDef {
 pub struct TypeFormDef {
     pub name: String,
     pub compile_groups: Vec<Vec<CompileParam>>,
+    pub values: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

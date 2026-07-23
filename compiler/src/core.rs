@@ -22,6 +22,7 @@ const EDITION_2026_LIB: &str = include_str!("../../library/core/src/lib.sc");
 const EDITION_2026_PRELUDE: &str = include_str!("../../library/core/src/prelude.sc");
 const EDITION_2026_NEVER: &str = include_str!("../../library/core/src/never.sc");
 const EDITION_2026_MARKER: &str = include_str!("../../library/core/src/marker.sc");
+const EDITION_2026_PRIMITIVES: &str = include_str!("../../library/core/src/primitives.sc");
 const EDITION_2026_OPTION: &str = include_str!("../../library/core/src/option.sc");
 const EDITION_2026_RESULT: &str = include_str!("../../library/core/src/result.sc");
 const EDITION_2026_CMP: &str = include_str!("../../library/core/src/cmp.sc");
@@ -38,7 +39,8 @@ const EDITION_2026_ITER: &str = include_str!("../../library/core/src/iter.sc");
 const EDITION_2026_ALGEBRA: &str = include_str!("../../library/core/src/algebra.sc");
 const EDITION_2026_FUNCTIONAL: &str = include_str!("../../library/core/src/functional.sc");
 
-const NON_LANG_ITEM_CORE_MODULES: &[&str] = &["effect", "control", "algebra", "functional"];
+const NON_LANG_ITEM_CORE_MODULES: &[&str] =
+    &["primitives", "effect", "control", "algebra", "functional"];
 
 #[cfg(test)]
 const TEST_ASSIGNMENT_OPS: &str = r#"
@@ -117,6 +119,19 @@ pub enum LangItemKind {
     Option,
     Result,
     Never,
+    Bool,
+    I8,
+    I16,
+    I32,
+    I64,
+    I128,
+    ISize,
+    U8,
+    U16,
+    U32,
+    U64,
+    U128,
+    USize,
     Copy,
     Drop,
     Add,
@@ -172,10 +187,23 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 55] = [
+    const ALL: [Self; 68] = [
         Self::Option,
         Self::Result,
         Self::Never,
+        Self::Bool,
+        Self::I8,
+        Self::I16,
+        Self::I32,
+        Self::I64,
+        Self::I128,
+        Self::ISize,
+        Self::U8,
+        Self::U16,
+        Self::U32,
+        Self::U64,
+        Self::U128,
+        Self::USize,
         Self::Copy,
         Self::Drop,
         Self::Add,
@@ -235,6 +263,19 @@ impl LangItemKind {
             Self::Option => "Option",
             Self::Result => "Result",
             Self::Never => "Never",
+            Self::Bool => "bool",
+            Self::I8 => "i8",
+            Self::I16 => "i16",
+            Self::I32 => "i32",
+            Self::I64 => "i64",
+            Self::I128 => "i128",
+            Self::ISize => "isize",
+            Self::U8 => "u8",
+            Self::U16 => "u16",
+            Self::U32 => "u32",
+            Self::U64 => "u64",
+            Self::U128 => "u128",
+            Self::USize => "usize",
             Self::Copy => "Copy",
             Self::Drop => "Drop",
             Self::Add => "Add",
@@ -301,7 +342,20 @@ impl LangItemKind {
             | Self::PassingDomain
             | Self::EffectDomain
             | Self::ParametersDomain => "domain",
-            Self::BorrowTypeForm => "type form",
+            Self::BorrowTypeForm
+            | Self::Bool
+            | Self::I8
+            | Self::I16
+            | Self::I32
+            | Self::I64
+            | Self::I128
+            | Self::ISize
+            | Self::U8
+            | Self::U16
+            | Self::U32
+            | Self::U64
+            | Self::U128
+            | Self::USize => "type form",
             Self::BorrowValueForm => "function",
             Self::Do | Self::Try | Self::Throw | Self::Unsafe | Self::Loop | Self::While => {
                 "function"
@@ -361,6 +415,19 @@ impl LangItemKind {
             Self::Option
             | Self::Result
             | Self::Never
+            | Self::Bool
+            | Self::I8
+            | Self::I16
+            | Self::I32
+            | Self::I64
+            | Self::I128
+            | Self::ISize
+            | Self::U8
+            | Self::U16
+            | Self::U32
+            | Self::U64
+            | Self::U128
+            | Self::USize
             | Self::Copy
             | Self::Drop
             | Self::PartialOrdering
@@ -462,6 +529,19 @@ pub struct LangItems {
     option: LangItem,
     result: LangItem,
     never: LangItem,
+    bool_type: LangItem,
+    i8_type: LangItem,
+    i16_type: LangItem,
+    i32_type: LangItem,
+    i64_type: LangItem,
+    i128_type: LangItem,
+    isize_type: LangItem,
+    u8_type: LangItem,
+    u16_type: LangItem,
+    u32_type: LangItem,
+    u64_type: LangItem,
+    u128_type: LangItem,
+    usize_type: LangItem,
     copy: LangItem,
     drop: LangItem,
     add: LangItem,
@@ -527,6 +607,21 @@ impl LangItems {
 
     pub const fn never(&self) -> &LangItem {
         &self.never
+    }
+    pub const fn bool_type(&self) -> &LangItem {
+        &self.bool_type
+    }
+    pub const fn i32_type(&self) -> &LangItem {
+        &self.i32_type
+    }
+    pub const fn i64_type(&self) -> &LangItem {
+        &self.i64_type
+    }
+    pub const fn u32_type(&self) -> &LangItem {
+        &self.u32_type
+    }
+    pub const fn u64_type(&self) -> &LangItem {
+        &self.u64_type
     }
 
     pub const fn copy(&self) -> &LangItem {
@@ -704,6 +799,19 @@ impl LangItems {
             LangItemKind::Option => &self.option,
             LangItemKind::Result => &self.result,
             LangItemKind::Never => &self.never,
+            LangItemKind::Bool => &self.bool_type,
+            LangItemKind::I8 => &self.i8_type,
+            LangItemKind::I16 => &self.i16_type,
+            LangItemKind::I32 => &self.i32_type,
+            LangItemKind::I64 => &self.i64_type,
+            LangItemKind::I128 => &self.i128_type,
+            LangItemKind::ISize => &self.isize_type,
+            LangItemKind::U8 => &self.u8_type,
+            LangItemKind::U16 => &self.u16_type,
+            LangItemKind::U32 => &self.u32_type,
+            LangItemKind::U64 => &self.u64_type,
+            LangItemKind::U128 => &self.u128_type,
+            LangItemKind::USize => &self.usize_type,
             LangItemKind::Copy => &self.copy,
             LangItemKind::Drop => &self.drop,
             LangItemKind::Add => &self.add,
@@ -779,6 +887,7 @@ impl CoreBundle {
                     ("prelude", EDITION_2026_PRELUDE),
                     ("never", EDITION_2026_NEVER),
                     ("marker", EDITION_2026_MARKER),
+                    ("primitives", EDITION_2026_PRIMITIVES),
                     ("option", EDITION_2026_OPTION),
                     ("result", EDITION_2026_RESULT),
                     ("cmp", EDITION_2026_CMP),
@@ -816,7 +925,7 @@ impl CoreBundle {
         // Most contract tests isolate one prelude/operator declaration. Keep
         // the independently tested control module present in those fixtures.
         let source = format!(
-            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{TEST_EFFECT}\n{TEST_EFFECT_HANDLER}\n{EDITION_2026_DOMAINS}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}"
+            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{TEST_EFFECT}\n{TEST_EFFECT_HANDLER}\n{EDITION_2026_PRIMITIVES}\n{EDITION_2026_DOMAINS}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}"
         );
         let mut program = parser::parse(&source).map_err(|error| {
             CoreBundleError::new(
@@ -898,6 +1007,19 @@ impl CoreBundle {
             &mut lang_items.option,
             &mut lang_items.result,
             &mut lang_items.never,
+            &mut lang_items.bool_type,
+            &mut lang_items.i8_type,
+            &mut lang_items.i16_type,
+            &mut lang_items.i32_type,
+            &mut lang_items.i64_type,
+            &mut lang_items.i128_type,
+            &mut lang_items.isize_type,
+            &mut lang_items.u8_type,
+            &mut lang_items.u16_type,
+            &mut lang_items.u32_type,
+            &mut lang_items.u64_type,
+            &mut lang_items.u128_type,
+            &mut lang_items.usize_type,
             &mut lang_items.copy,
             &mut lang_items.drop,
             &mut lang_items.add,
@@ -1202,6 +1324,19 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         option: item(LangItemKind::Option),
         result: item(LangItemKind::Result),
         never: item(LangItemKind::Never),
+        bool_type: item(LangItemKind::Bool),
+        i8_type: item(LangItemKind::I8),
+        i16_type: item(LangItemKind::I16),
+        i32_type: item(LangItemKind::I32),
+        i64_type: item(LangItemKind::I64),
+        i128_type: item(LangItemKind::I128),
+        isize_type: item(LangItemKind::ISize),
+        u8_type: item(LangItemKind::U8),
+        u16_type: item(LangItemKind::U16),
+        u32_type: item(LangItemKind::U32),
+        u64_type: item(LangItemKind::U64),
+        u128_type: item(LangItemKind::U128),
+        usize_type: item(LangItemKind::USize),
         copy: item(LangItemKind::Copy),
         drop: item(LangItemKind::Drop),
         add: item(LangItemKind::Add),
@@ -1347,6 +1482,38 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         (LangItemKind::BorrowTypeForm, Item::TypeForm(definition)) => {
             validate_borrow_type_form(definition, diagnostics)
         }
+        (LangItemKind::Bool, Item::TypeForm(definition)) => {
+            if !definition.compile_groups.is_empty()
+                || definition.values.as_slice() != ["false", "true"]
+            {
+                diagnostics.push(
+                    "primitive lang item `bool` must have shape `pub let bool = type { false, true }`"
+                        .to_owned(),
+                );
+            }
+        }
+        (
+            LangItemKind::I8
+            | LangItemKind::I16
+            | LangItemKind::I32
+            | LangItemKind::I64
+            | LangItemKind::I128
+            | LangItemKind::ISize
+            | LangItemKind::U8
+            | LangItemKind::U16
+            | LangItemKind::U32
+            | LangItemKind::U64
+            | LangItemKind::U128
+            | LangItemKind::USize,
+            Item::TypeForm(definition),
+        ) => {
+            if !definition.compile_groups.is_empty() || !definition.values.is_empty() {
+                diagnostics.push(format!(
+                    "primitive lang item `{}` must have shape `pub let {} = type`",
+                    definition.name, definition.name
+                ));
+            }
+        }
         (LangItemKind::BorrowValueForm, Item::Function(function)) => {
             validate_borrow_value_form(function, diagnostics)
         }
@@ -1451,7 +1618,8 @@ fn validate_domain(
 }
 
 fn validate_borrow_type_form(definition: &TypeFormDef, diagnostics: &mut Vec<String>) {
-    let valid = definition.compile_groups == borrow_compile_groups();
+    let valid =
+        definition.compile_groups == borrow_compile_groups() && definition.values.is_empty();
     if !valid {
         diagnostics.push(
             "lang item `borrow` type form must have shape `pub let borrow(A: access = shared)(R: region)(T: type): type`"
@@ -2558,6 +2726,7 @@ pub let Shr(Rhs: type) = trait {
         let mut modules = vec![
             ("lib", EDITION_2026_LIB),
             ("prelude", EDITION_2026_PRELUDE),
+            ("primitives", EDITION_2026_PRIMITIVES),
             ("never", EDITION_2026_NEVER),
             ("marker", EDITION_2026_MARKER),
             ("option", EDITION_2026_OPTION),
@@ -2593,7 +2762,7 @@ pub let Shr(Rhs: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 27);
+        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 124);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -2601,6 +2770,21 @@ pub let Shr(Rhs: type) = trait {
                 LangItemKind::Option => "core::option::Option".to_owned(),
                 LangItemKind::Result => "core::result::Result".to_owned(),
                 LangItemKind::Never => "core::never::Never".to_owned(),
+                LangItemKind::Bool
+                | LangItemKind::I8
+                | LangItemKind::I16
+                | LangItemKind::I32
+                | LangItemKind::I64
+                | LangItemKind::I128
+                | LangItemKind::ISize
+                | LangItemKind::U8
+                | LangItemKind::U16
+                | LangItemKind::U32
+                | LangItemKind::U64
+                | LangItemKind::U128
+                | LangItemKind::USize => {
+                    format!("core::primitives::{}", kind.source_name())
+                }
                 LangItemKind::Copy | LangItemKind::Drop => {
                     format!("core::marker::{}", kind.source_name())
                 }
@@ -2674,6 +2858,19 @@ pub let Shr(Rhs: type) = trait {
                 LangItemKind::Option => vec!["option"],
                 LangItemKind::Result => vec!["result"],
                 LangItemKind::Never => vec!["never"],
+                LangItemKind::Bool
+                | LangItemKind::I8
+                | LangItemKind::I16
+                | LangItemKind::I32
+                | LangItemKind::I64
+                | LangItemKind::I128
+                | LangItemKind::ISize
+                | LangItemKind::U8
+                | LangItemKind::U16
+                | LangItemKind::U32
+                | LangItemKind::U64
+                | LangItemKind::U128
+                | LangItemKind::USize => vec!["primitives"],
                 LangItemKind::Copy | LangItemKind::Drop => vec!["marker"],
                 LangItemKind::Add
                 | LangItemKind::Sub
@@ -2761,6 +2958,18 @@ pub let Shr(Rhs: type) = trait {
                     [operation] if operation.name == "suspend" && operation.return_type == Some(Type::Unit)
                 )
         ));
+    }
+
+    #[test]
+    fn bool_lang_item_requires_its_closed_value_set() {
+        let malformed = EDITION_2026_PRIMITIVES
+            .replace("pub let bool = type { false, true }", "pub let bool = type");
+        let modules = edition_2026_test_modules(&[("primitives", &malformed)]);
+        let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
+        assert!(error.diagnostics().iter().any(|diagnostic| {
+            diagnostic
+                == "primitive lang item `bool` must have shape `pub let bool = type { false, true }`"
+        }));
     }
 
     #[test]

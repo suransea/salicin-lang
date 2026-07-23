@@ -57,6 +57,19 @@ impl Analyzer {
         let left = self.access_place(place.clone(), AccessKind::Copy, context);
         let right = self.lower_expr(value, Some(&place.ty), context);
         self.require_same_type(&right.ty, &place.ty, "right operand of compound assignment");
+        let implemented = self.trait_impls.keys().any(|key| {
+            key.self_ty == place.ty
+                && key.trait_ref.name == self.lang_item_name(lang_item)
+                && key.trait_ref.arguments.as_slice() == [right.ty.clone()]
+        });
+        if !implemented {
+            self.error(format!(
+                "type `{}` does not implement `{}` required by compound assignment",
+                self.diagnostic_type_name(&place.ty),
+                lang_item.source_name(),
+            ));
+            return error_expr();
+        }
         let binary = HirExpr {
             ty: place.ty.clone(),
             kind: HirExprKind::Binary(Box::new(left), operator, Box::new(right)),

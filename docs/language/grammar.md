@@ -98,7 +98,10 @@ let_decl = "let", [ "mut" ], IDENT,
 with_clause = IDENT("with"), "(", effect, { ",", effect }, [ "," ], ")" ;
 effect = IDENT, [ "(", type_expr, { ",", type_expr }, [ "," ], ")" ] ;
 
-initializer = expression | effect_decl | domain_decl | struct_decl | enum_decl | trait_decl ;
+initializer = expression | opaque_type_decl | effect_decl | domain_decl
+            | struct_decl | enum_decl | trait_decl ;
+
+opaque_type_decl = "type" ;
 
 effect_decl = "effect", [ "{", separators,
               { effect_operation, separators }, "}" ] ;
@@ -128,6 +131,9 @@ constructor_kind = compile_parameter_group,
   `domain { ... }` 是封闭域。标准 `type`、`region`、`effect`、`parameters`、`access` 与 `passing` domain 位于
   `core.domains`；effect 身份位于 `core.effect`；控制 lang item 可在声明名位置使用 `do`、`try`、
   `unsafe`、`loop`。
+- 声明右侧的 `type` 声明新的不透明名义类型，例如 `pub let i32 = type`。可选的封闭值集合
+  声明编译器表示的全部合法值，例如 `pub let bool = type { false, true }`。它不同于
+  `let Alias: type = Target` 透明别名；只有经过验证的 core primitive lang item 才获得编译器原生布局。
 - `let f(x: T) = { body }` 是把参数提升到名称旁边的具名闭包声明；RHS 必须有花括号。
 - `let f: (x: T): R = { body }` 是带名签名的具名闭包声明：所有槽必须有名字。
 - `let f: (T): R = { (x: T) -> body }` 是普通函数值绑定。
