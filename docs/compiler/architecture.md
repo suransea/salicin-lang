@@ -48,8 +48,8 @@ The implementation lives under `compiler/src`:
   - `handlers.rs` owns algebraic-handler state, CPS source transformation, and handler-specific
     AST rewrite helpers.
   - `hir.rs` defines typed IR structs, semantic types, places, signatures, and helper predicates.
-  - `inference.rs` owns generic type-argument seed, unification, template resolution, and
-    expression-constraint inference helpers.
+  - `inference.rs` owns generic function-instance inference, type-argument seeding, unification,
+    template resolution, and expression-constraint inference helpers.
   - `layouts.rs` builds struct/enum field layouts, validates recursive value layout cycles, and
     reports missing nominal layout diagnostics.
   - `lower.rs` defines shared expression-lowering data, type-probe helpers, and HIR construction

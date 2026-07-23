@@ -8,6 +8,7 @@ use super::compile_time::{
     ACCESS_MUT_MARKER, ACCESS_SHARED_MARKER, PASSING_AUTO_MARKER, PASSING_COPY_MARKER,
     PASSING_MOVE_MARKER,
 };
+use super::effects::source_type_is_never;
 use super::flow::LowerCtx;
 use super::hir::{FunctionTy, Ty};
 use super::lower::{InferredTypeArgument, TypeProbe};
@@ -16,6 +17,122 @@ use super::registry::{NominalInstanceKey, NominalKind};
 use super::Analyzer;
 
 impl Analyzer {
+    pub(super) fn resolve_inferred_generic_function_instance(
+        &mut self,
+        name: &str,
+        groups: &[&[CallArg]],
+        expected: Option<&Ty>,
+        context: &LowerCtx,
+    ) -> Option<(String, usize)> {
+        let template = self
+            .function_templates
+            .get(name)
+            .unwrap_or_else(|| panic!("missing generic function template `{name}`"))
+            .clone();
+        let (compile_parameters, mut inferred, runtime_start) = self.seed_type_argument_inference(
+            name,
+            &template.compile_groups,
+            groups,
+            context,
+            false,
+        )?;
+        let runtime_groups = &groups[runtime_start..];
+        if runtime_groups.len() > template.groups.len() {
+            self.error(format!(
+                "too many parameter groups in call to `{name}`: expected at most {}, found {}",
+                template.groups.len(),
+                runtime_groups.len()
+            ));
+            return None;
+        }
+        let mut ordered_runtime_groups = Vec::new();
+        for (group_index, (arguments, parameters)) in
+            runtime_groups.iter().zip(&template.groups).enumerate()
+        {
+            let parameter_names = parameters
+                .iter()
+                .map(|parameter| parameter.name.clone())
+                .collect::<Vec<_>>();
+            ordered_runtime_groups.push(self.ordered_call_arguments(
+                name,
+                group_index + 1,
+                arguments,
+                &parameter_names,
+            )?);
+        }
+
+        if runtime_groups.len() == template.groups.len() {
+            if let (Some(expected), Some(result)) = (expected, template.return_type.as_ref()) {
+                if *expected != Ty::Error {
+                    let logical_result = if template.effects.throws.is_some() {
+                        match result {
+                            Type::Named(_, arguments) if arguments.len() == 2 => &arguments[0],
+                            _ => result,
+                        }
+                    } else {
+                        result
+                    };
+                    if !source_type_is_never(logical_result) {
+                        if let Err(message) = self.unify_template_ty(
+                            logical_result,
+                            expected,
+                            None,
+                            &compile_parameters,
+                            &mut inferred,
+                            "expected result type",
+                        ) {
+                            self.error(message);
+                            return None;
+                        }
+                    }
+                }
+            }
+        }
+
+        let constraints: Vec<_> = ordered_runtime_groups
+            .iter()
+            .zip(&template.groups)
+            .enumerate()
+            .flat_map(|(group_index, (arguments, parameters))| {
+                arguments
+                    .iter()
+                    .zip(parameters)
+                    .map(move |(argument, parameter)| {
+                        (
+                            parameter.ty.clone(),
+                            argument.value.clone(),
+                            format!(
+                                "argument for parameter `{}` in group {}",
+                                parameter.name,
+                                group_index + 1
+                            ),
+                        )
+                    })
+            })
+            .collect();
+        let unsupported_argument = self.infer_from_expression_constraints(
+            &constraints,
+            &compile_parameters,
+            &mut inferred,
+            context,
+        )?;
+
+        let ordered_parameters = template
+            .compile_groups
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+        let (source_arguments, arguments) = self.finish_type_argument_inference(
+            name,
+            &ordered_parameters,
+            &inferred,
+            unsupported_argument,
+        )?;
+        let canonical = self.ensure_function_instance(name, source_arguments, arguments)?;
+        Some((canonical, runtime_start))
+    }
+
     pub(super) fn unify_template_ty(
         &self,
         template: &Type,
