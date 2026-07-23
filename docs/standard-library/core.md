@@ -6,12 +6,17 @@ validates declarations that have language-defined roles.
 
 ## Modules
 
-`core.prelude` contains the deliberately small implicit surface:
+`core.lib` is the root facade. It only re-exports the public root surface: `Never`, `Copy`, `Drop`,
+`Option`, and `Result`.
+
+`core.prelude` is also only a facade and contains the deliberately small implicit surface:
 
 - the uninhabited `Never` type
 - the `Copy` and `Drop` traits
 
-The `core` root contains fundamental ordinary data types that are intentionally not prelude names:
+The definitions live in focused modules. `core.never` owns `Never`, `core.marker` owns `Copy` and
+`Drop`, and `core.option` and `core.result` own fundamental ordinary data types that are
+intentionally not prelude names:
 
 ```sc
 pub let Option(T: type) = enum {
@@ -26,14 +31,16 @@ pub let Result(E: type)
 }
 ```
 
-Naming them requires an ordinary root import such as `use std.Option` or `use std.Result`.
+Naming `Option` or `Result` requires an ordinary root import such as `use std.Option` or
+`use std.Result`.
 Operators and syntax that lower through these identities use the validated standard-library
 declarations directly; importing is only required when source code writes the names.
 
-`core.ops` contains the arithmetic protocols `Add`, `Sub`, `Mul`, `Div`, and `Rem`, the equality
-protocol `Eq`, the ordering protocol `PartialOrd`, the unary protocols `Neg` and `Not`, the bitwise
-protocols `BitAnd`, `BitOr`, `BitXor`, `Shl`, and `Shr`, and the assignment protocols. They are not
-in the prelude.
+`core.ops` is a compatibility facade over smaller protocol modules. `core.ops.arith` defines
+`Add`, `Sub`, `Mul`, `Div`, `Rem`, and `Neg`; `core.ops.bit` defines `Not`, `BitAnd`, `BitOr`,
+`BitXor`, `Shl`, and `Shr`; `core.ops.assign` defines the compound-assignment protocols; and
+`core.cmp` defines `Eq`, `PartialOrdering`, and `PartialOrd`. The `std.ops` facade re-exports the
+operator-facing names for ordinary imports. They are not in the prelude.
 Arithmetic and bitwise protocols consume their operands and use an associated `Output` type:
 
 ```sc
@@ -130,12 +137,12 @@ concrete and generic nominal trait implementations. `??` dispatches non-`Option`
 values through `Coalesce` when the fallback can be represented as a no-capture lifted function. `?.`
 dispatches non-`Option`/`Result` nominal values through `Chain` when the synthesized transform
 closure can be represented in the same way; simple field access is supported, while transforms that
-capture outer method-call arguments still require the general callable-to-function bridge. The root
+capture outer method-call arguments still require the general callable-to-function bridge. The facade
 `core.Option`/`core.Result` paths remain available as standard-library specializations. The older
 `std.ops.Chain` and `std.ops.Coalesce` paths are accepted as compatibility aliases, but new source
 should import the protocols from `std.flow`.
 
-`core.effects` owns standard effect identities. It is not part of the prelude; ordinary source
+`core.effect` owns standard effect identities. It is not part of the prelude; ordinary source
 should import these identities through `std.effect`:
 
 ```sc
@@ -197,7 +204,8 @@ the standard effect declarations. The `unsafe` body removes the marker effect wi
 permitted only as a validated core lang item; ordinary package functions still require
 `= { ... }` bodies.
 
-It also declares the protocol and erased runtime contracts used by algebraic handler lowering:
+`core.effect.handler` declares the protocol and erased runtime contracts used by algebraic handler
+lowering:
 
 ```sc
 pub let Continuation(Input: type, Output: type) = struct {}
@@ -213,7 +221,8 @@ pub let Handle = trait(Self: effect) {
 `Continuation` is a one-shot suspended computation. `EffectCallable` is an owned action awaiting a
 handler-supplied continuation from `Output` to `Answer`; `Input` is the action's packed runtime input.
 Both native values carry call and drop entries, an environment pointer, and an ownership flag. They
-are module exports rather than prelude names and cannot be replaced by same-named user declarations.
+are `core.effect.handler` exports rather than prelude names and cannot be replaced by same-named user
+declarations.
 The compiler-internal action entry has the logical signature
 `(environment, Input, Continuation(Output, Answer)): Answer`. Erasing or invoking an action consumes
 its owner; a dropped, uninvoked action releases its captured environment through the stored drop
@@ -228,11 +237,11 @@ handler implementations are not ordinary source-level standard-library functions
 pub let do(E: effect, T: type)
   (move action: (): T with(E)): T with(E)
 pub let try(F: effect, T: type, E: type)
-  (move action: (): T with(core.effects.Throws(E), F)): core.Result(E)(T) with(F)
+  (move action: (): T with(core.effect.Throws(E), F)): core.Result(E)(T) with(F)
 pub let throw(Error: type)
-  (move error: Error): Never with(core.effects.Throws(Error))
+  (move error: Error): Never with(core.effect.Throws(Error))
 pub let unsafe(E: effect, T: type)
-  (move action: (): T with(core.effects.Unsafe, E)): T with(E)
+  (move action: (): T with(core.effect.Unsafe, E)): T with(E)
 pub let loop(E: effect, T: type)
   (move body: (): () with(E)): T with(E)
 ```
@@ -248,8 +257,8 @@ pub let do(E: effect, T: type)
 }
 
 pub let try(F: effect, T: type, E: type)
-  (move action: (): T with(core.effects.Throws(E), F)): core.Result(E)(T) with(F) = {
-  core.effects.Throws(E).handle(
+  (move action: (): T with(core.effect.Throws(E), F)): core.Result(E)(T) with(F) = {
+  core.effect.Throws(E).handle(
     raise: { (error) -> core.Result.Err(error) },
     done: { (value) -> core.Result.Ok(value) },
   ) {
@@ -258,8 +267,8 @@ pub let try(F: effect, T: type, E: type)
 }
 
 pub let throw(Error: type)
-  (move error: Error): Never with(core.effects.Throws(Error)) = {
-  core.effects.Throws(Error).raise(error)
+  (move error: Error): Never with(core.effect.Throws(Error)) = {
+  core.effect.Throws(Error).raise(error)
 }
 ```
 
@@ -287,7 +296,7 @@ iterator for `Iterator.next`, and stops on `None`. An inherent or unrelated trai
 
 The control spellings bind to these validated identities without importing ordinary names. Standard
 effect identities such as `Throws` remain normal `std.effect` exports when named in source, backed
-by `core.effects` identities. An ordinary same-named declaration cannot acquire lang-item lowering
+by `core.effect` identities. An ordinary same-named declaration cannot acquire lang-item lowering
 behavior. Future control features
 follow the same rule: for example, async lowering must add `Future`, `async`, and handler contracts
 to the matching core release when it becomes executable, rather than reserving undocumented compiler

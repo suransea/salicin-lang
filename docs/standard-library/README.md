@@ -7,26 +7,35 @@ the `std` namespace:
 - `alloc` contains owning heap types and depends on the allocator ABI.
 - `std` will contain host facilities such as files, processes, networking, and threading.
 
-Source is organized by public module rather than accumulated in a release-oriented prelude file:
+Source is organized around definition modules plus small `pub use` facades:
 
 ```text
 library/
   core/src/
-    root.sc
+    lib.sc
     prelude.sc
-    ops.sc
+    never.sc
+    marker.sc
+    option.sc
+    result.sc
+    cmp.sc
     flow.sc
-    effects.sc
+    ops.sc
+    ops/arith.sc
+    ops/bit.sc
+    ops/assign.sc
+    effect.sc
+    effect/handler.sc
     domains.sc
     control.sc
     iter.sc
     algebra.sc
     functional.sc
-    option.sc
-    result.sc
   alloc/src/
+    lib.sc
     boxed.sc
     vec.sc
+    raw.sc
 ```
 
 ## Prelude policy
@@ -41,14 +50,14 @@ use std.Option
 use std.Result
 ```
 
-Operator traits are imported from `std.ops`, `?.`/`??` protocols from `std.flow`, effect identities
-from `std.effect`, compile-time domains from `std.domains`, compiler-lowered control contracts from
-`std.control`, algebra protocols from `std.algebra`, higher-kinded functional protocols from
-`std.functional`, iteration protocols from `std.iter`, and owning containers from `std.boxed` and
-`std.vec`. The underlying implementation is still split across `core` and `alloc`: `core.option`
-and `core.result` hold standard implementations for the root `Option` and `Result` types. Standard
-declarations must be named through their module or imported explicitly with ordinary `use`; for
-example:
+Operator traits are imported from the `std.ops` facade, `?.`/`??` protocols from `std.flow`, effect
+identities from `std.effect`, handler contracts from `std.effect.handler`, compile-time domains from
+`std.domains`, compiler-lowered control contracts from `std.control`, algebra protocols from
+`std.algebra`, higher-kinded functional protocols from `std.functional`, iteration protocols from
+`std.iter`, and owning containers from `std.boxed` and `std.vec`. The underlying implementation is
+still split across `core` and `alloc`: `core.option` and `core.result` define `Option` and `Result`,
+while the `core` root re-exports the root public surface. Standard declarations must be named
+through their module or imported explicitly with ordinary `use`; for example:
 
 ```sc
 use std.boxed.Box

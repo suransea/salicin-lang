@@ -27,12 +27,12 @@ constructor arguments such as `Pair(V: bool, K: i32)`; labels are matched agains
 compile-time parameter names, normalized to declaration order, and erased before semantic lowering.
 
 Compiler-lowered capabilities are now source-backed by validated declarations in ordinary core
-modules: `core.effects` owns `Unsafe`, `Throws(Error)` with `raise(move error: Error): Never`, and
+modules: `core.effect` owns `Unsafe`, `Throws(Error)` with `raise(move error: Error): Never`, and
 an ordinary `Async` effect with a minimal `suspend(): ()` operation; `core.domains` owns the
 `type`, `region`, `effect`, `access`, and `passing` compile-time domains; `core.control` owns source
 definitions for `do`, `try`, `throw`, and `unsafe`, plus the remaining bodyless intrinsic signature
-for `loop`; `core.flow` owns the standard `Chain` and `Coalesce` protocol declarations for
-`?.` and `??`. These exports remain outside the prelude. `await` is
+for `loop`; `core.effect.handler` owns the handler runtime contracts; `core.flow` owns the standard
+`Chain` and `Coalesce` protocol declarations for `?.` and `??`. These exports remain outside the prelude. `await` is
 intentionally absent until the async/Future lowering slice is implemented, at which point its
 executable standard-library contract must land with the implementation.
 `Never`-returning algebraic operations are handled as abort operations whose clauses omit `resume`,
@@ -49,7 +49,7 @@ unique. Mixed `Throws(Error)` plus `Unsafe` rows now run through the standard ef
 preserving `unsafe { ... }` authorization across generated CPS frames. Concrete residual-handler
 paths also compose through ordinary `Throws(Error)` rows. `Never`-only actions and fully generic
 residual-row cases remain future work.
-`core.control` also defines `Handle`, `Continuation(Input, Output)` and
+`core.effect.handler` also defines `Handle`, `Continuation(Input, Output)` and
 `EffectCallable(Input, Output, Answer)` as validated source contracts. `Handle` declares the
 compiler-derived `Clauses(Value, Answer)` pack and `handle` member shape for every source effect.
 `EffectCallable` has a

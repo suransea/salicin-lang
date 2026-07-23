@@ -1,7 +1,9 @@
 # Allocation library
 
 `library/alloc` contains owning types built on Salicin's raw allocation intrinsics and the
-replaceable allocator ABI. It is split by public module and is not part of the intended prelude.
+replaceable allocator ABI. `alloc.lib` is the root `pub use` facade, `alloc.boxed` and `alloc.vec`
+hold the public definitions, and `alloc.raw` is reserved for package-internal allocation helpers
+once the language has finer-grained visibility. Alloc is not part of the intended prelude.
 
 Alloc names are not implicitly visible. Import only the declarations a module uses:
 

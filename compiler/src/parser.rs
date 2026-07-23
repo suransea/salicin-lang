@@ -6159,7 +6159,7 @@ mod tests {
             .message
             .contains("uppercase nominal name"));
 
-        let lowercase_use = parse("let f(): i32 with(core.effects.ui) = { 0 }\n").unwrap_err();
+        let lowercase_use = parse("let f(): i32 with(core.effect.ui) = { 0 }\n").unwrap_err();
         assert!(lowercase_use.message.contains("uppercase nominal segment"));
     }
 

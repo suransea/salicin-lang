@@ -2810,7 +2810,7 @@ fn throws_errors_report_their_cause() {
         ),
         (
             "throw_error_type_mismatch.sc",
-            "requires `core::effects::Throws(i32)`",
+            "requires `core::effect::Throws(i32)`",
         ),
         (
             "throw_without_value.sc",

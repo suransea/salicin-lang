@@ -18,20 +18,27 @@ use crate::manifest::Edition;
 use crate::modules::{self, PackageId, SourceUnit};
 use crate::parser;
 
+const EDITION_2026_LIB: &str = include_str!("../../library/core/src/lib.sc");
 const EDITION_2026_PRELUDE: &str = include_str!("../../library/core/src/prelude.sc");
-const EDITION_2026_ROOT: &str = include_str!("../../library/core/src/root.sc");
-const EDITION_2026_OPS: &str = include_str!("../../library/core/src/ops.sc");
+const EDITION_2026_NEVER: &str = include_str!("../../library/core/src/never.sc");
+const EDITION_2026_MARKER: &str = include_str!("../../library/core/src/marker.sc");
+const EDITION_2026_OPTION: &str = include_str!("../../library/core/src/option.sc");
+const EDITION_2026_RESULT: &str = include_str!("../../library/core/src/result.sc");
+const EDITION_2026_CMP: &str = include_str!("../../library/core/src/cmp.sc");
 const EDITION_2026_FLOW: &str = include_str!("../../library/core/src/flow.sc");
-const EDITION_2026_EFFECTS: &str = include_str!("../../library/core/src/effects.sc");
+const EDITION_2026_OPS: &str = include_str!("../../library/core/src/ops.sc");
+const EDITION_2026_OPS_ARITH: &str = include_str!("../../library/core/src/ops/arith.sc");
+const EDITION_2026_OPS_BIT: &str = include_str!("../../library/core/src/ops/bit.sc");
+const EDITION_2026_OPS_ASSIGN: &str = include_str!("../../library/core/src/ops/assign.sc");
+const EDITION_2026_EFFECT: &str = include_str!("../../library/core/src/effect.sc");
+const EDITION_2026_EFFECT_HANDLER: &str = include_str!("../../library/core/src/effect/handler.sc");
 const EDITION_2026_DOMAINS: &str = include_str!("../../library/core/src/domains.sc");
 const EDITION_2026_CONTROL: &str = include_str!("../../library/core/src/control.sc");
 const EDITION_2026_ITER: &str = include_str!("../../library/core/src/iter.sc");
 const EDITION_2026_ALGEBRA: &str = include_str!("../../library/core/src/algebra.sc");
 const EDITION_2026_FUNCTIONAL: &str = include_str!("../../library/core/src/functional.sc");
-const EDITION_2026_OPTION: &str = include_str!("../../library/core/src/option.sc");
-const EDITION_2026_RESULT: &str = include_str!("../../library/core/src/result.sc");
 
-const NON_LANG_ITEM_CORE_MODULES: &[&str] = &["core", "effects", "algebra", "functional"];
+const NON_LANG_ITEM_CORE_MODULES: &[&str] = &["effect", "algebra", "functional"];
 
 #[cfg(test)]
 const TEST_ASSIGNMENT_OPS: &str = r#"
@@ -77,9 +84,21 @@ pub let Coalesce = trait {
 "#;
 
 #[cfg(test)]
-const TEST_EFFECTS: &str = r#"
+const TEST_EFFECT: &str = r#"
 pub let Unsafe = effect {}
 pub let Throws(Error: type) = effect { let raise(move error: Error): Never }
+"#;
+
+#[cfg(test)]
+const TEST_EFFECT_HANDLER: &str = r#"
+pub let Continuation(Input: type, Output: type) = struct {}
+pub let EffectCallable(Input: type, Output: type, Answer: type) = struct {}
+pub let Handle = trait(Self: effect) {
+  let Clauses(Value: type, Answer: type): type
+  let handle(Value: type, Answer: type, Rest: effect)
+    (move clauses: Clauses(Value, Answer))
+    (move action: (): Value with(Self, Rest)): Answer with(Rest)
+}
 "#;
 
 /// A stable logical role fulfilled by one declaration in the edition's
@@ -712,18 +731,25 @@ impl CoreBundle {
             Edition::Edition2026 => Self::from_modules(
                 edition,
                 &[
+                    ("lib", EDITION_2026_LIB),
                     ("prelude", EDITION_2026_PRELUDE),
-                    ("core", EDITION_2026_ROOT),
-                    ("ops", EDITION_2026_OPS),
+                    ("never", EDITION_2026_NEVER),
+                    ("marker", EDITION_2026_MARKER),
+                    ("option", EDITION_2026_OPTION),
+                    ("result", EDITION_2026_RESULT),
+                    ("cmp", EDITION_2026_CMP),
                     ("flow", EDITION_2026_FLOW),
-                    ("effects", EDITION_2026_EFFECTS),
+                    ("ops", EDITION_2026_OPS),
+                    ("ops/arith", EDITION_2026_OPS_ARITH),
+                    ("ops/bit", EDITION_2026_OPS_BIT),
+                    ("ops/assign", EDITION_2026_OPS_ASSIGN),
+                    ("effect", EDITION_2026_EFFECT),
+                    ("effect/handler", EDITION_2026_EFFECT_HANDLER),
                     ("domains", EDITION_2026_DOMAINS),
                     ("control", EDITION_2026_CONTROL),
                     ("iter", EDITION_2026_ITER),
                     ("algebra", EDITION_2026_ALGEBRA),
                     ("functional", EDITION_2026_FUNCTIONAL),
-                    ("option", EDITION_2026_OPTION),
-                    ("result", EDITION_2026_RESULT),
                 ],
             ),
         }
@@ -746,7 +772,7 @@ impl CoreBundle {
         // Most contract tests isolate one prelude/operator declaration. Keep
         // the independently tested control module present in those fixtures.
         let source = format!(
-            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{TEST_EFFECTS}\n{EDITION_2026_DOMAINS}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}"
+            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{TEST_EFFECT}\n{TEST_EFFECT_HANDLER}\n{EDITION_2026_DOMAINS}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}"
         );
         let mut program = parser::parse(&source).map_err(|error| {
             CoreBundleError::new(
@@ -783,7 +809,7 @@ impl CoreBundle {
             program.item_origins = vec![
                 ItemOrigin {
                     package: PackageId::CORE.0,
-                    module_path: vec!["@core".to_owned(), (*module).to_owned()],
+                    module_path: core_origin_module_path(module),
                 };
                 program.items.len()
             ];
@@ -811,14 +837,17 @@ impl CoreBundle {
             origin.module_path = if origin.module_path.is_empty() {
                 vec!["@core".to_owned(), "prelude".to_owned()]
             } else {
-                vec![
-                    "@core".to_owned(),
-                    origin
-                        .module_path
-                        .last()
-                        .expect("non-root embedded core module has a name")
-                        .clone(),
-                ]
+                let mut mapped = vec!["@core".to_owned()];
+                if origin
+                    .module_path
+                    .first()
+                    .is_some_and(|name| name == "core")
+                {
+                    mapped.extend(origin.module_path.iter().skip(1).cloned());
+                } else {
+                    mapped.extend(origin.module_path.iter().cloned());
+                }
+                mapped
             };
         }
         for lang_item in [
@@ -863,6 +892,8 @@ impl CoreBundle {
             &mut lang_items.effect_domain,
             &mut lang_items.borrow_type_form,
             &mut lang_items.borrow_value_form,
+            &mut lang_items.continuation,
+            &mut lang_items.effect_callable,
             &mut lang_items.handle,
             &mut lang_items.do_function,
             &mut lang_items.try_function,
@@ -887,8 +918,24 @@ impl CoreBundle {
 fn core_source_module_path(module: &str) -> Vec<String> {
     match module {
         "prelude" => Vec::new(),
-        "core" => vec!["core".to_owned()],
-        module => vec!["core".to_owned(), module.to_owned()],
+        "lib" => vec!["core".to_owned()],
+        module => {
+            let mut path = vec!["core".to_owned()];
+            path.extend(module.split('/').map(str::to_owned));
+            path
+        }
+    }
+}
+
+fn core_origin_module_path(module: &str) -> Vec<String> {
+    match module {
+        "prelude" => vec!["@core".to_owned(), "prelude".to_owned()],
+        "lib" => vec!["@core".to_owned()],
+        module => {
+            let mut path = vec!["@core".to_owned()];
+            path.extend(module.split('/').map(str::to_owned));
+            path
+        }
     }
 }
 
@@ -957,7 +1004,7 @@ pub const fn embedded_flow_source(edition: Edition) -> &'static str {
 /// Return the effect protocol source compiled into this compiler.
 pub const fn embedded_effects_source(edition: Edition) -> &'static str {
     match edition {
-        Edition::Edition2026 => EDITION_2026_EFFECTS,
+        Edition::Edition2026 => EDITION_2026_EFFECT,
     }
 }
 
@@ -1690,7 +1737,7 @@ fn valid_try(function: &Function) -> bool {
     );
     let effects = crate::ast::FunctionEffects {
         custom: vec![Type::Named(
-            "core.effects.Throws".to_owned(),
+            "core.effect.Throws".to_owned(),
             vec![named_type("E")],
         )],
         parameters: vec!["F".to_owned()],
@@ -1718,7 +1765,7 @@ fn valid_try(function: &Function) -> bool {
 fn valid_throw(function: &Function) -> bool {
     let effects = crate::ast::FunctionEffects {
         custom: vec![Type::Named(
-            "core.effects.Throws".to_owned(),
+            "core.effect.Throws".to_owned(),
             vec![named_type("Error")],
         )],
         ..crate::ast::FunctionEffects::default()
@@ -1732,7 +1779,7 @@ fn valid_throw(function: &Function) -> bool {
 
 fn valid_unsafe(function: &Function) -> bool {
     let effects = crate::ast::FunctionEffects {
-        custom: vec![Type::Named("core.effects.Unsafe".to_owned(), Vec::new())],
+        custom: vec![Type::Named("core.effect.Unsafe".to_owned(), Vec::new())],
         parameters: vec!["E".to_owned()],
         ..crate::ast::FunctionEffects::default()
     };
@@ -2178,7 +2225,7 @@ fn valid_borrowing_comparison_method(function: &Function, kind: LangItemKind) ->
                 function.return_type.as_ref(),
                 Some(Type::Named(name, arguments))
                     if arguments.is_empty()
-                        && matches!(name.as_str(), "PartialOrdering" | "core::ops::PartialOrdering")
+                        && matches!(name.as_str(), "PartialOrdering" | "core::cmp::PartialOrdering")
             ),
         ),
         _ => return false,
@@ -2293,6 +2340,42 @@ pub let Shr(Rhs: type) = trait {
         .concat()
     }
 
+    fn edition_2026_test_modules<'a>(
+        overrides: &[(&str, &'a str)],
+    ) -> Vec<(&'static str, &'a str)> {
+        let mut modules = vec![
+            ("lib", EDITION_2026_LIB),
+            ("prelude", EDITION_2026_PRELUDE),
+            ("never", EDITION_2026_NEVER),
+            ("marker", EDITION_2026_MARKER),
+            ("option", EDITION_2026_OPTION),
+            ("result", EDITION_2026_RESULT),
+            ("cmp", EDITION_2026_CMP),
+            ("flow", EDITION_2026_FLOW),
+            ("ops", EDITION_2026_OPS),
+            ("ops/arith", EDITION_2026_OPS_ARITH),
+            ("ops/bit", EDITION_2026_OPS_BIT),
+            ("ops/assign", EDITION_2026_OPS_ASSIGN),
+            ("effect", EDITION_2026_EFFECT),
+            ("effect/handler", EDITION_2026_EFFECT_HANDLER),
+            ("domains", EDITION_2026_DOMAINS),
+            ("control", EDITION_2026_CONTROL),
+            ("iter", EDITION_2026_ITER),
+            ("algebra", EDITION_2026_ALGEBRA),
+            ("functional", EDITION_2026_FUNCTIONAL),
+        ];
+        for (module, source) in overrides {
+            let Some((_, target)) = modules
+                .iter_mut()
+                .find(|(candidate, _)| candidate == module)
+            else {
+                panic!("unknown edition 2026 core test module `{module}`");
+            };
+            *target = *source;
+        }
+        modules
+    }
+
     #[test]
     fn edition_2026_bundle_parses_and_validates() {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
@@ -2303,17 +2386,25 @@ pub let Shr(Rhs: type) = trait {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
             let canonical = match kind {
-                LangItemKind::Option => "core::Option".to_owned(),
-                LangItemKind::Result => "core::Result".to_owned(),
-                LangItemKind::Never | LangItemKind::Copy | LangItemKind::Drop => {
-                    kind.source_name().to_owned()
+                LangItemKind::Option => "core::option::Option".to_owned(),
+                LangItemKind::Result => "core::result::Result".to_owned(),
+                LangItemKind::Never => "core::never::Never".to_owned(),
+                LangItemKind::Copy | LangItemKind::Drop => {
+                    format!("core::marker::{}", kind.source_name())
                 }
                 LangItemKind::Add
                 | LangItemKind::Sub
                 | LangItemKind::Mul
                 | LangItemKind::Div
                 | LangItemKind::Rem
-                | LangItemKind::AddAssign
+                | LangItemKind::Neg => format!("core::ops::arith::{}", kind.source_name()),
+                LangItemKind::BitAnd
+                | LangItemKind::BitOr
+                | LangItemKind::BitXor
+                | LangItemKind::Shl
+                | LangItemKind::Shr
+                | LangItemKind::Not => format!("core::ops::bit::{}", kind.source_name()),
+                LangItemKind::AddAssign
                 | LangItemKind::SubAssign
                 | LangItemKind::MulAssign
                 | LangItemKind::DivAssign
@@ -2322,22 +2413,17 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::BitOrAssign
                 | LangItemKind::BitXorAssign
                 | LangItemKind::ShlAssign
-                | LangItemKind::ShrAssign
-                | LangItemKind::Eq
-                | LangItemKind::PartialOrdering
-                | LangItemKind::PartialOrd
-                | LangItemKind::Neg
-                | LangItemKind::Not
-                | LangItemKind::BitAnd
-                | LangItemKind::BitOr
-                | LangItemKind::BitXor
-                | LangItemKind::Shl
-                | LangItemKind::Shr => format!("core::ops::{}", kind.source_name()),
+                | LangItemKind::ShrAssign => {
+                    format!("core::ops::assign::{}", kind.source_name())
+                }
+                LangItemKind::Eq | LangItemKind::PartialOrdering | LangItemKind::PartialOrd => {
+                    format!("core::cmp::{}", kind.source_name())
+                }
                 LangItemKind::Chain | LangItemKind::Coalesce => {
                     format!("core::flow::{}", kind.source_name())
                 }
                 LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect => {
-                    format!("core::effects::{}", kind.source_name())
+                    format!("core::effect::{}", kind.source_name())
                 }
                 LangItemKind::TypeDomain
                 | LangItemKind::RegionDomain
@@ -2350,8 +2436,10 @@ pub let Shr(Rhs: type) = trait {
                 }
                 LangItemKind::Continuation
                 | LangItemKind::EffectCallable
-                | LangItemKind::Handle
-                | LangItemKind::Do
+                | LangItemKind::Handle => {
+                    format!("core::effect::handler::{}", kind.source_name())
+                }
+                LangItemKind::Do
                 | LangItemKind::Try
                 | LangItemKind::Throw
                 | LangItemKind::Unsafe
@@ -2364,24 +2452,25 @@ pub let Shr(Rhs: type) = trait {
                 item_name(&bundle.program().items[lang_item.item_index()]),
                 Some(canonical.as_str())
             );
-            let expected_lang_item_name = if matches!(
-                kind,
-                LangItemKind::Continuation | LangItemKind::EffectCallable
-            ) {
-                kind.source_name()
-            } else {
-                canonical.as_str()
-            };
-            assert_eq!(lang_item.canonical_name(), expected_lang_item_name);
-            let module = match kind {
-                LangItemKind::Option | LangItemKind::Result => "core",
-                LangItemKind::Never | LangItemKind::Copy | LangItemKind::Drop => "prelude",
+            assert_eq!(lang_item.canonical_name(), canonical.as_str());
+            let module_path: Vec<&str> = match kind {
+                LangItemKind::Option => vec!["option"],
+                LangItemKind::Result => vec!["result"],
+                LangItemKind::Never => vec!["never"],
+                LangItemKind::Copy | LangItemKind::Drop => vec!["marker"],
                 LangItemKind::Add
                 | LangItemKind::Sub
                 | LangItemKind::Mul
                 | LangItemKind::Div
                 | LangItemKind::Rem
-                | LangItemKind::AddAssign
+                | LangItemKind::Neg => vec!["ops", "arith"],
+                LangItemKind::BitAnd
+                | LangItemKind::BitOr
+                | LangItemKind::BitXor
+                | LangItemKind::Shl
+                | LangItemKind::Shr
+                | LangItemKind::Not => vec!["ops", "bit"],
+                LangItemKind::AddAssign
                 | LangItemKind::SubAssign
                 | LangItemKind::MulAssign
                 | LangItemKind::DivAssign
@@ -2390,46 +2479,42 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::BitOrAssign
                 | LangItemKind::BitXorAssign
                 | LangItemKind::ShlAssign
-                | LangItemKind::ShrAssign
-                | LangItemKind::Eq
-                | LangItemKind::PartialOrdering
-                | LangItemKind::PartialOrd
-                | LangItemKind::Neg
-                | LangItemKind::Not
-                | LangItemKind::BitAnd
-                | LangItemKind::BitOr
-                | LangItemKind::BitXor
-                | LangItemKind::Shl
-                | LangItemKind::Shr => "ops",
-                LangItemKind::Chain | LangItemKind::Coalesce => "flow",
-                LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect => "effects",
+                | LangItemKind::ShrAssign => vec!["ops", "assign"],
+                LangItemKind::Eq | LangItemKind::PartialOrdering | LangItemKind::PartialOrd => {
+                    vec!["cmp"]
+                }
+                LangItemKind::Chain | LangItemKind::Coalesce => vec!["flow"],
+                LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect => vec!["effect"],
                 LangItemKind::TypeDomain
                 | LangItemKind::RegionDomain
                 | LangItemKind::AccessDomain
                 | LangItemKind::PassingDomain
                 | LangItemKind::EffectDomain
                 | LangItemKind::BorrowTypeForm
-                | LangItemKind::BorrowValueForm => "domains",
+                | LangItemKind::BorrowValueForm => vec!["domains"],
                 LangItemKind::Continuation
                 | LangItemKind::EffectCallable
-                | LangItemKind::Handle
-                | LangItemKind::Do
+                | LangItemKind::Handle => vec!["effect", "handler"],
+                LangItemKind::Do
                 | LangItemKind::Try
                 | LangItemKind::Throw
                 | LangItemKind::Unsafe
-                | LangItemKind::Loop => "control",
-                LangItemKind::Iterator | LangItemKind::IntoIterator => "iter",
+                | LangItemKind::Loop => vec!["control"],
+                LangItemKind::Iterator | LangItemKind::IntoIterator => vec!["iter"],
             };
+            let mut expected_origin_path = vec!["@core".to_owned()];
+            expected_origin_path.extend(module_path.into_iter().map(str::to_owned));
             assert_eq!(
                 bundle.program().item_origins[lang_item.item_index()],
                 ItemOrigin {
                     package: PackageId::CORE.0,
-                    module_path: vec!["@core".to_owned(), module.to_owned()],
+                    module_path: expected_origin_path,
                 }
             );
         }
 
         let throws = &bundle.program().items[bundle.lang_items().throws_effect().item_index()];
+        let never_name = bundle.lang_items().never().canonical_name().to_owned();
         assert!(matches!(
             throws,
             Item::Effect(definition)
@@ -2437,15 +2522,15 @@ pub let Shr(Rhs: type) = trait {
                     definition.operations.as_slice(),
                     [operation]
                         if operation.name == "raise"
-                            && operation.return_type == Some(named_type("Never"))
+                            && operation.return_type == Some(Type::Named(never_name.clone(), Vec::new()))
                 )
         ));
         let async_effect = bundle
             .program()
             .items
             .iter()
-            .find(|item| item_name(item) == Some("core::effects::Async"))
-            .expect("core.effects.Async must be mounted");
+            .find(|item| item_name(item) == Some("core::effect::Async"))
+            .expect("core.effect.Async must be mounted");
         assert!(matches!(
             async_effect,
             Item::Effect(definition)
@@ -2459,115 +2544,55 @@ pub let Shr(Rhs: type) = trait {
     #[test]
     fn rejects_malformed_control_contracts() {
         let malformed = EDITION_2026_CONTROL.replace(
-            "pub let unsafe(E: effect, T: type)\n  (move action: (): T with(core.effects.Unsafe, E)): T with(E)",
+            "pub let unsafe(E: effect, T: type)\n  (move action: (): T with(core.effect.Unsafe, E)): T with(E)",
             "pub let unsafe(E: effect, T: type)\n  (move action: (): T with(E)): T with(E)",
         );
-        let error = CoreBundle::from_modules(
-            Edition::Edition2026,
-            &[
-                ("prelude", EDITION_2026_PRELUDE),
-                ("core", EDITION_2026_ROOT),
-                ("ops", EDITION_2026_OPS),
-                ("flow", EDITION_2026_FLOW),
-                ("effects", EDITION_2026_EFFECTS),
-                ("domains", EDITION_2026_DOMAINS),
-                ("control", &malformed),
-                ("iter", EDITION_2026_ITER),
-            ],
-        )
-        .unwrap_err();
+        let modules = edition_2026_test_modules(&[("control", &malformed)]);
+        let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
         assert!(error
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.contains("lang item `unsafe`")));
 
         let bodyless = EDITION_2026_CONTROL.replace(
-            " = {\n  core.effects.Unsafe.handle() {\n    action()\n  }\n}",
+            " = {\n  core.effect.Unsafe.handle() {\n    action()\n  }\n}",
             "",
         );
-        let error = CoreBundle::from_modules(
-            Edition::Edition2026,
-            &[
-                ("prelude", EDITION_2026_PRELUDE),
-                ("core", EDITION_2026_ROOT),
-                ("ops", EDITION_2026_OPS),
-                ("flow", EDITION_2026_FLOW),
-                ("effects", EDITION_2026_EFFECTS),
-                ("domains", EDITION_2026_DOMAINS),
-                ("control", &bodyless),
-                ("iter", EDITION_2026_ITER),
-            ],
-        )
-        .unwrap_err();
+        let modules = edition_2026_test_modules(&[("control", &bodyless)]);
+        let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
         assert!(error
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.contains("lang item `unsafe`")));
 
-        let malformed = EDITION_2026_CONTROL.replace(
+        let malformed = EDITION_2026_EFFECT_HANDLER.replace(
             "pub let EffectCallable(Input: type, Output: type, Answer: type) = struct {}",
             "pub let EffectCallable(Input: type, Output: type) = struct {}",
         );
-        let error = CoreBundle::from_modules(
-            Edition::Edition2026,
-            &[
-                ("prelude", EDITION_2026_PRELUDE),
-                ("core", EDITION_2026_ROOT),
-                ("ops", EDITION_2026_OPS),
-                ("flow", EDITION_2026_FLOW),
-                ("effects", EDITION_2026_EFFECTS),
-                ("domains", EDITION_2026_DOMAINS),
-                ("control", &malformed),
-                ("iter", EDITION_2026_ITER),
-            ],
-        )
-        .unwrap_err();
+        let modules = edition_2026_test_modules(&[("effect/handler", &malformed)]);
+        let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
         assert!(error
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.contains("lang item `EffectCallable`")));
 
-        let malformed = EDITION_2026_CONTROL.replace(
+        let malformed = EDITION_2026_EFFECT_HANDLER.replace(
             "pub let Handle = trait(Self: effect)",
             "pub let Handle = trait",
         );
-        let error = CoreBundle::from_modules(
-            Edition::Edition2026,
-            &[
-                ("prelude", EDITION_2026_PRELUDE),
-                ("core", EDITION_2026_ROOT),
-                ("ops", EDITION_2026_OPS),
-                ("flow", EDITION_2026_FLOW),
-                ("effects", EDITION_2026_EFFECTS),
-                ("domains", EDITION_2026_DOMAINS),
-                ("control", &malformed),
-                ("iter", EDITION_2026_ITER),
-            ],
-        )
-        .unwrap_err();
+        let modules = edition_2026_test_modules(&[("effect/handler", &malformed)]);
+        let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
         assert!(error
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.contains("lang item `Handle`")));
 
         let malformed = EDITION_2026_CONTROL.replace(
-            "pub let throw(Error: type)\n  (move error: Error): Never with(core.effects.Throws(Error))",
+            "pub let throw(Error: type)\n  (move error: Error): Never with(core.effect.Throws(Error))",
             "pub let throw(Error: type)\n  (move error: Error): Never",
         );
-        let error = CoreBundle::from_modules(
-            Edition::Edition2026,
-            &[
-                ("prelude", EDITION_2026_PRELUDE),
-                ("core", EDITION_2026_ROOT),
-                ("ops", EDITION_2026_OPS),
-                ("flow", EDITION_2026_FLOW),
-                ("effects", EDITION_2026_EFFECTS),
-                ("domains", EDITION_2026_DOMAINS),
-                ("control", &malformed),
-                ("iter", EDITION_2026_ITER),
-            ],
-        )
-        .unwrap_err();
+        let modules = edition_2026_test_modules(&[("control", &malformed)]);
+        let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
         assert!(error
             .diagnostics()
             .iter()
@@ -2580,20 +2605,8 @@ pub let Shr(Rhs: type) = trait {
             "let next(self: borrow(mut)(Self))\n    (): core.Option(Item)",
             "let next(self: borrow(Self))\n    (): core.Option(Item)",
         );
-        let error = CoreBundle::from_modules(
-            Edition::Edition2026,
-            &[
-                ("prelude", EDITION_2026_PRELUDE),
-                ("core", EDITION_2026_ROOT),
-                ("ops", EDITION_2026_OPS),
-                ("flow", EDITION_2026_FLOW),
-                ("effects", EDITION_2026_EFFECTS),
-                ("domains", EDITION_2026_DOMAINS),
-                ("control", EDITION_2026_CONTROL),
-                ("iter", &malformed),
-            ],
-        )
-        .unwrap_err();
+        let modules = edition_2026_test_modules(&[("iter", &malformed)]);
+        let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
         assert!(error
             .diagnostics()
             .iter()
@@ -2602,24 +2615,12 @@ pub let Shr(Rhs: type) = trait {
 
     #[test]
     fn rejects_malformed_assignment_operator_contracts() {
-        let malformed = EDITION_2026_OPS.replace(
+        let malformed = EDITION_2026_OPS_ASSIGN.replace(
             "let add_assign(self: borrow(mut)(Self))\n    (move rhs: Rhs): ()",
             "let add_assign(self: borrow(Self))\n    (move rhs: Rhs): ()",
         );
-        let error = CoreBundle::from_modules(
-            Edition::Edition2026,
-            &[
-                ("prelude", EDITION_2026_PRELUDE),
-                ("core", EDITION_2026_ROOT),
-                ("ops", &malformed),
-                ("flow", EDITION_2026_FLOW),
-                ("effects", EDITION_2026_EFFECTS),
-                ("domains", EDITION_2026_DOMAINS),
-                ("control", EDITION_2026_CONTROL),
-                ("iter", EDITION_2026_ITER),
-            ],
-        )
-        .unwrap_err();
+        let modules = edition_2026_test_modules(&[("ops/assign", &malformed)]);
+        let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
         assert!(error
             .diagnostics()
             .iter()
@@ -2630,20 +2631,8 @@ pub let Shr(Rhs: type) = trait {
     fn rejects_malformed_chain_and_coalesce_contracts() {
         let malformed =
             EDITION_2026_FLOW.replace("let Rebind(Value: type): type", "let Rebind: type");
-        let error = CoreBundle::from_modules(
-            Edition::Edition2026,
-            &[
-                ("prelude", EDITION_2026_PRELUDE),
-                ("core", EDITION_2026_ROOT),
-                ("ops", EDITION_2026_OPS),
-                ("flow", &malformed),
-                ("effects", EDITION_2026_EFFECTS),
-                ("domains", EDITION_2026_DOMAINS),
-                ("control", EDITION_2026_CONTROL),
-                ("iter", EDITION_2026_ITER),
-            ],
-        )
-        .unwrap_err();
+        let modules = edition_2026_test_modules(&[("flow", &malformed)]);
+        let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
         assert!(error
             .diagnostics()
             .iter()
@@ -2653,20 +2642,8 @@ pub let Shr(Rhs: type) = trait {
             "let coalesce(E: effect)\n    (move self)\n    (move fallback: (): Item with(E)): Item with(E)",
             "let coalesce(move self)\n    (move fallback: (): Item): Item",
         );
-        let error = CoreBundle::from_modules(
-            Edition::Edition2026,
-            &[
-                ("prelude", EDITION_2026_PRELUDE),
-                ("core", EDITION_2026_ROOT),
-                ("ops", EDITION_2026_OPS),
-                ("flow", &malformed),
-                ("effects", EDITION_2026_EFFECTS),
-                ("domains", EDITION_2026_DOMAINS),
-                ("control", EDITION_2026_CONTROL),
-                ("iter", EDITION_2026_ITER),
-            ],
-        )
-        .unwrap_err();
+        let modules = edition_2026_test_modules(&[("flow", &malformed)]);
+        let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
         assert!(error
             .diagnostics()
             .iter()

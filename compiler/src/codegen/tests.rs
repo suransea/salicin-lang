@@ -18,6 +18,11 @@ fn resolve_text(source: &str) -> Program {
 }
 
 fn compile_text(source: &str) -> Result<String, Vec<Diagnostic>> {
+    let program = resolve_text(source);
+    compile(&program)
+}
+
+fn compile_unresolved_text(source: &str) -> Result<String, Vec<Diagnostic>> {
     let program = crate::parser::parse(source).expect("test source must parse");
     compile(&program)
 }
@@ -28,7 +33,7 @@ fn compile_resolved_text(source: &str) -> Result<String, Vec<Diagnostic>> {
 }
 
 fn compile_library_text(source: &str) -> Result<String, Vec<Diagnostic>> {
-    let program = crate::parser::parse(source).expect("test source must parse");
+    let program = resolve_text(source);
     compile_library(&program)
 }
 
@@ -487,7 +492,7 @@ fn registers_plain_nominals_and_deduplicates_generic_nominal_instances() {
 
 #[test]
 fn allows_same_named_struct_and_constructor_function() {
-    let ir = compile_text(
+    let ir = compile_unresolved_text(
         r#"
 let Pair = struct { left: i32, right: i32 }
 let Pair(left: i32, right: i32): Pair = { Pair { left: left, right: right } }
@@ -554,7 +559,7 @@ fn materializes_nested_generic_struct_layouts_in_dependency_order() {
 
 #[test]
 fn lowers_generic_enum_type_heads_unit_variants_and_short_patterns() {
-    let ir = compile_text(
+    let ir = compile_unresolved_text(
         "let Maybe(T: type) = enum {\n\
            Some(T),\n\
            None,\n\
@@ -590,10 +595,13 @@ fn registers_source_backed_core_lang_items() {
     );
     assert_eq!(
         &analyzer.enum_template_order[..2],
-        &["core::Option".to_owned(), "core::Result".to_owned()]
+        &[
+            "core::option::Option".to_owned(),
+            "core::result::Result".to_owned()
+        ]
     );
 
-    let option = &analyzer.enum_templates["core::Option"];
+    let option = &analyzer.enum_templates["core::option::Option"];
     assert_eq!(option.compile_groups.len(), 1);
     assert_eq!(option.compile_groups[0].len(), 1);
     assert_eq!(option.compile_groups[0][0].name, "T");
@@ -606,7 +614,7 @@ fn registers_source_backed_core_lang_items() {
     assert_eq!(option.variants[1].name, "None");
     assert_eq!(option.variants[1].fields, VariantFields::Unit);
 
-    let result = &analyzer.enum_templates["core::Result"];
+    let result = &analyzer.enum_templates["core::result::Result"];
     assert_eq!(result.compile_groups.len(), 2);
     assert_eq!(result.compile_groups[0].len(), 1);
     assert_eq!(result.compile_groups[0][0].name, "E");
@@ -625,10 +633,11 @@ fn registers_source_backed_core_lang_items() {
     assert_eq!(result.variants[0].name, "Ok");
     assert_eq!(result.variants[1].name, "Err");
 
-    let never = &analyzer.enum_defs["Never"];
+    let never_name = analyzer.lang_item_name(LangItemKind::Never);
+    let never = &analyzer.enum_defs[never_name];
     assert!(never.compile_groups.is_empty());
     assert!(never.variants.is_empty());
-    assert!(analyzer.enum_layouts["Never"].variants.is_empty());
+    assert!(analyzer.enum_layouts[never_name].variants.is_empty());
     for operator_trait in BINARY_OPERATOR_TRAITS {
         let name = analyzer.lang_item_name(operator_trait.lang_item).to_owned();
         assert!(analyzer.traits[&name].valid);
@@ -663,7 +672,7 @@ fn registers_source_backed_core_lang_items() {
     );
     assert_eq!(
         throw.return_type,
-        Some(Type::Named("Never".to_owned(), Vec::new()))
+        Some(Type::Named(never_name.to_owned(), Vec::new()))
     );
     assert_eq!(
         throw.effects.custom,
@@ -795,12 +804,12 @@ let main(): i32 = {
     .expect("core Option and Result program must compile");
     let option = NominalInstanceKey {
         kind: NominalKind::Enum,
-        template: "core::Option".into(),
+        template: "core::option::Option".into(),
         arguments: vec![Ty::I32],
     };
     let result = NominalInstanceKey {
         kind: NominalKind::Enum,
-        template: "core::Result".into(),
+        template: "core::result::Result".into(),
         arguments: vec![Ty::Bool, Ty::I32],
     };
     assert!(ir.contains(&hex_name(&nominal_instance_name(&option))));
@@ -820,7 +829,7 @@ let choose(flag: bool): i32 = { if flag { 42 } else { stop() } }
     )
     .expect("empty enums and empty matches must compile");
 
-    assert!(ir.contains(&type_symbol("Never")));
+    assert!(ir.contains(&type_symbol("core::never::Never")));
     assert!(ir.contains(&type_symbol("Empty")));
     assert!(ir.contains("unreachable"));
     assert!(!ir.contains("define i32 @main()"));
@@ -1018,7 +1027,7 @@ let main(): i32 = { choose(right: 40) }
         function_symbol("choose$overload$1$right")
     )));
 
-    let positional = compile_text(
+    let positional = compile_unresolved_text(
         r#"
 let choose(left: i32): i32 = { left }
 let choose(right: i32): i32 = { right }
@@ -1030,7 +1039,7 @@ let main(): i32 = { choose(42) }
         .iter()
         .any(|error| error.message.contains("requires named arguments")));
 
-    let duplicate = compile_text(
+    let duplicate = compile_unresolved_text(
         r#"
 let choose(value: i32): i32 = { value }
 let choose(value: bool): i32 = { 0 }
@@ -1042,7 +1051,7 @@ let main(): i32 = { choose(value: 42) }
         .iter()
         .any(|error| error.message.contains("duplicate overload")));
 
-    let partial = compile_text(
+    let partial = compile_unresolved_text(
         r#"
 let choose(value: i32)(left: i32): i32 = { value + left }
 let choose(value: i32)(right: i32): i32 = { value + right }
@@ -1052,7 +1061,7 @@ let main(): i32 = { choose(value: 40)(right: 2) }
     .expect("later named parameter groups should disambiguate curried overloads");
     assert!(partial.contains(&function_symbol("choose$overload$1$value$$1$right")));
 
-    compile_text(
+    compile_unresolved_text(
         r#"
 let choose(left: i32): i32 = { left + 1 }
 let choose(right: i32): i32 = { right + 2 }
@@ -1079,7 +1088,7 @@ let main(): i32 = {
     )
     .expect("a selected overload should preserve throws inference and lowering");
 
-    compile_text(
+    compile_unresolved_text(
         r#"
 let choose(T: type)(left: T): T = { left }
 let choose(T: type)(right: T): T = { right }
@@ -1088,7 +1097,7 @@ let main(): i32 = { choose(left: 20) + choose(i32)(right: 22) }
     )
     .expect("generic overload selection should precede inferred or explicit type arguments");
 
-    compile_text(
+    compile_unresolved_text(
         r#"
 let choose(left: i32): i32 = { left }
 let choose(T: type)(right: T): T = { right }
@@ -1326,7 +1335,7 @@ fn throw_requires_an_exact_active_throws_boundary() {
     for (source, expected) in [
         (
             "let fail(): i32 with(Throws(bool)) = { throw(0) }\nlet main(): i32 = { 0 }\n",
-            "requires `core::effects::Throws(i32)`",
+            "requires `core::effect::Throws(i32)`",
         ),
         (
             "let fail(): Option(i32) = { throw(false) }\nlet main(): i32 = { 0 }\n",
@@ -1744,7 +1753,7 @@ fn coalesce_does_not_guess_an_unconstrained_result_error_type() {
     assert!(errors.iter().any(|diagnostic| {
         diagnostic.message.contains("cannot infer type argument")
             && diagnostic.message.contains("`E`")
-            && diagnostic.message.contains("`core::Result`")
+            && diagnostic.message.contains("`core::result::Result`")
     }));
 }
 
@@ -1830,12 +1839,12 @@ let main(): i32 = {
 
     let option_i32 = NominalInstanceKey {
         kind: NominalKind::Enum,
-        template: "core::Option".into(),
+        template: "core::option::Option".into(),
         arguments: vec![Ty::I32],
     };
     let option_bool = NominalInstanceKey {
         kind: NominalKind::Enum,
-        template: "core::Option".into(),
+        template: "core::option::Option".into(),
         arguments: vec![Ty::Bool],
     };
     let option_i32_name = analyzer.nominal_instance_names[&option_i32].clone();
@@ -1853,7 +1862,7 @@ let main(): i32 = {
     let result_keys = analyzer
         .nominal_instances
         .values()
-        .filter(|instance| instance.key.template == "core::Result")
+        .filter(|instance| instance.key.template == "core::result::Result")
         .map(|instance| instance.key.arguments.clone())
         .collect::<HashSet<_>>();
     assert_eq!(
@@ -1888,11 +1897,14 @@ fn allows_user_redefinitions_of_unimported_core_nominal_names() {
         crate::parser::parse("let Never = struct { value: i32 }\nlet main(): i32 = { 42 }\n")
             .expect("reserved Never source must parse");
     let analyzer = Analyzer::new(&program);
-    assert!(analyzer
-        .diagnostics
-        .iter()
-        .any(|diagnostic| { diagnostic.message == "duplicate top-level name `Never`" }));
-    assert!(analyzer.enum_defs["Never"].variants.is_empty());
+    assert!(
+        !analyzer
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.message == "duplicate top-level name `Never`" }),
+        "prelude `Never` should not reserve a user top-level name"
+    );
+    assert!(analyzer.enum_defs["core::never::Never"].variants.is_empty());
 
     let program =
         crate::parser::parse("let Add = struct { value: i32 }\nlet main(): i32 = { 42 }\n")
@@ -1903,7 +1915,7 @@ fn allows_user_redefinitions_of_unimported_core_nominal_names() {
         .iter()
         .any(|diagnostic| { diagnostic.message == "duplicate top-level name `Add`" }));
     assert!(analyzer.struct_defs.contains_key("Add"));
-    assert!(analyzer.traits["core::ops::Add"].valid);
+    assert!(analyzer.traits["core::ops::arith::Add"].valid);
 
     let errors = compile_text("let invalid(value: void): () = { () }\nlet main(): i32 = { 42 }\n")
         .expect_err("`void` must not resolve as a unit alias");
@@ -1914,7 +1926,7 @@ fn allows_user_redefinitions_of_unimported_core_nominal_names() {
 
 #[test]
 fn reserves_compiler_provided_control_contracts_for_core() {
-    let errors = compile_text(
+    let errors = compile_unresolved_text(
         "let do(T: type)(move action: (): T): T = { action() }\n\
          let main(): i32 = { 0 }\n",
     )
@@ -1923,7 +1935,7 @@ fn reserves_compiler_provided_control_contracts_for_core() {
         .message
         .contains("control lang-item name `do` is reserved")));
 
-    let errors = compile_text(
+    let errors = compile_unresolved_text(
         "let throw(Error: type)(move error: Error): Never = { loop { continue } }\n\
          let main(): i32 = { 0 }\n",
     )
@@ -1932,7 +1944,7 @@ fn reserves_compiler_provided_control_contracts_for_core() {
         .message
         .contains("control lang-item name `throw` is reserved")));
 
-    let errors = compile_text(
+    let errors = compile_unresolved_text(
         "let external(value: i32): i32\n\
          let main(): i32 = { 0 }\n",
     )
@@ -1944,7 +1956,7 @@ fn reserves_compiler_provided_control_contracts_for_core() {
 
 #[test]
 fn custom_domain_declarations_are_allowed() {
-    compile_text(
+    compile_unresolved_text(
         "let Local = domain { one two }\n\
          let main(): i32 = { 0 }\n",
     )
@@ -2461,7 +2473,7 @@ let main(): i32 = { forbidden() }
 
 #[test]
 fn inherent_members_inherit_the_target_api_boundary_for_leak_checks() {
-    let errors = compile_text(
+    let errors = compile_unresolved_text(
         r#"
 let Hidden = struct {}
 pub let Public = struct {}
@@ -2483,7 +2495,7 @@ let main(): i32 = { 0 }
 
 #[test]
 fn generic_inherent_member_boundaries_include_concrete_type_arguments() {
-    compile_text(
+    compile_unresolved_text(
         r#"
 let Hidden = struct { value: i32 }
 pub let Cell(T: type) = struct { pub value: T }
@@ -2503,7 +2515,7 @@ let main(): i32 = { use_hidden() }
 
 #[test]
 fn trait_impl_associated_types_cannot_widen_beyond_trait_and_target_access() {
-    let errors = compile_text(
+    let errors = compile_unresolved_text(
         r#"
 let Hidden = struct {}
 pub let Public = struct {}
@@ -2524,7 +2536,7 @@ let main(): i32 = { 0 }
             && error.message.contains("private type `Hidden`")
     }));
 
-    compile_text(
+    compile_unresolved_text(
         r#"
 let Hidden = struct {}
 let Private = struct {}
@@ -2819,7 +2831,7 @@ let main(): i32 = {
         .iter()
         .any(|error| error.message.contains("both `Copy` and `Drop`")));
 
-    let foreign_copy = compile_with_origins(
+    let foreign_copy = compile_resolved_with_origins(
         r#"
 pub let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Copy
@@ -2837,7 +2849,7 @@ let main(): i32 = { 42 }
         .iter()
         .any(|error| error.message.contains("package that defines the type")));
 
-    let foreign_drop = compile_with_origins(
+    let foreign_drop = compile_resolved_with_origins(
         r#"
 pub let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Drop {
@@ -2863,9 +2875,9 @@ let main(): i32 = { 42 }
 "#,
     )
     .expect_err("an unused blanket Drop implementation must still be complete");
-    assert!(missing_drop
-        .iter()
-        .any(|error| error.message.contains("missing trait method `Drop.drop`")));
+    assert!(missing_drop.iter().any(|error| error
+        .message
+        .contains("missing trait method `core::marker::Drop.drop`")));
 }
 
 #[test]
@@ -3046,7 +3058,7 @@ let main(): i32 = { 0 }
         .iter()
         .any(|error| error.message.contains("both `Copy` and `Drop`")));
 
-    let orphan = compile_with_origins(
+    let orphan = compile_resolved_with_origins(
         r#"
 pub let Resource = struct { value: i32 }
 extend Resource: Drop {
@@ -3144,7 +3156,7 @@ let main(): i32 = {
   0
 }
 "#;
-    let program = crate::parser::parse(source).expect("drop source must parse");
+    let program = resolve_text(source);
     let mut analyzer = Analyzer::new(&program);
     let hir = analyzer.analyze().expect("drop source must lower");
     assert!(analyzer.diagnostics.is_empty());
@@ -3947,7 +3959,7 @@ let main(): i32 = { 0 }
     assert!(errors.iter().any(|error| {
         error
             .message
-            .contains("requires `core::effects::Throws(i64)`")
+            .contains("requires `core::effect::Throws(i64)`")
     }));
 }
 
@@ -4136,8 +4148,8 @@ let main(): i32 = { run() }
     assert!(missing_throws.iter().any(|error| {
         error
             .message
-            .contains("requires `core::effects::Throws(bool)`")
-            && error.message.contains("core::effects::Throws(bool)")
+            .contains("requires `core::effect::Throws(bool)`")
+            && error.message.contains("core::effect::Throws(bool)")
     }));
 }
 
@@ -5612,7 +5624,7 @@ let main(): i32 = { Number { value: 40 } + Number { value: 2 } }
     let key = TraitImplKey {
         self_ty: Ty::Struct("Number".into()),
         trait_ref: TraitRefKey {
-            name: "core::ops::Add".into(),
+            name: "core::ops::arith::Add".into(),
             arguments: vec![Ty::Struct("Number".into())],
         },
     };
@@ -5656,10 +5668,10 @@ let main(): i32 = {
     );
     let ir = compile(&program).expect("arithmetic trait dispatch must compile");
     for (trait_name, method) in [
-        ("core::ops::Sub", "sub"),
-        ("core::ops::Mul", "mul"),
-        ("core::ops::Div", "div"),
-        ("core::ops::Rem", "rem"),
+        ("core::ops::arith::Sub", "sub"),
+        ("core::ops::arith::Mul", "mul"),
+        ("core::ops::arith::Div", "div"),
+        ("core::ops::arith::Rem", "rem"),
     ] {
         let key = TraitImplKey {
             self_ty: Ty::Struct("Number".into()),
@@ -5696,7 +5708,7 @@ let main(): i32 = {
     let key = TraitImplKey {
         self_ty: Ty::Struct("Number".into()),
         trait_ref: TraitRefKey {
-            name: "core::ops::Eq".into(),
+            name: "core::cmp::Eq".into(),
             arguments: vec![Ty::Struct("Number".into())],
         },
     };
@@ -5733,7 +5745,7 @@ let main(): i32 = {
     let key = TraitImplKey {
         self_ty: Ty::Struct("Number".into()),
         trait_ref: TraitRefKey {
-            name: "core::ops::PartialOrd".into(),
+            name: "core::cmp::PartialOrd".into(),
             arguments: vec![Ty::Struct("Number".into())],
         },
     };
@@ -5770,11 +5782,14 @@ let main(): i32 = { if invert(false) {
 "#,
     );
     let ir = compile(&program).expect("core unary operator source must compile");
-    for (ty, trait_name, method) in [("Number", "Neg", "neg"), ("Flag", "Not", "not")] {
+    for (ty, trait_name, method) in [
+        ("Number", "core::ops::arith::Neg", "neg"),
+        ("Flag", "core::ops::bit::Not", "not"),
+    ] {
         let key = TraitImplKey {
             self_ty: Ty::Struct(ty.into()),
             trait_ref: TraitRefKey {
-                name: format!("core::ops::{trait_name}"),
+                name: trait_name.to_owned(),
                 arguments: Vec::new(),
             },
         };
@@ -5831,7 +5846,7 @@ let main(): i32 = {
         let key = TraitImplKey {
             self_ty: Ty::Struct("Bits".into()),
             trait_ref: TraitRefKey {
-                name: format!("core::ops::{trait_name}"),
+                name: format!("core::ops::bit::{trait_name}"),
                 arguments: vec![Ty::Struct("Bits".into())],
             },
         };
@@ -6010,14 +6025,14 @@ let main(): i32 = { Number { value: 42 } - 1 }
     let exact = TraitImplKey {
         self_ty: Ty::Struct("Number".into()),
         trait_ref: TraitRefKey {
-            name: "core::ops::Sub".into(),
+            name: "core::ops::arith::Sub".into(),
             arguments: vec![Ty::I64],
         },
     };
     let uninhabited = TraitImplKey {
         self_ty: Ty::Struct("Number".into()),
         trait_ref: TraitRefKey {
-            name: "core::ops::Sub".into(),
+            name: "core::ops::arith::Sub".into(),
             arguments: vec![Ty::I32],
         },
     };
@@ -6055,14 +6070,14 @@ let main(): i32 = { Number { value: 1 } - do {
     let boolean = TraitImplKey {
         self_ty: Ty::Struct("Number".into()),
         trait_ref: TraitRefKey {
-            name: "core::ops::Sub".into(),
+            name: "core::ops::arith::Sub".into(),
             arguments: vec![Ty::Bool],
         },
     };
     let integer = TraitImplKey {
         self_ty: Ty::Struct("Number".into()),
         trait_ref: TraitRefKey {
-            name: "core::ops::Sub".into(),
+            name: "core::ops::arith::Sub".into(),
             arguments: vec![Ty::I32],
         },
     };
@@ -6147,14 +6162,14 @@ let main(): i32 = {
     let i32_key = TraitImplKey {
         self_ty: Ty::Struct("Number".into()),
         trait_ref: TraitRefKey {
-            name: "core::ops::Add".into(),
+            name: "core::ops::arith::Add".into(),
             arguments: vec![Ty::I32],
         },
     };
     let i64_key = TraitImplKey {
         self_ty: Ty::Struct("Number".into()),
         trait_ref: TraitRefKey {
-            name: "core::ops::Add".into(),
+            name: "core::ops::arith::Add".into(),
             arguments: vec![Ty::I64],
         },
     };
@@ -6185,7 +6200,7 @@ let make() = { Number { value: 40 } }
     let key = TraitImplKey {
         self_ty: Ty::Struct("Number".into()),
         trait_ref: TraitRefKey {
-            name: "core::ops::Add".into(),
+            name: "core::ops::arith::Add".into(),
             arguments: vec![Ty::Struct("Number".into())],
         },
     };
@@ -8534,8 +8549,10 @@ let finish(): () = { let value = Plain { value: 42 }; () }
 
 #[test]
 fn erased_effect_callable_uses_cps_entry_and_owned_environment() {
-    let mut program = crate::parser::parse(
+    let mut program = resolve_text(
         r#"
+use std.effect.handler.Continuation
+
 let main(): i32 = {
   let continuation: (i32): i32 = { (value: i32) -> value + 2 }
   let action: (i32, Continuation(i32, i32)): i32 = {
@@ -8546,8 +8563,7 @@ let main(): i32 = {
   invoke_effect_callable(erased_action, 40, erased_continuation)
 }
 "#,
-    )
-    .expect("internal effect-callable source must parse");
+    );
     let replacements = HashMap::from([
         (
             "invoke_continuation".to_owned(),

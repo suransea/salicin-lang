@@ -122,7 +122,7 @@ constructor_kind = compile_parameter_group,
   `(effect): T`、`T(effect)` 与 `T ! effect` 都不属于语法。
 - 声明右侧的 `domain` 同样是上下文词，用于声明编译期参数域。无 body 的 `domain` 是开放域；
   `domain { ... }` 是封闭域。标准 `type`、`region`、`effect`、`access` 与 `passing` domain 位于
-  `core.domains`；effect 身份位于 `core.effects`；控制 lang item 可在声明名位置使用 `do`、`try`、
+  `core.domains`；effect 身份位于 `core.effect`；控制 lang item 可在声明名位置使用 `do`、`try`、
   `unsafe`、`loop`。
 - `let f(x: T) = { body }` 是把参数提升到名称旁边的具名闭包声明；RHS 必须有花括号。
 - `let f: (x: T): R = { body }` 是带名签名的具名闭包声明：所有槽必须有名字。

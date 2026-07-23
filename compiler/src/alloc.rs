@@ -11,6 +11,8 @@ use crate::modules::{self, PackageId, SourceUnit};
 use crate::parser;
 
 const EDITION_2026_BOXED: &str = include_str!("../../library/alloc/src/boxed.sc");
+const EDITION_2026_LIB: &str = include_str!("../../library/alloc/src/lib.sc");
+const EDITION_2026_RAW: &str = include_str!("../../library/alloc/src/raw.sc");
 const EDITION_2026_VEC: &str = include_str!("../../library/alloc/src/vec.sc");
 
 #[derive(Clone, Debug, PartialEq)]
@@ -21,7 +23,12 @@ pub struct AllocBundle {
 impl AllocBundle {
     pub fn for_edition(edition: Edition) -> Result<Self, AllocBundleError> {
         let modules = match edition {
-            Edition::Edition2026 => [("boxed", EDITION_2026_BOXED), ("vec", EDITION_2026_VEC)],
+            Edition::Edition2026 => [
+                ("lib", EDITION_2026_LIB),
+                ("boxed", EDITION_2026_BOXED),
+                ("vec", EDITION_2026_VEC),
+                ("raw", EDITION_2026_RAW),
+            ],
         };
         let mut combined = Program::new(Vec::new());
         for &(module, source) in &modules {
@@ -57,7 +64,7 @@ impl AllocBundle {
         }];
         sources.extend(modules.map(|(module, source)| SourceUnit {
             path: format!("<alloc/{module}>"),
-            module_path: vec!["alloc".to_owned(), module.to_owned()],
+            module_path: alloc_source_module_path(module),
             source: source.to_owned(),
             is_root: false,
         }));
@@ -78,6 +85,13 @@ impl AllocBundle {
 
     pub const fn program(&self) -> &Program {
         &self.program
+    }
+}
+
+fn alloc_source_module_path(module: &str) -> Vec<String> {
+    match module {
+        "lib" => vec!["alloc".to_owned()],
+        module => vec!["alloc".to_owned(), module.to_owned()],
     }
 }
 

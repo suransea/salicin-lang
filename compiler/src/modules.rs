@@ -165,10 +165,13 @@ fn resolve_packages_impl(
         return Err(collection_diagnostics);
     }
 
-    let (aliases, import_diagnostics) =
+    let (mut aliases, import_diagnostics) =
         collect_imports(&parsed, &symbols, &module_paths, &dependencies);
     if !import_diagnostics.is_empty() {
         return Err(import_diagnostics);
+    }
+    if standard_library.expose_core {
+        install_standard_prelude_aliases(&parsed, &symbols, &module_paths, &mut aliases);
     }
 
     let mut resolver = Resolver {
@@ -361,14 +364,23 @@ const ALLOC_EXPORTS: &[(&str, &str)] = &[
     ("vec", "vec_write"),
 ];
 
-const CORE_PRELUDE_EXPORTS: &[&str] = &["Never", "Copy", "Drop"];
-const CORE_ROOT_EXPORTS: &[&str] = &["Option", "Result"];
-const CORE_OPS_EXPORTS: &[&str] = &[
-    "Add",
-    "Sub",
-    "Mul",
-    "Div",
-    "Rem",
+const CORE_PRELUDE_EXPORTS: &[(&str, &str)] = &[
+    ("Never", "core::never::Never"),
+    ("Copy", "core::marker::Copy"),
+    ("Drop", "core::marker::Drop"),
+];
+const CORE_ROOT_EXPORTS: &[(&str, &str)] = &[
+    ("Never", "core::never::Never"),
+    ("Copy", "core::marker::Copy"),
+    ("Drop", "core::marker::Drop"),
+    ("Option", "core::option::Option"),
+    ("Result", "core::result::Result"),
+];
+const CORE_NEVER_EXPORTS: &[&str] = &["Never"];
+const CORE_MARKER_EXPORTS: &[&str] = &["Copy", "Drop"];
+const CORE_ARITH_EXPORTS: &[&str] = &["Add", "Sub", "Mul", "Div", "Rem", "Neg"];
+const CORE_BIT_EXPORTS: &[&str] = &["BitAnd", "BitOr", "BitXor", "Shl", "Shr", "Not"];
+const CORE_ASSIGN_EXPORTS: &[&str] = &[
     "AddAssign",
     "SubAssign",
     "MulAssign",
@@ -379,97 +391,149 @@ const CORE_OPS_EXPORTS: &[&str] = &[
     "BitXorAssign",
     "ShlAssign",
     "ShrAssign",
-    "Eq",
-    "PartialOrdering",
-    "PartialOrd",
-    "Neg",
-    "Not",
-    "BitAnd",
-    "BitOr",
-    "BitXor",
-    "Shl",
-    "Shr",
+];
+const CORE_CMP_EXPORTS: &[&str] = &["Eq", "PartialOrdering", "PartialOrd"];
+const CORE_OPS_EXPORTS: &[(&str, &str)] = &[
+    ("Add", "core::ops::arith::Add"),
+    ("Sub", "core::ops::arith::Sub"),
+    ("Mul", "core::ops::arith::Mul"),
+    ("Div", "core::ops::arith::Div"),
+    ("Rem", "core::ops::arith::Rem"),
+    ("Neg", "core::ops::arith::Neg"),
+    ("BitAnd", "core::ops::bit::BitAnd"),
+    ("BitOr", "core::ops::bit::BitOr"),
+    ("BitXor", "core::ops::bit::BitXor"),
+    ("Shl", "core::ops::bit::Shl"),
+    ("Shr", "core::ops::bit::Shr"),
+    ("Not", "core::ops::bit::Not"),
+    ("AddAssign", "core::ops::assign::AddAssign"),
+    ("SubAssign", "core::ops::assign::SubAssign"),
+    ("MulAssign", "core::ops::assign::MulAssign"),
+    ("DivAssign", "core::ops::assign::DivAssign"),
+    ("RemAssign", "core::ops::assign::RemAssign"),
+    ("BitAndAssign", "core::ops::assign::BitAndAssign"),
+    ("BitOrAssign", "core::ops::assign::BitOrAssign"),
+    ("BitXorAssign", "core::ops::assign::BitXorAssign"),
+    ("ShlAssign", "core::ops::assign::ShlAssign"),
+    ("ShrAssign", "core::ops::assign::ShrAssign"),
+    ("Eq", "core::cmp::Eq"),
+    ("PartialOrdering", "core::cmp::PartialOrdering"),
+    ("PartialOrd", "core::cmp::PartialOrd"),
+    ("Chain", "core::flow::Chain"),
+    ("Coalesce", "core::flow::Coalesce"),
 ];
 const CORE_FLOW_EXPORTS: &[&str] = &["Chain", "Coalesce"];
-const CORE_EFFECTS_EXPORTS: &[&str] = &["Unsafe", "Throws", "Async"];
+const CORE_EFFECT_EXPORTS: &[&str] = &["Unsafe", "Throws", "Async"];
+const CORE_EFFECT_HANDLER_EXPORTS: &[&str] = &["Continuation", "EffectCallable", "Handle"];
 const CORE_DOMAIN_EXPORTS: &[&str] = &["type", "region", "effect", "access", "passing", "borrow"];
-const CORE_CONTROL_EXPORTS: &[&str] = &[
-    "Continuation",
-    "EffectCallable",
-    "Handle",
-    "do",
-    "try",
-    "throw",
-    "unsafe",
-    "loop",
-];
+const CORE_CONTROL_EXPORTS: &[&str] = &["do", "try", "throw", "unsafe", "loop"];
 const CORE_ITER_EXPORTS: &[&str] = &["Iterator", "IntoIterator"];
 const CORE_ALGEBRA_EXPORTS: &[&str] = &["Semigroup", "Monoid"];
 const CORE_FUNCTIONAL_EXPORTS: &[&str] = &["Functor", "Applicative", "Monad"];
 
 const STD_ROOT_EXPORTS: &[(&str, &str)] = &[
-    ("Never", "Never"),
-    ("Copy", "Copy"),
-    ("Drop", "Drop"),
-    ("Option", "core::Option"),
-    ("Result", "core::Result"),
+    ("Never", "core::never::Never"),
+    ("Copy", "core::marker::Copy"),
+    ("Drop", "core::marker::Drop"),
+    ("Option", "core::option::Option"),
+    ("Result", "core::result::Result"),
 ];
 
 const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
-    ("prelude", "Never", "Never"),
-    ("prelude", "Copy", "Copy"),
-    ("prelude", "Drop", "Drop"),
-    ("marker", "Copy", "Copy"),
-    ("marker", "Drop", "Drop"),
-    ("option", "Option", "core::Option"),
-    ("result", "Result", "core::Result"),
-    ("ops", "Add", "core::ops::Add"),
-    ("ops", "Sub", "core::ops::Sub"),
-    ("ops", "Mul", "core::ops::Mul"),
-    ("ops", "Div", "core::ops::Div"),
-    ("ops", "Rem", "core::ops::Rem"),
-    ("ops", "AddAssign", "core::ops::AddAssign"),
-    ("ops", "SubAssign", "core::ops::SubAssign"),
-    ("ops", "MulAssign", "core::ops::MulAssign"),
-    ("ops", "DivAssign", "core::ops::DivAssign"),
-    ("ops", "RemAssign", "core::ops::RemAssign"),
-    ("ops", "BitAndAssign", "core::ops::BitAndAssign"),
-    ("ops", "BitOrAssign", "core::ops::BitOrAssign"),
-    ("ops", "BitXorAssign", "core::ops::BitXorAssign"),
-    ("ops", "ShlAssign", "core::ops::ShlAssign"),
-    ("ops", "ShrAssign", "core::ops::ShrAssign"),
-    ("ops", "Eq", "core::ops::Eq"),
-    ("ops", "PartialOrdering", "core::ops::PartialOrdering"),
-    ("ops", "PartialOrd", "core::ops::PartialOrd"),
-    ("ops", "Neg", "core::ops::Neg"),
-    ("ops", "Not", "core::ops::Not"),
-    ("ops", "BitAnd", "core::ops::BitAnd"),
-    ("ops", "BitOr", "core::ops::BitOr"),
-    ("ops", "BitXor", "core::ops::BitXor"),
-    ("ops", "Shl", "core::ops::Shl"),
-    ("ops", "Shr", "core::ops::Shr"),
+    ("prelude", "Never", "core::never::Never"),
+    ("prelude", "Copy", "core::marker::Copy"),
+    ("prelude", "Drop", "core::marker::Drop"),
+    ("never", "Never", "core::never::Never"),
+    ("marker", "Copy", "core::marker::Copy"),
+    ("marker", "Drop", "core::marker::Drop"),
+    ("option", "Option", "core::option::Option"),
+    ("result", "Result", "core::result::Result"),
+    ("ops", "Add", "core::ops::arith::Add"),
+    ("ops", "Sub", "core::ops::arith::Sub"),
+    ("ops", "Mul", "core::ops::arith::Mul"),
+    ("ops", "Div", "core::ops::arith::Div"),
+    ("ops", "Rem", "core::ops::arith::Rem"),
+    ("ops", "Neg", "core::ops::arith::Neg"),
+    ("ops", "BitAnd", "core::ops::bit::BitAnd"),
+    ("ops", "BitOr", "core::ops::bit::BitOr"),
+    ("ops", "BitXor", "core::ops::bit::BitXor"),
+    ("ops", "Shl", "core::ops::bit::Shl"),
+    ("ops", "Shr", "core::ops::bit::Shr"),
+    ("ops", "Not", "core::ops::bit::Not"),
+    ("ops", "AddAssign", "core::ops::assign::AddAssign"),
+    ("ops", "SubAssign", "core::ops::assign::SubAssign"),
+    ("ops", "MulAssign", "core::ops::assign::MulAssign"),
+    ("ops", "DivAssign", "core::ops::assign::DivAssign"),
+    ("ops", "RemAssign", "core::ops::assign::RemAssign"),
+    ("ops", "BitAndAssign", "core::ops::assign::BitAndAssign"),
+    ("ops", "BitOrAssign", "core::ops::assign::BitOrAssign"),
+    ("ops", "BitXorAssign", "core::ops::assign::BitXorAssign"),
+    ("ops", "ShlAssign", "core::ops::assign::ShlAssign"),
+    ("ops", "ShrAssign", "core::ops::assign::ShrAssign"),
+    ("ops", "Eq", "core::cmp::Eq"),
+    ("ops", "PartialOrdering", "core::cmp::PartialOrdering"),
+    ("ops", "PartialOrd", "core::cmp::PartialOrd"),
     ("ops", "Chain", "core::flow::Chain"),
     ("ops", "Coalesce", "core::flow::Coalesce"),
-    ("cmp", "Eq", "core::ops::Eq"),
-    ("cmp", "PartialOrdering", "core::ops::PartialOrdering"),
-    ("cmp", "PartialOrd", "core::ops::PartialOrd"),
+    ("ops.arith", "Add", "core::ops::arith::Add"),
+    ("ops.arith", "Sub", "core::ops::arith::Sub"),
+    ("ops.arith", "Mul", "core::ops::arith::Mul"),
+    ("ops.arith", "Div", "core::ops::arith::Div"),
+    ("ops.arith", "Rem", "core::ops::arith::Rem"),
+    ("ops.arith", "Neg", "core::ops::arith::Neg"),
+    ("ops.bit", "BitAnd", "core::ops::bit::BitAnd"),
+    ("ops.bit", "BitOr", "core::ops::bit::BitOr"),
+    ("ops.bit", "BitXor", "core::ops::bit::BitXor"),
+    ("ops.bit", "Shl", "core::ops::bit::Shl"),
+    ("ops.bit", "Shr", "core::ops::bit::Shr"),
+    ("ops.bit", "Not", "core::ops::bit::Not"),
+    ("ops.assign", "AddAssign", "core::ops::assign::AddAssign"),
+    ("ops.assign", "SubAssign", "core::ops::assign::SubAssign"),
+    ("ops.assign", "MulAssign", "core::ops::assign::MulAssign"),
+    ("ops.assign", "DivAssign", "core::ops::assign::DivAssign"),
+    ("ops.assign", "RemAssign", "core::ops::assign::RemAssign"),
+    (
+        "ops.assign",
+        "BitAndAssign",
+        "core::ops::assign::BitAndAssign",
+    ),
+    (
+        "ops.assign",
+        "BitOrAssign",
+        "core::ops::assign::BitOrAssign",
+    ),
+    (
+        "ops.assign",
+        "BitXorAssign",
+        "core::ops::assign::BitXorAssign",
+    ),
+    ("ops.assign", "ShlAssign", "core::ops::assign::ShlAssign"),
+    ("ops.assign", "ShrAssign", "core::ops::assign::ShrAssign"),
+    ("cmp", "Eq", "core::cmp::Eq"),
+    ("cmp", "PartialOrdering", "core::cmp::PartialOrdering"),
+    ("cmp", "PartialOrd", "core::cmp::PartialOrd"),
     ("flow", "Chain", "core::flow::Chain"),
     ("flow", "Coalesce", "core::flow::Coalesce"),
-    ("effect", "Unsafe", "core::effects::Unsafe"),
-    ("effect", "Throws", "core::effects::Throws"),
-    ("effect", "Async", "core::effects::Async"),
-    ("effects", "Unsafe", "core::effects::Unsafe"),
-    ("effects", "Throws", "core::effects::Throws"),
-    ("effects", "Async", "core::effects::Async"),
+    ("effect", "Unsafe", "core::effect::Unsafe"),
+    ("effect", "Throws", "core::effect::Throws"),
+    ("effect", "Async", "core::effect::Async"),
+    (
+        "effect.handler",
+        "Continuation",
+        "core::effect::handler::Continuation",
+    ),
+    (
+        "effect.handler",
+        "EffectCallable",
+        "core::effect::handler::EffectCallable",
+    ),
+    ("effect.handler", "Handle", "core::effect::handler::Handle"),
     ("domains", "type", "core::domains::type"),
     ("domains", "region", "core::domains::region"),
     ("domains", "effect", "core::domains::effect"),
     ("domains", "access", "core::domains::access"),
     ("domains", "passing", "core::domains::passing"),
     ("domains", "borrow", "core::domains::borrow"),
-    ("control", "Continuation", "core::control::Continuation"),
-    ("control", "EffectCallable", "core::control::EffectCallable"),
-    ("control", "Handle", "core::control::Handle"),
     ("control", "do", "core::control::do"),
     ("control", "try", "core::control::try"),
     ("control", "throw", "core::control::throw"),
@@ -991,17 +1055,20 @@ fn install_standard_namespaces(
         }
     }
     if exposure.expose_core {
-        for name in CORE_ROOT_EXPORTS {
+        for (name, _) in CORE_ROOT_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.{name}"));
         }
-        for name in CORE_OPS_EXPORTS {
+        for (name, _) in CORE_OPS_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.ops.{name}"));
         }
         for name in CORE_FLOW_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.flow.{name}"));
         }
-        for name in CORE_EFFECTS_EXPORTS {
-            required_imports.insert((*name).to_owned(), format!("core.effects.{name}"));
+        for name in CORE_EFFECT_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.effect.{name}"));
+        }
+        for name in CORE_EFFECT_HANDLER_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.effect.handler.{name}"));
         }
         for name in CORE_DOMAIN_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.domains.{name}"));
@@ -1017,21 +1084,28 @@ fn install_standard_namespaces(
         }
     }
     if exposure.expose_std {
+        let mut std_required_imports = HashMap::new();
         for (name, _) in STD_ROOT_EXPORTS {
-            if CORE_PRELUDE_EXPORTS.contains(name) {
+            if is_core_prelude_export(name) {
                 continue;
             }
-            required_imports.insert((*name).to_owned(), format!("std.{name}"));
+            std_required_imports.insert((*name).to_owned(), format!("std.{name}"));
         }
         for (module, name, _) in STD_MODULE_EXPORTS {
             if matches!(
                 *module,
-                "prelude" | "marker" | "option" | "result" | "cmp" | "effects"
+                "prelude" | "never" | "marker" | "option" | "result" | "cmp"
             ) {
                 continue;
             }
-            required_imports.insert((*name).to_owned(), format!("std.{module}.{name}"));
+            if *module == "ops" && matches!(*name, "Chain" | "Coalesce") {
+                continue;
+            }
+            std_required_imports
+                .entry((*name).to_owned())
+                .or_insert_with(|| format!("std.{module}.{name}"));
         }
+        required_imports.extend(std_required_imports);
     }
 
     for package_root in package_roots {
@@ -1053,6 +1127,60 @@ fn install_standard_namespaces(
 
 fn is_reserved_standard_namespace(name: &str) -> bool {
     matches!(name, "core" | "alloc" | "std")
+}
+
+fn is_core_prelude_export(name: &str) -> bool {
+    CORE_PRELUDE_EXPORTS
+        .iter()
+        .any(|(export, _)| *export == name)
+}
+
+fn standard_module_path(root: &[String], module: &str) -> Vec<String> {
+    let mut module_path = root.to_vec();
+    if !module.is_empty() {
+        module_path.extend(module.split('.').map(str::to_owned));
+    }
+    module_path
+}
+
+fn insert_standard_module_path(
+    module_paths: &mut HashSet<Vec<String>>,
+    root: &[String],
+    module: &str,
+) {
+    let mut module_path = root.to_vec();
+    if module.is_empty() {
+        module_paths.insert(module_path);
+        return;
+    }
+    for segment in module.split('.') {
+        module_path.push(segment.to_owned());
+        module_paths.insert(module_path.clone());
+    }
+}
+
+fn insert_standard_symbol(
+    symbols: &mut SymbolTable,
+    package_root: &[String],
+    namespace_root: &[String],
+    module: &str,
+    name: &str,
+    canonical: &str,
+    source_path: &str,
+) {
+    let module_path = standard_module_path(namespace_root, module);
+    let mut logical_path = module_path.clone();
+    logical_path.push(name.to_owned());
+    symbols.insert(
+        logical_path,
+        Symbol {
+            canonical: canonical.to_owned(),
+            module_path,
+            package_root: package_root.to_vec(),
+            visibility: Visibility::Public,
+            source_path: source_path.to_owned(),
+        },
+    );
 }
 
 fn install_core_namespace(
@@ -1077,193 +1205,257 @@ fn install_core_namespace(
         module_paths.insert(core_root.clone());
         for module in [
             "prelude",
+            "never",
+            "marker",
+            "option",
+            "result",
+            "cmp",
             "ops",
+            "ops.arith",
+            "ops.bit",
+            "ops.assign",
             "flow",
-            "effects",
+            "effect",
+            "effect.handler",
             "domains",
             "control",
             "iter",
             "algebra",
             "functional",
-            "option",
-            "result",
         ] {
-            let mut module_path = core_root.clone();
-            module_path.push(module.to_owned());
-            module_paths.insert(module_path);
+            insert_standard_module_path(module_paths, &core_root, module);
         }
-        for name in CORE_PRELUDE_EXPORTS {
-            let mut module_path = core_root.clone();
-            module_path.push("prelude".to_owned());
-            let mut logical_path = module_path.clone();
-            logical_path.push((*name).to_owned());
-            symbols.insert(
-                logical_path,
-                Symbol {
-                    canonical: (*name).to_owned(),
-                    module_path,
-                    package_root: package_root.to_vec(),
-                    visibility: Visibility::Public,
-                    source_path: "<core>".to_owned(),
-                },
+        for (name, canonical) in CORE_PRELUDE_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "prelude",
+                name,
+                canonical,
+                "<core>",
             );
         }
-        for name in CORE_ROOT_EXPORTS {
-            let module_path = core_root.clone();
-            let mut logical_path = module_path.clone();
-            logical_path.push((*name).to_owned());
-            symbols.insert(
-                logical_path,
-                Symbol {
-                    canonical: format!("core::{name}"),
-                    module_path,
-                    package_root: package_root.to_vec(),
-                    visibility: Visibility::Public,
-                    source_path: "<core>".to_owned(),
-                },
+        for (name, canonical) in CORE_ROOT_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "",
+                name,
+                canonical,
+                "<core>",
             );
         }
-        for name in CORE_OPS_EXPORTS {
-            let mut module_path = core_root.clone();
-            module_path.push("ops".to_owned());
-            let mut logical_path = module_path.clone();
-            logical_path.push((*name).to_owned());
-            symbols.insert(
-                logical_path,
-                Symbol {
-                    canonical: format!("core::ops::{name}"),
-                    module_path,
-                    package_root: package_root.to_vec(),
-                    visibility: Visibility::Public,
-                    source_path: "<core>".to_owned(),
-                },
+        for name in CORE_NEVER_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "never",
+                name,
+                &format!("core::never::{name}"),
+                "<core>",
+            );
+        }
+        for name in CORE_MARKER_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "marker",
+                name,
+                &format!("core::marker::{name}"),
+                "<core>",
+            );
+        }
+        for (module, name, canonical) in [
+            ("option", "Option", "core::option::Option"),
+            ("result", "Result", "core::result::Result"),
+        ] {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                module,
+                name,
+                canonical,
+                "<core>",
+            );
+        }
+        for name in CORE_CMP_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "cmp",
+                name,
+                &format!("core::cmp::{name}"),
+                "<core>",
+            );
+        }
+        for (name, canonical) in CORE_OPS_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "ops",
+                name,
+                canonical,
+                "<core>",
+            );
+        }
+        for name in CORE_ARITH_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "ops.arith",
+                name,
+                &format!("core::ops::arith::{name}"),
+                "<core>",
+            );
+        }
+        for name in CORE_BIT_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "ops.bit",
+                name,
+                &format!("core::ops::bit::{name}"),
+                "<core>",
+            );
+        }
+        for name in CORE_ASSIGN_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "ops.assign",
+                name,
+                &format!("core::ops::assign::{name}"),
+                "<core>",
             );
         }
         for name in CORE_FLOW_EXPORTS {
-            let mut module_path = core_root.clone();
-            module_path.push("flow".to_owned());
-            let mut logical_path = module_path.clone();
-            logical_path.push((*name).to_owned());
-            symbols.insert(
-                logical_path,
-                Symbol {
-                    canonical: format!("core::flow::{name}"),
-                    module_path,
-                    package_root: package_root.to_vec(),
-                    visibility: Visibility::Public,
-                    source_path: "<core>".to_owned(),
-                },
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "flow",
+                name,
+                &format!("core::flow::{name}"),
+                "<core>",
             );
         }
-        for name in CORE_FLOW_EXPORTS {
-            let mut module_path = core_root.clone();
-            module_path.push("ops".to_owned());
-            let mut logical_path = module_path.clone();
-            logical_path.push((*name).to_owned());
-            symbols.insert(
-                logical_path,
-                Symbol {
-                    canonical: format!("core::flow::{name}"),
-                    module_path,
-                    package_root: package_root.to_vec(),
-                    visibility: Visibility::Public,
-                    source_path: "<core>".to_owned(),
-                },
+        for name in CORE_EFFECT_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "effect",
+                name,
+                &format!("core::effect::{name}"),
+                "<core>",
             );
         }
-        for name in CORE_EFFECTS_EXPORTS {
-            let mut module_path = core_root.clone();
-            module_path.push("effects".to_owned());
-            let mut logical_path = module_path.clone();
-            logical_path.push((*name).to_owned());
-            symbols.insert(
-                logical_path,
-                Symbol {
-                    canonical: format!("core::effects::{name}"),
-                    module_path,
-                    package_root: package_root.to_vec(),
-                    visibility: Visibility::Public,
-                    source_path: "<core>".to_owned(),
-                },
+        for name in CORE_EFFECT_HANDLER_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "effect.handler",
+                name,
+                &format!("core::effect::handler::{name}"),
+                "<core>",
             );
         }
         for name in CORE_DOMAIN_EXPORTS {
-            let mut module_path = core_root.clone();
-            module_path.push("domains".to_owned());
-            let mut logical_path = module_path.clone();
-            logical_path.push((*name).to_owned());
-            symbols.insert(
-                logical_path,
-                Symbol {
-                    canonical: format!("core::domains::{name}"),
-                    module_path,
-                    package_root: package_root.to_vec(),
-                    visibility: Visibility::Public,
-                    source_path: "<core>".to_owned(),
-                },
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "domains",
+                name,
+                &format!("core::domains::{name}"),
+                "<core>",
             );
         }
         for name in CORE_CONTROL_EXPORTS {
-            let mut module_path = core_root.clone();
-            module_path.push("control".to_owned());
-            let mut logical_path = module_path.clone();
-            logical_path.push((*name).to_owned());
-            symbols.insert(
-                logical_path,
-                Symbol {
-                    canonical: format!("core::control::{name}"),
-                    module_path,
-                    package_root: package_root.to_vec(),
-                    visibility: Visibility::Public,
-                    source_path: "<core>".to_owned(),
-                },
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "control",
+                name,
+                &format!("core::control::{name}"),
+                "<core>",
             );
         }
         for name in CORE_ALGEBRA_EXPORTS {
-            let mut module_path = core_root.clone();
-            module_path.push("algebra".to_owned());
-            let mut logical_path = module_path.clone();
-            logical_path.push((*name).to_owned());
-            symbols.insert(
-                logical_path,
-                Symbol {
-                    canonical: format!("core::algebra::{name}"),
-                    module_path,
-                    package_root: package_root.to_vec(),
-                    visibility: Visibility::Public,
-                    source_path: "<core>".to_owned(),
-                },
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "algebra",
+                name,
+                &format!("core::algebra::{name}"),
+                "<core>",
             );
         }
         for name in CORE_FUNCTIONAL_EXPORTS {
-            let mut module_path = core_root.clone();
-            module_path.push("functional".to_owned());
-            let mut logical_path = module_path.clone();
-            logical_path.push((*name).to_owned());
-            symbols.insert(
-                logical_path,
-                Symbol {
-                    canonical: format!("core::functional::{name}"),
-                    module_path,
-                    package_root: package_root.to_vec(),
-                    visibility: Visibility::Public,
-                    source_path: "<core>".to_owned(),
-                },
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "functional",
+                name,
+                &format!("core::functional::{name}"),
+                "<core>",
             );
         }
         for name in CORE_ITER_EXPORTS {
-            let mut module_path = core_root.clone();
-            module_path.push("iter".to_owned());
-            let mut logical_path = module_path.clone();
-            logical_path.push((*name).to_owned());
-            symbols.insert(
-                logical_path,
-                Symbol {
-                    canonical: format!("core::iter::{name}"),
-                    module_path,
-                    package_root: package_root.to_vec(),
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "iter",
+                name,
+                &format!("core::iter::{name}"),
+                "<core>",
+            );
+        }
+    }
+}
+
+fn install_standard_prelude_aliases(
+    parsed: &[ParsedUnit<'_>],
+    symbols: &SymbolTable,
+    module_paths: &HashSet<Vec<String>>,
+    aliases: &mut AliasTable,
+) {
+    let package_roots = parsed
+        .iter()
+        .map(|unit| unit.package_root.clone())
+        .collect::<BTreeSet<_>>();
+    for package_root in package_roots {
+        for (name, canonical) in CORE_PRELUDE_EXPORTS {
+            let mut key = package_root.clone();
+            key.push((*name).to_owned());
+            if symbols.contains_key(&key)
+                || module_paths.contains(&key)
+                || aliases.contains_key(&key)
+            {
+                continue;
+            }
+            aliases.insert(
+                key,
+                ResolvedAlias {
+                    target: AliasTarget::Declaration((*canonical).to_owned()),
                     visibility: Visibility::Public,
-                    source_path: "<core>".to_owned(),
+                    module_path: package_root.clone(),
+                    package_root: package_root.clone(),
                 },
             );
         }
@@ -1300,6 +1492,15 @@ fn install_alloc_namespace(
         module_paths.insert(module_path);
     }
     for (module, name) in ALLOC_EXPORTS {
+        insert_standard_symbol(
+            symbols,
+            package_root,
+            &alloc_root,
+            "",
+            name,
+            &format!("alloc::{module}::{name}"),
+            "<alloc>",
+        );
         let mut module_path = alloc_root.clone();
         module_path.push((*module).to_owned());
         let mut logical_path = module_path.clone();
@@ -1343,14 +1544,18 @@ fn install_std_namespace(
     module_paths.insert(std_root.clone());
     for module in [
         "prelude",
+        "never",
         "marker",
         "option",
         "result",
         "ops",
+        "ops.arith",
+        "ops.bit",
+        "ops.assign",
         "cmp",
         "flow",
         "effect",
-        "effects",
+        "effect.handler",
         "domains",
         "control",
         "iter",
@@ -1359,9 +1564,7 @@ fn install_std_namespace(
         "boxed",
         "vec",
     ] {
-        let mut module_path = std_root.clone();
-        module_path.push(module.to_owned());
-        module_paths.insert(module_path);
+        insert_standard_module_path(module_paths, &std_root, module);
     }
 
     for (name, canonical) in STD_ROOT_EXPORTS {
@@ -1380,19 +1583,14 @@ fn install_std_namespace(
     }
 
     for (module, name, canonical) in STD_MODULE_EXPORTS {
-        let mut module_path = std_root.clone();
-        module_path.push((*module).to_owned());
-        let mut logical_path = module_path.clone();
-        logical_path.push((*name).to_owned());
-        symbols.insert(
-            logical_path,
-            Symbol {
-                canonical: (*canonical).to_owned(),
-                module_path,
-                package_root: package_root.to_vec(),
-                visibility: Visibility::Public,
-                source_path: "<std>".to_owned(),
-            },
+        insert_standard_symbol(
+            symbols,
+            package_root,
+            &std_root,
+            module,
+            name,
+            canonical,
+            "<std>",
         );
     }
 }
@@ -4715,7 +4913,7 @@ let main(): i32 = { Option {} }
         assert!(operator.items.iter().any(|item| {
             matches!(item, Item::Extend(extension)
                 if matches!(&extension.trait_ref,
-                    Some(Type::Named(name, _)) if name == "core::ops::Add"))
+                    Some(Type::Named(name, _)) if name == "core::ops::arith::Add"))
         }));
 
         let flow = resolve_sources(&[unit(
@@ -4760,7 +4958,7 @@ let main(): i32 = { Option {} }
         .unwrap();
         assert_eq!(
             function(&standard_modules, "suspended").effects.custom,
-            vec![Type::Named("core::effects::Async".into(), Vec::new())]
+            vec![Type::Named("core::effect::Async".into(), Vec::new())]
         );
         let invoke = function(&standard_modules, "invoke");
         let Type::Function { effects, .. } = &invoke.groups[0][0].ty else {
@@ -4768,7 +4966,7 @@ let main(): i32 = { Option {} }
         };
         assert_eq!(
             effects.custom,
-            vec![Type::Named("core::effects::Async".into(), Vec::new())]
+            vec![Type::Named("core::effect::Async".into(), Vec::new())]
         );
         assert!(standard_modules.items.iter().any(|item| {
             matches!(item, Item::Extend(extension)
@@ -4939,13 +5137,22 @@ let main(): i32 = { Option {} }
                 ))
             })
             .collect::<BTreeSet<_>>();
-        let expected_core = CORE_PRELUDE_EXPORTS
+        let expected_core = CORE_NEVER_EXPORTS
             .iter()
-            .map(|name| ("prelude", *name))
-            .chain(CORE_ROOT_EXPORTS.iter().map(|name| ("core", *name)))
-            .chain(CORE_OPS_EXPORTS.iter().map(|name| ("ops", *name)))
+            .map(|name| ("never", *name))
+            .chain(CORE_MARKER_EXPORTS.iter().map(|name| ("marker", *name)))
+            .chain([("option", "Option"), ("result", "Result")])
+            .chain(CORE_CMP_EXPORTS.iter().map(|name| ("cmp", *name)))
             .chain(CORE_FLOW_EXPORTS.iter().map(|name| ("flow", *name)))
-            .chain(CORE_EFFECTS_EXPORTS.iter().map(|name| ("effects", *name)))
+            .chain(CORE_ARITH_EXPORTS.iter().map(|name| ("arith", *name)))
+            .chain(CORE_BIT_EXPORTS.iter().map(|name| ("bit", *name)))
+            .chain(CORE_ASSIGN_EXPORTS.iter().map(|name| ("assign", *name)))
+            .chain(CORE_EFFECT_EXPORTS.iter().map(|name| ("effect", *name)))
+            .chain(
+                CORE_EFFECT_HANDLER_EXPORTS
+                    .iter()
+                    .map(|name| ("handler", *name)),
+            )
             .chain(CORE_DOMAIN_EXPORTS.iter().map(|name| ("domains", *name)))
             .chain(CORE_CONTROL_EXPORTS.iter().map(|name| ("control", *name)))
             .chain(CORE_ITER_EXPORTS.iter().map(|name| ("iter", *name)))
@@ -4999,11 +5206,10 @@ let main(): i32 = { Option {} }
             );
         }
         for (module, name, canonical) in STD_MODULE_EXPORTS {
-            assert_eq!(
-                symbols[&vec!["std".to_owned(), (*module).to_owned(), (*name).to_owned()]]
-                    .canonical,
-                *canonical
-            );
+            let mut logical_path = vec!["std".to_owned()];
+            logical_path.extend(module.split('.').map(str::to_owned));
+            logical_path.push((*name).to_owned());
+            assert_eq!(symbols[&logical_path].canonical, *canonical);
         }
     }
 
