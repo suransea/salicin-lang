@@ -34,16 +34,26 @@ const NON_LANG_ITEM_CORE_MODULES: &[&str] = &["core", "effects", "algebra", "fun
 
 #[cfg(test)]
 const TEST_ASSIGNMENT_OPS: &str = r#"
-pub let AddAssign(Rhs: type) = trait { let add_assign(self: borrow(mut)(Self))(move rhs: Rhs): () }
-pub let SubAssign(Rhs: type) = trait { let sub_assign(self: borrow(mut)(Self))(move rhs: Rhs): () }
-pub let MulAssign(Rhs: type) = trait { let mul_assign(self: borrow(mut)(Self))(move rhs: Rhs): () }
-pub let DivAssign(Rhs: type) = trait { let div_assign(self: borrow(mut)(Self))(move rhs: Rhs): () }
-pub let RemAssign(Rhs: type) = trait { let rem_assign(self: borrow(mut)(Self))(move rhs: Rhs): () }
-pub let BitAndAssign(Rhs: type) = trait { let bit_and_assign(self: borrow(mut)(Self))(move rhs: Rhs): () }
-pub let BitOrAssign(Rhs: type) = trait { let bit_or_assign(self: borrow(mut)(Self))(move rhs: Rhs): () }
-pub let BitXorAssign(Rhs: type) = trait { let bit_xor_assign(self: borrow(mut)(Self))(move rhs: Rhs): () }
-pub let ShlAssign(Rhs: type) = trait { let shl_assign(self: borrow(mut)(Self))(move rhs: Rhs): () }
-pub let ShrAssign(Rhs: type) = trait { let shr_assign(self: borrow(mut)(Self))(move rhs: Rhs): () }
+pub let AddAssign(Rhs: type) = trait { let add_assign(self: borrow(mut)(Self))
+  (move rhs: Rhs): () }
+pub let SubAssign(Rhs: type) = trait { let sub_assign(self: borrow(mut)(Self))
+  (move rhs: Rhs): () }
+pub let MulAssign(Rhs: type) = trait { let mul_assign(self: borrow(mut)(Self))
+  (move rhs: Rhs): () }
+pub let DivAssign(Rhs: type) = trait { let div_assign(self: borrow(mut)(Self))
+  (move rhs: Rhs): () }
+pub let RemAssign(Rhs: type) = trait { let rem_assign(self: borrow(mut)(Self))
+  (move rhs: Rhs): () }
+pub let BitAndAssign(Rhs: type) = trait { let bit_and_assign(self: borrow(mut)(Self))
+  (move rhs: Rhs): () }
+pub let BitOrAssign(Rhs: type) = trait { let bit_or_assign(self: borrow(mut)(Self))
+  (move rhs: Rhs): () }
+pub let BitXorAssign(Rhs: type) = trait { let bit_xor_assign(self: borrow(mut)(Self))
+  (move rhs: Rhs): () }
+pub let ShlAssign(Rhs: type) = trait { let shl_assign(self: borrow(mut)(Self))
+  (move rhs: Rhs): () }
+pub let ShrAssign(Rhs: type) = trait { let shr_assign(self: borrow(mut)(Self))
+  (move rhs: Rhs): () }
 "#;
 
 #[cfg(test)]
@@ -51,11 +61,17 @@ const TEST_CHAIN_OPS: &str = r#"
 pub let Chain = trait {
   let Item: type
   let Rebind(Value: type): type
-  let chain(E: effect, U: type)(move self)(move transform: (Item): U with(E)): Rebind(U) with(E)
+
+  let chain(E: effect, U: type)
+    (move self)
+    (move transform: (Item): U with(E)): Rebind(U) with(E)
 }
 pub let Coalesce = trait {
   let Item: type
-  let coalesce(E: effect)(move self)(move fallback: (): Item with(E)): Item with(E)
+
+  let coalesce(E: effect)
+    (move self)
+    (move fallback: (): Item with(E)): Item with(E)
 }
 "#;
 
@@ -1499,7 +1515,7 @@ fn validate_chain(definition: &TraitDef, diagnostics: &mut Vec<String>) {
         );
     if !valid {
         diagnostics.push(
-            "lang item `Chain` must declare `Item`, `Rebind(Value: type): type`, and `chain(E: effect, U: type)(move self)(move transform: (Item): U with(E)): Rebind(U) with(E)`"
+            "lang item `Chain` must declare `Item`, `Rebind(Value: type): type`, and `chain(E: effect, U: type) (move self) (move transform: (Item): U with(E)): Rebind(U) with(E)`"
                 .to_owned(),
         );
     }
@@ -1545,7 +1561,7 @@ fn validate_coalesce(definition: &TraitDef, diagnostics: &mut Vec<String>) {
         );
     if !valid {
         diagnostics.push(
-            "lang item `Coalesce` must declare `Item` and `coalesce(E: effect)(move self)(move fallback: (): Item with(E)): Item with(E)`"
+            "lang item `Coalesce` must declare `Item` and `coalesce(E: effect) (move self) (move fallback: (): Item with(E)): Item with(E)`"
                 .to_owned(),
         );
     }
@@ -2435,8 +2451,8 @@ pub let Shr(Rhs: type) = trait {
     #[test]
     fn rejects_malformed_control_contracts() {
         let malformed = EDITION_2026_CONTROL.replace(
-            "pub let unsafe(E: effect, T: type)(move action: (): T with(core.effects.Unsafe, E)): T with(E)",
-            "pub let unsafe(E: effect, T: type)(move action: (): T with(E)): T with(E)",
+            "pub let unsafe(E: effect, T: type)\n  (move action: (): T with(core.effects.Unsafe, E)): T with(E)",
+            "pub let unsafe(E: effect, T: type)\n  (move action: (): T with(E)): T with(E)",
         );
         let error = CoreBundle::from_modules(
             Edition::Edition2026,
@@ -2501,7 +2517,7 @@ pub let Shr(Rhs: type) = trait {
             .any(|diagnostic| diagnostic.contains("lang item `EffectCallable`")));
 
         let malformed = EDITION_2026_CONTROL.replace(
-            "pub let Handle = trait(Self: effect) {\n  let Clauses(Value: type, Answer: type): type\n  let handle(Value: type, Answer: type, Rest: effect)(\n    move clauses: Clauses(Value, Answer),\n  )(\n    move action: (): Value with(Self, Rest),\n  ): Answer with(Rest)\n}",
+            "pub let Handle = trait(Self: effect) {\n  let Clauses(Value: type, Answer: type): type\n  let handle(Value: type, Answer: type, Rest: effect)\n    (move clauses: Clauses(Value, Answer))\n    (move action: (): Value with(Self, Rest)): Answer with(Rest)\n}",
             "pub let Handle = trait { let Clauses(Value: type): type }",
         );
         let error = CoreBundle::from_modules(
@@ -2523,8 +2539,8 @@ pub let Shr(Rhs: type) = trait {
             .any(|diagnostic| diagnostic.contains("lang item `Handle`")));
 
         let malformed = EDITION_2026_CONTROL.replace(
-            "pub let throw(Error: type)(move error: Error): Never with(core.effects.Throws(Error))",
-            "pub let throw(Error: type)(move error: Error): Never",
+            "pub let throw(Error: type)\n  (move error: Error): Never with(core.effects.Throws(Error))",
+            "pub let throw(Error: type)\n  (move error: Error): Never",
         );
         let error = CoreBundle::from_modules(
             Edition::Edition2026,
@@ -2548,8 +2564,8 @@ pub let Shr(Rhs: type) = trait {
     #[test]
     fn rejects_malformed_iteration_contracts() {
         let malformed = EDITION_2026_ITER.replace(
-            "let next(self: borrow(mut)(Self))(): core.Option(Item)",
-            "let next(self: borrow(Self))(): core.Option(Item)",
+            "let next(self: borrow(mut)(Self))\n    (): core.Option(Item)",
+            "let next(self: borrow(Self))\n    (): core.Option(Item)",
         );
         let error = CoreBundle::from_modules(
             Edition::Edition2026,
@@ -2573,8 +2589,8 @@ pub let Shr(Rhs: type) = trait {
     #[test]
     fn rejects_malformed_assignment_operator_contracts() {
         let malformed = EDITION_2026_OPS.replace(
-            "let add_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()",
-            "let add_assign(self: borrow(Self))(move rhs: Rhs): ()",
+            "let add_assign(self: borrow(mut)(Self))\n    (move rhs: Rhs): ()",
+            "let add_assign(self: borrow(Self))\n    (move rhs: Rhs): ()",
         );
         let error = CoreBundle::from_modules(
             Edition::Edition2026,
@@ -2618,8 +2634,8 @@ pub let Shr(Rhs: type) = trait {
             .any(|diagnostic| diagnostic.contains("lang item `Chain`")));
 
         let malformed = EDITION_2026_OPS.replace(
-            "let coalesce(E: effect)(move self)(move fallback: (): Item with(E)): Item with(E)",
-            "let coalesce(move self)(move fallback: (): Item): Item",
+            "let coalesce(E: effect)\n    (move self)\n    (move fallback: (): Item with(E)): Item with(E)",
+            "let coalesce(move self)\n    (move fallback: (): Item): Item",
         );
         let error = CoreBundle::from_modules(
             Edition::Edition2026,

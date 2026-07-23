@@ -19,7 +19,8 @@ pub let Option(T: type) = enum {
   None,
 }
 
-pub let Result(E: type)(T: type) = enum {
+pub let Result(E: type)
+  (T: type) = enum {
   Ok(T),
   Err(E),
 }
@@ -40,7 +41,8 @@ use core.ops.Add
 
 extend Number: Add(Number) {
   let Output = Number
-  let add(move self)(move rhs: Number): Number = { ... }
+  let add(move self)
+    (move rhs: Number): Number = { ... }
 }
 ```
 
@@ -51,7 +53,8 @@ negates its result:
 use core.ops.Eq
 
 extend Number: Eq(Number) {
-  let eq(self: borrow(Self))(rhs: borrow(Number)): bool = { self.value == rhs.value }
+  let eq(self: borrow(Self))
+    (rhs: borrow(Number)): bool = { self.value == rhs.value }
 }
 ```
 
@@ -63,7 +66,8 @@ the method once; an `Unordered` result makes each operator false:
 use core.ops.{PartialOrd, PartialOrdering}
 
 extend Number: PartialOrd(Number) {
-  let partial_cmp(self: borrow(Self))(rhs: borrow(Number)): PartialOrdering = { ... }
+  let partial_cmp(self: borrow(Self))
+    (rhs: borrow(Number)): PartialOrdering = { ... }
 }
 ```
 
@@ -83,7 +87,8 @@ returns `()`:
 
 ```sc
 pub let AddAssign(Rhs: type) = trait {
-  let add_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()
+  let add_assign(self: borrow(mut)(Self))
+    (move rhs: Rhs): ()
 }
 ```
 
@@ -103,12 +108,18 @@ direct member access.
 pub let Chain = trait {
   let Item: type
   let Rebind(Value: type): type
-  let chain(E: effect, U: type)(move self)(move transform: (Item): U with(E)): Rebind(U) with(E)
+
+  let chain(E: effect, U: type)
+    (move self)
+    (move transform: (Item): U with(E)): Rebind(U) with(E)
 }
 
 pub let Coalesce = trait {
   let Item: type
-  let coalesce(E: effect)(move self)(move fallback: (): Item with(E)): Item with(E)
+
+  let coalesce(E: effect)
+    (move self)
+    (move fallback: (): Item with(E)): Item with(E)
 }
 ```
 
@@ -190,11 +201,9 @@ pub let Continuation(Input: type, Output: type) = struct {}
 pub let EffectCallable(Input: type, Output: type, Answer: type) = struct {}
 pub let Handle = trait(Self: effect) {
   let Clauses(Value: type, Answer: type): type
-  let handle(Value: type, Answer: type, Rest: effect)(
-    move clauses: Clauses(Value, Answer),
-  )(
-    move action: (): Value with(Self, Rest),
-  ): Answer with(Rest)
+  let handle(Value: type, Answer: type, Rest: effect)
+    (move clauses: Clauses(Value, Answer))
+    (move action: (): Value with(Self, Rest)): Answer with(Rest)
 }
 ```
 
@@ -213,13 +222,16 @@ example `State(i32).handle(get: ..., put: ...) { ... }`. These low-level operati
 handler implementations are not ordinary source-level standard-library functions.
 
 ```sc
-pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E)
+pub let do(E: effect, T: type)
+  (move action: (): T with(E)): T with(E)
 pub let try(F: effect, T: type, E: type)
   (move action: (): T with(core.effects.Throws(E), F)): core.Result(E)(T) with(F)
-pub let throw(Error: type)(move error: Error): Never with(core.effects.Throws(Error))
+pub let throw(Error: type)
+  (move error: Error): Never with(core.effects.Throws(Error))
 pub let unsafe(E: effect, T: type)
   (move action: (): T with(core.effects.Unsafe, E)): T with(E)
-pub let loop(E: effect, T: type)(move body: (): () with(E)): T with(E)
+pub let loop(E: effect, T: type)
+  (move body: (): () with(E)): T with(E)
 ```
 
 Here `try` removes only `Throws(E)`, `unsafe` removes only the `Unsafe` requirement, and both forward
@@ -227,7 +239,8 @@ the remainder row. `throw` introduces the standard `Throws(Error)` requirement, 
 `loop` forward the whole row. The source definitions are intentionally simple:
 
 ```sc
-pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E) = {
+pub let do(E: effect, T: type)
+  (move action: (): T with(E)): T with(E) = {
   action()
 }
 
@@ -241,7 +254,8 @@ pub let try(F: effect, T: type, E: type)
   }
 }
 
-pub let throw(Error: type)(move error: Error): Never with(core.effects.Throws(Error)) = {
+pub let throw(Error: type)
+  (move error: Error): Never with(core.effects.Throws(Error)) = {
   core.effects.Throws(Error).raise(error)
 }
 ```
@@ -251,12 +265,14 @@ pub let throw(Error: type)(move error: Error): Never with(core.effects.Throws(Er
 ```sc
 pub let Iterator = trait {
   let Item: type
-  let next(self: borrow(mut)(Self))(): core.Option(Item)
+  let next(self: borrow(mut)(Self))
+    (): core.Option(Item)
 }
 
 pub let IntoIterator = trait {
   let IntoIter: type
-  let into_iter(move self)(): IntoIter
+  let into_iter(move self)
+    (): IntoIter
 }
 ```
 
@@ -291,28 +307,27 @@ part of the prelude:
 
 ```sc
 pub let Functor = trait(Self: (Value: type): type) {
-  let map(E: effect, A: type, B: type)(
-    move self: Self(A),
-  )(
-    move transform: (A): B with(E),
-  ): Self(B) with(E)
+  let map(E: effect, A: type, B: type)
+    (move self: Self(A))
+    (move transform: (A): B with(E)): Self(B) with(E)
 }
 
 pub let Applicative = trait(Self: (Value: type): type)
-where Self: Functor{let pure(A: type)(move value: A): Self(A)
+where Self: Functor {
+  let pure(A: type)
+    (move value: A): Self(A)
 
-  let apply(E: effect, A: type, B: type)(
-    move self: Self((A): B with(E)),
-  )(
-    move value: Self(A),
-  ): Self(B) with(E)}
+  let apply(E: effect, A: type, B: type)
+    (move self: Self((A): B with(E)))
+    (move value: Self(A)): Self(B) with(E)
+}
 
 pub let Monad = trait(Self: (Value: type): type)
-where Self: Applicative{let flat_map(E: effect, A: type, B: type)(
-    move self: Self(A),
-  )(
-    move next: (A): Self(B) with(E),
-  ): Self(B) with(E)}
+where Self: Applicative {
+  let flat_map(E: effect, A: type, B: type)
+    (move self: Self(A))
+    (move next: (A): Self(B) with(E)): Self(B) with(E)
+}
 ```
 
 These declarations use constructor kinds such as `(Value: type): type` on the trait `Self` subject,

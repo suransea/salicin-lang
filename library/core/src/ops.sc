@@ -1,70 +1,86 @@
 pub let Add(Rhs: type) = trait {
   let Output: type
-  let add(move self)(move rhs: Rhs): Output
+  let add(move self)
+    (move rhs: Rhs): Output
 }
 
 pub let Sub(Rhs: type) = trait {
   let Output: type
-  let sub(move self)(move rhs: Rhs): Output
+  let sub(move self)
+    (move rhs: Rhs): Output
 }
 
 pub let Mul(Rhs: type) = trait {
   let Output: type
-  let mul(move self)(move rhs: Rhs): Output
+  let mul(move self)
+    (move rhs: Rhs): Output
 }
 
 pub let Div(Rhs: type) = trait {
   let Output: type
-  let div(move self)(move rhs: Rhs): Output
+  let div(move self)
+    (move rhs: Rhs): Output
 }
 
 pub let Rem(Rhs: type) = trait {
   let Output: type
-  let rem(move self)(move rhs: Rhs): Output
+  let rem(move self)
+    (move rhs: Rhs): Output
 }
 
 pub let AddAssign(Rhs: type) = trait {
-  let add_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()
+  let add_assign(self: borrow(mut)(Self))
+    (move rhs: Rhs): ()
 }
 
 pub let SubAssign(Rhs: type) = trait {
-  let sub_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()
+  let sub_assign(self: borrow(mut)(Self))
+    (move rhs: Rhs): ()
 }
 
 pub let MulAssign(Rhs: type) = trait {
-  let mul_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()
+  let mul_assign(self: borrow(mut)(Self))
+    (move rhs: Rhs): ()
 }
 
 pub let DivAssign(Rhs: type) = trait {
-  let div_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()
+  let div_assign(self: borrow(mut)(Self))
+    (move rhs: Rhs): ()
 }
 
 pub let RemAssign(Rhs: type) = trait {
-  let rem_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()
+  let rem_assign(self: borrow(mut)(Self))
+    (move rhs: Rhs): ()
 }
 
 pub let BitAndAssign(Rhs: type) = trait {
-  let bit_and_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()
+  let bit_and_assign(self: borrow(mut)(Self))
+    (move rhs: Rhs): ()
 }
 
 pub let BitOrAssign(Rhs: type) = trait {
-  let bit_or_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()
+  let bit_or_assign(self: borrow(mut)(Self))
+    (move rhs: Rhs): ()
 }
 
 pub let BitXorAssign(Rhs: type) = trait {
-  let bit_xor_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()
+  let bit_xor_assign(self: borrow(mut)(Self))
+    (move rhs: Rhs): ()
 }
 
 pub let ShlAssign(Rhs: type) = trait {
-  let shl_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()
+  let shl_assign(self: borrow(mut)(Self))
+    (move rhs: Rhs): ()
 }
 
 pub let ShrAssign(Rhs: type) = trait {
-  let shr_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()
+  let shr_assign(self: borrow(mut)(Self))
+    (move rhs: Rhs): ()
 }
 
 pub let Eq(Rhs: type) = trait {
-  let eq(self: borrow(Self))(rhs: borrow(Rhs)): bool
+  let eq(self: borrow(Self))
+    (rhs: borrow(Rhs)): bool
 }
 
 pub let PartialOrdering = enum {
@@ -75,7 +91,8 @@ pub let PartialOrdering = enum {
 }
 
 pub let PartialOrd(Rhs: type) = trait {
-  let partial_cmp(self: borrow(Self))(rhs: borrow(Rhs)): PartialOrdering
+  let partial_cmp(self: borrow(Self))
+    (rhs: borrow(Rhs)): PartialOrdering
 }
 
 pub let Neg = trait {
@@ -90,36 +107,47 @@ pub let Not = trait {
 
 pub let BitAnd(Rhs: type) = trait {
   let Output: type
-  let bit_and(move self)(move rhs: Rhs): Output
+  let bit_and(move self)
+    (move rhs: Rhs): Output
 }
 
 pub let BitOr(Rhs: type) = trait {
   let Output: type
-  let bit_or(move self)(move rhs: Rhs): Output
+  let bit_or(move self)
+    (move rhs: Rhs): Output
 }
 
 pub let BitXor(Rhs: type) = trait {
   let Output: type
-  let bit_xor(move self)(move rhs: Rhs): Output
+  let bit_xor(move self)
+    (move rhs: Rhs): Output
 }
 
 pub let Shl(Rhs: type) = trait {
   let Output: type
-  let shl(move self)(move rhs: Rhs): Output
+  let shl(move self)
+    (move rhs: Rhs): Output
 }
 
 pub let Shr(Rhs: type) = trait {
   let Output: type
-  let shr(move self)(move rhs: Rhs): Output
+  let shr(move self)
+    (move rhs: Rhs): Output
 }
 
 pub let Chain = trait {
   let Item: type
   let Rebind(Value: type): type
-  let chain(E: effect, U: type)(move self)(move transform: (Item): U with(E)): Rebind(U) with(E)
+
+  let chain(E: effect, U: type)
+    (move self)
+    (move transform: (Item): U with(E)): Rebind(U) with(E)
 }
 
 pub let Coalesce = trait {
   let Item: type
-  let coalesce(E: effect)(move self)(move fallback: (): Item with(E)): Item with(E)
+
+  let coalesce(E: effect)
+    (move self)
+    (move fallback: (): Item with(E)): Item with(E)
 }

@@ -16,22 +16,22 @@ pub let EffectCallable(Input: type, Output: type, Answer: type) = struct {}
 // operation set.
 pub let Handle = trait(Self: effect) {
   let Clauses(Value: type, Answer: type): type
-  let handle(Value: type, Answer: type, Rest: effect)(
-    move clauses: Clauses(Value, Answer),
-  )(
-    move action: (): Value with(Self, Rest),
-  ): Answer with(Rest)
+  let handle(Value: type, Answer: type, Rest: effect)
+    (move clauses: Clauses(Value, Answer))
+    (move action: (): Value with(Self, Rest)): Answer with(Rest)
 }
 
 // Control syntax uses trailing-closure call notation and targets these
 // validated functions. Most control helpers are ordinary source definitions;
 // the compiler only keeps syntax-directed shortcuts and the few places that
 // need authority or primitive control-flow lowering.
-pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E) = {
+pub let do(E: effect, T: type)
+  (move action: (): T with(E)): T with(E) = {
   action()
 }
 
-pub let try(F: effect, T: type, E: type)(move action: (): T with(core.effects.Throws(E), F)): core.Result(E)(T) with(F) = {
+pub let try(F: effect, T: type, E: type)
+  (move action: (): T with(core.effects.Throws(E), F)): core.Result(E)(T) with(F) = {
   core.effects.Throws(E).handle(
     raise: { (error) -> core.Result.Err(error) },
     done: { (value) -> core.Result.Ok(value) },
@@ -40,13 +40,16 @@ pub let try(F: effect, T: type, E: type)(move action: (): T with(core.effects.Th
   }
 }
 
-pub let throw(Error: type)(move error: Error): Never with(core.effects.Throws(Error)) = {
+pub let throw(Error: type)
+  (move error: Error): Never with(core.effects.Throws(Error)) = {
   core.effects.Throws(Error).raise(error)
 }
 
-pub let unsafe(E: effect, T: type)(move action: (): T with(core.effects.Unsafe, E)): T with(E) = {
+pub let unsafe(E: effect, T: type)
+  (move action: (): T with(core.effects.Unsafe, E)): T with(E) = {
   core.effects.Unsafe.handle() {
     action()
   }
 }
-pub let loop(E: effect, T: type)(move body: (): () with(E)): T with(E)
+pub let loop(E: effect, T: type)
+  (move body: (): () with(E)): T with(E)

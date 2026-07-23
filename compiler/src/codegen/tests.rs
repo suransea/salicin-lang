@@ -1459,7 +1459,9 @@ let Choice = enum { Present(i32), Missing }
 
 extend Choice: Coalesce {
   let Item = i32
-  let coalesce(E: effect)(move self)(move fallback: (): i32 with(E)): i32 with(E) = {
+  let coalesce(E: effect)
+    (move self)
+    (move fallback: (): i32 with(E)): i32 with(E) = {
 self match {
   Present(value) => value,
   Missing => fallback(),
@@ -1512,7 +1514,9 @@ let Maybe(T: type) = enum { Some(T), None }
 extend Maybe(Boxed): Chain {
   let Item = Boxed
   let Rebind = Maybe
-  let chain(E: effect, U: type)(move self)(move transform: (Boxed): U with(E)): Maybe(U) with(E) = {
+  let chain(E: effect, U: type)
+    (move self)
+    (move transform: (Boxed): U with(E)): Maybe(U) with(E) = {
 self match {
   Some(value) => Maybe(U).Some(transform(value)),
   None => Maybe(U).None,
@@ -1576,7 +1580,9 @@ let Maybe(T: type) = enum { Some(T), None }
 extend Maybe(Boxed): Chain {
   let Item = Boxed
   let Rebind = Maybe
-  let chain(E: effect, U: type)(move self)(move transform: (Boxed): U with(E)): Maybe(U) with(E) = {
+  let chain(E: effect, U: type)
+    (move self)
+    (move transform: (Boxed): U with(E)): Maybe(U) with(E) = {
 self match {
   Some(value) => Maybe(U).Some(transform(value)),
   None => Maybe(U).None,
@@ -1632,7 +1638,9 @@ let Maybe(T: type) = enum { Some(T), None }
 extend(T: type) Maybe(T): Chain {
   let Item = T
   let Rebind = Maybe
-  let chain(E: effect, U: type)(move self)(move transform: (T): U with(E)): Maybe(U) with(E) = {
+  let chain(E: effect, U: type)
+    (move self)
+    (move transform: (T): U with(E)): Maybe(U) with(E) = {
 self match {
   Some(value) => Maybe(U).Some(transform(value)),
   None => Maybe(U).None,

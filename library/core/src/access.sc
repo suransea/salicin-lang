@@ -14,8 +14,11 @@ pub let passing = domain {
   move
 }
 
-pub let borrow(A: access = shared)('r: region)(T: type): type
+pub let borrow(A: access = shared)
+  ('r: region)
+  (T: type): type
 
-pub let borrow(A: access = shared)('r: region)(T: type)(
-  value: borrow(A)('r)(T),
-): borrow(A)('r)(T)
+pub let borrow(A: access = shared)
+  ('r: region)
+  (T: type)
+  (value: borrow(A)('r)(T)): borrow(A)('r)(T)
