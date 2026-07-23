@@ -42,6 +42,8 @@ The implementation lives under `compiler/src`:
     type encodings.
   - `operators.rs` centralizes operator-syntax bindings, candidate selection, type probes, and HIR
     lowering for validated lang-item protocols.
+  - `raw.rs` lowers layout queries, raw pointer constructors, raw allocation primitives, raw
+    borrow/take/offset/trap operations, and `forget`.
   - `registry.rs` defines item, trait, overload, and generic-instance registry keys, schemas,
     candidate lookup, and generic implementation pattern matching helpers.
   - `source_rewrite.rs` owns source-level rewrites before semantic lowering, including labeled
