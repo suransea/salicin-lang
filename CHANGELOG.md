@@ -6,6 +6,9 @@ subset.
 
 ## Unreleased
 
+- Made the validated `core.control.unsafe` helper an ordinary source definition over the
+  zero-operation `core.effects.Unsafe` handler; only its lexical raw-operation authority remains
+  syntax-directed in the compiler.
 - Refactored the compiler backend into a `codegen/` module directory, splitting out cleanup-plan
   construction, LLVM emission, and codegen regression tests while preserving behavior.
 - Normalized standard-library, documentation, fixture, and diagnostic snippets to write generic

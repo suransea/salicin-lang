@@ -1729,7 +1729,7 @@ fn valid_unsafe(function: &Function) -> bool {
         && !function.effects.unsafe_effect
         && function.effects.throws.is_none()
         && function.effects.custom.is_empty()
-        && function.body.is_none()
+        && function.body.is_some()
 }
 
 fn valid_loop(function: &Function) -> bool {
@@ -2412,6 +2412,28 @@ pub let Shr(Rhs: type) = trait {
                 ("effects", EDITION_2026_EFFECTS),
                 ("access", EDITION_2026_ACCESS),
                 ("control", &malformed),
+                ("iter", EDITION_2026_ITER),
+            ],
+        )
+        .unwrap_err();
+        assert!(error
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.contains("lang item `unsafe`")));
+
+        let bodyless = EDITION_2026_CONTROL.replace(
+            " = {\n  core.effects.Unsafe.handle() {\n    action()\n  }\n}",
+            "",
+        );
+        let error = CoreBundle::from_modules(
+            Edition::Edition2026,
+            &[
+                ("prelude", EDITION_2026_PRELUDE),
+                ("core", EDITION_2026_ROOT),
+                ("ops", EDITION_2026_OPS),
+                ("effects", EDITION_2026_EFFECTS),
+                ("access", EDITION_2026_ACCESS),
+                ("control", &bodyless),
                 ("iter", EDITION_2026_ITER),
             ],
         )

@@ -39,5 +39,9 @@ pub let throw(Error: type)(move error: Error): Never with(core.effects.Throws(Er
   core.effects.Throws(Error).raise(error)
 }
 
-pub let unsafe(E: effect, T: type)(move action: (): T with(core.effects.Unsafe, E)): T with(E)
+pub let unsafe(E: effect, T: type)(move action: (): T with(core.effects.Unsafe, E)): T with(E) = {
+  core.effects.Unsafe.handle() {
+    action()
+  }
+}
 pub let loop(E: effect, T: type)(move body: (): () with(E)): T with(E)

@@ -176,10 +176,12 @@ Borrow types and values are written with the declared `borrow` form: `borrow(T)`
 domains in compile-time parameter positions.
 
 `core.control` owns the edition-pinned contracts for compiler-lowered control functions. It is not
-part of the prelude. `do`, `try`, and `throw` are ordinary source-backed functions over the standard
-effect declarations. `unsafe` and `loop` still need compiler authority and primitive lowering, so
-their bodyless signatures are permitted only for validated core lang items; ordinary package
-functions still require `= { ... }` bodies.
+part of the prelude. `do`, `try`, `throw`, and `unsafe` are ordinary source-backed functions over
+the standard effect declarations. The `unsafe` body removes the marker effect with
+`Unsafe.handle()`; the compiler keeps only the lexical authority check for raw operations inside
+`unsafe { ... }`. `loop` still needs primitive control-flow lowering, so its bodyless signature is
+permitted only as a validated core lang item; ordinary package functions still require
+`= { ... }` bodies.
 
 It also declares the protocol and erased runtime contracts used by algebraic handler lowering:
 

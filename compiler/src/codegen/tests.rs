@@ -674,6 +674,11 @@ fn registers_source_backed_core_lang_items() {
             vec![Type::Named("Error".to_owned(), Vec::new())],
         )]
     );
+    let unsafe_name = analyzer.lang_item_name(LangItemKind::Unsafe);
+    assert!(
+        analyzer.function_templates[unsafe_name].body.is_some(),
+        "core.control.unsafe must remain source-backed"
+    );
     assert_eq!(analyzer.nominal_instances.len(), 2);
     assert_eq!(analyzer.nominal_instance_names.len(), 2);
     let partial_ordering = analyzer.lang_item_name(LangItemKind::PartialOrdering);
