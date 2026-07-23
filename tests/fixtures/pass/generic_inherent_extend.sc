@@ -3,7 +3,7 @@ let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T) {
   let new(move value: T): Cell(T) = { Cell { value: value } }
   let take(move self)(): T = { self.value }
-  let replace(borrow(mut) self)(move value: T): () = {
+  let replace(self: borrow(mut)(Self))(move value: T): () = {
     self.value = value
   }
 }

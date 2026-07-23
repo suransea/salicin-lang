@@ -10,16 +10,16 @@ pub let box_new(T: type)(move value: T): Box(T) = {
   Box(T) { pointer: pointer }
 }
 
-pub let box_ptr(T: type)(borrow boxed: Box(T)): MutPtr(T) = { boxed.pointer }
+pub let box_ptr(T: type)(boxed: borrow(Box(T))): MutPtr(T) = { boxed.pointer }
 
-pub let box_read(T: type)(borrow boxed: Box(T)): T
+pub let box_read(T: type)(boxed: borrow(Box(T))): T
 where T: Copy = {
   unsafe {
     *boxed.pointer
   }
 }
 
-pub let box_write(T: type)(borrow(mut) boxed: Box(T))(copy value: T): ()
+pub let box_write(T: type)(boxed: borrow(mut)(Box(T)))(copy value: T): ()
 where T: Copy = {
   unsafe {
     *boxed.pointer = value
@@ -38,7 +38,7 @@ pub let box_into_inner(T: type)(move boxed: Box(T)): T = {
   value
 }
 
-pub let box_replace(T: type)(borrow(mut) boxed: Box(T))(move value: T): T = {
+pub let box_replace(T: type)(boxed: borrow(mut)(Box(T)))(move value: T): T = {
   let pointer = boxed.pointer
   let previous = unsafe {
     raw_take(pointer)
@@ -50,26 +50,26 @@ pub let box_replace(T: type)(borrow(mut) boxed: Box(T))(move value: T): T = {
 }
 
 pub let box_as_ref(A: access, 'a: region, T: type)
-  (borrow(A, 'a) boxed: Box(T)): borrow(A, 'a) T = {
+  (boxed: borrow(A)('a)(Box(T))): borrow(A)('a)(T) = {
   unsafe {
-    raw_borrow(A)(boxed.pointer, borrow(A) boxed)
+    raw_borrow(A)(boxed.pointer, borrow(A)(boxed))
   }
 }
 
 extend(T: type) Box(T) {
   let new(move value: T): Box(T) = { box_new(value) }
-  let as_mut_ptr(borrow self)(): MutPtr(T) = { box_ptr(self) }
-  let as_ref(A: access)(borrow(A) self)(): borrow(A) T = {
+  let as_mut_ptr(self: borrow(Self))(): MutPtr(T) = { box_ptr(self) }
+  let as_ref(A: access)(self: borrow(A)(Self))(): borrow(A)(T) = {
     unsafe {
-      raw_borrow(A)(self.pointer, borrow(A) self)
+      raw_borrow(A)(self.pointer, borrow(A)(self))
     }
   }
   let into_inner(move self)(): T = { box_into_inner(self) }
-  let replace(borrow(mut) self)(move value: T): T = { box_replace(self)(value) }
+  let replace(self: borrow(mut)(Self))(move value: T): T = { box_replace(self)(value) }
 }
 
 extend(T: type) Box(T)
 where T: Copy {
-  let read(borrow self)(): T = { box_read(self) }
-  let write(borrow(mut) self)(copy value: T): () = { box_write(self)(value) }
+  let read(self: borrow(Self))(): T = { box_read(self) }
+  let write(self: borrow(mut)(Self))(copy value: T): () = { box_write(self)(value) }
 }

@@ -8,5 +8,5 @@ let read(pointer: Ptr(i32)): i32 = { unsafe {
 
 let main(): i32 = {
   let value = 42
-  read(Ptr(borrow value))
+  read(Ptr(borrow(value)))
 }

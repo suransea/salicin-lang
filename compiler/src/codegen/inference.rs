@@ -525,16 +525,21 @@ impl Analyzer {
             Type::Unit => Some(Ty::Unit),
             Type::Borrow {
                 mutable,
+                access,
                 region,
                 pointee,
-                ..
             } => Some(Ty::Reference {
                 pointee: Box::new(self.resolved_template_ty(
                     pointee,
                     compile_parameters,
                     inferred,
                 )?),
-                mutable: *mutable,
+                mutable: access
+                    .as_deref()
+                    .and_then(|name| inferred.get(name))
+                    .map_or(*mutable, |argument| {
+                        argument.ty == Ty::Struct(ACCESS_MUT_MARKER.to_owned())
+                    }),
                 region: region.clone(),
             }),
             Type::Array(element, length) => Some(Ty::Array(
@@ -1122,7 +1127,14 @@ impl Analyzer {
             for index in pending {
                 let (template, expression, origin) = &constraints[index];
                 let hint = self.resolved_template_ty(template, compile_parameters, inferred);
-                match self.probe_expr_ty(expression, hint.as_ref(), context) {
+                let probe = self
+                    .probe_borrow_template_argument_ty(template, expression, inferred, context)
+                    .unwrap_or_else(|| {
+                        hint.as_ref()
+                            .map(|hint| self.probe_expr_ty(expression, Some(hint), context))
+                            .unwrap_or_else(|| self.probe_expr_ty(expression, None, context))
+                    });
+                match probe {
                     TypeProbe::Known(actual) => {
                         match self.unify_template_ty(
                             template,
@@ -1191,5 +1203,61 @@ impl Analyzer {
             pending = next;
         };
         Some(unsupported)
+    }
+
+    fn probe_borrow_template_argument_ty(
+        &self,
+        template: &Type,
+        expression: &Expr,
+        inferred: &HashMap<String, InferredTypeArgument>,
+        context: &LowerCtx,
+    ) -> Option<TypeProbe> {
+        let Type::Borrow {
+            mutable,
+            access,
+            region,
+            ..
+        } = template
+        else {
+            return None;
+        };
+        let (pointee, pointee_source) = match self.probe_expr_ty(expression, None, context) {
+            TypeProbe::Known(ty @ Ty::Reference { .. }) => {
+                let source = self.source_type_for_ty(&ty);
+                return Some(match source {
+                    Some(source) => TypeProbe::KnownSource(ty, source),
+                    None => TypeProbe::Known(ty),
+                });
+            }
+            TypeProbe::Known(ty) => {
+                let source = self.source_type_for_ty(&ty);
+                (ty, source)
+            }
+            TypeProbe::KnownSource(ty @ Ty::Reference { .. }, source) => {
+                return Some(TypeProbe::KnownSource(ty, source));
+            }
+            TypeProbe::KnownSource(ty, source) => (ty, Some(source)),
+            TypeProbe::Defaultable(_) | TypeProbe::Unsupported => return None,
+        };
+        let actual_mutable = access
+            .as_ref()
+            .and_then(|access| inferred.get(access))
+            .is_some_and(|selected| selected.ty == Ty::Struct(ACCESS_MUT_MARKER.to_owned()))
+            || (access.is_none() && *mutable);
+        let source = pointee_source.map(|pointee| Type::Borrow {
+            mutable: actual_mutable,
+            access: None,
+            region: region.clone(),
+            pointee: Box::new(pointee),
+        });
+        let actual = Ty::Reference {
+            pointee: Box::new(pointee),
+            mutable: actual_mutable,
+            region: region.clone(),
+        };
+        Some(match source {
+            Some(source) => TypeProbe::KnownSource(actual, source),
+            None => TypeProbe::Known(actual),
+        })
     }
 }

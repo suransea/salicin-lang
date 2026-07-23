@@ -4,7 +4,7 @@ let main(): i32 = {
   }
   let mut anchor = 0
   let reference = unsafe {
-    raw_borrow(pointer, borrow anchor)
+    raw_borrow(pointer, borrow(anchor))
   }
   anchor = 1
   reference

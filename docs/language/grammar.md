@@ -147,12 +147,9 @@ constructor_kind = compile_parameter_group,
 parameter_group = "(", [ parameter_list ], ")" ;
 parameter_list  = parameter, { ",", parameter }, [ "," ] ;
 
-parameter = [ pass_mode | IDENT ], IDENT, ":", type_expr
-          | [ pass_mode | IDENT ], "self" ;
+parameter = [ pass_mode | IDENT ], IDENT, ":", type_expr ;
 
-pass_mode = "copy" | "move"
-          | "borrow", [ "(", access_or_region,
-                         [ ",", REGION ], ")" ] ;
+pass_mode = "copy" | "move" ;
 
 access_or_region = IDENT | "shared" | "mut" | REGION ;
 ```
@@ -217,7 +214,7 @@ compile_parameter = IDENT, ":", ( "type" | "access" | "passing" | "effect" | con
 ```sc
 extend(T: type) Box(T): Display
 where T: Display {
-  let display(borrow self)(): String = { ... }
+  let display(self: borrow(Self))(): String = { ... }
 }
 ```
 
@@ -258,8 +255,7 @@ type_atom = path, [ type_arguments ]
           | "(", ")"
           | "(", type_expr, ")"
           | "(", type_expr, ",", [ type_expr, { ",", type_expr }, [ "," ] ], ")"
-          | "borrow", [ "(", access_or_region,
-                         [ ",", REGION ], ")" ], type_atom ;
+          | "borrow", { "(", access_or_region, ")" }, "(", type_expr, ")" ;
 
 type_arguments = "(", type_argument, { ",", type_argument }, [ "," ], ")" ;
 type_argument  = [ IDENT, ":" ], type_expr | INTEGER ;
@@ -268,8 +264,8 @@ type_argument  = [ IDENT, ":" ], type_expr | INTEGER ;
 `_` 不是类型实参。调用中的编译期参数组可整体省略，并由运行时实参和期望类型推断；显式消歧使用
 普通的 `IDENT ":" expression` 命名实参，不增加另一套括号或关键字。
 类型位置的构造子实参同样可以写 `IDENT ":" type_expr` 标签；一个实参组不能混用具名和位置形式。
-`access` 是 `core.access` 声明的封闭编译期 domain；其内建实参为 `shared` 与 `mut`。`borrow(A)` 和
-`borrow(A, 'a)` 分别携带 access 参数以及 access/region 参数组合。
+`access` 是 `core.access` 声明的封闭编译期 domain；其内建实参为 `shared` 与 `mut`。`borrow(A)(T)` 和
+`borrow(A)('a)(T)` 分别携带 access 参数以及 access/region 参数组合。
 `passing` 是函数编译期 domain；其内建实参为 `auto`、`copy` 与 `move`，并在参数模式位置以
 已声明的参数名引用，例如 `(P value: T)`。
 `effect` 是函数编译期 domain；实参是完整 effect row：`pure`、`Unsafe`、名义 marker 或其组合。
@@ -284,8 +280,8 @@ type_argument  = [ IDENT, ":" ], type_expr | INTEGER ;
 
 ```sc
 (T): U                 // auto 参数，类型 T
-(borrow _: T): U       // 调用时借用 T
-(_: borrow T): U       // 按 auto 传入一个已有借用值
+(_: borrow(T)): U      // 传入或自动借用一个共享借用值
+(_: borrow(mut)(T)): U // 传入或自动借用一个可变借用值
 ```
 
 trait 引用和约束：
@@ -484,12 +480,13 @@ match_arm = pattern, [ "if", expression ], "=>", expression ;
 pattern = or_pattern ;
 or_pattern = bind_pattern, { "|", bind_pattern } ;
 
-bind_pattern = [ pass_mode ], IDENT
+bind_pattern = [ pattern_mode ], IDENT
              | "_"
              | literal_pattern
              | tuple_pattern
              | variant_pattern
              | range_pattern ;
+pattern_mode = pass_mode | "borrow", [ "(", "mut", ")" ] ;
 
 tuple_pattern   = "(", pattern, ",", [ pattern, { ",", pattern }, [ "," ] ], ")" ;
 variant_pattern = path, [ "(", pattern_fields, ")" ] ;
@@ -529,8 +526,8 @@ if f(x) {}                         // 条件 f(x) + 空 if 主体
 if (f(x) {}) {}                    // 条件中使用尾随闭包
 a.method()                         // A.method(a)()
 
-let by_borrow: (borrow _: T): U = callback
-let takes_ref: (_: borrow T): U = callback_ref
+let by_borrow: (_: borrow(T)): U = callback
+let takes_ref: (_: borrow(T)): U = callback_ref
 
 a ?? b match {
   Some(x) => x,

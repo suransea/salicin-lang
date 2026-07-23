@@ -2,7 +2,8 @@ use crate::ast::{Expr, PassMode, Type};
 
 use super::flow::LowerCtx;
 use super::hir::{
-    HirArgument, HirExpr, HirExprKind, HirIndex, HirStmt, LoanId, ReferenceCallSource, Ty,
+    AccessKind, HirArgument, HirExpr, HirExprKind, HirIndex, HirStmt, LoanId, ReferenceCallSource,
+    Ty,
 };
 use super::lower::{display_region, reference_value_types_compatible};
 use super::Analyzer;
@@ -14,9 +15,22 @@ impl Analyzer {
         expected: &Ty,
         context: &mut LowerCtx,
     ) -> HirExpr {
+        self.lower_reference_value_expr_with_access(expression, expected, context, AccessKind::Auto)
+    }
+
+    pub(super) fn lower_reference_value_expr_with_access(
+        &mut self,
+        expression: &Expr,
+        expected: &Ty,
+        context: &mut LowerCtx,
+        access: AccessKind,
+    ) -> HirExpr {
+        let saved_access = context.reference_value_access;
+        context.reference_value_access = Some(access);
         context.reference_value_depth += 1;
         let mut lowered = self.lower_expr(expression, Some(expected), context);
         context.reference_value_depth -= 1;
+        context.reference_value_access = saved_access;
         if reference_value_types_compatible(&lowered.ty, expected) {
             lowered.ty = expected.clone();
         }

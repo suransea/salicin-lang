@@ -7,7 +7,7 @@ let Counter = struct { current: i32, end: i32 }
 extend Counter: Iterator {
   let Item = i32
 
-  let next(borrow(mut) self)(): Option(i32) = {
+  let next(self: borrow(mut)(Self))(): Option(i32) = {
     if self.current < self.end {
       let value = self.current
       self.current = self.current + 1

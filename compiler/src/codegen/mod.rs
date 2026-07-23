@@ -396,6 +396,7 @@ impl Analyzer {
                 Item::Effect(definition) => &definition.name,
                 Item::Domain(definition) => &definition.name,
                 Item::TypeAlias(definition) => &definition.name,
+                Item::TypeForm(definition) => &definition.name,
                 Item::Trait(definition) => &definition.name,
                 Item::Extend(extension) => {
                     extensions.push((extension.clone(), origin));
@@ -612,6 +613,7 @@ impl Analyzer {
                         .insert(definition.name.clone(), definition.clone());
                 }
                 Item::Domain(_) => {}
+                Item::TypeForm(_) => {}
                 Item::TypeAlias(_) => {
                     unreachable!("type aliases are expanded before item collection")
                 }
@@ -742,7 +744,11 @@ impl Analyzer {
                         ExtendMember::Const(_) => None,
                     })
                     .collect(),
-                Item::Global(_) | Item::Struct(_) | Item::Enum(_) | Item::Domain(_) => Vec::new(),
+                Item::Global(_)
+                | Item::Struct(_)
+                | Item::Enum(_)
+                | Item::Domain(_)
+                | Item::TypeForm(_) => Vec::new(),
                 Item::Effect(definition) => definition.operations.iter().collect(),
                 Item::TypeAlias(_) => Vec::new(),
             }
@@ -1059,7 +1065,7 @@ impl Analyzer {
             && !drop_trait_has_required_shape(&definition)
         {
             self.error(
-                "`Drop` language trait must have shape `let Drop = trait { let drop(borrow(mut) self)(): () }`",
+                "`Drop` language trait must have shape `let Drop = trait { let drop(self: borrow(mut)(Self))(): () }`",
             );
             valid = false;
         }
@@ -1073,10 +1079,10 @@ impl Analyzer {
                 let method = operator_trait.method();
                 let shape = match operator_trait.lang_item {
                     LangItemKind::Eq => format!(
-                        "let Eq(Rhs: type) = trait {{ let {method}(borrow self)(borrow rhs: Rhs): bool }}"
+                        "let Eq(Rhs: type) = trait {{ let {method}(self: borrow(Self))(rhs: borrow(Rhs)): bool }}"
                     ),
                     LangItemKind::PartialOrd => format!(
-                        "let PartialOrd(Rhs: type) = trait {{ let {method}(borrow self)(borrow rhs: Rhs): PartialOrdering }}"
+                        "let PartialOrd(Rhs: type) = trait {{ let {method}(self: borrow(Self))(rhs: borrow(Rhs)): PartialOrdering }}"
                     ),
                     _ => format!(
                         "let {trait_name}(Rhs: type) = trait {{ let Output: type; let {method}(move self)(move rhs: Rhs): Output }}"
@@ -1382,10 +1388,12 @@ impl Analyzer {
         compile_parameters.push(CompileParam {
             name: self_parameter.clone(),
             kind: schema.self_parameter.kind,
+            default: None,
         });
         compile_parameters.extend(schema.associated_types.iter().map(|name| CompileParam {
             name: name.clone(),
             kind: schema.associated_type_kinds[name],
+            default: None,
         }));
         let trait_arguments = schema
             .compile_parameters
@@ -4906,6 +4914,7 @@ impl Analyzer {
                     LangItemKind::Throw,
                     LangItemKind::Unsafe,
                     LangItemKind::Loop,
+                    LangItemKind::BorrowValueForm,
                 ]
                 .into_iter()
                 .any(|kind| self.lang_item_name(kind) == template_name)
@@ -5588,7 +5597,7 @@ impl Analyzer {
             Expr::Unit => TypeProbe::Known(Ty::Unit),
             Expr::Name(name) => {
                 if let Some(local) = context.lookup(name) {
-                    TypeProbe::Known(local.ty.clone())
+                    self.probe_reference_hint(expression, local.ty.clone(), hint, context)
                 } else if context.has_type_parameter(name) {
                     TypeProbe::Unsupported
                 } else if let Some(Some(annotation)) = self.global_annotations.get(name) {
@@ -5738,7 +5747,9 @@ impl Analyzer {
             }
             Expr::Index { base, .. } => match self.probe_expr_ty(base, None, context) {
                 TypeProbe::Known(Ty::Array(element, _))
-                | TypeProbe::KnownSource(Ty::Array(element, _), _) => TypeProbe::Known(*element),
+                | TypeProbe::KnownSource(Ty::Array(element, _), _) => {
+                    self.probe_reference_hint(expression, *element, hint, context)
+                }
                 _ => TypeProbe::Unsupported,
             },
             Expr::Member(base, member) => {
@@ -5754,15 +5765,16 @@ impl Analyzer {
                 }
                 match self.probe_expr_ty(base, None, context) {
                     TypeProbe::Known(Ty::Struct(name))
-                    | TypeProbe::KnownSource(Ty::Struct(name), _) => self
-                        .struct_layouts
-                        .get(&name)
-                        .and_then(|layout| layout.fields.iter().find(|field| field.name == *member))
-                        .filter(|field| {
-                            Self::access_boundary_allows(&context.origin, &field.access)
-                        })
-                        .map(|field| TypeProbe::Known(field.ty.clone()))
-                        .unwrap_or(TypeProbe::Unsupported),
+                    | TypeProbe::KnownSource(Ty::Struct(name), _) => {
+                        self.probe_struct_field_ty(expression, &name, member, hint, context)
+                    }
+                    TypeProbe::Known(Ty::Reference { pointee, .. })
+                    | TypeProbe::KnownSource(Ty::Reference { pointee, .. }, _) => {
+                        let Ty::Struct(name) = pointee.as_ref() else {
+                            return TypeProbe::Unsupported;
+                        };
+                        self.probe_struct_field_ty(expression, name, member, hint, context)
+                    }
                     _ => TypeProbe::Unsupported,
                 }
             }
@@ -5868,6 +5880,52 @@ impl Analyzer {
             | Expr::Continue
             | Expr::Match { .. } => TypeProbe::Unsupported,
         }
+    }
+
+    fn probe_reference_hint(
+        &self,
+        expression: &Expr,
+        actual: Ty,
+        hint: Option<&Ty>,
+        context: &LowerCtx,
+    ) -> TypeProbe {
+        let Some(expected @ Ty::Reference { pointee, .. }) = hint else {
+            return TypeProbe::Known(actual);
+        };
+        if reference_value_types_compatible(&actual, expected)
+            || (actual == **pointee && self.probe_borrowable_place(expression, context))
+        {
+            TypeProbe::Known(expected.clone())
+        } else {
+            TypeProbe::Known(actual)
+        }
+    }
+
+    fn probe_borrowable_place(&self, expression: &Expr, context: &LowerCtx) -> bool {
+        match expression {
+            Expr::Name(name) => context.lookup(name).is_some(),
+            Expr::Member(base, _) | Expr::ChainMember(base, _) => {
+                self.probe_borrowable_place(base, context)
+            }
+            Expr::Index { base, .. } => self.probe_borrowable_place(base, context),
+            _ => false,
+        }
+    }
+
+    fn probe_struct_field_ty(
+        &self,
+        expression: &Expr,
+        struct_name: &str,
+        member: &str,
+        hint: Option<&Ty>,
+        context: &LowerCtx,
+    ) -> TypeProbe {
+        self.struct_layouts
+            .get(struct_name)
+            .and_then(|layout| layout.fields.iter().find(|field| field.name == *member))
+            .filter(|field| Self::access_boundary_allows(&context.origin, &field.access))
+            .map(|field| self.probe_reference_hint(expression, field.ty.clone(), hint, context))
+            .unwrap_or(TypeProbe::Unsupported)
     }
 
     fn probe_struct_literal_ty(
@@ -6453,7 +6511,8 @@ impl Analyzer {
                             loan: None,
                             indirect: false,
                         };
-                        self.access_place(place, AccessKind::Auto, context)
+                        let access = context.reference_value_access.unwrap_or(AccessKind::Auto);
+                        self.access_place(place, access, context)
                     } else if local.partial.is_some() || local.closure.is_some() {
                         if matches!(&local.ty, Ty::Callable(callable) if callable.captures.iter().any(|capture| matches!(capture.mode, PassMode::Borrow | PassMode::MutBorrow)))
                         {
@@ -7461,9 +7520,12 @@ impl Analyzer {
                 ));
                 continue;
             }
+            let reborrows_borrowed_local =
+                local.capability != LocalCapability::Owned && compatible_reborrow;
             match capture.mode {
-                ClosureCaptureMode::Shared | ClosureCaptureMode::Mutable
-                    if !(self.is_copy_type(&local.ty)
+                ClosureCaptureMode::Shared
+                    if !(reborrows_borrowed_local
+                        || self.is_copy_type(&local.ty)
                         || deferred_handler_continuation && local.closure.is_some()) =>
                 {
                     if name.starts_with("$handler$match$input$")
@@ -7625,11 +7687,28 @@ impl Analyzer {
                         id,
                         (param.region.clone(), param.mode == PassMode::MutBorrow),
                     );
+                } else if let Ty::Reference {
+                    mutable, region, ..
+                } = &ty
+                {
+                    context
+                        .borrowed_parameter_regions
+                        .insert(id, (region.clone(), *mutable));
                 }
-                let capability = match param.mode {
-                    PassMode::Borrow => LocalCapability::SharedParam,
-                    PassMode::MutBorrow => LocalCapability::MutParam,
-                    PassMode::Inferred | PassMode::Copy | PassMode::Move => LocalCapability::Owned,
+                let (capability, mutable) = match (&param.mode, &ty) {
+                    (PassMode::Borrow, _) => (LocalCapability::SharedParam, false),
+                    (PassMode::MutBorrow, _) => (LocalCapability::MutParam, true),
+                    (_, Ty::Reference { mutable, .. }) => (
+                        if *mutable {
+                            LocalCapability::MutParam
+                        } else {
+                            LocalCapability::SharedParam
+                        },
+                        *mutable,
+                    ),
+                    (PassMode::Inferred | PassMode::Copy | PassMode::Move, _) => {
+                        (LocalCapability::Owned, false)
+                    }
                 };
                 context.scopes[0].locals.push(id);
                 context.scopes[0].names.insert(
@@ -7637,7 +7716,7 @@ impl Analyzer {
                     LocalInfo {
                         id,
                         ty: ty.clone(),
-                        mutable: param.mode == PassMode::MutBorrow,
+                        mutable,
                         capability,
                         alias: None,
                         partial: None,
@@ -7973,7 +8052,10 @@ impl Analyzer {
                                 if outer.lookup(&capture.name).is_some()
                                     && !bound.contains(&capture.name)
                                 {
-                                    let mode = match capture.mode {
+                                    let mode = match self
+                                        .borrow_channel_mode(capture.mode, &capture.ty)
+                                        .unwrap_or(capture.mode)
+                                    {
                                         PassMode::Borrow => ClosureCaptureMode::Shared,
                                         PassMode::MutBorrow => ClosureCaptureMode::Mutable,
                                         PassMode::Move => ClosureCaptureMode::Move,
@@ -9481,57 +9563,81 @@ impl Analyzer {
                 &mut argument_temporary_bindings,
             )
         } else {
-            self.require_same_type(
-                &receiver_place.ty,
-                &receiver_parameter.ty,
-                format!("receiver for method `{target}.{member}`"),
-            );
             let receiver_mode =
                 self.effective_pass_mode(receiver_parameter.mode, &receiver_parameter.ty);
-            if receiver_mode == PassMode::MutBorrow {
-                receiver_place.root_mutable = true;
-                if let Some(binding) = temporary_binding.as_mut() {
-                    binding.mutable = true;
+            if matches!(receiver_parameter.ty, Ty::Reference { .. }) {
+                if receiver_mode == PassMode::MutBorrow || receiver_mode == PassMode::Move {
+                    receiver_place.root_mutable = true;
+                    if let Some(binding) = temporary_binding.as_mut() {
+                        binding.mutable = true;
+                    }
                 }
-            }
-            match receiver_mode {
-                PassMode::Copy => {
-                    if !self.is_copy_type(&receiver_parameter.ty) {
-                        let ty = self.diagnostic_type_name(&receiver_parameter.ty);
-                        self.error(format!(
+                let Some(argument) = self.lower_reference_place_call_argument(
+                    receiver_place.clone(),
+                    receiver_parameter,
+                    &receiver_parameter.ty,
+                    context,
+                    &mut temporary_loans,
+                ) else {
+                    self.require_same_type(
+                        &receiver_place.ty,
+                        &receiver_parameter.ty,
+                        format!("receiver for method `{target}.{member}`"),
+                    );
+                    return error_expr();
+                };
+                argument
+            } else {
+                self.require_same_type(
+                    &receiver_place.ty,
+                    &receiver_parameter.ty,
+                    format!("receiver for method `{target}.{member}`"),
+                );
+                if receiver_mode == PassMode::MutBorrow {
+                    receiver_place.root_mutable = true;
+                    if let Some(binding) = temporary_binding.as_mut() {
+                        binding.mutable = true;
+                    }
+                }
+                match receiver_mode {
+                    PassMode::Copy => {
+                        if !self.is_copy_type(&receiver_parameter.ty) {
+                            let ty = self.diagnostic_type_name(&receiver_parameter.ty);
+                            self.error(format!(
                             "receiver for method `{target}.{member}` requires Copy, but `{ty}` does not implement Copy"
                         ));
+                        }
+                        HirArgument::Copy(self.access_place(
+                            receiver_place.clone(),
+                            AccessKind::Copy,
+                            context,
+                        ))
                     }
-                    HirArgument::Copy(self.access_place(
+                    PassMode::Move => HirArgument::Move(self.access_place(
                         receiver_place.clone(),
-                        AccessKind::Copy,
+                        AccessKind::Move,
                         context,
-                    ))
-                }
-                PassMode::Move => HirArgument::Move(self.access_place(
-                    receiver_place.clone(),
-                    AccessKind::Move,
-                    context,
-                )),
-                PassMode::Borrow => {
-                    if let Some(loan) =
-                        self.acquire_loan(&receiver_place, LoanKind::Shared, false, context)
-                    {
-                        receiver_place.loan = Some(loan);
-                        temporary_loans.push(loan);
+                    )),
+                    PassMode::Borrow => {
+                        if let Some(loan) =
+                            self.acquire_loan(&receiver_place, LoanKind::Shared, false, context)
+                        {
+                            receiver_place.loan = Some(loan);
+                            temporary_loans.push(loan);
+                        }
+                        HirArgument::SharedBorrow(receiver_place.clone())
                     }
-                    HirArgument::SharedBorrow(receiver_place.clone())
-                }
-                PassMode::MutBorrow => {
-                    if let Some(loan) =
-                        self.acquire_loan(&receiver_place, LoanKind::Mutable, false, context)
-                    {
-                        receiver_place.loan = Some(loan);
-                        temporary_loans.push(loan);
+                    PassMode::MutBorrow => {
+                        if let Some(loan) =
+                            self.acquire_loan(&receiver_place, LoanKind::Mutable, false, context)
+                        {
+                            receiver_place.loan = Some(loan);
+                            temporary_loans.push(loan);
+                        }
+                        HirArgument::MutBorrow(receiver_place.clone())
                     }
-                    HirArgument::MutBorrow(receiver_place.clone())
+                    PassMode::Inferred => unreachable!("effective mode is explicit"),
                 }
-                PassMode::Inferred => unreachable!("effective mode is explicit"),
             }
         };
         let mut arguments = vec![receiver_argument];
@@ -10095,86 +10201,6 @@ impl Analyzer {
             }
         };
         self.wrap_call_argument_temporaries(call, &mut arguments, temporary_bindings, context)
-    }
-
-    fn distribute_static_handler_selection(
-        &mut self,
-        name: &str,
-        groups: &[&[CallArg]],
-        context: &LowerCtx,
-    ) -> Option<Expr> {
-        let function = self.functions.get(name)?.clone();
-        if groups.len() != function.groups.len() || function.groups.first()?.is_empty() {
-            return None;
-        }
-        let Type::Function { effects, .. } = &function.groups[0][0].ty else {
-            return None;
-        };
-        if !effects.custom.iter().any(|effect| {
-            let identity = source_effect_identity(effect);
-            let root = identity.split('(').next().unwrap_or(&identity);
-            self.effect_defs
-                .get(root)
-                .is_some_and(|definition| !definition.operations.is_empty())
-        }) {
-            return None;
-        }
-
-        let mut ordered_groups = Vec::with_capacity(groups.len());
-        for (parameters, arguments) in function.groups.iter().zip(groups) {
-            if parameters.len() != arguments.len() {
-                return None;
-            }
-            let ordered = if arguments.iter().all(|argument| argument.label.is_none()) {
-                Some(arguments.to_vec())
-            } else if arguments.iter().all(|argument| argument.label.is_some()) {
-                parameters
-                    .iter()
-                    .map(|parameter| {
-                        let mut matches = arguments.iter().filter(|argument| {
-                            argument.label.as_deref() == Some(parameter.name.as_str())
-                        });
-                        let argument = matches.next()?.clone();
-                        matches.next().is_none().then_some(argument)
-                    })
-                    .collect::<Option<Vec<_>>>()
-            } else {
-                None
-            }?;
-            ordered_groups.push(ordered);
-        }
-
-        let mut targets = Vec::new();
-        let selection = static_callable_selection(&ordered_groups[0][0].value, &mut targets)?;
-        if targets.len() < 2
-            || targets.iter().any(|target| {
-                !self.functions.contains_key(target)
-                    && context.lookup(target).is_none_or(|local| {
-                        local.partial.as_ref().is_none_or(|partial| {
-                            partial.consumed_groups != 0 || partial.capture_count != 0
-                        })
-                    })
-            })
-        {
-            return None;
-        }
-
-        let calls = targets
-            .into_iter()
-            .map(|target| {
-                let mut target_groups = ordered_groups.clone();
-                target_groups[0][0] = CallArg {
-                    label: None,
-                    value: Expr::Name(target),
-                };
-                let mut call = Expr::Name(name.to_owned());
-                for group in target_groups {
-                    call = Expr::Call(Box::new(call), group);
-                }
-                call
-            })
-            .collect::<Vec<_>>();
-        Some(replace_static_selection_leaves(selection, &calls))
     }
 
     fn specialize_static_handler_call(
@@ -10862,6 +10888,175 @@ impl Analyzer {
         self.wrap_call_argument_temporaries(call, &mut arguments, temporary_bindings, context)
     }
 
+    fn lower_reference_call_argument(
+        &mut self,
+        argument: &Expr,
+        parameter: &ParamSig,
+        context: &mut LowerCtx,
+        temporary_loans: &mut Vec<LoanId>,
+        temporary_bindings: &mut Vec<HirBinding>,
+    ) -> HirArgument {
+        let argument_is_reference_value = match self.probe_expr_ty(argument, None, context) {
+            TypeProbe::Known(actual) | TypeProbe::KnownSource(actual, _) => {
+                reference_value_types_compatible(&actual, &parameter.ty)
+            }
+            TypeProbe::Defaultable(_) | TypeProbe::Unsupported => false,
+        };
+        if argument_is_reference_value && parameter.mode != PassMode::Inferred {
+            return self.lower_reference_value_call_argument(argument, parameter, context);
+        }
+
+        if let Some(place) = self.lower_place_without_diagnostic(argument, context) {
+            if let Some(argument) = self.lower_reference_place_call_argument(
+                place,
+                parameter,
+                &parameter.ty,
+                context,
+                temporary_loans,
+            ) {
+                return argument;
+            }
+        }
+        if argument_is_reference_value {
+            return self.lower_reference_value_call_argument(argument, parameter, context);
+        }
+
+        let Ty::Reference {
+            pointee, mutable, ..
+        } = &parameter.ty
+        else {
+            unreachable!("reference argument lowering requires a reference parameter");
+        };
+        let value = self.lower_expr(argument, Some(pointee), context);
+        self.require_same_type(
+            &value.ty,
+            pointee,
+            format!("argument for parameter `{}`", parameter.name),
+        );
+        let id = context.fresh_local();
+        let ty = value.ty.clone();
+        temporary_bindings.push(HirBinding {
+            id,
+            name: format!("$temporary argument for {}", parameter.name),
+            ty: ty.clone(),
+            mutable: *mutable,
+            value,
+        });
+        let mut place = HirPlace {
+            local: id,
+            root_ty: ty.clone(),
+            projections: Vec::new(),
+            ty,
+            capability: LocalCapability::Owned,
+            root_mutable: *mutable,
+            loan: None,
+            indirect: false,
+        };
+        let kind = if *mutable {
+            LoanKind::Mutable
+        } else {
+            LoanKind::Shared
+        };
+        if let Some(loan) = self.acquire_loan(&place, kind, false, context) {
+            place.loan = Some(loan);
+            temporary_loans.push(loan);
+        }
+        place.capability = if *mutable {
+            LocalCapability::MutParam
+        } else {
+            LocalCapability::SharedParam
+        };
+        if *mutable {
+            HirArgument::MutBorrow(place)
+        } else {
+            HirArgument::SharedBorrow(place)
+        }
+    }
+
+    fn lower_reference_value_call_argument(
+        &mut self,
+        argument: &Expr,
+        parameter: &ParamSig,
+        context: &mut LowerCtx,
+    ) -> HirArgument {
+        let mode = self.effective_pass_mode(parameter.mode, &parameter.ty);
+        let access = match mode {
+            PassMode::Copy => AccessKind::Copy,
+            PassMode::Move => AccessKind::Move,
+            PassMode::Borrow | PassMode::MutBorrow | PassMode::Inferred => AccessKind::Auto,
+        };
+        let value =
+            self.lower_reference_value_expr_with_access(argument, &parameter.ty, context, access);
+        self.require_same_type(
+            &value.ty,
+            &parameter.ty,
+            format!("argument for parameter `{}`", parameter.name),
+        );
+        if mode == PassMode::Copy {
+            if !self.is_copy_type(&parameter.ty) {
+                let ty = self.diagnostic_type_name(&parameter.ty);
+                self.error(format!(
+                    "parameter `{}` requires Copy, but `{}` does not implement Copy",
+                    parameter.name, ty
+                ));
+            }
+            HirArgument::Copy(value)
+        } else {
+            HirArgument::Move(value)
+        }
+    }
+
+    fn lower_reference_place_call_argument(
+        &mut self,
+        mut place: HirPlace,
+        parameter: &ParamSig,
+        expected: &Ty,
+        context: &mut LowerCtx,
+        temporary_loans: &mut Vec<LoanId>,
+    ) -> Option<HirArgument> {
+        if reference_value_types_compatible(&place.ty, expected) {
+            let mut value = self.access_place(place, AccessKind::Auto, context);
+            value.ty = expected.clone();
+            let mode = self.effective_pass_mode(parameter.mode, expected);
+            return Some(if mode == PassMode::Copy {
+                HirArgument::Copy(value)
+            } else {
+                HirArgument::Move(value)
+            });
+        }
+        let Ty::Reference {
+            pointee, mutable, ..
+        } = expected
+        else {
+            return None;
+        };
+        if place.ty != **pointee {
+            return None;
+        }
+        if *mutable {
+            self.ensure_writable(&place);
+        }
+        let kind = if *mutable {
+            LoanKind::Mutable
+        } else {
+            LoanKind::Shared
+        };
+        if let Some(loan) = self.acquire_loan(&place, kind, false, context) {
+            place.loan = Some(loan);
+            temporary_loans.push(loan);
+        }
+        place.capability = if *mutable {
+            LocalCapability::MutParam
+        } else {
+            LocalCapability::SharedParam
+        };
+        Some(if *mutable {
+            HirArgument::MutBorrow(place)
+        } else {
+            HirArgument::SharedBorrow(place)
+        })
+    }
+
     fn lower_call_argument(
         &mut self,
         argument: &Expr,
@@ -10917,43 +11112,16 @@ impl Analyzer {
         let mode = self.effective_pass_mode(parameter.mode, &parameter.ty);
         match mode {
             PassMode::Copy | PassMode::Move => {
-                let value = if matches!(parameter.ty, Ty::Reference { .. }) {
-                    if let Expr::Name(name) = argument {
-                        if let Some(local) = context
-                            .lookup(name)
-                            .cloned()
-                            .filter(|local| matches!(local.ty, Ty::Reference { .. }))
-                        {
-                            let place = HirPlace {
-                                local: local.id,
-                                root_ty: local.ty.clone(),
-                                projections: Vec::new(),
-                                ty: local.ty,
-                                capability: LocalCapability::Owned,
-                                root_mutable: local.mutable,
-                                loan: None,
-                                indirect: false,
-                            };
-                            let mut value = self.access_place(
-                                place,
-                                if mode == PassMode::Copy {
-                                    AccessKind::Copy
-                                } else {
-                                    AccessKind::Move
-                                },
-                                context,
-                            );
-                            if reference_value_types_compatible(&value.ty, &parameter.ty) {
-                                value.ty = parameter.ty.clone();
-                            }
-                            value
-                        } else {
-                            self.lower_reference_value_expr(argument, &parameter.ty, context)
-                        }
-                    } else {
-                        self.lower_reference_value_expr(argument, &parameter.ty, context)
-                    }
-                } else if let (Ty::Function(function_ty), Expr::Closure(params, body)) =
+                if matches!(parameter.ty, Ty::Reference { .. }) {
+                    return self.lower_reference_call_argument(
+                        argument,
+                        parameter,
+                        context,
+                        temporary_loans,
+                        temporary_bindings,
+                    );
+                }
+                let value = if let (Ty::Function(function_ty), Expr::Closure(params, body)) =
                     (&parameter.ty, argument)
                 {
                     self.lower_noncapturing_closure_argument_as_function(

@@ -2,7 +2,7 @@ let Resource = struct { value: i32 }
 let Pair = struct { left: Resource, right: Resource }
 
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = {
+  let drop(self: borrow(mut)(Self))(): () = {
     let trapped = 1 / self.value
   }}
 

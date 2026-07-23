@@ -6,7 +6,7 @@ let Choice = enum {
 }
 
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = {
+  let drop(self: borrow(mut)(Self))(): () = {
     self.value = 0
   }}
 

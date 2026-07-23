@@ -3,7 +3,7 @@ let Bundle = struct { left: Resource, right: Resource }
 let Choice = enum { Some(Bundle, Resource), None }
 
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = {
+  let drop(self: borrow(mut)(Self))(): () = {
     let trapped = 1 / self.value
   }}
 

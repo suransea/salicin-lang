@@ -15,11 +15,11 @@ let run(action: (i32): i32 with(Ask))(input: i32): i32 = {
 let left(input: i32): i32 with(Ask) = { Ask.value() + input }
 let right(input: i32): i32 with(Ask) = { Ask.value() * 2 + input }
 let abort(input: i32): i32 with(Ask) = { Ask.stop() + input }
-let select(borrow(mut) order: i32): bool = {
+let select(order: borrow(mut)(i32)): bool = {
   order = order * 10 + 1
   false
 }
-let next_input(borrow(mut) order: i32): i32 = {
+let next_input(order: borrow(mut)(i32)): i32 = {
   order = order * 10 + 2
   2
 }

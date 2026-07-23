@@ -383,7 +383,7 @@ const CORE_OPS_EXPORTS: &[&str] = &[
     "Coalesce",
 ];
 const CORE_EFFECTS_EXPORTS: &[&str] = &["Unsafe", "Throws", "Async"];
-const CORE_ACCESS_EXPORTS: &[&str] = &["type", "region", "effect", "access", "passing"];
+const CORE_ACCESS_EXPORTS: &[&str] = &["type", "region", "effect", "access", "passing", "borrow"];
 const CORE_CONTROL_EXPORTS: &[&str] = &[
     "Continuation",
     "EffectCallable",
@@ -1643,6 +1643,7 @@ fn validate_api_visibility(program: &Program, item_source_paths: &[String]) -> V
                 Item::Trait(definition) => &definition.name,
                 Item::Effect(definition) => &definition.name,
                 Item::Domain(definition) => &definition.name,
+                Item::TypeForm(definition) => &definition.name,
                 Item::Function(_) | Item::Global(_) | Item::TypeAlias(_) | Item::Extend(_) => {
                     return None
                 }
@@ -1740,7 +1741,7 @@ fn validate_item_api(
                 );
             }
         }
-        Item::Domain(_) => {}
+        Item::Domain(_) | Item::TypeForm(_) => {}
         Item::Struct(definition) => {
             let bound_types = compile_parameter_names(&definition.compile_groups, &no_bound_types);
             for field in &definition.fields {
@@ -2221,6 +2222,7 @@ fn declaration_name(item: &Item) -> Option<&str> {
         Item::Trait(definition) => Some(&definition.name),
         Item::Effect(definition) => Some(&definition.name),
         Item::Domain(definition) => Some(&definition.name),
+        Item::TypeForm(definition) => Some(&definition.name),
         Item::TypeAlias(definition) => Some(&definition.name),
         Item::Extend(_) => None,
     }
@@ -2229,7 +2231,9 @@ fn declaration_name(item: &Item) -> Option<&str> {
 fn declaration_namespace(item: &Item) -> DeclarationNamespace {
     match item {
         Item::Function(_) => DeclarationNamespace::Function,
-        Item::Struct(_) | Item::Enum(_) | Item::TypeAlias(_) => DeclarationNamespace::Type,
+        Item::Struct(_) | Item::Enum(_) | Item::TypeAlias(_) | Item::TypeForm(_) => {
+            DeclarationNamespace::Type
+        }
         Item::Global(_) | Item::Trait(_) | Item::Effect(_) | Item::Domain(_) | Item::Extend(_) => {
             DeclarationNamespace::Other
         }
@@ -2303,6 +2307,9 @@ impl Resolver {
                 }
             }
             Item::Domain(definition) => {
+                definition.name = canonical_name(context.module_path, &definition.name);
+            }
+            Item::TypeForm(definition) => {
                 definition.name = canonical_name(context.module_path, &definition.name);
             }
             Item::Extend(extension) => self.rewrite_extend(extension, context),
@@ -3318,14 +3325,14 @@ mod tests {
                    let Output: type\n\
                    let A: type\n\
                    let B: type\n\
-                   let convert(borrow self)(value: Self): Output\n\
+                   let convert(self: borrow(Self))(value: Self): Output\n\
                  }\n\
                  pub(package) let Number = struct { value: i32 }\n\
                  extend Number: Convert {\n\
                    let Output = i32\n\
                    let A = Self\n\
                    let B = A\n\
-                   let convert(borrow self)(value: Self): Output = { value.value }\n}\n",
+                   let convert(self: borrow(Self))(value: Self): Output = { value.value }\n}\n",
                 false,
             ),
         ])
@@ -3349,7 +3356,12 @@ mod tests {
             .expect("missing trait method");
         assert_eq!(
             trait_method.groups[0][0].ty,
-            Type::Named("Self".into(), Vec::new())
+            Type::Borrow {
+                mutable: false,
+                access: None,
+                region: None,
+                pointee: Box::new(Type::Named("Self".into(), Vec::new())),
+            }
         );
         assert_eq!(
             trait_method.groups[1][0].ty,
@@ -3378,7 +3390,12 @@ mod tests {
             .expect("missing implementation method");
         assert_eq!(
             implementation.groups[0][0].ty,
-            Type::Named("Self".into(), Vec::new())
+            Type::Borrow {
+                mutable: false,
+                access: None,
+                region: None,
+                pointee: Box::new(Type::Named("Self".into(), Vec::new())),
+            }
         );
         assert_eq!(
             implementation.groups[1][0].ty,
@@ -4369,7 +4386,7 @@ let main(): i32 = { Option {} }
             &[],
             "pub let Convert(T: type) = trait {\n\
                let Output: type = T\n\
-               let convert(U: type)(borrow self)(value: T): Output\n\
+               let convert(U: type)(self: borrow(Self))(value: T): Output\n\
              }\n",
             true,
         )]);
@@ -4381,7 +4398,7 @@ let main(): i32 = { Option {} }
             "let Hidden = struct {}\n\
              pub let Expose = trait {\n\
                let Output: type = Hidden\n\
-               let convert(borrow self)(value: Hidden): Hidden\n\
+               let convert(self: borrow(Self))(value: Hidden): Hidden\n\
              }\n",
             true,
         )])

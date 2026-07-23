@@ -1,6 +1,6 @@
 use core.Result
 
-let fallback(borrow(mut) count: i32): i32 = {
+let fallback(count: borrow(mut)(i32)): i32 = {
   count = count + 1
   42
 }

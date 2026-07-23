@@ -90,6 +90,7 @@ pub enum Item {
     Enum(EnumDef),
     Effect(EffectDef),
     Domain(DomainDef),
+    TypeForm(TypeFormDef),
     TypeAlias(TypeAliasDef),
     Trait(TraitDef),
     Extend(ExtendDef),
@@ -115,6 +116,12 @@ pub struct DomainDef {
     pub members: Option<Vec<String>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeFormDef {
+    pub name: String,
+    pub compile_groups: Vec<Vec<CompileParam>>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TraitDef {
     pub name: String,
@@ -128,6 +135,7 @@ pub fn default_trait_self_parameter() -> CompileParam {
     CompileParam {
         name: "Self".to_owned(),
         kind: CompileParamKind::Type,
+        default: None,
     }
 }
 
@@ -235,6 +243,13 @@ pub struct AssociatedTypeBinding {
 pub struct CompileParam {
     pub name: String,
     pub kind: CompileParamKind,
+    pub default: Option<CompileParamDefault>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum CompileParamDefault {
+    Name(String),
+    Region(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

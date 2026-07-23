@@ -6,7 +6,7 @@ extend Adder {
   let add(move self)(value: i32): i32 = { self.base + value }
 }
 
-let side_effect(borrow(mut) count: i32): i32 = {
+let side_effect(count: borrow(mut)(i32)): i32 = {
   count = count + 1
   1
 }

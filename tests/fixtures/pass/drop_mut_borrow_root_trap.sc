@@ -1,11 +1,11 @@
 let Resource = struct { value: i32 }
 
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = {
+  let drop(self: borrow(mut)(Self))(): () = {
     let trapped = 1 / self.value
   }}
 
-let replace(borrow(mut) target: Resource)(move replacement: Resource): () = {
+let replace(target: borrow(mut)(Resource))(move replacement: Resource): () = {
   target = replacement
 }
 

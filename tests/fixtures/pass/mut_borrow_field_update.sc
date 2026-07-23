@@ -1,6 +1,6 @@
 let Counter = struct { value: i32 }
 
-let increment(borrow(mut) counter: Counter)(amount: i32): () = {
+let increment(counter: borrow(mut)(Counter))(amount: i32): () = {
   counter.value = counter.value + amount
 }
 

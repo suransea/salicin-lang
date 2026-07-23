@@ -8,7 +8,7 @@ let run(seed: i32)(move action: (): i32 with(Ask)): i32 = {
   }
 }
 
-let prepare(borrow(mut) order: i32): i32 = {
+let prepare(order: borrow(mut)(i32)): i32 = {
   order = order + 1
   20
 }

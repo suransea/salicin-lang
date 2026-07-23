@@ -658,6 +658,7 @@ fn registers_source_backed_core_lang_items() {
         vec![vec![CompileParam {
             name: "Error".to_owned(),
             kind: CompileParamKind::Type,
+            default: None,
         }]]
     );
     assert_eq!(
@@ -827,11 +828,11 @@ fn coalesce_lowers_option_and_result_through_lazy_match_control_flow() {
 use core.Option
 use core.Result
 
-let make(borrow(mut) count: i32): Option(i32) = {
+let make(count: borrow(mut)(i32)): Option(i32) = {
   count = count + 1
   Option(i32).Some(20)
 }
-let fallback(borrow(mut) count: i32): i32 = {
+let fallback(count: borrow(mut)(i32)): i32 = {
   count = count + 10
   22
 }
@@ -947,7 +948,7 @@ use core.effects.Throws
 let Failure = struct { code: i32 }
 extend Failure: Copy {}
 extend Failure {
-  let raise(borrow self)(): i32 with(Throws(bool)) = { throw(true) }
+  let raise(self: borrow(Self))(): i32 with(Throws(bool)) = { throw(true) }
 }
 let main(): i32 = {
   let failure = Failure { code: 1 }
@@ -1099,8 +1100,8 @@ fn named_arguments_select_inherent_member_overloads() {
 let Counter = struct { value: i32 }
 extend Counter: Copy {}
 extend Counter {
-  let add(borrow self)(left: i32): i32 = { self.value + left }
-  let add(borrow self)(right: i32): i32 = { self.value + right + 1 }
+  let add(self: borrow(Self))(left: i32): i32 = { self.value + left }
+  let add(self: borrow(Self))(right: i32): i32 = { self.value + right + 1 }
   let make(left: i32): Counter = { Counter { value: left } }
   let make(right: i32): Counter = { Counter { value: right + 1 } }
 }
@@ -1120,8 +1121,8 @@ let main(): i32 = {
         r#"
 let Counter = struct { value: i32 }
 extend Counter {
-  let add(borrow self)(left: i32): i32 = { self.value + left }
-  let add(borrow self)(right: i32): i32 = { self.value + right }
+  let add(self: borrow(Self))(left: i32): i32 = { self.value + left }
+  let add(self: borrow(Self))(right: i32): i32 = { self.value + right }
 }
 let main(): i32 = { Counter { value: 40 }.add(2) }
 "#,
@@ -1139,10 +1140,10 @@ use core.effects.Throws
 let Counter = struct { value: i32 }
 extend Counter: Copy {}
 extend Counter {
-  let read(borrow self)(fail: bool): i32 with(Throws(bool)) = {
+  let read(self: borrow(Self))(fail: bool): i32 with(Throws(bool)) = {
 if fail { throw(true) } else { self.value }
   }
-  let read(borrow self)(fallback: i32): i32 = { fallback }
+  let read(self: borrow(Self))(fallback: i32): i32 = { fallback }
 }
 let main(): i32 = {
   let counter = Counter { value: 42 }
@@ -1159,8 +1160,8 @@ let Counter = struct { value: i32 }
 extend Counter {
   let choose(T: type)(left: T): T = { left }
   let choose(T: type)(right: T): T = { right }
-  let add(T: type)(borrow self)(left: T): T = { left }
-  let add(T: type)(borrow self)(right: T): T = { right }
+  let add(T: type)(self: borrow(Self))(left: T): T = { left }
+  let add(T: type)(self: borrow(Self))(right: T): T = { right }
 }
 let main(): i32 = {
   Counter.choose(left: 20) + Counter { value: 0 }.add(i32)(right: 22)
@@ -1175,8 +1176,8 @@ let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T) {
   let choose(left: T): T = { left }
   let choose(right: T): T = { right }
-  let add(borrow self)(left: T): T = { left }
-  let add(borrow self)(right: T): T = { right }
+  let add(self: borrow(Self))(left: T): T = { left }
+  let add(self: borrow(Self))(right: T): T = { right }
 }
 let main(): i32 = {
   Cell.choose(left: 20) + Cell(i32) { value: 0 }.add(right: 22)
@@ -1191,15 +1192,15 @@ fn named_arguments_select_trait_member_overloads() {
     compile_text(
         r#"
 let Select = trait {
-  let pick(borrow self)(left: i32): i32
-  let pick(borrow self)(right: i32): i32
+  let pick(self: borrow(Self))(left: i32): i32
+  let pick(self: borrow(Self))(right: i32): i32
   let make(left: i32): i32
   let make(right: i32): i32
 }
 let Counter = struct { value: i32 }
 extend Counter: Select {
-  let pick(borrow self)(left: i32): i32 = { self.value + left }
-  let pick(borrow self)(right: i32): i32 = { self.value + right + 1 }
+  let pick(self: borrow(Self))(left: i32): i32 = { self.value + left }
+  let pick(self: borrow(Self))(right: i32): i32 = { self.value + right + 1 }
   let make(left: i32): i32 = { left }
   let make(right: i32): i32 = { right + 1 }
 }
@@ -1211,13 +1212,13 @@ let main(): i32 = { Counter { value: 0 }.pick(right: 20) + Counter.make(right: 2
     let positional = compile_text(
         r#"
 let Select = trait {
-  let pick(borrow self)(left: i32): i32
-  let pick(borrow self)(right: i32): i32
+  let pick(self: borrow(Self))(left: i32): i32
+  let pick(self: borrow(Self))(right: i32): i32
 }
 let Counter = struct { value: i32 }
 extend Counter: Select {
-  let pick(borrow self)(left: i32): i32 = { self.value + left }
-  let pick(borrow self)(right: i32): i32 = { self.value + right }
+  let pick(self: borrow(Self))(left: i32): i32 = { self.value + left }
+  let pick(self: borrow(Self))(right: i32): i32 = { self.value + right }
 }
 let main(): i32 = { Counter { value: 40 }.pick(2) }
 "#,
@@ -1233,12 +1234,12 @@ let main(): i32 = { Counter { value: 40 }.pick(2) }
     compile_text(
         r#"
 let Select = trait {
-  let pick(borrow self)(left: i32): i32 = { left }
-  let pick(borrow self)(right: i32): i32 = { right + 1 }
+  let pick(self: borrow(Self))(left: i32): i32 = { left }
+  let pick(self: borrow(Self))(right: i32): i32 = { right + 1 }
 }
 let Counter = struct { value: i32 }
 extend Counter: Select {}
-let select(T: type)(borrow value: T): i32 where T: Select = {
+let select(T: type)(value: borrow(T)): i32 where T: Select = {
   value.pick(right: 41)
 }
 let main(): i32 = { select(Counter { value: 0 }) }
@@ -1249,13 +1250,13 @@ let main(): i32 = { select(Counter { value: 0 }) }
     compile_text(
         r#"
 let Select = trait {
-  let pick(borrow self)(left: i32): i32
-  let pick(borrow self)(right: i32): i32
+  let pick(self: borrow(Self))(left: i32): i32
+  let pick(self: borrow(Self))(right: i32): i32
 }
 let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Select {
-  let pick(borrow self)(left: i32): i32 = { left }
-  let pick(borrow self)(right: i32): i32 = { right + 1 }
+  let pick(self: borrow(Self))(left: i32): i32 = { left }
+  let pick(self: borrow(Self))(right: i32): i32 = { right + 1 }
 }
 let main(): i32 = { Cell(i32) { value: 0 }.pick(right: 41) }
 "#,
@@ -1264,14 +1265,14 @@ let main(): i32 = { Cell(i32) { value: 0 }.pick(right: 41) }
 
     compile_text(
         r#"
-let Left = trait { let pick(borrow self)(left: i32): i32 }
-let Right = trait { let pick(borrow self)(right: i32): i32 }
+let Left = trait { let pick(self: borrow(Self))(left: i32): i32 }
+let Right = trait { let pick(self: borrow(Self))(right: i32): i32 }
 let Counter = struct { value: i32 }
 extend Counter: Left {
-  let pick(borrow self)(left: i32): i32 = { self.value + left }
+  let pick(self: borrow(Self))(left: i32): i32 = { self.value + left }
 }
 extend Counter: Right {
-  let pick(borrow self)(right: i32): i32 = { self.value + right + 1 }
+  let pick(self: borrow(Self))(right: i32): i32 = { self.value + right + 1 }
 }
 let main(): i32 = { Counter { value: 20 }.pick(right: 21) }
 "#,
@@ -1281,8 +1282,8 @@ let main(): i32 = { Counter { value: 20 }.pick(right: 21) }
     let duplicate = compile_text(
         r#"
 let Select = trait {
-  let pick(borrow self)(value: i32): i32
-  let pick(borrow self)(value: bool): i32
+  let pick(self: borrow(Self))(value: i32): i32
+  let pick(self: borrow(Self))(value: bool): i32
 }
 let main(): i32 = { 0 }
 "#,
@@ -2018,12 +2019,12 @@ fn generic_function_validation_rolls_back_temporary_nominal_instances() {
 #[test]
 fn where_bound_validation_rolls_back_assumed_trait_implementations() {
     let program = crate::parser::parse(
-        "let Measure = trait { let measure(borrow self)(): i32 }\n\
+        "let Measure = trait { let measure(self: borrow(Self))(): i32 }\n\
          let Value = struct { value: i32 }\n\
          extend Value: Measure {\n\
-           let measure(borrow self)(): i32 = { self.value }\n\
+           let measure(self: borrow(Self))(): i32 = { self.value }\n\
          }\n\
-         let read(T: type)(borrow value: T): i32\n\
+         let read(T: type)(value: borrow(T)): i32\n\
          where T: Measure = { value.measure() }\n\
          let main(): i32 = { let value = Value { value: 42 }; read(value) }\n",
     )
@@ -2452,7 +2453,7 @@ fn inherent_members_inherit_the_target_api_boundary_for_leak_checks() {
 let Hidden = struct {}
 pub let Public = struct {}
 extend Public {
-  let reveal(borrow self)() = { Hidden {} }
+  let reveal(self: borrow(Self))() = { Hidden {} }
   let secret = Hidden {}
 }
 let main(): i32 = { 0 }
@@ -2495,11 +2496,11 @@ let Hidden = struct {}
 pub let Public = struct {}
 pub let Convert = trait {
   let Output: type
-  let convert(borrow self)(): Output
+  let convert(self: borrow(Self))(): Output
 }
 extend Public: Convert {
   let Output = Hidden
-  let convert(borrow self)(): Hidden = { Hidden {} }}
+  let convert(self: borrow(Self))(): Hidden = { Hidden {} }}
 let main(): i32 = { 0 }
 "#,
     )
@@ -2516,11 +2517,11 @@ let Hidden = struct {}
 let Private = struct {}
 pub let Convert = trait {
   let Output: type
-  let convert(borrow self)(): Output
+  let convert(self: borrow(Self))(): Output
 }
 extend Private: Convert {
   let Output = Hidden
-  let convert(borrow self)(): Hidden = { Hidden {} }}
+  let convert(self: borrow(Self))(): Hidden = { Hidden {} }}
 let main(): i32 = { 0 }
 "#,
     )
@@ -2532,19 +2533,19 @@ fn generic_trait_extensions_materialize_conditionally_with_associated_types() {
     compile_text(
         r#"
 let Read = trait {
-  let read(borrow self)(): i32
+  let read(self: borrow(Self))(): i32
 }
 let Leaf = struct { value: i32 }
 extend Leaf: Read {
-  let read(borrow self)(): i32 = { self.value }
+  let read(self: borrow(Self))(): i32 = { self.value }
 }
 let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Read
 where T: Read {
-  let read(borrow self)(): i32 = { self.value.read() }
+  let read(self: borrow(Self))(): i32 = { self.value.read() }
 }
 
-let read_cell(T: type)(borrow cell: Cell(T)): i32
+let read_cell(T: type)(cell: borrow(Cell(T))): i32
 where T: Read = { cell.read() }
 
 let Value = trait {
@@ -2570,13 +2571,13 @@ let main(): i32 = {
     let errors = compile_text(
         r#"
 let Read = trait {
-  let read(borrow self)(): i32
+  let read(self: borrow(Self))(): i32
 }
 let Leaf = struct { value: i32 }
 let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Read
 where T: Read {
-  let read(borrow self)(): i32 = { self.value.read() }
+  let read(self: borrow(Self))(): i32 = { self.value.read() }
 }
 let main(): i32 = {
   let cell = Cell { value: Leaf { value: 42 } }
@@ -2592,14 +2593,14 @@ let main(): i32 = {
     let errors = compile_text(
         r#"
 let Read = trait {
-  let read(borrow self)(): i32
+  let read(self: borrow(Self))(): i32
 }
 let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Read {
-  let read(borrow self)(): i32 = { 1 }
+  let read(self: borrow(Self))(): i32 = { 1 }
 }
 extend(T: type) Cell(T): Read {
-  let read(borrow self)(): i32 = { 2 }
+  let read(self: borrow(Self))(): i32 = { 2 }
 }
 let main(): i32 = { 0 }
 "#,
@@ -2612,14 +2613,14 @@ let main(): i32 = { 0 }
     compile_text(
         r#"
 let Convert(To: type) = trait {
-  let convert(borrow self)(): To
+  let convert(self: borrow(Self))(): To
 }
 let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Convert(i32) {
-  let convert(borrow self)(): i32 = { 1 }
+  let convert(self: borrow(Self))(): i32 = { 1 }
 }
 extend(T: type) Cell(T): Convert(i64) {
-  let convert(borrow self)(): i64 = { 2 }
+  let convert(self: borrow(Self))(): i64 = { 2 }
 }
 let main(): i32 = {
   let cell = Cell { value: true }
@@ -2631,13 +2632,13 @@ let main(): i32 = {
 
     compile_text(
         r#"
-let Convert(To: type) = trait { let convert(borrow self)(): To }
+let Convert(To: type) = trait { let convert(self: borrow(Self))(): To }
 let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Convert(T)
 where T: Copy {
-  let convert(borrow self)(): T = { self.value }}
+  let convert(self: borrow(Self))(): T = { self.value }}
 extend Cell(i32): Convert(i64) {
-  let convert(borrow self)(): i64 = { 42 }
+  let convert(self: borrow(Self))(): i64 = { 42 }
 }
 let main(): i32 = { 42 }
 "#,
@@ -2646,24 +2647,24 @@ let main(): i32 = { 42 }
 
     for source in [
         r#"
-let Convert(To: type) = trait { let convert(borrow self)(): To }
+let Convert(To: type) = trait { let convert(self: borrow(Self))(): To }
 let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Convert(i32) {
-  let convert(borrow self)(): i32 = { 1 }
+  let convert(self: borrow(Self))(): i32 = { 1 }
 }
 extend Cell(i32): Convert(i32) {
-  let convert(borrow self)(): i32 = { 2 }
+  let convert(self: borrow(Self))(): i32 = { 2 }
 }
 let main(): i32 = { 42 }
 "#,
         r#"
-let Convert(To: type) = trait { let convert(borrow self)(): To }
+let Convert(To: type) = trait { let convert(self: borrow(Self))(): To }
 let Cell(T: type) = struct { value: T }
 extend Cell(i32): Convert(i32) {
-  let convert(borrow self)(): i32 = { 2 }
+  let convert(self: borrow(Self))(): i32 = { 2 }
 }
 extend(T: type) Cell(T): Convert(i32) {
-  let convert(borrow self)(): i32 = { 1 }
+  let convert(self: borrow(Self))(): i32 = { 1 }
 }
 let main(): i32 = { 42 }
 "#,
@@ -2675,11 +2676,11 @@ let main(): i32 = { 42 }
 
     compile_text(
         r#"
-let Read = trait { let read(borrow self)(): i32 }
+let Read = trait { let read(self: borrow(Self))(): i32 }
 let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Read
 where T: Read {
-  let read(borrow self)(): i32 = { self.value.read() }
+  let read(self: borrow(Self))(): i32 = { self.value.read() }
 }
 let main(): i32 = { 42 }
 "#,
@@ -2688,10 +2689,10 @@ let main(): i32 = { 42 }
 
     let mismatch = compile_text(
         r#"
-let Read = trait { let read(borrow self)(): i32 }
+let Read = trait { let read(self: borrow(Self))(): i32 }
 let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Read {
-  let read(borrow self)(): i64 = { 0 }
+  let read(self: borrow(Self))(): i64 = { 0 }
 }
 let main(): i32 = { 42 }
 "#,
@@ -2703,10 +2704,10 @@ let main(): i32 = { 42 }
 
     let invalid_body = compile_text(
         r#"
-let Read = trait { let read(borrow self)(): i32 }
+let Read = trait { let read(self: borrow(Self))(): i32 }
 let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Read {
-  let read(borrow self)(): i32 = { missing }
+  let read(self: borrow(Self))(): i32 = { missing }
 }
 let main(): i32 = { 42 }
 "#,
@@ -2759,7 +2760,7 @@ let main(): i32 = {
         r#"
 let Resource = struct { value: i32 }
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = { self.value = 0 }}
+  let drop(self: borrow(mut)(Self))(): () = { self.value = 0 }}
 let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Copy
 where T: Copy {}
@@ -2776,7 +2777,7 @@ let main(): i32 = {
         r#"
 let Resource = struct { value: i32 }
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = { self.value = 0 }}
+  let drop(self: borrow(mut)(Self))(): () = { self.value = 0 }}
 let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Copy {}
 let main(): i32 = { 42 }
@@ -2793,7 +2794,7 @@ let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Copy
 where T: Copy {}
 extend(T: type) Cell(T): Drop {
-  let drop(borrow(mut) self)(): () = { () }}
+  let drop(self: borrow(mut)(Self))(): () = { () }}
 let main(): i32 = {
   let cell = Cell { value: 42 }
   42
@@ -2827,7 +2828,7 @@ let main(): i32 = { 42 }
         r#"
 pub let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Drop {
-  let drop(borrow(mut) self)(): () = { () }}
+  let drop(self: borrow(mut)(Self))(): () = { () }}
 let main(): i32 = { 42 }
 "#,
         vec![
@@ -3023,7 +3024,7 @@ fn source_backed_drop_is_exclusive_local_and_not_directly_callable() {
 let Resource = struct { value: i32 }
 extend Resource: Copy {}
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = { () }}
+  let drop(self: borrow(mut)(Self))(): () = { () }}
 let main(): i32 = { 0 }
 "#,
     )
@@ -3036,7 +3037,7 @@ let main(): i32 = { 0 }
         r#"
 pub let Resource = struct { value: i32 }
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = { () }}
+  let drop(self: borrow(mut)(Self))(): () = { () }}
 let main(): i32 = { 0 }
 "#,
         vec![
@@ -3054,7 +3055,7 @@ let main(): i32 = { 0 }
         r#"
 let Resource = struct { value: i32 }
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = { () }}
+  let drop(self: borrow(mut)(Self))(): () = { () }}
 let main(): i32 = {
   let mut value = Resource { value: 0 }
   value.drop()
@@ -3073,11 +3074,11 @@ fn ordinary_trait_implementations_obey_the_package_orphan_rule() {
     let concrete = compile_with_origins(
         r#"
 pub let Read = trait {
-  let read(borrow self)(): i32
+  let read(self: borrow(Self))(): i32
 }
 pub let Foreign = struct { value: i32 }
 extend Foreign: Read {
-  let read(borrow self)(): i32 = { self.value }
+  let read(self: borrow(Self))(): i32 = { self.value }
 }
 let main(): i32 = { 0 }
 "#,
@@ -3096,11 +3097,11 @@ let main(): i32 = { 0 }
     let generic = compile_with_origins(
         r#"
 pub let Read = trait {
-  let read(borrow self)(): i32
+  let read(self: borrow(Self))(): i32
 }
 pub let Cell(T: type) = struct { value: T }
 extend(T: type) Cell(T): Read {
-  let read(borrow self)(): i32 = { 0 }
+  let read(self: borrow(Self))(): i32 = { 0 }
 }
 let main(): i32 = { 0 }
 "#,
@@ -3124,7 +3125,7 @@ let Resource = struct { value: i32 }
 let Wrapper = struct { resource: Resource, plain: i32 }
 let Choice = enum { Some(Wrapper), None }
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = { self.value = 0 }}
+  let drop(self: borrow(mut)(Self))(): () = { self.value = 0 }}
 let main(): i32 = {
   let value = Choice.Some(Wrapper { resource: Resource { value: 42 }, plain: 1 })
   0
@@ -3168,7 +3169,7 @@ fn permits_struct_and_enum_projection_drop_but_keeps_custom_drop_complete() {
 let Resource = struct { value: i32 }
 let Wrapper = struct { resource: Resource, plain: i32 }
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = { () }}
+  let drop(self: borrow(mut)(Self))(): () = { () }}
 let main(): i32 = {
   let wrapper = Wrapper { resource: Resource { value: 1 }, plain: 0 }
   let resource = wrapper.resource
@@ -3182,7 +3183,7 @@ let main(): i32 = {
         r#"
 let Resource = struct { value: i32 }
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = { () }}
+  let drop(self: borrow(mut)(Self))(): () = { () }}
 let consume_i32(move value: i32): () = { () }
 let main(): i32 = {
   let resource = Resource { value: 1 }
@@ -3201,7 +3202,7 @@ let main(): i32 = {
 let Resource = struct { value: i32 }
 let Choice = enum { Some(Resource), None }
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = { () }}
+  let drop(self: borrow(mut)(Self))(): () = { () }}
 let main(): i32 = { Choice.Some(Resource { value: 1 }) match {
   Some(resource) => 1,
   None => 0
@@ -3215,9 +3216,9 @@ let main(): i32 = { Choice.Some(Resource { value: 1 }) match {
 let Resource = struct { value: i32 }
 let Choice = enum { Some(Resource), None }
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = { () }}
+  let drop(self: borrow(mut)(Self))(): () = { () }}
 extend Choice: Drop {
-  let drop(borrow(mut) self)(): () = { () }}
+  let drop(self: borrow(mut)(Self))(): () = { () }}
 let main(): i32 = { Choice.Some(Resource { value: 1 }) match {
   Some(resource) => 1,
   None => 0
@@ -3233,7 +3234,7 @@ let main(): i32 = { Choice.Some(Resource { value: 1 }) match {
         r#"
 let Choice = enum { Some(i32), None }
 extend Choice: Drop {
-  let drop(borrow(mut) self)(): () = { () }}
+  let drop(self: borrow(mut)(Self))(): () = { () }}
 let main(): i32 = { Choice.Some(1) match {
   whole if true => 1,
   _ => 0
@@ -3247,7 +3248,7 @@ let main(): i32 = { Choice.Some(1) match {
 let Resource = struct { value: i32 }
 let Choice = enum { Some(Resource), None }
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = { () }}
+  let drop(self: borrow(mut)(Self))(): () = { () }}
 let main(): i32 = { Choice.Some(Resource { value: 1 }) match {
   Some(resource) if false => 1,
   Some(_) => 2,
@@ -3263,9 +3264,9 @@ let Resource = struct { value: i32 }
 let Wrapper = struct { resource: Resource }
 let Choice = enum { Some(Wrapper), None }
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = { () }}
+  let drop(self: borrow(mut)(Self))(): () = { () }}
 extend Wrapper: Drop {
-  let drop(borrow(mut) self)(): () = { () }}
+  let drop(self: borrow(mut)(Self))(): () = { () }}
 let main(): i32 = { Choice.Some(Wrapper { resource: Resource { value: 1 } }) match {
   Some(Wrapper(resource: resource)) => 1,
   None => 0
@@ -4495,7 +4496,7 @@ let read(pointer: Ptr(i32)): i32 with(Unsafe) = { *pointer }
 let forward(pointer: Ptr(i32)): i32 with(Unsafe) = { read(pointer) }
 let main(): i32 = {
   let value = 42
-  unsafe { forward(Ptr(borrow value)) }
+  unsafe { forward(Ptr(borrow(value))) }
 }
 "#,
     )
@@ -4509,7 +4510,7 @@ use core.effects.Unsafe
 let read(pointer: Ptr(i32)): i32 with(Unsafe) = { *pointer }
 let main(): i32 = {
   let value = 42
-  read(Ptr(borrow value))
+  read(Ptr(borrow(value)))
 }
 "#,
     )
@@ -4531,7 +4532,7 @@ let read(pointer: Ptr(i32))(offset: i32): i32 with(Unsafe) = { *pointer + offset
 let main(): i32 = {
   let value = 40
   let named = read
-  let pending = named(Ptr(borrow value))
+  let pending = named(Ptr(borrow(value)))
   pending(2)
 }
 "#,
@@ -4548,7 +4549,7 @@ use core.effects.Unsafe
 let read(pointer: Ptr(i32))(offset: i32): i32 with(Unsafe) = { *pointer + offset }
 let main(): i32 = {
   let value = 40
-  let pending = read(Ptr(borrow value))
+  let pending = read(Ptr(borrow(value)))
   unsafe { pending(2) }
 }
 "#,
@@ -4564,14 +4565,14 @@ use core.effects.Unsafe
 
 let Reader = struct { pointer: Ptr(i32) }
 let Read = trait {
-  let read(borrow self)(): i32 with(Unsafe)
+  let read(self: borrow(Self))(): i32 with(Unsafe)
 }
 extend Reader: Read {
-  let read(borrow self)(): i32 with(Unsafe) = { *self.pointer }
+  let read(self: borrow(Self))(): i32 with(Unsafe) = { *self.pointer }
 }
 let main(): i32 = {
   let value = 42
-  let reader = Reader { pointer: Ptr(borrow value) }
+  let reader = Reader { pointer: Ptr(borrow(value)) }
   unsafe { reader.read() }
 }
 "#,
@@ -4584,10 +4585,10 @@ use core.effects.Unsafe
 
 let Reader = struct { pointer: Ptr(i32) }
 let Read = trait {
-  let read(borrow self)(): i32 with(Unsafe)
+  let read(self: borrow(Self))(): i32 with(Unsafe)
 }
 extend Reader: Read {
-  let read(borrow self)(): i32 = { unsafe { *self.pointer } }
+  let read(self: borrow(Self))(): i32 = { unsafe { *self.pointer } }
 }
 let main(): i32 = { 0 }
 "#,
@@ -4657,7 +4658,7 @@ use core.effects.Unsafe
 let read(E: effect)(pointer: Ptr(i32)): i32 with(E) = { *pointer }
 let main(): i32 = {
   let value = 42
-  unsafe { read(Unsafe)(Ptr(borrow value)) }
+  unsafe { read(Unsafe)(Ptr(borrow(value))) }
 }
 "#,
     )
@@ -4670,7 +4671,7 @@ use core.effects.Unsafe
 let read(E: effect)(pointer: Ptr(i32)): i32 with(E) = { *pointer }
 let main(): i32 = {
   let value = 42
-  read(Ptr(borrow value))
+  read(Ptr(borrow(value)))
 }
 "#,
     )
@@ -4715,7 +4716,7 @@ use core.effects.Unsafe
 
 let Value = struct { value: i32 }
 extend Value {
-  let tagged(E: effect)(borrow self)(): i32 with(E) = { self.value }
+  let tagged(E: effect)(self: borrow(Self))(): i32 with(E) = { self.value }
 }
 let main(): i32 = {
   let value = Value { value: 42 }
@@ -4768,7 +4769,7 @@ use core.effects.{Throws, Unsafe}
 let read(pointer: Ptr(i32)): i32 with(Throws(bool), Unsafe) = { *pointer }
 let main(): i32 = {
   let value = 42
-  read(Ptr(borrow value))
+  read(Ptr(borrow(value)))
 }
 "#,
     )
@@ -4926,7 +4927,7 @@ fn rejects_an_fn_mut_capture_that_conflicts_with_an_existing_borrow() {
         r#"
 let main(): i32 = {
   let mut value = 40
-  let shared = borrow value
+  let shared = borrow(value)
   let mut next = {
 value = value + 2
 value
@@ -4989,7 +4990,7 @@ fn rejects_calling_a_resource_partial_application_twice() {
         r#"
 let Resource = struct { value: i32 }
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = { () }}
+  let drop(self: borrow(mut)(Self))(): () = { () }}
 let finish(move resource: Resource)(value: i32): i32 = { value }
 let main(): i32 = {
   let pending = finish(Resource { value: 1 })
@@ -5064,8 +5065,8 @@ fn emits_kind_discriminated_inherent_receiver_abis() {
         r#"
 let Counter = struct { value: i32 }
 extend Counter {
-  let read(borrow self)(): i32 = { self.value }
-  let reset(borrow(mut) self)(): () = { self.value = 0 }
+  let read(self: borrow(Self))(): i32 = { self.value }
+  let reset(self: borrow(mut)(Self))(): () = { self.value = 0 }
   let take(move self)(): i32 = { self.value }
   let answer = 1
 }
@@ -5099,12 +5100,12 @@ fn registers_generic_trait_metadata_and_emits_static_method_dispatch() {
         r#"
 let Convert(Rhs: type) = trait {
   let Output: type
-  let convert(borrow self)(move rhs: Rhs): Output
+  let convert(self: borrow(Self))(move rhs: Rhs): Output
 }
 let Number = struct { value: i32 }
 extend Number: Convert(i32) {
   let Output = i32
-  let convert(borrow self)(move rhs: i32): i32 = { self.value + rhs }
+  let convert(self: borrow(Self))(move rhs: i32): i32 = { self.value + rhs }
 }
 let main(): i32 = {
   let number = Number { value: 40 }
@@ -5670,7 +5671,7 @@ fn lowers_core_eq_and_ne_to_one_borrowing_static_call() {
 use core.ops.Eq
 let Number = struct { value: i32 }
 extend Number: Eq(Number) {
-  let eq(borrow self)(borrow rhs: Number): bool = { self.value == rhs.value }
+  let eq(self: borrow(Self))(rhs: borrow(Number)): bool = { self.value == rhs.value }
 }
 let main(): i32 = {
   let left = Number { value: 21 }
@@ -5699,7 +5700,7 @@ fn lowers_partial_ord_operators_through_four_state_results() {
 use core.ops.{PartialOrd, PartialOrdering}
 let Number = struct { value: i32, unordered: bool }
 extend Number: PartialOrd(Number) {
-  let partial_cmp(borrow self)(borrow rhs: Number): PartialOrdering = {
+  let partial_cmp(self: borrow(Self))(rhs: borrow(Number)): PartialOrdering = {
 if self.unordered || rhs.unordered { Unordered }
 else if self.value < rhs.value { Less }
 else if self.value > rhs.value { Greater }
@@ -6223,12 +6224,12 @@ fn trait_method_bodies_resolve_concrete_trait_type_substitutions() {
 let Cell(T: type) = struct { value: T }
 let Factory(T: type) = trait {
   let Output: type
-  let make(borrow self)(move value: T): Output
+  let make(self: borrow(Self))(move value: T): Output
 }
 let Maker = struct { seed: i32 }
 extend Maker: Factory(i32) {
   let Output = Cell(i32)
-  let make(borrow self)(move value: i32): Cell(i32) = { Cell(T) { value: value + self.seed } }
+  let make(self: borrow(Self))(move value: i32): Cell(i32) = { Cell(T) { value: value + self.seed } }
 }
 let main(): i32 = {
   let maker = Maker { seed: 0 }
@@ -6292,14 +6293,14 @@ fn inherent_methods_take_precedence_over_trait_candidates() {
     let program = crate::parser::parse(
         r#"
 let Answer = trait {
-  let answer(borrow self)(): i32
+  let answer(self: borrow(Self))(): i32
 }
 let Number = struct { value: i32 }
 extend Number: Answer {
-  let answer(borrow self)(): i32 = { 1 }
+  let answer(self: borrow(Self))(): i32 = { 1 }
 }
 extend Number {
-  let answer(borrow self)(): i32 = { self.value }
+  let answer(self: borrow(Self))(): i32 = { self.value }
 }
 let main(): i32 = {
   let number = Number { value: 42 }
@@ -6351,7 +6352,7 @@ let main(): i32 = { 0 }
         (
             r#"
 let Broken = trait {
-  let read(borrow self)(): Missing
+  let read(self: borrow(Self))(): Missing
 }
 let main(): i32 = { 0 }
 "#,
@@ -6369,11 +6370,11 @@ let main(): i32 = { 0 }
         (
             r#"
 let Read = trait {
-  let read(borrow self)(): i32
+  let read(self: borrow(Self))(): i32
 }
 let Number = struct { value: i32 }
 extend Number: Read {
-  let read(borrow value: Number)(): i32 = { value.value }
+  let read(value: borrow(Number))(): i32 = { value.value }
 }
 let main(): i32 = { 0 }
 "#,
@@ -6383,7 +6384,7 @@ let main(): i32 = { 0 }
             r#"
 let Boxed = struct { value: i32 }
 let InvalidCopy = trait {
-  let consume(borrow self)(copy value: Boxed): i32
+  let consume(self: borrow(Self))(copy value: Boxed): i32
 }
 let main(): i32 = { 0 }
 "#,
@@ -6392,12 +6393,12 @@ let main(): i32 = { 0 }
         (
             r#"
 let Read = trait {
-  let read(borrow self)(): i32
+  let read(self: borrow(Self))(): i32
 }
 let Number = struct { value: i32 }
 extend Number: Read {}
 extend Number: Read {
-  let read(borrow self)(): i32 = { self.value }
+  let read(self: borrow(Self))(): i32 = { self.value }
 }
 let main(): i32 = { 0 }
 "#,
@@ -6420,7 +6421,7 @@ fn validates_unused_default_trait_method_bodies() {
     let errors = compile_text(
         r#"
 let Broken = trait {
-  let value(borrow self)(): i32 = { missing }
+  let value(self: borrow(Self))(): i32 = { missing }
 }
 let main(): i32 = { 42 }
 "#,
@@ -6437,12 +6438,12 @@ fn trait_copy_parameters_accept_validated_concrete_copy_nominals() {
         r#"
 let Cell(T: type) = struct { value: T }
 let Reader = trait {
-  let read(borrow self)(copy value: Cell(i32)): i32
+  let read(self: borrow(Self))(copy value: Cell(i32)): i32
 }
 
 let Host = struct { value: i32 }
 extend Host: Reader {
-  let read(borrow self)(copy value: Cell(i32)): i32 = { self.value + value.value }
+  let read(self: borrow(Self))(copy value: Cell(i32)): i32 = { self.value + value.value }
 }
 extend Cell(i32): Copy {}
 let main(): i32 = {
@@ -6461,7 +6462,7 @@ fn emits_resource_array_drop_glue_for_unconstructed_layout_fields() {
         r#"
 let Payload = struct { value: i32 }
 extend Payload: Drop {
-  let drop(borrow(mut) self)(): () = { () }}
+  let drop(self: borrow(mut)(Self))(): () = { () }}
 let Holder = struct { values: Array(Payload, 1) }
 let main(): i32 = { 42 }
 "#,
@@ -6499,7 +6500,7 @@ fn keeps_same_named_method_and_associated_function_symbols_distinct() {
         r#"
 let Number = struct { raw: i32 }
 extend Number {
-  let value(borrow self)(): i32 = { self.raw }
+  let value(self: borrow(Self))(): i32 = { self.raw }
   let value(): i32 = { 2 }
 }
 let main(): i32 = {
@@ -6618,12 +6619,12 @@ fn lowers_for_through_validated_iteration_lang_items() {
          use core.iter.{Iterator, IntoIterator}\n\
          let Counter = struct { current: i32, end: i32 }\n\
          extend Counter {\n\
-           let into_iter(borrow self)(): i32 = { self.current }\n\
-           let next(borrow self)(): bool = { false }\n\
+           let into_iter(self: borrow(Self))(): i32 = { self.current }\n\
+           let next(self: borrow(Self))(): bool = { false }\n\
          }\n\
          extend Counter: Iterator {\n\
            let Item = i32\n\
-           let next(borrow(mut) self)(): Option(i32) = {\n\
+           let next(self: borrow(mut)(Self))(): Option(i32) = {\n\
              if self.current < self.end {\n\
                let value = self.current\n\
                self.current = self.current + 1\n\
@@ -6704,7 +6705,7 @@ use core.Result
 
 let Payload = struct { value: i32, nested: Option(i32) }
 extend Payload {
-  let add(borrow self)(amount: i32): i32 = { self.value + amount }
+  let add(self: borrow(Self))(amount: i32): i32 = { self.value + amount }
 }
 let read(value: Option(Payload)): Option(i32) = { value?.value }
 let nested(value: Option(Payload)): Option(Option(i32)) = { value?.nested }
@@ -6742,7 +6743,7 @@ fn rejects_unsupported_optional_chain_receivers_and_calls() {
         (
             r#"
 let Payload = struct { value: i32 }
-let read(borrow value: Option(Payload)): Option(i32) = { value?.value }
+let read(value: borrow(Option(Payload))): Option(i32) = { value?.value }
 let main(): i32 = { 0 }
 "#,
             "owned",
@@ -6750,7 +6751,7 @@ let main(): i32 = { 0 }
         (
             r#"
 let Payload = struct { value: i32 }
-extend Payload { let reset(borrow(mut) self)(): i32 = { self.value } }
+extend Payload { let reset(self: borrow(mut)(Self))(): i32 = { self.value } }
 let read(value: Option(Payload)): Option(i32) = { value?.reset() }
 let main(): i32 = { 0 }
 "#,
@@ -6759,7 +6760,7 @@ let main(): i32 = { 0 }
         (
             r#"
 let Payload = struct { value: i32 }
-extend Payload { let add(borrow self)(x: i32)(y: i32): i32 = { self.value + x + y } }
+extend Payload { let add(self: borrow(Self))(x: i32)(y: i32): i32 = { self.value + x + y } }
 let read(value: Option(Payload)): Option(i32) = { value?.add(1) }
 let main(): i32 = { 0 }
 "#,
@@ -7078,7 +7079,7 @@ fn cleanup_plan_marks_mutation_through_a_mutable_borrow() {
         r#"
 let Payload = struct { value: i32 }
 let Pair = struct { left: Payload }
-let replace(borrow(mut) target: Pair, move replacement: Payload): () = {
+let replace(target: borrow(mut)(Pair), move replacement: Payload): () = {
   target.left = replacement
 }
 "#,
@@ -7189,7 +7190,7 @@ let Resource = struct { value: i32 }
 let Bundle = struct { left: Resource, right: Resource }
 let Choice = enum { Some(Bundle), None }
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = { () }}
+  let drop(self: borrow(mut)(Self))(): () = { () }}
 let consume(move value: Resource): () = { () }
 let inspect(move choice: Choice): i32 = { choice match {
   Some(Bundle(left: left, right: _)) if left.value == 1 => do {
@@ -7245,7 +7246,7 @@ fn cleanup_plan_keeps_borrow_aliases_out_of_owned_cleanup() {
 let Boxed = struct { value: i32 }
 let read(): i32 = {
   let value = Boxed { value: 42 }
-  let alias = borrow value
+  let alias = borrow(value)
   alias.value
 }
 "#,
@@ -7278,7 +7279,7 @@ fn cleanup_plan_does_not_materialize_a_borrow_as_an_owned_resource() {
 let Boxed = struct { value: i32 }
 let inspect(): () = {
   let value = Boxed { value: 42 }
-  let alias = borrow value
+  let alias = borrow(value)
   ()
 }
 "#,
@@ -7364,7 +7365,7 @@ extend Empty: Copy {}
 let Pair = struct { left: i32, right: Empty }
 extend Pair: Copy {}
 let Choice = enum { First(next: Pair), Second(i32), Unit }
-let inspect(move empty: Empty, move pair: Pair, move choice: Choice, move values: Array(Pair, 3), borrow alias: Pair): () = { () }
+let inspect(move empty: Empty, move pair: Pair, move choice: Choice, move values: Array(Pair, 3), alias: borrow(Pair)): () = { () }
 "#,
         "inspect",
     );
@@ -7975,7 +7976,7 @@ let run(): i32 = {
         r#"
 let Resource = struct { value: i32 }
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = { () }}
+  let drop(self: borrow(mut)(Self))(): () = { () }}
 let consume(move value: Resource): () = { () }
 let run(): () = {
   let resource = Resource { value: 1 }
@@ -7995,7 +7996,7 @@ fn cleanup_plan_transfers_and_consumes_callable_alias_environments() {
         r#"
 let Resource = struct { value: i32 }
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = { () }}
+  let drop(self: borrow(mut)(Self))(): () = { () }}
 let finish(move resource: Resource)(value: i32): i32 = { value }
 let main(): i32 = {
   let pending = finish(Resource { value: 1 })
@@ -8463,7 +8464,7 @@ fn cleanup_plan_classifies_drop_paths_and_conditional_flags_from_types() {
         r#"
 let Boxed = struct { value: i32 }
 extend Boxed: Drop {
-  let drop(borrow(mut) self)(): () = { () }}
+  let drop(self: borrow(mut)(Self))(): () = { () }}
 let consume(move value: Boxed): () = { () }
 let finish(flag: bool): () = {
   let boxed = Boxed { value: 42 };
@@ -8594,7 +8595,7 @@ let Ask = effect { let value(): i32 }
 let run(seed: i32)(move action: (): i32 with(Ask)): i32 = {
   Ask.handle(value: { (resume) -> resume(20) }) { action() + seed }
 }
-let prepare(borrow(mut) order: i32): i32 = {
+let prepare(order: borrow(mut)(i32)): i32 = {
   order = order + 1
   20
 }

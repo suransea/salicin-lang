@@ -1,11 +1,11 @@
-let read('a: region)(borrow('a) value: i32): i32 = {
-  let alias: borrow('a) i32 = borrow value
+let read('a: region)(value: borrow('a)(i32)): i32 = {
+  let alias: borrow('a)(i32) = borrow(value)
   alias
 }
 
-let generic_read('a: region, T: type)(borrow('a) cell: Cell(T)): T
+let generic_read('a: region, T: type)(cell: borrow('a)(Cell(T))): T
 where T: Copy = {
-  let alias: borrow('a) Cell(T) = borrow cell
+  let alias: borrow('a)(Cell(T)) = borrow(cell)
   alias.value
 }
 

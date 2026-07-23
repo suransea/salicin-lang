@@ -25,6 +25,7 @@ pub(super) fn normalize_labeled_type_arguments<const N: usize>(
                 Item::Effect(definition) => (&definition.name, &definition.compile_groups),
                 Item::Trait(definition) => (&definition.name, &definition.compile_groups),
                 Item::TypeAlias(definition) => (&definition.name, &definition.compile_groups),
+                Item::TypeForm(definition) => (&definition.name, &definition.compile_groups),
                 Item::Function(_) | Item::Global(_) | Item::Domain(_) | Item::Extend(_) => {
                     return None;
                 }
@@ -205,6 +206,7 @@ fn normalize_item_labeled_type_arguments(
             constructor_parameters,
             diagnostics,
         ),
+        Item::TypeForm(_) => {}
         Item::Domain(_) => {}
     }
 }
@@ -779,6 +781,7 @@ fn expand_item_aliases(
             }
         }
         Item::Domain(_) => {}
+        Item::TypeForm(_) => {}
         Item::TypeAlias(_) => unreachable!("aliases are removed before item expansion"),
     }
 }
@@ -1122,6 +1125,7 @@ pub(super) fn erase_region_parameters(program: &mut Program) {
             Item::Function(function) => erase_function(function),
             Item::Global(_) => {}
             Item::TypeAlias(definition) => erase_groups(&mut definition.compile_groups),
+            Item::TypeForm(definition) => erase_groups(&mut definition.compile_groups),
             Item::Effect(definition) => {
                 erase_groups(&mut definition.compile_groups);
                 for operation in &mut definition.operations {

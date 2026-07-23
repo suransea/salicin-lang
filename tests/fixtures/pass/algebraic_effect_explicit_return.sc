@@ -5,7 +5,7 @@ let Read = effect {
 let Resource = struct { counter: MutPtr(i32) }
 
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = { unsafe {
+  let drop(self: borrow(mut)(Self))(): () = { unsafe {
     *self.counter = *self.counter + 1
   } }}
 

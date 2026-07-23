@@ -3,7 +3,7 @@ use core.ops.{PartialOrd, PartialOrdering}
 let Number = struct { value: i32, unordered: bool }
 
 extend Number: PartialOrd(Number) {
-  let partial_cmp(borrow self)(borrow rhs: Number): PartialOrdering = {
+  let partial_cmp(self: borrow(Self))(rhs: borrow(Number)): PartialOrdering = {
     if self.unordered || rhs.unordered { Unordered }
     else if self.value < rhs.value { Less }
     else if self.value > rhs.value { Greater }

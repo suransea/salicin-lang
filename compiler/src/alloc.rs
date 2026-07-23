@@ -339,6 +339,40 @@ fn applied(name: &str, argument: Type) -> Type {
     Type::Named(name.to_owned(), vec![argument])
 }
 
+fn borrow_type(mutable: bool, access: Option<&str>, region: Option<&str>, pointee: Type) -> Type {
+    Type::Borrow {
+        mutable,
+        access: access.map(str::to_owned),
+        region: region.map(str::to_owned),
+        pointee: Box::new(pointee),
+    }
+}
+
+fn parameter_matches(parameter: &crate::ast::Param, name: &str, mode: PassMode, ty: Type) -> bool {
+    if parameter.name != name {
+        return false;
+    }
+    match mode {
+        PassMode::Borrow => {
+            parameter.mode == PassMode::Inferred
+                && parameter.access.is_none()
+                && parameter.passing.is_none()
+                && parameter.region.is_none()
+                && parameter.ty == borrow_type(false, None, None, ty)
+        }
+        PassMode::MutBorrow => {
+            parameter.mode == PassMode::Inferred
+                && parameter.access.is_none()
+                && parameter.passing.is_none()
+                && parameter.region.is_none()
+                && parameter.ty == borrow_type(true, None, None, ty)
+        }
+        PassMode::Inferred | PassMode::Copy | PassMode::Move => {
+            parameter.mode == mode && parameter.ty == ty
+        }
+    }
+}
+
 fn valid_box(definition: &StructDef) -> bool {
     definition.name == "Box"
         && matches!(
@@ -376,11 +410,7 @@ fn valid_box_ptr(function: &Function) -> bool {
         && generic_t(function)
         && matches!(
             function.groups.as_slice(),
-            [group]
-                if matches!(group.as_slice(), [parameter]
-                    if parameter.name == "boxed"
-                        && parameter.mode == PassMode::Borrow
-                        && parameter.ty == applied("Box", named("T")))
+            [group] if has_parameter(group, "boxed", PassMode::Borrow, applied("Box", named("T")))
         )
         && function.return_type == Some(applied("MutPtr", named("T")))
         && function.body.is_some()
@@ -397,11 +427,7 @@ fn valid_box_read(function: &Function) -> bool {
         && generic_t(function)
         && matches!(
             function.groups.as_slice(),
-            [group]
-                if matches!(group.as_slice(), [parameter]
-                    if parameter.name == "boxed"
-                        && parameter.mode == PassMode::Borrow
-                        && parameter.ty == applied("Box", named("T")))
+            [group] if has_parameter(group, "boxed", PassMode::Borrow, applied("Box", named("T")))
         )
         && matches!(function.where_predicates.as_slice(), [predicate] if is_copy_bound(predicate))
         && function.return_type == Some(named("T"))
@@ -414,10 +440,7 @@ fn valid_box_write(function: &Function) -> bool {
         && matches!(
             function.groups.as_slice(),
             [receiver, value]
-                if matches!(receiver.as_slice(), [parameter]
-                    if parameter.name == "boxed"
-                        && parameter.mode == PassMode::MutBorrow
-                        && parameter.ty == applied("Box", named("T")))
+                if has_parameter(receiver, "boxed", PassMode::MutBorrow, applied("Box", named("T")))
                     && matches!(value.as_slice(), [parameter]
                         if parameter.name == "value"
                             && parameter.mode == PassMode::Copy
@@ -449,10 +472,7 @@ fn valid_box_replace(function: &Function) -> bool {
         && matches!(
             function.groups.as_slice(),
             [receiver, replacement]
-                if matches!(receiver.as_slice(), [parameter]
-                    if parameter.name == "boxed"
-                        && parameter.mode == PassMode::MutBorrow
-                        && parameter.ty == applied("Box", named("T")))
+                if has_parameter(receiver, "boxed", PassMode::MutBorrow, applied("Box", named("T")))
                     && matches!(replacement.as_slice(), [parameter]
                         if parameter.name == "value"
                             && parameter.mode == PassMode::Move
@@ -475,10 +495,11 @@ fn valid_box_borrow(function: &Function) -> bool {
         && matches!(function.groups.as_slice(), [receiver]
             if matches!(receiver.as_slice(), [parameter]
                 if parameter.name == "boxed"
-                    && parameter.mode == PassMode::Borrow
-                    && parameter.access.as_deref() == Some("A")
-                    && parameter.region.as_deref() == Some("a")
-                    && parameter.ty == applied("Box", named("T"))))
+                    && parameter.mode == PassMode::Inferred
+                    && parameter.access.is_none()
+                    && parameter.passing.is_none()
+                    && parameter.region.is_none()
+                    && parameter.ty == borrow_type(false, Some("A"), Some("a"), applied("Box", named("T")))))
         && function.return_type
             == Some(Type::Borrow {
                 mutable: false,
@@ -535,9 +556,11 @@ fn valid_box_access_method(function: &Function) -> bool {
             if arguments.is_empty()
                 && matches!(receiver.as_slice(), [parameter]
                     if parameter.name == "self"
-                        && parameter.mode == PassMode::Borrow
-                        && parameter.access.as_deref() == Some("A")
-                        && parameter.ty == named("Self")))
+                        && parameter.mode == PassMode::Inferred
+                        && parameter.access.is_none()
+                        && parameter.passing.is_none()
+                        && parameter.region.is_none()
+                        && parameter.ty == borrow_type(false, Some("A"), None, named("Self"))))
         && function.return_type
             == Some(Type::Borrow {
                 mutable: false,
@@ -581,16 +604,12 @@ fn valid_box_method(
         && function.compile_groups.is_empty()
         && function.groups.len() == 2
         && matches!(function.groups[0].as_slice(), [receiver]
-            if receiver.name == "self"
-                && receiver.mode == receiver_mode
-                && receiver.ty == named("Self"))
+            if parameter_matches(receiver, "self", receiver_mode, named("Self")))
         && function.groups[1].len() == parameters.len()
         && function.groups[1]
             .iter()
             .zip(parameters)
-            .all(|(actual, (name, mode, ty))| {
-                actual.name == *name && actual.mode == *mode && actual.ty == *ty
-            })
+            .all(|(actual, (name, mode, ty))| parameter_matches(actual, name, *mode, ty.clone()))
         && function.return_type == Some(result)
         && function.body.is_some()
 }
@@ -619,8 +638,7 @@ fn valid_vec(definition: &StructDef) -> bool {
 }
 
 fn has_parameter(group: &[crate::ast::Param], name: &str, mode: PassMode, ty: Type) -> bool {
-    matches!(group, [parameter]
-        if parameter.name == name && parameter.mode == mode && parameter.ty == ty)
+    matches!(group, [parameter] if parameter_matches(parameter, name, mode, ty))
 }
 
 fn valid_vec_layout_size(function: &Function) -> bool {
@@ -701,10 +719,11 @@ fn valid_vec_at(function: &Function) -> bool {
         && matches!(function.groups.as_slice(), [receiver, index]
             if matches!(receiver.as_slice(), [parameter]
                 if parameter.name == "values"
-                    && parameter.mode == PassMode::Borrow
-                    && parameter.access.as_deref() == Some("A")
-                    && parameter.region.as_deref() == Some("a")
-                    && parameter.ty == applied("Vec", named("T")))
+                    && parameter.mode == PassMode::Inferred
+                    && parameter.access.is_none()
+                    && parameter.passing.is_none()
+                    && parameter.region.is_none()
+                    && parameter.ty == borrow_type(false, Some("A"), Some("a"), applied("Vec", named("T"))))
                 && has_parameter(index, "index", PassMode::Inferred, Type::U64))
         && function.return_type
             == Some(Type::Borrow {
@@ -929,9 +948,11 @@ fn valid_vec_access_method(function: &Function) -> bool {
         && matches!(function.groups.as_slice(), [receiver, index]
             if matches!(receiver.as_slice(), [parameter]
                 if parameter.name == "self"
-                    && parameter.mode == PassMode::Borrow
-                    && parameter.access.as_deref() == Some("A")
-                    && parameter.ty == named("Self"))
+                    && parameter.mode == PassMode::Inferred
+                    && parameter.access.is_none()
+                    && parameter.passing.is_none()
+                    && parameter.region.is_none()
+                    && parameter.ty == borrow_type(false, Some("A"), None, named("Self")))
                 && has_parameter(index, "index", PassMode::Inferred, Type::U64))
         && function.return_type
             == Some(Type::Borrow {
@@ -1090,8 +1111,8 @@ mod tests {
     #[test]
     fn rejects_box_write_without_its_copy_proof() {
         let source = alloc_source().replacen(
-            "pub let box_write(T: type)(borrow(mut) boxed: Box(T))(copy value: T): ()\nwhere T: Copy = {\n  unsafe {",
-            "pub let box_write(T: type)(borrow(mut) boxed: Box(T))(copy value: T): ()\n= {\n  unsafe {",
+            "pub let box_write(T: type)(boxed: borrow(mut)(Box(T)))(copy value: T): ()\nwhere T: Copy = {\n  unsafe {",
+            "pub let box_write(T: type)(boxed: borrow(mut)(Box(T)))(copy value: T): ()\n= {\n  unsafe {",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
@@ -1102,8 +1123,8 @@ mod tests {
     #[test]
     fn rejects_a_malformed_copy_box_extension() {
         let source = alloc_source().replacen(
-            "let read(borrow self)(): T = { box_read(self) }",
-            "let peek(borrow self)(): T = { box_read(self) }",
+            "let read(self: borrow(Self))(): T = { box_read(self) }",
+            "let peek(self: borrow(Self))(): T = { box_read(self) }",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
@@ -1123,8 +1144,8 @@ mod tests {
     #[test]
     fn rejects_a_malformed_vec_drop_extension() {
         let source = alloc_source().replacen(
-            "let drop(borrow(mut) self)(): () = {",
-            "let release(borrow(mut) self)(): () = {",
+            "let drop(self: borrow(mut)(Self))(): () = {",
+            "let release(self: borrow(mut)(Self))(): () = {",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
@@ -1135,8 +1156,8 @@ mod tests {
     #[test]
     fn rejects_a_malformed_vec_owning_extension() {
         let source = alloc_source().replacen(
-            "let pop(borrow(mut) self)(): Option(T) = { vec_pop(self) }",
-            "let take(borrow(mut) self)(): Option(T) = { vec_pop(self) }",
+            "let pop(self: borrow(mut)(Self))(): Option(T) = { vec_pop(self) }",
+            "let take(self: borrow(mut)(Self))(): Option(T) = { vec_pop(self) }",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
@@ -1147,8 +1168,8 @@ mod tests {
     #[test]
     fn rejects_a_malformed_copy_vec_extension() {
         let source = alloc_source().replacen(
-            "let read(borrow self)(index: u64): T = { vec_read(self)(index) }",
-            "let peek(borrow self)(index: u64): T = { vec_read(self)(index) }",
+            "let read(self: borrow(Self))(index: u64): T = { vec_read(self)(index) }",
+            "let peek(self: borrow(Self))(index: u64): T = { vec_read(self)(index) }",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))

@@ -1,15 +1,15 @@
 let Convert(To: type) = trait {
-  let convert(borrow self)(): To
+  let convert(self: borrow(Self))(): To
 }
 
 let Cell(T: type) = struct { value: T }
 
 extend(T: type) Cell(T): Convert(i32) {
-  let convert(borrow self)(): i32 = { 42 }
+  let convert(self: borrow(Self))(): i32 = { 42 }
 }
 
 extend(T: type) Cell(T): Convert(i64) {
-  let convert(borrow self)(): i64 = { 42 }
+  let convert(self: borrow(Self))(): i64 = { 42 }
 }
 
 let main(): i32 = {

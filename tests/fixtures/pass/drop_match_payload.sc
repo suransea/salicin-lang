@@ -2,7 +2,7 @@ let Resource = struct { value: i32 }
 let Choice = enum { Pair(Resource, Resource), None }
 
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = {
+  let drop(self: borrow(mut)(Self))(): () = {
     let checked = 1 / self.value
     self.value = 0
   }}

@@ -24,47 +24,47 @@ pub let Rem(Rhs: type) = trait {
 }
 
 pub let AddAssign(Rhs: type) = trait {
-  let add_assign(borrow(mut) self)(move rhs: Rhs): ()
+  let add_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()
 }
 
 pub let SubAssign(Rhs: type) = trait {
-  let sub_assign(borrow(mut) self)(move rhs: Rhs): ()
+  let sub_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()
 }
 
 pub let MulAssign(Rhs: type) = trait {
-  let mul_assign(borrow(mut) self)(move rhs: Rhs): ()
+  let mul_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()
 }
 
 pub let DivAssign(Rhs: type) = trait {
-  let div_assign(borrow(mut) self)(move rhs: Rhs): ()
+  let div_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()
 }
 
 pub let RemAssign(Rhs: type) = trait {
-  let rem_assign(borrow(mut) self)(move rhs: Rhs): ()
+  let rem_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()
 }
 
 pub let BitAndAssign(Rhs: type) = trait {
-  let bit_and_assign(borrow(mut) self)(move rhs: Rhs): ()
+  let bit_and_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()
 }
 
 pub let BitOrAssign(Rhs: type) = trait {
-  let bit_or_assign(borrow(mut) self)(move rhs: Rhs): ()
+  let bit_or_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()
 }
 
 pub let BitXorAssign(Rhs: type) = trait {
-  let bit_xor_assign(borrow(mut) self)(move rhs: Rhs): ()
+  let bit_xor_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()
 }
 
 pub let ShlAssign(Rhs: type) = trait {
-  let shl_assign(borrow(mut) self)(move rhs: Rhs): ()
+  let shl_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()
 }
 
 pub let ShrAssign(Rhs: type) = trait {
-  let shr_assign(borrow(mut) self)(move rhs: Rhs): ()
+  let shr_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()
 }
 
 pub let Eq(Rhs: type) = trait {
-  let eq(borrow self)(borrow rhs: Rhs): bool
+  let eq(self: borrow(Self))(rhs: borrow(Rhs)): bool
 }
 
 pub let PartialOrdering = enum {
@@ -75,7 +75,7 @@ pub let PartialOrdering = enum {
 }
 
 pub let PartialOrd(Rhs: type) = trait {
-  let partial_cmp(borrow self)(borrow rhs: Rhs): PartialOrdering
+  let partial_cmp(self: borrow(Self))(rhs: borrow(Rhs)): PartialOrdering
 }
 
 pub let Neg = trait {

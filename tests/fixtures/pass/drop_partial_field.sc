@@ -3,7 +3,7 @@ let Pair = struct { left: Resource, right: Resource }
 let Nested = struct { pair: Pair, tail: Resource }
 
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = {
+  let drop(self: borrow(mut)(Self))(): () = {
     let checked = 1 / self.value
     self.value = 0
   }}

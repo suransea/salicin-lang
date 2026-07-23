@@ -1,26 +1,26 @@
 let Read = trait {
-  let read(borrow self)(): i32
-  let doubled(borrow self)(): i32 = { self.read() + self.read() }
+  let read(self: borrow(Self))(): i32
+  let doubled(self: borrow(Self))(): i32 = { self.read() + self.read() }
 }
 
 let Number = struct { value: i32 }
 
 extend Number: Read {
-  let read(borrow self)(): i32 = { self.value }
+  let read(self: borrow(Self))(): i32 = { self.value }
 }
 
 let Override = struct {}
 
 extend Override: Read {
-  let read(borrow self)(): i32 = { 0 }
-  let doubled(borrow self)(): i32 = { 42 }
+  let read(self: borrow(Self))(): i32 = { 0 }
+  let doubled(self: borrow(Self))(): i32 = { 42 }
 }
 
 let Cell(T: type) = struct { value: T }
 
 extend(T: type) Cell(T): Read
 where T: Read {
-  let read(borrow self)(): i32 = { self.value.read() }
+  let read(self: borrow(Self))(): i32 = { self.value.read() }
 }
 
 let Take = trait {

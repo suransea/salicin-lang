@@ -2,7 +2,7 @@ let Resource = struct { value: i32 }
 let Wrapper = struct { resource: Resource, value: i32 }
 
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = {
+  let drop(self: borrow(mut)(Self))(): () = {
     let trapped = 1 / self.value
   }}
 

@@ -10,8 +10,9 @@ use std::error::Error;
 use std::fmt;
 
 use crate::ast::{
-    CompileParam, CompileParamKind, EnumDef, Function, Item, ItemOrigin, PassMode, Program,
-    TraitDef, TraitMember, Type, VariantDef, VariantFields, Visibility,
+    CompileParam, CompileParamDefault, CompileParamKind, EnumDef, Function, Item, ItemOrigin,
+    PassMode, Program, TraitDef, TraitMember, Type, TypeFormDef, VariantDef, VariantFields,
+    Visibility,
 };
 use crate::manifest::Edition;
 use crate::modules::{self, PackageId, SourceUnit};
@@ -33,16 +34,16 @@ const NON_LANG_ITEM_CORE_MODULES: &[&str] = &["core", "effects", "algebra", "fun
 
 #[cfg(test)]
 const TEST_ASSIGNMENT_OPS: &str = r#"
-pub let AddAssign(Rhs: type) = trait { let add_assign(borrow(mut) self)(move rhs: Rhs): () }
-pub let SubAssign(Rhs: type) = trait { let sub_assign(borrow(mut) self)(move rhs: Rhs): () }
-pub let MulAssign(Rhs: type) = trait { let mul_assign(borrow(mut) self)(move rhs: Rhs): () }
-pub let DivAssign(Rhs: type) = trait { let div_assign(borrow(mut) self)(move rhs: Rhs): () }
-pub let RemAssign(Rhs: type) = trait { let rem_assign(borrow(mut) self)(move rhs: Rhs): () }
-pub let BitAndAssign(Rhs: type) = trait { let bit_and_assign(borrow(mut) self)(move rhs: Rhs): () }
-pub let BitOrAssign(Rhs: type) = trait { let bit_or_assign(borrow(mut) self)(move rhs: Rhs): () }
-pub let BitXorAssign(Rhs: type) = trait { let bit_xor_assign(borrow(mut) self)(move rhs: Rhs): () }
-pub let ShlAssign(Rhs: type) = trait { let shl_assign(borrow(mut) self)(move rhs: Rhs): () }
-pub let ShrAssign(Rhs: type) = trait { let shr_assign(borrow(mut) self)(move rhs: Rhs): () }
+pub let AddAssign(Rhs: type) = trait { let add_assign(self: borrow(mut)(Self))(move rhs: Rhs): () }
+pub let SubAssign(Rhs: type) = trait { let sub_assign(self: borrow(mut)(Self))(move rhs: Rhs): () }
+pub let MulAssign(Rhs: type) = trait { let mul_assign(self: borrow(mut)(Self))(move rhs: Rhs): () }
+pub let DivAssign(Rhs: type) = trait { let div_assign(self: borrow(mut)(Self))(move rhs: Rhs): () }
+pub let RemAssign(Rhs: type) = trait { let rem_assign(self: borrow(mut)(Self))(move rhs: Rhs): () }
+pub let BitAndAssign(Rhs: type) = trait { let bit_and_assign(self: borrow(mut)(Self))(move rhs: Rhs): () }
+pub let BitOrAssign(Rhs: type) = trait { let bit_or_assign(self: borrow(mut)(Self))(move rhs: Rhs): () }
+pub let BitXorAssign(Rhs: type) = trait { let bit_xor_assign(self: borrow(mut)(Self))(move rhs: Rhs): () }
+pub let ShlAssign(Rhs: type) = trait { let shl_assign(self: borrow(mut)(Self))(move rhs: Rhs): () }
+pub let ShrAssign(Rhs: type) = trait { let shr_assign(self: borrow(mut)(Self))(move rhs: Rhs): () }
 "#;
 
 #[cfg(test)]
@@ -107,6 +108,8 @@ pub enum LangItemKind {
     AccessDomain,
     PassingDomain,
     EffectDomain,
+    BorrowTypeForm,
+    BorrowValueForm,
     Continuation,
     EffectCallable,
     Handle,
@@ -120,7 +123,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 49] = [
+    const ALL: [Self; 51] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -160,6 +163,8 @@ impl LangItemKind {
         Self::AccessDomain,
         Self::PassingDomain,
         Self::EffectDomain,
+        Self::BorrowTypeForm,
+        Self::BorrowValueForm,
         Self::Continuation,
         Self::EffectCallable,
         Self::Handle,
@@ -213,6 +218,8 @@ impl LangItemKind {
             Self::AccessDomain => "access",
             Self::PassingDomain => "passing",
             Self::EffectDomain => "effect",
+            Self::BorrowTypeForm => "borrow",
+            Self::BorrowValueForm => "borrow",
             Self::Continuation => "Continuation",
             Self::EffectCallable => "EffectCallable",
             Self::Handle => "Handle",
@@ -236,6 +243,8 @@ impl LangItemKind {
             | Self::AccessDomain
             | Self::PassingDomain
             | Self::EffectDomain => "domain",
+            Self::BorrowTypeForm => "type form",
+            Self::BorrowValueForm => "function",
             Self::Do | Self::Try | Self::Throw | Self::Unsafe | Self::Loop => "function",
             Self::Handle
             | Self::Copy
@@ -312,6 +321,8 @@ impl LangItemKind {
             | Self::AccessDomain
             | Self::PassingDomain
             | Self::EffectDomain
+            | Self::BorrowTypeForm
+            | Self::BorrowValueForm
             | Self::Continuation
             | Self::EffectCallable
             | Self::Handle
@@ -421,6 +432,8 @@ pub struct LangItems {
     access_domain: LangItem,
     passing_domain: LangItem,
     effect_domain: LangItem,
+    borrow_type_form: LangItem,
+    borrow_value_form: LangItem,
     continuation: LangItem,
     effect_callable: LangItem,
     handle: LangItem,
@@ -573,6 +586,12 @@ impl LangItems {
     pub const fn effect_domain(&self) -> &LangItem {
         &self.effect_domain
     }
+    pub const fn borrow_type_form(&self) -> &LangItem {
+        &self.borrow_type_form
+    }
+    pub const fn borrow_value_form(&self) -> &LangItem {
+        &self.borrow_value_form
+    }
     pub const fn continuation(&self) -> &LangItem {
         &self.continuation
     }
@@ -645,6 +664,8 @@ impl LangItems {
             LangItemKind::AccessDomain => &self.access_domain,
             LangItemKind::PassingDomain => &self.passing_domain,
             LangItemKind::EffectDomain => &self.effect_domain,
+            LangItemKind::BorrowTypeForm => &self.borrow_type_form,
+            LangItemKind::BorrowValueForm => &self.borrow_value_form,
             LangItemKind::Continuation => &self.continuation,
             LangItemKind::EffectCallable => &self.effect_callable,
             LangItemKind::Handle => &self.handle,
@@ -822,6 +843,8 @@ impl CoreBundle {
             &mut lang_items.access_domain,
             &mut lang_items.passing_domain,
             &mut lang_items.effect_domain,
+            &mut lang_items.borrow_type_form,
+            &mut lang_items.borrow_value_form,
             &mut lang_items.handle,
             &mut lang_items.do_function,
             &mut lang_items.try_function,
@@ -954,7 +977,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         return Err(CoreBundleError::new(edition, diagnostics));
     }
 
-    let mut indices: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    let mut indices: BTreeMap<LangItemKind, Vec<usize>> = BTreeMap::new();
     for (index, ((item, visibility), origin)) in program
         .items
         .iter()
@@ -973,13 +996,45 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
             ));
             continue;
         };
-        let kind = if let Some(kind) = LangItemKind::ALL
+        let candidates = LangItemKind::ALL
             .iter()
             .copied()
-            .find(|kind| kind.source_name() == name)
-        {
-            kind
-        } else {
+            .filter(|kind| kind.source_name() == name)
+            .collect::<Vec<_>>();
+        let matching = candidates
+            .iter()
+            .copied()
+            .filter(|kind| item_has_expected_kind(*kind, item))
+            .collect::<Vec<_>>();
+        let kind = match (candidates.as_slice(), matching.as_slice()) {
+            ([], []) => {
+                if !is_allowed_non_lang_item(origin) {
+                    diagnostics.push(format!(
+                        "unexpected declaration `{name}` at item {}",
+                        index + 1
+                    ));
+                }
+                continue;
+            }
+            ([kind], []) => *kind,
+            (_, [kind]) => *kind,
+            (_, []) => {
+                diagnostics.push(format!(
+                    "lang item name `{name}` at item {} must be one of the expected compiler-owned shapes",
+                    index + 1
+                ));
+                continue;
+            }
+            (_, matches) => {
+                diagnostics.push(format!(
+                    "lang item name `{name}` at item {} ambiguously matches {} compiler-owned shapes",
+                    index + 1,
+                    matches.len()
+                ));
+                continue;
+            }
+        };
+        if candidates.is_empty() {
             if !is_allowed_non_lang_item(origin) {
                 diagnostics.push(format!(
                     "unexpected declaration `{name}` at item {}",
@@ -987,8 +1042,8 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
                 ));
             }
             continue;
-        };
-        indices.entry(kind.source_name()).or_default().push(index);
+        }
+        indices.entry(kind).or_default().push(index);
         if *visibility != Visibility::Public {
             diagnostics.push(format!(
                 "lang item `{kind}` must be `pub`, found {} visibility",
@@ -999,7 +1054,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
 
     let mut resolved = BTreeMap::new();
     for kind in LangItemKind::ALL {
-        match indices.get(kind.source_name()).map(Vec::as_slice) {
+        match indices.get(&kind).map(Vec::as_slice) {
             None | Some([]) => diagnostics.push(format!("missing lang item `{kind}`")),
             Some([index]) => {
                 validate_item_shape(kind, &program.items[*index], &mut diagnostics);
@@ -1066,6 +1121,8 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         access_domain: item(LangItemKind::AccessDomain),
         passing_domain: item(LangItemKind::PassingDomain),
         effect_domain: item(LangItemKind::EffectDomain),
+        borrow_type_form: item(LangItemKind::BorrowTypeForm),
+        borrow_value_form: item(LangItemKind::BorrowValueForm),
         continuation: item(LangItemKind::Continuation),
         effect_callable: item(LangItemKind::EffectCallable),
         handle: item(LangItemKind::Handle),
@@ -1088,6 +1145,7 @@ fn item_name(item: &Item) -> Option<&str> {
         Item::Effect(definition) => Some(&definition.name),
         Item::Domain(definition) => Some(&definition.name),
         Item::TypeAlias(definition) => Some(&definition.name),
+        Item::TypeForm(definition) => Some(&definition.name),
         Item::Trait(definition) => Some(&definition.name),
         Item::Extend(_) => None,
     }
@@ -1109,8 +1167,22 @@ fn item_kind(item: &Item) -> &'static str {
         Item::Effect(_) => "effect",
         Item::Domain(_) => "domain",
         Item::TypeAlias(_) => "type alias",
+        Item::TypeForm(_) => "type form",
         Item::Trait(_) => "trait",
         Item::Extend(_) => "extension",
+    }
+}
+
+fn item_has_expected_kind(kind: LangItemKind, item: &Item) -> bool {
+    match kind.expected_kind() {
+        "enum" => matches!(item, Item::Enum(_)),
+        "struct" => matches!(item, Item::Struct(_)),
+        "effect" => matches!(item, Item::Effect(_)),
+        "domain" => matches!(item, Item::Domain(_)),
+        "type form" => matches!(item, Item::TypeForm(_)),
+        "function" => matches!(item, Item::Function(_)),
+        "trait" => matches!(item, Item::Trait(_)),
+        _ => false,
     }
 }
 
@@ -1143,6 +1215,12 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
             | LangItemKind::EffectDomain,
             Item::Domain(definition),
         ) => validate_domain(kind, definition, diagnostics),
+        (LangItemKind::BorrowTypeForm, Item::TypeForm(definition)) => {
+            validate_borrow_type_form(definition, diagnostics)
+        }
+        (LangItemKind::BorrowValueForm, Item::Function(function)) => {
+            validate_borrow_value_form(function, diagnostics)
+        }
         (LangItemKind::Continuation, Item::Struct(definition)) => {
             let valid = definition.compile_groups
                 == vec![vec![type_parameter("Input"), type_parameter("Output")]]
@@ -1238,6 +1316,39 @@ fn validate_domain(
     }
 }
 
+fn validate_borrow_type_form(definition: &TypeFormDef, diagnostics: &mut Vec<String>) {
+    let valid = definition.compile_groups == borrow_compile_groups();
+    if !valid {
+        diagnostics.push(
+            "lang item `borrow` type form must have shape `pub let borrow(A: access = shared)('r: region)(T: type): type`"
+                .to_owned(),
+        );
+    }
+}
+
+fn validate_borrow_value_form(function: &Function, diagnostics: &mut Vec<String>) {
+    let valid = function.compile_groups == borrow_compile_groups()
+        && function.return_type == Some(borrow_type("A", "r", named_type("T")))
+        && function.effects == crate::ast::FunctionEffects::default()
+        && function.where_predicates.is_empty()
+        && function.body.is_none()
+        && matches!(
+            function.groups.as_slice(),
+            [group] if matches!(
+                group.as_slice(),
+                [parameter] if parameter.name == "value"
+                    && parameter.mode == PassMode::Inferred
+                    && parameter.ty == borrow_type("A", "r", named_type("T"))
+            )
+        );
+    if !valid {
+        diagnostics.push(
+            "lang item `borrow` value form must have shape `pub let borrow(A: access = shared)('r: region)(T: type)(value: borrow(A)('r)(T)): borrow(A)('r)(T)`"
+                .to_owned(),
+        );
+    }
+}
+
 fn validate_assignment_operator(
     kind: LangItemKind,
     definition: &TraitDef,
@@ -1255,7 +1366,7 @@ fn validate_assignment_operator(
         );
     if !valid {
         diagnostics.push(format!(
-            "lang item `{kind}` must have shape `pub let {kind}(Rhs: type) = trait {{ let {method}(borrow(mut) self)(move rhs: Rhs): () }}`"
+            "lang item `{kind}` must have shape `pub let {kind}(Rhs: type) = trait {{ let {method}(self: borrow(mut)(Self))(move rhs: Rhs): () }}`"
         ));
     }
 }
@@ -1277,8 +1388,8 @@ fn valid_assignment_operator_method(function: &Function, method: &str) -> bool {
         && function.where_predicates.is_empty()
         && function.body.is_none()
         && receiver.name == "self"
-        && receiver.mode == PassMode::MutBorrow
-        && receiver.ty == named_type("Self")
+        && receiver.mode == PassMode::Inferred
+        && receiver.ty == simple_borrow_type(true, named_type("Self"))
         && rhs.name == "rhs"
         && rhs.mode == PassMode::Move
         && rhs.ty == named_type("Rhs")
@@ -1303,7 +1414,7 @@ fn validate_iterator(definition: &TraitDef, diagnostics: &mut Vec<String>) {
         );
     if !valid {
         diagnostics.push(
-            "lang item `Iterator` must declare `Item` and `next(borrow(mut) self)(): Option(Item)`"
+            "lang item `Iterator` must declare `Item` and `next(self: borrow(mut)(Self))(): Option(Item)`"
                 .to_owned(),
         );
     }
@@ -1348,8 +1459,18 @@ fn valid_iteration_method(function: &Function, name: &str, mode: PassMode, resul
         && function.where_predicates.is_empty()
         && function.body.is_none()
         && receiver.name == "self"
-        && receiver.mode == mode
-        && receiver.ty == named_type("Self")
+        && match mode {
+            PassMode::Move => receiver.mode == PassMode::Move && receiver.ty == named_type("Self"),
+            PassMode::Borrow => {
+                receiver.mode == PassMode::Inferred
+                    && receiver.ty == simple_borrow_type(false, named_type("Self"))
+            }
+            PassMode::MutBorrow => {
+                receiver.mode == PassMode::Inferred
+                    && receiver.ty == simple_borrow_type(true, named_type("Self"))
+            }
+            PassMode::Inferred | PassMode::Copy => false,
+        }
         && empty_group.is_empty()
 }
 
@@ -1527,6 +1648,7 @@ fn valid_do(function: &Function) -> bool {
             CompileParam {
                 name: "E".to_owned(),
                 kind: CompileParamKind::Effect,
+                default: None,
             },
             type_parameter("T"),
         ]]
@@ -1557,6 +1679,7 @@ fn valid_try(function: &Function) -> bool {
             CompileParam {
                 name: "F".to_owned(),
                 kind: CompileParamKind::Effect,
+                default: None,
             },
             type_parameter("T"),
             type_parameter("E"),
@@ -1596,6 +1719,7 @@ fn valid_unsafe(function: &Function) -> bool {
             CompileParam {
                 name: "E".to_owned(),
                 kind: CompileParamKind::Effect,
+                default: None,
             },
             type_parameter("T"),
         ]]
@@ -1614,6 +1738,7 @@ fn valid_loop(function: &Function) -> bool {
             CompileParam {
                 name: "E".to_owned(),
                 kind: CompileParamKind::Effect,
+                default: None,
             },
             type_parameter("T"),
         ]]
@@ -1669,6 +1794,49 @@ fn type_parameter(name: &str) -> CompileParam {
     CompileParam {
         name: name.to_owned(),
         kind: CompileParamKind::Type,
+        default: None,
+    }
+}
+
+fn access_parameter(name: &str, default: Option<&str>) -> CompileParam {
+    CompileParam {
+        name: name.to_owned(),
+        kind: CompileParamKind::Access,
+        default: default.map(|value| CompileParamDefault::Name(value.to_owned())),
+    }
+}
+
+fn region_parameter(name: &str) -> CompileParam {
+    CompileParam {
+        name: name.to_owned(),
+        kind: CompileParamKind::Region,
+        default: None,
+    }
+}
+
+fn borrow_compile_groups() -> Vec<Vec<CompileParam>> {
+    vec![
+        vec![access_parameter("A", Some("shared"))],
+        vec![region_parameter("r")],
+        vec![type_parameter("T")],
+    ]
+}
+
+fn borrow_type(access: &str, region: &str, pointee: Type) -> Type {
+    Type::Borrow {
+        mutable: false,
+        access: Some(access.to_owned()),
+        region: Some(region.to_owned()),
+        pointee: Box::new(pointee),
+    }
+}
+
+fn simple_borrow_type(mutable: bool, pointee: Type) -> Type {
+    Type::Borrow {
+        mutable,
+        access: None,
+        region: None,
+        pointee: Box::new(pointee),
     }
 }
 
@@ -1704,6 +1872,7 @@ fn compile_effect_parameter(name: &str) -> CompileParam {
     CompileParam {
         name: name.to_owned(),
         kind: CompileParamKind::Effect,
+        default: None,
     }
 }
 
@@ -1802,7 +1971,7 @@ pub(crate) fn copy_trait_has_required_shape(definition: &TraitDef) -> bool {
 fn validate_drop(definition: &TraitDef, diagnostics: &mut Vec<String>) {
     if !drop_trait_has_required_shape(definition) {
         diagnostics.push(
-            "lang item `Drop` must have shape `pub let Drop = trait { let drop(borrow(mut) self)(): () }`"
+            "lang item `Drop` must have shape `pub let Drop = trait { let drop(self: borrow(mut)(Self))(): () }`"
                 .to_owned(),
         );
     }
@@ -1826,8 +1995,8 @@ pub(crate) fn drop_trait_has_required_shape(definition: &TraitDef) -> bool {
         && function.return_type == Some(Type::Unit)
         && function.body.is_none()
         && receiver.name == "self"
-        && receiver.mode == PassMode::MutBorrow
-        && receiver.ty == named_type("Self")
+        && receiver.mode == PassMode::Inferred
+        && receiver.ty == simple_borrow_type(true, named_type("Self"))
         && empty_group.is_empty()
 }
 
@@ -1838,10 +2007,10 @@ fn validate_operator(kind: LangItemKind, definition: &TraitDef, diagnostics: &mu
     if !operator_trait_has_required_shape(kind, definition) {
         let shape = match kind {
             LangItemKind::Eq => format!(
-                "pub let Eq(Rhs: type) = trait {{ let {method}(borrow self)(borrow rhs: Rhs): bool }}"
+                "pub let Eq(Rhs: type) = trait {{ let {method}(self: borrow(Self))(rhs: borrow(Rhs)): bool }}"
             ),
             LangItemKind::PartialOrd => format!(
-                "pub let PartialOrd(Rhs: type) = trait {{ let {method}(borrow self)(borrow rhs: Rhs): PartialOrdering }}"
+                "pub let PartialOrd(Rhs: type) = trait {{ let {method}(self: borrow(Self))(rhs: borrow(Rhs)): PartialOrdering }}"
             ),
             _ => format!(
                 "pub let {kind}(Rhs: type) = trait {{ let Output: type; let {method}(move self)(move rhs: Rhs): Output }}"
@@ -1962,11 +2131,11 @@ fn valid_borrowing_comparison_method(function: &Function, kind: LangItemKind) ->
         && result_is_valid
         && function.body.is_none()
         && receiver.name == "self"
-        && receiver.mode == PassMode::Borrow
-        && receiver.ty == named_type("Self")
+        && receiver.mode == PassMode::Inferred
+        && receiver.ty == simple_borrow_type(false, named_type("Self"))
         && rhs.name == "rhs"
-        && rhs.mode == PassMode::Borrow
-        && rhs.ty == named_type("Rhs")
+        && rhs.mode == PassMode::Inferred
+        && rhs.ty == simple_borrow_type(false, named_type("Rhs"))
 }
 
 fn valid_operator_method(function: &Function, method: &str) -> bool {
@@ -2005,7 +2174,7 @@ pub let Never = enum {}
             copy_declaration,
             r#"
 pub let Drop = trait {
-  let drop(borrow(mut) self)(): ()
+  let drop(self: borrow(mut)(Self))(): ()
 }
 pub let Add(Rhs: type) = trait {
   let Output: type
@@ -2028,11 +2197,11 @@ pub let Rem(Rhs: type) = trait {
   let rem(move self)(move rhs: Rhs): Output
 }
 pub let Eq(Rhs: type) = trait {
-  let eq(borrow self)(borrow rhs: Rhs): bool
+  let eq(self: borrow(Self))(rhs: borrow(Rhs)): bool
 }
 pub let PartialOrdering = enum { Less, Equal, Greater, Unordered }
 pub let PartialOrd(Rhs: type) = trait {
-  let partial_cmp(borrow self)(borrow rhs: Rhs): PartialOrdering
+  let partial_cmp(self: borrow(Self))(rhs: borrow(Rhs)): PartialOrdering
 }
 pub let Neg = trait {
   let Output: type
@@ -2116,7 +2285,9 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::RegionDomain
                 | LangItemKind::AccessDomain
                 | LangItemKind::PassingDomain
-                | LangItemKind::EffectDomain => format!("core::access::{}", kind.source_name()),
+                | LangItemKind::EffectDomain
+                | LangItemKind::BorrowTypeForm
+                | LangItemKind::BorrowValueForm => format!("core::access::{}", kind.source_name()),
                 LangItemKind::Continuation
                 | LangItemKind::EffectCallable
                 | LangItemKind::Handle
@@ -2177,7 +2348,9 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::RegionDomain
                 | LangItemKind::AccessDomain
                 | LangItemKind::PassingDomain
-                | LangItemKind::EffectDomain => "access",
+                | LangItemKind::EffectDomain
+                | LangItemKind::BorrowTypeForm
+                | LangItemKind::BorrowValueForm => "access",
                 LangItemKind::Continuation
                 | LangItemKind::EffectCallable
                 | LangItemKind::Handle
@@ -2318,8 +2491,8 @@ pub let Shr(Rhs: type) = trait {
     #[test]
     fn rejects_malformed_iteration_contracts() {
         let malformed = EDITION_2026_ITER.replace(
-            "let next(borrow(mut) self)(): core.Option(Item)",
-            "let next(borrow self)(): core.Option(Item)",
+            "let next(self: borrow(mut)(Self))(): core.Option(Item)",
+            "let next(self: borrow(Self))(): core.Option(Item)",
         );
         let error = CoreBundle::from_modules(
             Edition::Edition2026,
@@ -2343,8 +2516,8 @@ pub let Shr(Rhs: type) = trait {
     #[test]
     fn rejects_malformed_assignment_operator_contracts() {
         let malformed = EDITION_2026_OPS.replace(
-            "let add_assign(borrow(mut) self)(move rhs: Rhs): ()",
-            "let add_assign(borrow self)(move rhs: Rhs): ()",
+            "let add_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()",
+            "let add_assign(self: borrow(Self))(move rhs: Rhs): ()",
         );
         let error = CoreBundle::from_modules(
             Edition::Edition2026,
@@ -2419,7 +2592,7 @@ pub let Rem(Rhs: type) = trait {
 }
 pub let Copy = trait {}
 pub let Drop = trait {
-  let drop(borrow(mut) self)(): ()
+  let drop(self: borrow(mut)(Self))(): ()
 }
 pub let Add(Rhs: type) = trait {
   let Output: type
@@ -2441,11 +2614,11 @@ pub let Mul(Rhs: type) = trait {
   let mul(move self)(move rhs: Rhs): Output
 }
 pub let Eq(Rhs: type) = trait {
-  let eq(borrow self)(borrow rhs: Rhs): bool
+  let eq(self: borrow(Self))(rhs: borrow(Rhs)): bool
 }
 pub let PartialOrdering = enum { Less, Equal, Greater, Unordered }
 pub let PartialOrd(Rhs: type) = trait {
-  let partial_cmp(borrow self)(borrow rhs: Rhs): PartialOrdering
+  let partial_cmp(self: borrow(Self))(rhs: borrow(Rhs)): PartialOrdering
 }
 pub let Neg = trait {
   let Output: type
@@ -2535,11 +2708,11 @@ pub let Rem(Rhs: type) = trait {
   let rem(move self)(move rhs: Rhs): Output
 }
 pub let Eq(Rhs: type) = trait {
-  let eq(borrow self)(borrow rhs: Rhs): bool
+  let eq(self: borrow(Self))(rhs: borrow(Rhs)): bool
 }
 pub let PartialOrdering = enum { Less, Equal, Greater, Unordered }
 pub let PartialOrd(Rhs: type) = trait {
-  let partial_cmp(borrow self)(borrow rhs: Rhs): PartialOrdering
+  let partial_cmp(self: borrow(Self))(rhs: borrow(Rhs)): PartialOrdering
 }
 pub let Neg = trait {
   let Output: type
@@ -2570,7 +2743,7 @@ pub let Shr(Rhs: type) = trait {
   let shr(move self)(move rhs: Rhs): Output
 }
 pub let Drop = trait {
-  let drop(borrow(mut) self)(): ()
+  let drop(self: borrow(mut)(Self))(): ()
 }
 "#;
         let error = CoreBundle::from_source(Edition::Edition2026, source).unwrap_err();
@@ -2619,11 +2792,11 @@ pub let Rem(Rhs: type) = trait {
   let rem(move self)(move rhs: Rhs): Output
 }
 pub let Eq(Rhs: type) = trait {
-  let eq(borrow self)(borrow rhs: Rhs): bool
+  let eq(self: borrow(Self))(rhs: borrow(Rhs)): bool
 }
 pub let PartialOrdering = enum { Less, Equal, Greater, Unordered }
 pub let PartialOrd(Rhs: type) = trait {
-  let partial_cmp(borrow self)(borrow rhs: Rhs): PartialOrdering
+  let partial_cmp(self: borrow(Self))(rhs: borrow(Rhs)): PartialOrdering
 }
 pub let Neg = trait {
   let Output: type
@@ -2672,7 +2845,7 @@ pub let Shr(Rhs: type) = trait {
         let malformed_declarations = [
             "pub let Copy(T: type) = trait {}",
             "pub let Copy = trait { let Item: type }",
-            "pub let Copy = trait { let clone(borrow self)(): Self }",
+            "pub let Copy = trait { let clone(self: borrow(Self))(): Self }",
         ];
 
         for declaration in malformed_declarations {
@@ -2690,22 +2863,22 @@ pub let Shr(Rhs: type) = trait {
     #[test]
     fn rejects_malformed_drop_traits() {
         let malformed_declarations = [
-            "pub let Drop(T: type) = trait { let drop(borrow(mut) self)(): () }",
+            "pub let Drop(T: type) = trait { let drop(self: borrow(mut)(Self))(): () }",
             "pub let Drop = trait {}",
-            "pub let Drop = trait { let drop(borrow self)(): () }",
-            "pub let Drop = trait { let drop(borrow(mut) self)(): i32 }",
+            "pub let Drop = trait { let drop(self: borrow(Self))(): () }",
+            "pub let Drop = trait { let drop(self: borrow(mut)(Self))(): i32 }",
         ];
 
         for declaration in malformed_declarations {
             let source = core_source_with_copy("pub let Copy = trait {}").replacen(
-                "pub let Drop = trait {\n  let drop(borrow(mut) self)(): ()\n}",
+                "pub let Drop = trait {\n  let drop(self: borrow(mut)(Self))(): ()\n}",
                 declaration,
                 1,
             );
             let error = CoreBundle::from_source(Edition::Edition2026, &source).unwrap_err();
             assert_eq!(
                 error.diagnostics(),
-                ["lang item `Drop` must have shape `pub let Drop = trait { let drop(borrow(mut) self)(): () }`"],
+                ["lang item `Drop` must have shape `pub let Drop = trait { let drop(self: borrow(mut)(Self))(): () }`"],
                 "unexpected diagnostic for `{declaration}`"
             );
         }
@@ -2719,7 +2892,7 @@ pub let Result(E: type)(T: type) = enum { Ok(T), Err(E) }
 pub let Never = enum {}
 pub let Copy = trait {}
 pub let Drop = trait {
-  let drop(borrow(mut) self)(): ()
+  let drop(self: borrow(mut)(Self))(): ()
 }
 pub let Add(Rhs: type) = trait {
   let Output: type
@@ -2785,8 +2958,8 @@ pub let Shr(Rhs: type) = trait {
                 "lang item `Mul` must have shape `pub let Mul(Rhs: type) = trait { let Output: type; let mul(move self)(move rhs: Rhs): Output }`",
                 "lang item `Div` must have shape `pub let Div(Rhs: type) = trait { let Output: type; let div(move self)(move rhs: Rhs): Output }`",
                 "lang item `Rem` must have shape `pub let Rem(Rhs: type) = trait { let Output: type; let rem(move self)(move rhs: Rhs): Output }`",
-                "lang item `Eq` must have shape `pub let Eq(Rhs: type) = trait { let eq(borrow self)(borrow rhs: Rhs): bool }`",
-                "lang item `PartialOrd` must have shape `pub let PartialOrd(Rhs: type) = trait { let partial_cmp(borrow self)(borrow rhs: Rhs): PartialOrdering }`",
+                "lang item `Eq` must have shape `pub let Eq(Rhs: type) = trait { let eq(self: borrow(Self))(rhs: borrow(Rhs)): bool }`",
+                "lang item `PartialOrd` must have shape `pub let PartialOrd(Rhs: type) = trait { let partial_cmp(self: borrow(Self))(rhs: borrow(Rhs)): PartialOrdering }`",
             ]
         );
     }
@@ -2822,7 +2995,7 @@ pub let Shr(Rhs: type) = trait {
             ),
             (
                 "pub let Not = trait {\n  let Output: type\n  let not(move self)(): Output\n}",
-                "pub let Not = trait { let Output: type; let not(borrow self)(): Output }",
+                "pub let Not = trait { let Output: type; let not(self: borrow(Self))(): Output }",
                 "lang item `Not` must have shape `pub let Not = trait { let Output: type; let not(move self)(): Output }`",
             ),
         ] {
@@ -2841,7 +3014,7 @@ pub let Shr(Rhs: type) = trait {
         for (original, malformed, expected) in [
             (
                 "pub let BitAnd(Rhs: type) = trait {\n  let Output: type\n  let bit_and(move self)(move rhs: Rhs): Output\n}",
-                "pub let BitAnd = trait { let bit_and(borrow self)(move rhs: i32): i32 }",
+                "pub let BitAnd = trait { let bit_and(self: borrow(Self))(move rhs: i32): i32 }",
                 "lang item `BitAnd` must have shape `pub let BitAnd(Rhs: type) = trait { let Output: type; let bit_and(move self)(move rhs: Rhs): Output }`",
             ),
             (

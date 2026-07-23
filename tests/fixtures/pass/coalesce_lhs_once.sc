@@ -1,6 +1,6 @@
 use core.Option
 
-let make(borrow(mut) count: i32): Option(i32) = {
+let make(count: borrow(mut)(i32)): Option(i32) = {
   count = count + 1
   Option(i32).Some(42)
 }

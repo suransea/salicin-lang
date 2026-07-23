@@ -101,10 +101,20 @@ impl Analyzer {
                         .borrowed_parameter_regions
                         .insert(id, (region.clone(), *mutable));
                 }
-                let capability = match param.mode {
-                    PassMode::Borrow => LocalCapability::SharedParam,
-                    PassMode::MutBorrow => LocalCapability::MutParam,
-                    PassMode::Inferred | PassMode::Copy | PassMode::Move => LocalCapability::Owned,
+                let (capability, mutable) = match (&param.mode, &runtime_ty) {
+                    (PassMode::Borrow, _) => (LocalCapability::SharedParam, false),
+                    (PassMode::MutBorrow, _) => (LocalCapability::MutParam, true),
+                    (_, Ty::Reference { mutable, .. }) => (
+                        if *mutable {
+                            LocalCapability::MutParam
+                        } else {
+                            LocalCapability::SharedParam
+                        },
+                        *mutable,
+                    ),
+                    (PassMode::Inferred | PassMode::Copy | PassMode::Move, _) => {
+                        (LocalCapability::Owned, false)
+                    }
                 };
                 context.scopes[0].locals.push(id);
                 context.scopes[0].names.insert(
@@ -112,7 +122,7 @@ impl Analyzer {
                     LocalInfo {
                         id,
                         ty: runtime_ty.clone(),
-                        mutable: param.mode == PassMode::MutBorrow,
+                        mutable,
                         capability,
                         alias: None,
                         partial: None,

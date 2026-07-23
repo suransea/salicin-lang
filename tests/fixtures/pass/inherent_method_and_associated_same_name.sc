@@ -1,7 +1,7 @@
 let Number = struct { raw: i32 }
 
 extend Number {
-  let value(borrow self)(): i32 = { self.raw }
+  let value(self: borrow(Self))(): i32 = { self.raw }
   let value = 2
 }
 

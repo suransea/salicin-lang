@@ -3,17 +3,17 @@ use core.ops.{AddAssign, BitXorAssign}
 let Counter = struct { value: i32 }
 
 extend Counter {
-  let add_assign(borrow self)(move rhs: i32): bool = { false }
+  let add_assign(self: borrow(Self))(move rhs: i32): bool = { false }
 }
 
 extend Counter: AddAssign(i32) {
-  let add_assign(borrow(mut) self)(move rhs: i32): () = {
+  let add_assign(self: borrow(mut)(Self))(move rhs: i32): () = {
     self.value += rhs
   }
 }
 
 extend Counter: BitXorAssign(i32) {
-  let bit_xor_assign(borrow(mut) self)(move rhs: i32): () = {
+  let bit_xor_assign(self: borrow(mut)(Self))(move rhs: i32): () = {
     self.value ^= rhs
   }
 }

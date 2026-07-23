@@ -357,7 +357,7 @@ impl Analyzer {
             ));
             return None;
         };
-        if receiver.mode == PassMode::MutBorrow {
+        if self.borrow_channel_mode(receiver.mode, &receiver.ty) == Some(PassMode::MutBorrow) {
             self.error(format!(
                 "optional chaining does not support mutable-borrow receiver `{target}.{member}`"
             ));

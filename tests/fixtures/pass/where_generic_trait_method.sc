@@ -1,14 +1,14 @@
 let Convert(To: type) = trait {
-  let convert(borrow self)(): To
+  let convert(self: borrow(Self))(): To
 }
 
 let Value = struct { value: i32 }
 
 extend Value: Convert(i32) {
-  let convert(borrow self)(): i32 = { self.value }
+  let convert(self: borrow(Self))(): i32 = { self.value }
 }
 
-let convert(T: type)(borrow value: T): i32
+let convert(T: type)(value: borrow(T)): i32
 where T: Convert(i32) = { value.convert() }
 
 let main(): i32 = {

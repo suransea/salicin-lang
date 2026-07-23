@@ -373,10 +373,16 @@ impl Analyzer {
         let valid_signature = signature.groups.len() == 2
             && signature.groups[0].len() == 1
             && signature.groups[1].len() == 1
-            && signature.groups[0][0].ty == *receiver
-            && signature.groups[0][0].mode == operator_trait.parameter_mode
-            && signature.groups[1][0].ty == candidate.rhs
-            && signature.groups[1][0].mode == operator_trait.parameter_mode
+            && Self::operator_parameter_matches(
+                &signature.groups[0][0],
+                receiver,
+                operator_trait.parameter_mode,
+            )
+            && Self::operator_parameter_matches(
+                &signature.groups[1][0],
+                &candidate.rhs,
+                operator_trait.parameter_mode,
+            )
             && signature.result.as_ref() == Some(&candidate.output);
         if !valid_signature {
             self.error(format!(
@@ -448,6 +454,36 @@ impl Analyzer {
                         .collect(),
                 },
             },
+        }
+    }
+
+    fn operator_parameter_matches(
+        parameter: &super::hir::ParamSig,
+        expected: &Ty,
+        mode: PassMode,
+    ) -> bool {
+        match mode {
+            PassMode::Borrow => {
+                parameter.mode == PassMode::Inferred
+                    && parameter.ty
+                        == (Ty::Reference {
+                            pointee: Box::new(expected.clone()),
+                            mutable: false,
+                            region: None,
+                        })
+            }
+            PassMode::MutBorrow => {
+                parameter.mode == PassMode::Inferred
+                    && parameter.ty
+                        == (Ty::Reference {
+                            pointee: Box::new(expected.clone()),
+                            mutable: true,
+                            region: None,
+                        })
+            }
+            PassMode::Inferred | PassMode::Copy | PassMode::Move => {
+                parameter.mode == mode && parameter.ty == *expected
+            }
         }
     }
 

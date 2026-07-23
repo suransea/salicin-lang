@@ -2,45 +2,45 @@ let Pair = struct { left: i32, right: i32 }
 let Holder(T: type) = struct { value: T }
 
 let RightView = trait {
-  let view('a: region)(borrow('a) self)(): borrow('a) i32
+  let view('a: region)(self: borrow('a)(Self))(): borrow('a)(i32)
 }
 
-let left('a: region)(borrow('a) pair: Pair): borrow('a) i32 = { borrow pair.left }
+let left('a: region)(pair: borrow('a)(Pair)): borrow('a)(i32) = { borrow(pair.left) }
 
 let left_mut('a: region)
-  (borrow(mut, 'a) pair: Pair): borrow(mut, 'a) i32 = { borrow(mut) pair.left }
+  (pair: borrow(mut, 'a)(Pair)): borrow(mut, 'a)(i32) = { borrow(mut)(pair.left) }
 
-let forward('a: region)(borrow('a) pair: Pair): borrow('a) i32 = { left(pair) }
+let forward('a: region)(pair: borrow('a)(Pair)): borrow('a)(i32) = { left(pair) }
 
-let same('a: region, T: type)(borrow('a) value: T): borrow('a) T = { borrow value }
+let same('a: region, T: type)(value: borrow('a)(T)): borrow('a)(T) = { borrow(value) }
 
-let forwarded_method('a: region)(borrow('a) pair: Pair): borrow('a) i32 = { pair.right_method() }
+let forwarded_method('a: region)(pair: borrow('a)(Pair)): borrow('a)(i32) = { pair.right_method() }
 
-let inferred_left(borrow pair: Pair): borrow i32 = { borrow pair.left }
+let inferred_left(pair: borrow(Pair)): borrow(i32) = { borrow(pair.left) }
 
-let inferred_same(T: type)(borrow value: T): borrow T = { borrow value }
+let inferred_same(T: type)(value: borrow(T)): borrow(T) = { borrow(value) }
 
-let inferred_forward('a: region)(borrow('a) pair: Pair): borrow('a) i32 = { inferred_left(pair) }
+let inferred_forward('a: region)(pair: borrow('a)(Pair)): borrow('a)(i32) = { inferred_left(pair) }
 
 extend Pair {
-  let right_ref('a: region)(borrow('a) pair: Pair): borrow('a) i32 = { borrow pair.right }
+  let right_ref('a: region)(pair: borrow('a)(Pair)): borrow('a)(i32) = { borrow(pair.right) }
 
-  let right_method('a: region)(borrow('a) self)(): borrow('a) i32 = { borrow self.right }
+  let right_method('a: region)(self: borrow('a)(Self))(): borrow('a)(i32) = { borrow(self.right) }
 
   let left_mut_method('a: region)
-    (borrow(mut, 'a) self)(): borrow(mut, 'a) i32 = { borrow(mut) self.left }
+    (self: borrow(mut, 'a)(Self))(): borrow(mut, 'a)(i32) = { borrow(mut)(self.left) }
 
-  let inferred_right(borrow self)(): borrow i32 = { borrow self.right }
+  let inferred_right(self: borrow(Self))(): borrow(i32) = { borrow(self.right) }
 
-  let inferred_left_mut(borrow(mut) self)(): borrow(mut) i32 = { borrow(mut) self.left }
+  let inferred_left_mut(self: borrow(mut)(Self))(): borrow(mut)(i32) = { borrow(mut)(self.left) }
 }
 
 extend(T: type) Holder(T) {
-  let get('a: region)(borrow('a) self)(): borrow('a) T = { borrow self.value }
+  let get('a: region)(self: borrow('a)(Self))(): borrow('a)(T) = { borrow(self.value) }
 }
 
 extend Pair: RightView {
-  let view('a: region)(borrow('a) self)(): borrow('a) i32 = { borrow self.right }
+  let view('a: region)(self: borrow('a)(Self))(): borrow('a)(i32) = { borrow(self.right) }
 }
 
 let main(): i32 = {

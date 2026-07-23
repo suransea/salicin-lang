@@ -1108,7 +1108,9 @@ impl<'a> FunctionEmitter<'a> {
             let pointer = self.entry_alloca(&ty, &llvm_comment(&parameter.name));
             self.instruction(format!("store {ty} %arg.{index}, ptr {pointer}"));
             self.locals.insert(parameter.id, pointer);
-            if self.source_local_needs_drop(parameter.id)? {
+            if self.program.needs_drop(&parameter.ty)
+                && self.source_local_needs_drop(parameter.id)?
+            {
                 self.register_drop_slot(
                     Some(parameter.id),
                     parameter.ty.clone(),

@@ -1,21 +1,21 @@
 let Read = trait {
-  let read(borrow self)(): i32
+  let read(self: borrow(Self))(): i32
 }
 
 let Leaf = struct { value: i32 }
 
 extend Leaf: Read {
-  let read(borrow self)(): i32 = { self.value }
+  let read(self: borrow(Self))(): i32 = { self.value }
 }
 
 let Cell(T: type) = struct { value: T }
 
 extend(T: type) Cell(T): Read
 where T: Read {
-  let read(borrow self)(): i32 = { self.value.read() }
+  let read(self: borrow(Self))(): i32 = { self.value.read() }
 }
 
-let read_cell(T: type)(borrow cell: Cell(T)): i32
+let read_cell(T: type)(cell: borrow(Cell(T))): i32
 where T: Read = { cell.read() }
 
 let Value = trait {

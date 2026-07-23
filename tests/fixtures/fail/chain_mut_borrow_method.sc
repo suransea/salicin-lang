@@ -3,7 +3,7 @@ use core.Option
 let Counter = struct { value: i32 }
 
 extend Counter {
-  let reset(borrow(mut) self)(): () = {
+  let reset(self: borrow(mut)(Self))(): () = {
     self.value = 0
   }
 }

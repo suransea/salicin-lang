@@ -508,7 +508,7 @@ impl Analyzer {
     ) -> HirExpr {
         if groups.len() != 1 || groups[0].len() != 1 {
             self.error(format!(
-                "`{name}` expects exactly one argument: `{name}({}borrow place)`",
+                "`{name}` expects exactly one argument: `{name}({}borrow(place))`",
                 if name == "MutPtr" { "mut " } else { "" }
             ));
             return error_expr();

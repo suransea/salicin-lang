@@ -4,7 +4,7 @@ extend Point {
   let origin: Self = Self { raw: 40 }
   let new(value: i32): Self = { Self { raw: value } }
   let shifted(move self)(delta: i32): Self = { Self { raw: self.raw + delta } }
-  let read(borrow self)(): i32 = { self.raw }
+  let read(self: borrow(Self))(): i32 = { self.raw }
   let read(value: Self): i32 = { Self.read(self: value)() }
 }
 
@@ -20,15 +20,15 @@ extend Choice {
 
 let Rebuild = trait {
   let rebuild(move self)(): Self
-  let read(borrow self)(): i32
-  let twice(borrow self)(): i32 = { Self.read(self: self)() + Self.read(self: self)() }
+  let read(self: borrow(Self))(): i32
+  let twice(self: borrow(Self))(): i32 = { Self.read(self: self)() + Self.read(self: self)() }
 }
 
 let Wrapper = struct { raw: i32 }
 
 extend Wrapper: Rebuild {
   let rebuild(move self)(): Self = { Self { raw: self.raw } }
-  let read(borrow self)(): i32 = { self.raw }
+  let read(self: borrow(Self))(): i32 = { self.raw }
 }
 
 let main(): i32 = {

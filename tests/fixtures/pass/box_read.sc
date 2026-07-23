@@ -1,6 +1,6 @@
 use alloc.boxed.{Box, box_new, box_read, box_write}
 
-let read_box(T: type)(borrow boxed: Box(T)): T
+let read_box(T: type)(boxed: borrow(Box(T))): T
 where T: Copy = { boxed.read() }
 
 let main(): i32 = {

@@ -6,7 +6,7 @@ let Once = struct { done: bool }
 
 extend Once: Iterator {
   let Item = i32
-  let next(borrow(mut) self)(): Option(i32) = {
+  let next(self: borrow(mut)(Self))(): Option(i32) = {
     if self.done {
       None
     } else {

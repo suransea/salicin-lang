@@ -1,7 +1,7 @@
 let Number = struct { value: i32 }
 
 extend Number {
-  let descend(borrow self)(remaining: i32): i32 = {
+  let descend(self: borrow(Self))(remaining: i32): i32 = {
     if remaining == 0 {
       self.value
     } else {

@@ -51,7 +51,7 @@ negates its result:
 use core.ops.Eq
 
 extend Number: Eq(Number) {
-  let eq(borrow self)(borrow rhs: Number): bool = { self.value == rhs.value }
+  let eq(self: borrow(Self))(rhs: borrow(Number)): bool = { self.value == rhs.value }
 }
 ```
 
@@ -63,7 +63,7 @@ the method once; an `Unordered` result makes each operator false:
 use core.ops.{PartialOrd, PartialOrdering}
 
 extend Number: PartialOrd(Number) {
-  let partial_cmp(borrow self)(borrow rhs: Number): PartialOrdering = { ... }
+  let partial_cmp(self: borrow(Self))(rhs: borrow(Number)): PartialOrdering = { ... }
 }
 ```
 
@@ -83,7 +83,7 @@ returns `()`:
 
 ```sc
 pub let AddAssign(Rhs: type) = trait {
-  let add_assign(borrow(mut) self)(move rhs: Rhs): ()
+  let add_assign(self: borrow(mut)(Self))(move rhs: Rhs): ()
 }
 ```
 
@@ -171,8 +171,9 @@ pub let passing = domain {
 }
 ```
 
-The language still writes borrow types as `borrow T` and `borrow(mut) T`; `borrow(A)` and generic
-passing modes refer to these domains in compile-time parameter positions.
+Borrow types and values are written with the declared `borrow` form: `borrow(T)`,
+`borrow(mut)(T)`, and `borrow(A)('r)(T)`. `borrow(A)` and generic passing modes refer to these
+domains in compile-time parameter positions.
 
 `core.control` owns the edition-pinned contracts for compiler-lowered control functions. It is not
 part of the prelude. `do`, `try`, and `throw` are ordinary source-backed functions over the standard
@@ -241,7 +242,7 @@ pub let throw(Error: type)(move error: Error): Never with(core.effects.Throws(Er
 ```sc
 pub let Iterator = trait {
   let Item: type
-  let next(borrow(mut) self)(): core.Option(Item)
+  let next(self: borrow(mut)(Self))(): core.Option(Item)
 }
 
 pub let IntoIterator = trait {

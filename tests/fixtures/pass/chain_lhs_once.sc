@@ -2,7 +2,7 @@ use core.Option
 
 let Boxed = struct { value: i32 }
 
-let make(borrow(mut) count: i32): Option(Boxed) = {
+let make(count: borrow(mut)(i32)): Option(Boxed) = {
   count = count + 1
   Option(Boxed).Some(Boxed { value: 42 })
 }

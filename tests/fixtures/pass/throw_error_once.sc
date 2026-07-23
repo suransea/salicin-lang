@@ -1,7 +1,7 @@
 use core.Result
 use core.effects.Throws
 
-let make_error(borrow(mut) count: i32): bool = {
+let make_error(count: borrow(mut)(i32)): bool = {
   count = count + 1
   true
 }

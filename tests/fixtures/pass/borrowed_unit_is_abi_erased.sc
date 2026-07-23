@@ -1,4 +1,4 @@
-let observe(borrow value: ()): () = { value }
+let observe(value: borrow(())): () = { value }
 
 let main(): i32 = {
   let unit = ()

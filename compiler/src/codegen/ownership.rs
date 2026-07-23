@@ -197,4 +197,13 @@ impl Analyzer {
             mode => mode,
         }
     }
+
+    pub(super) fn borrow_channel_mode(&self, mode: PassMode, ty: &Ty) -> Option<PassMode> {
+        match (mode, ty) {
+            (PassMode::Borrow | PassMode::MutBorrow, _) => Some(mode),
+            (_, Ty::Reference { mutable: true, .. }) => Some(PassMode::MutBorrow),
+            (_, Ty::Reference { mutable: false, .. }) => Some(PassMode::Borrow),
+            _ => None,
+        }
+    }
 }

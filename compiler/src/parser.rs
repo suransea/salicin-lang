@@ -2,10 +2,11 @@ use std::{collections::HashSet, fmt};
 
 use crate::ast::{
     default_trait_self_parameter, AssociatedTypeBinding, BinaryOp, Binding, CallArg, CompileParam,
-    CompileParamKind, DomainDef, EffectDef, EnumDef, Expr, ExtendDef, ExtendMember, Field,
-    Function, FunctionEffects, Item, MatchArm, Param, PassMode, Pattern, PatternField,
-    PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember, Type, TypeAliasDef, TypeArg,
-    UnaryOp, UseDecl, VariantDef, VariantFields, Visibility, WherePredicate,
+    CompileParamDefault, CompileParamKind, DomainDef, EffectDef, EnumDef, Expr, ExtendDef,
+    ExtendMember, Field, Function, FunctionEffects, Item, MatchArm, Param, PassMode, Pattern,
+    PatternField, PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember, Type,
+    TypeAliasDef, TypeArg, TypeFormDef, UnaryOp, UseDecl, VariantDef, VariantFields, Visibility,
+    WherePredicate,
 };
 use crate::lexer::{lex, LexError, Token, TokenKind};
 
@@ -221,7 +222,12 @@ impl Parser {
             if self.at_offset(1, &TokenKind::Type) {
                 self.advance();
                 self.advance();
-                return self.type_alias(name, compile_groups, mutable);
+                self.take_newlines_if_followed_by(&[TokenKind::Equal]);
+                return if self.at(&TokenKind::Equal) {
+                    self.type_alias(name, compile_groups, mutable)
+                } else {
+                    self.type_form_definition(name, compile_groups, mutable)
+                };
             }
             if self.type_constructor_signature_follows() {
                 self.advance();
@@ -496,6 +502,24 @@ impl Parser {
         }))
     }
 
+    fn type_form_definition(
+        &mut self,
+        name: String,
+        compile_groups: Vec<Vec<CompileParam>>,
+        mutable: bool,
+    ) -> Result<Item, ParseError> {
+        if mutable {
+            return Err(self.error_here("type forms cannot be declared with `let mut`"));
+        }
+        if compile_groups.is_empty() {
+            return Err(self.error_here("type form declarations require compile-time parameters"));
+        }
+        Ok(Item::TypeForm(TypeFormDef {
+            name,
+            compile_groups,
+        }))
+    }
+
     fn type_constructor_alias(
         &mut self,
         name: String,
@@ -537,6 +561,7 @@ impl Parser {
             TokenKind::Ident(name) => name.clone(),
             TokenKind::Type => "type".to_owned(),
             TokenKind::Region => "region".to_owned(),
+            TokenKind::Borrow => "borrow".to_owned(),
             TokenKind::Do => "do".to_owned(),
             TokenKind::Try => "try".to_owned(),
             TokenKind::Throw => "throw".to_owned(),
@@ -1135,7 +1160,12 @@ impl Parser {
             };
             self.expect(&TokenKind::Colon, "`:` after compile-time parameter name")?;
             let kind = self.compile_parameter_kind(&name_token, &name, region_name)?;
-            params.push(CompileParam { name, kind });
+            let default = self.compile_parameter_default(kind)?;
+            params.push(CompileParam {
+                name,
+                kind,
+                default,
+            });
 
             if self.take(&TokenKind::Comma) {
                 if self.take(&TokenKind::RParen) {
@@ -1148,6 +1178,76 @@ impl Parser {
         }
 
         Ok(params)
+    }
+
+    fn compile_parameter_default(
+        &mut self,
+        kind: CompileParamKind,
+    ) -> Result<Option<CompileParamDefault>, ParseError> {
+        if !self.take(&TokenKind::Equal) {
+            return Ok(None);
+        }
+
+        let default = match kind {
+            CompileParamKind::Access => {
+                let name = self.compile_parameter_default_name("an access default")?;
+                if !matches!(name.as_str(), "shared" | "mut") {
+                    return Err(
+                        self.error_here("access parameter defaults must be `shared` or `mut`")
+                    );
+                }
+                CompileParamDefault::Name(name)
+            }
+            CompileParamKind::Passing => {
+                let name = self.compile_parameter_default_name("a passing default")?;
+                if !matches!(name.as_str(), "auto" | "copy" | "move") {
+                    return Err(self.error_here(
+                        "passing parameter defaults must be `auto`, `copy`, or `move`",
+                    ));
+                }
+                CompileParamDefault::Name(name)
+            }
+            CompileParamKind::Effect => {
+                CompileParamDefault::Name(self.compile_parameter_default_name("an effect default")?)
+            }
+            CompileParamKind::Region => {
+                let token = self.current().clone();
+                let TokenKind::RegionName(name) = token.kind else {
+                    return Err(self.error_at(
+                        &token,
+                        format!("expected a region default, found {}", describe(&token.kind)),
+                    ));
+                };
+                self.advance();
+                CompileParamDefault::Region(name)
+            }
+            CompileParamKind::Type
+            | CompileParamKind::TypeConstructor { .. }
+            | CompileParamKind::EffectConstructor { .. } => {
+                return Err(self.error_here(
+                    "defaults for type and constructor parameters are not supported yet",
+                ));
+            }
+        };
+        Ok(Some(default))
+    }
+
+    fn compile_parameter_default_name(&mut self, expected: &str) -> Result<String, ParseError> {
+        let token = self.current().clone();
+        let name = match token.kind {
+            TokenKind::Ident(name) => name,
+            TokenKind::Mut => "mut".to_owned(),
+            TokenKind::Copy => "copy".to_owned(),
+            TokenKind::Move => "move".to_owned(),
+            _ => {
+                return Err(self.error_at(
+                    &token,
+                    format!("expected {expected}, found {}", describe(&token.kind)),
+                ))
+            }
+        };
+        self.advance();
+        Ok(name)
     }
 
     fn runtime_parameter_group(
@@ -1182,17 +1282,10 @@ impl Parser {
                 (PassMode::Copy, None, None)
             } else if self.take(&TokenKind::Move) {
                 (PassMode::Move, None, None)
-            } else if self.take(&TokenKind::Borrow) {
-                let (mutable, access, region) = self.optional_borrow_arguments()?;
-                (
-                    if mutable {
-                        PassMode::MutBorrow
-                    } else {
-                        PassMode::Borrow
-                    },
-                    access,
-                    region,
-                )
+            } else if self.at(&TokenKind::Borrow) {
+                return Err(self.error_here(
+                    "borrow parameter mode was removed; write `name: borrow(T)` and pass `borrow(value)` at the call site",
+                ));
             } else {
                 (PassMode::Inferred, None, None)
             };
@@ -1836,19 +1929,8 @@ impl Parser {
             return self.function_type_or_unit();
         }
 
-        let borrow_qualifier = if self.take(&TokenKind::Borrow) {
-            let (mutable, access, region) = self.optional_borrow_arguments()?;
-            Some((mutable, access, region))
-        } else {
-            None
-        };
-        if let Some((mutable, access, region)) = borrow_qualifier {
-            return Ok(Type::Borrow {
-                mutable,
-                access,
-                region,
-                pointee: Box::new(self.type_expr()?),
-            });
+        if self.at(&TokenKind::Borrow) {
+            return self.borrow_type();
         }
 
         if matches!(&self.current().kind, TokenKind::Ident(name) if name == "_") {
@@ -1957,6 +2039,83 @@ impl Parser {
                 arguments.into_iter().map(|argument| argument.ty).collect(),
             ))
         }
+    }
+
+    fn borrow_type(&mut self) -> Result<Type, ParseError> {
+        self.expect(&TokenKind::Borrow, "`borrow`")?;
+        if !self.at(&TokenKind::LParen) {
+            return Err(self.error_here(
+                "borrow types are written as `borrow(T)`; borrow values are written as `borrow(value)`",
+            ));
+        }
+
+        let (mutable, access, region, pointee) = if self.borrow_qualifier_group_follows() {
+            let (mutable, access, mut region) = self.optional_borrow_arguments()?;
+            if region.is_none() && self.borrow_type_region_group_follows() {
+                region = self.optional_region()?;
+            }
+            let pointee = self.borrow_type_pointee_group()?;
+            (mutable, access, region, pointee)
+        } else {
+            (false, None, None, self.borrow_type_pointee_group()?)
+        };
+
+        Ok(Type::Borrow {
+            mutable,
+            access,
+            region,
+            pointee: Box::new(pointee),
+        })
+    }
+
+    fn borrow_qualifier_group_follows(&self) -> bool {
+        if !self.at(&TokenKind::LParen) {
+            return false;
+        }
+        match self.tokens.get(self.index + 1).map(|token| &token.kind) {
+            Some(TokenKind::Mut | TokenKind::RegionName(_)) => true,
+            Some(TokenKind::Ident(_)) => {
+                self.at_offset(2, &TokenKind::Comma)
+                    || (self.at_offset(2, &TokenKind::RParen)
+                        && self
+                            .tokens
+                            .get(self.index + 3)
+                            .is_some_and(|token| Self::token_can_start_borrow_operand(&token.kind)))
+            }
+            _ => false,
+        }
+    }
+
+    fn token_can_start_borrow_operand(kind: &TokenKind) -> bool {
+        matches!(
+            kind,
+            TokenKind::Ident(_)
+                | TokenKind::Root
+                | TokenKind::Super
+                | TokenKind::Borrow
+                | TokenKind::Star
+                | TokenKind::LParen
+        )
+    }
+
+    fn borrow_type_region_group_follows(&self) -> bool {
+        self.at(&TokenKind::LParen)
+            && matches!(
+                self.tokens.get(self.index + 1).map(|token| &token.kind),
+                Some(TokenKind::RegionName(_))
+            )
+            && self.at_offset(2, &TokenKind::RParen)
+            && self.at_offset(3, &TokenKind::LParen)
+    }
+
+    fn borrow_type_pointee_group(&mut self) -> Result<Type, ParseError> {
+        self.expect(&TokenKind::LParen, "`(` before borrow pointee type")?;
+        if self.at(&TokenKind::RParen) {
+            return Err(self.error_here("borrow pointee type cannot be empty"));
+        }
+        let pointee = self.type_expr()?;
+        self.expect(&TokenKind::RParen, "`)` after borrow pointee type")?;
+        Ok(pointee)
     }
 
     fn function_type_or_unit(&mut self) -> Result<Type, ParseError> {
@@ -2408,8 +2567,7 @@ impl Parser {
             Ok(Expr::Unary(UnaryOp::Deref, Box::new(operand)))
         } else if self.take(&TokenKind::Borrow) {
             let borrow = self.previous().clone();
-            let (mutable, access, _) = self.optional_borrow_arguments()?;
-            self.borrow_expression(mutable, access, &borrow, allow_trailing_closure)
+            self.borrow_expression(&borrow, allow_trailing_closure)
         } else if self.take(&TokenKind::Mut) {
             Ok(Expr::Name("mut".to_owned()))
         } else {
@@ -2419,12 +2577,36 @@ impl Parser {
 
     fn borrow_expression(
         &mut self,
+        operator: &Token,
+        _allow_trailing_closure: bool,
+    ) -> Result<Expr, ParseError> {
+        let (mutable, access) = if self.borrow_qualifier_group_follows() {
+            let (mutable, access, _) = self.optional_borrow_arguments()?;
+            (mutable, access)
+        } else {
+            (false, None)
+        };
+        if self.at(&TokenKind::LParen) {
+            return self.borrow_group_expression(mutable, access, operator);
+        }
+        Err(self.error_at(
+            operator,
+            "borrow expressions are written as `borrow(value)`",
+        ))
+    }
+
+    fn borrow_group_expression(
+        &mut self,
         mutable: bool,
         access: Option<String>,
         operator: &Token,
-        allow_trailing_closure: bool,
     ) -> Result<Expr, ParseError> {
-        let value = self.unary(allow_trailing_closure)?;
+        self.expect(&TokenKind::LParen, "`(` before borrow operand")?;
+        if self.at(&TokenKind::RParen) {
+            return Err(self.error_here("borrow operand cannot be empty"));
+        }
+        let value = self.expression(true)?;
+        self.expect(&TokenKind::RParen, "`)` after borrow operand")?;
         if !Self::is_assignable_place(&value) {
             return Err(self.error_at(operator, "borrow operand must be a name or member chain"));
         }
@@ -3302,6 +3484,19 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
                 }
             }
             Item::Domain(_) => {}
+            Item::TypeForm(definition) => {
+                let mut names = HashSet::new();
+                for parameter in definition.compile_groups.iter().flatten() {
+                    if !names.insert(parameter.name.clone()) {
+                        return Err(format!(
+                            "duplicate compile-time parameter `{}`",
+                            parameter.name
+                        ));
+                    }
+                }
+                let _regions = declared_regions(&definition.compile_groups, &empty)?;
+                let _accesses = declared_accesses(&definition.compile_groups, &empty)?;
+            }
             Item::Struct(definition) => {
                 reject_passing_parameters(
                     &definition.compile_groups,
@@ -4517,7 +4712,7 @@ mod tests {
     fn parses_trait_method_signatures_and_associated_types() {
         let program = parse(
             "let Foo = trait {\n\
-               let f(borrow self)(x: i32): i32;\n\
+               let f(self: borrow(Self))(x: i32): i32;\n\
                let Item: type\n\
              }\n",
         )
@@ -4537,7 +4732,16 @@ mod tests {
         assert!(function.compile_groups.is_empty());
         assert_eq!(function.groups.len(), 2);
         assert_eq!(function.groups[0][0].name, "self");
-        assert_eq!(function.groups[0][0].mode, PassMode::Borrow);
+        assert_eq!(function.groups[0][0].mode, PassMode::Inferred);
+        assert_eq!(
+            function.groups[0][0].ty,
+            Type::Borrow {
+                mutable: false,
+                access: None,
+                region: None,
+                pointee: Box::new(Type::Named("Self".into(), Vec::new())),
+            }
+        );
         assert_eq!(function.groups[1][0].name, "x");
         assert_eq!(function.groups[1][0].ty, Type::I32);
         assert_eq!(function.return_type, Some(Type::I32));
@@ -4560,7 +4764,7 @@ mod tests {
     fn preserves_generic_traits_and_trait_member_defaults() {
         let program = parse(
             "let Convert(T: type) = trait {\n\
-               let convert(U: type)(borrow self)(value: U): T = { value }\n\
+               let convert(U: type)(self: borrow(Self))(value: U): T = { value }\n\
                let Output(V: type): type = Pair(T, V)\n\
              }\n",
         )
@@ -4631,7 +4835,7 @@ mod tests {
     #[test]
     fn parses_unsafe_raw_pointer_dereference_and_assignment() {
         let program = parse(
-            "let main(): i32 = {\n  let mut value = 41\n  let pointer = MutPtr(borrow(mut) value)\n  unsafe {\n    *pointer = *pointer + 1\n  }\n  value\n}\n",
+            "let main(): i32 = {\n  let mut value = 41\n  let pointer = MutPtr(borrow(mut)(value))\n  unsafe {\n    *pointer = *pointer + 1\n  }\n  value\n}\n",
         )
         .unwrap();
         let Item::Function(function) = &program.items[0] else {
@@ -5065,8 +5269,8 @@ mod tests {
     fn named_closure_declarations_require_braced_bodies() {
         for source in [
             "let answer(): i32 = 42\n",
-            "extend Cell { let read(borrow self)(): i32 = self.value }\n",
-            "let Read = trait { let read(borrow self)(): i32 = 42 }\n",
+            "extend Cell { let read(self: borrow(Self))(): i32 = self.value }\n",
+            "let Read = trait { let read(self: borrow(Self))(): i32 = 42 }\n",
         ] {
             let error = parse(source).unwrap_err();
             assert!(error.message.contains("require a braced body"), "{error:?}");
@@ -5241,8 +5445,8 @@ mod tests {
     fn parses_shared_and_mutable_borrow_places() {
         let program = parse(
             "let main(): () = {\n\
-               let shared = borrow value.field\n\
-               let exclusive = borrow(mut) value\n\
+               let shared = borrow(value.field)\n\
+               let exclusive = borrow(mut)(value)\n\
              }\n",
         )
         .unwrap();
@@ -5279,7 +5483,7 @@ mod tests {
 
     #[test]
     fn rejects_borrowing_a_non_place_expression() {
-        let error = parse("let invalid = borrow make()\n").unwrap_err();
+        let error = parse("let invalid = borrow(make())\n").unwrap_err();
         assert!(error.message.contains("name or member chain"));
     }
 
@@ -5329,7 +5533,7 @@ mod tests {
             "let main(): i32 = {\n\
                let mut values = [0]\n\
                values[0] = 42\n\
-               let item = borrow values[0]\n\
+               let item = borrow(values[0])\n\
                values[0]\n\
              }\n",
         )
@@ -5360,8 +5564,8 @@ mod tests {
         let program = parse(
             "let main(): i32 = {\n\
                let value = 42\n\
-               let shared: borrow i32 = borrow value\n\
-               let mutable: borrow(mut) i32 = borrow(mut) value\n\
+               let shared: borrow(i32) = borrow(value)\n\
+               let mutable: borrow(mut)(i32) = borrow(mut)(value)\n\
                shared\n\
              }\n",
         )
@@ -5402,9 +5606,9 @@ mod tests {
     #[test]
     fn rejects_legacy_mut_borrow_token_sequence() {
         for source in [
-            "let invalid(mut borrow value: i32): i32 = { value }\n",
-            "let invalid(value: mut borrow i32): i32 = { value }\n",
-            "let invalid(value: i32): borrow i32 = { mut borrow value }\n",
+            "let invalid(mut value: borrow(i32)): i32 = { value }\n",
+            "let invalid(value: mut borrow(i32)): i32 = { value }\n",
+            "let invalid(value: i32): borrow(i32) = { mut borrow(value) }\n",
         ] {
             let error = parse(source).unwrap_err();
             assert!(!error.message.is_empty());
@@ -5414,7 +5618,7 @@ mod tests {
     #[test]
     fn parses_region_parameters_and_borrow_regions() {
         let program = parse(
-            "let choose('a: region)(borrow('a) value: i32): borrow('a) i32 = { borrow value }\n",
+            "let choose('a: region)(value: borrow('a)(i32)): borrow('a)(i32) = { borrow(value) }\n",
         )
         .unwrap();
         let Item::Function(function) = &program.items[0] else {
@@ -5422,7 +5626,15 @@ mod tests {
         };
         assert_eq!(function.compile_groups[0][0].name, "a");
         assert_eq!(function.compile_groups[0][0].kind, CompileParamKind::Region);
-        assert_eq!(function.groups[0][0].region.as_deref(), Some("a"));
+        assert_eq!(
+            function.groups[0][0].ty,
+            Type::Borrow {
+                mutable: false,
+                access: None,
+                region: Some("a".to_owned()),
+                pointee: Box::new(Type::I32),
+            }
+        );
         assert_eq!(
             function.return_type,
             Some(Type::Borrow {
@@ -5438,15 +5650,22 @@ mod tests {
     fn parses_access_parameters_in_borrow_modes_types_and_expressions() {
         let program = parse(
             "let identity(A: access, 'a: region, T: type)\n\
-               (borrow(A, 'a) value: T): borrow(A, 'a) T = { borrow(A, 'a) value }\n",
+               (value: borrow(A)('a)(T)): borrow(A)('a)(T) = { borrow(A)(value) }\n",
         )
         .unwrap();
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };
         assert_eq!(function.compile_groups[0][0].kind, CompileParamKind::Access);
-        assert_eq!(function.groups[0][0].access.as_deref(), Some("A"));
-        assert_eq!(function.groups[0][0].region.as_deref(), Some("a"));
+        assert_eq!(
+            function.groups[0][0].ty,
+            Type::Borrow {
+                mutable: false,
+                access: Some("A".to_owned()),
+                region: Some("a".to_owned()),
+                pointee: Box::new(Type::Named("T".into(), Vec::new())),
+            }
+        );
         assert!(matches!(
             function.return_type,
             Some(Type::Borrow {
@@ -5716,7 +5935,7 @@ mod tests {
 
     #[test]
     fn rejects_undeclared_access_parameters() {
-        let error = parse("let invalid(borrow(A) value: i32): i32 = { value }\n").unwrap_err();
+        let error = parse("let invalid(value: borrow(A)(i32)): i32 = { value }\n").unwrap_err();
         assert!(error.message.contains("undeclared access parameter `A`"));
     }
 
@@ -5868,7 +6087,7 @@ mod tests {
         let program = parse(
             "let A = struct { value: i32 }\n\
              extend A: Foo {\n\
-               let reset(borrow(mut) self)(): () = {}\n\
+               let reset(self: borrow(mut)(Self))(): () = {}\n\
                let answer: i32 = 42\n\
                let make(value: i32): A = { A { value: value } }\n\
              }\n",
@@ -5892,10 +6111,15 @@ mod tests {
         assert_eq!(reset.groups.len(), 2);
         assert_eq!(reset.groups[0].len(), 1);
         assert_eq!(reset.groups[0][0].name, "self");
-        assert_eq!(reset.groups[0][0].mode, PassMode::MutBorrow);
+        assert_eq!(reset.groups[0][0].mode, PassMode::Inferred);
         assert_eq!(
             reset.groups[0][0].ty,
-            Type::Named("Self".into(), Vec::new())
+            Type::Borrow {
+                mutable: true,
+                access: None,
+                region: None,
+                pointee: Box::new(Type::Named("Self".into(), Vec::new())),
+            }
         );
         assert!(reset.groups[1].is_empty());
 
@@ -5920,7 +6144,7 @@ mod tests {
     fn parses_compile_parameters_on_extend_functions() {
         let program = parse(
             "extend A {\n\
-               let convert(T: type)(borrow self)(value: T): T = { value }\n\
+               let convert(T: type)(self: borrow(Self))(value: T): T = { value }\n\
                let make(T: type)(value: T): T = { value }\n\
              }\n",
         )
@@ -5950,7 +6174,7 @@ mod tests {
             "let Cell(T: type) = struct { value: T }\n\
              extend(T: type) Cell(T)\n\
              where T: Copy {\n\
-               let get(borrow self)(): T = { self.value }\n}\n",
+               let get(self: borrow(Self))(): T = { self.value }\n}\n",
         )
         .unwrap();
 
@@ -6032,7 +6256,7 @@ mod tests {
     fn parses_borrow_and_move_receivers_with_explicit_following_groups() {
         let program = parse(
             "extend A {\n\
-               let inspect(borrow self)(): i32 = { self.value }\n\
+               let inspect(self: borrow(Self))(): i32 = { self.value }\n\
                let replace(move self)(value: i32)(other: i32): A = { A { value: value + other } }\n\
              }\n",
         )
@@ -6044,7 +6268,16 @@ mod tests {
         let ExtendMember::Function(inspect) = &extension.members[0] else {
             panic!("expected method");
         };
-        assert_eq!(inspect.groups[0][0].mode, PassMode::Borrow);
+        assert_eq!(inspect.groups[0][0].mode, PassMode::Inferred);
+        assert_eq!(
+            inspect.groups[0][0].ty,
+            Type::Borrow {
+                mutable: false,
+                access: None,
+                region: None,
+                pointee: Box::new(Type::Named("Self".into(), Vec::new())),
+            }
+        );
         assert!(inspect.groups[1].is_empty());
 
         let ExtendMember::Function(replace) = &extension.members[1] else {

@@ -7,7 +7,7 @@ extend Number: Mul(Number) {
   let mul(move self)(move rhs: Number): Number = { Number { value: self.value * rhs.value } }
 }
 
-let tick(borrow(mut) count: i32)(value: i32): Number = {
+let tick(count: borrow(mut)(i32))(value: i32): Number = {
   count = count + 1
   Number { value: value }
 }

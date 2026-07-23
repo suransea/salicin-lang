@@ -132,11 +132,19 @@ impl<'a> HirCleanupPlanner<'a> {
             .any(|parameter| program.is_uninhabited(&parameter.ty));
 
         for param in &function.params {
-            let ownership = match param.mode {
-                PassMode::Borrow => CleanupLocalOwnership::SharedBorrow,
-                PassMode::MutBorrow => CleanupLocalOwnership::MutableBorrow,
-                PassMode::Inferred | PassMode::Copy | PassMode::Move => {
-                    CleanupLocalOwnership::Owned
+            let (ownership, mutable_borrow) = match (&param.mode, &param.ty) {
+                (PassMode::Borrow, _) => (CleanupLocalOwnership::SharedBorrow, false),
+                (PassMode::MutBorrow, _) => (CleanupLocalOwnership::MutableBorrow, true),
+                (_, Ty::Reference { mutable, .. }) => (
+                    if *mutable {
+                        CleanupLocalOwnership::MutableBorrow
+                    } else {
+                        CleanupLocalOwnership::SharedBorrow
+                    },
+                    *mutable,
+                ),
+                (PassMode::Inferred | PassMode::Copy | PassMode::Move, _) => {
+                    (CleanupLocalOwnership::Owned, false)
                 }
             };
             let local = planner
@@ -144,7 +152,7 @@ impl<'a> HirCleanupPlanner<'a> {
                     function_scope,
                     CleanupLocalKind::Argument,
                     ownership,
-                    param.mode == PassMode::MutBorrow,
+                    mutable_borrow,
                     CleanupSourceLocal {
                         id: param.id,
                         name: &param.name,

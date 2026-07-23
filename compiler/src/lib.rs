@@ -153,9 +153,9 @@ mod tests {
 
     #[test]
     fn access_compile_parameters_select_shared_or_mutable_borrowing() {
-        let source = "let inspect(A: access)(borrow(A) value: i32): i32 = { value }\n\
+        let source = "let inspect(A: access)(value: borrow(A)(i32)): i32 = { value }\n\
                       let borrow_value(A: access, 'a: region, T: type)\n\
-                        (borrow(A, 'a) value: T): borrow(A, 'a) T = { borrow(A, 'a) value }\n\
+                        (value: borrow(A)('a)(T)): borrow(A)('a)(T) = { borrow(A)(value) }\n\
                       let main(): i32 = {\n\
                         let mut left = 20\n\
                         let right = 22\n\
@@ -234,7 +234,7 @@ mod tests {
 
         let missing_order = "let Number = struct { value: i32 }\n\
                              extend Number: PartialOrd(Number) {\n\
-                               let partial_cmp(borrow self)(borrow rhs: Number): core.ops.PartialOrdering = {\n\
+                               let partial_cmp(self: borrow(Self))(rhs: borrow(Number)): core.ops.PartialOrdering = {\n\
                                  core.ops.PartialOrdering.Equal\n\
                                }\n\
                              }\n\
@@ -305,8 +305,8 @@ mod tests {
                         let make(U: type)(move value: T)(marker: U): Cell(T) = {\n\
                           Cell(T) { value: value }\n\
                         }\n\
-                        let view(A: access)(borrow(A) self)(): borrow(A) T = {\n\
-                          borrow(A) self.value\n\
+                        let view(A: access)(self: borrow(A)(Self))(): borrow(A)(T) = {\n\
+                          borrow(A)(self.value)\n\
                         }\n\
                       }\n\
                       let main(): i32 = {\n\
@@ -320,7 +320,7 @@ mod tests {
                           reference = 21\n\
                         }\n\
                         do {\n\
-                          let reference: borrow(mut) i32 = cell.view()\n\
+                          let reference: borrow(mut)(i32) = cell.view()\n\
                           reference = 22\n\
                         }\n\
                         let after = do {\n\

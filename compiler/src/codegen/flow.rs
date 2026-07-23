@@ -4,7 +4,7 @@ use crate::ast::{Binding, ItemOrigin, Type};
 
 use super::fallible::ReturnBoundary;
 use super::hir::{
-    ClosureInfo, HirPlace, LoanId, LocalCapability, LocalId, ParamSig, PartialInfo, Ty,
+    AccessKind, ClosureInfo, HirPlace, LoanId, LocalCapability, LocalId, ParamSig, PartialInfo, Ty,
 };
 
 #[derive(Debug, Clone)]
@@ -195,6 +195,7 @@ pub(super) struct LowerCtx {
     pub(super) borrowed_parameter_regions: HashMap<LocalId, (Option<String>, bool)>,
     pub(super) reference_loans: HashMap<LocalId, Vec<LoanId>>,
     pub(super) reference_value_depth: usize,
+    pub(super) reference_value_access: Option<AccessKind>,
     pub(super) unsafe_depth: usize,
     pub(super) active_throws_error: Option<Ty>,
     pub(super) active_custom_effects: HashSet<String>,
@@ -224,6 +225,7 @@ impl LowerCtx {
             borrowed_parameter_regions: HashMap::new(),
             reference_loans: HashMap::new(),
             reference_value_depth: 0,
+            reference_value_access: None,
             unsafe_depth: 0,
             active_throws_error: None,
             active_custom_effects: HashSet::new(),
@@ -253,6 +255,7 @@ impl LowerCtx {
             borrowed_parameter_regions: HashMap::new(),
             reference_loans: HashMap::new(),
             reference_value_depth: 0,
+            reference_value_access: None,
             unsafe_depth: 0,
             active_throws_error: None,
             active_custom_effects: HashSet::new(),

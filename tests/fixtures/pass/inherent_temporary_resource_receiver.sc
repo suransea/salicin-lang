@@ -1,11 +1,11 @@
 let Resource = struct { value: i32 }
 
 extend Resource {
-  let read(borrow self)(): i32 = { self.value }
+  let read(self: borrow(Self))(): i32 = { self.value }
 }
 
 extend Resource: Drop {
-  let drop(borrow(mut) self)(): () = {
+  let drop(self: borrow(mut)(Self))(): () = {
     let checked = 1 / self.value
     self.value = 0
   }}

@@ -34,23 +34,23 @@ pub let vec_with_capacity(T: type)(capacity: u64): Vec(T) = {
   Vec(T) { pointer: vec_allocate(T: T)(capacity), length: 0, storage_capacity: capacity }
 }
 
-pub let vec_len(T: type)(borrow values: Vec(T)): u64 = { values.length }
+pub let vec_len(T: type)(values: borrow(Vec(T))): u64 = { values.length }
 
-pub let vec_capacity(T: type)(borrow values: Vec(T)): u64 = { values.storage_capacity }
+pub let vec_capacity(T: type)(values: borrow(Vec(T))): u64 = { values.storage_capacity }
 
 pub let vec_at(A: access, 'a: region, T: type)
-  (borrow(A, 'a) values: Vec(T))(index: u64): borrow(A, 'a) T = {
+  (values: borrow(A)('a)(Vec(T)))(index: u64): borrow(A)('a)(T) = {
   if index >= values.length {
     unsafe {
       raw_trap()
     }
   }
   unsafe {
-    raw_borrow(A)(raw_offset(values.pointer, index), borrow(A) values)
+    raw_borrow(A)(raw_offset(values.pointer, index), borrow(A)(values))
   }
 }
 
-pub let vec_reserve(T: type)(borrow(mut) values: Vec(T))(additional: u64): () = {
+pub let vec_reserve(T: type)(values: borrow(mut)(Vec(T)))(additional: u64): () = {
   if additional > 18446744073709551615 - values.length {
     unsafe {
       raw_trap()
@@ -87,7 +87,7 @@ pub let vec_reserve(T: type)(borrow(mut) values: Vec(T))(additional: u64): () = 
   }
 }
 
-pub let vec_push(T: type)(borrow(mut) values: Vec(T))(value: T): () = {
+pub let vec_push(T: type)(values: borrow(mut)(Vec(T)))(value: T): () = {
   vec_reserve(values)(1)
   unsafe {
     raw_init(raw_offset(values.pointer, values.length), value)
@@ -95,7 +95,7 @@ pub let vec_push(T: type)(borrow(mut) values: Vec(T))(value: T): () = {
   values.length = values.length + 1
 }
 
-pub let vec_replace(T: type)(borrow(mut) values: Vec(T))(index: u64)(value: T): T = {
+pub let vec_replace(T: type)(values: borrow(mut)(Vec(T)))(index: u64)(value: T): T = {
   if index >= values.length {
     unsafe {
       raw_trap()
@@ -113,7 +113,7 @@ pub let vec_replace(T: type)(borrow(mut) values: Vec(T))(index: u64)(value: T): 
   previous
 }
 
-pub let vec_pop(T: type)(borrow(mut) values: Vec(T)): Option(T) = {
+pub let vec_pop(T: type)(values: borrow(mut)(Vec(T))): Option(T) = {
   if values.length == 0 {
     Option(T).None
   } else {
@@ -125,7 +125,7 @@ pub let vec_pop(T: type)(borrow(mut) values: Vec(T)): Option(T) = {
   }
 }
 
-pub let vec_truncate(T: type)(borrow(mut) values: Vec(T))(new_length: u64): () = {
+pub let vec_truncate(T: type)(values: borrow(mut)(Vec(T)))(new_length: u64): () = {
   while values.length > new_length {
     values.length = values.length - 1
     let item = unsafe {
@@ -134,11 +134,11 @@ pub let vec_truncate(T: type)(borrow(mut) values: Vec(T))(new_length: u64): () =
   }
 }
 
-pub let vec_clear(T: type)(borrow(mut) values: Vec(T)): () = { vec_truncate(values)(0) }
+pub let vec_clear(T: type)(values: borrow(mut)(Vec(T))): () = { vec_truncate(values)(0) }
 
-pub let vec_is_empty(T: type)(borrow values: Vec(T)): bool = { values.length == 0 }
+pub let vec_is_empty(T: type)(values: borrow(Vec(T))): bool = { values.length == 0 }
 
-pub let vec_swap_remove(T: type)(borrow(mut) values: Vec(T))(index: u64): T = {
+pub let vec_swap_remove(T: type)(values: borrow(mut)(Vec(T)))(index: u64): T = {
   if index >= values.length {
     unsafe {
       raw_trap()
@@ -160,7 +160,7 @@ pub let vec_swap_remove(T: type)(borrow(mut) values: Vec(T))(index: u64): T = {
   removed
 }
 
-pub let vec_swap(T: type)(borrow(mut) values: Vec(T))(left: u64, right: u64): () = {
+pub let vec_swap(T: type)(values: borrow(mut)(Vec(T)))(left: u64, right: u64): () = {
   if left >= values.length || right >= values.length {
     unsafe {
       raw_trap()
@@ -180,7 +180,7 @@ pub let vec_swap(T: type)(borrow(mut) values: Vec(T))(left: u64, right: u64): ()
   }
 }
 
-pub let vec_reverse(T: type)(borrow(mut) values: Vec(T)): () = {
+pub let vec_reverse(T: type)(values: borrow(mut)(Vec(T))): () = {
   let mut left: u64 = 0
   while left < values.length / 2 {
     let right = values.length - 1 - left
@@ -189,7 +189,7 @@ pub let vec_reverse(T: type)(borrow(mut) values: Vec(T)): () = {
   }
 }
 
-pub let vec_insert(T: type)(borrow(mut) values: Vec(T))(index: u64)(value: T): () = {
+pub let vec_insert(T: type)(values: borrow(mut)(Vec(T)))(index: u64)(value: T): () = {
   if index > values.length {
     unsafe {
       raw_trap()
@@ -213,7 +213,7 @@ pub let vec_insert(T: type)(borrow(mut) values: Vec(T))(index: u64)(value: T): (
   values.length = values.length + 1
 }
 
-pub let vec_remove(T: type)(borrow(mut) values: Vec(T))(index: u64): T = {
+pub let vec_remove(T: type)(values: borrow(mut)(Vec(T)))(index: u64): T = {
   if index >= values.length {
     unsafe {
       raw_trap()
@@ -237,7 +237,7 @@ pub let vec_remove(T: type)(borrow(mut) values: Vec(T))(index: u64): T = {
   removed
 }
 
-pub let vec_append(T: type)(borrow(mut) values: Vec(T))(borrow(mut) other: Vec(T)): () = {
+pub let vec_append(T: type)(values: borrow(mut)(Vec(T)))(other: borrow(mut)(Vec(T))): () = {
   let start = values.length
   let moved = other.length
   vec_reserve(values)(moved)
@@ -255,7 +255,7 @@ pub let vec_append(T: type)(borrow(mut) values: Vec(T))(borrow(mut) other: Vec(T
   other.length = 0
 }
 
-pub let vec_shrink_to_fit(T: type)(borrow(mut) values: Vec(T)): () = {
+pub let vec_shrink_to_fit(T: type)(values: borrow(mut)(Vec(T))): () = {
   if values.length != values.storage_capacity {
     let new_pointer = vec_allocate(T: T)(values.length)
     let mut index: u64 = 0
@@ -274,7 +274,7 @@ pub let vec_shrink_to_fit(T: type)(borrow(mut) values: Vec(T)): () = {
   }
 }
 
-pub let vec_read(T: type)(borrow values: Vec(T))(index: u64): T
+pub let vec_read(T: type)(values: borrow(Vec(T)))(index: u64): T
 where T: Copy = {
   if index >= values.length {
     unsafe {
@@ -286,7 +286,7 @@ where T: Copy = {
   }
 }
 
-pub let vec_write(T: type)(borrow(mut) values: Vec(T))(index: u64)(copy value: T): ()
+pub let vec_write(T: type)(values: borrow(mut)(Vec(T)))(index: u64)(copy value: T): ()
 where T: Copy = {
   if index >= values.length {
     unsafe {
@@ -301,42 +301,42 @@ where T: Copy = {
 extend(T: type) Vec(T) {
   let new(): Vec(T) = { vec_new() }
   let with_capacity(capacity: u64): Vec(T) = { vec_with_capacity(capacity) }
-  let len(borrow self)(): u64 = { vec_len(self) }
-  let capacity(borrow self)(): u64 = { vec_capacity(self) }
-  let at(A: access)(borrow(A) self)(index: u64): borrow(A) T = {
+  let len(self: borrow(Self))(): u64 = { vec_len(self) }
+  let capacity(self: borrow(Self))(): u64 = { vec_capacity(self) }
+  let at(A: access)(self: borrow(A)(Self))(index: u64): borrow(A)(T) = {
     if index >= self.length {
       unsafe {
         raw_trap()
       }
     }
     unsafe {
-      raw_borrow(A)(raw_offset(self.pointer, index), borrow(A) self)
+      raw_borrow(A)(raw_offset(self.pointer, index), borrow(A)(self))
     }
   }
-  let reserve(borrow(mut) self)(additional: u64): () = { vec_reserve(self)(additional) }
-  let push(borrow(mut) self)(value: T): () = { vec_push(self)(value) }
-  let replace(borrow(mut) self)(index: u64)(value: T): T = { vec_replace(self)(index)(value) }
-  let pop(borrow(mut) self)(): Option(T) = { vec_pop(self) }
-  let truncate(borrow(mut) self)(new_length: u64): () = { vec_truncate(self)(new_length) }
-  let clear(borrow(mut) self)(): () = { vec_clear(self) }
-  let is_empty(borrow self)(): bool = { vec_is_empty(self) }
-  let swap_remove(borrow(mut) self)(index: u64): T = { vec_swap_remove(self)(index) }
-  let swap(borrow(mut) self)(left: u64, right: u64): () = { vec_swap(self)(left: left, right: right) }
-  let reverse(borrow(mut) self)(): () = { vec_reverse(self) }
-  let insert(borrow(mut) self)(index: u64)(value: T): () = { vec_insert(self)(index)(value) }
-  let remove(borrow(mut) self)(index: u64): T = { vec_remove(self)(index) }
-  let append(borrow(mut) self)(borrow(mut) other: Vec(T)): () = { vec_append(self)(other) }
-  let shrink_to_fit(borrow(mut) self)(): () = { vec_shrink_to_fit(self) }
+  let reserve(self: borrow(mut)(Self))(additional: u64): () = { vec_reserve(self)(additional) }
+  let push(self: borrow(mut)(Self))(value: T): () = { vec_push(self)(value) }
+  let replace(self: borrow(mut)(Self))(index: u64)(value: T): T = { vec_replace(self)(index)(value) }
+  let pop(self: borrow(mut)(Self))(): Option(T) = { vec_pop(self) }
+  let truncate(self: borrow(mut)(Self))(new_length: u64): () = { vec_truncate(self)(new_length) }
+  let clear(self: borrow(mut)(Self))(): () = { vec_clear(self) }
+  let is_empty(self: borrow(Self))(): bool = { vec_is_empty(self) }
+  let swap_remove(self: borrow(mut)(Self))(index: u64): T = { vec_swap_remove(self)(index) }
+  let swap(self: borrow(mut)(Self))(left: u64, right: u64): () = { vec_swap(self)(left: left, right: right) }
+  let reverse(self: borrow(mut)(Self))(): () = { vec_reverse(self) }
+  let insert(self: borrow(mut)(Self))(index: u64)(value: T): () = { vec_insert(self)(index)(value) }
+  let remove(self: borrow(mut)(Self))(index: u64): T = { vec_remove(self)(index) }
+  let append(self: borrow(mut)(Self))(other: borrow(mut)(Vec(T))): () = { vec_append(self)(other) }
+  let shrink_to_fit(self: borrow(mut)(Self))(): () = { vec_shrink_to_fit(self) }
 }
 
 extend(T: type) Vec(T)
 where T: Copy {
-  let read(borrow self)(index: u64): T = { vec_read(self)(index) }
-  let write(borrow(mut) self)(index: u64)(copy value: T): () = { vec_write(self)(index)(value) }
+  let read(self: borrow(Self))(index: u64): T = { vec_read(self)(index) }
+  let write(self: borrow(mut)(Self))(index: u64)(copy value: T): () = { vec_write(self)(index)(value) }
 }
 
 extend(T: type) Vec(T): Drop {
-  let drop(borrow(mut) self)(): () = {
+  let drop(self: borrow(mut)(Self))(): () = {
     let mut index: u64 = 0
     while index < self.length {
       let item = unsafe {
