@@ -1,6 +1,6 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use crate::ast::{CallArg, Expr, Param, PassMode, Stmt, Type};
+use crate::ast::{CallArg, Expr, MatchArm, Param, PassMode, Pattern, PatternFields, Stmt, Type};
 use crate::core::LangItemKind;
 
 use super::compile_time::source_effect_identity;
@@ -12,7 +12,7 @@ use super::hir::{
     HirExprKind, LocalCapability, Ty,
 };
 use super::lower::{error_expr, flatten_call, TypeProbe};
-use super::source_rewrite::source_type_expression_name;
+use super::source_rewrite::{source_type_expression_name, substitute_function_types};
 use super::Analyzer;
 
 impl Analyzer {
@@ -708,6 +708,195 @@ impl Analyzer {
             }
             Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => false,
         }
+    }
+
+    pub(super) fn lower_automatic_throws(
+        &mut self,
+        operand: HirExpr,
+        thrown_error: &Ty,
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let Some(active_error) = context.active_throws_error.clone() else {
+            self.error(format!(
+                "call requires `Throws({thrown_error})`; propagate it from the current function or handle it with `try {{ ... }}`"
+            ));
+            return error_expr();
+        };
+        if active_error != *thrown_error {
+            self.error(format!(
+                "call throws `{thrown_error}`, but the active error type is `{active_error}`; convert errors explicitly"
+            ));
+            return error_expr();
+        }
+        if context.return_boundary.is_none() {
+            self.error("internal error: active throws effect has no Result return boundary");
+            return error_expr();
+        }
+        let Some(info) = self.standard_fallible_info_for_ty(&operand.ty) else {
+            self.error("internal error: throws call does not use a Result ABI");
+            return error_expr();
+        };
+        if info.kind != StandardFallibleKind::Result || info.error.as_ref() != Some(thrown_error) {
+            self.error("internal error: throws call Result ABI does not match its error effect");
+            return error_expr();
+        }
+        const OUTPUT_BINDING: &str = "$throws$output";
+        const ERROR_BINDING: &str = "$throws$error";
+        let arms = vec![
+            MatchArm {
+                pattern: Pattern::Constructor {
+                    path: vec!["Ok".to_owned()],
+                    fields: PatternFields::Positional(vec![Pattern::Binding(
+                        OUTPUT_BINDING.to_owned(),
+                    )]),
+                },
+                guard: None,
+                body: Expr::Name(OUTPUT_BINDING.to_owned()),
+            },
+            MatchArm {
+                pattern: Pattern::Constructor {
+                    path: vec!["Err".to_owned()],
+                    fields: PatternFields::Positional(vec![Pattern::Binding(
+                        ERROR_BINDING.to_owned(),
+                    )]),
+                },
+                guard: None,
+                body: Expr::Throw(Box::new(Expr::Name(ERROR_BINDING.to_owned()))),
+            },
+        ];
+        self.lower_match_with_scrutinee(operand, &arms, expected.or(Some(&info.payload)), context)
+    }
+
+    pub(super) fn lower_throw(&mut self, value: &Expr, context: &mut LowerCtx) -> HirExpr {
+        let Some(error_ty) = context.active_throws_error.clone() else {
+            if let Some(lowered) = self.lower_standard_throws_raise(value, context) {
+                return lowered;
+            }
+            let _ = self.lower_expr(value, None, context);
+            self.error(
+                "`throw` requires an enclosing `with(Throws(Error))` function or `try { ... }` handler",
+            );
+            return error_expr();
+        };
+        let Some(boundary) = context.return_boundary.clone() else {
+            let _ = self.lower_expr(value, Some(&error_ty), context);
+            self.error("internal error: throws effect has no Result return boundary");
+            return error_expr();
+        };
+        if boundary.kind != Some(StandardFallibleKind::Result)
+            || boundary.error.as_ref() != Some(&error_ty)
+        {
+            let _ = self.lower_expr(value, Some(&error_ty), context);
+            self.error("internal error: throws effect does not match its Result ABI");
+            return error_expr();
+        }
+        let error = self.lower_expr(value, Some(&error_ty), context);
+        if self.is_uninhabited_type(&error.ty) {
+            return error;
+        }
+        let result = self.construct_boundary_variant(&boundary, false, Some(error));
+        context.returned_types.push(boundary.container);
+        context.flow.reachable = false;
+        HirExpr {
+            ty: Ty::Never,
+            kind: HirExprKind::Return(Some(Box::new(result))),
+        }
+    }
+
+    fn lower_standard_throws_raise(
+        &mut self,
+        value: &Expr,
+        context: &mut LowerCtx,
+    ) -> Option<HirExpr> {
+        let mut candidates = self
+            .active_standard_throws_error_sources(context)
+            .into_iter()
+            .collect::<Vec<_>>();
+        match candidates.len() {
+            0 => None,
+            1 => {
+                let error_source = candidates.pop().expect("one candidate");
+                let Some(instance) = self.standard_throw_effect_source(error_source) else {
+                    self.error(
+                        "compiler core did not register its validated `throw` control contract",
+                    );
+                    return Some(error_expr());
+                };
+                let throws_name = self.lang_item_name(LangItemKind::ThrowsEffect).to_owned();
+                if standard_throws_error_source(&instance, &throws_name).is_none() {
+                    self.error(
+                        "compiler core `throw` contract does not target its validated `Throws` effect",
+                    );
+                    return Some(error_expr());
+                }
+                let Some(definition) = self.effect_defs.get(&throws_name).cloned() else {
+                    self.error("compiler core did not register its validated `Throws` effect");
+                    return Some(error_expr());
+                };
+                let arguments = vec![CallArg {
+                    label: None,
+                    value: value.clone(),
+                }];
+                let groups = vec![arguments.as_slice()];
+                Some(self.lower_effect_operation_call(
+                    &definition,
+                    &instance,
+                    "raise",
+                    &groups,
+                    None,
+                    context,
+                ))
+            }
+            _ => {
+                let _ = self.lower_expr(value, None, context);
+                let mut rendered = candidates
+                    .into_iter()
+                    .map(|source| source_effect_identity(&source))
+                    .collect::<Vec<_>>();
+                rendered.sort();
+                self.error(format!(
+                    "`throw` under ordinary `Throws` effects requires exactly one active `Throws(Error)` row; found {}: {}",
+                    rendered.len(),
+                    rendered
+                        .iter()
+                        .map(|source| format!("`{source}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+                Some(error_expr())
+            }
+        }
+    }
+
+    fn standard_throw_effect_source(&self, error_source: Type) -> Option<Type> {
+        let throw_name = self.lang_item_name(LangItemKind::Throw);
+        let mut function = self.function_templates.get(throw_name)?.clone();
+        let substitutions = HashMap::from([("Error".to_owned(), error_source)]);
+        substitute_function_types(&mut function, &substitutions);
+        if !function.effects.parameters.is_empty()
+            || function.effects.unsafe_effect
+            || function.effects.throws.is_some()
+        {
+            return None;
+        }
+        let [effect] = function.effects.custom.as_slice() else {
+            return None;
+        };
+        Some(effect.clone())
+    }
+
+    fn active_standard_throws_error_sources(&self, context: &LowerCtx) -> Vec<Type> {
+        let throws_name = self.lang_item_name(LangItemKind::ThrowsEffect);
+        let mut sources = context
+            .active_custom_effect_sources
+            .values()
+            .filter_map(|source| standard_throws_error_source(source, throws_name))
+            .map(|source| (source_effect_identity(&source), source))
+            .collect::<Vec<_>>();
+        sources.sort_by(|left, right| left.0.cmp(&right.0));
+        sources.dedup_by(|left, right| left.0 == right.0);
+        sources.into_iter().map(|(_, source)| source).collect()
     }
 
     fn collect_escaping_throws(
