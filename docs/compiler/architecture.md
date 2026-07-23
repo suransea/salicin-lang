@@ -36,14 +36,15 @@ The implementation lives under `compiler/src`:
   - `control.rs` lowers loops, `break`, and `continue`, including loop backedge flow checks.
   - `emitter.rs` evaluates global constants and emits textual LLVM IR.
   - `effects.rs` owns source-level support state, effect identity helpers, effect-forwarding
-    `do` lowering, handler entry lowering, and AST helpers for algebraic-effect and control
-    lowering.
+    `do` lowering, and handler entry lowering.
   - `fallible.rs` defines standard `Option`/`Result` short-circuit container metadata, inference
     helpers, and throws-result return-boundary lowering shared by `??`, `?.`, `try`, and `throw`.
   - `flow.rs` tracks local scopes, move initialization alternatives, lexical loans, and lowering
     context state used by ownership and borrow checks.
   - `functions.rs` lowers function and global bodies, materializes generic function instances,
     resolves function/global value types, and validates binary entry-point shape.
+  - `handlers.rs` owns algebraic-handler state and AST source-rewrite helpers used by handler CPS
+    lowering.
   - `hir.rs` defines typed IR structs, semantic types, places, signatures, and helper predicates.
   - `inference.rs` owns generic type-argument seed, unification, template resolution, and
     expression-constraint inference helpers.

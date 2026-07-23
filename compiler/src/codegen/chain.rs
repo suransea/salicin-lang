@@ -3,9 +3,9 @@ use crate::ast::{
 };
 use crate::core::LangItemKind;
 
-use super::effects::rewrite_handler_chain_wrappers;
 use super::fallible::{StandardFallibleInfo, StandardFallibleKind};
 use super::flow::LowerCtx;
+use super::handlers::rewrite_handler_chain_wrappers;
 use super::hir::{HirExpr, LocalCapability, Ty};
 use super::lower::{error_expr, place_root_name, CustomChainPlan, TypeProbe};
 use super::names::nominal_instance_name;
