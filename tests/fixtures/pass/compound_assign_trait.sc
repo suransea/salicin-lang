@@ -1,4 +1,4 @@
-use core.ops.{AddAssign, BitXorAssign}
+use std.ops.{AddAssign, BitXorAssign}
 
 let Counter = struct { value: i32 }
 

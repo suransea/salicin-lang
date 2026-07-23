@@ -1,4 +1,4 @@
-use core.ops.{BitAnd, BitOr, BitXor, Shl, Shr}
+use std.ops.{BitAnd, BitOr, BitXor, Shl, Shr}
 
 let Bits = struct { value: i32 }
 

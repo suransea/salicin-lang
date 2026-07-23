@@ -1,4 +1,4 @@
-use core.Result
+use std.Result
 
 let Result(E: type)(T: type) = enum {
   Ok(T),

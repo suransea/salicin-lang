@@ -1,3 +1,37 @@
+/// Provides `?.` chaining for `Option`.
+extend(T: type) core.Option(T): core.flow.Chain {
+  /// The payload type produced by a successful option.
+  let Item = T
+  /// Rebuilds `Option` around a transformed payload type.
+  let Rebind = core.Option
+
+  /// Applies `transform` to `Some` and propagates `None`.
+  let chain(E: effect, U: type)
+    (move self)
+    (move transform: (T): U with(E)): core.Option(U) with(E) = {
+    self match {
+      Some(value) => core.Option.Some(transform(value)),
+      None => core.Option.None,
+    }
+  }
+}
+
+/// Provides `??` fallback evaluation for `Option`.
+extend(T: type) core.Option(T): core.flow.Coalesce {
+  /// The value type returned by coalescing.
+  let Item = T
+
+  /// Extracts `Some` or evaluates `fallback` for `None`.
+  let coalesce(E: effect)
+    (move self)
+    (move fallback: (): T with(E)): T with(E) = {
+    self match {
+      Some(value) => value,
+      None => fallback(),
+    }
+  }
+}
+
 /// Implements `Functor` for `Option`.
 extend core.Option: core.functional.Functor {
   /// Maps `Some` through `transform` and preserves `None`.

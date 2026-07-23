@@ -1,4 +1,4 @@
-use core.Option
+use std.Option
 
 let main(): i32 = {
   let first = Option(i32).None

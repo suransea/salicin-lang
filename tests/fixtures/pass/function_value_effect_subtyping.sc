@@ -1,4 +1,4 @@
-use core.effects.Unsafe
+use std.effect.Unsafe
 
 let pure(): i32 = { 42 }
 

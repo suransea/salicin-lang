@@ -26,18 +26,18 @@ pub let Result(E: type)
 }
 ```
 
-Naming them requires an ordinary root import such as `use core.Option` or `use core.Result`.
+Naming them requires an ordinary root import such as `use std.Option` or `use std.Result`.
 Operators and syntax that lower through these identities use the validated standard-library
 declarations directly; importing is only required when source code writes the names.
 
 `core.ops` contains the arithmetic protocols `Add`, `Sub`, `Mul`, `Div`, and `Rem`, the equality
 protocol `Eq`, the ordering protocol `PartialOrd`, the unary protocols `Neg` and `Not`, the bitwise
-protocols `BitAnd`, `BitOr`, `BitXor`, `Shl`, and `Shr`, the assignment protocols, and the
-nullish-control protocols `Chain` and `Coalesce`. They are not in the prelude.
+protocols `BitAnd`, `BitOr`, `BitXor`, `Shl`, and `Shr`, and the assignment protocols. They are not
+in the prelude.
 Arithmetic and bitwise protocols consume their operands and use an associated `Output` type:
 
 ```sc
-use core.ops.Add
+use std.ops.Add
 
 extend Number: Add(Number) {
   let Output = Number
@@ -50,7 +50,7 @@ extend Number: Add(Number) {
 negates its result:
 
 ```sc
-use core.ops.Eq
+use std.ops.Eq
 
 extend Number: Eq(Number) {
   let eq(self: borrow(Self))
@@ -63,7 +63,7 @@ whose variants are `Less`, `Equal`, `Greater`, and `Unordered`. All four orderin
 the method once; an `Unordered` result makes each operator false:
 
 ```sc
-use core.ops.{PartialOrd, PartialOrdering}
+use std.ops.{PartialOrd, PartialOrdering}
 
 extend Number: PartialOrd(Number) {
   let partial_cmp(self: borrow(Self))
@@ -102,7 +102,7 @@ Writing `left + right`, `left & right`, `left == right`, or `left < right` does 
 import. An import is required when source names the protocol in an implementation, bound, type, or
 direct member access.
 
-`Chain` and `Coalesce` are the standard protocols for `?.` and `??`:
+`core.flow` contains the standard protocols for `?.` and `??`. They are not in the prelude:
 
 ```sc
 pub let Chain = trait {
@@ -131,9 +131,12 @@ values through `Coalesce` when the fallback can be represented as a no-capture l
 dispatches non-`Option`/`Result` nominal values through `Chain` when the synthesized transform
 closure can be represented in the same way; simple field access is supported, while transforms that
 capture outer method-call arguments still require the general callable-to-function bridge. The root
-`core.Option`/`core.Result` paths remain available as standard-library specializations.
+`core.Option`/`core.Result` paths remain available as standard-library specializations. The older
+`std.ops.Chain` and `std.ops.Coalesce` paths are accepted as compatibility aliases, but new source
+should import the protocols from `std.flow`.
 
-`core.effects` owns standard effect identities. It is not part of the prelude:
+`core.effects` owns standard effect identities. It is not part of the prelude; ordinary source
+should import these identities through `std.effect`:
 
 ```sc
 pub let Unsafe = effect {}
@@ -276,15 +279,16 @@ pub let IntoIterator = trait {
 }
 ```
 
-Implementing or naming either trait requires `use core.iter.{Iterator, IntoIterator}`. The `for`
+Implementing or naming either trait requires `use std.iter.{Iterator, IntoIterator}`. The `for`
 syntax itself needs no import and dispatches only through these validated identities. It evaluates
 the iterable once, moves it into `IntoIterator.into_iter`, repeatedly mutably borrows the resulting
 iterator for `Iterator.next`, and stops on `None`. An inherent or unrelated trait method named
 `into_iter` or `next` cannot intercept this lowering.
 
 The control spellings bind to these validated identities without importing ordinary names. Standard
-effect identities such as `Throws` remain normal `core.effects` exports when named in source. An
-ordinary same-named declaration cannot acquire lang-item lowering behavior. Future control features
+effect identities such as `Throws` remain normal `std.effect` exports when named in source, backed
+by `core.effects` identities. An ordinary same-named declaration cannot acquire lang-item lowering
+behavior. Future control features
 follow the same rule: for example, async lowering must add `Future`, `async`, and handler contracts
 to the matching core release when it becomes executable, rather than reserving undocumented compiler
 magic in advance.
@@ -346,8 +350,8 @@ The standard library implements `Functor`, `Applicative`, and `Monad` for `core.
 each partially applied `core.Result(Error)` constructor:
 
 ```sc
-use core.Result
-use core.functional.Monad
+use std.Result
+use std.functional.Monad
 
 let next(value: i32): Result(bool)(i32) = {
   Result(bool)(i32).Ok(value + 1)

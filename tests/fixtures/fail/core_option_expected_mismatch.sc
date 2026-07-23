@@ -1,4 +1,4 @@
-use core.Option
+use std.Option
 
 let main(): i32 = {
   let value: Option(bool) = Option(i32).Some(42)

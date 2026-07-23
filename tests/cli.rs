@@ -950,7 +950,7 @@ fn vec_drop_releases_its_allocation_through_the_allocator_abi() {
     let directory = TestDirectory::new();
     let source = directory.write(
         "main.sc",
-        "use alloc.vec.Vec\n\nlet main(): i32 = {\n  let values: Vec(i32) = Vec(i32).new()\n  values.len()\n  0\n}\n",
+        "use std.vec.Vec\n\nlet main(): i32 = {\n  let values: Vec(i32) = Vec(i32).new()\n  values.len()\n  0\n}\n",
     );
     let ir = directory.join("main.ll");
     let executable = directory.join("main");
@@ -3274,7 +3274,7 @@ dep = { path = "../dep" }
     );
     workspace.write(
         "dep/src/lib.sc",
-        r#"use core.Option
+        r#"use std.Option
 
 pub let Number = struct { value: i32 }
 let Secret = trait {
@@ -3375,8 +3375,8 @@ dep = { path = "../dep" }
     );
     workspace.write(
         "dep/src/lib.sc",
-        r#"use core.Option
-use core.ops.Add
+        r#"use std.Option
+use std.ops.Add
 
 pub let Number = struct { value: i32 }
 extend Number: Add(Number) {
@@ -3867,8 +3867,8 @@ fn prelude_never_coerces_through_diverging_calls() {
     let temporary = TestDirectory::new();
     let source = temporary.write(
         "never.sc",
-        r#"use core.Result
-use core.effects.Throws
+        r#"use std.Result
+use std.effect.Throws
 let stop(): Never = { loop {} }
 let absurd(move value: Never): i32 = { value }
 let propagate(move value: Never): Result(())(i32) = { value }

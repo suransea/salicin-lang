@@ -1,4 +1,4 @@
-use core.ops.{Neg, Not}
+use std.ops.{Neg, Not}
 
 let Number = struct { value: i32 }
 let Flag = struct { value: bool }

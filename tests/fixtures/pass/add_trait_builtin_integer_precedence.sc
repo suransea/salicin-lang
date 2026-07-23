@@ -1,4 +1,4 @@
-use core.ops.Add
+use std.ops.Add
 
 let Number = struct { value: i32 }
 

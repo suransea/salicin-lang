@@ -1,4 +1,4 @@
-use core.ops.Rem
+use std.ops.Rem
 
 let Number = struct { value: i32 }
 

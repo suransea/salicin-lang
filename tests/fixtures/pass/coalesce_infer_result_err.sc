@@ -1,3 +1,3 @@
-use core.Result
+use std.Result
 
 let main(): i32 = { Result(E: bool).Err(false) ?? 42 }

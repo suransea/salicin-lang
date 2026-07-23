@@ -1,5 +1,5 @@
-use core.Result
-use core.effects.Throws
+use std.Result
+use std.effect.Throws
 
 let fail(Error: type)(move error: Error): Never with(Throws(i32), Throws(bool)) = {
   throw(error)

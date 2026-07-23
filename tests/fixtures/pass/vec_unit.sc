@@ -1,4 +1,4 @@
-use alloc.vec.{Vec, vec_new}
+use std.vec.{Vec, vec_new}
 
 let main(): i32 = {
   let mut values: Vec(()) = vec_new()

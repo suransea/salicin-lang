@@ -1,5 +1,5 @@
-use core.Result
-use core.effects.Throws
+use std.Result
+use std.effect.Throws
 
 let fail(): i32 with(Throws(())) = {
   throw(())

@@ -62,7 +62,7 @@ let answer = Ask.handle(
 
 ## Derived `handle` member
 
-Every effect declaration automatically satisfies the validated `core.control.Handle` protocol and
+Every effect declaration automatically satisfies the validated `std.control.Handle` protocol and
 derives a compiler-lowered associated member named `handle`:
 
 ```sc
@@ -79,7 +79,7 @@ once as a labeled closure. A non-overloaded operation clause may choose local pa
 overloaded clause must repeat the selected operation's parameter names in declaration order.
 `handle` is reserved in the effect member namespace. The operation-specific clause pack is derived
 from the source `effect` declaration rather than implemented by ordinary user code, but its public
-shape is declared by the `core.control.Handle` trait.
+shape is declared by the `std.control.Handle` trait.
 
 For an operation with parameter groups `(P1)...(Pn): O`, its handler closure normally has the
 contextual shape `(P1)...(Pn)(resume): R`, where `R` is the result of the complete handler. For a

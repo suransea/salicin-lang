@@ -1,4 +1,4 @@
-use core.Option
+use std.Option
 
 let Adder = struct { base: i32 }
 

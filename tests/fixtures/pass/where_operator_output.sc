@@ -1,4 +1,4 @@
-use core.ops.Add
+use std.ops.Add
 
 let twice(T: type)(copy value: T): T
 where T: Add(T, Output = T),

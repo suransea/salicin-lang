@@ -1,6 +1,6 @@
-use core.Option
+use std.Option
 
-use core.iter.{Iterator, IntoIterator}
+use std.iter.{Iterator, IntoIterator}
 
 let Once = struct { done: bool }
 

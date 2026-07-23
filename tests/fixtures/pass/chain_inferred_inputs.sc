@@ -1,5 +1,5 @@
-use core.Option
-use core.Result
+use std.Option
+use std.Result
 
 let Boxed = struct { value: i32 }
 

@@ -1,6 +1,6 @@
-use core.Result
+use std.Result
 
-use core.effects.{Throws, Unsafe}
+use std.effect.{Throws, Unsafe}
 
 let Supply = effect {
   let seed(): i32

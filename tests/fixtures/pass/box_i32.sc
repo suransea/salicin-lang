@@ -1,4 +1,4 @@
-use alloc.boxed.{box_new, box_ptr}
+use std.boxed.{box_new, box_ptr}
 
 let main(): i32 = {
   let boxed = box_new(42)

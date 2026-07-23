@@ -1,5 +1,5 @@
-use core.Result
-use core.effects.Throws
+use std.Result
+use std.effect.Throws
 
 let fail(E: type)(move error: E): i32 with(Throws(E)) = {
   throw(error)

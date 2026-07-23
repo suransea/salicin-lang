@@ -1,5 +1,5 @@
-use core.Option
-use core.Result
+use std.Option
+use std.Result
 
 let option_tail(): Option(i32) = { Option(i32).Some(10) }
 

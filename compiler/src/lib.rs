@@ -169,8 +169,8 @@ mod tests {
 
     #[test]
     fn alloc_accessors_use_the_access_generic_entry_points() {
-        let source = "use alloc.boxed.{Box, box_as_ref}\n\
-                      use alloc.vec.{Vec, vec_at}\n\
+        let source = "use std.boxed.{Box, box_as_ref}\n\
+                      use std.vec.{Vec, vec_at}\n\
                       let main(): i32 = {\n\
                         let mut boxed = Box.new(20)\n\
                         do {\n\
@@ -193,10 +193,10 @@ mod tests {
         let errors = compile_source("let main(): i32 = { Box.new(42).read() }\n").unwrap_err();
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `Box` is not in the prelude")
-                && diagnostic.contains("use alloc.boxed.Box")
+                && diagnostic.contains("use std.boxed.Box")
         }));
 
-        let source = "use alloc.boxed.Box as HeapBox\n\
+        let source = "use std.boxed.Box as HeapBox\n\
                       let main(): i32 = { HeapBox.new(42).read() }\n";
         compile_source(source).expect("renamed alloc import should compile");
     }
@@ -220,10 +220,10 @@ mod tests {
         let errors = compile_source(missing).unwrap_err();
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `Add` is not in the prelude")
-                && diagnostic.contains("use core.ops.Add")
+                && diagnostic.contains("use std.ops.Add")
         }));
 
-        let imported = format!("use core.ops.Add\n{missing}").replace(
+        let imported = format!("use std.ops.Add\n{missing}").replace(
             "let main(): i32 = { 0 }",
             "let main(): i32 = { (Number { value: 20 } + Number { value: 22 }).value }",
         );
@@ -234,21 +234,21 @@ mod tests {
 
         let missing_order = "let Number = struct { value: i32 }\n\
                              extend Number: PartialOrd(Number) {\n\
-                               let partial_cmp(self: borrow(Self))(rhs: borrow(Number)): core.ops.PartialOrdering = {\n\
-                                 core.ops.PartialOrdering.Equal\n\
+                               let partial_cmp(self: borrow(Self))(rhs: borrow(Number)): std.ops.PartialOrdering = {\n\
+                                 std.ops.PartialOrdering.Equal\n\
                                }\n\
                              }\n\
                              let main(): i32 = { 0 }\n";
         let errors = compile_source(missing_order).unwrap_err();
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `PartialOrd` is not in the prelude")
-                && diagnostic.contains("use core.ops.PartialOrd")
+                && diagnostic.contains("use std.ops.PartialOrd")
         }));
 
         let imported_order = format!(
-            "use core.ops.{{PartialOrd, PartialOrdering}}\n{missing_order}"
+            "use std.ops.{{PartialOrd, PartialOrdering}}\n{missing_order}"
         )
-        .replace("core.ops.PartialOrdering", "PartialOrdering")
+        .replace("std.ops.PartialOrdering", "PartialOrdering")
         .replace(
             "let main(): i32 = { 0 }",
             "let main(): i32 = { if Number { value: 1 } <= Number { value: 2 } { 42 } else { 0 } }",
@@ -264,10 +264,10 @@ mod tests {
         let errors = compile_source(missing_unary).unwrap_err();
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `Neg` is not in the prelude")
-                && diagnostic.contains("use core.ops.Neg")
+                && diagnostic.contains("use std.ops.Neg")
         }));
 
-        let imported_unary = format!("use core.ops.Neg\n{missing_unary}").replace(
+        let imported_unary = format!("use std.ops.Neg\n{missing_unary}").replace(
             "let main(): i32 = { 0 }",
             "let main(): i32 = { (-Number { value: 42 }).value }",
         );
@@ -282,10 +282,10 @@ mod tests {
         let errors = compile_source(missing_bitwise).unwrap_err();
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `BitAnd` is not in the prelude")
-                && diagnostic.contains("use core.ops.BitAnd")
+                && diagnostic.contains("use std.ops.BitAnd")
         }));
 
-        let imported_bitwise = format!("use core.ops.BitAnd\n{missing_bitwise}").replace(
+        let imported_bitwise = format!("use std.ops.BitAnd\n{missing_bitwise}").replace(
             "let main(): i32 = { 0 }",
             "let main(): i32 = { (Bits { value: 6 } & Bits { value: 3 }).value }",
         );

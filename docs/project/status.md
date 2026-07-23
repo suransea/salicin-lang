@@ -16,7 +16,7 @@ The unit type has one source spelling, `()`; the former `void` alias is removed 
 uninhabited prelude enum is spelled `Never`; the former lowercase `never` spelling has no
 compatibility alias.
 `Option` and `Result` are ordinary root `core` definitions rather than prelude exports, so source
-that names them imports `core.Option` or `core.Result`. `Result` is curried as
+that names them imports `std.Option` or `std.Result`. `Result` is curried as
 `Result(Error)(Value)`, making `Result(Error)` the standard unary constructor for HKT protocols.
 
 Transparent type aliases and type-constructor aliases are implemented. `let Scalar = i32`,
@@ -31,15 +31,15 @@ modules: `core.effects` owns `Unsafe`, `Throws(Error)` with `raise(move error: E
 an ordinary `Async` effect with a minimal `suspend(): ()` operation; `core.domains` owns the
 `type`, `region`, `effect`, `access`, and `passing` compile-time domains; `core.control` owns source
 definitions for `do`, `try`, `throw`, and `unsafe`, plus the remaining bodyless intrinsic signature
-for `loop`; `core.ops` owns the standard `Chain` and `Coalesce` protocol declarations for
+for `loop`; `core.flow` owns the standard `Chain` and `Coalesce` protocol declarations for
 `?.` and `??`. These exports remain outside the prelude. `await` is
 intentionally absent until the async/Future lowering slice is implemented, at which point its
 executable standard-library contract must land with the implementation.
 `Never`-returning algebraic operations are handled as abort operations whose clauses omit `resume`,
 so `Throws(Error).raise` can now be exercised through the same handler path as user-defined effects.
-`throw(error)` reads the validated source-backed `core.control.throw` function and then calls the
+`throw(error)` reads the validated source-backed `std.control.throw` function and then calls the
 ordinary `Throws(Error).raise` operation when the active row has a unique standard `Throws(Error)`
-effect. `core.control.try` is likewise source-backed: it declares its action requirement as
+effect. `std.control.try` is likewise source-backed: it declares its action requirement as
 `Throws(E)` and materializes ordinary `Throws(Error)` as `core.Result(Error)(T)` through
 `Throws(Error).handle`. Context-free ordinary `Throws` inference now
 covers direct standard-effect function calls, local function values, explicitly instantiated generic
@@ -74,7 +74,7 @@ Structured control flow includes `while`, value-producing `loop`, `break`, and `
 `continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs
 all lexical cleanup required when leaving nested scopes before starting the next iteration.
 `for name in value { ... }` and `for _ in value { ... }` lower through validated, source-backed
-`core.iter.IntoIterator` and `core.iter.Iterator` identities. The iterable is evaluated once,
+`std.iter.IntoIterator` and `std.iter.Iterator` identities. The iterable is evaluated once,
 `into_iter` consumes it, and each iteration mutably borrows the iterator for `next`; unrelated
 same-named methods cannot intercept the lowering. Break, continue, ownership flow, and cleanup reuse
 the ordinary loop machinery.
@@ -89,7 +89,7 @@ Arithmetic, bitwise, and shift compound assignment (`+=`, `-=`, `*=`, `/=`, `%=`
 Built-in integers retain checked trap boundaries, while nominal values dispatch through the
 source-backed `core.ops` `*Assign` traits with a mutable receiver borrow. Same-named ordinary methods
 cannot intercept operator lowering.
-`core.ops.Chain` uses a `Rebind(Value: type): type` generic associated constructor and `Coalesce`
+`std.flow.Chain` uses a `Rebind(Value: type): type` generic associated constructor and `Coalesce`
 uses an effect-forwarding fallback closure. The compiler accepts such GAT declarations and
 method-signature references. Concrete and generic nominal trait implementations can bind a direct
 generic nominal constructor such as `let Rebind = Maybe`; the constructor source is substituted into
@@ -98,8 +98,8 @@ implementation methods can carry matching compile-time parameter groups and are 
 generic templates, which unblocks source-level protocol methods such as `coalesce(E)` and
 `chain(E, U)`. GAT where-predicate equalities, partial constructor applications, and broader
 constructor equation solving remain future work. `??` now dispatches non-`Option`/`Result` nominal
-values through `core.ops.Coalesce` when its fallback can be represented as a no-capture lifted
-function. `?.` now dispatches non-`Option`/`Result` nominal values through `core.ops.Chain` under
+values through `std.flow.Coalesce` when its fallback can be represented as a no-capture lifted
+function. `?.` now dispatches non-`Option`/`Result` nominal values through `std.flow.Chain` under
 the same no-capture transform limit; simple field access is covered, while transforms that capture
 outer call arguments still require the general callable-to-function bridge. The root
 `core.Option`/`core.Result` paths remain available.
@@ -228,10 +228,11 @@ active row through its immediate closure boundary, including recoverable-error, 
 and nominal marker effects. Capturing closure values, generic trait methods, the remaining general
 algebraic-continuation ABI, and async color lowering remain design or implementation work.
 
-`core` and `alloc` are mounted in ordinary module resolution. `core.ops` traits and alloc containers
-are not part of the prelude. `Box`, `Vec`, and their free functions require
-`use alloc.boxed...` / `use alloc.vec...` (or a qualified path), while operator traits require
-`use core.ops...` when named. Their internal identities remain isolated from same-named user
+`std` is the preferred public standard-library facade, backed by lower-level `core` and `alloc`
+namespaces in ordinary module resolution. Operator/flow traits and alloc containers are not part of
+the prelude. `Box`, `Vec`, and their free functions require
+`use std.boxed...` / `use std.vec...` (or a qualified path), while operator and flow traits require
+`use std.ops...` / `use std.flow...` when named. Their internal identities remain isolated from same-named user
 declarations; operator syntax continues to dispatch through validated lang items.
 
 The implementation is broad but not stable. Important incomplete boundaries include:

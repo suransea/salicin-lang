@@ -1,6 +1,6 @@
-use core.Result
+use std.Result
 
-use core.effects.{Throws, Async}
+use std.effect.{Throws, Async}
 
 let fail_with_answer(): Never with(Throws(i32)) = {
   Throws(i32).raise(42)

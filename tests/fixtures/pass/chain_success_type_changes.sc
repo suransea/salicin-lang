@@ -1,4 +1,4 @@
-use core.Result
+use std.Result
 
 let Boxed = struct { answer: bool }
 

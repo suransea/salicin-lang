@@ -21,14 +21,15 @@ use crate::parser;
 const EDITION_2026_PRELUDE: &str = include_str!("../../library/core/src/prelude.sc");
 const EDITION_2026_ROOT: &str = include_str!("../../library/core/src/root.sc");
 const EDITION_2026_OPS: &str = include_str!("../../library/core/src/ops.sc");
+const EDITION_2026_FLOW: &str = include_str!("../../library/core/src/flow.sc");
 const EDITION_2026_EFFECTS: &str = include_str!("../../library/core/src/effects.sc");
 const EDITION_2026_DOMAINS: &str = include_str!("../../library/core/src/domains.sc");
 const EDITION_2026_CONTROL: &str = include_str!("../../library/core/src/control.sc");
 const EDITION_2026_ITER: &str = include_str!("../../library/core/src/iter.sc");
 const EDITION_2026_ALGEBRA: &str = include_str!("../../library/core/src/algebra.sc");
 const EDITION_2026_FUNCTIONAL: &str = include_str!("../../library/core/src/functional.sc");
-const EDITION_2026_OPTION_MONAD: &str = include_str!("../../library/core/src/option_monad.sc");
-const EDITION_2026_RESULT_MONAD: &str = include_str!("../../library/core/src/result_monad.sc");
+const EDITION_2026_OPTION: &str = include_str!("../../library/core/src/option.sc");
+const EDITION_2026_RESULT: &str = include_str!("../../library/core/src/result.sc");
 
 const NON_LANG_ITEM_CORE_MODULES: &[&str] = &["core", "effects", "algebra", "functional"];
 
@@ -714,14 +715,15 @@ impl CoreBundle {
                     ("prelude", EDITION_2026_PRELUDE),
                     ("core", EDITION_2026_ROOT),
                     ("ops", EDITION_2026_OPS),
+                    ("flow", EDITION_2026_FLOW),
                     ("effects", EDITION_2026_EFFECTS),
                     ("domains", EDITION_2026_DOMAINS),
                     ("control", EDITION_2026_CONTROL),
                     ("iter", EDITION_2026_ITER),
                     ("algebra", EDITION_2026_ALGEBRA),
                     ("functional", EDITION_2026_FUNCTIONAL),
-                    ("option_monad", EDITION_2026_OPTION_MONAD),
-                    ("result_monad", EDITION_2026_RESULT_MONAD),
+                    ("option", EDITION_2026_OPTION),
+                    ("result", EDITION_2026_RESULT),
                 ],
             ),
         }
@@ -945,6 +947,13 @@ pub const fn embedded_ops_source(edition: Edition) -> &'static str {
     }
 }
 
+/// Return the flow protocol source compiled into this compiler.
+pub const fn embedded_flow_source(edition: Edition) -> &'static str {
+    match edition {
+        Edition::Edition2026 => EDITION_2026_FLOW,
+    }
+}
+
 /// Return the effect protocol source compiled into this compiler.
 pub const fn embedded_effects_source(edition: Edition) -> &'static str {
     match edition {
@@ -983,9 +992,6 @@ pub const fn embedded_algebra_source(edition: Edition) -> &'static str {
 fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, CoreBundleError> {
     let mut diagnostics = Vec::new();
 
-    if !program.uses.is_empty() {
-        diagnostics.push("embedded core bundle must not contain `use` declarations".to_owned());
-    }
     if program.items.len() != program.item_visibilities.len()
         || program.items.len() != program.item_origins.len()
     {
@@ -2326,9 +2332,10 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::BitOr
                 | LangItemKind::BitXor
                 | LangItemKind::Shl
-                | LangItemKind::Shr
-                | LangItemKind::Chain
-                | LangItemKind::Coalesce => format!("core::ops::{}", kind.source_name()),
+                | LangItemKind::Shr => format!("core::ops::{}", kind.source_name()),
+                LangItemKind::Chain | LangItemKind::Coalesce => {
+                    format!("core::flow::{}", kind.source_name())
+                }
                 LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect => {
                     format!("core::effects::{}", kind.source_name())
                 }
@@ -2393,9 +2400,8 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::BitOr
                 | LangItemKind::BitXor
                 | LangItemKind::Shl
-                | LangItemKind::Shr
-                | LangItemKind::Chain
-                | LangItemKind::Coalesce => "ops",
+                | LangItemKind::Shr => "ops",
+                LangItemKind::Chain | LangItemKind::Coalesce => "flow",
                 LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect => "effects",
                 LangItemKind::TypeDomain
                 | LangItemKind::RegionDomain
@@ -2462,6 +2468,7 @@ pub let Shr(Rhs: type) = trait {
                 ("prelude", EDITION_2026_PRELUDE),
                 ("core", EDITION_2026_ROOT),
                 ("ops", EDITION_2026_OPS),
+                ("flow", EDITION_2026_FLOW),
                 ("effects", EDITION_2026_EFFECTS),
                 ("domains", EDITION_2026_DOMAINS),
                 ("control", &malformed),
@@ -2484,6 +2491,7 @@ pub let Shr(Rhs: type) = trait {
                 ("prelude", EDITION_2026_PRELUDE),
                 ("core", EDITION_2026_ROOT),
                 ("ops", EDITION_2026_OPS),
+                ("flow", EDITION_2026_FLOW),
                 ("effects", EDITION_2026_EFFECTS),
                 ("domains", EDITION_2026_DOMAINS),
                 ("control", &bodyless),
@@ -2506,6 +2514,7 @@ pub let Shr(Rhs: type) = trait {
                 ("prelude", EDITION_2026_PRELUDE),
                 ("core", EDITION_2026_ROOT),
                 ("ops", EDITION_2026_OPS),
+                ("flow", EDITION_2026_FLOW),
                 ("effects", EDITION_2026_EFFECTS),
                 ("domains", EDITION_2026_DOMAINS),
                 ("control", &malformed),
@@ -2528,6 +2537,7 @@ pub let Shr(Rhs: type) = trait {
                 ("prelude", EDITION_2026_PRELUDE),
                 ("core", EDITION_2026_ROOT),
                 ("ops", EDITION_2026_OPS),
+                ("flow", EDITION_2026_FLOW),
                 ("effects", EDITION_2026_EFFECTS),
                 ("domains", EDITION_2026_DOMAINS),
                 ("control", &malformed),
@@ -2550,6 +2560,7 @@ pub let Shr(Rhs: type) = trait {
                 ("prelude", EDITION_2026_PRELUDE),
                 ("core", EDITION_2026_ROOT),
                 ("ops", EDITION_2026_OPS),
+                ("flow", EDITION_2026_FLOW),
                 ("effects", EDITION_2026_EFFECTS),
                 ("domains", EDITION_2026_DOMAINS),
                 ("control", &malformed),
@@ -2575,6 +2586,7 @@ pub let Shr(Rhs: type) = trait {
                 ("prelude", EDITION_2026_PRELUDE),
                 ("core", EDITION_2026_ROOT),
                 ("ops", EDITION_2026_OPS),
+                ("flow", EDITION_2026_FLOW),
                 ("effects", EDITION_2026_EFFECTS),
                 ("domains", EDITION_2026_DOMAINS),
                 ("control", EDITION_2026_CONTROL),
@@ -2600,6 +2612,7 @@ pub let Shr(Rhs: type) = trait {
                 ("prelude", EDITION_2026_PRELUDE),
                 ("core", EDITION_2026_ROOT),
                 ("ops", &malformed),
+                ("flow", EDITION_2026_FLOW),
                 ("effects", EDITION_2026_EFFECTS),
                 ("domains", EDITION_2026_DOMAINS),
                 ("control", EDITION_2026_CONTROL),
@@ -2616,13 +2629,14 @@ pub let Shr(Rhs: type) = trait {
     #[test]
     fn rejects_malformed_chain_and_coalesce_contracts() {
         let malformed =
-            EDITION_2026_OPS.replace("let Rebind(Value: type): type", "let Rebind: type");
+            EDITION_2026_FLOW.replace("let Rebind(Value: type): type", "let Rebind: type");
         let error = CoreBundle::from_modules(
             Edition::Edition2026,
             &[
                 ("prelude", EDITION_2026_PRELUDE),
                 ("core", EDITION_2026_ROOT),
-                ("ops", &malformed),
+                ("ops", EDITION_2026_OPS),
+                ("flow", &malformed),
                 ("effects", EDITION_2026_EFFECTS),
                 ("domains", EDITION_2026_DOMAINS),
                 ("control", EDITION_2026_CONTROL),
@@ -2635,7 +2649,7 @@ pub let Shr(Rhs: type) = trait {
             .iter()
             .any(|diagnostic| diagnostic.contains("lang item `Chain`")));
 
-        let malformed = EDITION_2026_OPS.replace(
+        let malformed = EDITION_2026_FLOW.replace(
             "let coalesce(E: effect)\n    (move self)\n    (move fallback: (): Item with(E)): Item with(E)",
             "let coalesce(move self)\n    (move fallback: (): Item): Item",
         );
@@ -2644,7 +2658,8 @@ pub let Shr(Rhs: type) = trait {
             &[
                 ("prelude", EDITION_2026_PRELUDE),
                 ("core", EDITION_2026_ROOT),
-                ("ops", &malformed),
+                ("ops", EDITION_2026_OPS),
+                ("flow", &malformed),
                 ("effects", EDITION_2026_EFFECTS),
                 ("domains", EDITION_2026_DOMAINS),
                 ("control", EDITION_2026_CONTROL),

@@ -1,6 +1,6 @@
-use core.Option
+use std.Option
 
-use alloc.boxed.{Box, box_new}
+use std.boxed.{Box, box_new}
 
 let Node = struct { value: i32, next: Option(Box(Node)) }
 

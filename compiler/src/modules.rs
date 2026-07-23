@@ -35,6 +35,9 @@ impl PackageId {
     /// Compiler-owned package identity used by the edition-pinned `alloc`
     /// bundle. Source package graphs must never claim this identity.
     pub const ALLOC: Self = Self(usize::MAX - 1);
+    /// Compiler-owned package identity reserved for the public `std` facade.
+    /// Source package graphs must never claim this identity.
+    pub const STD: Self = Self(usize::MAX - 2);
 }
 
 /// All source files and direct dependency aliases belonging to one package.
@@ -144,7 +147,10 @@ fn resolve_packages_impl(
 
     let (mut symbols, mut module_paths, mut collection_diagnostics) =
         collect_symbols(&parsed, &dependencies);
-    let required_imports = if standard_library.expose_core || standard_library.expose_alloc {
+    let required_imports = if standard_library.expose_core
+        || standard_library.expose_alloc
+        || standard_library.expose_std
+    {
         install_standard_namespaces(
             &parsed,
             &mut symbols,
@@ -279,6 +285,7 @@ enum DeclarationNamespace {
 struct StandardLibraryExposure {
     expose_core: bool,
     expose_alloc: bool,
+    expose_std: bool,
     allow_source_standard_modules: bool,
 }
 
@@ -287,6 +294,7 @@ impl StandardLibraryExposure {
         Self {
             expose_core: true,
             expose_alloc: true,
+            expose_std: true,
             allow_source_standard_modules: false,
         }
     }
@@ -295,6 +303,7 @@ impl StandardLibraryExposure {
         Self {
             expose_core: false,
             expose_alloc: false,
+            expose_std: false,
             allow_source_standard_modules: true,
         }
     }
@@ -303,6 +312,7 @@ impl StandardLibraryExposure {
         Self {
             expose_core: true,
             expose_alloc: false,
+            expose_std: false,
             allow_source_standard_modules: true,
         }
     }
@@ -379,9 +389,8 @@ const CORE_OPS_EXPORTS: &[&str] = &[
     "BitXor",
     "Shl",
     "Shr",
-    "Chain",
-    "Coalesce",
 ];
+const CORE_FLOW_EXPORTS: &[&str] = &["Chain", "Coalesce"];
 const CORE_EFFECTS_EXPORTS: &[&str] = &["Unsafe", "Throws", "Async"];
 const CORE_DOMAIN_EXPORTS: &[&str] = &["type", "region", "effect", "access", "passing", "borrow"];
 const CORE_CONTROL_EXPORTS: &[&str] = &[
@@ -398,6 +407,113 @@ const CORE_ITER_EXPORTS: &[&str] = &["Iterator", "IntoIterator"];
 const CORE_ALGEBRA_EXPORTS: &[&str] = &["Semigroup", "Monoid"];
 const CORE_FUNCTIONAL_EXPORTS: &[&str] = &["Functor", "Applicative", "Monad"];
 
+const STD_ROOT_EXPORTS: &[(&str, &str)] = &[
+    ("Never", "Never"),
+    ("Copy", "Copy"),
+    ("Drop", "Drop"),
+    ("Option", "core::Option"),
+    ("Result", "core::Result"),
+];
+
+const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
+    ("prelude", "Never", "Never"),
+    ("prelude", "Copy", "Copy"),
+    ("prelude", "Drop", "Drop"),
+    ("marker", "Copy", "Copy"),
+    ("marker", "Drop", "Drop"),
+    ("option", "Option", "core::Option"),
+    ("result", "Result", "core::Result"),
+    ("ops", "Add", "core::ops::Add"),
+    ("ops", "Sub", "core::ops::Sub"),
+    ("ops", "Mul", "core::ops::Mul"),
+    ("ops", "Div", "core::ops::Div"),
+    ("ops", "Rem", "core::ops::Rem"),
+    ("ops", "AddAssign", "core::ops::AddAssign"),
+    ("ops", "SubAssign", "core::ops::SubAssign"),
+    ("ops", "MulAssign", "core::ops::MulAssign"),
+    ("ops", "DivAssign", "core::ops::DivAssign"),
+    ("ops", "RemAssign", "core::ops::RemAssign"),
+    ("ops", "BitAndAssign", "core::ops::BitAndAssign"),
+    ("ops", "BitOrAssign", "core::ops::BitOrAssign"),
+    ("ops", "BitXorAssign", "core::ops::BitXorAssign"),
+    ("ops", "ShlAssign", "core::ops::ShlAssign"),
+    ("ops", "ShrAssign", "core::ops::ShrAssign"),
+    ("ops", "Eq", "core::ops::Eq"),
+    ("ops", "PartialOrdering", "core::ops::PartialOrdering"),
+    ("ops", "PartialOrd", "core::ops::PartialOrd"),
+    ("ops", "Neg", "core::ops::Neg"),
+    ("ops", "Not", "core::ops::Not"),
+    ("ops", "BitAnd", "core::ops::BitAnd"),
+    ("ops", "BitOr", "core::ops::BitOr"),
+    ("ops", "BitXor", "core::ops::BitXor"),
+    ("ops", "Shl", "core::ops::Shl"),
+    ("ops", "Shr", "core::ops::Shr"),
+    ("ops", "Chain", "core::flow::Chain"),
+    ("ops", "Coalesce", "core::flow::Coalesce"),
+    ("cmp", "Eq", "core::ops::Eq"),
+    ("cmp", "PartialOrdering", "core::ops::PartialOrdering"),
+    ("cmp", "PartialOrd", "core::ops::PartialOrd"),
+    ("flow", "Chain", "core::flow::Chain"),
+    ("flow", "Coalesce", "core::flow::Coalesce"),
+    ("effect", "Unsafe", "core::effects::Unsafe"),
+    ("effect", "Throws", "core::effects::Throws"),
+    ("effect", "Async", "core::effects::Async"),
+    ("effects", "Unsafe", "core::effects::Unsafe"),
+    ("effects", "Throws", "core::effects::Throws"),
+    ("effects", "Async", "core::effects::Async"),
+    ("domains", "type", "core::domains::type"),
+    ("domains", "region", "core::domains::region"),
+    ("domains", "effect", "core::domains::effect"),
+    ("domains", "access", "core::domains::access"),
+    ("domains", "passing", "core::domains::passing"),
+    ("domains", "borrow", "core::domains::borrow"),
+    ("control", "Continuation", "core::control::Continuation"),
+    ("control", "EffectCallable", "core::control::EffectCallable"),
+    ("control", "Handle", "core::control::Handle"),
+    ("control", "do", "core::control::do"),
+    ("control", "try", "core::control::try"),
+    ("control", "throw", "core::control::throw"),
+    ("control", "unsafe", "core::control::unsafe"),
+    ("control", "loop", "core::control::loop"),
+    ("iter", "Iterator", "core::iter::Iterator"),
+    ("iter", "IntoIterator", "core::iter::IntoIterator"),
+    ("algebra", "Semigroup", "core::algebra::Semigroup"),
+    ("algebra", "Monoid", "core::algebra::Monoid"),
+    ("functional", "Functor", "core::functional::Functor"),
+    ("functional", "Applicative", "core::functional::Applicative"),
+    ("functional", "Monad", "core::functional::Monad"),
+    ("boxed", "Box", "alloc::boxed::Box"),
+    ("boxed", "box_new", "alloc::boxed::box_new"),
+    ("boxed", "box_ptr", "alloc::boxed::box_ptr"),
+    ("boxed", "box_read", "alloc::boxed::box_read"),
+    ("boxed", "box_write", "alloc::boxed::box_write"),
+    ("boxed", "box_into_inner", "alloc::boxed::box_into_inner"),
+    ("boxed", "box_replace", "alloc::boxed::box_replace"),
+    ("boxed", "box_as_ref", "alloc::boxed::box_as_ref"),
+    ("vec", "Vec", "alloc::vec::Vec"),
+    ("vec", "vec_new", "alloc::vec::vec_new"),
+    ("vec", "vec_with_capacity", "alloc::vec::vec_with_capacity"),
+    ("vec", "vec_len", "alloc::vec::vec_len"),
+    ("vec", "vec_capacity", "alloc::vec::vec_capacity"),
+    ("vec", "vec_at", "alloc::vec::vec_at"),
+    ("vec", "vec_reserve", "alloc::vec::vec_reserve"),
+    ("vec", "vec_push", "alloc::vec::vec_push"),
+    ("vec", "vec_replace", "alloc::vec::vec_replace"),
+    ("vec", "vec_pop", "alloc::vec::vec_pop"),
+    ("vec", "vec_truncate", "alloc::vec::vec_truncate"),
+    ("vec", "vec_clear", "alloc::vec::vec_clear"),
+    ("vec", "vec_is_empty", "alloc::vec::vec_is_empty"),
+    ("vec", "vec_swap_remove", "alloc::vec::vec_swap_remove"),
+    ("vec", "vec_swap", "alloc::vec::vec_swap"),
+    ("vec", "vec_reverse", "alloc::vec::vec_reverse"),
+    ("vec", "vec_insert", "alloc::vec::vec_insert"),
+    ("vec", "vec_remove", "alloc::vec::vec_remove"),
+    ("vec", "vec_append", "alloc::vec::vec_append"),
+    ("vec", "vec_shrink_to_fit", "alloc::vec::vec_shrink_to_fit"),
+    ("vec", "vec_read", "alloc::vec::vec_read"),
+    ("vec", "vec_write", "alloc::vec::vec_write"),
+];
+
 fn validate_package_layout(
     packages: &[SourcePackage],
     allow_standard_namespaces: bool,
@@ -412,14 +528,18 @@ fn validate_package_layout(
 
     let mut package_roots = HashMap::new();
     for package in packages {
-        if package.id == PackageId::CORE || package.id == PackageId::ALLOC {
+        if matches!(
+            package.id,
+            PackageId::CORE | PackageId::ALLOC | PackageId::STD
+        ) {
             diagnostics.push(format!(
                 "<packages>: error: package ID {} is reserved for compiler {}",
                 package.id.0,
-                if package.id == PackageId::CORE {
-                    "core"
-                } else {
-                    "alloc"
+                match package.id {
+                    PackageId::CORE => "core",
+                    PackageId::ALLOC => "alloc",
+                    PackageId::STD => "std",
+                    _ => unreachable!("reserved package ID check is exhaustive"),
                 }
             ));
         }
@@ -444,7 +564,7 @@ fn validate_package_layout(
         };
         let mut aliases = BTreeMap::new();
         for (alias, target_id) in &package.dependencies {
-            if matches!(alias.as_str(), "core" | "alloc") && !allow_standard_namespaces {
+            if is_reserved_standard_namespace(alias) && !allow_standard_namespaces {
                 diagnostics.push(format!(
                     "<package {}>: error: dependency alias `{alias}` conflicts with the standard-library namespace",
                     package.id.0,
@@ -521,7 +641,7 @@ fn validate_package_layout(
                 }
             }
             if let Some(first) = source.module_path.first() {
-                if matches!(first.as_str(), "core" | "alloc") && !allow_standard_namespaces {
+                if is_reserved_standard_namespace(first) && !allow_standard_namespaces {
                     diagnostics.push(format!(
                         "{}: error: top-level module `{first}` conflicts with the standard-library namespace",
                         source.path,
@@ -877,6 +997,9 @@ fn install_standard_namespaces(
         for name in CORE_OPS_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.ops.{name}"));
         }
+        for name in CORE_FLOW_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.flow.{name}"));
+        }
         for name in CORE_EFFECTS_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.effects.{name}"));
         }
@@ -893,6 +1016,23 @@ fn install_standard_namespaces(
             required_imports.insert((*name).to_owned(), format!("core.iter.{name}"));
         }
     }
+    if exposure.expose_std {
+        for (name, _) in STD_ROOT_EXPORTS {
+            if CORE_PRELUDE_EXPORTS.contains(name) {
+                continue;
+            }
+            required_imports.insert((*name).to_owned(), format!("std.{name}"));
+        }
+        for (module, name, _) in STD_MODULE_EXPORTS {
+            if matches!(
+                *module,
+                "prelude" | "marker" | "option" | "result" | "cmp" | "effects"
+            ) {
+                continue;
+            }
+            required_imports.insert((*name).to_owned(), format!("std.{module}.{name}"));
+        }
+    }
 
     for package_root in package_roots {
         if exposure.expose_core {
@@ -902,9 +1042,17 @@ fn install_standard_namespaces(
         if exposure.expose_alloc {
             install_alloc_namespace(symbols, module_paths, diagnostics, &package_root);
         }
+
+        if exposure.expose_std {
+            install_std_namespace(symbols, module_paths, diagnostics, &package_root);
+        }
     }
 
     required_imports
+}
+
+fn is_reserved_standard_namespace(name: &str) -> bool {
+    matches!(name, "core" | "alloc" | "std")
 }
 
 fn install_core_namespace(
@@ -930,14 +1078,15 @@ fn install_core_namespace(
         for module in [
             "prelude",
             "ops",
+            "flow",
             "effects",
             "domains",
             "control",
             "iter",
             "algebra",
             "functional",
-            "option_monad",
-            "result_monad",
+            "option",
+            "result",
         ] {
             let mut module_path = core_root.clone();
             module_path.push(module.to_owned());
@@ -983,6 +1132,38 @@ fn install_core_namespace(
                 logical_path,
                 Symbol {
                     canonical: format!("core::ops::{name}"),
+                    module_path,
+                    package_root: package_root.to_vec(),
+                    visibility: Visibility::Public,
+                    source_path: "<core>".to_owned(),
+                },
+            );
+        }
+        for name in CORE_FLOW_EXPORTS {
+            let mut module_path = core_root.clone();
+            module_path.push("flow".to_owned());
+            let mut logical_path = module_path.clone();
+            logical_path.push((*name).to_owned());
+            symbols.insert(
+                logical_path,
+                Symbol {
+                    canonical: format!("core::flow::{name}"),
+                    module_path,
+                    package_root: package_root.to_vec(),
+                    visibility: Visibility::Public,
+                    source_path: "<core>".to_owned(),
+                },
+            );
+        }
+        for name in CORE_FLOW_EXPORTS {
+            let mut module_path = core_root.clone();
+            module_path.push("ops".to_owned());
+            let mut logical_path = module_path.clone();
+            logical_path.push((*name).to_owned());
+            symbols.insert(
+                logical_path,
+                Symbol {
+                    canonical: format!("core::flow::{name}"),
                     module_path,
                     package_root: package_root.to_vec(),
                     visibility: Visibility::Public,
@@ -1131,6 +1312,86 @@ fn install_alloc_namespace(
                 package_root: package_root.to_vec(),
                 visibility: Visibility::Public,
                 source_path: "<alloc>".to_owned(),
+            },
+        );
+    }
+}
+
+fn install_std_namespace(
+    symbols: &mut SymbolTable,
+    module_paths: &mut HashSet<Vec<String>>,
+    diagnostics: &mut Vec<String>,
+    package_root: &[String],
+) {
+    let mut std_root = package_root.to_vec();
+    std_root.push("std".to_owned());
+    if module_paths.contains(&std_root) {
+        diagnostics.push(
+            "<package>: error: top-level module `std` conflicts with the standard-library namespace"
+                .to_owned(),
+        );
+        return;
+    }
+    if let Some(symbol) = symbols.get(&std_root) {
+        diagnostics.push(format!(
+            "{}: error: root declaration `std` conflicts with the standard-library namespace",
+            symbol.source_path
+        ));
+        return;
+    }
+
+    module_paths.insert(std_root.clone());
+    for module in [
+        "prelude",
+        "marker",
+        "option",
+        "result",
+        "ops",
+        "cmp",
+        "flow",
+        "effect",
+        "effects",
+        "domains",
+        "control",
+        "iter",
+        "algebra",
+        "functional",
+        "boxed",
+        "vec",
+    ] {
+        let mut module_path = std_root.clone();
+        module_path.push(module.to_owned());
+        module_paths.insert(module_path);
+    }
+
+    for (name, canonical) in STD_ROOT_EXPORTS {
+        let mut logical_path = std_root.clone();
+        logical_path.push((*name).to_owned());
+        symbols.insert(
+            logical_path,
+            Symbol {
+                canonical: (*canonical).to_owned(),
+                module_path: std_root.clone(),
+                package_root: package_root.to_vec(),
+                visibility: Visibility::Public,
+                source_path: "<std>".to_owned(),
+            },
+        );
+    }
+
+    for (module, name, canonical) in STD_MODULE_EXPORTS {
+        let mut module_path = std_root.clone();
+        module_path.push((*module).to_owned());
+        let mut logical_path = module_path.clone();
+        logical_path.push((*name).to_owned());
+        symbols.insert(
+            logical_path,
+            Symbol {
+                canonical: (*canonical).to_owned(),
+                module_path,
+                package_root: package_root.to_vec(),
+                visibility: Visibility::Public,
+                source_path: "<std>".to_owned(),
             },
         );
     }
@@ -3248,7 +3509,7 @@ mod tests {
             unit(
                 "src/main.sc",
                 &[],
-                "use core.Option\n\
+                "use std.Option\n\
                  let keep(math: i32): i32 = {\n\
                    let local = { (math: i32) -> math }\n\
                    Option.Some(math) match { Option.Some(math) => local(math), _ => math }\n\
@@ -4424,7 +4685,7 @@ let main(): i32 = { Option {} }
         let program = resolve_sources(&[unit(
             "main.sc",
             &[],
-            "use alloc.boxed.Box as HeapBox\nuse alloc.vec.Vec\n\
+            "use std.boxed.Box as HeapBox\nuse std.vec.Vec\n\
              let keep(move boxed: HeapBox(i32)): HeapBox(i32) = { boxed }\n\
              let empty(): Vec(i32) = { Vec(i32).new() }\n",
             true,
@@ -4442,7 +4703,7 @@ let main(): i32 = { Option {} }
         let operator = resolve_sources(&[unit(
             "operator.sc",
             &[],
-            "use core.ops.Add as Plus\n\
+            "use std.ops.Add as Plus\n\
              let Number = struct { value: i32 }\n\
              extend Number: Plus(Number) {\n\
                let Output = Number\n\
@@ -4457,11 +4718,36 @@ let main(): i32 = { Option {} }
                     Some(Type::Named(name, _)) if name == "core::ops::Add"))
         }));
 
+        let flow = resolve_sources(&[unit(
+            "flow.sc",
+            &[],
+            "use std.flow.Chain\n\
+             use std.ops.Coalesce as OpsCoalesce\n\
+             use core.ops.Coalesce as LegacyCoalesce\n\
+             let Maybe(T: type) = enum { Some(T), None }\n\
+             let LegacyMaybe(T: type) = enum { Some(T), None }\n\
+             extend(T: type) Maybe(T): Chain {}\n\
+             extend(T: type) Maybe(T): OpsCoalesce {}\n\
+             extend(T: type) LegacyMaybe(T): LegacyCoalesce {}\n",
+            true,
+        )])
+        .unwrap();
+        assert!(flow.items.iter().any(|item| {
+            matches!(item, Item::Extend(extension)
+                if matches!(&extension.trait_ref,
+                    Some(Type::Named(name, _)) if name == "core::flow::Chain"))
+        }));
+        assert!(flow.items.iter().any(|item| {
+            matches!(item, Item::Extend(extension)
+                if matches!(&extension.trait_ref,
+                    Some(Type::Named(name, _)) if name == "core::flow::Coalesce"))
+        }));
+
         let standard_modules = resolve_sources(&[unit(
             "standard.sc",
             &[],
-            "use core.effects.Async\n\
-             use core.algebra.{Semigroup, Monoid}\n\
+            "use std.effect.Async\n\
+             use std.algebra.{Semigroup, Monoid}\n\
              let Number = struct { value: i32 }\n\
              let suspended(): i32 with(Async) = { 0 }\n\
              let invoke(move action: (): i32 with(Async)): i32 with(Async) = { action() }\n\
@@ -4504,7 +4790,31 @@ let main(): i32 = { Option {} }
         .unwrap_err();
         assert!(bare.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `Box` is not in the prelude")
-                && diagnostic.contains("use alloc.boxed.Box")
+                && diagnostic.contains("use std.boxed.Box")
+        }));
+
+        let bare_option = resolve_sources(&[unit(
+            "option.sc",
+            &[],
+            "let maybe(): Option(i32) = { Option.None }\n",
+            true,
+        )])
+        .unwrap_err();
+        assert!(bare_option.iter().any(|diagnostic| {
+            diagnostic.contains("standard-library item `Option` is not in the prelude")
+                && diagnostic.contains("use std.Option")
+        }));
+
+        let bare_result = resolve_sources(&[unit(
+            "result.sc",
+            &[],
+            "let outcome(): Result(bool)(i32) = { Result.Ok(1) }\n",
+            true,
+        )])
+        .unwrap_err();
+        assert!(bare_result.iter().any(|diagnostic| {
+            diagnostic.contains("standard-library item `Result` is not in the prelude")
+                && diagnostic.contains("use std.Result")
         }));
 
         let bare_operator = resolve_sources(&[unit(
@@ -4520,7 +4830,20 @@ let main(): i32 = { Option {} }
         .unwrap_err();
         assert!(bare_operator.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `Add` is not in the prelude")
-                && diagnostic.contains("use core.ops.Add")
+                && diagnostic.contains("use std.ops.Add")
+        }));
+
+        let bare_flow = resolve_sources(&[unit(
+            "flow.sc",
+            &[],
+            "let Maybe(T: type) = enum { Some(T), None }\n\
+             extend(T: type) Maybe(T): Chain {}\n",
+            true,
+        )])
+        .unwrap_err();
+        assert!(bare_flow.iter().any(|diagnostic| {
+            diagnostic.contains("standard-library item `Chain` is not in the prelude")
+                && diagnostic.contains("use std.flow.Chain")
         }));
 
         let bare_effect = resolve_sources(&[unit(
@@ -4532,7 +4855,7 @@ let main(): i32 = { Option {} }
         .unwrap_err();
         assert!(bare_effect.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `Async` is not in the prelude")
-                && diagnostic.contains("use core.effects.Async")
+                && diagnostic.contains("use std.effect.Async")
         }));
 
         let bare_algebra = resolve_sources(&[unit(
@@ -4546,7 +4869,7 @@ let main(): i32 = { Option {} }
         .unwrap_err();
         assert!(bare_algebra.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `Semigroup` is not in the prelude")
-                && diagnostic.contains("use core.algebra.Semigroup")
+                && diagnostic.contains("use std.algebra.Semigroup")
         }));
 
         let bare_functional = resolve_sources(&[unit(
@@ -4559,10 +4882,10 @@ let main(): i32 = { Option {} }
         .unwrap_err();
         assert!(bare_functional.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `Functor` is not in the prelude")
-                && diagnostic.contains("use core.functional.Functor")
+                && diagnostic.contains("use std.functional.Functor")
         }));
 
-        for namespace in ["core", "alloc"] {
+        for namespace in ["core", "alloc", "std"] {
             let module = resolve_sources(&[
                 unit("main.sc", &[], "let main(): i32 = { 0 }\n", true),
                 unit(
@@ -4578,7 +4901,7 @@ let main(): i32 = { Option {} }
                 .any(|diagnostic| diagnostic.contains("standard-library namespace")));
         }
 
-        for namespace in ["core", "alloc"] {
+        for namespace in ["core", "alloc", "std"] {
             let dependency = resolve_packages(&[
                 package(
                     0,
@@ -4621,6 +4944,7 @@ let main(): i32 = { Option {} }
             .map(|name| ("prelude", *name))
             .chain(CORE_ROOT_EXPORTS.iter().map(|name| ("core", *name)))
             .chain(CORE_OPS_EXPORTS.iter().map(|name| ("ops", *name)))
+            .chain(CORE_FLOW_EXPORTS.iter().map(|name| ("flow", *name)))
             .chain(CORE_EFFECTS_EXPORTS.iter().map(|name| ("effects", *name)))
             .chain(CORE_DOMAIN_EXPORTS.iter().map(|name| ("domains", *name)))
             .chain(CORE_CONTROL_EXPORTS.iter().map(|name| ("control", *name)))
@@ -4660,6 +4984,27 @@ let main(): i32 = { Option {} }
             .collect::<BTreeSet<_>>();
         let expected_alloc = ALLOC_EXPORTS.iter().copied().collect::<BTreeSet<_>>();
         assert_eq!(alloc_exports, expected_alloc);
+
+        let mut symbols = SymbolTable::new();
+        let mut module_paths = HashSet::new();
+        let mut diagnostics = Vec::new();
+        install_std_namespace(&mut symbols, &mut module_paths, &mut diagnostics, &[]);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert!(module_paths.contains(&vec!["std".to_owned()]));
+        assert!(module_paths.contains(&vec!["std".to_owned(), "vec".to_owned()]));
+        for (name, canonical) in STD_ROOT_EXPORTS {
+            assert_eq!(
+                symbols[&vec!["std".to_owned(), (*name).to_owned()]].canonical,
+                *canonical
+            );
+        }
+        for (module, name, canonical) in STD_MODULE_EXPORTS {
+            assert_eq!(
+                symbols[&vec!["std".to_owned(), (*module).to_owned(), (*name).to_owned()]]
+                    .canonical,
+                *canonical
+            );
+        }
     }
 
     fn expression_names(expression: Option<&Expr>) -> HashSet<String> {

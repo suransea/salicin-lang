@@ -1,4 +1,4 @@
-use alloc.boxed.Box
+use std.boxed.Box
 
 let main(): i32 = {
   let contextual: Box(i64) = Box.new(42)

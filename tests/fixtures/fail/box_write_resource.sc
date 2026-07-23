@@ -1,4 +1,4 @@
-use alloc.boxed.{Box, box_write}
+use std.boxed.{Box, box_write}
 
 let Resource = struct { value: i32 }
 

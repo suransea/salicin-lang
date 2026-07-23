@@ -1,4 +1,4 @@
-use core.Option
+use std.Option
 
 let Inner = struct { answer: i32 }
 let Middle = struct { inner: Inner }

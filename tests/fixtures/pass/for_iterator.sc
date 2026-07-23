@@ -1,6 +1,6 @@
-use core.Option
+use std.Option
 
-use core.iter.{Iterator, IntoIterator}
+use std.iter.{Iterator, IntoIterator}
 
 let Counter = struct { current: i32, end: i32 }
 

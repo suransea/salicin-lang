@@ -1,4 +1,4 @@
-use core.Option
+use std.Option
 
 let Boxed = struct { value: i32 }
 

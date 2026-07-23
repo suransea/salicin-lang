@@ -1,3 +1,37 @@
+/// Provides `?.` chaining for `Result`.
+extend(Error: type, T: type) core.Result(Error)(T): core.flow.Chain {
+  /// The success payload type.
+  let Item = T
+  /// Rebuilds `Result(Error)` around a transformed success type.
+  let Rebind = core.Result(Error)
+
+  /// Applies `transform` to `Ok` and propagates `Err`.
+  let chain(E: effect, U: type)
+    (move self)
+    (move transform: (T): U with(E)): core.Result(Error)(U) with(E) = {
+    self match {
+      Ok(value) => core.Result.Ok(transform(value)),
+      Err(error) => core.Result.Err(error),
+    }
+  }
+}
+
+/// Provides `??` fallback evaluation for `Result`.
+extend(Error: type, T: type) core.Result(Error)(T): core.flow.Coalesce {
+  /// The success payload type returned by coalescing.
+  let Item = T
+
+  /// Extracts `Ok` or evaluates `fallback` for `Err`.
+  let coalesce(E: effect)
+    (move self)
+    (move fallback: (): T with(E)): T with(E) = {
+    self match {
+      Ok(value) => value,
+      Err(_) => fallback(),
+    }
+  }
+}
+
 /// Implements `Functor` for `Result(Error)`.
 extend(Error: type) core.Result(Error): core.functional.Functor {
   /// Maps `Ok` through `transform` and preserves `Err`.

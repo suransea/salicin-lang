@@ -1,4 +1,4 @@
-use core.Result
+use std.Result
 
 let wrong(): Result(bool)(i32) = { 42 }
 

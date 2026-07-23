@@ -1,4 +1,4 @@
-use core.ops.{Sub, Mul, Div, Rem}
+use std.ops.{Sub, Mul, Div, Rem}
 
 let Number = struct { value: i32 }
 

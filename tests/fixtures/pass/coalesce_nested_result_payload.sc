@@ -1,4 +1,4 @@
-use core.Result
+use std.Result
 
 let main(): i32 = {
   let outer = Result(bool)(Result(bool)(i32)).Err(false)

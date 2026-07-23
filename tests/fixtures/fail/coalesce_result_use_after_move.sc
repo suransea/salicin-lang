@@ -1,4 +1,4 @@
-use core.Result
+use std.Result
 
 let main(): i32 = {
   let value = Result(bool)(i32).Ok(42)

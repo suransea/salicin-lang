@@ -1,4 +1,4 @@
-use core.ops.{PartialOrd, PartialOrdering}
+use std.ops.{PartialOrd, PartialOrdering}
 
 let Number = struct { value: i32, unordered: bool }
 

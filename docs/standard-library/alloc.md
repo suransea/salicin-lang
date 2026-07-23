@@ -6,14 +6,14 @@ replaceable allocator ABI. It is split by public module and is not part of the i
 Alloc names are not implicitly visible. Import only the declarations a module uses:
 
 ```sc
-use alloc.boxed.{Box, box_as_ref}
-use alloc.vec.Vec
+use std.boxed.{Box, box_as_ref}
+use std.vec.Vec
 ```
 
-Qualified paths such as `alloc.boxed.Box` are also valid. `alloc` is supplied by the toolchain and
-does not need to appear in `salicin.toml`.
+Qualified paths such as `std.boxed.Box` are also valid. The underlying `alloc` layer is supplied by
+the toolchain and does not need to appear in `salicin.toml`.
 
-## `alloc.boxed`
+## `std.boxed`
 
 `Box(T)` owns one heap allocation. `box_as_ref(A: access, R: region, T: type)` is the canonical free
 borrow operation: omitted `A` selects shared access and `A: mut` selects exclusive access.
@@ -22,7 +22,7 @@ There is no separately named mutable alias. The rest of the API covers construct
 replacement, Copy reads and writes, and consuming extraction. Destruction recursively drops the
 pointee before releasing storage.
 
-## `alloc.vec`
+## `std.vec`
 
 `Vec(T)` owns contiguous storage and supports both Copy and resource elements. Its API includes
 construction, capacity management, push/pop, insertion/removal, append, truncation, swaps, and

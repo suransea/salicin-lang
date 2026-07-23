@@ -1,4 +1,4 @@
-use core.Option
+use std.Option
 
 let fail(): Option(i32) = {
   throw(true)

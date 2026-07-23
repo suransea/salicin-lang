@@ -1,4 +1,4 @@
-use alloc.vec.{Vec, vec_at}
+use std.vec.{Vec, vec_at}
 
 let Resource = struct { value: i32 }
 
