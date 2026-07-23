@@ -436,7 +436,10 @@ const CORE_DOMAIN_EXPORTS: &[&str] = &[
     "passing",
     "borrow",
 ];
-const CORE_CONTROL_EXPORTS: &[&str] = &["do", "try", "throw", "unsafe", "loop"];
+const CORE_CONTROL_EXPORTS: &[&str] = &[
+    "Break", "Continue", "Return", "break", "continue", "return", "do", "try", "throw", "unsafe",
+    "loop", "while",
+];
 const CORE_ITER_EXPORTS: &[&str] = &["Iterator", "IntoIterator"];
 const CORE_ALGEBRA_EXPORTS: &[&str] = &["Semigroup", "Monoid"];
 const CORE_FUNCTIONAL_EXPORTS: &[&str] = &["Functor", "Applicative", "Monad"];

@@ -2916,6 +2916,22 @@ impl Parser {
                 }
                 Ok(Self::core_control_function("throw"))
             }
+            TokenKind::Ident(ref name) if name == "return" => {
+                self.return_expression(allow_trailing_closure)
+            }
+            TokenKind::Ident(ref name) if name == "while" => self.while_expression(),
+            TokenKind::Ident(ref name)
+                if name == "loop" && self.at_offset(1, &TokenKind::LBrace) =>
+            {
+                self.loop_expression()
+            }
+            TokenKind::Ident(ref name) if name == "break" => {
+                self.break_expression(allow_trailing_closure)
+            }
+            TokenKind::Ident(ref name) if name == "continue" => {
+                self.advance();
+                Ok(Expr::Continue)
+            }
             TokenKind::Ident(ref name) if name == "_" => Err(self.error_at(
                 &token,
                 "`_` is not an expression; omit an inferred compile-time argument group or use a named argument",
@@ -4592,6 +4608,11 @@ fn contextual_spelling(kind: &TokenKind) -> Option<&'static str> {
         TokenKind::Do => "do",
         TokenKind::Throw => "throw",
         TokenKind::Try => "try",
+        TokenKind::Return => "return",
+        TokenKind::While => "while",
+        TokenKind::Loop => "loop",
+        TokenKind::Break => "break",
+        TokenKind::Continue => "continue",
         _ => return None,
     })
 }

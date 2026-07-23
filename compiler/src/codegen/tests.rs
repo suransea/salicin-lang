@@ -697,7 +697,10 @@ fn registers_source_backed_core_lang_items() {
         .any(|instance| instance.key.kind == NominalKind::Enum
             && instance.key.template == partial_ordering
             && instance.key.arguments.is_empty()));
-    assert!(analyzer.functions.is_empty());
+    assert!(analyzer
+        .functions
+        .keys()
+        .all(|name| name.starts_with("core::control::")));
     let boxed = |name: &str| format!("alloc::boxed::{name}");
     let vec = |name: &str| format!("alloc::vec::{name}");
     assert!(analyzer.function_templates.contains_key(&boxed("box_new")));
@@ -774,7 +777,10 @@ fn registers_source_backed_core_lang_items() {
         .any(
             |member| matches!(member, ExtendMember::Function(function) if function.name == "push")
         ));
-    assert!(analyzer.function_order.is_empty());
+    assert!(analyzer
+        .function_order
+        .iter()
+        .all(|name| name.starts_with("core::control::")));
 }
 
 #[test]

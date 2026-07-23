@@ -139,13 +139,8 @@ fn keyword(text: &str) -> Option<TokenKind> {
         "super" => TokenKind::Super,
         "if" => TokenKind::If,
         "else" => TokenKind::Else,
-        "return" => TokenKind::Return,
-        "while" => TokenKind::While,
         "for" => TokenKind::For,
         "in" => TokenKind::In,
-        "loop" => TokenKind::Loop,
-        "break" => TokenKind::Break,
-        "continue" => TokenKind::Continue,
         "extend" => TokenKind::Extend,
         "struct" => TokenKind::Struct,
         "enum" => TokenKind::Enum,
@@ -567,9 +562,11 @@ mod tests {
     #[test]
     fn recognizes_loops_and_suppresses_newlines_in_brackets() {
         let tokens = lex("while true { loop { break [\n  40,\n  2\n][\n0\n] } }\n").unwrap();
-        assert!(tokens.iter().any(|token| token.kind == TokenKind::While));
-        assert!(tokens.iter().any(|token| token.kind == TokenKind::Loop));
-        assert!(tokens.iter().any(|token| token.kind == TokenKind::Break));
+        for name in ["while", "loop", "break"] {
+            assert!(tokens
+                .iter()
+                .any(|token| token.kind == TokenKind::Ident(name.to_owned())));
+        }
         assert_eq!(
             tokens
                 .iter()
@@ -651,15 +648,15 @@ mod tests {
     #[test]
     fn exposes_the_same_keyword_set_used_by_tokenization() {
         for text in [
-            "let", "pub", "package", "use", "as", "root", "super", "if", "else", "return", "while",
-            "for", "in", "loop", "break", "extend", "struct", "enum", "trait", "match", "true",
-            "false",
+            "let", "pub", "package", "use", "as", "root", "super", "if", "else", "for", "in",
+            "extend", "struct", "enum", "trait", "match", "true", "false",
         ] {
             assert!(is_keyword(text), "`{text}` was not reported as a keyword");
             assert!(!matches!(lex(text).unwrap()[0].kind, TokenKind::Ident(_)));
         }
         for text in [
             "mut", "copy", "move", "borrow", "type", "region", "do", "try", "throw", "unsafe",
+            "return", "while", "loop", "break", "continue",
         ] {
             assert!(!is_keyword(text), "`{text}` must remain an identifier");
             assert_eq!(

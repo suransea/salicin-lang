@@ -38,7 +38,7 @@ const EDITION_2026_ITER: &str = include_str!("../../library/core/src/iter.sc");
 const EDITION_2026_ALGEBRA: &str = include_str!("../../library/core/src/algebra.sc");
 const EDITION_2026_FUNCTIONAL: &str = include_str!("../../library/core/src/functional.sc");
 
-const NON_LANG_ITEM_CORE_MODULES: &[&str] = &["effect", "algebra", "functional"];
+const NON_LANG_ITEM_CORE_MODULES: &[&str] = &["effect", "control", "algebra", "functional"];
 
 #[cfg(test)]
 const TEST_ASSIGNMENT_OPS: &str = r#"
@@ -166,12 +166,13 @@ pub enum LangItemKind {
     Throw,
     Unsafe,
     Loop,
+    While,
     Iterator,
     IntoIterator,
 }
 
 impl LangItemKind {
-    const ALL: [Self; 54] = [
+    const ALL: [Self; 55] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -224,6 +225,7 @@ impl LangItemKind {
         Self::Throw,
         Self::Unsafe,
         Self::Loop,
+        Self::While,
         Self::Iterator,
         Self::IntoIterator,
     ];
@@ -282,6 +284,7 @@ impl LangItemKind {
             Self::Throw => "throw",
             Self::Unsafe => "unsafe",
             Self::Loop => "loop",
+            Self::While => "while",
             Self::Iterator => "Iterator",
             Self::IntoIterator => "IntoIterator",
         }
@@ -300,7 +303,9 @@ impl LangItemKind {
             | Self::ParametersDomain => "domain",
             Self::BorrowTypeForm => "type form",
             Self::BorrowValueForm => "function",
-            Self::Do | Self::Try | Self::Throw | Self::Unsafe | Self::Loop => "function",
+            Self::Do | Self::Try | Self::Throw | Self::Unsafe | Self::Loop | Self::While => {
+                "function"
+            }
             Self::Handle
             | Self::Copy
             | Self::Drop
@@ -390,7 +395,8 @@ impl LangItemKind {
             | Self::Try
             | Self::Throw
             | Self::Unsafe
-            | Self::Loop => None,
+            | Self::Loop
+            | Self::While => None,
             Self::Iterator | Self::IntoIterator => None,
         }
     }
@@ -505,6 +511,7 @@ pub struct LangItems {
     throw_function: LangItem,
     unsafe_function: LangItem,
     loop_function: LangItem,
+    while_function: LangItem,
     iterator: LangItem,
     into_iterator: LangItem,
 }
@@ -682,6 +689,9 @@ impl LangItems {
     pub const fn loop_function(&self) -> &LangItem {
         &self.loop_function
     }
+    pub const fn while_function(&self) -> &LangItem {
+        &self.while_function
+    }
     pub const fn iterator(&self) -> &LangItem {
         &self.iterator
     }
@@ -743,6 +753,7 @@ impl LangItems {
             LangItemKind::Throw => &self.throw_function,
             LangItemKind::Unsafe => &self.unsafe_function,
             LangItemKind::Loop => &self.loop_function,
+            LangItemKind::While => &self.while_function,
             LangItemKind::Iterator => &self.iterator,
             LangItemKind::IntoIterator => &self.into_iterator,
         }
@@ -936,6 +947,7 @@ impl CoreBundle {
             &mut lang_items.throw_function,
             &mut lang_items.unsafe_function,
             &mut lang_items.loop_function,
+            &mut lang_items.while_function,
             &mut lang_items.iterator,
             &mut lang_items.into_iterator,
         ] {
@@ -1113,7 +1125,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
             .collect::<Vec<_>>();
         let kind = match (candidates.as_slice(), matching.as_slice()) {
             ([], []) => {
-                if !is_allowed_non_lang_item(origin) {
+                if !is_allowed_non_lang_item(origin) && !is_control_support_item(name) {
                     diagnostics.push(format!(
                         "unexpected declaration `{name}` at item {}",
                         index + 1
@@ -1140,7 +1152,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
             }
         };
         if candidates.is_empty() {
-            if !is_allowed_non_lang_item(origin) {
+            if !is_allowed_non_lang_item(origin) && !is_control_support_item(name) {
                 diagnostics.push(format!(
                     "unexpected declaration `{name}` at item {}",
                     index + 1
@@ -1239,6 +1251,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         throw_function: item(LangItemKind::Throw),
         unsafe_function: item(LangItemKind::Unsafe),
         loop_function: item(LangItemKind::Loop),
+        while_function: item(LangItemKind::While),
         iterator: item(LangItemKind::Iterator),
         into_iterator: item(LangItemKind::IntoIterator),
     })
@@ -1264,6 +1277,13 @@ fn is_allowed_non_lang_item(origin: &ItemOrigin) -> bool {
         .module_path
         .last()
         .is_some_and(|module| NON_LANG_ITEM_CORE_MODULES.contains(&module.as_str()))
+}
+
+fn is_control_support_item(name: &str) -> bool {
+    matches!(
+        name,
+        "Break" | "Continue" | "Return" | "break" | "continue" | "return"
+    )
 }
 
 fn item_kind(item: &Item) -> &'static str {
@@ -1362,7 +1382,8 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
             | LangItemKind::Try
             | LangItemKind::Throw
             | LangItemKind::Unsafe
-            | LangItemKind::Loop,
+            | LangItemKind::Loop
+            | LangItemKind::While,
             Item::Function(function),
         ) => validate_control_function(kind, function, diagnostics),
         (LangItemKind::Iterator, Item::Trait(definition)) => {
@@ -1851,6 +1872,7 @@ fn validate_control_function(
             LangItemKind::Throw => valid_throw(function),
             LangItemKind::Unsafe => valid_unsafe(function),
             LangItemKind::Loop => valid_loop(function),
+            LangItemKind::While => valid_while(function),
             _ => false,
         };
     if !valid {
@@ -1969,6 +1991,32 @@ fn valid_loop(function: &Function) -> bool {
         && function.body.is_none()
 }
 
+fn valid_while(function: &Function) -> bool {
+    let [condition_group, body_group] = function.groups.as_slice() else {
+        return false;
+    };
+    let [condition] = condition_group.as_slice() else {
+        return false;
+    };
+    let [body] = body_group.as_slice() else {
+        return false;
+    };
+    function.compile_groups
+        == vec![vec![CompileParam {
+            name: "E".to_owned(),
+            kind: CompileParamKind::Effect,
+            default: None,
+        }]]
+        && moved_callable_parameter(condition, "condition", Type::Bool, effect_parameter("E"))
+        && moved_callable_parameter(body, "body", Type::Unit, effect_parameter("E"))
+        && function.return_type == Some(Type::Unit)
+        && function.effects.parameters == vec!["E"]
+        && !function.effects.unsafe_effect
+        && function.effects.throws.is_none()
+        && function.effects.custom.is_empty()
+        && function.body.is_some()
+}
+
 fn effect_parameter(name: &str) -> crate::ast::FunctionEffects {
     crate::ast::FunctionEffects {
         parameters: vec![name.to_owned()],
@@ -1998,6 +2046,15 @@ fn single_moved_callable(
     let [parameter] = group.as_slice() else {
         return false;
     };
+    moved_callable_parameter(parameter, name, result, effects)
+}
+
+fn moved_callable_parameter(
+    parameter: &crate::ast::Param,
+    name: &str,
+    result: Type,
+    effects: crate::ast::FunctionEffects,
+) -> bool {
     parameter.name == name
         && parameter.mode == PassMode::Move
         && parameter.ty
@@ -2536,7 +2593,7 @@ pub let Shr(Rhs: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 19);
+        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 27);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -2602,7 +2659,8 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::Try
                 | LangItemKind::Throw
                 | LangItemKind::Unsafe
-                | LangItemKind::Loop => format!("core::control::{}", kind.source_name()),
+                | LangItemKind::Loop
+                | LangItemKind::While => format!("core::control::{}", kind.source_name()),
                 LangItemKind::Iterator | LangItemKind::IntoIterator => {
                     format!("core::iter::{}", kind.source_name())
                 }
@@ -2662,7 +2720,8 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::Try
                 | LangItemKind::Throw
                 | LangItemKind::Unsafe
-                | LangItemKind::Loop => vec!["control"],
+                | LangItemKind::Loop
+                | LangItemKind::While => vec!["control"],
                 LangItemKind::Iterator | LangItemKind::IntoIterator => vec!["iter"],
             };
             let mut expected_origin_path = vec!["@core".to_owned()];
