@@ -49,6 +49,7 @@ The implementation lives under `compiler/src`:
     reports missing nominal layout diagnostics.
   - `lower.rs` defines shared expression-lowering data, type-probe helpers, and HIR construction
     helpers used by multiple lowering paths.
+  - `matches.rs` lowers scalar and enum `match` expressions and owns pattern binding validation.
   - `members.rs` lowers value and type member access, including associated constants, unit enum
     variants, and field diagnostics.
   - `names.rs` centralizes stable symbol, monomorphization instance, trait-method, and canonical
