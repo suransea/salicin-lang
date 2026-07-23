@@ -418,12 +418,20 @@ impl Analyzer {
                 "$lang$next" => Some(("next", LangItemKind::Iterator)),
                 "$lang$chain" => Some(("chain", LangItemKind::Chain)),
                 "$lang$coalesce" => Some(("coalesce", LangItemKind::Coalesce)),
+                "$lang$unwrap" => Some(("unwrap", LangItemKind::Unwrap)),
                 _ => None,
             } {
+                let groups = if lang_item == LangItemKind::Unwrap
+                    && matches!(groups.as_slice(), [group] if group.is_empty())
+                {
+                    &groups[..0]
+                } else {
+                    &groups
+                };
                 return self.lower_bound_method_call(
                     base,
                     member,
-                    &groups,
+                    groups,
                     BoundMethodConstraint::LangItem(lang_item),
                     expected,
                     context,

@@ -40,6 +40,18 @@ extend(T: type) Option(T): core.flow.Coalesce {
   }
 }
 
+/// Provides postfix `!` extraction for `Option`.
+extend(T: type) Option(T): core.flow.Unwrap {
+  let Output = T
+
+  let unwrap(move self): T = {
+    self match {
+      Some(value) => value,
+      None => unsafe { raw_trap() },
+    }
+  }
+}
+
 /// Implements `Functor` for `Option`.
 extend Option: core.functional.Functor {
   /// Maps `Some` through `transform` and preserves `None`.

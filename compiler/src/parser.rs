@@ -685,7 +685,7 @@ impl Parser {
         let name = self.expect_ident("an extend member name")?;
 
         let (compile_groups, groups) = self.declaration_groups(true, &[])?;
-        self.validate_receiver_groups(&groups)?;
+        self.validate_receiver_groups(&name, &groups)?;
 
         let logical_result = if self.take(&TokenKind::Colon) {
             Some(self.function_result_type()?)
@@ -1396,7 +1396,11 @@ impl Parser {
         Ok((mutable, access, region))
     }
 
-    fn validate_receiver_groups(&self, groups: &[Vec<Param>]) -> Result<(), ParseError> {
+    fn validate_receiver_groups(
+        &self,
+        name: &str,
+        groups: &[Vec<Param>],
+    ) -> Result<(), ParseError> {
         let receivers = groups
             .iter()
             .enumerate()
@@ -1420,7 +1424,7 @@ impl Parser {
         if groups[0].len() != 1 {
             return Err(self.error_here("`self` must be the only parameter in its group"));
         }
-        if groups.len() < 2 {
+        if groups.len() < 2 && name != "unwrap" {
             return Err(self.error_here(
                 "an instance method requires an explicit parameter group after `self`",
             ));
@@ -1625,7 +1629,7 @@ impl Parser {
         }
         let name = self.expect_ident("a trait member name")?;
         let (compile_groups, groups) = self.declaration_groups(true, outer_effect_parameters)?;
-        self.validate_receiver_groups(&groups)?;
+        self.validate_receiver_groups(&name, &groups)?;
 
         let logical_result = if self.take(&TokenKind::Colon) {
             if self.take(&TokenKind::Type) {
@@ -2706,6 +2710,14 @@ impl Parser {
             } else if self.take(&TokenKind::QuestionDot) {
                 let member = self.expect_ident("a member name after `?.`")?;
                 expression = Expr::ChainMember(Box::new(expression), member);
+            } else if self.take(&TokenKind::Bang) {
+                expression = Expr::Call(
+                    Box::new(Expr::Member(
+                        Box::new(expression),
+                        "$lang$unwrap".to_owned(),
+                    )),
+                    Vec::new(),
+                );
             } else if self.struct_literal_follows(&expression) {
                 let fields = self.struct_literal_fields()?;
                 expression = Expr::StructLiteral {

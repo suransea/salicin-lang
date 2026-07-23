@@ -81,6 +81,10 @@ pub let Coalesce = trait {
     (move self)
     (move fallback: (): Item with(E)): Item with(E)
 }
+pub let Unwrap = trait {
+  let Output: type
+  let unwrap(move self): Output
+}
 "#;
 
 #[cfg(test)]
@@ -137,6 +141,7 @@ pub enum LangItemKind {
     Shr,
     Chain,
     Coalesce,
+    Unwrap,
     UnsafeEffect,
     ThrowsEffect,
     TypeDomain,
@@ -159,7 +164,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 51] = [
+    const ALL: [Self; 52] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -192,6 +197,7 @@ impl LangItemKind {
         Self::Shr,
         Self::Chain,
         Self::Coalesce,
+        Self::Unwrap,
         Self::UnsafeEffect,
         Self::ThrowsEffect,
         Self::TypeDomain,
@@ -247,6 +253,7 @@ impl LangItemKind {
             Self::Shr => "Shr",
             Self::Chain => "Chain",
             Self::Coalesce => "Coalesce",
+            Self::Unwrap => "Unwrap",
             Self::UnsafeEffect => "Unsafe",
             Self::ThrowsEffect => "Throws",
             Self::TypeDomain => "type",
@@ -311,6 +318,7 @@ impl LangItemKind {
             | Self::Shr
             | Self::Chain
             | Self::Coalesce
+            | Self::Unwrap
             | Self::Iterator
             | Self::IntoIterator => "trait",
         }
@@ -350,6 +358,7 @@ impl LangItemKind {
             | Self::ShrAssign
             | Self::Chain
             | Self::Coalesce
+            | Self::Unwrap
             | Self::UnsafeEffect
             | Self::ThrowsEffect
             | Self::TypeDomain
@@ -461,6 +470,7 @@ pub struct LangItems {
     shr: LangItem,
     chain: LangItem,
     coalesce: LangItem,
+    unwrap: LangItem,
     unsafe_effect: LangItem,
     throws_effect: LangItem,
     type_domain: LangItem,
@@ -693,6 +703,7 @@ impl LangItems {
             LangItemKind::Shr => &self.shr,
             LangItemKind::Chain => &self.chain,
             LangItemKind::Coalesce => &self.coalesce,
+            LangItemKind::Unwrap => &self.unwrap,
             LangItemKind::UnsafeEffect => &self.unsafe_effect,
             LangItemKind::ThrowsEffect => &self.throws_effect,
             LangItemKind::TypeDomain => &self.type_domain,
@@ -883,6 +894,7 @@ impl CoreBundle {
             &mut lang_items.shr,
             &mut lang_items.chain,
             &mut lang_items.coalesce,
+            &mut lang_items.unwrap,
             &mut lang_items.unsafe_effect,
             &mut lang_items.throws_effect,
             &mut lang_items.type_domain,
@@ -1183,6 +1195,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         shr: item(LangItemKind::Shr),
         chain: item(LangItemKind::Chain),
         coalesce: item(LangItemKind::Coalesce),
+        unwrap: item(LangItemKind::Unwrap),
         unsafe_effect: item(LangItemKind::UnsafeEffect),
         throws_effect: item(LangItemKind::ThrowsEffect),
         type_domain: item(LangItemKind::TypeDomain),
@@ -1335,6 +1348,7 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         (LangItemKind::Coalesce, Item::Trait(definition)) => {
             validate_coalesce(definition, diagnostics)
         }
+        (LangItemKind::Unwrap, Item::Trait(definition)) => validate_unwrap(definition, diagnostics),
         (kind @ (LangItemKind::Neg | LangItemKind::Not), Item::Trait(definition)) => {
             validate_unary_operator(kind, definition, diagnostics)
         }
@@ -1640,6 +1654,47 @@ fn valid_coalesce_method(function: &Function) -> bool {
         && fallback.name == "fallback"
         && fallback.mode == PassMode::Move
         && fallback.ty == function_type(vec![Vec::new()], named_type("Item"), effects)
+}
+
+fn validate_unwrap(definition: &TraitDef, diagnostics: &mut Vec<String>) {
+    let valid = trait_has_default_self(definition)
+        && definition.compile_groups.is_empty()
+        && matches!(
+            definition.members.as_slice(),
+            [
+                TraitMember::AssociatedType {
+                    name,
+                    compile_groups,
+                    default: None,
+                },
+                TraitMember::Function(function),
+            ] if name == "Output"
+                && compile_groups.is_empty()
+                && valid_unwrap_method(function)
+        );
+    if !valid {
+        diagnostics.push(
+            "lang item `Unwrap` must declare `Output` and `unwrap(move self): Output`".to_owned(),
+        );
+    }
+}
+
+fn valid_unwrap_method(function: &Function) -> bool {
+    let [receiver_group] = function.groups.as_slice() else {
+        return false;
+    };
+    let [receiver] = receiver_group.as_slice() else {
+        return false;
+    };
+    function.name == "unwrap"
+        && function.compile_groups.is_empty()
+        && function.return_type == Some(named_type("Output"))
+        && function.effects == Default::default()
+        && function.where_predicates.is_empty()
+        && function.body.is_none()
+        && receiver.name == "self"
+        && receiver.mode == PassMode::Move
+        && receiver.ty == named_type("Self")
 }
 
 fn validate_effect(
@@ -2381,7 +2436,7 @@ pub let Shr(Rhs: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 16);
+        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 18);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -2419,7 +2474,7 @@ pub let Shr(Rhs: type) = trait {
                 LangItemKind::Eq | LangItemKind::PartialOrdering | LangItemKind::PartialOrd => {
                     format!("core::cmp::{}", kind.source_name())
                 }
-                LangItemKind::Chain | LangItemKind::Coalesce => {
+                LangItemKind::Chain | LangItemKind::Coalesce | LangItemKind::Unwrap => {
                     format!("core::flow::{}", kind.source_name())
                 }
                 LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect => {
@@ -2483,7 +2538,7 @@ pub let Shr(Rhs: type) = trait {
                 LangItemKind::Eq | LangItemKind::PartialOrdering | LangItemKind::PartialOrd => {
                     vec!["cmp"]
                 }
-                LangItemKind::Chain | LangItemKind::Coalesce => vec!["flow"],
+                LangItemKind::Chain | LangItemKind::Coalesce | LangItemKind::Unwrap => vec!["flow"],
                 LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect => vec!["effect"],
                 LangItemKind::TypeDomain
                 | LangItemKind::RegionDomain
@@ -2628,7 +2683,7 @@ pub let Shr(Rhs: type) = trait {
     }
 
     #[test]
-    fn rejects_malformed_chain_and_coalesce_contracts() {
+    fn rejects_malformed_flow_operator_contracts() {
         let malformed =
             EDITION_2026_FLOW.replace("let Rebind(Value: type): type", "let Rebind: type");
         let modules = edition_2026_test_modules(&[("flow", &malformed)]);
@@ -2648,6 +2703,15 @@ pub let Shr(Rhs: type) = trait {
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.contains("lang item `Coalesce`")));
+
+        let malformed =
+            EDITION_2026_FLOW.replace("let unwrap(move self): Output", "let unwrap(self): Output");
+        let modules = edition_2026_test_modules(&[("flow", &malformed)]);
+        let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
+        assert!(error
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.contains("lang item `Unwrap`")));
     }
 
     #[test]

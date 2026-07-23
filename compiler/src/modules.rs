@@ -421,8 +421,9 @@ const CORE_OPS_EXPORTS: &[(&str, &str)] = &[
     ("PartialOrd", "core::cmp::PartialOrd"),
     ("Chain", "core::flow::Chain"),
     ("Coalesce", "core::flow::Coalesce"),
+    ("Unwrap", "core::flow::Unwrap"),
 ];
-const CORE_FLOW_EXPORTS: &[&str] = &["Chain", "Coalesce"];
+const CORE_FLOW_EXPORTS: &[&str] = &["Chain", "Coalesce", "Unwrap"];
 const CORE_EFFECT_EXPORTS: &[&str] = &["Unsafe", "Throws", "Async"];
 const CORE_EFFECT_HANDLER_EXPORTS: &[&str] = &["Continuation", "EffectCallable", "Handle"];
 const CORE_DOMAIN_EXPORTS: &[&str] = &["type", "region", "effect", "access", "passing", "borrow"];
@@ -475,6 +476,7 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("ops", "PartialOrd", "core::cmp::PartialOrd"),
     ("ops", "Chain", "core::flow::Chain"),
     ("ops", "Coalesce", "core::flow::Coalesce"),
+    ("ops", "Unwrap", "core::flow::Unwrap"),
     ("ops.arith", "Add", "core::ops::arith::Add"),
     ("ops.arith", "Sub", "core::ops::arith::Sub"),
     ("ops.arith", "Mul", "core::ops::arith::Mul"),
@@ -514,6 +516,7 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("cmp", "PartialOrd", "core::cmp::PartialOrd"),
     ("flow", "Chain", "core::flow::Chain"),
     ("flow", "Coalesce", "core::flow::Coalesce"),
+    ("flow", "Unwrap", "core::flow::Unwrap"),
     ("effect", "Unsafe", "core::effect::Unsafe"),
     ("effect", "Throws", "core::effect::Throws"),
     ("effect", "Async", "core::effect::Async"),
@@ -1098,7 +1101,7 @@ fn install_standard_namespaces(
             ) {
                 continue;
             }
-            if *module == "ops" && matches!(*name, "Chain" | "Coalesce") {
+            if *module == "ops" && matches!(*name, "Chain" | "Coalesce" | "Unwrap") {
                 continue;
             }
             std_required_imports

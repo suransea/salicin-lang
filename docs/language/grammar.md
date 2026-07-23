@@ -315,7 +315,7 @@ trait_argument = type_expr | IDENT, "=", type_expr ;
 | 12 | `+`、`-` | 左结合 |
 | 13 | `*`、`/`、`%` | 左结合 |
 | 14 | `-`、`!`、`borrow`、`borrow(mut)`、`move` | 前缀 |
-| 15 | 调用、索引、成员、`?.`、尾随闭包 | 左到右后缀 |
+| 15 | 调用、索引、成员、`?.`、后缀 `!`、尾随闭包 | 左到右后缀 |
 
 ```ebnf
 expression       = assignment_expr ;
@@ -346,6 +346,7 @@ postfix_part = call_group
              | "[", expression, "]"
              | ".", IDENT
              | "?.", IDENT
+             | "!"
              | trailing_closure ;
 
 call_group = "(", [ call_argument, { ",", call_argument }, [ "," ] ], ")" ;

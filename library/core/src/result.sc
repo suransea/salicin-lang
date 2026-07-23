@@ -41,6 +41,18 @@ extend(Error: type, T: type) Result(Error)(T): core.flow.Coalesce {
   }
 }
 
+/// Provides postfix `!` extraction for `Result`.
+extend(Error: type, T: type) Result(Error)(T): core.flow.Unwrap {
+  let Output = T
+
+  let unwrap(move self): T = {
+    self match {
+      Ok(value) => value,
+      Err(_) => unsafe { raw_trap() },
+    }
+  }
+}
+
 /// Implements `Functor` for `Result(Error)`.
 extend(Error: type) Result(Error): core.functional.Functor {
   /// Maps `Ok` through `transform` and preserves `Err`.

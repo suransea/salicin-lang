@@ -21,3 +21,12 @@ pub let Coalesce = trait {
     (move self)
     (move fallback: (): Item with(E)): Item with(E)
 }
+
+/// Trait used by postfix `!` to assert success and extract a payload.
+pub let Unwrap = trait {
+  /// Payload type produced by unwrapping.
+  let Output: type
+
+  /// Returns the successful payload or terminates when no payload is present.
+  let unwrap(move self): Output
+}
