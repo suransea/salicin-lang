@@ -95,7 +95,7 @@ let_decl = "let", [ "mut" ], IDENT,
 with_clause = IDENT("with"), "(", effect, { ",", effect }, [ "," ], ")" ;
 effect = IDENT, [ "(", type_expr, { ",", type_expr }, [ "," ], ")" ] ;
 
-initializer = expression | effect_decl | domain_decl | struct_decl | enum_decl | trait_decl | module_decl ;
+initializer = expression | effect_decl | domain_decl | struct_decl | enum_decl | trait_decl ;
 
 effect_decl = "effect", [ "{", separators,
               { effect_operation, separators }, "}" ] ;
@@ -112,7 +112,7 @@ constructor_kind = compile_parameter_group,
 
 语义限制：
 
-- 普通值、函数、类型和模块声明必须有 initializer；只有 trait 要求，以及编译器内嵌并验证的
+- 普通值、函数和类型声明必须有 initializer；只有 trait 要求，以及编译器内嵌并验证的
   `core.control` 函数契约可以省略。普通包中的无函数体声明是语义错误。
 - `let mut` 不能含参数组，且必须绑定运行时值。
 - `with(...)` 属于函数签名，位于返回类型之后；`with(Throws(E))` 声明标准可恢复错误 effect，
@@ -165,12 +165,11 @@ access_or_region = IDENT | "shared" | "mut" | REGION ;
 不能混合编译期和运行时参数。忽略开头的编译期组后，实例方法的 `self` 独占第一个运行时组，
 并且后面至少还有一个显式运行时组。
 
-### 4.2 数据、trait 与模块
+### 4.2 数据与 trait
 
 ```ebnf
 struct_decl = "struct", [ "(", struct_option_list, ")" ],
               "{", [ field_list ], "}" ;
-module_decl = "struct", "{", separators, { item, separators }, "}" ;
 
 struct_option_list = struct_option, { ",", struct_option }, [ "," ] ;
 struct_option      = "derive", ":", IDENT ;

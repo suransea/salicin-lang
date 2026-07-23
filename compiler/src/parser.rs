@@ -5076,6 +5076,39 @@ mod tests {
     }
 
     #[test]
+    fn parses_empty_structs_as_types_that_can_be_extended() {
+        let program = parse(
+            "let Marker = struct {}\n\
+             extend Marker {\n\
+               let answer(): i32 = { 42 }\n\
+             }\n",
+        )
+        .unwrap();
+
+        let Item::Struct(marker) = &program.items[0] else {
+            panic!("expected empty struct");
+        };
+        assert_eq!(marker.name, "Marker");
+        assert!(marker.fields.is_empty());
+
+        let Item::Extend(extension) = &program.items[1] else {
+            panic!("expected extension");
+        };
+        assert_eq!(
+            extension.target,
+            Type::Named("Marker".to_owned(), Vec::new())
+        );
+        assert_eq!(extension.members.len(), 1);
+
+        let error = parse("let Namespace = struct { let value = 42 }\n").unwrap_err();
+        assert!(
+            error.message.contains("expected a field name"),
+            "{}",
+            error.message
+        );
+    }
+
+    #[test]
     fn parses_trait_method_signatures_and_associated_types() {
         let program = parse(
             "let Foo = trait {\n\
