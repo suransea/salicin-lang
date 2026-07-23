@@ -48,6 +48,8 @@ The implementation lives under `compiler/src`:
     type encodings.
   - `operators.rs` centralizes operator-syntax bindings, candidate selection, type probes, and HIR
     lowering for validated lang-item protocols.
+  - `ownership.rs` centralizes Copy/drop type predicates, custom Drop crossing checks, and inferred
+    pass-mode selection used by ownership-sensitive lowering.
   - `raw.rs` lowers layout queries, raw pointer constructors, raw allocation primitives, raw
     borrow/take/offset/trap operations, and `forget`.
   - `references.rs` lowers contextual reference values and validates explicit reference-return
