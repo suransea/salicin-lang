@@ -16,6 +16,11 @@ pub let EffectCallable(Input: type, Output: type, Answer: type) = struct {}
 // operation set.
 pub let Handle = trait(Self: effect) {
   let Clauses(Value: type, Answer: type): type
+  let handle(Value: type, Answer: type, Rest: effect)(
+    move clauses: Clauses(Value, Answer),
+  )(
+    move action: (): Value with(Self, Rest),
+  ): Answer with(Rest)
 }
 
 // Control syntax uses trailing-closure call notation and targets these

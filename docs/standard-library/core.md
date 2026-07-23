@@ -190,6 +190,11 @@ pub let Continuation(Input: type, Output: type) = struct {}
 pub let EffectCallable(Input: type, Output: type, Answer: type) = struct {}
 pub let Handle = trait(Self: effect) {
   let Clauses(Value: type, Answer: type): type
+  let handle(Value: type, Answer: type, Rest: effect)(
+    move clauses: Clauses(Value, Answer),
+  )(
+    move action: (): Value with(Self, Rest),
+  ): Answer with(Rest)
 }
 ```
 
@@ -201,9 +206,11 @@ The compiler-internal action entry has the logical signature
 `(environment, Input, Continuation(Output, Answer)): Answer`. Erasing or invoking an action consumes
 its owner; a dropped, uninvoked action releases its captured environment through the stored drop
 entry. `Handle` is an effect-kinded lang trait automatically satisfied by every source
-`effect` declaration; its `Clauses` associated constructor names the compiler-derived labeled
-clause pack used by `.handle`. These low-level operations and generated handler implementations are
-not ordinary source-level standard-library functions.
+`effect` declaration. Its `Clauses` associated constructor names the compiler-derived labeled
+clause pack used by `.handle`, and its `handle` member records the public handler shape. The first
+runtime group is a synthetic clause pack: source calls still write operation labels directly, for
+example `State(i32).handle(get: ..., put: ...) { ... }`. These low-level operations and generated
+handler implementations are not ordinary source-level standard-library functions.
 
 ```sc
 pub let do(E: effect, T: type)(move action: (): T with(E)): T with(E)

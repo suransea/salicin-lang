@@ -49,8 +49,10 @@ unique. Mixed `Throws(Error)` plus `Unsafe` rows now run through the standard ef
 preserving `unsafe { ... }` authorization across generated CPS frames. Concrete residual-handler
 paths also compose through ordinary `Throws(Error)` rows. `Never`-only actions and fully generic
 residual-row cases remain future work.
-`core.control` also defines `Continuation(Input, Output)` and
-`EffectCallable(Input, Output, Answer)` as validated empty source contracts. The latter has a
+`core.control` also defines `Handle`, `Continuation(Input, Output)` and
+`EffectCallable(Input, Output, Answer)` as validated source contracts. `Handle` declares the
+compiler-derived `Clauses(Value, Answer)` pack and `handle` member shape for every source effect.
+`EffectCallable` has a
 distinct owned semantic type plus a four-pointer LLVM call/drop/environment/flag layout and guarded
 drop glue. Compiler-internal HIR can now erase an owned CPS closure into that layout and invoke it
 with an input plus `Continuation(Output, Answer)`; target-specific adapters preserve captured

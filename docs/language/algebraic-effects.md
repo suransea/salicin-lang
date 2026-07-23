@@ -78,7 +78,8 @@ The final trailing closure is the handled action. Every operation signature is s
 once as a labeled closure. A non-overloaded operation clause may choose local parameter names; an
 overloaded clause must repeat the selected operation's parameter names in declaration order.
 `handle` is reserved in the effect member namespace. The operation-specific clause pack is derived
-from the source `effect` declaration rather than implemented by ordinary user code.
+from the source `effect` declaration rather than implemented by ordinary user code, but its public
+shape is declared by the `core.control.Handle` trait.
 
 For an operation with parameter groups `(P1)...(Pn): O`, its handler closure normally has the
 contextual shape `(P1)...(Pn)(resume): R`, where `R` is the result of the complete handler. For a
@@ -148,8 +149,9 @@ Effect operations and derived handlers are justified by the source `effect { ...
 the same way enum constructors are justified by an `enum` declaration. The handler surface is backed
 by the edition-pinned `Handle` trait in `core.control`; every effect declaration receives a
 compiler-derived implementation whose `Clauses(Value, Answer)` associated constructor denotes the
-operation-indexed clause pack for that exact effect instance. Shared continuation behavior has the
-adjacent `Continuation(Input, Output)` declaration; the compiler may not recognize a resumable
+operation-indexed clause pack for that exact effect instance and whose `handle` method records the
+two-group handler shape: clause pack first, trailing action second. Shared continuation behavior has
+the adjacent `Continuation(Input, Output)` declaration; the compiler may not recognize a resumable
 runtime protocol that has no matching standard-library source contract. Owned actions crossing into
 reusable handlers use the adjacent `EffectCallable(Input, Output, Answer)` contract. Its logical
 declaration is empty because the call entry, drop entry, environment pointer, and ownership flag are

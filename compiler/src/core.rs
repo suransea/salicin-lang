@@ -1856,16 +1856,51 @@ fn validate_handle(definition: &TraitDef, diagnostics: &mut Vec<String>) {
                 name,
                 compile_groups,
                 default,
-            }] if name == "Clauses"
+            }, TraitMember::Function(function)] if name == "Clauses"
                 && compile_groups == &vec![vec![type_parameter("Value"), type_parameter("Answer")]]
                 && default.is_none()
+                && valid_handle_method(function)
         );
     if !valid {
         diagnostics.push(
-            "lang item `Handle` must have shape `pub let Handle = trait(Self: effect) { let Clauses(Value: type, Answer: type): type }`"
+            "lang item `Handle` must have shape `pub let Handle = trait(Self: effect) { let Clauses(Value: type, Answer: type): type; let handle(Value: type, Answer: type, Rest: effect)(move clauses: Clauses(Value, Answer))(move action: (): Value with(Self, Rest)): Answer with(Rest) }`"
                 .to_owned(),
         );
     }
+}
+
+fn valid_handle_method(function: &Function) -> bool {
+    let [clauses_group, action_group] = function.groups.as_slice() else {
+        return false;
+    };
+    let ([clauses], [action]) = (clauses_group.as_slice(), action_group.as_slice()) else {
+        return false;
+    };
+    let action_effects = crate::ast::FunctionEffects {
+        parameters: vec!["Rest".to_owned(), "Self".to_owned()],
+        ..crate::ast::FunctionEffects::default()
+    };
+    function.name == "handle"
+        && function.compile_groups
+            == vec![vec![
+                type_parameter("Value"),
+                type_parameter("Answer"),
+                compile_effect_parameter("Rest"),
+            ]]
+        && function.return_type == Some(named_type("Answer"))
+        && function.effects == effect_parameter("Rest")
+        && function.where_predicates.is_empty()
+        && function.body.is_none()
+        && clauses.name == "clauses"
+        && clauses.mode == PassMode::Move
+        && clauses.ty
+            == Type::Named(
+                "Clauses".to_owned(),
+                vec![named_type("Value"), named_type("Answer")],
+            )
+        && action.name == "action"
+        && action.mode == PassMode::Move
+        && action.ty == function_type(vec![Vec::new()], named_type("Value"), action_effects)
 }
 
 fn compile_effect_parameter(name: &str) -> CompileParam {
@@ -2466,7 +2501,7 @@ pub let Shr(Rhs: type) = trait {
             .any(|diagnostic| diagnostic.contains("lang item `EffectCallable`")));
 
         let malformed = EDITION_2026_CONTROL.replace(
-            "pub let Handle = trait(Self: effect) {\n  let Clauses(Value: type, Answer: type): type\n}",
+            "pub let Handle = trait(Self: effect) {\n  let Clauses(Value: type, Answer: type): type\n  let handle(Value: type, Answer: type, Rest: effect)(\n    move clauses: Clauses(Value, Answer),\n  )(\n    move action: (): Value with(Self, Rest),\n  ): Answer with(Rest)\n}",
             "pub let Handle = trait { let Clauses(Value: type): type }",
         );
         let error = CoreBundle::from_modules(

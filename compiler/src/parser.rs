@@ -212,7 +212,7 @@ impl Parser {
         let mutable = self.take(&TokenKind::Mut);
         let name = self.declaration_name()?;
 
-        let (compile_groups, groups) = self.declaration_groups(false)?;
+        let (compile_groups, groups) = self.declaration_groups(false, &[])?;
 
         if mutable && (!compile_groups.is_empty() || !groups.is_empty()) {
             return Err(self.error_here("`let mut` cannot declare a function"));
@@ -398,7 +398,7 @@ impl Parser {
                     "effect operation name `{operation}` is reserved by handler lowering"
                 )));
             }
-            let (operation_compile_groups, groups) = self.declaration_groups(false)?;
+            let (operation_compile_groups, groups) = self.declaration_groups(false, &[])?;
             if !operation_compile_groups.is_empty() {
                 return Err(self.error_here(
                     "compile-time parameters on effect operations are not supported yet",
@@ -625,7 +625,7 @@ impl Parser {
 
     fn extend_definition(&mut self) -> Result<ExtendDef, ParseError> {
         self.expect(&TokenKind::Extend, "`extend`")?;
-        let (compile_groups, runtime_groups) = self.declaration_groups(false)?;
+        let (compile_groups, runtime_groups) = self.declaration_groups(false, &[])?;
         if !runtime_groups.is_empty() {
             return Err(self.error_here(
                 "extend headers accept only compile-time parameters before the target type",
@@ -684,7 +684,7 @@ impl Parser {
         }
         let name = self.expect_ident("an extend member name")?;
 
-        let (compile_groups, groups) = self.declaration_groups(true)?;
+        let (compile_groups, groups) = self.declaration_groups(true, &[])?;
         self.validate_receiver_groups(&groups)?;
 
         let logical_result = if self.take(&TokenKind::Colon) {
@@ -847,8 +847,11 @@ impl Parser {
     fn declaration_groups(
         &mut self,
         allow_receiver: bool,
+        outer_effect_parameters: &[String],
     ) -> Result<DeclarationGroups, ParseError> {
         self.effect_parameters_in_scope.clear();
+        self.effect_parameters_in_scope
+            .extend(outer_effect_parameters.iter().cloned());
         let mut compile_groups: Vec<Vec<CompileParam>> = Vec::new();
         let mut runtime_groups = Vec::new();
         let mut saw_runtime_group = false;
@@ -1574,12 +1577,22 @@ impl Parser {
         self.expect(&TokenKind::LBrace, "`{` after `trait`")?;
         self.skip_separators();
 
+        let mut member_effect_parameters = compile_groups
+            .iter()
+            .flatten()
+            .filter(|parameter| parameter.kind == CompileParamKind::Effect)
+            .map(|parameter| parameter.name.clone())
+            .collect::<Vec<_>>();
+        if self_parameter.kind == CompileParamKind::Effect {
+            member_effect_parameters.push(self_parameter.name.clone());
+        }
+
         let mut members = Vec::new();
         while !self.at(&TokenKind::RBrace) {
             if self.at(&TokenKind::Eof) {
                 return Err(self.error_here("expected `}` before end of trait declaration"));
             }
-            members.push(self.trait_member()?);
+            members.push(self.trait_member(&member_effect_parameters)?);
             if !self.at(&TokenKind::RBrace) && !self.at_separator() {
                 return Err(self.error_here("expected a newline or `;` after trait member"));
             }
@@ -1596,7 +1609,10 @@ impl Parser {
         })
     }
 
-    fn trait_member(&mut self) -> Result<TraitMember, ParseError> {
+    fn trait_member(
+        &mut self,
+        outer_effect_parameters: &[String],
+    ) -> Result<TraitMember, ParseError> {
         if self.at(&TokenKind::Pub) {
             return Err(self.error_here("visibility on trait members is not supported yet"));
         }
@@ -1606,7 +1622,7 @@ impl Parser {
             return Err(self.error_at(&mutable, "trait members cannot be declared with `let mut`"));
         }
         let name = self.expect_ident("a trait member name")?;
-        let (compile_groups, groups) = self.declaration_groups(true)?;
+        let (compile_groups, groups) = self.declaration_groups(true, outer_effect_parameters)?;
         self.validate_receiver_groups(&groups)?;
 
         let logical_result = if self.take(&TokenKind::Colon) {
@@ -3451,7 +3467,7 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
     let empty = HashSet::new();
     for item in items {
         match item {
-            Item::Function(function) => validate_function_scopes(function, &empty, &empty)?,
+            Item::Function(function) => validate_function_scopes(function, &empty, &empty, &empty)?,
             Item::Global(binding) => validate_binding_scopes(binding, &empty, &empty)?,
             Item::TypeAlias(definition) => {
                 let mut names = HashSet::new();
@@ -3480,7 +3496,7 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
                 let regions = declared_regions(&definition.compile_groups, &empty)?;
                 let accesses = declared_accesses(&definition.compile_groups, &empty)?;
                 for operation in &definition.operations {
-                    validate_function_scopes(operation, &regions, &accesses)?;
+                    validate_function_scopes(operation, &regions, &accesses, &empty)?;
                 }
             }
             Item::Domain(_) => {}
@@ -3553,10 +3569,14 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
                 )?;
                 let regions = declared_regions(&definition.compile_groups, &empty)?;
                 let accesses = declared_accesses(&definition.compile_groups, &empty)?;
+                let mut effects = HashSet::new();
+                if definition.self_parameter.kind == CompileParamKind::Effect {
+                    effects.insert(definition.self_parameter.name.clone());
+                }
                 for member in &definition.members {
                     match member {
                         TraitMember::Function(function) => {
-                            validate_function_scopes(function, &regions, &accesses)?
+                            validate_function_scopes(function, &regions, &accesses, &effects)?
                         }
                         TraitMember::AssociatedType {
                             name,
@@ -3602,7 +3622,7 @@ fn validate_region_scopes(items: &[Item]) -> Result<(), String> {
                 for member in &extension.members {
                     match member {
                         ExtendMember::Function(function) => {
-                            validate_function_scopes(function, &regions, &accesses)?
+                            validate_function_scopes(function, &regions, &accesses, &empty)?
                         }
                         ExtendMember::Const(binding) => {
                             validate_binding_scopes(binding, &regions, &accesses)?
@@ -3683,6 +3703,7 @@ fn validate_function_scopes(
     function: &Function,
     outer_regions: &HashSet<String>,
     outer_accesses: &HashSet<String>,
+    outer_effects: &HashSet<String>,
 ) -> Result<(), String> {
     let regions = declared_regions(&function.compile_groups, outer_regions)?;
     let accesses = declared_accesses(&function.compile_groups, outer_accesses)?;
@@ -3693,13 +3714,17 @@ fn validate_function_scopes(
         .filter(|parameter| parameter.kind == CompileParamKind::Passing)
         .map(|parameter| parameter.name.clone())
         .collect::<HashSet<_>>();
-    let effects = function
+    let mut effects = outer_effects.clone();
+    for parameter in function
         .compile_groups
         .iter()
         .flatten()
         .filter(|parameter| parameter.kind == CompileParamKind::Effect)
-        .map(|parameter| parameter.name.clone())
-        .collect::<HashSet<_>>();
+    {
+        if !effects.insert(parameter.name.clone()) {
+            return Err(format!("duplicate effect parameter `{}`", parameter.name));
+        }
+    }
     let mut compile_names = HashSet::new();
     for parameter in function.compile_groups.iter().flatten() {
         if !compile_names.insert(parameter.name.clone()) {
@@ -3729,6 +3754,11 @@ fn validate_function_scopes(
         validate_type_regions(return_type, &regions)?;
         validate_type_accesses(return_type, &accesses)?;
         validate_type_effects(return_type, &effects)?;
+    }
+    for parameter in &function.effects.parameters {
+        if !effects.contains(parameter) {
+            return Err(format!("use of undeclared effect parameter `{parameter}`"));
+        }
     }
     for effect in &function.effects.custom {
         validate_type_regions(effect, &regions)?;
@@ -5738,6 +5768,29 @@ mod tests {
             error.message
         );
         assert!(!error.message.contains("was removed"));
+    }
+
+    #[test]
+    fn parses_trait_self_effect_parameter_in_member_rows() {
+        let program = parse(
+            "let Handle = trait(Self: effect) {\n\
+               let Clauses(Value: type, Answer: type): type\n\
+               let handle(Value: type, Answer: type, Rest: effect)(move clauses: Clauses(Value, Answer))(move action: (): Value with(Self, Rest)): Answer with(Rest)\n\
+             }\n",
+        )
+        .unwrap();
+        let Item::Trait(definition) = &program.items[0] else {
+            panic!("expected trait");
+        };
+        let TraitMember::Function(function) = &definition.members[1] else {
+            panic!("expected handle member");
+        };
+        assert_eq!(function.effects.parameters, vec!["Rest"]);
+        let Type::Function { effects, .. } = &function.groups[1][0].ty else {
+            panic!("expected action callable parameter");
+        };
+        assert_eq!(effects.parameters, vec!["Rest", "Self"]);
+        assert!(effects.custom.is_empty());
     }
 
     #[test]

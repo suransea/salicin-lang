@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+- Declared the compiler-derived effect handler surface in `core.control.Handle`, including the
+  synthetic `Clauses(Value, Answer)` pack and `handle` member shape for every source effect.
 - Made the validated `core.control.unsafe` helper an ordinary source definition over the
   zero-operation `core.effects.Unsafe` handler; only its lexical raw-operation authority remains
   syntax-directed in the compiler.
