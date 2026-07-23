@@ -57,6 +57,8 @@ The implementation lives under `compiler/src`:
     lowering for validated lang-item protocols.
   - `ownership.rs` centralizes Copy/drop type predicates, custom Drop crossing checks, and inferred
     pass-mode selection used by ownership-sensitive lowering.
+  - `places.rs` lowers local place expressions and owns move initialization plus lexical loan
+    bookkeeping over HIR places.
   - `raw.rs` lowers layout queries, raw pointer constructors, raw allocation primitives, raw
     borrow/take/offset/trap operations, and `forget`.
   - `references.rs` lowers contextual reference values and validates explicit reference-return
