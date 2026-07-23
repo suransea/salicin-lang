@@ -34,6 +34,8 @@ The implementation lives under `compiler/src`:
   - `compile_time.rs` encodes compiler-visible compile-time domain values, source effect
     identities, and compile-parameter shape helpers.
   - `control.rs` lowers loops, `break`, and `continue`, including loop backedge flow checks.
+  - `constructors.rs` lowers struct literals, struct and enum construction, field argument
+    validation, and context-sensitive short enum variant resolution.
   - `emitter.rs` evaluates global constants and emits textual LLVM IR.
   - `effects.rs` owns source-level support state, effect identity helpers, effect-forwarding
     `do` lowering, effect operation lowering, and handler entry lowering.
