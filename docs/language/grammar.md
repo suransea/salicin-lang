@@ -366,14 +366,25 @@ call_group = "(", [ call_argument, { ",", call_argument }, [ "," ] ], ")" ;
 call_argument = expression | IDENT, ":", expression ;
 
 trailing_closure = closure_literal ;
-named_trailing_closure = IDENT, ":", closure_literal ;
+named_trailing_closure = IDENT, [ ":" ], closure_literal ;
 ```
 
 语义限制：尾随闭包跟随已有 `call_group`，每个尾随闭包新建一个单元素参数组；可以跨行连续提供
 多个位置或具名尾随闭包。`f(x) {} {}` 是 `Call(Call(Call(f,[x]),[{}]),[{}])`，
-`f(x) label: {}` 的最后一组则包含标签为 `label` 的闭包参数。普通名称后的 `{}` 仍优先解释为
+`f(x) label {}` 的最后一组则包含标签为 `label` 的闭包参数。普通名称后的 `{}` 仍优先解释为
 结构体字面量，因此无显式调用组的通用调用写作 `f() {}`；经过验证的控制形式可以提供更短写法，
-例如 `while { condition } { body }`。
+例如 `if condition { then } { else }` 与 `while { condition } { body }`。
+
+若调用至少有一个立即求值的首参数并紧跟尾闭包，则该单参数组可省略括号：
+`f value { body }` 等价于 `f(value)({ body })`。复杂首参数按普通表达式优先级解析到第一个
+尾闭包；需要强调边界时仍可写 `f(expression) { body }`。
+
+具名尾参数还可直接接另一个尾调用；该嵌套调用会自动包装为零参闭包：
+`f(x) failure retry(y) { recover }` 等价于
+`f(x)(failure: { retry(y)({ recover }) })`。因此 `else if` 只是 `else` 标签接嵌套 `if`
+尾调用，不需要组合关键字产生式。无冒号标签与前一调用保持在同一逻辑行，以免把下一条
+`label { ... }` 语句误接到上一调用；跨行时可保留冒号，或使用经过验证的 `if`/`while`
+控制布局。
 
 同一作用域中的具名函数可以形成重载集，但每个候选的运行时参数标签组必须不同。调用重载名时，
 至少一个实参必须写成 `label: expression`，所有已提供参数组共同筛选唯一候选；其他参数组仍可使用
@@ -449,14 +460,17 @@ block_item = let_decl | expression ;
 实际 parser 应保留每个表达式后的终止符类别；最后一个未以 `;` 终止的表达式成为块值。
 
 ```ebnf
-if_expr = "if", ( expression | "let", pattern, "=", expression ), block,
-          [ "else", ( block | if_expr ) ] ;
+if_expr = "if",
+          ( expression, [ "then", [ ":" ] ], block,
+            [ block | "else", [ ":" ], ( block | if_expr ) ]
+          | "let", pattern, "=", expression, block,
+            [ "else", ( block | if_expr ) ] ) ;
 
 loop_expr  = "loop", block ;
 while_expr = "while",
              ( closure_literal, closure_literal
-             | "condition", ":", closure_literal,
-               "body", ":", closure_literal
+             | "condition", [ ":" ], closure_literal,
+               "body", [ ":" ], closure_literal
              | "let", pattern, "=", expression, block ) ;
 for_expr   = "for", pattern, "in", expression, block ;
 
@@ -470,7 +484,10 @@ continue_expr = "continue" ;
 `for` 的 pattern 必须不可失败；当前实现接受单一名称绑定和 `_`。它通过 `core.iter` 中经验证的
 `IntoIterator` 与 `Iterator` lang item 展开，而不是按普通成员查找选择同名方法。
 
-`do { ... }`、`try { ... }`、`unsafe { ... }` 和未来的 `async { ... }` 在语义上都是接受尾闭包的内建函数调用，
+普通 `if` 把 condition 作为省略括号的立即参数，then 与可选 else 是后续尾闭包；
+`if condition { then } { else }` 等价于 `if(condition)({ then })({ else })`。`if let`
+仍保留模式绑定产生式。`do { ... }`、`try { ... }`、`unsafe { ... }` 和未来的 `async { ... }`
+在语义上都是接受尾闭包的内建函数调用，
 不是三种互不相关的块节点。parser 保留专用产生式以消除关键字后大括号的歧义。`do` 立即调用闭包
 并原样转发其 effect/color；`try` 把 `Throws(E)` 处理为 `Result(E)(T)`；`unsafe` 处理闭包要求的
 `Unsafe` effect。

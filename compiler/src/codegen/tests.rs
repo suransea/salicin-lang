@@ -5129,7 +5129,9 @@ let main(): i32 = {
 fn multiple_and_named_trailing_closures_lower_as_successive_calls() {
     for call in [
         "choose(0) { true } { 42 }",
-        "choose(0) condition: { true } body: { 42 }",
+        "choose(0) condition { true } body { 42 }",
+        "choose 0 { true } { 42 }",
+        "choose 0 condition { true } body { 42 }",
     ] {
         let program = crate::parser::parse(&format!(
             r#"
@@ -5147,13 +5149,23 @@ let main(): i32 = {{ {call} }}
 
     for while_expression in [
         "while { value < 42 } { value += 1 }",
-        "while condition: { value < 42 } body: { value += 1 }",
+        "while condition { value < 42 } body { value += 1 }",
     ] {
         let program = crate::parser::parse(&format!(
             "let main(): i32 = {{ let mut value = 0; {while_expression}; value }}\n"
         ))
         .expect("multi-trailing-closure while source must parse");
         compile(&program).expect("multi-trailing-closure while must lower");
+    }
+
+    for if_expression in [
+        "if true { 42 } { 0 }",
+        "if true then { 42 } else { 0 }",
+        "if false { 0 } else if true { 42 } else { 0 }",
+    ] {
+        let program = crate::parser::parse(&format!("let main(): i32 = {{ {if_expression} }}\n"))
+            .expect("multi-trailing-closure if source must parse");
+        compile(&program).expect("multi-trailing-closure if must lower");
     }
 }
 

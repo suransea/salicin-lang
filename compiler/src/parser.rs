@@ -2863,6 +2863,55 @@ impl Parser {
                 );
             } else if allow_trailing_closure
                 && can_take_trailing_closure
+                && self.colonless_named_trailing_closure_follows()
+            {
+                let label = self.take_trailing_label()?;
+                let closure = self.closure()?;
+                expression = Expr::Call(
+                    Box::new(expression),
+                    vec![CallArg {
+                        label: Some(label),
+                        value: closure,
+                    }],
+                );
+            } else if allow_trailing_closure
+                && can_take_trailing_closure
+                && self.named_nested_trailing_call_follows()
+            {
+                let label = self.take_trailing_label()?;
+                let nested = self.expression(true)?;
+                expression = Expr::Call(
+                    Box::new(expression),
+                    vec![CallArg {
+                        label: Some(label),
+                        value: Expr::Closure(Vec::new(), Box::new(nested)),
+                    }],
+                );
+            } else if allow_trailing_closure
+                && !can_take_trailing_closure
+                && self.bare_call_argument_can_start()
+            {
+                let before_argument = self.index;
+                let argument = self.expression(false)?;
+                if self.at(&TokenKind::LBrace)
+                    || self.named_trailing_closure_follows()
+                    || self.colonless_named_trailing_closure_follows()
+                    || self.named_nested_trailing_call_follows()
+                {
+                    expression = Expr::Call(
+                        Box::new(expression),
+                        vec![CallArg {
+                            label: None,
+                            value: argument,
+                        }],
+                    );
+                    can_take_trailing_closure = true;
+                } else {
+                    self.index = before_argument;
+                    break;
+                }
+            } else if allow_trailing_closure
+                && can_take_trailing_closure
                 && self.at(&TokenKind::Newline)
             {
                 let before_newlines = self.index;
@@ -2880,6 +2929,23 @@ impl Parser {
         Ok(expression)
     }
 
+    fn bare_call_argument_can_start(&self) -> bool {
+        matches!(
+            self.current().kind,
+            TokenKind::Integer(_)
+                | TokenKind::True
+                | TokenKind::False
+                | TokenKind::Ident(_)
+                | TokenKind::Root
+                | TokenKind::Super
+                | TokenKind::LParen
+                | TokenKind::LBracket
+                | TokenKind::Minus
+                | TokenKind::Bang
+                | TokenKind::Borrow
+        )
+    }
+
     fn named_trailing_closure_follows(&self) -> bool {
         matches!(
             (
@@ -2892,6 +2958,60 @@ impl Parser {
                 Some(TokenKind::Colon),
                 Some(TokenKind::LBrace)
             )
+        )
+    }
+
+    fn colonless_named_trailing_closure_follows(&self) -> bool {
+        self.trailing_label_at(self.index).is_some()
+            && self
+                .tokens
+                .get(self.index + 1)
+                .is_some_and(|token| token.kind == TokenKind::LBrace)
+    }
+
+    fn named_nested_trailing_call_follows(&self) -> bool {
+        self.trailing_label_at(self.index).is_some()
+            && self
+                .tokens
+                .get(self.index + 1)
+                .is_some_and(|token| Self::token_can_start_expression(&token.kind))
+    }
+
+    fn trailing_label_at(&self, index: usize) -> Option<String> {
+        match self.tokens.get(index).map(|token| &token.kind) {
+            Some(TokenKind::Ident(label)) => Some(label.clone()),
+            Some(TokenKind::Else) => Some("else".to_owned()),
+            _ => None,
+        }
+    }
+
+    fn take_trailing_label(&mut self) -> Result<String, ParseError> {
+        let Some(label) = self.trailing_label_at(self.index) else {
+            return Err(self.error_here("expected a trailing argument label"));
+        };
+        self.advance();
+        Ok(label)
+    }
+
+    fn token_can_start_expression(token: &TokenKind) -> bool {
+        matches!(
+            token,
+            TokenKind::Integer(_)
+                | TokenKind::True
+                | TokenKind::False
+                | TokenKind::Ident(_)
+                | TokenKind::Root
+                | TokenKind::Super
+                | TokenKind::LParen
+                | TokenKind::LBracket
+                | TokenKind::LBrace
+                | TokenKind::Minus
+                | TokenKind::Bang
+                | TokenKind::Borrow
+                | TokenKind::If
+                | TokenKind::Loop
+                | TokenKind::While
+                | TokenKind::For
         )
     }
 
@@ -3163,6 +3283,14 @@ impl Parser {
             });
         }
         let condition = self.expression(false)?;
+        if self.named_trailing_closure_follows() || self.colonless_named_trailing_closure_follows()
+        {
+            let label = self.take_trailing_label()?;
+            if label != "then" {
+                return Err(self.error_here("the first named `if` trailing closure must be `then`"));
+            }
+            self.take(&TokenKind::Colon);
+        }
         if !self.at(&TokenKind::LBrace) {
             return Err(self.error_here("expected `{` after `if` condition"));
         }
@@ -3177,22 +3305,27 @@ impl Parser {
     }
 
     fn optional_else_branch(&mut self) -> Result<Option<Box<Expr>>, ParseError> {
-        // `else` may begin on the next logical line. If it is absent, restore
-        // the newlines so the containing block can still see its separator.
+        // A second trailing closure is the lazy else branch. It may begin on
+        // the next logical line. If absent, restore the newlines so the
+        // containing block can still see its separator.
         let before_newlines = self.index;
         while self.take(&TokenKind::Newline) {}
-        if self.take(&TokenKind::Else) {
-            if self.at(&TokenKind::If) {
-                Ok(Some(Box::new(self.if_expression()?)))
-            } else if self.at(&TokenKind::LBrace) {
-                Ok(Some(Box::new(self.block()?)))
-            } else {
-                Err(self.error_here("expected `if` or `{` after `else`"))
-            }
-        } else {
-            self.index = before_newlines;
-            Ok(None)
+        if self.at(&TokenKind::LBrace) {
+            return Ok(Some(Box::new(self.block()?)));
         }
+        if self.trailing_label_at(self.index).as_deref() == Some("else") {
+            self.advance();
+            self.take(&TokenKind::Colon);
+            if self.at(&TokenKind::LBrace) {
+                return Ok(Some(Box::new(self.block()?)));
+            }
+            if Self::token_can_start_expression(&self.current().kind) {
+                return Ok(Some(Box::new(self.expression(true)?)));
+            }
+            return Err(self.error_here("expected a closure or nested trailing call after `else`"));
+        }
+        self.index = before_newlines;
+        Ok(None)
     }
 
     fn return_expression(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
@@ -3210,27 +3343,32 @@ impl Parser {
         while self.take(&TokenKind::Newline) {}
         if self.at(&TokenKind::LBrace)
             || matches!(&self.current().kind, TokenKind::Ident(name) if name == "condition")
-                && self.named_trailing_closure_follows()
+                && (self.named_trailing_closure_follows()
+                    || self.colonless_named_trailing_closure_follows())
         {
-            if self.named_trailing_closure_follows() {
-                let label = self.expect_ident("`condition`")?;
+            if self.named_trailing_closure_follows()
+                || self.colonless_named_trailing_closure_follows()
+            {
+                let label = self.take_trailing_label()?;
                 if label != "condition" {
                     return Err(self.error_here(
                         "the first named `while` trailing closure must be `condition`",
                     ));
                 }
-                self.expect(&TokenKind::Colon, "`:` after `condition`")?;
+                self.take(&TokenKind::Colon);
             }
             let condition = self.zero_parameter_trailing_closure("while condition")?;
             while self.take(&TokenKind::Newline) {}
-            if self.named_trailing_closure_follows() {
-                let label = self.expect_ident("`body`")?;
+            if self.named_trailing_closure_follows()
+                || self.colonless_named_trailing_closure_follows()
+            {
+                let label = self.take_trailing_label()?;
                 if label != "body" {
                     return Err(
                         self.error_here("the second named `while` trailing closure must be `body`")
                     );
                 }
-                self.expect(&TokenKind::Colon, "`:` after `body`")?;
+                self.take(&TokenKind::Colon);
             }
             if !self.at(&TokenKind::LBrace) {
                 return Err(self.error_here("expected a second trailing closure for `while`"));
@@ -5878,16 +6016,27 @@ mod tests {
         };
         assert_eq!(first_group.len(), 1);
         assert!(matches!(first_call.as_ref(), Expr::Call(_, arguments) if arguments.is_empty()));
+
+        let program = parse("let value = choose true { 1 } { 0 }\n").unwrap();
+        let Item::Global(binding) = &program.items[0] else {
+            panic!("expected global");
+        };
+        let Expr::Call(second_call, _) = &binding.value else {
+            panic!("expected second trailing group");
+        };
+        let Expr::Call(first_call, _) = second_call.as_ref() else {
+            panic!("expected first trailing group");
+        };
+        assert!(matches!(
+            first_call.as_ref(),
+            Expr::Call(_, arguments)
+                if matches!(arguments.as_slice(), [CallArg { value: Expr::Bool(true), .. }])
+        ));
     }
 
     #[test]
     fn named_trailing_closures_create_labeled_call_groups() {
-        let program = parse(
-            "let value = choose()\n\
-               condition: { true }\n\
-               body: { 1 }\n",
-        )
-        .unwrap();
+        let program = parse("let value = choose() condition { true } body { 1 }\n").unwrap();
         let Item::Global(binding) = &program.items[0] else {
             panic!("expected global");
         };
@@ -5899,6 +6048,20 @@ mod tests {
             panic!("expected condition group");
         };
         assert_eq!(condition_group[0].label.as_deref(), Some("condition"));
+    }
+
+    #[test]
+    fn named_nested_trailing_calls_are_implicitly_closed() {
+        let program =
+            parse("let value = choose(true) { 1 } otherwise choose(false) { 2 } { 3 }\n").unwrap();
+        let Item::Global(binding) = &program.items[0] else {
+            panic!("expected global");
+        };
+        let Expr::Call(_, group) = &binding.value else {
+            panic!("expected named trailing group");
+        };
+        assert_eq!(group[0].label.as_deref(), Some("otherwise"));
+        assert!(matches!(group[0].value, Expr::Closure(_, _)));
     }
 
     #[test]
@@ -6706,7 +6869,7 @@ mod tests {
     fn parses_while_with_positional_or_named_trailing_closures() {
         for source in [
             "let main(): () = { while { ready() } { work() } }\n",
-            "let main(): () = {\n  while\n    condition: { ready() }\n    body: { work() }\n}\n",
+            "let main(): () = {\n  while\n    condition { ready() }\n    body { work() }\n}\n",
         ] {
             let program = parse(source).unwrap();
             let Item::Function(function) = &program.items[0] else {
@@ -6717,6 +6880,30 @@ mod tests {
                 Expr::While { condition, body }
                     if matches!(condition.as_ref(), Expr::Block(_, _))
                         && matches!(body.as_ref(), Expr::Block(_, _))
+            ));
+        }
+    }
+
+    #[test]
+    fn parses_if_with_positional_or_named_trailing_closures() {
+        for source in [
+            "let main(): i32 = { if true { 42 } { 0 } }\n",
+            "let main(): i32 = { if true then { 42 } else { 0 } }\n",
+            "let main(): i32 = { if false { 0 } else if true { 42 } else { 0 } }\n",
+        ] {
+            let program = parse(source).unwrap();
+            let Item::Function(function) = &program.items[0] else {
+                panic!("expected function");
+            };
+            assert!(matches!(
+                function_tail(function),
+                Expr::If {
+                    then_branch,
+                    else_branch: Some(else_branch),
+                    ..
+                } if matches!(then_branch.as_ref(), Expr::Block(_, _))
+                    && matches!(else_branch.as_ref(), Expr::Block(_, _))
+                        || matches!(else_branch.as_ref(), Expr::If { .. })
             ));
         }
     }

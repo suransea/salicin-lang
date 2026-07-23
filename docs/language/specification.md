@@ -47,8 +47,13 @@
 - `let Name = type { value, ... }` 声明 primitive type form 的封闭值集合；标准布尔类型
   写作 `let bool = type { false, true }`。
 - 调用可以连续提供多个尾随闭包，每个闭包应用一个新的参数组；尾随闭包也可以写成
-  `label: { ... }` 以参与具名参数选择。标准 `while` 支持
+  `label { ... }` 以参与具名参数选择。标签后的嵌套尾调用会自动闭包化，因此
+  `else if ...` 是普通的 `else` 标签加嵌套调用。标准 `while` 支持
   `while { condition } { body }` 及对应的 `condition:`、`body:` 具名形式。
+- 带尾闭包的调用可省略单个立即首参数组的括号：`f value { body }` 等价于
+  `f(value)({ body })`。因此普通条件分支写作
+  `if condition { then } { else }`；condition 立即求值，后两个块保持惰性。具名形式为
+  `if condition then { ... } else { ... }`。
 - region 名以 `'` 开头，后接普通标识符主体，例如 `'a`、`'input`；`'static` 是预定义 region。
 
 ## 3. 声明与作用域
