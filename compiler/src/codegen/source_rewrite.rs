@@ -2191,6 +2191,117 @@ pub(super) fn rewrite_static_function_values(
     }
 }
 
+pub(super) fn visit_expr_mut(expression: &mut Expr, visitor: &mut impl FnMut(&mut Expr)) {
+    match expression {
+        Expr::Unary(_, value)
+        | Expr::Try(value)
+        | Expr::DoBlock { body: value }
+        | Expr::Throw(value)
+        | Expr::Unsafe(value)
+        | Expr::Borrow { value, .. }
+        | Expr::Member(value, _)
+        | Expr::ChainMember(value, _)
+        | Expr::Loop { body: value } => visit_expr_mut(value, visitor),
+        Expr::Binary(left, _, right)
+        | Expr::Coalesce(left, right)
+        | Expr::Assign(left, right)
+        | Expr::CompoundAssign(left, _, right) => {
+            visit_expr_mut(left, visitor);
+            visit_expr_mut(right, visitor);
+        }
+        Expr::HandlerCoalesce {
+            scrutinee,
+            success,
+            fallback,
+            ..
+        } => {
+            visit_expr_mut(scrutinee, visitor);
+            visit_expr_mut(success, visitor);
+            visit_expr_mut(fallback, visitor);
+        }
+        Expr::HandlerChainCall(chain) => {
+            visit_expr_mut(&mut chain.scrutinee, visitor);
+            for argument in chain.groups.iter_mut().flatten() {
+                visit_expr_mut(&mut argument.value, visitor);
+            }
+            visit_expr_mut(&mut chain.success, visitor);
+            visit_expr_mut(&mut chain.residual, visitor);
+        }
+        Expr::Call(callee, arguments) => {
+            visit_expr_mut(callee, visitor);
+            for argument in arguments {
+                visit_expr_mut(&mut argument.value, visitor);
+            }
+        }
+        Expr::StructLiteral {
+            constructor,
+            fields,
+        } => {
+            visit_expr_mut(constructor, visitor);
+            for field in fields {
+                visit_expr_mut(&mut field.value, visitor);
+            }
+        }
+        Expr::Array(elements) => {
+            for element in elements {
+                visit_expr_mut(element, visitor);
+            }
+        }
+        Expr::Index { base, index } => {
+            visit_expr_mut(base, visitor);
+            visit_expr_mut(index, visitor);
+        }
+        Expr::Block(statements, tail) => {
+            for statement in statements {
+                match statement {
+                    Stmt::Let(binding) => visit_expr_mut(&mut binding.value, visitor),
+                    Stmt::Expr(expression) => visit_expr_mut(expression, visitor),
+                }
+            }
+            if let Some(tail) = tail {
+                visit_expr_mut(tail, visitor);
+            }
+        }
+        Expr::Closure(_, body) => visit_expr_mut(body, visitor),
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            visit_expr_mut(condition, visitor);
+            visit_expr_mut(then_branch, visitor);
+            if let Some(else_branch) = else_branch {
+                visit_expr_mut(else_branch, visitor);
+            }
+        }
+        Expr::Return(value) | Expr::Break(value) => {
+            if let Some(value) = value {
+                visit_expr_mut(value, visitor);
+            }
+        }
+        Expr::While { condition, body } => {
+            visit_expr_mut(condition, visitor);
+            visit_expr_mut(body, visitor);
+        }
+        Expr::Match { scrutinee, arms } => {
+            visit_expr_mut(scrutinee, visitor);
+            for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    visit_expr_mut(guard, visitor);
+                }
+                visit_expr_mut(&mut arm.body, visitor);
+            }
+        }
+        Expr::Type(_)
+        | Expr::Unit
+        | Expr::Integer(_)
+        | Expr::Bool(_)
+        | Expr::Name(_)
+        | Expr::Continue => {}
+    }
+    visitor(expression);
+}
+
 pub(super) fn append_innermost_closure_parameter(
     expression: &mut Expr,
     parameter: Param,

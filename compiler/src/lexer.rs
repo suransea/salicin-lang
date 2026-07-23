@@ -311,6 +311,26 @@ impl Lexer {
         self.bump();
 
         let continued = tokens.last().is_some_and(|token| {
+            if token.kind == TokenKind::Bang {
+                let before_bangs = tokens
+                    .iter()
+                    .rev()
+                    .skip_while(|token| token.kind == TokenKind::Bang)
+                    .next();
+                return !before_bangs.is_some_and(|token| {
+                    matches!(
+                        token.kind,
+                        TokenKind::Ident(_)
+                            | TokenKind::RegionName(_)
+                            | TokenKind::Integer(_)
+                            | TokenKind::True
+                            | TokenKind::False
+                            | TokenKind::RParen
+                            | TokenKind::RBracket
+                            | TokenKind::RBrace
+                    )
+                });
+            }
             matches!(
                 token.kind,
                 TokenKind::Colon
@@ -321,7 +341,6 @@ impl Lexer {
                     | TokenKind::FatArrow
                     | TokenKind::Equal
                     | TokenKind::EqualEqual
-                    | TokenKind::Bang
                     | TokenKind::BangEqual
                     | TokenKind::Plus
                     | TokenKind::PlusEqual
@@ -539,6 +558,17 @@ mod tests {
         assert!(tokens
             .iter()
             .any(|token| token.kind == TokenKind::QuestionDot));
+    }
+
+    #[test]
+    fn postfix_bangs_end_a_logical_line_but_prefix_bangs_continue_it() {
+        let tokens =
+            lex("let raised = value!\nlet forced = value!!\nlet negated = !\ntrue\n").unwrap();
+        let newlines = tokens
+            .iter()
+            .filter(|token| token.kind == TokenKind::Newline)
+            .count();
+        assert_eq!(newlines, 3);
     }
 
     #[test]

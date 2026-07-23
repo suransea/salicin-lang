@@ -14,4 +14,4 @@ extend Present: Unwrap {
   }
 }
 
-let main(): i32 = { Present.Value(42)! }
+let main(): i32 = { Present.Value(42)!! }

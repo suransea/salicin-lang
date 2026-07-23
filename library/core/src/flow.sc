@@ -22,11 +22,22 @@ pub let Coalesce = trait {
     (move fallback: (): Item with(E)): Item with(E)
 }
 
-/// Trait used by postfix `!` to assert success and extract a payload.
+/// Trait used by postfix `!!` to assert success and extract a payload.
 pub let Unwrap = trait {
   /// Payload type produced by unwrapping.
   let Output: type
 
   /// Returns the successful payload or terminates when no payload is present.
   let unwrap(move self): Output
+}
+
+/// Trait used by postfix `!` to turn a stored failure into `Throws`.
+pub let Raise = trait {
+  /// Successful payload type.
+  let Output: type
+  /// Error type introduced into the effect row.
+  let Error: type
+
+  /// Returns the successful payload or raises the stored error.
+  let raise(move self): Output with(core.effect.Throws(Error))
 }

@@ -6,8 +6,13 @@ subset.
 
 ## Unreleased
 
-- Added the source-backed `core.flow.Unwrap` lang-item trait and postfix `value!` operator, with
-  aborting `Option` and `Result` implementations and support for user-defined containers.
+- Added source-backed `core.flow.Raise` and `core.flow.Unwrap` lang-item traits: postfix `value!`
+  turns stored `Result` errors into `Throws`, while `value!!` force-extracts or aborts. `Option`
+  and `Result` implement `Unwrap`, `Result` implements `Raise`, and user containers may implement
+  either protocol.
+- Routed effectful trait-method calls discovered after concrete receiver and generic-implementation
+  selection back through handler lowering, so `Raise.raise` keeps its direct
+  `Output with(Throws(Error))` contract instead of exposing an intermediate `Result`.
 - Added the compile-time `parameters` domain and complete parameter-group expansion with `...`.
   `core.effect.handler.Handle` now declares `Clauses(Value, Answer): parameters`, so every
   compiler-derived effect implementation has the same expanded `handle` shape as its source trait.

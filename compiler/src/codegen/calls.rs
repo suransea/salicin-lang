@@ -419,9 +419,10 @@ impl Analyzer {
                 "$lang$chain" => Some(("chain", LangItemKind::Chain)),
                 "$lang$coalesce" => Some(("coalesce", LangItemKind::Coalesce)),
                 "$lang$unwrap" => Some(("unwrap", LangItemKind::Unwrap)),
+                "$lang$raise" => Some(("raise", LangItemKind::Raise)),
                 _ => None,
             } {
-                let groups = if lang_item == LangItemKind::Unwrap
+                let groups = if matches!(lang_item, LangItemKind::Unwrap | LangItemKind::Raise)
                     && matches!(groups.as_slice(), [group] if group.is_empty())
                 {
                     &groups[..0]
@@ -433,7 +434,11 @@ impl Analyzer {
                     member,
                     groups,
                     BoundMethodConstraint::LangItem(lang_item),
-                    expected,
+                    if lang_item == LangItemKind::Raise {
+                        None
+                    } else {
+                        expected
+                    },
                     context,
                 );
             }

@@ -1941,6 +1941,28 @@ fn every_pass_fixture_checks_successfully() {
 }
 
 #[test]
+fn raise_and_unwrap_operators_run_through_standard_and_custom_protocols() {
+    for name in [
+        "raise_result.sc",
+        "raise_custom.sc",
+        "unwrap_option_result.sc",
+        "unwrap_custom.sc",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run raise or unwrap fixture");
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn m1_loops_and_arrays_run_with_expected_result() {
     for name in [
         "while_mutation.sc",

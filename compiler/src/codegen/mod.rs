@@ -9055,6 +9055,9 @@ impl Analyzer {
             return error_expr();
         };
         let signature = self.signatures[&canonical].clone();
+        if signature.groups.len() == 1 && matches!(runtime_groups, [group] if group.is_empty()) {
+            runtime_groups = &runtime_groups[..0];
+        }
         let Some(receiver_parameter) = signature.groups.first().and_then(|group| group.first())
         else {
             self.error(format!(

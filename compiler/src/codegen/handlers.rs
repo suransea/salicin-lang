@@ -24,7 +24,7 @@ use super::source_rewrite::{
     append_innermost_closure_parameter, handler_match_commit, hygienic_inline_function,
     pattern_contains_binding, pattern_for_suspended_guard, rewrite_handler_returns,
     rewrite_static_function_values, source_type_expression, source_type_expression_name,
-    substitute_type_parameters,
+    substitute_type_parameters, visit_expr_mut,
 };
 use super::Analyzer;
 
@@ -3493,6 +3493,86 @@ impl Analyzer {
         let prefix = format!("$handler$frame${specialization}${name}$");
         self.next_closure += 1;
         let (parameters, mut body) = hygienic_inline_function(&function, &prefix);
+        let mut parameter_types = parameters
+            .iter()
+            .flatten()
+            .map(|parameter| (parameter.name.clone(), parameter.ty.clone()))
+            .collect::<HashMap<_, _>>();
+        visit_expr_mut(&mut body, &mut |expression| match expression {
+            Expr::Block(statements, _) => {
+                for statement in statements {
+                    let Stmt::Let(binding) = statement else {
+                        continue;
+                    };
+                    if let Some(annotation) = &binding.annotation {
+                        parameter_types.insert(binding.name.clone(), annotation.clone());
+                    }
+                }
+            }
+            Expr::Closure(parameters, _) => {
+                for parameter in parameters {
+                    parameter_types.insert(parameter.name.clone(), parameter.ty.clone());
+                }
+            }
+            _ => {}
+        });
+        let origin = self
+            .function_origins
+            .get(&name)
+            .cloned()
+            .unwrap_or_default();
+        let raise_trait = self.lang_item_name(LangItemKind::Raise).to_owned();
+        visit_expr_mut(&mut body, &mut |expression| {
+            let replacement = match expression {
+                Expr::Call(callee, arguments) if arguments.is_empty() => {
+                    let Expr::Member(receiver, member) = callee.as_ref() else {
+                        return;
+                    };
+                    let (member, forced_trait) = if member == "$lang$raise" {
+                        ("raise", Some(raise_trait.as_str()))
+                    } else if member.starts_with("$lang$") {
+                        return;
+                    } else {
+                        (member.as_str(), None)
+                    };
+                    let Expr::Name(receiver_name) = receiver.as_ref() else {
+                        return;
+                    };
+                    let Some(source_ty) = parameter_types.get(receiver_name) else {
+                        return;
+                    };
+                    let receiver_ty = self.lower_source_type(source_ty);
+                    let mut candidates =
+                        self.trait_method_function_candidates(&receiver_ty, member, &origin);
+                    candidates.retain(|(key, canonical)| {
+                        forced_trait.is_none_or(|name| key.trait_ref.name == name)
+                            && self
+                                .functions
+                                .get(canonical)
+                                .or_else(|| self.function_templates.get(canonical))
+                                .is_some_and(|function| {
+                                    function.effects.custom.iter().any(|effect| {
+                                        source_effect_identity(effect) == handler.identity
+                                    })
+                                })
+                    });
+                    let [(_, canonical)] = candidates.as_slice() else {
+                        return;
+                    };
+                    Some(Expr::Call(
+                        Box::new(Expr::Name(canonical.clone())),
+                        vec![CallArg {
+                            label: None,
+                            value: (**receiver).clone(),
+                        }],
+                    ))
+                }
+                _ => None,
+            };
+            if let Some(replacement) = replacement {
+                *expression = replacement;
+            }
+        });
         let mut source_arguments = Vec::new();
         for (arguments, declared) in groups.iter().zip(&function.groups) {
             for (argument, declared) in arguments.iter().zip(declared) {

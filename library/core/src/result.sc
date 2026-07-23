@@ -53,6 +53,19 @@ extend(Error: type, T: type) Result(Error)(T): core.flow.Unwrap {
   }
 }
 
+/// Provides postfix `!` effect raising for `Result`.
+extend(E: type, T: type) Result(E)(T): core.flow.Raise {
+  let Output = T
+  let Error = E
+
+  let raise(move self): T with(core.effect.Throws(E)) = {
+    self match {
+      Ok(value) => value,
+      Err(error) => core.effect.Throws(E).raise(error),
+    }
+  }
+}
+
 /// Implements `Functor` for `Result(Error)`.
 extend(Error: type) Result(Error): core.functional.Functor {
   /// Maps `Ok` through `transform` and preserves `Err`.

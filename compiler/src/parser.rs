@@ -1457,7 +1457,7 @@ impl Parser {
         if groups[0].len() != 1 {
             return Err(self.error_here("`self` must be the only parameter in its group"));
         }
-        if groups.len() < 2 && name != "unwrap" {
+        if groups.len() < 2 && !matches!(name, "unwrap" | "raise") {
             return Err(self.error_here(
                 "an instance method requires an explicit parameter group after `self`",
             ));
@@ -2757,11 +2757,19 @@ impl Parser {
                 let member = self.expect_ident("a member name after `?.`")?;
                 expression = Expr::ChainMember(Box::new(expression), member);
             } else if self.take(&TokenKind::Bang) {
+                let force = if self.take(&TokenKind::Bang) {
+                    if self.at(&TokenKind::Bang) {
+                        return Err(self.error_here(
+                            "postfix operators accept at most two consecutive `!` tokens",
+                        ));
+                    }
+                    true
+                } else {
+                    false
+                };
+                let method = if force { "$lang$unwrap" } else { "$lang$raise" };
                 expression = Expr::Call(
-                    Box::new(Expr::Member(
-                        Box::new(expression),
-                        "$lang$unwrap".to_owned(),
-                    )),
+                    Box::new(Expr::Member(Box::new(expression), method.to_owned())),
                     Vec::new(),
                 );
             } else if self.struct_literal_follows(&expression) {

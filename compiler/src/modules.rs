@@ -422,8 +422,9 @@ const CORE_OPS_EXPORTS: &[(&str, &str)] = &[
     ("Chain", "core::flow::Chain"),
     ("Coalesce", "core::flow::Coalesce"),
     ("Unwrap", "core::flow::Unwrap"),
+    ("Raise", "core::flow::Raise"),
 ];
-const CORE_FLOW_EXPORTS: &[&str] = &["Chain", "Coalesce", "Unwrap"];
+const CORE_FLOW_EXPORTS: &[&str] = &["Chain", "Coalesce", "Unwrap", "Raise"];
 const CORE_EFFECT_EXPORTS: &[&str] = &["Unsafe", "Throws", "Async"];
 const CORE_EFFECT_HANDLER_EXPORTS: &[&str] = &["Continuation", "EffectCallable", "Handle"];
 const CORE_DOMAIN_EXPORTS: &[&str] = &[
@@ -485,6 +486,7 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("ops", "Chain", "core::flow::Chain"),
     ("ops", "Coalesce", "core::flow::Coalesce"),
     ("ops", "Unwrap", "core::flow::Unwrap"),
+    ("ops", "Raise", "core::flow::Raise"),
     ("ops.arith", "Add", "core::ops::arith::Add"),
     ("ops.arith", "Sub", "core::ops::arith::Sub"),
     ("ops.arith", "Mul", "core::ops::arith::Mul"),
@@ -525,6 +527,7 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("flow", "Chain", "core::flow::Chain"),
     ("flow", "Coalesce", "core::flow::Coalesce"),
     ("flow", "Unwrap", "core::flow::Unwrap"),
+    ("flow", "Raise", "core::flow::Raise"),
     ("effect", "Unsafe", "core::effect::Unsafe"),
     ("effect", "Throws", "core::effect::Throws"),
     ("effect", "Async", "core::effect::Async"),
@@ -1110,7 +1113,7 @@ fn install_standard_namespaces(
             ) {
                 continue;
             }
-            if *module == "ops" && matches!(*name, "Chain" | "Coalesce" | "Unwrap") {
+            if *module == "ops" && matches!(*name, "Chain" | "Coalesce" | "Unwrap" | "Raise") {
                 continue;
             }
             std_required_imports

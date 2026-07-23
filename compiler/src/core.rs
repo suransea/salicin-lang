@@ -85,6 +85,11 @@ pub let Unwrap = trait {
   let Output: type
   let unwrap(move self): Output
 }
+pub let Raise = trait {
+  let Output: type
+  let Error: type
+  let raise(move self): Output with(Throws(Error))
+}
 "#;
 
 #[cfg(test)]
@@ -142,6 +147,7 @@ pub enum LangItemKind {
     Chain,
     Coalesce,
     Unwrap,
+    Raise,
     UnsafeEffect,
     ThrowsEffect,
     TypeDomain,
@@ -165,7 +171,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 53] = [
+    const ALL: [Self; 54] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -199,6 +205,7 @@ impl LangItemKind {
         Self::Chain,
         Self::Coalesce,
         Self::Unwrap,
+        Self::Raise,
         Self::UnsafeEffect,
         Self::ThrowsEffect,
         Self::TypeDomain,
@@ -256,6 +263,7 @@ impl LangItemKind {
             Self::Chain => "Chain",
             Self::Coalesce => "Coalesce",
             Self::Unwrap => "Unwrap",
+            Self::Raise => "Raise",
             Self::UnsafeEffect => "Unsafe",
             Self::ThrowsEffect => "Throws",
             Self::TypeDomain => "type",
@@ -323,6 +331,7 @@ impl LangItemKind {
             | Self::Chain
             | Self::Coalesce
             | Self::Unwrap
+            | Self::Raise
             | Self::Iterator
             | Self::IntoIterator => "trait",
         }
@@ -363,6 +372,7 @@ impl LangItemKind {
             | Self::Chain
             | Self::Coalesce
             | Self::Unwrap
+            | Self::Raise
             | Self::UnsafeEffect
             | Self::ThrowsEffect
             | Self::TypeDomain
@@ -476,6 +486,7 @@ pub struct LangItems {
     chain: LangItem,
     coalesce: LangItem,
     unwrap: LangItem,
+    raise: LangItem,
     unsafe_effect: LangItem,
     throws_effect: LangItem,
     type_domain: LangItem,
@@ -713,6 +724,7 @@ impl LangItems {
             LangItemKind::Chain => &self.chain,
             LangItemKind::Coalesce => &self.coalesce,
             LangItemKind::Unwrap => &self.unwrap,
+            LangItemKind::Raise => &self.raise,
             LangItemKind::UnsafeEffect => &self.unsafe_effect,
             LangItemKind::ThrowsEffect => &self.throws_effect,
             LangItemKind::TypeDomain => &self.type_domain,
@@ -905,6 +917,7 @@ impl CoreBundle {
             &mut lang_items.chain,
             &mut lang_items.coalesce,
             &mut lang_items.unwrap,
+            &mut lang_items.raise,
             &mut lang_items.unsafe_effect,
             &mut lang_items.throws_effect,
             &mut lang_items.type_domain,
@@ -1207,6 +1220,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         chain: item(LangItemKind::Chain),
         coalesce: item(LangItemKind::Coalesce),
         unwrap: item(LangItemKind::Unwrap),
+        raise: item(LangItemKind::Raise),
         unsafe_effect: item(LangItemKind::UnsafeEffect),
         throws_effect: item(LangItemKind::ThrowsEffect),
         type_domain: item(LangItemKind::TypeDomain),
@@ -1362,6 +1376,7 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
             validate_coalesce(definition, diagnostics)
         }
         (LangItemKind::Unwrap, Item::Trait(definition)) => validate_unwrap(definition, diagnostics),
+        (LangItemKind::Raise, Item::Trait(definition)) => validate_raise(definition, diagnostics),
         (kind @ (LangItemKind::Neg | LangItemKind::Not), Item::Trait(definition)) => {
             validate_unary_operator(kind, definition, diagnostics)
         }
@@ -1709,6 +1724,66 @@ fn valid_unwrap_method(function: &Function) -> bool {
         && function.compile_groups.is_empty()
         && function.return_type == Some(named_type("Output"))
         && function.effects == Default::default()
+        && function.where_predicates.is_empty()
+        && function.body.is_none()
+        && receiver.name == "self"
+        && receiver.mode == PassMode::Move
+        && receiver.ty == named_type("Self")
+}
+
+fn validate_raise(definition: &TraitDef, diagnostics: &mut Vec<String>) {
+    let valid = trait_has_default_self(definition)
+        && definition.compile_groups.is_empty()
+        && matches!(
+            definition.members.as_slice(),
+            [
+                TraitMember::AssociatedType {
+                    name: output,
+                    compile_groups: output_groups,
+                    default: None,
+                    ..
+                },
+                TraitMember::AssociatedType {
+                    name: error,
+                    compile_groups: error_groups,
+                    default: None,
+                    ..
+                },
+                TraitMember::Function(function),
+            ] if output == "Output"
+                && output_groups.is_empty()
+                && error == "Error"
+                && error_groups.is_empty()
+                && valid_raise_method(function)
+        );
+    if !valid {
+        diagnostics.push(
+            "lang item `Raise` must declare `Output`, `Error`, and `raise(move self): Output with(Throws(Error))`"
+                .to_owned(),
+        );
+    }
+}
+
+fn valid_raise_method(function: &Function) -> bool {
+    let [receiver_group] = function.groups.as_slice() else {
+        return false;
+    };
+    let [receiver] = receiver_group.as_slice() else {
+        return false;
+    };
+    let throws_error = matches!(
+        function.effects.custom.as_slice(),
+        [Type::Named(name, arguments)]
+            if name.split('.').next_back() == Some("Throws")
+                && arguments == &vec![named_type("Error")]
+    );
+    function.name == "raise"
+        && function.compile_groups.is_empty()
+        && function.return_type == Some(named_type("Output"))
+        && throws_error
+        && !function.effects.unsafe_effect
+        && function.effects.throws.is_none()
+        && function.effects.parameters.is_empty()
         && function.where_predicates.is_empty()
         && function.body.is_none()
         && receiver.name == "self"
@@ -2461,7 +2536,7 @@ pub let Shr(Rhs: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 18);
+        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 19);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -2499,7 +2574,10 @@ pub let Shr(Rhs: type) = trait {
                 LangItemKind::Eq | LangItemKind::PartialOrdering | LangItemKind::PartialOrd => {
                     format!("core::cmp::{}", kind.source_name())
                 }
-                LangItemKind::Chain | LangItemKind::Coalesce | LangItemKind::Unwrap => {
+                LangItemKind::Chain
+                | LangItemKind::Coalesce
+                | LangItemKind::Unwrap
+                | LangItemKind::Raise => {
                     format!("core::flow::{}", kind.source_name())
                 }
                 LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect => {
@@ -2564,7 +2642,10 @@ pub let Shr(Rhs: type) = trait {
                 LangItemKind::Eq | LangItemKind::PartialOrdering | LangItemKind::PartialOrd => {
                     vec!["cmp"]
                 }
-                LangItemKind::Chain | LangItemKind::Coalesce | LangItemKind::Unwrap => vec!["flow"],
+                LangItemKind::Chain
+                | LangItemKind::Coalesce
+                | LangItemKind::Unwrap
+                | LangItemKind::Raise => vec!["flow"],
                 LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect => vec!["effect"],
                 LangItemKind::TypeDomain
                 | LangItemKind::RegionDomain
@@ -2755,6 +2836,17 @@ pub let Shr(Rhs: type) = trait {
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.contains("lang item `Unwrap`")));
+
+        let malformed = EDITION_2026_FLOW.replace(
+            "let raise(move self): Output with(core.effect.Throws(Error))",
+            "let raise(move self): Output",
+        );
+        let modules = edition_2026_test_modules(&[("flow", &malformed)]);
+        let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
+        assert!(error
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.contains("lang item `Raise`")));
     }
 
     #[test]
