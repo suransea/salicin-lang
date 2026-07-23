@@ -62,6 +62,8 @@ The implementation lives under `compiler/src`:
   - `throws.rs` probes custom-effect call rows to identify dedicated and standard throws sources,
     infers context-free `try { ... }` `Result(E)(T)` types, and lowers `try { ... }`, `throw`, and
     automatic throws propagation return-boundary wrappers.
+  - `types.rs` lowers source-level type syntax, compile-time type arguments, and non-diagnostic
+    source/nominal type probes used by inference and expression lowering.
   - `tests.rs` contains the large codegen regression suite.
 - `main.rs` implements the `salic` command-line interface.
 
