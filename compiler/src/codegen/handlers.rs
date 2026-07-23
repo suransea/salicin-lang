@@ -14,6 +14,7 @@ use super::effects::{
     logical_function_result_source, standard_throws_error_source,
 };
 use super::flow::LowerCtx;
+use super::hir::{RuntimeHandlerAction, Ty};
 use super::lower::flatten_call;
 use super::source_rewrite::{
     append_innermost_closure_parameter, handler_match_commit, hygienic_inline_function,
@@ -982,6 +983,78 @@ pub(super) fn is_internal_handler_closure_binding(name: &str) -> bool {
 }
 
 impl Analyzer {
+    pub(super) fn register_runtime_handler_actions(&mut self) {
+        for function_name in self.function_order.clone() {
+            let function = self.functions[&function_name].clone();
+            let Some(body) = function.body.as_ref() else {
+                continue;
+            };
+            let Some(answer_source) = function.return_type.as_ref() else {
+                continue;
+            };
+            let answer = self.lower_source_type(answer_source);
+            for (group_index, group) in function.groups.iter().enumerate() {
+                for (parameter_index, parameter) in group.iter().enumerate() {
+                    if matches!(parameter.mode, PassMode::Borrow | PassMode::MutBorrow) {
+                        continue;
+                    }
+                    let Type::Function {
+                        groups,
+                        effects,
+                        result,
+                    } = &parameter.ty
+                    else {
+                        continue;
+                    };
+                    if self.function_effects_unsafe(effects)
+                        || effects.throws.is_some()
+                        || !effects.parameters.is_empty()
+                        || self.function_effects_custom_identities(effects).len() != 1
+                        || groups.len() != 1
+                        || groups[0].len() > 1
+                    {
+                        continue;
+                    }
+                    let effect = self
+                        .function_effects_custom_identities(effects)
+                        .into_iter()
+                        .next()
+                        .expect("exactly one normalized custom effect");
+                    let root = effect.split('(').next().unwrap_or(&effect);
+                    if self
+                        .effect_defs
+                        .get(root)
+                        .is_none_or(|definition| definition.operations.is_empty())
+                        || function
+                            .effects
+                            .custom
+                            .iter()
+                            .filter(|candidate| !self.is_standard_unsafe_effect_source(candidate))
+                            .any(|candidate| source_effect_identity(candidate) == effect)
+                        || !expression_handles_effect(body, &effect)
+                    {
+                        continue;
+                    }
+                    let input = groups[0]
+                        .first()
+                        .map(|input| self.lower_source_type(input))
+                        .unwrap_or(Ty::Unit);
+                    let output = self.lower_source_type(result);
+                    self.runtime_handler_actions.insert(
+                        (function_name.clone(), group_index, parameter_index),
+                        RuntimeHandlerAction {
+                            effect,
+                            input,
+                            output,
+                            answer: answer.clone(),
+                            accepts_input: !groups[0].is_empty(),
+                        },
+                    );
+                }
+            }
+        }
+    }
+
     pub(super) fn transform_handler_expr(
         &mut self,
         expression: Expr,
