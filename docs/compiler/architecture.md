@@ -42,6 +42,8 @@ The implementation lives under `compiler/src`:
   - `functions.rs` lowers function and global bodies, resolves function/global value types, and
     validates binary entry-point shape.
   - `hir.rs` defines typed IR structs, semantic types, places, signatures, and helper predicates.
+  - `inference.rs` owns generic type-argument seed, unification, template resolution, and
+    expression-constraint inference helpers.
   - `lower.rs` defines shared expression-lowering data, type-probe helpers, and HIR construction
     helpers used by multiple lowering paths.
   - `names.rs` centralizes stable symbol, monomorphization instance, trait-method, and canonical
