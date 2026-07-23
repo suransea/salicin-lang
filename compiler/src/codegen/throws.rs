@@ -1,12 +1,17 @@
 use std::collections::HashSet;
 
-use crate::ast::{CallArg, Expr, Stmt};
+use crate::ast::{CallArg, Expr, Param, PassMode, Stmt, Type};
 use crate::core::LangItemKind;
 
-use super::effects::standard_throws_error_source;
+use super::compile_time::source_effect_identity;
+use super::effects::{handled_operation_call, standard_throws_error_source};
+use super::fallible::StandardFallibleKind;
 use super::flow::{LocalInfo, LowerCtx};
-use super::hir::{FunctionSig, FunctionTy, LocalCapability, Ty};
-use super::lower::{flatten_call, TypeProbe};
+use super::hir::{
+    ClosureCaptureMode, ClosureEffectContext, FunctionSig, FunctionTy, HirArgument, HirExpr,
+    HirExprKind, LocalCapability, Ty,
+};
+use super::lower::{error_expr, flatten_call, TypeProbe};
 use super::source_rewrite::source_type_expression_name;
 use super::Analyzer;
 
@@ -240,6 +245,469 @@ impl Analyzer {
         (groups.len() + 1 == signature.groups.len())
             .then(|| self.throws_info_from_signature(signature))
             .flatten()
+    }
+
+    pub(super) fn lower_try(
+        &mut self,
+        body: &Expr,
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let expected = match expected.cloned() {
+            Some(expected) => expected,
+            None => match self.infer_try_result_type(body, context) {
+                Some(inferred) => inferred,
+                None => {
+                    let _ = self.lower_expr(body, None, context);
+                    return error_expr();
+                }
+            },
+        };
+        let Some(info) = self.standard_fallible_info_for_ty(&expected) else {
+            let _ = self.lower_expr(body, None, context);
+            self.error(format!(
+                "`try {{ ... }}` produces `Result(E)(T)`, but this context expects `{expected}`"
+            ));
+            return error_expr();
+        };
+        if info.kind != StandardFallibleKind::Result {
+            let _ = self.lower_expr(body, None, context);
+            self.error("`try { ... }` requires `Result(E)(T)`, not `Option(T)`");
+            return error_expr();
+        }
+        let error = info.error.expect("Result has an error type");
+        if !self.try_body_uses_dedicated_throws_call(body, context)
+            && self.try_body_uses_standard_throws(body, &error, context)
+        {
+            return self.lower_standard_throws_try(body, expected, context);
+        }
+        let closure = self.lower_local_closure(
+            &[],
+            body,
+            Some(expected.clone()),
+            ClosureEffectContext {
+                unsafe_depth: context.unsafe_depth,
+                throws_error: Some(error),
+                custom_effects: context.active_custom_effects.clone(),
+                custom_effect_sources: context.active_custom_effect_sources.clone(),
+                lexical_handler_effects: context.lexical_handler_effects.clone(),
+                lexical_handler_effect_sources: context.lexical_handler_effect_sources.clone(),
+            },
+            context,
+        );
+        let HirExprKind::LocalClosure(info) = closure.kind else {
+            return error_expr();
+        };
+        let mut loans = Vec::new();
+        let arguments = info
+            .captures
+            .into_iter()
+            .map(|capture| match capture.mode {
+                ClosureCaptureMode::Shared => {
+                    if let Some(loan) = capture.place.loan {
+                        loans.push(loan);
+                    }
+                    HirArgument::SharedBorrow(capture.place)
+                }
+                ClosureCaptureMode::Mutable => {
+                    if let Some(loan) = capture.place.loan {
+                        loans.push(loan);
+                    }
+                    HirArgument::MutBorrow(capture.place)
+                }
+                ClosureCaptureMode::Move => HirArgument::Move(
+                    *capture
+                        .value
+                        .expect("move capture stores its evaluated value"),
+                ),
+            })
+            .collect();
+        self.release_loans(&loans, context);
+        HirExpr {
+            ty: expected,
+            kind: HirExprKind::Call {
+                function: info.function,
+                arguments,
+                consumed_callable: None,
+                diverges: false,
+            },
+        }
+    }
+
+    fn lower_standard_throws_try(
+        &mut self,
+        body: &Expr,
+        expected: Ty,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let Some(info) = self.standard_fallible_info_for_ty(&expected) else {
+            self.error("internal error: standard Throws try requires a Result expectation");
+            return error_expr();
+        };
+        let Some(error_source) = info
+            .error
+            .as_ref()
+            .and_then(|error| self.source_type_for_ty(error))
+        else {
+            self.error("standard Throws try requires a source-level error type");
+            return error_expr();
+        };
+        let Some(payload_source) = info.payload_source.clone() else {
+            self.error("standard Throws try requires a source-level success type");
+            return error_expr();
+        };
+        let throws_name = self.lang_item_name(LangItemKind::ThrowsEffect).to_owned();
+        let Some(definition) = self.effect_defs.get(&throws_name).cloned() else {
+            self.error("compiler core did not register its validated `Throws` effect");
+            return error_expr();
+        };
+        let instance = Type::Named(throws_name, vec![error_source]);
+        let inferred = Type::Named("$context$infer".into(), Vec::new());
+        let result_name = self.lang_item_name(LangItemKind::Result).to_owned();
+        let done_value = "$try$value".to_owned();
+        let raise_error = "$try$error".to_owned();
+        let clauses = vec![
+            CallArg {
+                label: Some("done".to_owned()),
+                value: Expr::Closure(
+                    vec![Param {
+                        mode: PassMode::Inferred,
+                        access: None,
+                        passing: None,
+                        region: None,
+                        name: done_value.clone(),
+                        ty: payload_source,
+                    }],
+                    Box::new(Expr::Call(
+                        Box::new(Expr::Member(
+                            Box::new(Expr::Name(result_name.clone())),
+                            "Ok".to_owned(),
+                        )),
+                        vec![CallArg {
+                            label: None,
+                            value: Expr::Name(done_value),
+                        }],
+                    )),
+                ),
+            },
+            CallArg {
+                label: Some("raise".to_owned()),
+                value: Expr::Closure(
+                    vec![Param {
+                        mode: PassMode::Inferred,
+                        access: None,
+                        passing: None,
+                        region: None,
+                        name: raise_error.clone(),
+                        ty: inferred,
+                    }],
+                    Box::new(Expr::Call(
+                        Box::new(Expr::Member(
+                            Box::new(Expr::Name(result_name)),
+                            "Err".to_owned(),
+                        )),
+                        vec![CallArg {
+                            label: None,
+                            value: Expr::Name(raise_error),
+                        }],
+                    )),
+                ),
+            },
+        ];
+        let action = vec![CallArg {
+            label: None,
+            value: Expr::Closure(Vec::new(), Box::new(body.clone())),
+        }];
+        let groups = vec![clauses.as_slice(), action.as_slice()];
+        self.lower_effect_handler(&definition, &instance, &groups, Some(&expected), context)
+    }
+
+    fn try_body_uses_standard_throws(
+        &self,
+        expression: &Expr,
+        error: &Ty,
+        context: &LowerCtx,
+    ) -> bool {
+        let Some(error_source) = self.source_type_for_ty(error) else {
+            return false;
+        };
+        let identity = source_effect_identity(&Type::Named(
+            self.lang_item_name(LangItemKind::ThrowsEffect).to_owned(),
+            vec![error_source],
+        ));
+        self.expression_uses_standard_throws_identity(expression, &identity, context)
+    }
+
+    fn expression_uses_standard_throws_identity(
+        &self,
+        expression: &Expr,
+        identity: &str,
+        context: &LowerCtx,
+    ) -> bool {
+        match expression {
+            Expr::Throw(_) => true,
+            Expr::Try(_) | Expr::Closure(_, _) => false,
+            Expr::Call(callee, arguments) => {
+                handled_operation_call(expression, identity).is_some()
+                    || self
+                        .call_custom_effect_identities(expression, context)
+                        .is_some_and(|effects| effects.iter().any(|effect| effect == identity))
+                    || self.effect_handler_call_uses_standard_throws_identity(
+                        expression, identity, context,
+                    )
+                    || self.expression_uses_standard_throws_identity(callee, identity, context)
+                    || arguments.iter().any(|argument| {
+                        self.expression_uses_standard_throws_identity(
+                            &argument.value,
+                            identity,
+                            context,
+                        )
+                    })
+            }
+            Expr::Unary(_, value)
+            | Expr::Borrow { value, .. }
+            | Expr::DoBlock { body: value }
+            | Expr::Unsafe(value)
+            | Expr::Return(Some(value))
+            | Expr::Break(Some(value)) => {
+                self.expression_uses_standard_throws_identity(value, identity, context)
+            }
+            Expr::Return(None) | Expr::Break(None) | Expr::Continue => false,
+            Expr::Binary(left, _, right)
+            | Expr::Coalesce(left, right)
+            | Expr::Assign(left, right)
+            | Expr::CompoundAssign(left, _, right) => {
+                self.expression_uses_standard_throws_identity(left, identity, context)
+                    || self.expression_uses_standard_throws_identity(right, identity, context)
+            }
+            Expr::HandlerCoalesce {
+                scrutinee,
+                success,
+                fallback,
+                ..
+            } => {
+                self.expression_uses_standard_throws_identity(scrutinee, identity, context)
+                    || self.expression_uses_standard_throws_identity(success, identity, context)
+                    || self.expression_uses_standard_throws_identity(fallback, identity, context)
+            }
+            Expr::HandlerChainCall(chain) => {
+                self.expression_uses_standard_throws_identity(&chain.scrutinee, identity, context)
+                    || chain.groups.iter().flatten().any(|argument| {
+                        self.expression_uses_standard_throws_identity(
+                            &argument.value,
+                            identity,
+                            context,
+                        )
+                    })
+                    || self.expression_uses_standard_throws_identity(
+                        &chain.success,
+                        identity,
+                        context,
+                    )
+                    || self.expression_uses_standard_throws_identity(
+                        &chain.residual,
+                        identity,
+                        context,
+                    )
+            }
+            Expr::Member(base, _) | Expr::ChainMember(base, _) => {
+                self.expression_uses_standard_throws_identity(base, identity, context)
+            }
+            Expr::Array(elements) => elements.iter().any(|element| {
+                self.expression_uses_standard_throws_identity(element, identity, context)
+            }),
+            Expr::StructLiteral { fields, .. } => fields.iter().any(|field| {
+                self.expression_uses_standard_throws_identity(&field.value, identity, context)
+            }),
+            Expr::Index { base, index } => {
+                self.expression_uses_standard_throws_identity(base, identity, context)
+                    || self.expression_uses_standard_throws_identity(index, identity, context)
+            }
+            Expr::Block(statements, tail) => {
+                statements.iter().any(|statement| match statement {
+                    Stmt::Let(binding) => self.expression_uses_standard_throws_identity(
+                        &binding.value,
+                        identity,
+                        context,
+                    ),
+                    Stmt::Expr(expression) => {
+                        self.expression_uses_standard_throws_identity(expression, identity, context)
+                    }
+                }) || tail.as_ref().is_some_and(|tail| {
+                    self.expression_uses_standard_throws_identity(tail, identity, context)
+                })
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.expression_uses_standard_throws_identity(condition, identity, context)
+                    || self.expression_uses_standard_throws_identity(then_branch, identity, context)
+                    || else_branch.as_ref().is_some_and(|else_branch| {
+                        self.expression_uses_standard_throws_identity(
+                            else_branch,
+                            identity,
+                            context,
+                        )
+                    })
+            }
+            Expr::While { condition, body } => {
+                self.expression_uses_standard_throws_identity(condition, identity, context)
+                    || self.expression_uses_standard_throws_identity(body, identity, context)
+            }
+            Expr::Loop { body } => {
+                self.expression_uses_standard_throws_identity(body, identity, context)
+            }
+            Expr::Match { scrutinee, arms } => {
+                self.expression_uses_standard_throws_identity(scrutinee, identity, context)
+                    || arms.iter().any(|arm| {
+                        arm.guard.as_ref().is_some_and(|guard| {
+                            self.expression_uses_standard_throws_identity(guard, identity, context)
+                        }) || self
+                            .expression_uses_standard_throws_identity(&arm.body, identity, context)
+                    })
+            }
+            Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => false,
+        }
+    }
+
+    fn effect_handler_call_uses_standard_throws_identity(
+        &self,
+        expression: &Expr,
+        identity: &str,
+        context: &LowerCtx,
+    ) -> bool {
+        let Expr::Call(inner_callee, action_arguments) = expression else {
+            return false;
+        };
+        let [CallArg {
+            label: None,
+            value: Expr::Closure(action_parameters, action_body),
+        }] = action_arguments.as_slice()
+        else {
+            return false;
+        };
+        if !action_parameters.is_empty() {
+            return false;
+        }
+        let mut groups = Vec::new();
+        let Expr::Member(effect, member) = flatten_call(inner_callee, &mut groups) else {
+            return false;
+        };
+        if member != "handle" || groups.len() != 1 {
+            return false;
+        }
+        let Some(effect_name) = source_type_expression_name(effect) else {
+            return false;
+        };
+        let root_name = effect_name.split('(').next().unwrap_or(&effect_name);
+        if !self.effect_defs.contains_key(root_name) {
+            return false;
+        }
+        groups[0].iter().any(|argument| {
+            matches!(
+                &argument.value,
+                Expr::Closure(_, body)
+                    if self.expression_uses_standard_throws_identity(body, identity, context)
+            )
+        }) || self.expression_uses_standard_throws_identity(action_body, identity, context)
+    }
+
+    fn try_body_uses_dedicated_throws_call(&self, expression: &Expr, context: &LowerCtx) -> bool {
+        match expression {
+            Expr::Try(_) | Expr::Closure(_, _) => false,
+            Expr::Call(callee, arguments) => {
+                self.call_throws_info(expression, context).is_some()
+                    || self.try_body_uses_dedicated_throws_call(callee, context)
+                    || arguments.iter().any(|argument| {
+                        self.try_body_uses_dedicated_throws_call(&argument.value, context)
+                    })
+            }
+            Expr::Unary(_, value)
+            | Expr::Borrow { value, .. }
+            | Expr::DoBlock { body: value }
+            | Expr::Throw(value)
+            | Expr::Unsafe(value)
+            | Expr::Return(Some(value))
+            | Expr::Break(Some(value)) => self.try_body_uses_dedicated_throws_call(value, context),
+            Expr::Return(None) | Expr::Break(None) | Expr::Continue => false,
+            Expr::Binary(left, _, right)
+            | Expr::Coalesce(left, right)
+            | Expr::Assign(left, right)
+            | Expr::CompoundAssign(left, _, right) => {
+                self.try_body_uses_dedicated_throws_call(left, context)
+                    || self.try_body_uses_dedicated_throws_call(right, context)
+            }
+            Expr::HandlerCoalesce {
+                scrutinee,
+                success,
+                fallback,
+                ..
+            } => {
+                self.try_body_uses_dedicated_throws_call(scrutinee, context)
+                    || self.try_body_uses_dedicated_throws_call(success, context)
+                    || self.try_body_uses_dedicated_throws_call(fallback, context)
+            }
+            Expr::HandlerChainCall(chain) => {
+                self.try_body_uses_dedicated_throws_call(&chain.scrutinee, context)
+                    || chain.groups.iter().flatten().any(|argument| {
+                        self.try_body_uses_dedicated_throws_call(&argument.value, context)
+                    })
+                    || self.try_body_uses_dedicated_throws_call(&chain.success, context)
+                    || self.try_body_uses_dedicated_throws_call(&chain.residual, context)
+            }
+            Expr::Member(base, _) | Expr::ChainMember(base, _) => {
+                self.try_body_uses_dedicated_throws_call(base, context)
+            }
+            Expr::Array(elements) => elements
+                .iter()
+                .any(|element| self.try_body_uses_dedicated_throws_call(element, context)),
+            Expr::StructLiteral { fields, .. } => fields
+                .iter()
+                .any(|field| self.try_body_uses_dedicated_throws_call(&field.value, context)),
+            Expr::Index { base, index } => {
+                self.try_body_uses_dedicated_throws_call(base, context)
+                    || self.try_body_uses_dedicated_throws_call(index, context)
+            }
+            Expr::Block(statements, tail) => {
+                statements.iter().any(|statement| match statement {
+                    Stmt::Let(binding) => {
+                        self.try_body_uses_dedicated_throws_call(&binding.value, context)
+                    }
+                    Stmt::Expr(expression) => {
+                        self.try_body_uses_dedicated_throws_call(expression, context)
+                    }
+                }) || tail
+                    .as_ref()
+                    .is_some_and(|tail| self.try_body_uses_dedicated_throws_call(tail, context))
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.try_body_uses_dedicated_throws_call(condition, context)
+                    || self.try_body_uses_dedicated_throws_call(then_branch, context)
+                    || else_branch.as_ref().is_some_and(|else_branch| {
+                        self.try_body_uses_dedicated_throws_call(else_branch, context)
+                    })
+            }
+            Expr::While { condition, body } => {
+                self.try_body_uses_dedicated_throws_call(condition, context)
+                    || self.try_body_uses_dedicated_throws_call(body, context)
+            }
+            Expr::Loop { body } => self.try_body_uses_dedicated_throws_call(body, context),
+            Expr::Match { scrutinee, arms } => {
+                self.try_body_uses_dedicated_throws_call(scrutinee, context)
+                    || arms.iter().any(|arm| {
+                        arm.guard.as_ref().is_some_and(|guard| {
+                            self.try_body_uses_dedicated_throws_call(guard, context)
+                        }) || self.try_body_uses_dedicated_throws_call(&arm.body, context)
+                    })
+            }
+            Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Name(_) => false,
+        }
     }
 
     fn collect_escaping_throws(
