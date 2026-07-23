@@ -6,8 +6,11 @@ use crate::ast::{BinaryOp, Binding, CallArg, Expr, Function, FunctionEffects, Pa
 use crate::core::LangItemKind;
 
 use super::compile_time::{source_effect_identities, source_effect_source_map};
+use super::flow::LowerCtx;
+use super::hir::{ClosureCaptureMode, ClosureEffectContext, HirArgument, HirExpr, HirExprKind, Ty};
+use super::lower::{error_expr, flatten_call, TypeProbe};
 use super::source_rewrite::{source_effect_expression_identity, source_type_expression_name};
-use super::{flatten_call, Analyzer};
+use super::Analyzer;
 
 pub(super) type SourceContinuation = Rc<dyn Fn(&mut Analyzer, Expr) -> Result<Expr, ()>>;
 pub(super) type SourceArgumentsContinuation =
@@ -76,6 +79,98 @@ impl Analyzer {
                 vec![error.clone(), logical],
             ),
             None => logical,
+        }
+    }
+
+    pub(super) fn lower_do_block(
+        &mut self,
+        body: &Expr,
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        if !do_block_requires_function_boundary(body) {
+            return self.lower_expr(body, expected, context);
+        }
+        let active_throws_error = context.active_throws_error.clone();
+        let logical_result =
+            expected
+                .filter(|ty| **ty != Ty::Error)
+                .cloned()
+                .or_else(|| match self.probe_expr_ty(body, None, context) {
+                    TypeProbe::Known(ty)
+                    | TypeProbe::KnownSource(ty, _)
+                    | TypeProbe::Defaultable(ty) => Some(ty),
+                    TypeProbe::Unsupported => None,
+                });
+        let declared_result = match (&logical_result, &active_throws_error) {
+            (Some(logical), Some(error)) => {
+                self.ensure_throws_result_type(logical.clone(), error.clone())
+            }
+            (Some(logical), None) => Some(logical.clone()),
+            (None, Some(_)) => {
+                self.error(
+                    "cannot infer the result of an effect-forwarding `do` block; add a contextual type",
+                );
+                Some(Ty::Error)
+            }
+            (None, None) => None,
+        };
+        let closure = self.lower_local_closure(
+            &[],
+            body,
+            declared_result,
+            ClosureEffectContext {
+                unsafe_depth: context.unsafe_depth,
+                throws_error: active_throws_error.clone(),
+                custom_effects: context.active_custom_effects.clone(),
+                custom_effect_sources: context.active_custom_effect_sources.clone(),
+                lexical_handler_effects: context.lexical_handler_effects.clone(),
+                lexical_handler_effect_sources: context.lexical_handler_effect_sources.clone(),
+            },
+            context,
+        );
+        let HirExprKind::LocalClosure(info) = closure.kind else {
+            return error_expr();
+        };
+        let result = info.result.clone();
+        let mut loans = Vec::new();
+        let arguments = info
+            .captures
+            .into_iter()
+            .map(|capture| match capture.mode {
+                ClosureCaptureMode::Shared => {
+                    if let Some(loan) = capture.place.loan {
+                        loans.push(loan);
+                    }
+                    HirArgument::SharedBorrow(capture.place)
+                }
+                ClosureCaptureMode::Mutable => {
+                    if let Some(loan) = capture.place.loan {
+                        loans.push(loan);
+                    }
+                    HirArgument::MutBorrow(capture.place)
+                }
+                ClosureCaptureMode::Move => HirArgument::Move(
+                    *capture
+                        .value
+                        .expect("move capture stores its evaluated value"),
+                ),
+            })
+            .collect();
+        self.release_loans(&loans, context);
+        let call = HirExpr {
+            ty: result,
+            kind: HirExprKind::Call {
+                function: info.function,
+                arguments,
+                consumed_callable: None,
+                diverges: false,
+            },
+        };
+        if let Some(error) = active_throws_error.as_ref() {
+            self.lower_automatic_throws(call, error, expected.or(logical_result.as_ref()), context)
+        } else {
+            call
         }
     }
 
