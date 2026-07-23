@@ -8249,8 +8249,14 @@ impl Analyzer {
                         );
                     }
                     valid
-                } else if matches!(root, Expr::Name(name) if self.struct_layouts.contains_key(name))
-                {
+                } else if matches!(
+                    root,
+                    Expr::Name(name)
+                        if self.struct_layouts.contains_key(name)
+                            || self.struct_templates.contains_key(name)
+                            || self.enum_defs.contains_key(name)
+                            || self.enum_templates.contains_key(name)
+                ) {
                     groups
                         .iter()
                         .flat_map(|group| group.iter())

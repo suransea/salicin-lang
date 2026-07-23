@@ -132,6 +132,16 @@ fn effect_generics_select_pure_and_unsafe_instances() {
 }
 
 #[test]
+fn functional_protocols_forward_callback_effects() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "functional_effect_forwarding.sc"))
+        .output()
+        .expect("run functional effect-forwarding fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
     for fixture_name in [
         "algebraic_effect_handler.sc",
