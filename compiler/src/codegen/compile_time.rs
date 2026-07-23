@@ -277,6 +277,7 @@ pub(super) fn describe_compile_param_kind(kind: CompileParamKind) -> String {
         CompileParamKind::Access => "`access`".to_owned(),
         CompileParamKind::Passing => "`passing`".to_owned(),
         CompileParamKind::Effect => "`effect`".to_owned(),
+        CompileParamKind::Parameters => "`parameters`".to_owned(),
         CompileParamKind::TypeConstructor { parameter_count } => {
             format!(
                 "`({} type parameter{}): type`",

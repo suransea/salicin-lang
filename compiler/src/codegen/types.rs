@@ -706,7 +706,9 @@ impl Analyzer {
                     .filter(|target| target.parameter_count == parameter_count)
                     .map(|_| source)
             }
-            CompileParamKind::Region | CompileParamKind::EffectConstructor { .. } => None,
+            CompileParamKind::Region
+            | CompileParamKind::Parameters
+            | CompileParamKind::EffectConstructor { .. } => None,
         }
     }
 
@@ -731,7 +733,9 @@ impl Analyzer {
             | CompileParamKind::Access
             | CompileParamKind::Passing
             | CompileParamKind::Effect => self.probe_source_ty(source),
-            CompileParamKind::Region | CompileParamKind::EffectConstructor { .. } => None,
+            CompileParamKind::Region
+            | CompileParamKind::Parameters
+            | CompileParamKind::EffectConstructor { .. } => None,
         }
     }
 
@@ -895,6 +899,7 @@ impl Analyzer {
                 self.expression_is_explicit_type_constructor_argument(expression, parameter_count)
             }
             CompileParamKind::Region => false,
+            CompileParamKind::Parameters => false,
             CompileParamKind::EffectConstructor { .. } => false,
         }
     }

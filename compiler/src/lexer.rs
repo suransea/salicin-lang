@@ -47,6 +47,7 @@ pub enum TokenKind {
     RBrace,
     Colon,
     Dot,
+    Ellipsis,
     Comma,
     Semicolon,
     Newline,
@@ -227,6 +228,17 @@ impl Lexer {
                     '{' => TokenKind::LBrace,
                     '}' => TokenKind::RBrace,
                     ':' => TokenKind::Colon,
+                    '.' if self.take('.') => {
+                        if self.take('.') {
+                            TokenKind::Ellipsis
+                        } else {
+                            return Err(self.error(
+                                "expected a third `.` in parameter expansion".to_owned(),
+                                line,
+                                column,
+                            ));
+                        }
+                    }
                     '.' => TokenKind::Dot,
                     ',' => TokenKind::Comma,
                     ';' => TokenKind::Semicolon,
@@ -303,6 +315,7 @@ impl Lexer {
                 token.kind,
                 TokenKind::Colon
                     | TokenKind::Dot
+                    | TokenKind::Ellipsis
                     | TokenKind::Comma
                     | TokenKind::Arrow
                     | TokenKind::FatArrow

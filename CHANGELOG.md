@@ -8,8 +8,9 @@ subset.
 
 - Added the source-backed `core.flow.Unwrap` lang-item trait and postfix `value!` operator, with
   aborting `Option` and `Result` implementations and support for user-defined containers.
-- Declared the compiler-derived effect handler surface in `core.control.Handle`, including the
-  synthetic `Clauses(Value, Answer)` pack and `handle` member shape for every source effect.
+- Added the compile-time `parameters` domain and complete parameter-group expansion with `...`.
+  `core.effect.handler.Handle` now declares `Clauses(Value, Answer): parameters`, so every
+  compiler-derived effect implementation has the same expanded `handle` shape as its source trait.
 - Made the validated `core.control.unsafe` helper an ordinary source definition over the
   zero-operation `core.effects.Unsafe` handler; only its lexical raw-operation authority remains
   syntax-directed in the compiler.

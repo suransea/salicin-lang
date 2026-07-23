@@ -10,9 +10,9 @@ use std::error::Error;
 use std::fmt;
 
 use crate::ast::{
-    CompileParam, CompileParamDefault, CompileParamKind, EnumDef, Function, Item, ItemOrigin,
-    PassMode, Program, TraitDef, TraitMember, Type, TypeFormDef, VariantDef, VariantFields,
-    Visibility,
+    AssociatedKind, CompileParam, CompileParamDefault, CompileParamKind, EnumDef, Function, Item,
+    ItemOrigin, PassMode, Program, TraitDef, TraitMember, Type, TypeFormDef, VariantDef,
+    VariantFields, Visibility,
 };
 use crate::manifest::Edition;
 use crate::modules::{self, PackageId, SourceUnit};
@@ -98,9 +98,9 @@ const TEST_EFFECT_HANDLER: &str = r#"
 pub let Continuation(Input: type, Output: type) = struct {}
 pub let EffectCallable(Input: type, Output: type, Answer: type) = struct {}
 pub let Handle = trait(Self: effect) {
-  let Clauses(Value: type, Answer: type): type
+  let Clauses(Value: type, Answer: type): parameters
   let handle(Value: type, Answer: type, Rest: effect)
-    (move clauses: Clauses(Value, Answer))
+    (...move clauses: Clauses(Value, Answer))
     (move action: (): Value with(Self, Rest)): Answer with(Rest)
 }
 "#;
@@ -149,6 +149,7 @@ pub enum LangItemKind {
     AccessDomain,
     PassingDomain,
     EffectDomain,
+    ParametersDomain,
     BorrowTypeForm,
     BorrowValueForm,
     Continuation,
@@ -164,7 +165,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 52] = [
+    const ALL: [Self; 53] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -205,6 +206,7 @@ impl LangItemKind {
         Self::AccessDomain,
         Self::PassingDomain,
         Self::EffectDomain,
+        Self::ParametersDomain,
         Self::BorrowTypeForm,
         Self::BorrowValueForm,
         Self::Continuation,
@@ -261,6 +263,7 @@ impl LangItemKind {
             Self::AccessDomain => "access",
             Self::PassingDomain => "passing",
             Self::EffectDomain => "effect",
+            Self::ParametersDomain => "parameters",
             Self::BorrowTypeForm => "borrow",
             Self::BorrowValueForm => "borrow",
             Self::Continuation => "Continuation",
@@ -285,7 +288,8 @@ impl LangItemKind {
             | Self::RegionDomain
             | Self::AccessDomain
             | Self::PassingDomain
-            | Self::EffectDomain => "domain",
+            | Self::EffectDomain
+            | Self::ParametersDomain => "domain",
             Self::BorrowTypeForm => "type form",
             Self::BorrowValueForm => "function",
             Self::Do | Self::Try | Self::Throw | Self::Unsafe | Self::Loop => "function",
@@ -366,6 +370,7 @@ impl LangItemKind {
             | Self::AccessDomain
             | Self::PassingDomain
             | Self::EffectDomain
+            | Self::ParametersDomain
             | Self::BorrowTypeForm
             | Self::BorrowValueForm
             | Self::Continuation
@@ -478,6 +483,7 @@ pub struct LangItems {
     access_domain: LangItem,
     passing_domain: LangItem,
     effect_domain: LangItem,
+    parameters_domain: LangItem,
     borrow_type_form: LangItem,
     borrow_value_form: LangItem,
     continuation: LangItem,
@@ -632,6 +638,9 @@ impl LangItems {
     pub const fn effect_domain(&self) -> &LangItem {
         &self.effect_domain
     }
+    pub const fn parameters_domain(&self) -> &LangItem {
+        &self.parameters_domain
+    }
     pub const fn borrow_type_form(&self) -> &LangItem {
         &self.borrow_type_form
     }
@@ -711,6 +720,7 @@ impl LangItems {
             LangItemKind::AccessDomain => &self.access_domain,
             LangItemKind::PassingDomain => &self.passing_domain,
             LangItemKind::EffectDomain => &self.effect_domain,
+            LangItemKind::ParametersDomain => &self.parameters_domain,
             LangItemKind::BorrowTypeForm => &self.borrow_type_form,
             LangItemKind::BorrowValueForm => &self.borrow_value_form,
             LangItemKind::Continuation => &self.continuation,
@@ -902,6 +912,7 @@ impl CoreBundle {
             &mut lang_items.access_domain,
             &mut lang_items.passing_domain,
             &mut lang_items.effect_domain,
+            &mut lang_items.parameters_domain,
             &mut lang_items.borrow_type_form,
             &mut lang_items.borrow_value_form,
             &mut lang_items.continuation,
@@ -1203,6 +1214,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         access_domain: item(LangItemKind::AccessDomain),
         passing_domain: item(LangItemKind::PassingDomain),
         effect_domain: item(LangItemKind::EffectDomain),
+        parameters_domain: item(LangItemKind::ParametersDomain),
         borrow_type_form: item(LangItemKind::BorrowTypeForm),
         borrow_value_form: item(LangItemKind::BorrowValueForm),
         continuation: item(LangItemKind::Continuation),
@@ -1294,7 +1306,8 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
             | LangItemKind::RegionDomain
             | LangItemKind::AccessDomain
             | LangItemKind::PassingDomain
-            | LangItemKind::EffectDomain,
+            | LangItemKind::EffectDomain
+            | LangItemKind::ParametersDomain,
             Item::Domain(definition),
         ) => validate_domain(kind, definition, diagnostics),
         (LangItemKind::BorrowTypeForm, Item::TypeForm(definition)) => {
@@ -1372,9 +1385,10 @@ fn validate_domain(
     diagnostics: &mut Vec<String>,
 ) {
     let valid = match kind {
-        LangItemKind::TypeDomain | LangItemKind::RegionDomain | LangItemKind::EffectDomain => {
-            definition.members.is_none()
-        }
+        LangItemKind::TypeDomain
+        | LangItemKind::RegionDomain
+        | LangItemKind::EffectDomain
+        | LangItemKind::ParametersDomain => definition.members.is_none(),
         LangItemKind::AccessDomain => definition.members.as_ref().is_some_and(|members| {
             members.len() == 2 && members[0] == "shared" && members[1] == "mut"
         }),
@@ -1391,6 +1405,7 @@ fn validate_domain(
             LangItemKind::TypeDomain => "pub let type = domain",
             LangItemKind::RegionDomain => "pub let region = domain",
             LangItemKind::EffectDomain => "pub let effect = domain",
+            LangItemKind::ParametersDomain => "pub let parameters = domain",
             LangItemKind::AccessDomain => "pub let access = domain { shared, mut }",
             LangItemKind::PassingDomain => "pub let passing = domain { auto, copy, move }",
             _ => unreachable!("validate_domain called for non-domain lang item"),
@@ -1484,7 +1499,7 @@ fn validate_iterator(definition: &TraitDef, diagnostics: &mut Vec<String>) {
         && matches!(
             definition.members.as_slice(),
             [
-                TraitMember::AssociatedType { name, compile_groups, default: None },
+                TraitMember::AssociatedType { name, compile_groups, default: None, .. },
                 TraitMember::Function(function),
             ] if name == "Item"
                 && compile_groups.is_empty()
@@ -1509,7 +1524,7 @@ fn validate_into_iterator(definition: &TraitDef, diagnostics: &mut Vec<String>) 
         && matches!(
             definition.members.as_slice(),
             [
-                TraitMember::AssociatedType { name: into_iter, compile_groups: iter_groups, default: None },
+                TraitMember::AssociatedType { name: into_iter, compile_groups: iter_groups, default: None, .. },
                 TraitMember::Function(function),
             ] if into_iter == "IntoIter"
                 && iter_groups.is_empty()
@@ -1567,11 +1582,13 @@ fn validate_chain(definition: &TraitDef, diagnostics: &mut Vec<String>) {
                     name: item_name,
                     compile_groups: item_groups,
                     default: None,
+                    ..
                 },
                 TraitMember::AssociatedType {
                     name: rebind_name,
                     compile_groups: rebind_groups,
                     default: None,
+                    ..
                 },
                 TraitMember::Function(function),
             ] if item_name == "Item"
@@ -1620,6 +1637,7 @@ fn validate_coalesce(definition: &TraitDef, diagnostics: &mut Vec<String>) {
                     name,
                     compile_groups,
                     default: None,
+                    ..
                 },
                 TraitMember::Function(function),
             ] if name == "Item"
@@ -1666,6 +1684,7 @@ fn validate_unwrap(definition: &TraitDef, diagnostics: &mut Vec<String>) {
                     name,
                     compile_groups,
                     default: None,
+                    ..
                 },
                 TraitMember::Function(function),
             ] if name == "Output"
@@ -1979,15 +1998,17 @@ fn validate_handle(definition: &TraitDef, diagnostics: &mut Vec<String>) {
             [TraitMember::AssociatedType {
                 name,
                 compile_groups,
+                kind,
                 default,
             }, TraitMember::Function(function)] if name == "Clauses"
                 && compile_groups == &vec![vec![type_parameter("Value"), type_parameter("Answer")]]
+                && *kind == AssociatedKind::Parameters
                 && default.is_none()
                 && valid_handle_method(function)
         );
     if !valid {
         diagnostics.push(
-            "lang item `Handle` must have shape `pub let Handle = trait(Self: effect) { let Clauses(Value: type, Answer: type): type; let handle(Value: type, Answer: type, Rest: effect)(move clauses: Clauses(Value, Answer))(move action: (): Value with(Self, Rest)): Answer with(Rest) }`"
+            "lang item `Handle` must have shape `pub let Handle = trait(Self: effect) { let Clauses(Value: type, Answer: type): parameters; let handle(Value: type, Answer: type, Rest: effect)(...move clauses: Clauses(Value, Answer))(move action: (): Value with(Self, Rest)): Answer with(Rest) }`"
                 .to_owned(),
         );
     }
@@ -2019,8 +2040,11 @@ fn valid_handle_method(function: &Function) -> bool {
         && clauses.mode == PassMode::Move
         && clauses.ty
             == Type::Named(
-                "Clauses".to_owned(),
-                vec![named_type("Value"), named_type("Answer")],
+                "$parameters$expand".to_owned(),
+                vec![Type::Named(
+                    "Clauses".to_owned(),
+                    vec![named_type("Value"), named_type("Answer")],
+                )],
             )
         && action.name == "action"
         && action.mode == PassMode::Move
@@ -2210,7 +2234,7 @@ pub(crate) fn unary_operator_trait_has_required_shape(
     matches!(
         definition.members.as_slice(),
         [
-            TraitMember::AssociatedType { name, compile_groups, default: None },
+            TraitMember::AssociatedType { name, compile_groups, default: None, .. },
             TraitMember::Function(function),
         ] if name == "Output"
             && compile_groups.is_empty()
@@ -2253,6 +2277,7 @@ pub(crate) fn operator_trait_has_required_shape(kind: LangItemKind, definition: 
                 name,
                 compile_groups,
                 default,
+                ..
             }, TraitMember::Function(function)] => {
                 name == "Output"
                     && compile_groups.is_empty()
@@ -2485,6 +2510,7 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::AccessDomain
                 | LangItemKind::PassingDomain
                 | LangItemKind::EffectDomain
+                | LangItemKind::ParametersDomain
                 | LangItemKind::BorrowTypeForm
                 | LangItemKind::BorrowValueForm => {
                     format!("core::domains::{}", kind.source_name())
@@ -2545,6 +2571,7 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::AccessDomain
                 | LangItemKind::PassingDomain
                 | LangItemKind::EffectDomain
+                | LangItemKind::ParametersDomain
                 | LangItemKind::BorrowTypeForm
                 | LangItemKind::BorrowValueForm => vec!["domains"],
                 LangItemKind::Continuation
@@ -2635,6 +2662,22 @@ pub let Shr(Rhs: type) = trait {
             "pub let Handle = trait(Self: effect)",
             "pub let Handle = trait",
         );
+        let modules = edition_2026_test_modules(&[("effect/handler", &malformed)]);
+        let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
+        assert!(error
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.contains("lang item `Handle`")));
+
+        let malformed = EDITION_2026_EFFECT_HANDLER
+            .replace(
+                "let Clauses(Value: type, Answer: type): parameters",
+                "let Clauses(Value: type, Answer: type): type",
+            )
+            .replace(
+                "(...move clauses: Clauses(Value, Answer))",
+                "(move clauses: Clauses(Value, Answer))",
+            );
         let modules = edition_2026_test_modules(&[("effect/handler", &malformed)]);
         let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
         assert!(error

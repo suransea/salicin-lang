@@ -984,6 +984,13 @@ impl Analyzer {
                         self.error("region arguments are erased before semantic analysis");
                         return None;
                     }
+                    CompileParamKind::Parameters => {
+                        self.error(format!(
+                            "explicit parameter-schema argument `{}` in `{owner}` is not supported yet; parameter schemas are currently supplied by compiler-derived associated declarations",
+                            parameter.name
+                        ));
+                        return None;
+                    }
                     CompileParamKind::TypeConstructor { parameter_count } => {
                         let constructor = self.type_constructor_argument_from_expr(
                             &argument.value,

@@ -426,7 +426,15 @@ const CORE_OPS_EXPORTS: &[(&str, &str)] = &[
 const CORE_FLOW_EXPORTS: &[&str] = &["Chain", "Coalesce", "Unwrap"];
 const CORE_EFFECT_EXPORTS: &[&str] = &["Unsafe", "Throws", "Async"];
 const CORE_EFFECT_HANDLER_EXPORTS: &[&str] = &["Continuation", "EffectCallable", "Handle"];
-const CORE_DOMAIN_EXPORTS: &[&str] = &["type", "region", "effect", "access", "passing", "borrow"];
+const CORE_DOMAIN_EXPORTS: &[&str] = &[
+    "type",
+    "region",
+    "effect",
+    "parameters",
+    "access",
+    "passing",
+    "borrow",
+];
 const CORE_CONTROL_EXPORTS: &[&str] = &["do", "try", "throw", "unsafe", "loop"];
 const CORE_ITER_EXPORTS: &[&str] = &["Iterator", "IntoIterator"];
 const CORE_ALGEBRA_EXPORTS: &[&str] = &["Semigroup", "Monoid"];
@@ -534,6 +542,7 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("domains", "type", "core::domains::type"),
     ("domains", "region", "core::domains::region"),
     ("domains", "effect", "core::domains::effect"),
+    ("domains", "parameters", "core::domains::parameters"),
     ("domains", "access", "core::domains::access"),
     ("domains", "passing", "core::domains::passing"),
     ("domains", "borrow", "core::domains::borrow"),
@@ -2284,6 +2293,7 @@ fn validate_item_api(
                         name,
                         compile_groups,
                         default: Some(default),
+                        ..
                     } => {
                         let bound_types =
                             compile_parameter_names(compile_groups, &trait_bound_types);

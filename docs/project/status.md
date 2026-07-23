@@ -51,7 +51,8 @@ paths also compose through ordinary `Throws(Error)` rows. `Never`-only actions a
 residual-row cases remain future work.
 `core.effect.handler` also defines `Handle`, `Continuation(Input, Output)` and
 `EffectCallable(Input, Output, Answer)` as validated source contracts. `Handle` declares the
-compiler-derived `Clauses(Value, Answer)` pack and `handle` member shape for every source effect.
+compiler-derived `Clauses(Value, Answer): parameters` schema and matching expanded `handle` member
+shape for every source effect.
 `EffectCallable` has a
 distinct owned semantic type plus a four-pointer LLVM call/drop/environment/flag layout and guarded
 drop glue. Compiler-internal HIR can now erase an owned CPS closure into that layout and invoke it

@@ -77,7 +77,7 @@ let answer = State(i32).handle(
 The final trailing closure is the handled action. Every operation signature is supplied exactly
 once as a labeled closure. A non-overloaded operation clause may choose local parameter names; an
 overloaded clause must repeat the selected operation's parameter names in declaration order.
-`handle` is reserved in the effect member namespace. The operation-specific clause pack is derived
+`handle` is reserved in the effect member namespace. The operation-specific `parameters` schema is derived
 from the source `effect` declaration rather than implemented by ordinary user code, but its public
 shape is declared by the `std.effect.handler.Handle` trait.
 
@@ -148,9 +148,9 @@ unification or silently discard duplicate nominal identities.
 Effect operations and derived handlers are justified by the source `effect { ... }` declaration in
 the same way enum constructors are justified by an `enum` declaration. The handler surface is backed
 by the edition-pinned `Handle` trait in `core.effect.handler`; every effect declaration receives a
-compiler-derived implementation whose `Clauses(Value, Answer)` associated constructor denotes the
-operation-indexed clause pack for that exact effect instance and whose `handle` method records the
-two-group handler shape: clause pack first, trailing action second. Shared continuation behavior has
+compiler-derived implementation whose `Clauses(Value, Answer): parameters` associated declaration
+denotes the operation-indexed first parameter group for that exact effect instance. The `handle`
+method expands that schema with `...`, followed by the trailing action group. Shared continuation behavior has
 the adjacent `Continuation(Input, Output)` declaration; the compiler may not recognize a resumable
 runtime protocol that has no matching standard-library source contract. Owned actions crossing into
 reusable handlers use the adjacent `EffectCallable(Input, Output, Answer)` contract. Its logical

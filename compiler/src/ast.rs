@@ -146,8 +146,15 @@ pub enum TraitMember {
     AssociatedType {
         name: String,
         compile_groups: Vec<Vec<CompileParam>>,
+        kind: AssociatedKind,
         default: Option<Type>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssociatedKind {
+    Type,
+    Parameters,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -259,6 +266,7 @@ pub enum CompileParamKind {
     Access,
     Passing,
     Effect,
+    Parameters,
     TypeConstructor { parameter_count: usize },
     EffectConstructor { parameter_count: usize },
 }

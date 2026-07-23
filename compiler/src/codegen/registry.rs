@@ -154,6 +154,8 @@ pub(super) struct TraitSchema {
     pub(super) where_predicates: Vec<crate::ast::WherePredicate>,
     pub(super) associated_types: Vec<String>,
     pub(super) associated_type_kinds: HashMap<String, CompileParamKind>,
+    pub(super) associated_parameter_schemas: HashSet<String>,
+    pub(super) associated_parameter_counts: HashMap<String, usize>,
     pub(super) methods: HashMap<String, Function>,
     pub(super) method_overloads: HashMap<String, Vec<String>>,
     pub(super) method_order: Vec<String>,

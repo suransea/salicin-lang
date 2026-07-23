@@ -6485,6 +6485,25 @@ let main(): i32 = {
 }
 
 #[test]
+fn parameter_group_expansion_requires_a_parameters_schema() {
+    let errors = compile_text(
+        r#"
+let Bad = trait {
+  let Args(T: type): type
+  let call(T: type)(...move args: Args(T)): ()
+}
+let main(): i32 = { 42 }
+"#,
+    )
+    .expect_err("ordinary associated types cannot be expanded as parameter groups");
+    assert!(errors.iter().any(|error| {
+        error
+            .message
+            .contains("not declared as an associated `parameters` schema")
+    }));
+}
+
+#[test]
 fn emits_resource_array_drop_glue_for_unconstructed_layout_fields() {
     let ir = compile_text(
         r#"

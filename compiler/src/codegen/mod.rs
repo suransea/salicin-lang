@@ -9,9 +9,9 @@ use std::fmt;
 
 use crate::alloc::AllocBundle;
 use crate::ast::{
-    BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EffectDef, EnumDef, Expr,
-    ExtendDef, ExtendMember, Function, FunctionEffects, Item, ItemOrigin, Param, PassMode, Program,
-    Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantFields, Visibility,
+    AssociatedKind, BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EffectDef, EnumDef,
+    Expr, ExtendDef, ExtendMember, Function, FunctionEffects, Item, ItemOrigin, Param, PassMode,
+    Program, Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantFields, Visibility,
     WherePredicate,
 };
 use crate::core::{
@@ -1180,6 +1180,8 @@ impl Analyzer {
         let mut member_names = HashSet::new();
         let mut associated_types = Vec::new();
         let mut associated_type_kinds = HashMap::new();
+        let mut associated_parameter_schemas = HashSet::new();
+        let mut associated_parameter_counts = HashMap::new();
         let mut methods = HashMap::new();
         let mut method_overloads = HashMap::<String, Vec<String>>::new();
         let mut overload_shapes = HashMap::<String, HashSet<ParameterLabelShape>>::new();
@@ -1189,6 +1191,7 @@ impl Analyzer {
                 TraitMember::AssociatedType {
                     name,
                     compile_groups,
+                    kind: associated_kind,
                     default,
                 } => {
                     if !member_names.insert(name.clone()) {
@@ -1206,7 +1209,9 @@ impl Analyzer {
                         ));
                         valid = false;
                     }
-                    let kind = if compile_groups.is_empty() {
+                    let kind = if associated_kind == AssociatedKind::Parameters {
+                        CompileParamKind::Parameters
+                    } else if compile_groups.is_empty() {
                         CompileParamKind::Type
                     } else {
                         let mut parameter_count = 0usize;
@@ -1228,6 +1233,11 @@ impl Analyzer {
                             CompileParamKind::Type
                         }
                     };
+                    if associated_kind == AssociatedKind::Parameters {
+                        associated_parameter_schemas.insert(name.clone());
+                        associated_parameter_counts
+                            .insert(name.clone(), compile_groups.iter().flatten().count());
+                    }
                     if default.is_some() {
                         self.error(format!(
                             "default associated type `{}.{name}` is not supported",
@@ -1293,6 +1303,8 @@ impl Analyzer {
                 where_predicates: definition.where_predicates,
                 associated_types,
                 associated_type_kinds,
+                associated_parameter_schemas,
+                associated_parameter_counts,
                 methods,
                 method_overloads,
                 method_order,
@@ -1336,6 +1348,42 @@ impl Analyzer {
                         .map(|parameter| (parameter.name.clone(), parameter.kind)),
                 );
                 for parameter in method.groups.iter().flatten() {
+                    if let Type::Named(wrapper, schemas) = &parameter.ty {
+                        if wrapper == "$parameters$expand" {
+                            let schema_name = schemas.first().and_then(|schema| match schema {
+                                Type::Named(name, _) => Some(name),
+                                _ => None,
+                            });
+                            let compile_schema = schema_name.is_some_and(|name| {
+                                schema.compile_parameters.iter().any(|parameter| {
+                                    parameter.name == *name
+                                        && parameter.kind == CompileParamKind::Parameters
+                                })
+                            });
+                            if !schema_name.is_some_and(|name| {
+                                schema.associated_parameter_schemas.contains(name)
+                            }) && !compile_schema
+                            {
+                                self.error(format!(
+                                    "trait method `{trait_name}.{method_name}` expands a type that is not declared as an associated `parameters` schema"
+                                ));
+                                valid = false;
+                            } else if let Some(Type::Named(name, arguments)) = schemas.first() {
+                                let expected = schema
+                                    .associated_parameter_counts
+                                    .get(name)
+                                    .copied()
+                                    .unwrap_or(0);
+                                if arguments.len() != expected {
+                                    self.error(format!(
+                                        "associated parameter schema `{trait_name}.{name}` expects {expected} type arguments, found {}",
+                                        arguments.len()
+                                    ));
+                                    valid = false;
+                                }
+                            }
+                        }
+                    }
                     valid &= self.validate_trait_source_type(
                         &trait_name,
                         method_name,
@@ -1455,6 +1503,47 @@ impl Analyzer {
         compile_parameters: &HashMap<String, CompileParamKind>,
     ) -> bool {
         match source {
+            Type::Named(wrapper, schemas)
+                if wrapper == "$parameters$expand" && schemas.len() == 1 =>
+            {
+                let Type::Named(name, arguments) = &schemas[0] else {
+                    self.error(format!(
+                        "parameter expansion in trait member `{trait_name}.{member_name}` requires an associated parameter schema"
+                    ));
+                    return false;
+                };
+                let Some(kind) = compile_parameters.get(name) else {
+                    self.error(format!(
+                        "`{name}` in trait member `{trait_name}.{member_name}` is not an associated parameter schema"
+                    ));
+                    return false;
+                };
+                let parameter_count = match kind {
+                    CompileParamKind::Parameters => arguments.len(),
+                    CompileParamKind::TypeConstructor { parameter_count } => *parameter_count,
+                    _ => {
+                        self.error(format!(
+                            "`{name}` in trait member `{trait_name}.{member_name}` is not an associated parameter schema"
+                        ));
+                        return false;
+                    }
+                };
+                if arguments.len() != parameter_count {
+                    self.error(format!(
+                        "parameter schema `{name}` in `{trait_name}.{member_name}` expects {parameter_count} type arguments, found {}",
+                        arguments.len()
+                    ));
+                    return false;
+                }
+                arguments.iter().all(|argument| {
+                    self.validate_trait_source_type(
+                        trait_name,
+                        member_name,
+                        argument,
+                        compile_parameters,
+                    )
+                })
+            }
             Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => true,
             Type::Borrow { pointee, .. } => self.validate_trait_source_type(
                 trait_name,
@@ -1541,6 +1630,12 @@ impl Analyzer {
                     CompileParamKind::Effect => {
                         self.error(format!(
                             "effect row parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
+                        ));
+                        false
+                    }
+                    CompileParamKind::Parameters => {
+                        self.error(format!(
+                            "parameter schema `{name}` in `{trait_name}.{member_name}` can only be used through a complete `...` parameter-group expansion"
                         ));
                         false
                     }
@@ -2611,6 +2706,13 @@ impl Analyzer {
                     }
                 }
                 CompileParamKind::TypeConstructor { .. } => {}
+                CompileParamKind::Parameters => {
+                    self.error(format!(
+                        "associated parameter schema `{}.{associated}` implementations are compiler-derived only",
+                        key.trait_ref.name
+                    ));
+                    valid = false;
+                }
                 CompileParamKind::EffectConstructor { .. } => {
                     self.error(format!(
                         "effect associated constructor `{}.{associated}` implementations are not supported yet",
@@ -4052,6 +4154,13 @@ impl Analyzer {
         for name in &schema.associated_types {
             match schema.associated_type_kinds[name] {
                 CompileParamKind::Type | CompileParamKind::TypeConstructor { .. } => {}
+                CompileParamKind::Parameters => {
+                    self.error(format!(
+                        "associated parameter schema `{trait_name}.{name}` implementations are compiler-derived only"
+                    ));
+                    valid = false;
+                    continue;
+                }
                 CompileParamKind::EffectConstructor { .. } => {
                     self.error(format!(
                         "effect associated constructor `{trait_name}.{name}` implementations are not supported yet"
@@ -4157,6 +4266,12 @@ impl Analyzer {
                     } else {
                         valid = false;
                     }
+                }
+                CompileParamKind::Parameters => {
+                    self.error(format!(
+                        "associated parameter schema `{trait_name}.{associated}` implementations are compiler-derived only"
+                    ));
+                    valid = false;
                 }
                 CompileParamKind::EffectConstructor { .. } => {
                     self.error(format!(
@@ -4960,6 +5075,7 @@ impl Analyzer {
                     // Abstract validation uses the maximal currently supported row. Every
                     // concrete instance is lowered again after substituting its selected row.
                     CompileParamKind::Effect => EFFECT_UNSAFE_MARKER.to_owned(),
+                    CompileParamKind::Parameters => continue,
                     CompileParamKind::Region => continue,
                     CompileParamKind::TypeConstructor { .. }
                     | CompileParamKind::EffectConstructor { .. } => unreachable!(

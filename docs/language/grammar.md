@@ -121,7 +121,7 @@ constructor_kind = compile_parameter_group,
   还可声明无函数体的 operation requirements。这些声明向 `effect` domain 引入成员。旧的
   `(effect): T`、`T(effect)` 与 `T ! effect` 都不属于语法。
 - 声明右侧的 `domain` 同样是上下文词，用于声明编译期参数域。无 body 的 `domain` 是开放域；
-  `domain { ... }` 是封闭域。标准 `type`、`region`、`effect`、`access` 与 `passing` domain 位于
+  `domain { ... }` 是封闭域。标准 `type`、`region`、`effect`、`parameters`、`access` 与 `passing` domain 位于
   `core.domains`；effect 身份位于 `core.effect`；控制 lang item 可在声明名位置使用 `do`、`try`、
   `unsafe`、`loop`。
 - `let f(x: T) = { body }` 是把参数提升到名称旁边的具名闭包声明；RHS 必须有花括号。
@@ -144,8 +144,9 @@ constructor_kind = compile_parameter_group,
 参数组：
 
 ```ebnf
-parameter_group = "(", [ parameter_list ], ")" ;
+parameter_group = "(", [ parameter_list | parameter_expansion ], ")" ;
 parameter_list  = parameter, { ",", parameter }, [ "," ] ;
+parameter_expansion = "...", [ pass_mode ], IDENT, ":", type_expr ;
 
 parameter = [ pass_mode | IDENT ], IDENT, ":", type_expr ;
 
@@ -156,6 +157,8 @@ access_or_region = IDENT | "shared" | "mut" | REGION ;
 
 参数模式位置的 `IDENT` 只有在它引用当前函数已声明的 `P: passing` 参数时才合法；否则第一个
 `IDENT` 就是参数名。这是上下文语法，不把 `passing`、`auto` 或参数名加入全局保留字集合。
+`(...move args: P)` 把编译期 `parameters` schema 展开为完整的一个运行时参数组；首版要求该
+展开独占参数组。关联 `parameters` declaration 可由编译器派生，不能作为普通运行时类型使用。
 
 一个编译期参数组只含 `T: type`、`A: access`、`R: region` 等编译期参数，并位于所有运行时参数组之前；同一组
 不能混合编译期和运行时参数。忽略开头的编译期组后，实例方法的 `self` 独占第一个运行时组，

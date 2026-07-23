@@ -1,12 +1,12 @@
 use std::{collections::HashSet, fmt};
 
 use crate::ast::{
-    default_trait_self_parameter, AssociatedTypeBinding, BinaryOp, Binding, CallArg, CompileParam,
-    CompileParamDefault, CompileParamKind, DomainDef, EffectDef, EnumDef, Expr, ExtendDef,
-    ExtendMember, Field, Function, FunctionEffects, Item, MatchArm, Param, PassMode, Pattern,
-    PatternField, PatternFields, Program, Stmt, StructDef, TraitDef, TraitMember, Type,
-    TypeAliasDef, TypeArg, TypeFormDef, UnaryOp, UseDecl, VariantDef, VariantFields, Visibility,
-    WherePredicate,
+    default_trait_self_parameter, AssociatedKind, AssociatedTypeBinding, BinaryOp, Binding,
+    CallArg, CompileParam, CompileParamDefault, CompileParamKind, DomainDef, EffectDef, EnumDef,
+    Expr, ExtendDef, ExtendMember, Field, Function, FunctionEffects, Item, MatchArm, Param,
+    PassMode, Pattern, PatternField, PatternFields, Program, Stmt, StructDef, TraitDef,
+    TraitMember, Type, TypeAliasDef, TypeArg, TypeFormDef, UnaryOp, UseDecl, VariantDef,
+    VariantFields, Visibility, WherePredicate,
 };
 use crate::lexer::{lex, LexError, Token, TokenKind};
 
@@ -925,7 +925,10 @@ impl Parser {
             || matches!(
                 self.tokens.get(self.index + offset).map(|token| &token.kind),
                 Some(TokenKind::Ident(name))
-                    if matches!(name.as_str(), "access" | "passing" | "effect")
+                    if matches!(
+                        name.as_str(),
+                        "access" | "passing" | "effect" | "parameters"
+                    )
             )
     }
 
@@ -1032,6 +1035,7 @@ impl Parser {
                 "access" => Some(CompileParamKind::Access),
                 "passing" => Some(CompileParamKind::Passing),
                 "effect" => Some(CompileParamKind::Effect),
+                "parameters" => Some(CompileParamKind::Parameters),
                 _ => None,
             };
             if let Some(parameter_kind) = parameter_kind {
@@ -1054,7 +1058,7 @@ impl Parser {
 
         self.expect(
             &TokenKind::Region,
-            "`type`, `access`, `passing`, `effect`, a constructor kind, or `region`",
+            "`type`, `access`, `passing`, `effect`, `parameters`, a constructor kind, or `region`",
         )?;
         if name == "static" {
             return Err(self.error_at(
@@ -1206,6 +1210,10 @@ impl Parser {
             CompileParamKind::Effect => {
                 CompileParamDefault::Name(self.compile_parameter_default_name("an effect default")?)
             }
+            CompileParamKind::Parameters => {
+                return Err(self
+                    .error_here("defaults for parameter-schema parameters are not supported yet"));
+            }
             CompileParamKind::Region => {
                 let token = self.current().clone();
                 let TokenKind::RegionName(name) = token.kind else {
@@ -1255,6 +1263,31 @@ impl Parser {
         let mut params = Vec::new();
         if self.take(&TokenKind::RParen) {
             return Ok(params);
+        }
+
+        if self.take(&TokenKind::Ellipsis) {
+            let mode = if self.take(&TokenKind::Move) {
+                PassMode::Move
+            } else if self.take(&TokenKind::Copy) {
+                PassMode::Copy
+            } else {
+                PassMode::Inferred
+            };
+            let name = self.expect_ident("a parameter-pack binding name")?;
+            self.expect(&TokenKind::Colon, "`:` after parameter-pack binding name")?;
+            let schema = self.type_expr()?;
+            self.expect(
+                &TokenKind::RParen,
+                "`)` after parameter-pack expansion; an expansion must occupy its complete parameter group",
+            )?;
+            return Ok(vec![Param {
+                mode,
+                access: None,
+                passing: None,
+                region: None,
+                name,
+                ty: Type::Named("$parameters$expand".to_owned(), vec![schema]),
+            }]);
         }
 
         loop {
@@ -1632,11 +1665,23 @@ impl Parser {
         self.validate_receiver_groups(&name, &groups)?;
 
         let logical_result = if self.take(&TokenKind::Colon) {
-            if self.take(&TokenKind::Type) {
+            let associated_kind = if self.take(&TokenKind::Type) {
+                Some(AssociatedKind::Type)
+            } else if self.at_context_ident("parameters") {
+                self.advance();
+                Some(AssociatedKind::Parameters)
+            } else {
+                None
+            };
+            if let Some(kind) = associated_kind {
                 if !groups.is_empty() {
-                    return Err(
-                        self.error_here("associated types cannot have runtime parameter groups")
-                    );
+                    return Err(self.error_here(
+                        "associated declarations cannot have runtime parameter groups",
+                    ));
+                }
+                if kind == AssociatedKind::Parameters && self.at(&TokenKind::Equal) {
+                    return Err(self
+                        .error_here("default associated parameter schemas are not supported yet"));
                 }
                 self.take_newlines_if_followed_by(&[TokenKind::Equal]);
                 let default = if self.take(&TokenKind::Equal) {
@@ -1647,6 +1692,7 @@ impl Parser {
                 return Ok(TraitMember::AssociatedType {
                     name,
                     compile_groups,
+                    kind,
                     default,
                 });
             }
@@ -3610,6 +3656,7 @@ fn normalize_and_validate_scopes(items: &mut [Item]) -> Result<(), String> {
                             name,
                             compile_groups,
                             default,
+                            ..
                         } => {
                             reject_passing_parameters(
                                 compile_groups,
@@ -4528,6 +4575,7 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::RBrace => "`}`",
         TokenKind::Colon => "`:`",
         TokenKind::Dot => "`.`",
+        TokenKind::Ellipsis => "`...`",
         TokenKind::Comma => "`,`",
         TokenKind::Semicolon => "`;`",
         TokenKind::Newline => "a newline",
@@ -5062,6 +5110,7 @@ mod tests {
             name,
             compile_groups,
             default,
+            ..
         } = &definition.members[1]
         else {
             panic!("expected associated type");
@@ -5101,6 +5150,7 @@ mod tests {
             name,
             compile_groups,
             default,
+            ..
         } = &definition.members[1]
         else {
             panic!("expected generic associated type");
@@ -6073,17 +6123,34 @@ mod tests {
     fn parses_trait_self_effect_parameter_in_member_rows() {
         let program = parse(
             "let Handle = trait(Self: effect) {\n\
-               let Clauses(Value: type, Answer: type): type\n\
-               let handle(Value: type, Answer: type, Rest: effect)(move clauses: Clauses(Value, Answer))(move action: (): Value with(Self, Rest)): Answer with(Rest)\n\
+               let Clauses(Value: type, Answer: type): parameters\n\
+               let handle(Value: type, Answer: type, Rest: effect)(...move clauses: Clauses(Value, Answer))(move action: (): Value with(Self, Rest)): Answer with(Rest)\n\
              }\n",
         )
         .unwrap();
         let Item::Trait(definition) = &program.items[0] else {
             panic!("expected trait");
         };
+        let TraitMember::AssociatedType { kind, .. } = &definition.members[0] else {
+            panic!("expected clauses schema");
+        };
+        assert_eq!(*kind, AssociatedKind::Parameters);
         let TraitMember::Function(function) = &definition.members[1] else {
             panic!("expected handle member");
         };
+        assert_eq!(
+            function.groups[0][0].ty,
+            Type::Named(
+                "$parameters$expand".to_owned(),
+                vec![Type::Named(
+                    "Clauses".to_owned(),
+                    vec![
+                        Type::Named("Value".to_owned(), Vec::new()),
+                        Type::Named("Answer".to_owned(), Vec::new()),
+                    ],
+                )],
+            )
+        );
         assert_eq!(function.effects.parameters, vec!["Rest"]);
         let Type::Function { effects, .. } = &function.groups[1][0].ty else {
             panic!("expected action callable parameter");
