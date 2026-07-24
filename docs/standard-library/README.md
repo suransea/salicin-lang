@@ -85,7 +85,7 @@ those module exports as ordinary unqualified names. The former control-container
 been removed.
 Effect identities use uppercase nominal spelling, including user-defined effects; row parameters
 such as `E: effect` remain ordinary parameter names.
-The `effect`, `access`, and `passing` compile-time domains use contextual names such as `pure`,
+The `effect` compile-time domain and the closed `access` and `passing` types use contextual names such as `pure`,
 `shared`, `mut`, `auto`, `copy`, and `move` in parameter positions.
 `Semigroup` and `Monoid` require aliases from `std.algebra` when named.
 `Functor`, `Applicative`, and `Monad` require aliases from `std.functional` when named.

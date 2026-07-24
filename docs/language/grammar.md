@@ -136,7 +136,7 @@ constructor_kind = compile_parameter_group,
   `(effect): T`、`T(effect)` 与 `T ! effect` 都不属于语法。
 - 声明右侧的 `domain` 同样是上下文词，用于声明编译期参数域。无 body 的 `domain` 是开放域；
   `domain { ... }` 是封闭域。标准 `type`、`region`、`effect`、`parameters`、`access`
-  与 `passing` domain 位于
+  与 `passing` 封闭类型位于
   `core.domains`；effect 身份位于 `core.effect`；控制 lang item 可在声明名位置使用 `do`、`try`、
   `unsafe`、`loop`、`while`、`if`、`match`、`for`。
 - 声明右侧的 `type` 声明新的不透明名义类型，例如 `pub let i32 = type`。可选的封闭值集合
@@ -288,9 +288,9 @@ type_argument  = [ IDENT, ":" ], type_expr | INTEGER ;
 `L: usize` 声明受限的编译期无符号整数参数。首版实参是非负 `u64` 范围字面量或另一个
 `usize` 参数；可从数组类型约束推断，但不执行任意常量表达式。标准数组声明为
 `core.memory.Array(T: type)(L: usize): type`，因此完整应用必须写成 `Array(T)(L)`，不能合并两组。
-`access` 是 `core.domains` 声明的封闭编译期 domain；其内建实参为 `shared` 与 `mut`。`borrow(A)(T)` 和
+`access` 是 `core.domains` 声明的封闭类型；其内建实参为 `shared` 与 `mut`。`borrow(A)(T)` 和
 `borrow(A)(R)(T)` 分别携带 access 参数以及 access/region 参数组合。
-`passing` 是函数编译期 domain；其内建实参为 `auto`、`copy` 与 `move`，并在参数模式位置以
+`passing` 是封闭类型；其内建实参为 `auto`、`copy` 与 `move`，并在参数模式位置以
 已声明的参数名引用，例如 `(P value: T)`。
 `effect` 是函数编译期 domain；实参是完整 effect row：`pure`、`Unsafe`、名义 marker 或其组合。
 默认值为 `pure`。参数名只可出现在函数签名的 `with(...)` 子句和其他 effect 编译期实参位置，

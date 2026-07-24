@@ -51,7 +51,7 @@ The repository currently includes tested implementation slices for:
 
 - user-defined algebraic effects, one-shot handlers, residual rows, and several statically
   specialized effectful callable forms;
-- compile-time `effect`, `access`, and `passing` domains;
+- the compile-time `effect` domain and closed `access` and `passing` types;
 - constructor-kinded generic parameters and the standard `Functor`, `Applicative`, and `Monad`
   protocols;
 - source-backed `Chain` and `Coalesce` protocols;

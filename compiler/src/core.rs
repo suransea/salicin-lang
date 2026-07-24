@@ -172,8 +172,8 @@ pub enum LangItemKind {
     ThrowsEffect,
     TypeDomain,
     RegionDomain,
-    AccessDomain,
-    PassingDomain,
+    AccessType,
+    PassingType,
     EffectDomain,
     ParametersDomain,
     BorrowTypeForm,
@@ -253,8 +253,8 @@ impl LangItemKind {
         Self::ThrowsEffect,
         Self::TypeDomain,
         Self::RegionDomain,
-        Self::AccessDomain,
-        Self::PassingDomain,
+        Self::AccessType,
+        Self::PassingType,
         Self::EffectDomain,
         Self::ParametersDomain,
         Self::BorrowTypeForm,
@@ -334,8 +334,8 @@ impl LangItemKind {
             Self::ThrowsEffect => "Throws",
             Self::TypeDomain => "type",
             Self::RegionDomain => "region",
-            Self::AccessDomain => "access",
-            Self::PassingDomain => "passing",
+            Self::AccessType => "access",
+            Self::PassingType => "passing",
             Self::EffectDomain => "effect",
             Self::ParametersDomain => "parameters",
             Self::BorrowTypeForm => "borrow",
@@ -369,10 +369,9 @@ impl LangItemKind {
             Self::UnsafeEffect | Self::ThrowsEffect => "effect",
             Self::TypeDomain
             | Self::RegionDomain
-            | Self::AccessDomain
-            | Self::PassingDomain
             | Self::EffectDomain
             | Self::ParametersDomain => "domain",
+            Self::AccessType | Self::PassingType => "type form",
             Self::BorrowTypeForm
             | Self::ArrayTypeForm
             | Self::PtrTypeForm
@@ -489,8 +488,8 @@ impl LangItemKind {
             | Self::ThrowsEffect
             | Self::TypeDomain
             | Self::RegionDomain
-            | Self::AccessDomain
-            | Self::PassingDomain
+            | Self::AccessType
+            | Self::PassingType
             | Self::EffectDomain
             | Self::ParametersDomain
             | Self::BorrowTypeForm
@@ -626,8 +625,8 @@ pub struct LangItems {
     throws_effect: LangItem,
     type_domain: LangItem,
     region_domain: LangItem,
-    access_domain: LangItem,
-    passing_domain: LangItem,
+    access_type: LangItem,
+    passing_type: LangItem,
     effect_domain: LangItem,
     parameters_domain: LangItem,
     borrow_type_form: LangItem,
@@ -800,11 +799,11 @@ impl LangItems {
     pub const fn region_domain(&self) -> &LangItem {
         &self.region_domain
     }
-    pub const fn access_domain(&self) -> &LangItem {
-        &self.access_domain
+    pub const fn access_type(&self) -> &LangItem {
+        &self.access_type
     }
-    pub const fn passing_domain(&self) -> &LangItem {
-        &self.passing_domain
+    pub const fn passing_type(&self) -> &LangItem {
+        &self.passing_type
     }
     pub const fn effect_domain(&self) -> &LangItem {
         &self.effect_domain
@@ -920,8 +919,8 @@ impl LangItems {
             LangItemKind::ThrowsEffect => &self.throws_effect,
             LangItemKind::TypeDomain => &self.type_domain,
             LangItemKind::RegionDomain => &self.region_domain,
-            LangItemKind::AccessDomain => &self.access_domain,
-            LangItemKind::PassingDomain => &self.passing_domain,
+            LangItemKind::AccessType => &self.access_type,
+            LangItemKind::PassingType => &self.passing_type,
             LangItemKind::EffectDomain => &self.effect_domain,
             LangItemKind::ParametersDomain => &self.parameters_domain,
             LangItemKind::BorrowTypeForm => &self.borrow_type_form,
@@ -1148,8 +1147,8 @@ impl CoreBundle {
             &mut lang_items.throws_effect,
             &mut lang_items.type_domain,
             &mut lang_items.region_domain,
-            &mut lang_items.access_domain,
-            &mut lang_items.passing_domain,
+            &mut lang_items.access_type,
+            &mut lang_items.passing_type,
             &mut lang_items.effect_domain,
             &mut lang_items.parameters_domain,
             &mut lang_items.borrow_type_form,
@@ -1474,8 +1473,8 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         throws_effect: item(LangItemKind::ThrowsEffect),
         type_domain: item(LangItemKind::TypeDomain),
         region_domain: item(LangItemKind::RegionDomain),
-        access_domain: item(LangItemKind::AccessDomain),
-        passing_domain: item(LangItemKind::PassingDomain),
+        access_type: item(LangItemKind::AccessType),
+        passing_type: item(LangItemKind::PassingType),
         effect_domain: item(LangItemKind::EffectDomain),
         parameters_domain: item(LangItemKind::ParametersDomain),
         borrow_type_form: item(LangItemKind::BorrowTypeForm),
@@ -1600,12 +1599,14 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         (
             LangItemKind::TypeDomain
             | LangItemKind::RegionDomain
-            | LangItemKind::AccessDomain
-            | LangItemKind::PassingDomain
             | LangItemKind::EffectDomain
             | LangItemKind::ParametersDomain,
             Item::Domain(definition),
         ) => validate_domain(kind, definition, diagnostics),
+        (
+            kind @ (LangItemKind::AccessType | LangItemKind::PassingType),
+            Item::TypeForm(definition),
+        ) => validate_closed_compile_type(kind, definition, diagnostics),
         (LangItemKind::BorrowTypeForm, Item::TypeForm(definition)) => {
             validate_borrow_type_form(definition, diagnostics)
         }
@@ -1735,15 +1736,6 @@ fn validate_domain(
         | LangItemKind::RegionDomain
         | LangItemKind::EffectDomain
         | LangItemKind::ParametersDomain => definition.members.is_none(),
-        LangItemKind::AccessDomain => definition.members.as_ref().is_some_and(|members| {
-            members.len() == 2 && members[0] == "shared" && members[1] == "mut"
-        }),
-        LangItemKind::PassingDomain => definition.members.as_ref().is_some_and(|members| {
-            members.len() == 3
-                && members[0] == "auto"
-                && members[1] == "copy"
-                && members[2] == "move"
-        }),
         _ => unreachable!("validate_domain called for non-domain lang item"),
     };
     if !valid {
@@ -1752,11 +1744,38 @@ fn validate_domain(
             LangItemKind::RegionDomain => "pub let region = domain",
             LangItemKind::EffectDomain => "pub let effect = domain",
             LangItemKind::ParametersDomain => "pub let parameters = domain",
-            LangItemKind::AccessDomain => "pub let access = domain { shared, mut }",
-            LangItemKind::PassingDomain => "pub let passing = domain { auto, copy, move }",
             _ => unreachable!("validate_domain called for non-domain lang item"),
         };
         diagnostics.push(format!("lang item `{kind}` must have shape `{shape}`"));
+    }
+}
+
+fn validate_closed_compile_type(
+    kind: LangItemKind,
+    definition: &TypeFormDef,
+    diagnostics: &mut Vec<String>,
+) {
+    let (name, values, shape): (&str, &[&str], &str) = match kind {
+        LangItemKind::AccessType => (
+            "access",
+            &["shared", "mut"],
+            "pub let access = type { shared, mut }",
+        ),
+        LangItemKind::PassingType => (
+            "passing",
+            &["auto", "copy", "move"],
+            "pub let passing = type { auto, copy, move }",
+        ),
+        _ => unreachable!("closed compile type validation requires a closed type lang item"),
+    };
+    let valid = definition.compile_groups.is_empty()
+        && definition
+            .values
+            .iter()
+            .map(String::as_str)
+            .eq(values.iter().copied());
+    if !valid {
+        diagnostics.push(format!("lang item `{name}` must have shape `{shape}`"));
     }
 }
 
@@ -3245,8 +3264,8 @@ pub let Shr(Rhs: type) = trait {
                 }
                 LangItemKind::TypeDomain
                 | LangItemKind::RegionDomain
-                | LangItemKind::AccessDomain
-                | LangItemKind::PassingDomain
+                | LangItemKind::AccessType
+                | LangItemKind::PassingType
                 | LangItemKind::EffectDomain
                 | LangItemKind::ParametersDomain => {
                     format!("core::domains::{}", kind.source_name())
@@ -3335,8 +3354,8 @@ pub let Shr(Rhs: type) = trait {
                 LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect => vec!["effect"],
                 LangItemKind::TypeDomain
                 | LangItemKind::RegionDomain
-                | LangItemKind::AccessDomain
-                | LangItemKind::PassingDomain
+                | LangItemKind::AccessType
+                | LangItemKind::PassingType
                 | LangItemKind::EffectDomain
                 | LangItemKind::ParametersDomain => vec!["domains"],
                 LangItemKind::BorrowTypeForm | LangItemKind::BorrowValueForm => vec!["borrow"],

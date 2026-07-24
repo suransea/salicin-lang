@@ -8,20 +8,20 @@ pub let effect = domain
 /// Domain of compile-time schemas expanded into one runtime parameter group.
 pub let parameters = domain
 
-/// Domain describing whether a borrow is shared or mutable.
-pub let access = domain {
+/// Closed type describing whether a borrow is shared or mutable.
+pub let access = type {
   /// Shared read-only access.
-  shared
+  shared,
   /// Exclusive mutable access.
   mut
 }
 
-/// Domain describing how a runtime argument is passed to a callable.
-pub let passing = domain {
+/// Closed type describing how a runtime argument is passed to a callable.
+pub let passing = type {
   /// Lets the compiler choose copy, move, or borrow passing from context.
-  auto
+  auto,
   /// Passes by copying the argument value.
-  copy
+  copy,
   /// Passes by moving ownership of the argument value.
   move
 }

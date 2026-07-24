@@ -184,21 +184,21 @@ pub let region = domain
 pub let effect = domain
 pub let parameters = domain
 
-pub let access = domain {
-  shared
+pub let access = type {
+  shared,
   mut
 }
 
-pub let passing = domain {
-  auto
-  copy
+pub let passing = type {
+  auto,
+  copy,
   move
 }
 ```
 
 Borrow types and values are written with the declared `borrow` form: `borrow(T)`,
 `borrow(mut)(T)`, and `borrow(A)(R)(T)`. `borrow(A)` and generic passing modes refer to these
-domains in compile-time parameter positions.
+closed types in compile-time parameter positions.
 
 `core.control` owns the edition-pinned contracts for compiler-lowered control functions. It is not
 part of the prelude. `do`, `try`, `throw`, and `unsafe` are ordinary source-backed functions over

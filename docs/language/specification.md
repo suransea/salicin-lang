@@ -575,7 +575,7 @@ effect、trait 或协议，再由编译器校验对应 lang item 并做 lowering
 源码级契约，而不是为每个类型增加封闭的编译器特例。`core.effect` 声明普通 effect 形态的 `Unsafe`、
 带普通 abort operation `raise(move error: Error): Never` 的 `Throws(Error)`，以及带最小
 `suspend(): ()` operation 的 `Async`；`core.domains` 声明 `type`、`region`、`effect`、
-`parameters`、`access` 与 `passing` 编译期 domain；`core.control`
+`parameters` 编译期 domain，以及 `access` 与 `passing` 封闭类型；`core.control`
 声明 `do`、`try`、`throw`、`unsafe`、`loop`、`while`、`if`、`match` 与 `for`
 的控制函数签名；`core.effect.handler`
 声明 handler 运行时契约；`core.functional` 声明使用构造子 kind 的 `Functor`、`Applicative` 与 `Monad`
@@ -671,7 +671,7 @@ let f(
 
 ### 6.2 Access 关键字泛型
 
-共享和排他访问是编译期能力值，可由 `access` domain 参数化：
+共享和排他访问是编译期能力值，可由封闭 `access` 类型参数化：
 
 ```sc
 let identity(A: access, R: region, T: type)
@@ -696,7 +696,7 @@ effect 行仍有 row 组合与转发规则，不能误用 access 参数表达控
 
 ### 6.3 Passing 关键字泛型
 
-按值传递策略可由 `passing` domain 参数化，并直接在原本写 `copy` 或 `move` 的关键字位置引用：
+按值传递策略可由封闭 `passing` 类型参数化，并直接在原本写 `copy` 或 `move` 的关键字位置引用：
 
 ```sc
 let identity(P: passing, T: type)(P value: T): T = { value }

@@ -366,11 +366,15 @@ impl Parser {
             self.advance();
             let values = if self.take(&TokenKind::LBrace) {
                 let mut values = Vec::new();
+                self.skip_separators();
                 while !self.take(&TokenKind::RBrace) {
                     let value = match self.current().kind.clone() {
                         TokenKind::True => "true".to_owned(),
                         TokenKind::False => "false".to_owned(),
                         TokenKind::Ident(value) => value,
+                        TokenKind::Mut => "mut".to_owned(),
+                        TokenKind::Copy => "copy".to_owned(),
+                        TokenKind::Move => "move".to_owned(),
                         _ => {
                             return Err(self
                                 .error_here("expected a value name in the closed type value set"));
@@ -383,10 +387,12 @@ impl Parser {
                         )));
                     }
                     values.push(value);
+                    self.skip_separators();
                     if self.take(&TokenKind::RBrace) {
                         break;
                     }
                     self.expect(&TokenKind::Comma, "`,` between closed type values")?;
+                    self.skip_separators();
                     if self.take(&TokenKind::RBrace) {
                         break;
                     }
@@ -7097,9 +7103,9 @@ mod tests {
              pub let Throws(Error: type) = effect { let raise(move error: Error): Never }\n\
              pub let type = domain\n\
              pub let effect = domain\n\
-             pub let access = domain {\n\
+             pub let access = type {\n\
                /// Shared read-only access.\n\
-               shared\n\
+               shared,\n\
                /// Exclusive mutable access.\n\
                mut\n\
              }\n\
@@ -7124,10 +7130,8 @@ mod tests {
         ));
         assert!(matches!(
             &program.items[4],
-            Item::Domain(domain) if domain.name == "access"
-                && domain.members.as_ref().is_some_and(|members| members.len() == 2
-                    && members[0] == "shared"
-                    && members[1] == "mut")
+            Item::TypeForm(definition) if definition.name == "access"
+                && definition.values == ["shared", "mut"]
         ));
         assert!(matches!(
             &program.items[5],
