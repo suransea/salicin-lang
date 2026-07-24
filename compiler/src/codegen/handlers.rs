@@ -13,7 +13,7 @@ use super::effects::{
     call_argument_labels, handled_operation_call, logical_effect_result_source,
     logical_function_result_source, standard_throws_error_source,
 };
-use super::flow::LowerCtx;
+use super::flow::{projection_paths_overlap, LowerCtx};
 use super::hir::{
     AccessBoundary, ClosureCaptureMode, FunctionSig, LocalCapability, ParamSig,
     RuntimeHandlerAction, Ty,
@@ -1004,12 +1004,52 @@ fn source_borrow_channel_mode(mode: PassMode, ty: &Type) -> Option<PassMode> {
     }
 }
 
-fn stable_handler_borrow_root(expression: &Expr) -> Option<&str> {
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum HandlerBorrowProjection {
+    Field(String),
+    ConstantIndex(i128),
+    DynamicIndex,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct HandlerBorrowPlace {
+    root: String,
+    projections: Vec<HandlerBorrowProjection>,
+}
+
+fn stable_handler_borrow_place(expression: &Expr) -> Option<HandlerBorrowPlace> {
     match expression {
-        Expr::Name(name) => Some(name),
-        Expr::Member(base, _) | Expr::Index { base, .. } => stable_handler_borrow_root(base),
+        Expr::Name(name) => Some(HandlerBorrowPlace {
+            root: name.clone(),
+            projections: Vec::new(),
+        }),
+        Expr::Member(base, field) => {
+            let mut place = stable_handler_borrow_place(base)?;
+            place
+                .projections
+                .push(HandlerBorrowProjection::Field(field.clone()));
+            Some(place)
+        }
+        Expr::Index { base, index } => {
+            let mut place = stable_handler_borrow_place(base)?;
+            place.projections.push(match index.as_ref() {
+                Expr::Integer(index) => HandlerBorrowProjection::ConstantIndex(*index),
+                _ => HandlerBorrowProjection::DynamicIndex,
+            });
+            Some(place)
+        }
         _ => None,
     }
+}
+
+fn handler_borrow_places_overlap(left: &HandlerBorrowPlace, right: &HandlerBorrowPlace) -> bool {
+    left.root == right.root
+        && (left
+            .projections
+            .iter()
+            .chain(&right.projections)
+            .any(|projection| matches!(projection, HandlerBorrowProjection::DynamicIndex))
+            || projection_paths_overlap(&left.projections, &right.projections))
 }
 
 fn handler_expression_calls_named_function(expression: &Expr, name: &str) -> bool {
@@ -3736,12 +3776,40 @@ impl Analyzer {
                 .custom
                 .iter()
                 .all(|effect| source_effect_identity(effect) == handler.identity);
-        let distinct_borrow_roots = borrow_arguments
+        let borrow_places = borrow_arguments
             .iter()
-            .filter_map(|(_, (_, argument))| stable_handler_borrow_root(&argument.value))
-            .collect::<HashSet<_>>();
+            .filter_map(|(_, (parameter, argument))| {
+                Some((
+                    source_borrow_channel_mode(parameter.mode, &parameter.ty)?,
+                    stable_handler_borrow_place(&argument.value)?,
+                ))
+            })
+            .collect::<Vec<_>>();
+        let overlapping_mutable_borrows =
+            (borrow_places.len() == borrow_arguments.len()).then(|| {
+                borrow_places
+                    .iter()
+                    .enumerate()
+                    .any(|(left_index, (left_mode, left))| {
+                        borrow_places
+                            .iter()
+                            .skip(left_index + 1)
+                            .any(|(right_mode, right)| {
+                                (matches!(left_mode, PassMode::MutBorrow)
+                                    || matches!(right_mode, PassMode::MutBorrow))
+                                    && handler_borrow_places_overlap(left, right)
+                            })
+                    })
+            });
+        if overlapping_mutable_borrows == Some(true) {
+            self.error(format!(
+                "cannot create mutable borrow because effectful call `{name}` has overlapping borrowed arguments"
+            ));
+            return Some(Err(()));
+        }
+        let borrow_places_are_compatible = overlapping_mutable_borrows == Some(false);
         let can_fuse_borrow_frame = !borrow_arguments.is_empty()
-            && distinct_borrow_roots.len() == borrow_arguments.len()
+            && borrow_places_are_compatible
             && has_only_handled_effect
             && !handler_expression_calls_named_function(&body, &name);
         if can_fuse_borrow_frame {

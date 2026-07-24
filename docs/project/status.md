@@ -91,14 +91,16 @@ can retain and update user-defined state; resumption and abandonment both preser
 cleanup. Resumable loop backedges carry user-owned state alongside compiler-generated iterator
 state. A known non-recursive effectful function with no residual effect is fused into the caller's
 handler frame when every borrowed argument is a root local, stable field path, or eligible indexed
-path and their outer roots are distinct. Indexed paths currently require a stable root/field array
-base and `Copy` element. Their `i32` indexes are materialized once in source argument order, then
-carried through resumption while the element address is rebuilt from the frame-owned root with a
-bounds check. Value arguments remain materialized in source order, and each borrowed place remains
-available to both the inlined body and following continuation. Recursive calls, non-`Copy` or
-nested dynamic indexed places, multiple projections of the same root, and calls with residual
-effects still use the separate frame ABI and do not yet share an owned root with their caller
-continuation.
+path and every pair involving a mutable borrow is statically disjoint. Distinct fields and distinct
+constant indexes of one owned root are accepted; identical and parent/child paths are rejected, and
+same-root dynamic indexes remain conservatively overlapping. Eligible dynamic indexed paths still
+require distinct roots, a stable root/field array base, and a `Copy` element. Their `i32` indexes are
+materialized once in source argument order, then carried through resumption while the element
+address is rebuilt from the frame-owned root with a bounds check. Value arguments remain
+materialized in source order, and each borrowed place remains available to both the inlined body
+and following continuation. Recursive calls, non-`Copy` or nested dynamic indexed places, and calls
+with residual effects still use the separate frame ABI and do not yet share an owned root with
+their caller continuation.
 
 Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
 `continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs

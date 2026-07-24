@@ -32,9 +32,12 @@ subset.
   Native regressions cover repeated operations, direct field mutation, resumption, abandonment, and
   exactly-once cleanup of user-defined nominal state.
 - Fused eligible non-recursive effectful calls into their caller's handler frame when borrow
-  parameters receive root locals or stable field paths with distinct outer roots. Value arguments
-  remain materialized in source order, while each borrowed place is shared with the following
-  continuation instead of being borrowed and moved by competing frames.
+  parameters receive root locals or stable field/index paths whose mutable projections are
+  statically disjoint. Distinct fields and constant indexes may share one owned root across resume
+  and abandonment; identical, parent/child, and same-root dynamic-index places receive a direct
+  overlapping-borrow diagnostic. Value arguments remain materialized in source order, while each
+  borrowed place is shared with the following continuation instead of being borrowed and moved by
+  competing frames.
 - Restored `examples/ledger.sc` to effectful state processing: its `for` loop now consumes
   non-`Copy` transactions and performs overdraft operations while retaining both iterator and
   mutable ledger state.

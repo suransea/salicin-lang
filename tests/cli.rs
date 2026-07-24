@@ -330,13 +330,19 @@ fn owned_nominal_state_crosses_repeated_effectful_calls() {
 }
 
 #[test]
-fn owned_nominal_fields_cross_repeated_effectful_calls() {
-    let output = salic()
-        .arg("run")
-        .arg(fixture("pass", "algebraic_effect_owned_field_calls.sc"))
-        .output()
-        .expect("run owned handler field-state fixture");
-    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+fn disjoint_owned_projections_cross_repeated_effectful_calls() {
+    for (name, output) in native_fixture_outputs_in_parallel(&[
+        "algebraic_effect_owned_field_calls.sc",
+        "algebraic_effect_disjoint_field_calls.sc",
+        "algebraic_effect_disjoint_index_calls.sc",
+    ]) {
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
 }
 
 #[test]
@@ -1462,6 +1468,18 @@ fn m1_ownership_errors_report_their_cause() {
         (
             "same_field_mut_borrow_conflict.sc",
             &["mutable borrow", "already borrowed"][..],
+        ),
+        (
+            "algebraic_effect_identical_field_borrows.sc",
+            &["mutable borrow", "overlapping borrowed arguments"][..],
+        ),
+        (
+            "algebraic_effect_parent_child_borrows.sc",
+            &["mutable borrow", "overlapping borrowed arguments"][..],
+        ),
+        (
+            "algebraic_effect_dynamic_index_alias.sc",
+            &["mutable borrow", "overlapping borrowed arguments"][..],
         ),
         ("use_after_inferred_move.sc", &["moved"][..]),
         ("possibly_moved_after_branch.sc", &["possibly moved"][..]),

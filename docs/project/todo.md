@@ -17,15 +17,9 @@ Priority meanings:
 
 Current milestone: **EH1, close the algebraic-handler extension**
 
-Next task: **EFF-ALIAS-1**
+Next task: **EFF-RESIDUAL-1**
 
 ### P0 handler queue
-
-- [ ] **EFF-ALIAS-1: Fuse disjoint projections of one owned root**
-  - Reuse place-overlap analysis instead of comparing root names only.
-  - Accept `update(pair.left, pair.right)` for disjoint fields.
-  - Reject identical, parent/child, dynamic-index, and otherwise overlapping mutable places.
-  - Preserve ordinary call-site borrow diagnostics.
 
 - [ ] **EFF-RESIDUAL-1: Share owned roots through concrete residual rows**
   - Cover fused calls that retain concrete `Throws(E)`, `Unsafe`, or another nominal effect.
@@ -141,6 +135,7 @@ Entry gate: all ASYNC1 prerequisites in the roadmap
 - [x] **EFF-FRAME-1:** Fuse distinct borrowed roots into eligible non-recursive handler frames.
 - [x] **EFF-FIELD-1:** Extend frame fusion to stable nested field places.
 - [x] **EFF-INDEX-1:** Stage indexed borrow places once and rebuild them from frame-owned roots.
+- [x] **EFF-ALIAS-1:** Fuse statically disjoint same-root projections into handler frames.
 - [x] **CORE-MEMORY-1:** Source-back raw pointer and layout-query contracts in `core.memory`.
 - [x] **TYPE-CONST-1:** Add `usize` compile-time values and source-back curried `Array(T)(L)`.
 - [x] **CORE-BORROW-1:** Move borrow contracts from `core.domains` into `core.borrow`.

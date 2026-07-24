@@ -371,14 +371,13 @@ impl LowerCtx {
     }
 }
 
-pub(super) fn is_place_prefix(prefix: &PlaceKey, place: &PlaceKey) -> bool {
-    prefix.local == place.local
-        && prefix.projections.len() <= place.projections.len()
-        && place.projections.starts_with(&prefix.projections)
+pub(super) fn places_overlap(left: &PlaceKey, right: &PlaceKey) -> bool {
+    left.local == right.local && projection_paths_overlap(&left.projections, &right.projections)
 }
 
-pub(super) fn places_overlap(left: &PlaceKey, right: &PlaceKey) -> bool {
-    is_place_prefix(left, right) || is_place_prefix(right, left)
+pub(super) fn projection_paths_overlap<T: PartialEq>(left: &[T], right: &[T]) -> bool {
+    left.len() <= right.len() && right.starts_with(left)
+        || right.len() <= left.len() && left.starts_with(right)
 }
 
 pub(super) fn projected_uninitialized_alternatives(
