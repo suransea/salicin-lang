@@ -710,6 +710,7 @@ fn alloc_box_owns_copy_and_resource_payloads() {
         "box_recursive_layout.sc",
         "box_read.sc",
         "box_into_inner_drop_once.sc",
+        "box_raw_roundtrip_drop_once.sc",
         "box_replace_drop.sc",
         "box_borrow.sc",
         "forget_resource.sc",
@@ -929,8 +930,6 @@ fn where_copy_bounds_validate_generic_bodies_and_concrete_calls() {
 
     for (name, expected) in [
         ("where_copy_unsatisfied.sc", "not satisfied"),
-        ("box_read_resource.sc", "not satisfied"),
-        ("box_write_resource.sc", "not satisfied"),
         ("where_unknown_trait.sc", "unknown trait"),
         ("where_duplicate_predicate.sc", "duplicate where predicate"),
         ("where_trait_arity.sc", "argument count mismatch"),

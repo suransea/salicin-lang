@@ -1,4 +1,4 @@
-let box_new = std.boxed.box_new
+let Box = std.boxed.Box
 
 let Resource = struct { value: i32 }
 
@@ -8,6 +8,6 @@ extend Resource: Drop {
   }}
 
 let main(): i32 = {
-  let boxed = box_new(Resource { value: 0 })
+  let boxed = Box.new(Resource { value: 0 })
   0
 }

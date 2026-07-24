@@ -1,5 +1,4 @@
 let Vec = std.vec.Vec
-let vec_at = std.vec.vec_at
 
 let Resource = struct { value: i32 }
 
@@ -12,11 +11,11 @@ let main(): i32 = {
   values.push(Resource { value: 20 })
   values.push(Resource { value: 0 })
   let first = do {
-    let reference = vec_at(values)(0)
+    let reference = values.at(0)
     reference.read()
   }
   do {
-    let reference = vec_at(A: mut)(values)(1)
+    let reference = values.at(mut)(1)
     reference.value = 21
   }
   let second = do {

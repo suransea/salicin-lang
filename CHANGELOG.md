@@ -6,6 +6,10 @@ subset.
 
 ## Unreleased
 
+- Reduced the public allocation API to the `std.boxed.Box` and `std.vec.Vec` types plus their
+  inherent methods; prefixed `box_*` and `vec_*` functions are now implementation-private.
+  Replaced `Box.as_mut_ptr()` with consuming `Box.into_raw()` and unsafe `Box.from_raw(pointer)`
+  ownership conversion.
 - Added bounded `L: usize` compile-time parameters with non-negative literal arguments, explicit
   forwarding, array-driven inference, and monomorphization identity. Fixed arrays now use the
   validated curried `core.memory.Array(T)(L)` declaration; the old `Array(T, L)` grouping is rejected.

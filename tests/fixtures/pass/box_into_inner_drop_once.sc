@@ -1,5 +1,4 @@
-let box_new = std.boxed.box_new
-let box_into_inner = std.boxed.box_into_inner
+let Box = std.boxed.Box
 
 let Resource = struct { counter: MutPtr(i32) }
 
@@ -17,8 +16,8 @@ let main(): i32 = {
     *counter = 0
   }
   do {
-    let boxed = box_new(T: Resource)(Resource { counter: counter })
-    let resource = box_into_inner(boxed)
+    let boxed = Box.new(T: Resource)(Resource { counter: counter })
+    let resource = boxed.into_inner()
   }
   let drops = unsafe {
     *counter

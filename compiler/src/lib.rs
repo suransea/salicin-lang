@@ -172,24 +172,38 @@ mod tests {
 
     #[test]
     fn alloc_accessors_use_the_access_generic_entry_points() {
-        let source = "use std.boxed.{Box, box_as_ref}\n\
+        let source = "let Box = std.boxed.Box\n\
                       let Vec = std.vec.Vec
-                      let vec_at = std.vec.vec_at
                       let main(): i32 = {\n\
                         let mut boxed = Box.new(20)\n\
                         do {\n\
-                          let value = box_as_ref(A: mut, T: i32)(boxed)\n\
+                          let value = boxed.as_ref(mut)()\n\
                           value = 21\n\
                         }\n\
                         let mut values: Vec(i32) = Vec(i32).new()\n\
                         values.push(20)\n\
                         do {\n\
-                          let value = vec_at(A: mut, T: i32)(values)(0)\n\
+                          let value = values.at(mut)(0)\n\
                           value = value + 1\n\
                         }\n\
                         boxed.read() + values.read(0)\n\
                       }\n";
         compile_source(source).expect("alloc accessors should instantiate mutable access");
+    }
+
+    #[test]
+    fn alloc_helper_functions_are_not_public_api() {
+        for (path, name) in [
+            ("std.boxed.box_new", "box_new"),
+            ("std.vec.vec_push", "vec_push"),
+        ] {
+            let source = format!("let helper = {path}\nlet main(): i32 = {{ 0 }}\n");
+            let errors = compile_source(&source).unwrap_err();
+            assert!(errors.iter().any(|diagnostic| {
+                diagnostic.contains(name)
+                    && (diagnostic.contains("unknown") || diagnostic.contains("private"))
+            }));
+        }
     }
 
     #[test]

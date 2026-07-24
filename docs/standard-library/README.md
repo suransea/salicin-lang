@@ -65,7 +65,6 @@ through their module or given transparent aliases with ordinary `let`; for examp
 ```sc
 let Box = std.boxed.Box
 let Vec = std.vec.Vec
-let vec_at = std.vec.vec_at
 ```
 
 The compiler mounts `std` plus the lower-level `core` and `alloc` namespaces in every package.

@@ -12,8 +12,11 @@ let main(): i32 = {
   let mut count = 0
   do {
     let counter = MutPtr(borrow(mut)(count))
-    let first = Box.new(T: Resource)(Resource { counter: counter })
-    let second = first
+    let boxed = Box.new(Resource { counter: counter })
+    let pointer = boxed.into_raw()
+    let rebuilt = unsafe {
+      Box(Resource).from_raw(pointer)
+    }
   }
   41 + count
 }

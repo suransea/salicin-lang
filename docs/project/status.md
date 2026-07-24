@@ -154,8 +154,9 @@ constructor equation solving.
 Access domain generics are implemented for functions and generic inherent members: `A: access` accepts `shared` or `mut`,
 defaults to shared when omitted, participates in monomorphization, and can drive parameter modes,
 borrow types, borrow expressions, and raw pointer borrows. The alloc free functions and methods use
-this path. Mutable borrowing has one source spelling, `borrow(mut)`; separately named mutable alloc
-aliases and the former prefix spelling are intentionally absent before 1.0.
+this path internally, while the public container surface uses inherent methods. Mutable borrowing
+has one source spelling, `borrow(mut)`; separately named mutable alloc aliases and the former prefix
+spelling are intentionally absent before 1.0.
 Passing domain generics are also implemented for functions and generic inherent members:
 `P: passing` accepts `auto`, `copy`, or `move` and can be referenced directly in parameter keyword
 position. Functions and trait methods place a contextual `with(...)` clause after the result type:
@@ -262,10 +263,14 @@ algebraic-continuation ABI, and async color lowering remain design or implementa
 
 `std` is the preferred public standard-library facade, backed by lower-level `core` and `alloc`
 namespaces in ordinary module resolution. Operator/flow traits and alloc containers are not part of
-the prelude. `Box`, `Vec`, and their free functions require
-ordinary `let Name = std.boxed...Name` / `let Name = std.vec...Name` aliases (or a qualified path),
-while operator and flow traits use the same alias form when named. Their internal identities remain isolated from same-named user
-declarations; operator syntax continues to dispatch through validated lang items.
+the prelude. `std.boxed` and `std.vec` export only `Box` and `Vec`; prefixed free functions remain
+private implementation helpers, and operations are exposed as inherent methods. `Box.into_raw`
+consumes ownership, while `Box.from_raw` requires `Unsafe`; the former shared-borrow
+`as_mut_ptr` escape is removed. Container types require ordinary
+`let Name = std.boxed.Name` / `let Name = std.vec.Name` aliases (or a qualified path), while
+operator and flow traits use the same alias form when named. Their internal identities remain
+isolated from same-named user declarations; operator syntax continues to dispatch through
+validated lang items.
 
 The implementation is broad but not stable. Important incomplete boundaries include:
 

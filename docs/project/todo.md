@@ -92,8 +92,6 @@ After the P0 handler queue passes its exit conditions, stop adding handler featu
 
 Entry gate: **M0-QUALITY-1** and **M0-AUDIT-1**
 
-- [ ] **LIB-ALLOC-API-1: Keep Box/Vec implementations in the allocation-capable layer while exposing only stable type and inherent-method APIs through std**
-- [ ] **LIB-BOX-1: Replace ordinary raw-pointer accessors with an explicit unsafe ownership-conversion boundary**
 - [ ] **LIB-SLICE-1: Specify and implement slices**
 - [ ] **LIB-INDEX-1: Route indexing through source-backed traits**
 - [ ] **LIB-ITER-1: Add array, slice, and Vec iterator implementations**
@@ -146,6 +144,8 @@ Entry gate: all ASYNC1 prerequisites in the roadmap
 - [x] **CORE-MEMORY-1:** Source-back raw pointer and layout-query contracts in `core.memory`.
 - [x] **TYPE-CONST-1:** Add `usize` compile-time values and source-back curried `Array(T)(L)`.
 - [x] **CORE-BORROW-1:** Move borrow contracts from `core.domains` into `core.borrow`.
+- [x] **LIB-ALLOC-API-1:** Keep Box/Vec in the allocation-capable layer and expose only their inherent APIs through std.
+- [x] **LIB-BOX-1:** Replace `Box.as_mut_ptr` with consuming `into_raw` and unsafe `from_raw`.
 - [x] **EXAMPLE-LEDGER-1:** Process non-`Copy` transactions in an effectful native ledger loop.
 
 ## Definition of done

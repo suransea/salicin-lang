@@ -1,5 +1,4 @@
 let Box = std.boxed.Box
-let box_as_ref = std.boxed.box_as_ref
 
 let Resource = struct { value: i32 }
 
@@ -10,11 +9,11 @@ extend Resource {
 let main(): i32 = {
   let mut boxed = Box.new(Resource { value: 10 })
   let first = do {
-    let reference = box_as_ref(boxed)
+    let reference = boxed.as_ref()
     reference.read()
   }
   do {
-    let reference = box_as_ref(A: mut)(boxed)
+    let reference = boxed.as_ref(mut)()
     reference.value = 20
   }
   let second = do {

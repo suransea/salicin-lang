@@ -704,7 +704,9 @@ fn registers_source_backed_core_lang_items() {
     let boxed = |name: &str| format!("alloc::boxed::{name}");
     let vec = |name: &str| format!("alloc::vec::{name}");
     assert!(analyzer.function_templates.contains_key(&boxed("box_new")));
-    assert!(analyzer.function_templates.contains_key(&boxed("box_ptr")));
+    assert!(analyzer
+        .function_templates
+        .contains_key(&boxed("box_into_raw")));
     assert!(analyzer.function_templates.contains_key(&boxed("box_read")));
     assert!(analyzer
         .function_templates

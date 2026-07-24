@@ -1,21 +1,18 @@
 let Box = std.boxed.Box
-let box_new = std.boxed.box_new
-let box_read = std.boxed.box_read
-let box_write = std.boxed.box_write
 
 let read_box(T: type)(boxed: borrow(Box(T))): T
 where T: Copy = { boxed.read() }
 
 let main(): i32 = {
-  let mut boxed = box_new(T: i32)(0)
+  let mut boxed = Box.new(T: i32)(0)
   boxed.write(20)
   let first = boxed.read()
-  box_write(boxed)(22)
-  let second = box_read(boxed)
-  let mut unit: Box(()) = box_new(())
-  let zero = box_new(T: i32)(0)
+  boxed.write(22)
+  let second = boxed.read()
+  let mut unit: Box(()) = Box.new(())
+  let zero = Box.new(T: i32)(0)
   unit.write(())
-  box_write(unit)(())
+  unit.write(())
   unit.read()
   first + second + read_box(zero)
 }

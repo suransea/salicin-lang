@@ -155,7 +155,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
                 .iter()
                 .enumerate()
                 .all(|(index, visibility)| {
-                    let expected = if matches!(index, 0..=7 | 10 | 14..=34) {
+                    let expected = if matches!(index, 0 | 10) {
                         Visibility::Public
                     } else {
                         Visibility::Private
@@ -180,9 +180,11 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
             ),
         }
         match &program.items[2] {
-            Item::Function(function) if valid_box_ptr(function) => {}
-            _ => diagnostics
-                .push("alloc box_ptr must borrow `Box(T)` and return `MutPtr(T)`".to_owned()),
+            Item::Function(function) if valid_box_into_raw(function) => {}
+            _ => diagnostics.push(
+                "alloc box_into_raw must consume `Box(T)` and return its owned `MutPtr(T)`"
+                    .to_owned(),
+            ),
         }
         match &program.items[3] {
             Item::Function(function) if valid_box_read(function) => {}
@@ -217,7 +219,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
         match &program.items[8] {
             Item::Extend(extension) if valid_box_extension(extension) => {}
             _ => diagnostics.push(
-                "alloc Box extension must provide new, pointer/reference access, into_inner, and replace"
+                "alloc Box extension must provide new, from_raw, reference access, into_inner, into_raw, and replace"
                     .to_owned(),
             ),
         }
@@ -433,12 +435,12 @@ fn valid_box_new(function: &Function) -> bool {
         && function.body.is_some()
 }
 
-fn valid_box_ptr(function: &Function) -> bool {
-    function.name == "box_ptr"
+fn valid_box_into_raw(function: &Function) -> bool {
+    function.name == "box_into_raw"
         && generic_t(function)
         && matches!(
             function.groups.as_slice(),
-            [group] if has_parameter(group, "boxed", PassMode::Borrow, applied("Box", named("T")))
+            [group] if has_parameter(group, "boxed", PassMode::Move, applied("Box", named("T")))
         )
         && function.return_type == Some(applied("MutPtr", named("T")))
         && function.body.is_some()
@@ -548,7 +550,7 @@ fn valid_box_extension(extension: &crate::ast::ExtendDef) -> bool {
     ) && extension.target == applied("Box", named("T"))
         && extension.trait_ref.is_none()
         && extension.where_predicates.is_empty()
-        && extension.members.len() == 5
+        && extension.members.len() == 6
         && matches!(&extension.members[0], crate::ast::ExtendMember::Function(function)
             if function.name == "new"
                 && function.compile_groups.is_empty()
@@ -560,12 +562,14 @@ fn valid_box_extension(extension: &crate::ast::ExtendDef) -> bool {
                 && function.return_type == Some(applied("Box", named("T")))
                 && function.body.is_some())
         && matches!(&extension.members[1], crate::ast::ExtendMember::Function(function)
-            if valid_box_method(function, "as_mut_ptr", PassMode::Borrow, &[], applied("MutPtr", named("T"))))
+            if valid_box_from_raw_method(function))
         && matches!(&extension.members[2], crate::ast::ExtendMember::Function(function)
             if valid_box_access_method(function))
         && matches!(&extension.members[3], crate::ast::ExtendMember::Function(function)
             if valid_box_method(function, "into_inner", PassMode::Move, &[], named("T")))
         && matches!(&extension.members[4], crate::ast::ExtendMember::Function(function)
+            if valid_box_method(function, "into_raw", PassMode::Move, &[], applied("MutPtr", named("T"))))
+        && matches!(&extension.members[5], crate::ast::ExtendMember::Function(function)
         if valid_box_method(
             function,
             "replace",
@@ -573,6 +577,21 @@ fn valid_box_extension(extension: &crate::ast::ExtendDef) -> bool {
             &[("value", PassMode::Inferred, named("T"))],
             named("T"),
         ))
+}
+
+fn valid_box_from_raw_method(function: &Function) -> bool {
+    function.name == "from_raw"
+        && function.compile_groups.is_empty()
+        && matches!(function.groups.as_slice(), [group]
+            if has_parameter(group, "pointer", PassMode::Inferred, applied("MutPtr", named("T"))))
+        && function.return_type == Some(applied("Box", named("T")))
+        && function.effects
+            == crate::ast::FunctionEffects {
+                custom: vec![Type::Named("core.effect.Unsafe".to_owned(), Vec::new())],
+                ..crate::ast::FunctionEffects::default()
+            }
+        && function.where_predicates.is_empty()
+        && function.body.is_some()
 }
 
 fn valid_box_access_method(function: &Function) -> bool {
@@ -639,6 +658,8 @@ fn valid_box_method(
             .zip(parameters)
             .all(|(actual, (name, mode, ty))| parameter_matches(actual, name, *mode, ty.clone()))
         && function.return_type == Some(result)
+        && function.effects == crate::ast::FunctionEffects::default()
+        && function.where_predicates.is_empty()
         && function.body.is_some()
 }
 
@@ -1139,13 +1160,37 @@ mod tests {
     #[test]
     fn rejects_box_write_without_its_copy_proof() {
         let source = alloc_source().replacen(
-            "pub let box_write(T: type)(boxed: borrow(mut)(Box(T)))(copy value: T): ()\nwhere T: Copy = {\n  unsafe {",
-            "pub let box_write(T: type)(boxed: borrow(mut)(Box(T)))(copy value: T): ()\n= {\n  unsafe {",
+            "let box_write(T: type)(boxed: borrow(mut)(Box(T)))(copy value: T): ()\nwhere T: Copy = {\n  unsafe {",
+            "let box_write(T: type)(boxed: borrow(mut)(Box(T)))(copy value: T): ()\n= {\n  unsafe {",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
             .expect_err("box_write without Copy must fail bootstrap validation");
         assert!(error.to_string().contains("box_write"));
+    }
+
+    #[test]
+    fn rejects_box_from_raw_without_unsafe_effect() {
+        let source = alloc_source().replacen(
+            "let from_raw(pointer: MutPtr(T)): Box(T) with(core.effect.Unsafe) = {",
+            "let from_raw(pointer: MutPtr(T)): Box(T) = {",
+            1,
+        );
+        let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
+            .expect_err("safe Box.from_raw must fail bootstrap validation");
+        assert!(error.to_string().contains("from_raw"));
+    }
+
+    #[test]
+    fn rejects_box_into_raw_without_ownership_transfer() {
+        let source = alloc_source().replacen(
+            "let box_into_raw(T: type)(move boxed: Box(T)): MutPtr(T)",
+            "let box_into_raw(T: type)(boxed: borrow(Box(T))): MutPtr(T)",
+            1,
+        );
+        let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
+            .expect_err("borrowed box_into_raw must fail bootstrap validation");
+        assert!(error.to_string().contains("box_into_raw"));
     }
 
     #[test]

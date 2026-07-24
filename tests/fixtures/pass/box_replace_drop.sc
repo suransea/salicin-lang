@@ -1,5 +1,4 @@
-let box_new = std.boxed.box_new
-let box_replace = std.boxed.box_replace
+let Box = std.boxed.Box
 
 let Resource = struct { counter: MutPtr(i32), value: i32 }
 
@@ -17,9 +16,9 @@ let main(): i32 = {
     *counter = 0
   }
   do {
-    let mut boxed = box_new(T: Resource)(Resource { counter: counter, value: 10 })
+    let mut boxed = Box.new(T: Resource)(Resource { counter: counter, value: 10 })
     do {
-      let previous = box_replace(boxed)(Resource { counter: counter, value: 20 })
+      let previous = boxed.replace(Resource { counter: counter, value: 20 })
     }
   }
   let drops = unsafe {
