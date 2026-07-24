@@ -39,7 +39,7 @@ source file is named.
 | `Unsafe`, `unsafe`, and raw primitives behind authority | raw pointer, allocator, layout-query, and access-family fixtures | `fail/raw_*` validates authority, mutability, layout, type, and ownership boundaries | raw pointer, allocator, replacement ABI, invalid layout, and trap CLI tests | **Covered** |
 | C FFI | No parser, AST, semantic, ABI, or emitter implementation | No rejection contract or diagnostic fixtures | None | **Missing**, `M0-FFI-1`; stable external ABI remains outside M0 |
 | Binary/library targets and native LLVM emission | check/emit/build/run, explicit targets, default targets, and library dependency tests | output collision, target selection, manifest, dependency, and cycle diagnostics | shorthand native build, package binaries, dependencies, and ledger | **Covered** |
-| Diagnostics suitable for source-level debugging | Stable source-name fragments, defining declaration positions, local initializer positions, and end-exclusive expression-root ranges are asserted across parser, CLI, and codegen tests | Broad fail fixture corpus checks semantic rejection and rejects generated `$...` names | N/A | **Partial**: trailing source-closure calls still need statement spans outside `Expr` under `M0-DIAG-1` |
+| Diagnostics suitable for source-level debugging | Stable source-name fragments, defining declaration positions, local initializer positions, and end-exclusive expression-root ranges, including trailing source-closure calls, are asserted across parser, CLI, and codegen tests | Broad fail fixture corpus checks semantic rejection and rejects generated `$...` names | N/A | **Covered** |
 
 ## Audit tasks
 
@@ -53,9 +53,5 @@ The matrix creates these release-blocking tasks without changing the frozen scop
    or narrow declarations and the frozen scope through the formal change gate.
 4. `M0-FFI-1`: implement the bounded C FFI slice promised by M0, including ABI admissibility,
    unsafe calls, linking, diagnostics, and native round trips.
-5. `M0-DIAG-1`: move statement spans outside `Expr` so reusable-handler closure identity no longer
-   leaves trailing source-closure calls unlocated; initializer positions, ordinary expression-root
-   ranges, and the generated-name zero-leak gate are implemented.
-
 `M0-QUALITY-1` cannot close merely because the current suite is green; the implementation gaps
 above must either be completed or pass the M0 change gate.

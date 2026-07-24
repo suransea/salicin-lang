@@ -7193,11 +7193,13 @@ impl Analyzer {
 
     fn lower_expr(
         &mut self,
-        expression: &Expr,
+        mut expression: &Expr,
         expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
-        if let Expr::Located {
+        let previous = self.current_origin.clone();
+        let mut located = false;
+        while let Expr::Located {
             line,
             column,
             end_line,
@@ -7205,7 +7207,7 @@ impl Analyzer {
             value,
         } = expression
         {
-            let previous = self.current_origin.clone();
+            located = true;
             if let Some(origin) = &mut self.current_origin {
                 if let Some(source) = &mut origin.source {
                     source.line = *line;
@@ -7214,11 +7216,21 @@ impl Analyzer {
                     source.end_column = *end_column;
                 }
             }
-            let lowered = self.lower_expr(value, expected, context);
-            self.current_origin = previous;
-            return lowered;
+            expression = value;
         }
+        let lowered = self.lower_expr_unlocated(expression, expected, context);
+        if located {
+            self.current_origin = previous;
+        }
+        lowered
+    }
 
+    fn lower_expr_unlocated(
+        &mut self,
+        expression: &Expr,
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
         let lowered = match expression {
             Expr::Located { .. } => unreachable!("source locations are lowered transparently"),
             Expr::Type(_) => {

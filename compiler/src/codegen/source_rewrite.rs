@@ -2332,11 +2332,12 @@ fn visit_expr_mut_ordered(
     visitor: &mut impl FnMut(&mut Expr),
     preorder: bool,
 ) {
+    let expression = expression.unlocated_mut();
     if preorder {
         visitor(expression);
     }
     match expression {
-        Expr::Located { value, .. } => visit_expr_mut_ordered(value, visitor, preorder),
+        Expr::Located { .. } => unreachable!("source locations are visited transparently"),
         Expr::Unary(_, value)
         | Expr::Try(value)
         | Expr::DoBlock { body: value }
@@ -2658,8 +2659,9 @@ fn hygienic_rename_expr(
     next: &mut usize,
     scopes: &mut Vec<HashMap<String, String>>,
 ) {
+    let expression = expression.unlocated_mut();
     match expression {
-        Expr::Located { value, .. } => hygienic_rename_expr(value, prefix, next, scopes),
+        Expr::Located { .. } => unreachable!("source locations are renamed transparently"),
         Expr::Name(name) => {
             if let Some(renamed) = scopes.iter().rev().find_map(|scope| scope.get(name)) {
                 *name = renamed.clone();

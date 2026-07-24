@@ -17,7 +17,7 @@ Priority meanings:
 
 Current milestone: **M0 release baseline**
 
-Next task: **M0-DIAG-1**
+Next task: **M0-FRONTEND-EVIDENCE-1**
 
 ### P0 control-source queue
 
@@ -62,12 +62,11 @@ handler or async expansion is admitted.
   - Define admissible C ABI signatures and require `unsafe` at foreign call sites.
   - Add parser, semantic, linking, diagnostic, and native round-trip tests.
 
-- [ ] **M0-DIAG-1: Attach source spans to semantic errors**
+- [x] **M0-DIAG-1: Attach source spans to semantic errors**
   - [x] Preserve defining source paths and declaration positions through semantic specialization.
   - [x] Attach executable expression-statement start positions through semantic lowering.
   - [x] Attach exact local-initializer positions and end-exclusive expression-root ranges.
-  - [ ] Move statement spans outside `Expr` so trailing source-closure calls no longer depend on
-        an unlocated AST identity.
+  - [x] Make source-location wrappers transparent to trailing source-closure handler lowering.
   - [x] Prioritize ownership, borrow, handler, trait selection, and generic inference errors.
   - [x] Enforce a repository-wide generated-name zero-leak diagnostic gate.
 

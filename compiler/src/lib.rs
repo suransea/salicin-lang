@@ -305,6 +305,14 @@ mod tests {
                 18,
                 "expected `i32`, found `bool`",
             ),
+            (
+                "trailing closure call",
+                "let choose()(move action: (): bool): bool = { action() }\n\
+                 let main(): i32 = { choose() { true } }\n",
+                2,
+                21,
+                "expected `i32`, found `bool`",
+            ),
         ];
 
         for (category, source, line, column, expected) in cases {

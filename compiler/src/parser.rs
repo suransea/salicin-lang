@@ -3953,21 +3953,6 @@ impl Parser {
     }
 
     fn located_expression(start: &Token, end: &Token, value: Expr) -> Expr {
-        // Reusable handler lowering still tracks trailing source closures by
-        // AST identity. Their statement span must move outside `Expr` before
-        // this exception can be removed.
-        if matches!(
-            &value,
-            Expr::Call(_, arguments)
-                if arguments.iter().any(|argument| {
-                    matches!(
-                        argument.value,
-                        Expr::Closure(_, _) | Expr::PatternClosure { .. }
-                    )
-                })
-        ) {
-            return value;
-        }
         Expr::Located {
             line: start.line,
             column: start.column,
@@ -6692,7 +6677,7 @@ mod tests {
         let Some(Expr::Block(_, Some(value))) = &function.body else {
             panic!("expected function body");
         };
-        let Expr::Call(done_call, action_group) = value.as_ref() else {
+        let Expr::Call(done_call, action_group) = value.unlocated() else {
             panic!("expected action group");
         };
         assert_eq!(action_group[0].label.as_deref(), Some("action"));
@@ -8331,8 +8316,11 @@ mod tests {
 
     #[test]
     fn records_local_initializer_and_statement_ranges() {
-        let program = parse("let main(): i32 = {\n  let value: i32 = true\n  value\n}\n")
-            .expect("parse source ranges");
+        let program = parse(
+            "let main(): i32 = {\n  let value: i32 = true\n  value\n}\n\
+             let choose(): i32 = { if true { 1 } else { 2 } }\n",
+        )
+        .expect("parse source ranges");
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };
@@ -8360,6 +8348,20 @@ mod tests {
                 end_column: 8,
                 ..
             }
+        ));
+        let Item::Function(function) = &program.items[1] else {
+            panic!("expected trailing-closure function");
+        };
+        let Some(Expr::Block(_, Some(tail))) = &function.body else {
+            panic!("expected trailing-closure block");
+        };
+        assert!(matches!(
+            tail.as_ref(),
+            Expr::Located { value, .. }
+                if matches!(value.as_ref(), Expr::Call(_, arguments)
+                    if arguments.iter().any(|argument| {
+                        matches!(argument.value, Expr::Closure(_, _))
+                    }))
         ));
     }
 }

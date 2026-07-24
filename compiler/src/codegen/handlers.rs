@@ -514,6 +514,7 @@ pub(super) fn handler_alias_reference(
     expression: &Expr,
     aliases: &HashMap<String, String>,
 ) -> Option<String> {
+    let expression = expression.unlocated();
     if let Expr::Name(name) = expression {
         return aliases.contains_key(name).then(|| name.clone());
     }
@@ -705,8 +706,7 @@ pub(super) fn replace_static_selection_leaves(selection: Expr, calls: &[Expr]) -
 }
 
 pub(super) fn handler_expression_children(expression: &Expr) -> Vec<&Expr> {
-    match expression {
-        Expr::Located { value, .. } => vec![value],
+    match expression.unlocated() {
         Expr::Unary(_, value)
         | Expr::Try(value)
         | Expr::DoBlock { body: value }
@@ -783,6 +783,7 @@ pub(super) fn handler_expression_children(expression: &Expr) -> Vec<&Expr> {
             children
         }
         Expr::Type(_)
+        | Expr::Located { .. }
         | Expr::Unit
         | Expr::Integer(_)
         | Expr::Bool(_)
@@ -794,6 +795,7 @@ pub(super) fn handler_expression_children(expression: &Expr) -> Vec<&Expr> {
 }
 
 pub(super) fn expression_handles_effect(expression: &Expr, identity: &str) -> bool {
+    let expression = expression.unlocated();
     if let Expr::Call(inner, action) = expression {
         if matches!(action.as_slice(), [CallArg { label, value: Expr::Closure(parameters, _) }]
             if matches!(label.as_deref(), None | Some("action")) && parameters.is_empty())
@@ -839,6 +841,9 @@ pub(super) fn inject_handler_action_binding(
         }
     }
     match expression {
+        Expr::Located { value, .. } => {
+            inject_handler_action_binding(value, identity, action_binding)
+        }
         Expr::Block(statements, tail) => {
             for statement in statements {
                 let child = match statement {
@@ -1245,13 +1250,12 @@ impl Analyzer {
                     argument.label.as_deref() == Some(parameter.name.as_str())
                 })?
             };
-            let Some(CallArg {
-                value: Expr::Closure(_, _),
-                ..
-            }) = arguments.get(argument_index)
-            else {
+            let Some(argument) = arguments.get(argument_index) else {
                 continue;
             };
+            if !matches!(argument.value.unlocated(), Expr::Closure(_, _)) {
+                continue;
+            }
             let mut rewritten_groups = groups
                 .iter()
                 .map(|group| group.to_vec())
@@ -1351,6 +1355,7 @@ impl Analyzer {
         let Expr::Closure(parameters, body) = binding.value.unlocated() else {
             return false;
         };
+        let call = call.unlocated_mut();
         let mut group_refs = Vec::new();
         let Expr::Name(target) = flatten_call(call, &mut group_refs) else {
             return false;
@@ -1712,9 +1717,34 @@ impl Analyzer {
         resume: Option<SourceResume>,
         continuation: SourceContinuation,
     ) -> Result<Expr, ()> {
-        if let Expr::Located { value, .. } = expression {
-            return self.transform_handler_expr(*value, handler, resume, continuation);
+        if let Expr::Located {
+            line,
+            column,
+            end_line,
+            end_column,
+            value,
+        } = expression
+        {
+            return self
+                .transform_handler_expr_unlocated(*value, handler, resume, continuation)
+                .map(|value| Expr::Located {
+                    line,
+                    column,
+                    end_line,
+                    end_column,
+                    value: Box::new(value),
+                });
         }
+        self.transform_handler_expr_unlocated(expression, handler, resume, continuation)
+    }
+
+    fn transform_handler_expr_unlocated(
+        &mut self,
+        expression: Expr,
+        handler: Rc<AlgebraicHandler>,
+        resume: Option<SourceResume>,
+        continuation: SourceContinuation,
+    ) -> Result<Expr, ()> {
         if let Expr::Name(name) = &expression {
             if handler.function_aliases.borrow().contains_key(name) {
                 self.error(format!(
@@ -2910,6 +2940,7 @@ impl Analyzer {
         expression: &Expr,
         handler: &AlgebraicHandler,
     ) -> bool {
+        let expression = expression.unlocated();
         if handled_operation_call(expression, &handler.identity).is_some() {
             return true;
         }
