@@ -5,8 +5,6 @@ pub enum TokenKind {
     Let,
     Pub,
     Package,
-    Use,
-    As,
     Root,
     Super,
     // Parser-only contextual spellings. The lexer emits these words as Ident.
@@ -133,8 +131,6 @@ fn keyword(text: &str) -> Option<TokenKind> {
         "let" => TokenKind::Let,
         "pub" => TokenKind::Pub,
         "package" => TokenKind::Package,
-        "use" => TokenKind::Use,
-        "as" => TokenKind::As,
         "root" => TokenKind::Root,
         "super" => TokenKind::Super,
         "extend" => TokenKind::Extend,
@@ -560,7 +556,7 @@ mod tests {
 
     #[test]
     fn recognizes_loops_and_suppresses_newlines_in_brackets() {
-        let tokens = lex("while true { loop { break [\n  40,\n  2\n][\n0\n] } }\n").unwrap();
+        let tokens = lex("while true { loop { break([\n  40,\n  2\n][\n0\n]) } }\n").unwrap();
         for name in ["while", "loop", "break"] {
             assert!(tokens
                 .iter()
@@ -629,33 +625,31 @@ mod tests {
     }
 
     #[test]
-    fn recognizes_import_and_path_keywords_but_keeps_self_contextual() {
+    fn keeps_legacy_import_words_contextual_but_reserves_path_anchors() {
         let tokens = lex("pub use root.net.Client as HttpClient\nuse super.self.helper").unwrap();
-        for kind in [
-            TokenKind::Use,
-            TokenKind::As,
-            TokenKind::Root,
-            TokenKind::Super,
-        ] {
+        for kind in [TokenKind::Root, TokenKind::Super] {
             assert!(tokens.iter().any(|token| token.kind == kind));
         }
-        assert!(tokens
-            .iter()
-            .any(|token| token.kind == TokenKind::Ident("self".into())));
+        for identifier in ["use", "as", "self"] {
+            assert!(tokens
+                .iter()
+                .any(|token| token.kind == TokenKind::Ident(identifier.into())));
+        }
     }
 
     #[test]
     fn exposes_the_same_keyword_set_used_by_tokenization() {
         for text in [
-            "let", "pub", "package", "use", "as", "root", "super", "extend", "struct", "enum",
-            "trait", "true", "false",
+            "let", "pub", "package", "root", "super", "extend", "struct", "enum", "trait", "true",
+            "false",
         ] {
             assert!(is_keyword(text), "`{text}` was not reported as a keyword");
             assert!(!matches!(lex(text).unwrap()[0].kind, TokenKind::Ident(_)));
         }
         for text in [
-            "mut", "copy", "move", "borrow", "type", "region", "do", "try", "throw", "unsafe",
-            "return", "if", "else", "while", "for", "in", "loop", "break", "continue", "match",
+            "use", "as", "mut", "copy", "move", "borrow", "type", "region", "do", "try", "throw",
+            "unsafe", "return", "if", "else", "while", "for", "in", "loop", "break", "continue",
+            "match",
         ] {
             assert!(!is_keyword(text), "`{text}` must remain an identifier");
             assert_eq!(

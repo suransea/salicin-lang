@@ -1,4 +1,5 @@
-use std.boxed.{Box, box_write}
+let Box = std.boxed.Box
+let box_write = std.boxed.box_write
 
 let Resource = struct { value: i32 }
 

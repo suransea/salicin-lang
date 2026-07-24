@@ -2318,6 +2318,78 @@ pub(super) fn visit_expr_mut(expression: &mut Expr, visitor: &mut impl FnMut(&mu
     visitor(expression);
 }
 
+pub(super) fn normalize_handler_call_groups(program: &mut Program) {
+    fn normalize(expression: &mut Expr) {
+        visit_expr_mut(expression, &mut |expression| {
+            let Expr::Call(inner, action) = expression else {
+                return;
+            };
+            if !matches!(
+                action.as_slice(),
+                [CallArg {
+                    label: Some(label),
+                    value: Expr::Closure(parameters, _),
+                }] if label == "action" && parameters.is_empty()
+            ) {
+                return;
+            }
+            let mut groups = Vec::new();
+            let root = super::lower::flatten_call(inner, &mut groups);
+            if !matches!(root, Expr::Member(_, member) if member == "handle")
+                || groups.iter().any(|group| group.len() != 1)
+            {
+                return;
+            }
+            let clauses = groups
+                .iter()
+                .flat_map(|group| group.iter().cloned())
+                .collect::<Vec<_>>();
+            let normalized_inner = Expr::Call(Box::new(root.clone()), clauses);
+            let mut normalized_action = action.clone();
+            normalized_action[0].label = None;
+            *expression = Expr::Call(Box::new(normalized_inner), normalized_action);
+        });
+    }
+
+    fn function(function: &mut Function) {
+        if let Some(body) = &mut function.body {
+            normalize(body);
+        }
+    }
+
+    for item in &mut program.items {
+        match item {
+            Item::Function(definition) => function(definition),
+            Item::Global(binding) => normalize(&mut binding.value),
+            Item::Effect(definition) => {
+                for operation in &mut definition.operations {
+                    function(operation);
+                }
+            }
+            Item::Trait(definition) => {
+                for member in &mut definition.members {
+                    if let TraitMember::Function(definition) = member {
+                        function(definition);
+                    }
+                }
+            }
+            Item::Extend(definition) => {
+                for member in &mut definition.members {
+                    match member {
+                        ExtendMember::Function(definition) => function(definition),
+                        ExtendMember::Const(binding) => normalize(&mut binding.value),
+                    }
+                }
+            }
+            Item::Struct(_)
+            | Item::Enum(_)
+            | Item::Domain(_)
+            | Item::TypeForm(_)
+            | Item::TypeAlias(_) => {}
+        }
+    }
+}
+
 pub(super) fn append_innermost_closure_parameter(
     expression: &mut Expr,
     parameter: Param,

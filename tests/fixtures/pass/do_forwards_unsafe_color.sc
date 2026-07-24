@@ -1,6 +1,6 @@
 let read(pointer: Ptr(i32)): i32 = { unsafe {
   do {
-    return *pointer
+    return(*pointer)
     0
   }
 }

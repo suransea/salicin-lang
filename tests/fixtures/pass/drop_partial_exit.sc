@@ -7,7 +7,7 @@ extend Resource: Drop {
   }}
 
 let escape(): i32 = {
-  let wrapper = Wrapper { resource: Resource { value: 0 }, value: return 42 }
+  let wrapper = Wrapper { resource: Resource { value: 0 }, value: return(42) }
   0
 }
 

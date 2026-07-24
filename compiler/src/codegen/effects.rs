@@ -274,14 +274,24 @@ impl Analyzer {
             );
             return error_expr();
         }
-        if groups.len() != 2 || groups[1].len() != 1 || groups[1][0].label.is_some() {
+        let Some((action_group, clause_groups)) = groups.split_last() else {
             self.error(format!(
-                "`{}.handle` expects one labeled clause group followed by one trailing action closure",
+                "`{}.handle` expects labeled clause groups followed by an `action` closure",
+                source_effect_identity(instance)
+            ));
+            return error_expr();
+        };
+        if action_group.len() != 1
+            || !matches!(action_group[0].label.as_deref(), None | Some("action"))
+            || (clause_groups.len() != 1 && clause_groups.iter().any(|group| group.len() != 1))
+        {
+            self.error(format!(
+                "`{}.handle` expects labeled clause groups followed by an `action` closure",
                 source_effect_identity(instance)
             ));
             return error_expr();
         }
-        let Expr::Closure(action_parameters, action_body) = &groups[1][0].value else {
+        let Expr::Closure(action_parameters, action_body) = &action_group[0].value else {
             self.error("an effect handler requires a trailing closure");
             return error_expr();
         };
@@ -323,7 +333,7 @@ impl Analyzer {
                 });
         }
         let mut done = None;
-        for argument in groups[0] {
+        for argument in clause_groups.iter().flat_map(|group| group.iter()) {
             let Some(label) = &argument.label else {
                 self.error("effect handler clauses must use operation names as argument labels");
                 continue;

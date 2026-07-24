@@ -3410,7 +3410,7 @@ dep = { path = "../dep" }
     workspace.write(
         "dep/src/lib.sc",
         r#"use std.Option
-use std.ops.Add
+let Add = std.ops.Add
 
 pub let Number = struct { value: i32 }
 extend Number: Add(Number) {
@@ -3902,7 +3902,7 @@ fn prelude_never_coerces_through_diverging_calls() {
     let source = temporary.write(
         "never.sc",
         r#"use std.Result
-use std.effect.Throws
+let Throws = std.effect.Throws
 let stop(): Never = { loop {} }
 let absurd(move value: Never): i32 = { value }
 let propagate(move value: Never): Result(())(i32) = { value }
@@ -4216,11 +4216,11 @@ pub(package) let make_number(value: i32): Number = { Number { value: value } }
     project.write(
         "src/nested/deep.sc",
         r#"use root.kit.{Number, Outcome, increment}
-use root.kit.make_number as make
-use root.kit as utilities
-use self.local_bonus as local
-use super.parent_bonus as parent
-use root.root_bonus as from_root
+let make = root.kit.make_number
+let utilities = root.kit
+let local = self.local_bonus
+let parent = super.parent_bonus
+let from_root = root.root_bonus
 
 let local_bonus(): i32 = { 1 }
 
@@ -4329,7 +4329,7 @@ fn invalid_imports_report_alias_paths_and_visibility() {
         Case {
             name: "duplicate-alias",
             root: r#"use root.first.answer as selected
-use root.second.answer as selected
+let selected = root.second.answer
 let main(): i32 = { selected() }
 "#,
             modules: &[

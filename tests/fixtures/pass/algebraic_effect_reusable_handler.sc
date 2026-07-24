@@ -4,10 +4,7 @@ let Ask = effect {
 }
 
 let run(action: (i32): i32 with(Ask))(input: i32): i32 = {
-  Ask.handle(
-    value: { (resume) -> resume(10) },
-    stop: { (resume) -> 40 },
-  ) {
+  Ask.handle value { (resume) -> resume(10) } stop { (resume) -> 40 } action {
     action(input)
   }
 }

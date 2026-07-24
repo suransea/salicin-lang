@@ -1,5 +1,5 @@
-use std.Option
-use std.Result
+let Option = std.Option
+let Result = std.Result
 
 let Query = effect {
   let option(present: bool): Option(bool)
@@ -17,18 +17,14 @@ let program(): i32 with(Query) = {
 
 let main(): i32 = {
   let mut fallbacks = 0
-  let result = Query.handle(
-    option: { (present, resume) ->
+  let result = Query.handle option { (present, resume) ->
       resume(if present { Option.Some(true) } else { Option.None })
-    },
-    result: { (present, resume) ->
+    } result { (present, resume) ->
       resume(if present { Result.Ok(true) } else { Result.Err(()) })
-    },
-    fallback: { (resume) ->
+    } fallback { (resume) ->
       fallbacks += 1;
       resume(true)
-    },
-  ) {
+    } action {
     program()
   }
   result + fallbacks

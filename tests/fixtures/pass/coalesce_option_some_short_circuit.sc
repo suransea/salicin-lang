@@ -1,4 +1,4 @@
-use std.Option
+let Option = std.Option
 
 let fallback(count: borrow(mut)(i32)): i32 = {
   count = count + 1

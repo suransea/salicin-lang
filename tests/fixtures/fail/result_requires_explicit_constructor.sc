@@ -1,4 +1,4 @@
-use std.Result
+let Result = std.Result
 
 let wrong(): Result(bool)(i32) = { 42 }
 

@@ -1,4 +1,5 @@
-use std.boxed.{box_new, box_replace}
+let box_new = std.boxed.box_new
+let box_replace = std.boxed.box_replace
 
 let Resource = struct { counter: MutPtr(i32), value: i32 }
 

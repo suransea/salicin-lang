@@ -12,7 +12,7 @@ extend Resource: Drop {
 let consume(move resource: Resource): i32 = { 0 }
 
 let run(move action: (): i32 with(Ask)): i32 = {
-  Ask.handle(value: { (resume) -> resume(41) }) {
+  Ask.handle value { (resume) -> resume(41) } action {
     action()
   }
 }

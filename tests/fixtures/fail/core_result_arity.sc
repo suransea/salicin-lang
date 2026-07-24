@@ -1,4 +1,4 @@
-use std.Result
+let Result = std.Result
 
 let main(): i32 = {
   let value: Result(i32) = Result(i32).Ok(42)

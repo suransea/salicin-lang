@@ -1,15 +1,16 @@
 # Allocation library
 
 `library/alloc` contains owning types built on Salicin's raw allocation intrinsics and the
-replaceable allocator ABI. `alloc.lib` is the root `pub use` facade, `alloc.boxed` and `alloc.vec`
+replaceable allocator ABI. `alloc.lib` is the root `pub let` alias facade, `alloc.boxed` and `alloc.vec`
 hold the public definitions, and `alloc.raw` is reserved for package-internal allocation helpers
 once the language has finer-grained visibility. Alloc is not part of the intended prelude.
 
-Alloc names are not implicitly visible. Import only the declarations a module uses:
+Alloc names are not implicitly visible. Alias only the declarations a module uses:
 
 ```sc
-use std.boxed.{Box, box_as_ref}
-use std.vec.Vec
+let Box = std.boxed.Box
+let box_as_ref = std.boxed.box_as_ref
+let Vec = std.vec.Vec
 ```
 
 Qualified paths such as `std.boxed.Box` are also valid. The underlying `alloc` layer is supplied by
@@ -35,4 +36,4 @@ mutable alias. Bounds and allocation-layout failures trap.
 Container fields remain private so safe code cannot forge ownership metadata. Allocation operations
 ultimately use the ABI documented in [runtime.md](../runtime.md).
 
-See [standard-library organization](README.md) for the prelude and import policy.
+See [standard-library organization](README.md) for the prelude and alias policy.

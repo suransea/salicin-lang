@@ -1,4 +1,4 @@
-use std.Option
+let Option = std.Option
 
 let Adder = struct { base: i32 }
 

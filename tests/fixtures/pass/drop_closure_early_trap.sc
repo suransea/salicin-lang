@@ -13,5 +13,5 @@ let main(): i32 = {
     consume(resource)
     value
   }}
-  once(return 0)
+  once(return(0))
 }

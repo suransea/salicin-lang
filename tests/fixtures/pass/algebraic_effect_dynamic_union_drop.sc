@@ -17,10 +17,7 @@ let main(): i32 = {
     raw_alloc(i32)(size_of(i32), align_of(i32))
   }
   unsafe { *counter = 0 }
-  let result = Abort.handle(
-    choose: { (resume) -> resume(false) },
-    stop: { (resume) -> 39 },
-  ) {
+  let result = Abort.handle choose { (resume) -> resume(false) } stop { (resume) -> 39 } action {
     let left_resource = Resource { counter: counter }
     let middle_resource = Resource { counter: counter }
     let right_resource = Resource { counter: counter }

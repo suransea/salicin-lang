@@ -319,6 +319,9 @@ impl Analyzer {
         {
             analyzer.error(diagnostic);
         }
+        normalize_handler_call_groups(&mut core_program);
+        normalize_handler_call_groups(&mut alloc_program);
+        normalize_handler_call_groups(&mut source_program);
         analyzer.collect_items(&core_program, &alloc_program, &source_program);
         Ok(analyzer)
     }
@@ -1362,7 +1365,10 @@ impl Analyzer {
                 );
                 for parameter in method.groups.iter().flatten() {
                     if let Type::Named(wrapper, schemas) = &parameter.ty {
-                        if wrapper == "$parameters$expand" {
+                        if matches!(
+                            wrapper.as_str(),
+                            "$parameters$expand" | "$parameter$groups$expand"
+                        ) {
                             let schema_name = schemas.first().and_then(|schema| match schema {
                                 Type::Named(name, _) => Some(name),
                                 _ => None,
@@ -1517,7 +1523,10 @@ impl Analyzer {
     ) -> bool {
         match source {
             Type::Named(wrapper, schemas)
-                if wrapper == "$parameters$expand" && schemas.len() == 1 =>
+                if matches!(
+                    wrapper.as_str(),
+                    "$parameters$expand" | "$parameter$groups$expand"
+                ) && schemas.len() == 1 =>
             {
                 let Type::Named(name, arguments) = &schemas[0] else {
                     self.error(format!(
@@ -5064,6 +5073,15 @@ impl Analyzer {
     fn validate_function_templates(&mut self) {
         for template_name in self.function_template_order.clone() {
             let template = self.function_templates[&template_name].clone();
+            let for_lang_item = self.lang_item_name(LangItemKind::For);
+            if template_name == for_lang_item
+                || overloaded_function_name(for_lang_item, &function_parameter_labels(&template))
+                    == template_name
+            {
+                // `for` retains a source body as its portable contract, while
+                // this compiler always takes the iterator/loop fast path.
+                continue;
+            }
             if template.body.is_none()
                 && [
                     LangItemKind::Do,
@@ -5074,7 +5092,6 @@ impl Analyzer {
                     LangItemKind::Loop,
                     LangItemKind::If,
                     LangItemKind::Match,
-                    LangItemKind::For,
                     LangItemKind::BorrowValueForm,
                 ]
                 .into_iter()

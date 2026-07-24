@@ -1,4 +1,4 @@
 let main(): i32 = { loop {
-  break 42
+  break(42)
 }
 }

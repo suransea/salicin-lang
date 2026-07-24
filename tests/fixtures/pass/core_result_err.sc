@@ -1,4 +1,4 @@
-use std.Result
+let Result = std.Result
 
 let main(): i32 = {
   let value = Result(bool)(i32).Err(true)

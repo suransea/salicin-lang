@@ -1,5 +1,5 @@
-use std.Option
-use std.Result
+let Option = std.Option
+let Result = std.Result
 
 let Boxed = struct { value: i32 }
 

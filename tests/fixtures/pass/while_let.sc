@@ -1,4 +1,4 @@
-use std.Option
+let Option = std.Option
 
 let Counter = struct { current: i32, end: i32 }
 
@@ -21,11 +21,11 @@ let main(): i32 = {
     match counter.next()
       { Some(value) ->
         if value < 3 {
-          continue
+          continue()
         }
         total = total + value
       }
-      { None -> break }
+      { None -> break() }
     }
   total
 }

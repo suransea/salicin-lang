@@ -73,7 +73,7 @@ They are called as:
 ```sc
 let answer = loop {
   if ready() {
-    break 42
+    break(42)
   }
 }
 
@@ -122,17 +122,17 @@ pub let return(T: type)
 pub let return(): Never with(Return(()))
 ```
 
-The compiler accepts the familiar fast paths:
+Calls use ordinary argument groups:
 
 ```sc
-break value
-break
-continue
-return value
-return
+break(value)
+break()
+continue()
+return(value)
+return()
 ```
 
-The parenthesized calls remain valid. A control function may be stored or captured; doing so is
+A control function may be stored or captured; doing so is
 safe because its effect remains in its type. Calling a captured `break` outside a compatible loop
 handler, or a captured `return` outside the corresponding function boundary, fails effect
 checking. No lexical ban on escaping control callables is required.
@@ -254,7 +254,7 @@ match option
 loop {
   match next()
     { Some(value) -> consume(value) }
-    { None -> break }
+    { None -> break() }
 }
 ```
 
@@ -331,11 +331,11 @@ match value
   { pattern -> result }
   { _ -> fallback }
 
-break value
-break
-continue
-return value
-return
+break(value)
+break()
+continue()
+return(value)
+return()
 ```
 
 Only braces following `match` or `for` may begin with a bare pattern followed by `->`. Ordinary

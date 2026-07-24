@@ -1,4 +1,4 @@
-use std.Result
+let Result = std.Result
 
 let Number = struct { value: i32 }
 

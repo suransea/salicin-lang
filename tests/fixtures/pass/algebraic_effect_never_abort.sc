@@ -7,9 +7,7 @@ let fail(): Never with(Abort) = {
 }
 
 let main(): i32 = {
-  Abort.handle(
-    stop: { (value) -> value },
-  ) {
+  Abort.handle stop { (value) -> value } action {
     fail()
   }
 }

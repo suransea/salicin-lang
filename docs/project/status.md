@@ -16,7 +16,7 @@ The unit type has one source spelling, `()`; the former `void` alias is removed 
 uninhabited prelude enum is spelled `Never`; the former lowercase `never` spelling has no
 compatibility alias.
 `Option` and `Result` are ordinary root `core` definitions rather than prelude exports, so source
-that names them imports `std.Option` or `std.Result`. `Result` is curried as
+that names them binds transparent aliases from `std.Option` or `std.Result`. `Result` is curried as
 `Result(Error)(Value)`, making `Result(Error)` the standard unary constructor for HKT protocols.
 
 Transparent type aliases and type-constructor aliases are implemented. `let Scalar = i32`,
@@ -74,7 +74,7 @@ and fully general erased action construction remain the next implementation stag
 Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
 `continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs
 all lexical cleanup required when leaving nested scopes before starting the next iteration.
-`for name in value { ... }` and `for _ in value { ... }` lower through validated, source-backed
+`for value { name -> ... }` and `for value { _ -> ... }` lower through validated, source-backed
 `std.iter.IntoIterator` and `std.iter.Iterator` identities. The iterable is evaluated once,
 `into_iter` consumes it, and each iteration mutably borrows the iterator for `next`; unrelated
 same-named methods cannot intercept the lowering. Break, continue, ownership flow, and cleanup reuse
@@ -143,7 +143,7 @@ Parameterized user effects may declare typed operation requirements. Operation c
 instantiated identity such as `State(i32)`, propagate through the existing row machinery, and are
 checked for parameter modes, result types, arity, visibility, and missing row requirements.
 Operations share the language's name-only overload rule: runtime label shapes must differ, calls
-use named arguments, and repeated handler labels select signatures through clause parameter names.
+let  = named arguments, and repeated handler labels select signatures through clause parameter names.
 Handling removes only the selected nominal identity: operation gates and generated resumable frames
 retain residual `Unsafe`, `Throws(E)`, and other nominal requirements. Concrete residual
 `Throws(E)` rows now compose through nested handlers using the ordinary standard effect path; fully
@@ -232,8 +232,8 @@ algebraic-continuation ABI, and async color lowering remain design or implementa
 `std` is the preferred public standard-library facade, backed by lower-level `core` and `alloc`
 namespaces in ordinary module resolution. Operator/flow traits and alloc containers are not part of
 the prelude. `Box`, `Vec`, and their free functions require
-`use std.boxed...` / `use std.vec...` (or a qualified path), while operator and flow traits require
-`use std.ops...` / `use std.flow...` when named. Their internal identities remain isolated from same-named user
+ordinary `let Name = std.boxed...Name` / `let Name = std.vec...Name` aliases (or a qualified path),
+while operator and flow traits use the same alias form when named. Their internal identities remain isolated from same-named user
 declarations; operator syntax continues to dispatch through validated lang items.
 
 The implementation is broad but not stable. Important incomplete boundaries include:

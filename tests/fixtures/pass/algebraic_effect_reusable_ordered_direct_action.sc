@@ -3,7 +3,7 @@ let Ask = effect {
 }
 
 let run(seed: i32)(move action: (): i32 with(Ask)): i32 = {
-  Ask.handle(value: { (resume) -> resume(20) }) {
+  Ask.handle value { (resume) -> resume(20) } action {
     action() + seed
   }
 }

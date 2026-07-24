@@ -1,4 +1,4 @@
-use std.Result
+let Result = std.Result
 
 let Boxed = struct { answer: bool }
 

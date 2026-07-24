@@ -3,12 +3,10 @@ let Choose = effect {
 }
 
 let main(): i32 = {
-  Choose.handle(
-    choose: { (resume) ->
+  Choose.handle choose { (resume) ->
       resume(20);
       resume(22)
-    },
-  ) {
+    } action {
     Choose.choose()
   }
 }

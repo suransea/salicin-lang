@@ -1,4 +1,5 @@
-use std.ops.{PartialOrd, PartialOrdering}
+let PartialOrd = std.ops.PartialOrd
+let PartialOrdering = std.ops.PartialOrdering
 
 let Number = struct { value: i32, unordered: bool }
 

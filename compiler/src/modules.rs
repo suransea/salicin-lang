@@ -3553,7 +3553,7 @@ impl Resolver {
             return false;
         };
         self.diagnostics.push(format!(
-            "{}: error: standard-library item `{name}` is not in the prelude; import it with `use {import_path}`",
+            "{}: error: standard-library item `{name}` is not in the prelude; bind it with `let {name} = {import_path}`",
             context.source_path
         ));
         true
@@ -4049,13 +4049,13 @@ mod tests {
             unit(
                 "root.sc",
                 &[],
-                "use root.facade.answer as selected\nlet main(): i32 = { selected() }\n",
+                "let selected = root.facade.answer\nlet main(): i32 = { selected() }\n",
                 true,
             ),
             unit(
                 "facade.sc",
                 &["facade"],
-                "pub use root.implementation.answer\n",
+                "pub let answer = root.implementation.answer\n",
                 false,
             ),
             unit(
@@ -4082,8 +4082,8 @@ mod tests {
                 "root.sc",
                 &[],
                 r#"use root.fake as Option
-use root.fake as Add
-use root.fake as Never
+let Add = root.fake
+let Never = root.fake
 
 let Number = struct { value: i32 }
 extend Number: Add(Number) {
@@ -4132,9 +4132,9 @@ let main(): i32 = { Option {} }
             unit(
                 "nested/deep.sc",
                 &["nested", "deep"],
-                "use root as pkg\n\
-                 use self.local_value as local\n\
-                 use super.parent_value as parent\n\
+                "let pkg = root\n\
+                 let local = self.local_value\n\
+                 let parent = super.parent_value\n\
                  let local_value(): i32 = { 12 }\n\
                  pub(package) let answer(): i32 = { pkg.root_value() + parent() + local() }\n",
                 false,
@@ -4954,9 +4954,9 @@ let main(): i32 = { Option {} }
         let flow = resolve_sources(&[unit(
             "flow.sc",
             &[],
-            "use std.flow.Chain\n\
-             use std.ops.Coalesce as OpsCoalesce\n\
-             use core.ops.Coalesce as LegacyCoalesce\n\
+            "let Chain = std.flow.Chain\n\
+             let OpsCoalesce = std.ops.Coalesce\n\
+             let LegacyCoalesce = core.ops.Coalesce\n\
              let Maybe(T: type) = enum { Some(T), None }\n\
              let LegacyMaybe(T: type) = enum { Some(T), None }\n\
              extend(T: type) Maybe(T): Chain {}\n\
@@ -4980,7 +4980,8 @@ let main(): i32 = { Option {} }
             "standard.sc",
             &[],
             "use std.effect.Async\n\
-             use std.algebra.{Semigroup, Monoid}\n\
+             let Semigroup = std.algebra.Semigroup
+             let Monoid = std.algebra.Monoid
              let Number = struct { value: i32 }\n\
              let suspended(): i32 with(Async) = { 0 }\n\
              let invoke(move action: (): i32 with(Async)): i32 with(Async) = { action() }\n\
@@ -5023,7 +5024,7 @@ let main(): i32 = { Option {} }
         .unwrap_err();
         assert!(bare.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `Box` is not in the prelude")
-                && diagnostic.contains("use std.boxed.Box")
+                && diagnostic.contains("let Box = std.boxed.Box")
         }));
 
         let bare_option = resolve_sources(&[unit(
@@ -5035,7 +5036,7 @@ let main(): i32 = { Option {} }
         .unwrap_err();
         assert!(bare_option.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `Option` is not in the prelude")
-                && diagnostic.contains("use std.Option")
+                && diagnostic.contains("let Option = std.Option")
         }));
 
         let bare_result = resolve_sources(&[unit(
@@ -5047,7 +5048,7 @@ let main(): i32 = { Option {} }
         .unwrap_err();
         assert!(bare_result.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `Result` is not in the prelude")
-                && diagnostic.contains("use std.Result")
+                && diagnostic.contains("let Result = std.Result")
         }));
 
         let bare_operator = resolve_sources(&[unit(
@@ -5063,7 +5064,7 @@ let main(): i32 = { Option {} }
         .unwrap_err();
         assert!(bare_operator.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `Add` is not in the prelude")
-                && diagnostic.contains("use std.ops.Add")
+                && diagnostic.contains("let Add = std.ops.Add")
         }));
 
         let bare_flow = resolve_sources(&[unit(
@@ -5076,7 +5077,7 @@ let main(): i32 = { Option {} }
         .unwrap_err();
         assert!(bare_flow.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `Chain` is not in the prelude")
-                && diagnostic.contains("use std.flow.Chain")
+                && diagnostic.contains("let Chain = std.flow.Chain")
         }));
 
         let bare_effect = resolve_sources(&[unit(
@@ -5088,7 +5089,7 @@ let main(): i32 = { Option {} }
         .unwrap_err();
         assert!(bare_effect.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `Async` is not in the prelude")
-                && diagnostic.contains("use std.effect.Async")
+                && diagnostic.contains("let Async = std.effect.Async")
         }));
 
         let bare_algebra = resolve_sources(&[unit(
@@ -5102,7 +5103,7 @@ let main(): i32 = { Option {} }
         .unwrap_err();
         assert!(bare_algebra.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `Semigroup` is not in the prelude")
-                && diagnostic.contains("use std.algebra.Semigroup")
+                && diagnostic.contains("let Semigroup = std.algebra.Semigroup")
         }));
 
         let bare_functional = resolve_sources(&[unit(
@@ -5115,7 +5116,7 @@ let main(): i32 = { Option {} }
         .unwrap_err();
         assert!(bare_functional.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `Functor` is not in the prelude")
-                && diagnostic.contains("use std.functional.Functor")
+                && diagnostic.contains("let Functor = std.functional.Functor")
         }));
 
         for namespace in ["core", "alloc", "std"] {

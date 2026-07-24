@@ -1,10 +1,10 @@
-use std.Result
-use std.effect.Throws
+let Result = std.Result
+let Throws = std.effect.Throws
 
 let reject(): i32 with(Throws(bool)) = { throw(true) }
 
 let choose(flag: bool): i32 with(Throws(bool)) = { do {
-  if flag { return reject() }
+  if flag { return(reject()) }
   42
 }
 }

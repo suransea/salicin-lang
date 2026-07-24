@@ -1,4 +1,4 @@
-use std.effect.handler.EffectCallable
+let EffectCallable = std.effect.handler.EffectCallable
 
 let abandon(move action: EffectCallable(i32, i32, i32)): () = { () }
 

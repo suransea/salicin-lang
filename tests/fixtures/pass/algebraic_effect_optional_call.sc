@@ -1,5 +1,5 @@
-use std.Option
-use std.Result
+let Option = std.Option
+let Result = std.Result
 
 let Read = effect {
   let option_base(present: bool): Option(Adder)
@@ -15,18 +15,14 @@ extend Adder {
 
 let main(): i32 = {
   let mut arguments = 0
-  let result: i32 = Read.handle(
-    option_base: { (present, resume) ->
+  let result: i32 = Read.handle option_base { (present, resume) ->
       resume(if present { Option.Some(Adder { base: 8 }) } else { Option.None })
-    },
-    result_base: { (present, resume) ->
+    } result_base { (present, resume) ->
       resume(if present { Result.Ok(Adder { base: 8 }) } else { Result.Err(true) })
-    },
-    argument: { (resume) ->
+    } argument { (resume) ->
       arguments += 1;
       resume(2)
-    },
-  ) {
+    } action {
     let option_some = Read.option_base(true)?.add(Read.argument()) ?? 0
     let option_none = Read.option_base(false)?.add(Read.argument()) ?? 10
     let result_ok = Read.result_base(true)?.add(Read.argument()) ?? 0

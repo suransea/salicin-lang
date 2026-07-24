@@ -1,4 +1,4 @@
-use std.Option
+let Option = std.Option
 
 let main(): i32 = {
   let inner = Option(i32).Some(42)

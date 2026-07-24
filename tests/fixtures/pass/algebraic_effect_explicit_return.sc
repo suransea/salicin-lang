@@ -12,7 +12,7 @@ extend Resource: Drop {
 let read_early(counter: MutPtr(i32)): i32 with(Read) = {
   let resource = Resource { counter: counter }
   let value = Read.read()
-  return value
+  return(value)
 }
 
 let main(): i32 = {
@@ -20,9 +20,7 @@ let main(): i32 = {
     raw_alloc(i32)(size_of(i32), align_of(i32))
   }
   unsafe { *counter = 0 }
-  let result = Read.handle(
-    read: { (resume) -> resume(41) },
-  ) {
+  let result = Read.handle read { (resume) -> resume(41) } action {
     read_early(counter)
   }
   let drops = unsafe { *counter }

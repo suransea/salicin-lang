@@ -3,7 +3,7 @@ let Ask = effect {
 }
 
 let main(): i32 = {
-  Ask.handle(value: { (resume) -> resume(10) }) {
+  Ask.handle value { (resume) -> resume(10) } action {
     let mut left_total = 0
     let mut right_total = 20
     let mut left: (i32): i32 with(Ask) = { (value: i32) ->

@@ -1,4 +1,7 @@
-use std.ops.{Sub, Mul, Div, Rem}
+let Sub = std.ops.Sub
+let Mul = std.ops.Mul
+let Div = std.ops.Div
+let Rem = std.ops.Rem
 
 let Number = struct { value: i32 }
 

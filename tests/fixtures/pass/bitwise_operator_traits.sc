@@ -1,4 +1,8 @@
-use std.ops.{BitAnd, BitOr, BitXor, Shl, Shr}
+let BitAnd = std.ops.BitAnd
+let BitOr = std.ops.BitOr
+let BitXor = std.ops.BitXor
+let Shl = std.ops.Shl
+let Shr = std.ops.Shr
 
 let Bits = struct { value: i32 }
 

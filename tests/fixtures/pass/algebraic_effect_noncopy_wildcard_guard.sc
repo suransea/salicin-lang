@@ -19,7 +19,7 @@ let main(): i32 = {
     raw_alloc(i32)(size_of(i32), align_of(i32))
   }
   unsafe { *counter = 0 }
-  let result: i32 = Check.handle(accept: { (resume) -> resume(false) }) {
+  let result: i32 = Check.handle accept { (resume) -> resume(false) } action {
     let event = Event.Value( value: Resource { counter: counter } )
     match event
       { Event.Value( value: _ ) if Check.accept() -> 40 }

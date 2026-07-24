@@ -73,7 +73,8 @@ separators = { separator } ;
 换行分隔表达式但不主动丢弃最后表达式的值。块中最后一个表达式即使后面有换行，只要没有显式
 `;`，仍是块值。`;` 明确把该表达式转换为 `()`。
 
-`return`、`throw`、`break` 和 `continue` 后的逻辑换行结束该控制表达式。
+`return`、`throw`、`break` 和 `continue` 都使用普通参数组；无参退出写成
+`return()`、`break()` 和 `continue()`。
 
 ## 4. 源文件与声明
 
@@ -235,13 +236,10 @@ where T: Display {
 }
 ```
 
-### 4.4 导入与 FFI
+### 4.4 实体别名与 FFI
 
 ```ebnf
-use_decl = "use", use_path,
-           [ ".", "{", use_name, { ",", use_name }, [ "," ], "}" ] ;
-use_name = IDENT, [ "as", IDENT ] ;
-use_path = path, [ "as", IDENT ] ;
+entity_alias = [ visibility ], "let", IDENT, "=", qualified_path ;
 
 extern_decl = "extern", STRING,
               ( "{", separators, { extern_function_decl, separators }, "}"
@@ -251,7 +249,9 @@ extern_function_decl = { attribute }, "let", IDENT, parameter_group,
                        ":", type_expr ;
 ```
 
-`use` 的实际 parser 可把单名、分组和 `as` 形式拆成不同 AST 节点。首版没有 glob 导入。
+模块级纯限定路径绑定是透明实体别名。它保留目标的名义身份、重载集和声明类别；
+`pub let` 与 `pub(package) let` 分别建立相应可见性的重导出。多个名称使用多个普通绑定，
+不另设分组导入或 glob 语法。
 
 ## 5. 类型
 
@@ -478,10 +478,10 @@ match_expr = IDENT("match"), expression, pattern_case, { pattern_case } ;
 pattern_case = "{", separators, pattern, [ IDENT("if"), expression ],
                "->", block_contents, "}" ;
 
-return_expr   = "return", [ expression ] ;
-throw_expr    = "throw", expression ;
-break_expr    = "break", [ expression ] ;
-continue_expr = "continue" ;
+return_expr   = "return", "(", [ expression ], ")" ;
+throw_expr    = "throw", "(", expression, ")" ;
+break_expr    = "break", "(", [ expression ], ")" ;
+continue_expr = "continue", "(", ")" ;
 
 ```
 

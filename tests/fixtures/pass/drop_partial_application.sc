@@ -40,7 +40,7 @@ let conditional(flag: bool): () = {
 
 let early(): i32 = {
   let pending = finish(Resource { value: 1 })
-  pending(return 42)
+  pending(return(42))
 }
 
 let main(): i32 = {

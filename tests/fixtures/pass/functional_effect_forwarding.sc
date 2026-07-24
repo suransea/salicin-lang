@@ -1,6 +1,8 @@
-use std.Option
-use std.effect.Unsafe
-use std.functional.{Applicative, Functor, Monad}
+let Option = std.Option
+let Unsafe = std.effect.Unsafe
+let Applicative = std.functional.Applicative
+let Functor = std.functional.Functor
+let Monad = std.functional.Monad
 
 let unsafe_add_one(value: i32): i32 with(Unsafe) = {
   value + 1

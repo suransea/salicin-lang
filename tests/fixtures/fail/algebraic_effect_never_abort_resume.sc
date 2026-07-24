@@ -3,9 +3,7 @@ let Abort = effect {
 }
 
 let main(): i32 = {
-  Abort.handle(
-    stop: { (value, resume) -> resume(value) },
-  ) {
+  Abort.handle stop { (value, resume) -> resume(value) } action {
     Abort.stop(42)
   }
 }

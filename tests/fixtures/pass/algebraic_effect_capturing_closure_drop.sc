@@ -16,7 +16,7 @@ let main(): i32 = {
     raw_alloc(i32)(size_of(i32), align_of(i32))
   }
   unsafe { *counter = 0 }
-  let result = Abort.handle(stop: { (resume) -> 41 }) {
+  let result = Abort.handle stop { (resume) -> 41 } action {
     let resource = Resource { counter: counter }
     let action: (): i32 with(Abort) = { () ->
       let value = Abort.stop()

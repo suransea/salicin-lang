@@ -40,7 +40,7 @@ let early(): i32 = {
     consume(resource)
     value
   }}
-  once(return 42)
+  once(return(42))
 }
 
 let main(): i32 = {

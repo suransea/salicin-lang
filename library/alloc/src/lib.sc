@@ -1,25 +1,30 @@
-pub use alloc.boxed.{Box, box_new, box_ptr, box_read, box_write, box_into_inner, box_replace, box_as_ref}
-pub use alloc.vec.{
-  Vec,
-  vec_new,
-  vec_with_capacity,
-  vec_len,
-  vec_capacity,
-  vec_at,
-  vec_reserve,
-  vec_push,
-  vec_replace,
-  vec_pop,
-  vec_truncate,
-  vec_clear,
-  vec_is_empty,
-  vec_swap_remove,
-  vec_swap,
-  vec_reverse,
-  vec_insert,
-  vec_remove,
-  vec_append,
-  vec_shrink_to_fit,
-  vec_read,
-  vec_write,
-}
+pub let Box = alloc.boxed.Box
+pub let box_new = alloc.boxed.box_new
+pub let box_ptr = alloc.boxed.box_ptr
+pub let box_read = alloc.boxed.box_read
+pub let box_write = alloc.boxed.box_write
+pub let box_into_inner = alloc.boxed.box_into_inner
+pub let box_replace = alloc.boxed.box_replace
+pub let box_as_ref = alloc.boxed.box_as_ref
+pub let Vec = alloc.vec.Vec
+pub let vec_new = alloc.vec.vec_new
+pub let vec_with_capacity = alloc.vec.vec_with_capacity
+pub let vec_len = alloc.vec.vec_len
+pub let vec_capacity = alloc.vec.vec_capacity
+pub let vec_at = alloc.vec.vec_at
+pub let vec_reserve = alloc.vec.vec_reserve
+pub let vec_push = alloc.vec.vec_push
+pub let vec_replace = alloc.vec.vec_replace
+pub let vec_pop = alloc.vec.vec_pop
+pub let vec_truncate = alloc.vec.vec_truncate
+pub let vec_clear = alloc.vec.vec_clear
+pub let vec_is_empty = alloc.vec.vec_is_empty
+pub let vec_swap_remove = alloc.vec.vec_swap_remove
+pub let vec_swap = alloc.vec.vec_swap
+pub let vec_reverse = alloc.vec.vec_reverse
+pub let vec_insert = alloc.vec.vec_insert
+pub let vec_remove = alloc.vec.vec_remove
+pub let vec_append = alloc.vec.vec_append
+pub let vec_shrink_to_fit = alloc.vec.vec_shrink_to_fit
+pub let vec_read = alloc.vec.vec_read
+pub let vec_write = alloc.vec.vec_write

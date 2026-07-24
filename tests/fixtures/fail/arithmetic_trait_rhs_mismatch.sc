@@ -1,4 +1,4 @@
-use std.ops.Div
+let Div = std.ops.Div
 
 let Number = struct { value: i32 }
 let Divisor = struct { value: i32 }

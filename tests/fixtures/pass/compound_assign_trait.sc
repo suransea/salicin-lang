@@ -1,4 +1,5 @@
-use std.ops.{AddAssign, BitXorAssign}
+let AddAssign = std.ops.AddAssign
+let BitXorAssign = std.ops.BitXorAssign
 
 let Counter = struct { value: i32 }
 

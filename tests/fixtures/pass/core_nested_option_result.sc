@@ -1,5 +1,5 @@
-use std.Option
-use std.Result
+let Option = std.Option
+let Result = std.Result
 
 let main(): i32 = {
   let inner = Result(bool)(i32).Ok(42)

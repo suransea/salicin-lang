@@ -31,21 +31,21 @@ pub let Result(E: type)
 }
 ```
 
-Naming `Option` or `Result` requires an ordinary root import such as `use std.Option` or
-`use std.Result`.
+Naming `Option` or `Result` requires an ordinary root alias such as
+`let Option = std.Option` or `let Result = std.Result`.
 Operators and syntax that lower through these identities use the validated standard-library
-declarations directly; importing is only required when source code writes the names.
+declarations directly; aliasing is only required when source code writes the short names.
 
 `core.ops` is a compatibility facade over smaller protocol modules. `core.ops.arith` defines
 `Add`, `Sub`, `Mul`, `Div`, `Rem`, and `Neg`; `core.ops.bit` defines `Not`, `BitAnd`, `BitOr`,
 `BitXor`, `Shl`, and `Shr`; `core.ops.assign` defines the compound-assignment protocols; and
 `core.cmp` defines `Eq`, `PartialOrdering`, and `PartialOrd`. The `std.ops` facade re-exports the
-operator-facing names for ordinary imports. They are not in the prelude.
+operator-facing names for ordinary aliases. They are not in the prelude.
 Arithmetic and bitwise protocols accept their operands with automatic passing and use an associated
 `Output` type. Copy operands remain usable; resource operands move:
 
 ```sc
-use std.ops.Add
+let Add = std.ops.Add
 
 extend Number: Add(Number) {
   let Output = Number
@@ -58,7 +58,7 @@ extend Number: Add(Number) {
 negates its result:
 
 ```sc
-use std.ops.Eq
+let Eq = std.ops.Eq
 
 extend Number: Eq(Number) {
   let eq(self: borrow(Self))
@@ -71,7 +71,8 @@ whose variants are `Less`, `Equal`, `Greater`, and `Unordered`. All four orderin
 the method once; an `Unordered` result makes each operator false:
 
 ```sc
-use std.ops.{PartialOrd, PartialOrdering}
+let PartialOrd = std.ops.PartialOrd
+let PartialOrdering = std.ops.PartialOrdering
 
 extend Number: PartialOrd(Number) {
   let partial_cmp(self: borrow(Self))
@@ -108,7 +109,7 @@ inherent or unrelated trait method with the same member spelling cannot intercep
 assignment.
 
 Writing `left + right`, `left & right`, `left == right`, or `left < right` does not itself require an
-import. An import is required when source names the protocol in an implementation, bound, type, or
+alias. An alias is required when source names the protocol in an implementation, bound, type, or
 direct member access.
 
 `core.flow` contains the standard protocols for `?.` and `??`. They are not in the prelude:
@@ -142,10 +143,10 @@ closure can be represented in the same way; simple field access is supported, wh
 capture outer method-call arguments still require the general callable-to-function bridge. The facade
 `core.Option`/`core.Result` paths remain available as standard-library specializations. The older
 `std.ops.Chain` and `std.ops.Coalesce` paths are accepted as compatibility aliases, but new source
-should import the protocols from `std.flow`.
+should alias the protocols from `std.flow`.
 
 `core.effect` owns standard effect identities. It is not part of the prelude; ordinary source
-should import these identities through `std.effect`:
+should alias these identities through `std.effect`:
 
 ```sc
 pub let Unsafe = effect {}
@@ -202,7 +203,7 @@ domains in compile-time parameter positions.
 `core.control` owns the edition-pinned contracts for compiler-lowered control functions. It is not
 part of the prelude. `do`, `try`, `throw`, and `unsafe` are ordinary source-backed functions over
 the standard effect declarations. The `unsafe` body removes the marker effect with
-`Unsafe.handle()`; the compiler keeps only the lexical authority check for raw operations inside
+`Unsafe.handle action { ... }`; the compiler keeps only the lexical authority check for raw operations inside
 `unsafe { ... }`. `loop` still needs primitive control-flow lowering, so its bodyless signature is
 permitted only as a validated core lang item; ordinary package functions still require
 `= { ... }` bodies.
@@ -216,7 +217,7 @@ pub let EffectCallable(Input: type, Output: type, Answer: type) = struct {}
 pub let Handle = trait(Self: effect) {
   let Clauses(Value: type, Answer: type): parameters
   let handle(Value: type, Answer: type, Rest: effect)
-    (...move clauses: Clauses(Value, Answer))
+    ...Clauses(Value, Answer)
     (move action: (): Value with(Self, Rest)): Answer with(Rest)
 }
 ```
@@ -231,9 +232,9 @@ The compiler-internal action entry has the logical signature
 its owner; a dropped, uninvoked action releases its captured environment through the stored drop
 entry. `Handle` is an effect-kinded lang trait automatically satisfied by every source
 `effect` declaration. Its `Clauses` associated parameter schema names the compiler-derived labeled
-clause group used by `.handle`; `...` expands that schema into the complete first runtime parameter
-group. Consequently source calls write operation labels directly, for example
-`State(i32).handle(get: ..., put: ...) { ... }`, while the generated implementation has exactly the
+clause groups used by `.handle`; `...` expands that schema into an ordered sequence of runtime
+parameter groups. Consequently source calls use named trailing closures directly, for example
+`State(i32).handle get { ... } put { ... } action { ... }`, while the generated implementation has exactly the
 shape declared by the trait. These low-level operations and generated handler implementations are
 not ordinary source-level standard-library functions.
 
@@ -282,10 +283,7 @@ pub let do(E: effect, T: type)
 
 pub let try(F: effect, T: type, E: type)
   (move action: (): T with(core.effect.Throws(E), F)): core.Result(E)(T) with(F) = {
-  core.effect.Throws(E).handle(
-    raise: { (error) -> core.Result.Err(error) },
-    done: { (value) -> core.Result.Ok(value) },
-  ) {
+  core.effect.Throws(E).handle raise { (error) -> core.Result.Err(error) } done { (value) -> core.Result.Ok(value) } action {
     action()
   }
 }
@@ -312,13 +310,14 @@ pub let IntoIterator = trait {
 }
 ```
 
-Implementing or naming either trait requires `use std.iter.{Iterator, IntoIterator}`. The `for`
-syntax itself needs no import and dispatches only through these validated identities. It evaluates
+Implementing or naming either trait requires aliases such as
+`let Iterator = std.iter.Iterator` and `let IntoIterator = std.iter.IntoIterator`. The `for`
+syntax itself needs no alias and dispatches only through these validated identities. It evaluates
 the iterable once, moves it into `IntoIterator.into_iter`, repeatedly mutably borrows the resulting
 iterator for `Iterator.next`, and stops on `None`. An inherent or unrelated trait method named
 `into_iter` or `next` cannot intercept this lowering.
 
-The control spellings bind to these validated identities without importing ordinary names. Standard
+The control spellings bind to these validated identities without aliasing ordinary names. Standard
 effect identities such as `Throws` remain normal `std.effect` exports when named in source, backed
 by `core.effect` identities. An ordinary same-named declaration cannot acquire lang-item lowering
 behavior. Future control features
@@ -383,8 +382,8 @@ The standard library implements `Functor`, `Applicative`, and `Monad` for `core.
 each partially applied `core.Result(Error)` constructor:
 
 ```sc
-use std.Result
-use std.functional.Monad
+let Result = std.Result
+let Monad = std.functional.Monad
 
 let next(value: i32): Result(bool)(i32) = {
   Result(bool)(i32).Ok(value + 1)
@@ -406,5 +405,5 @@ Primitive implementations remain compiler-defined. The unit type has the single 
 receives language-item behavior when its validated identity comes from this edition's embedded core;
 same-named user declarations do not gain special semantics.
 
-See [standard-library organization](README.md) for the prelude/import policy and
+See [standard-library organization](README.md) for the prelude/alias policy and
 [the language specification](../language/specification.md) for semantic rules.

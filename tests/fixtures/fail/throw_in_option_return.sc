@@ -1,4 +1,4 @@
-use std.Option
+let Option = std.Option
 
 let fail(): Option(i32) = {
   throw(true)

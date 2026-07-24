@@ -20,7 +20,7 @@ let inspect(move choice: Choice): i32 = { match choice
 let escape(move choice: Choice): i32 = { match choice
   { Pair(left, _) -> do {
     consume(left)
-    return 42
+    return(42)
   } }
   { None -> 0 }
 }

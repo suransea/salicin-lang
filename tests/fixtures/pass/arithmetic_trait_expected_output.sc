@@ -1,4 +1,4 @@
-use std.ops.Sub
+let Sub = std.ops.Sub
 
 let Number = struct { value: i32 }
 

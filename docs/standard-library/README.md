@@ -7,7 +7,7 @@ the `std` namespace:
 - `alloc` contains owning heap types and depends on the allocator ABI.
 - `std` will contain host facilities such as files, processes, networking, and threading.
 
-Source is organized around definition modules plus small `pub use` facades:
+Source is organized around definition modules plus small `pub let` alias facades:
 
 ```text
 library/
@@ -46,37 +46,38 @@ produces or needs as universal contracts, currently `Never`, `Copy`, and `Drop`.
 `std` facade:
 
 ```sc
-use std.Option
-use std.Result
+let Option = std.Option
+let Result = std.Result
 ```
 
-Operator traits are imported from the `std.ops` facade, `?.`/`??` protocols from `std.flow`, effect
+Operator traits are aliased from the `std.ops` facade, `?.`/`??` protocols from `std.flow`, effect
 identities from `std.effect`, handler contracts from `std.effect.handler`, compile-time domains from
 `std.domains`, compiler-lowered control contracts from `std.control`, algebra protocols from
 `std.algebra`, higher-kinded functional protocols from `std.functional`, iteration protocols from
 `std.iter`, and owning containers from `std.boxed` and `std.vec`. The underlying implementation is
 still split across `core` and `alloc`: `core.option` and `core.result` define `Option` and `Result`,
 while the `core` root re-exports the root public surface. Standard declarations must be named
-through their module or imported explicitly with ordinary `use`; for example:
+through their module or given transparent aliases with ordinary `let`; for example:
 
 ```sc
-use std.boxed.Box
-use std.vec.{Vec, vec_at}
+let Box = std.boxed.Box
+let Vec = std.vec.Vec
+let vec_at = std.vec.vec_at
 ```
 
 The compiler mounts `std` plus the lower-level `core` and `alloc` namespaces in every package.
-Non-prelude declarations have qualified internal identities, so an unimported user declaration may
+Non-prelude declarations have qualified internal identities, so a user declaration without such an alias may
 still be named `Add`, `Box`, or `Vec`. A project dependency or top-level file module cannot claim
 any of these standard namespaces.
 `std.ops` uses the same rule: `Add`, `Sub`, `Mul`, `Div`, `Rem`, `Eq`, `PartialOrdering`,
 `PartialOrd`, `Neg`, `Not`, `BitAnd`, `BitOr`, `BitXor`, `Shl`, `Shr`, and their `*Assign` mutation
-traits require ordinary imports when
+traits require ordinary aliases when
 named. Merely writing the corresponding operator token does not require importing its protocol.
-`std.flow.Chain` and `std.flow.Coalesce` require ordinary imports when named directly; the older
+`std.flow.Chain` and `std.flow.Coalesce` require ordinary aliases when named directly; the older
 `std.ops.Chain` and `std.ops.Coalesce` paths remain accepted as compatibility aliases.
-`Throws(E)`, `Unsafe`, and `Async` are ordinary standard effect declarations imported from
+`Throws(E)`, `Unsafe`, and `Async` are ordinary standard effect declarations aliased from
 `std.effect`;
-source that names them imports them normally. The control spellings `do`, `try`, `throw`, `unsafe`,
+source that names them binds them normally. The control spellings `do`, `try`, `throw`, `unsafe`,
 and `loop` bind directly to validated lang-item declarations in `core.control`; they do not inject
 those module exports as ordinary unqualified names. The former control-container protocols have
 been removed.
@@ -84,11 +85,11 @@ Effect identities use uppercase nominal spelling, including user-defined effects
 such as `E: effect` remain ordinary parameter names.
 The `effect`, `access`, and `passing` compile-time domains use contextual names such as `pure`,
 `shared`, `mut`, `auto`, `copy`, and `move` in parameter positions.
-`Semigroup` and `Monoid` require `use std.algebra...` when named.
-`Functor`, `Applicative`, and `Monad` require `use std.functional...` when named.
-`Iterator` and `IntoIterator` require an ordinary `use std.iter...` when named in an implementation
-or bound. Writing `for pattern in value { ... }` binds to their validated lang-item identities
-without importing them and cannot be redirected by same-named inherent methods or traits.
+`Semigroup` and `Monoid` require aliases from `std.algebra` when named.
+`Functor`, `Applicative`, and `Monad` require aliases from `std.functional` when named.
+`Iterator` and `IntoIterator` require ordinary aliases from `std.iter` when named in an implementation
+or bound. Writing `for value { pattern -> ... }` binds to their validated lang-item identities
+without aliasing them and cannot be redirected by same-named inherent methods or traits.
 
 The compiler, library sources, and edition form one toolchain unit. Compiler-matched language items
 must come from the matching `core`, while user declarations with the same spelling remain ordinary

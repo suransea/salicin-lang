@@ -13,7 +13,7 @@ let consume(move value: Resource): () = { () }
 let inspect(move choice: Choice): i32 = { match choice
   { Some(Bundle(left: left, right: _), _) -> do {
     consume(left)
-    return 42
+    return(42)
   } }
   { None -> 0 }
 }

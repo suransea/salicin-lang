@@ -4,10 +4,7 @@ let Ask = effect {
 }
 
 let main(): i32 = {
-  Ask.handle(
-    choose: { (resume) -> resume(false) },
-    value: { (resume) -> resume(10) },
-  ) {
+  Ask.handle choose { (resume) -> resume(false) } value { (resume) -> resume(10) } action {
     let mut left_total = 0
     let mut middle_total = 10
     let mut right_total = 20

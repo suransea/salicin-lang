@@ -1,4 +1,5 @@
-use std.boxed.{box_new, box_into_inner}
+let box_new = std.boxed.box_new
+let box_into_inner = std.boxed.box_into_inner
 
 let Resource = struct { counter: MutPtr(i32) }
 

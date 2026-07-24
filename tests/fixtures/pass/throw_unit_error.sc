@@ -1,5 +1,5 @@
-use std.Result
-use std.effect.Throws
+let Result = std.Result
+let Throws = std.effect.Throws
 
 let fail(): i32 with(Throws(())) = {
   throw(())

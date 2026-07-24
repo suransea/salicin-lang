@@ -1,4 +1,4 @@
-use std.Option
+let Option = std.Option
 
 let choose(value: Option(i32)): i32 = {
   match value

@@ -18,9 +18,9 @@ let main(): i32 = {
     iteration = iteration + 1
     if iteration < 3 {
       let resource = Resource { counter: counter }
-      continue
+      continue()
     }
-    break
+    break()
   }
 
   let drops = unsafe {

@@ -4,16 +4,14 @@ let Tick = effect {
 
 let main(): i32 = {
   let mut count = 0
-  Tick.handle(
-    tick: { (resume) -> resume(1) },
-  ) {
+  Tick.handle tick { (resume) -> resume(1) } action {
     while { count + Tick.tick() <= 2 } {
       count += 1
-      if count == 1 { continue }
+      if count == 1 { continue() }
     }
     let stopped = loop {
       count += Tick.tick()
-      if count == 3 { break count }
+      if count == 3 { break(count) }
     }
     36 + count + stopped
   }

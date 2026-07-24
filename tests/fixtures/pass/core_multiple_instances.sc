@@ -1,5 +1,5 @@
-use std.Option
-use std.Result
+let Option = std.Option
+let Result = std.Result
 
 let main(): i32 = {
   let option_number = Option(i32).Some(20)

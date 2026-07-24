@@ -24,12 +24,12 @@ let inspect(move choice: Choice): i32 = { match choice
 
 let early(): i32 = {
   let value = Resource { value: 1 }
-  return 1
+  return(1)
 }
 
 let looped(): i32 = { loop {
   let value = Resource { value: 1 }
-  break 1
+  break(1)
 }
 }
 

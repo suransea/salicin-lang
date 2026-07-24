@@ -1,6 +1,6 @@
-use std.Result
-use std.effect.Throws
-use std.flow.Raise
+let Result = std.Result
+let Throws = std.effect.Throws
+let Raise = std.flow.Raise
 
 let Stored = enum {
   Value(i32),

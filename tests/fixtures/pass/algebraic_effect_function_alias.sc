@@ -7,7 +7,7 @@ let ask(): i32 with(Ask) = {
 }
 
 let main(): i32 = {
-  Ask.handle(value: { (resume) -> resume(42) }) {
+  Ask.handle value { (resume) -> resume(42) } action {
     let action = ask
     let forwarded = action
     forwarded()

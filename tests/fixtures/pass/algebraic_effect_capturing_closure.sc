@@ -7,7 +7,7 @@ let invoke(action: (i32): i32 with(Ask))(input: i32): i32 with(Ask) = {
 }
 
 let main(): i32 = {
-  Ask.handle(value: { (resume) -> resume(20) }) {
+  Ask.handle value { (resume) -> resume(20) } action {
     let offset = 2
     let action: (i32): i32 with(Ask) = { (input: i32) ->
       Ask.value() + input + offset

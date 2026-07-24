@@ -4,7 +4,7 @@ let main(): i32 = {
   while { value < 5 } {
     value = value + 1
     if value < 3 {
-      continue
+      continue()
     }
     total = total + value
   }

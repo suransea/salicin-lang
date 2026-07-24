@@ -1,4 +1,4 @@
-use core.Option
+let Option = core.Option
 
 /// Growable contiguous heap allocation for values of type `T`.
 pub let Vec(T: type) = struct {

@@ -1,6 +1,7 @@
-use std.Option
+let Option = std.Option
 
-use std.iter.{Iterator, IntoIterator}
+let Iterator = std.iter.Iterator
+let IntoIterator = std.iter.IntoIterator
 
 let Counter = struct { current: i32, end: i32 }
 

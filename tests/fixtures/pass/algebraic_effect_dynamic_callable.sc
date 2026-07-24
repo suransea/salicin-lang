@@ -30,7 +30,7 @@ let select(mode: i32): i32 with(Ask) = {
 }
 
 let main(): i32 = {
-  Ask.handle(value: { (resume) -> resume(20) }) {
+  Ask.handle value { (resume) -> resume(20) } action {
     select(2)
   }
 }

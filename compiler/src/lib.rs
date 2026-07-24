@@ -170,7 +170,8 @@ mod tests {
     #[test]
     fn alloc_accessors_use_the_access_generic_entry_points() {
         let source = "use std.boxed.{Box, box_as_ref}\n\
-                      use std.vec.{Vec, vec_at}\n\
+                      let Vec = std.vec.Vec
+                      let vec_at = std.vec.vec_at
                       let main(): i32 = {\n\
                         let mut boxed = Box.new(20)\n\
                         do {\n\
@@ -193,7 +194,7 @@ mod tests {
         let errors = compile_source("let main(): i32 = { Box.new(42).read() }\n").unwrap_err();
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `Box` is not in the prelude")
-                && diagnostic.contains("use std.boxed.Box")
+                && diagnostic.contains("let Box = std.boxed.Box")
         }));
 
         let source = "use std.boxed.Box as HeapBox\n\
@@ -220,7 +221,7 @@ mod tests {
         let errors = compile_source(missing).unwrap_err();
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `Add` is not in the prelude")
-                && diagnostic.contains("use std.ops.Add")
+                && diagnostic.contains("let Add = std.ops.Add")
         }));
 
         let imported = format!("use std.ops.Add\n{missing}").replace(
@@ -242,7 +243,7 @@ mod tests {
         let errors = compile_source(missing_order).unwrap_err();
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `PartialOrd` is not in the prelude")
-                && diagnostic.contains("use std.ops.PartialOrd")
+                && diagnostic.contains("let PartialOrd = std.ops.PartialOrd")
         }));
 
         let imported_order = format!(
@@ -264,7 +265,7 @@ mod tests {
         let errors = compile_source(missing_unary).unwrap_err();
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `Neg` is not in the prelude")
-                && diagnostic.contains("use std.ops.Neg")
+                && diagnostic.contains("let Neg = std.ops.Neg")
         }));
 
         let imported_unary = format!("use std.ops.Neg\n{missing_unary}").replace(
@@ -282,7 +283,7 @@ mod tests {
         let errors = compile_source(missing_bitwise).unwrap_err();
         assert!(errors.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `BitAnd` is not in the prelude")
-                && diagnostic.contains("use std.ops.BitAnd")
+                && diagnostic.contains("let BitAnd = std.ops.BitAnd")
         }));
 
         let imported_bitwise = format!("use std.ops.BitAnd\n{missing_bitwise}").replace(

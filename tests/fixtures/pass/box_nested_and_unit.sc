@@ -1,4 +1,5 @@
-use std.boxed.{Box, box_new}
+let Box = std.boxed.Box
+let box_new = std.boxed.box_new
 
 let main(): i32 = {
   let unit: Box(()) = box_new(())

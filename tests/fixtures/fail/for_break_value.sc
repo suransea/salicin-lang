@@ -1,6 +1,7 @@
-use std.Option
+let Option = std.Option
 
-use std.iter.{Iterator, IntoIterator}
+let Iterator = std.iter.Iterator
+let IntoIterator = std.iter.IntoIterator
 
 let Once = struct { done: bool }
 
@@ -21,7 +22,7 @@ extend Once: IntoIterator {
 
 let main(): i32 = {
   for Once { done: false } { value ->
-    break value
+    break(value)
   }
   0
 }

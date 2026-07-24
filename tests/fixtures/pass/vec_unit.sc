@@ -1,4 +1,5 @@
-use std.vec.{Vec, vec_new}
+let Vec = std.vec.Vec
+let vec_new = std.vec.vec_new
 
 let main(): i32 = {
   let mut values: Vec(()) = vec_new()

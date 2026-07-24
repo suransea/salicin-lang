@@ -1,4 +1,4 @@
-use std.ops.Eq
+let Eq = std.ops.Eq
 
 let Token = struct { value: i32 }
 

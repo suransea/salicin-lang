@@ -1,3 +1,3 @@
 let main(): i32 = {
-  break 42
+  break(42)
 }

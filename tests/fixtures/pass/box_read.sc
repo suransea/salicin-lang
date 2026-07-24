@@ -1,4 +1,7 @@
-use std.boxed.{Box, box_new, box_read, box_write}
+let Box = std.boxed.Box
+let box_new = std.boxed.box_new
+let box_read = std.boxed.box_read
+let box_write = std.boxed.box_write
 
 let read_box(T: type)(boxed: borrow(Box(T))): T
 where T: Copy = { boxed.read() }

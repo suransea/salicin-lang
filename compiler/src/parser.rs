@@ -74,7 +74,9 @@ impl Parser {
 
         while !self.at(&TokenKind::Eof) {
             let visibility = self.visibility()?;
-            if self.at(&TokenKind::Use) {
+            if self.qualified_alias_declaration_follows() {
+                uses.push(self.qualified_alias_declaration(visibility)?);
+            } else if self.at_context_ident("use") {
                 uses.extend(self.use_declaration(visibility)?);
             } else {
                 if visibility != Visibility::Private && self.at(&TokenKind::Extend) {
@@ -95,6 +97,70 @@ impl Parser {
         Ok(Program::with_uses(items, item_visibilities, uses))
     }
 
+    fn qualified_alias_declaration_follows(&self) -> bool {
+        if !self.at(&TokenKind::Let)
+            || !matches!(
+                self.tokens.get(self.index + 1).map(|token| &token.kind),
+                Some(TokenKind::Ident(_))
+            )
+            || !self.at_offset(2, &TokenKind::Equal)
+        {
+            return false;
+        }
+
+        let mut index = self.index + 3;
+        if !matches!(
+            self.tokens.get(index).map(|token| &token.kind),
+            Some(TokenKind::Ident(_) | TokenKind::Root | TokenKind::Super)
+        ) {
+            return false;
+        }
+        index += 1;
+        let mut segments = 1;
+        while matches!(
+            self.tokens.get(index).map(|token| &token.kind),
+            Some(TokenKind::Dot)
+        ) {
+            if !matches!(
+                self.tokens.get(index + 1).map(|token| &token.kind),
+                Some(TokenKind::Ident(_) | TokenKind::Super)
+            ) {
+                return false;
+            }
+            segments += 1;
+            index += 2;
+        }
+        (segments > 1
+            || self.tokens.get(self.index + 3).is_some_and(|token| {
+                matches!(token.kind, TokenKind::Root | TokenKind::Super)
+                    || matches!(&token.kind, TokenKind::Ident(name) if name == "self")
+            }))
+            && matches!(
+                self.tokens.get(index).map(|token| &token.kind),
+                Some(TokenKind::Newline | TokenKind::Semicolon | TokenKind::Eof)
+            )
+    }
+
+    fn qualified_alias_declaration(
+        &mut self,
+        visibility: Visibility,
+    ) -> Result<UseDecl, ParseError> {
+        self.expect(&TokenKind::Let, "`let`")?;
+        let alias = self.expect_ident("an alias name")?;
+        self.expect(&TokenKind::Equal, "`=` in alias declaration")?;
+        let mut path = vec![self.expect_path_start("an alias target path")?];
+        while self.take(&TokenKind::Dot) {
+            path.push(
+                self.expect_path_continuation(&path, "an alias target path segment after `.`")?,
+            );
+        }
+        Ok(UseDecl {
+            visibility,
+            path,
+            alias: Some(alias),
+        })
+    }
+
     fn visibility(&mut self) -> Result<Visibility, ParseError> {
         if !self.take(&TokenKind::Pub) {
             return Ok(Visibility::Private);
@@ -109,7 +175,10 @@ impl Parser {
     }
 
     fn use_declaration(&mut self, visibility: Visibility) -> Result<Vec<UseDecl>, ParseError> {
-        self.expect(&TokenKind::Use, "`use`")?;
+        if !self.at_context_ident("use") {
+            return Err(self.error_here("expected `use`"));
+        }
+        self.advance();
         let mut path = vec![self.expect_path_start("an import path")?];
 
         while self.take(&TokenKind::Dot) {
@@ -121,7 +190,8 @@ impl Parser {
             path.push(segment);
         }
 
-        let alias = if self.take(&TokenKind::As) {
+        let alias = if self.at_context_ident("as") {
+            self.advance();
             Some(self.expect_import_alias()?)
         } else {
             None
@@ -157,7 +227,8 @@ impl Parser {
         let mut bindings = HashSet::new();
         loop {
             let member = self.expect_relative_path_segment("an import name")?;
-            let alias = if self.take(&TokenKind::As) {
+            let alias = if self.at_context_ident("as") {
+                self.advance();
                 Some(self.expect_import_alias()?)
             } else {
                 None
@@ -962,14 +1033,24 @@ impl Parser {
         }
 
         if self.take(&TokenKind::Ellipsis) {
-            let pack = self.expect_ident("a repeated parameter-group pack name")?;
-            let declared = compile_groups.iter().flatten().any(|parameter| {
-                parameter.name == pack && parameter.kind == CompileParamKind::ParameterPack
-            });
-            if !declared {
-                return Err(self.error_here(format!(
-                    "repeated runtime group `{pack}` requires a preceding `...{pack}: parameters` declaration"
-                )));
+            let schema = self.repeated_parameter_group_schema()?;
+            let pack = match &schema {
+                Type::Named(name, _) => name.clone(),
+                _ => {
+                    return Err(self.error_here(
+                        "a repeated runtime parameter group requires a parameter schema",
+                    ));
+                }
+            };
+            if matches!(&schema, Type::Named(_, arguments) if arguments.is_empty()) {
+                let declared = compile_groups.iter().flatten().any(|parameter| {
+                    parameter.name == pack && parameter.kind == CompileParamKind::ParameterPack
+                });
+                if !declared {
+                    return Err(self.error_here(format!(
+                        "repeated runtime group `{pack}` requires a preceding `...{pack}: parameters` declaration"
+                    )));
+                }
             }
             runtime_groups.push(vec![Param {
                 mode: PassMode::Inferred,
@@ -977,14 +1058,63 @@ impl Parser {
                 passing: None,
                 region: None,
                 name: pack.clone(),
-                ty: Type::Named(
-                    "$parameter$groups$expand".to_owned(),
-                    vec![Type::Named(pack, Vec::new())],
-                ),
+                ty: Type::Named("$parameter$groups$expand".to_owned(), vec![schema]),
             }]);
+            self.take_newlines_if_followed_by(&[
+                TokenKind::LParen,
+                TokenKind::Colon,
+                TokenKind::Equal,
+            ]);
+            while self.at(&TokenKind::LParen) {
+                if self.group_starts_with_compile_parameter() {
+                    return Err(self.error_here(
+                        "compile-time parameter groups must precede repeated runtime parameter groups",
+                    ));
+                }
+                let passing_parameters = compile_groups
+                    .iter()
+                    .flatten()
+                    .filter(|parameter| parameter.kind == CompileParamKind::Passing)
+                    .map(|parameter| parameter.name.clone())
+                    .collect::<HashSet<_>>();
+                runtime_groups
+                    .push(self.runtime_parameter_group(allow_receiver, &passing_parameters)?);
+                self.take_newlines_if_followed_by(&[
+                    TokenKind::LParen,
+                    TokenKind::Colon,
+                    TokenKind::Equal,
+                ]);
+            }
         }
 
         Ok((compile_groups, runtime_groups))
+    }
+
+    fn repeated_parameter_group_schema(&mut self) -> Result<Type, ParseError> {
+        let mut path = vec![self.expect_path_start("a parameter schema")?];
+        while self.take(&TokenKind::Dot) {
+            let segment =
+                self.expect_path_continuation(&path, "a parameter schema path segment after `.`")?;
+            path.push(segment);
+        }
+        let name = path.join(".");
+        let mut arguments = Vec::new();
+        if self.take(&TokenKind::LParen) {
+            if !self.take(&TokenKind::RParen) {
+                loop {
+                    arguments.push(self.type_expr()?);
+                    if self.take(&TokenKind::Comma) {
+                        if self.take(&TokenKind::RParen) {
+                            break;
+                        }
+                    } else {
+                        self.expect(&TokenKind::RParen, "`)` after parameter schema arguments")?;
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(Type::Named(name, arguments))
     }
 
     fn group_starts_with_compile_parameter(&self) -> bool {
@@ -2846,7 +2976,11 @@ impl Parser {
         let mut can_take_trailing_closure = false;
 
         loop {
-            if self.take(&TokenKind::LParen) {
+            if self.at(&TokenKind::LParen) && Self::starts_implicit_handler_groups(&expression) {
+                return Err(self.error_here(
+                    "`handle` clauses use named trailing groups; omit the parenthesized argument group",
+                ));
+            } else if self.take(&TokenKind::LParen) {
                 let mut arguments = Vec::new();
                 let mut labeled = None;
                 if !self.take(&TokenKind::RParen) {
@@ -2931,6 +3065,11 @@ impl Parser {
                 && can_take_trailing_closure
                 && self.at(&TokenKind::LBrace)
             {
+                if Self::starts_implicit_handler_groups(&expression) {
+                    return Err(self.error_here(
+                        "a handler action must use the named trailing group `action { ... }`",
+                    ));
+                }
                 let closure = self.closure()?;
                 expression = Expr::Call(
                     Box::new(expression),
@@ -2940,7 +3079,7 @@ impl Parser {
                     }],
                 );
             } else if allow_trailing_closure
-                && can_take_trailing_closure
+                && (can_take_trailing_closure || Self::starts_implicit_handler_groups(&expression))
                 && self.named_trailing_closure_follows()
             {
                 let label = self.expect_ident("a trailing closure label")?;
@@ -2953,8 +3092,9 @@ impl Parser {
                         value: closure,
                     }],
                 );
+                can_take_trailing_closure = true;
             } else if allow_trailing_closure
-                && can_take_trailing_closure
+                && (can_take_trailing_closure || Self::starts_implicit_handler_groups(&expression))
                 && self.colonless_named_trailing_closure_follows()
             {
                 let label = self.take_trailing_label()?;
@@ -2966,8 +3106,9 @@ impl Parser {
                         value: closure,
                     }],
                 );
+                can_take_trailing_closure = true;
             } else if allow_trailing_closure
-                && can_take_trailing_closure
+                && (can_take_trailing_closure || Self::starts_implicit_handler_groups(&expression))
                 && self.named_nested_trailing_call_follows()
             {
                 let label = self.take_trailing_label()?;
@@ -2979,6 +3120,7 @@ impl Parser {
                         value: Expr::Closure(Vec::new(), Box::new(nested)),
                     }],
                 );
+                can_take_trailing_closure = true;
             } else if allow_trailing_closure
                 && !can_take_trailing_closure
                 && self.bare_call_argument_can_start()
@@ -3002,13 +3144,15 @@ impl Parser {
                     self.index = before_argument;
                     break;
                 }
-            } else if allow_trailing_closure
-                && can_take_trailing_closure
-                && self.at(&TokenKind::Newline)
-            {
+            } else if allow_trailing_closure && self.at(&TokenKind::Newline) {
                 let before_newlines = self.index;
                 while self.take(&TokenKind::Newline) {}
-                if self.at(&TokenKind::LBrace) || self.named_trailing_closure_follows() {
+                if (can_take_trailing_closure && self.at(&TokenKind::LBrace))
+                    || (can_take_trailing_closure && self.named_trailing_closure_follows())
+                    || (Self::starts_implicit_handler_groups(&expression)
+                        && (self.colonless_named_trailing_closure_follows()
+                            || self.named_nested_trailing_call_follows()))
+                {
                     continue;
                 }
                 self.index = before_newlines;
@@ -3019,6 +3163,14 @@ impl Parser {
         }
 
         Ok(expression)
+    }
+
+    fn starts_implicit_handler_groups(expression: &Expr) -> bool {
+        match expression {
+            Expr::Member(_, member) => member == "handle",
+            Expr::Call(callee, _) => Self::starts_implicit_handler_groups(callee),
+            _ => false,
+        }
     }
 
     fn bare_call_argument_can_start(&self) -> bool {
@@ -3243,8 +3395,7 @@ impl Parser {
                 self.break_expression(allow_trailing_closure)
             }
             TokenKind::Ident(ref name) if name == "continue" => {
-                self.advance();
-                Ok(Expr::Continue)
+                self.continue_expression()
             }
             TokenKind::Ident(ref name) if name == "_" => Err(self.error_at(
                 &token,
@@ -3319,8 +3470,7 @@ impl Parser {
             TokenKind::Loop => self.loop_expression(),
             TokenKind::Break => self.break_expression(allow_trailing_closure),
             TokenKind::Continue => {
-                self.advance();
-                Ok(Expr::Continue)
+                self.continue_expression()
             }
             TokenKind::LBrace => self.closure(),
             _ => Err(self.error_at(
@@ -3401,12 +3551,17 @@ impl Parser {
 
     fn return_expression(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
         self.expect(&TokenKind::Return, "`return`")?;
-        if self.at_control_expression_boundary() {
-            Ok(Expr::Return(None))
-        } else {
-            let value = self.expression(allow_trailing_closure)?;
-            Ok(Expr::Return(Some(Box::new(value))))
+        if !self.take(&TokenKind::LParen) {
+            return Err(
+                self.error_here("`return` is a function; write `return(value)` or `return()`")
+            );
         }
+        if self.take(&TokenKind::RParen) {
+            return Ok(Expr::Return(None));
+        }
+        let value = self.expression(allow_trailing_closure)?;
+        self.expect(&TokenKind::RParen, "`)` after `return` argument")?;
+        Ok(Expr::Return(Some(Box::new(value))))
     }
 
     fn while_expression(&mut self) -> Result<Expr, ParseError> {
@@ -3577,12 +3732,22 @@ impl Parser {
 
     fn break_expression(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
         self.expect(&TokenKind::Break, "`break`")?;
-        if self.at_control_expression_boundary() {
-            Ok(Expr::Break(None))
-        } else {
-            let value = self.expression(allow_trailing_closure)?;
-            Ok(Expr::Break(Some(Box::new(value))))
+        if !self.take(&TokenKind::LParen) {
+            return Err(self.error_here("`break` is a function; write `break(value)` or `break()`"));
         }
+        if self.take(&TokenKind::RParen) {
+            return Ok(Expr::Break(None));
+        }
+        let value = self.expression(allow_trailing_closure)?;
+        self.expect(&TokenKind::RParen, "`)` after `break` argument")?;
+        Ok(Expr::Break(Some(Box::new(value))))
+    }
+
+    fn continue_expression(&mut self) -> Result<Expr, ParseError> {
+        self.expect(&TokenKind::Continue, "`continue`")?;
+        self.expect(&TokenKind::LParen, "`(` after `continue`")?;
+        self.expect(&TokenKind::RParen, "`)` after `continue`")?;
+        Ok(Expr::Continue)
     }
 
     fn block(&mut self) -> Result<Expr, ParseError> {
@@ -4972,8 +5137,6 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::Let => "`let`",
         TokenKind::Pub => "`pub`",
         TokenKind::Package => "`package`",
-        TokenKind::Use => "`use`",
-        TokenKind::As => "`as`",
         TokenKind::Root => "`root`",
         TokenKind::Super => "`super`",
         TokenKind::Mut => "`mut`",
@@ -5236,6 +5399,58 @@ mod tests {
         );
         assert_eq!(program.items.len(), 1);
         assert_eq!(program.item_visibilities, vec![Visibility::Private]);
+    }
+
+    #[test]
+    fn parses_qualified_let_bindings_as_transparent_entity_aliases() {
+        let program = parse(
+            "let Option = std.Option\n\
+             let HttpClient = net.http.Client\n\
+             pub let Status = net.http.Status\n\
+             pub(package) let Value = root.core.Value\n\
+             let snapshot = (object.member)\n\
+             let answer = 42\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            program.uses,
+            vec![
+                UseDecl {
+                    visibility: Visibility::Private,
+                    path: vec!["std".into(), "Option".into()],
+                    alias: Some("Option".into()),
+                },
+                UseDecl {
+                    visibility: Visibility::Private,
+                    path: vec!["net".into(), "http".into(), "Client".into()],
+                    alias: Some("HttpClient".into()),
+                },
+                UseDecl {
+                    visibility: Visibility::Public,
+                    path: vec!["net".into(), "http".into(), "Status".into()],
+                    alias: Some("Status".into()),
+                },
+                UseDecl {
+                    visibility: Visibility::Package,
+                    path: vec!["root".into(), "core".into(), "Value".into()],
+                    alias: Some("Value".into()),
+                },
+            ]
+        );
+        assert_eq!(program.items.len(), 2);
+        assert_eq!(
+            program.item_visibilities,
+            vec![Visibility::Private, Visibility::Private]
+        );
+        assert!(matches!(
+            &program.items[0],
+            Item::Global(Binding {
+                name,
+                value: Expr::Member(_, member),
+                ..
+            }) if name == "snapshot" && member == "member"
+        ));
     }
 
     #[test]
@@ -5960,7 +6175,7 @@ mod tests {
     fn parses_do_if_else_and_return() {
         let program = parse(
             "let choose(flag: bool): i32 = { do {\n\
-               if flag { return 1 }\n\
+               if flag { return(1) }\n\
                else { 2 }\n\
              } }\n",
         )
@@ -6105,6 +6320,59 @@ mod tests {
             panic!("expected condition group");
         };
         assert_eq!(condition_group[0].label.as_deref(), Some("condition"));
+    }
+
+    #[test]
+    fn handler_member_accepts_implicit_named_trailing_groups() {
+        let program = parse(
+            "let run(): i32 = {\n\
+               Ask.handle\n\
+                 value { (resume) -> resume(42) }\n\
+                 done { (answer) -> answer }\n\
+                 action { Ask.value() }\n\
+             }\n",
+        )
+        .unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        let Some(Expr::Block(_, Some(value))) = &function.body else {
+            panic!("expected function body");
+        };
+        let Expr::Call(done_call, action_group) = value.as_ref() else {
+            panic!("expected action group");
+        };
+        assert_eq!(action_group[0].label.as_deref(), Some("action"));
+        let Expr::Call(value_call, done_group) = done_call.as_ref() else {
+            panic!("expected done group");
+        };
+        assert_eq!(done_group[0].label.as_deref(), Some("done"));
+        let Expr::Call(handler, value_group) = value_call.as_ref() else {
+            panic!("expected value group");
+        };
+        assert_eq!(value_group[0].label.as_deref(), Some("value"));
+        assert!(matches!(handler.as_ref(), Expr::Member(_, member) if member == "handle"));
+    }
+
+    #[test]
+    fn rejects_legacy_handler_and_for_forms() {
+        for (source, expected) in [
+            (
+                "let run(): i32 = { Ask.handle(value: { (resume) -> resume(42) }) { Ask.value() } }\n",
+                "`handle` clauses use named trailing groups",
+            ),
+            (
+                "let run(): i32 = { Ask.handle value { (resume) -> resume(42) } { Ask.value() } }\n",
+                "handler action must use the named trailing group",
+            ),
+            (
+                "let run(values: Values): () = { for value in values { consume(value) } }\n",
+                "trailing pattern closure",
+            ),
+        ] {
+            let error = parse(source).unwrap_err();
+            assert!(error.message.contains(expected), "{}", error.message);
+        }
     }
 
     #[test]
@@ -6686,7 +6954,7 @@ mod tests {
         let program = parse(
             "let Handle = trait(Self: effect) {\n\
                let Clauses(Value: type, Answer: type): parameters\n\
-               let handle(Value: type, Answer: type, Rest: effect)(...move clauses: Clauses(Value, Answer))(move action: (): Value with(Self, Rest)): Answer with(Rest)\n\
+               let handle(Value: type, Answer: type, Rest: effect) ...Clauses(Value, Answer) (move action: (): Value with(Self, Rest)): Answer with(Rest)\n\
              }\n",
         )
         .unwrap();
@@ -6703,7 +6971,7 @@ mod tests {
         assert_eq!(
             function.groups[0][0].ty,
             Type::Named(
-                "$parameters$expand".to_owned(),
+                "$parameter$groups$expand".to_owned(),
                 vec![Type::Named(
                     "Clauses".to_owned(),
                     vec![
@@ -6951,7 +7219,7 @@ mod tests {
         let program = parse(
             "let State(S: type) = effect { let get(): S }\n\
              let main(): i32 = {\n\
-               State(i32).handle(get: { (resume) -> resume(42) }) {\n\
+               State(i32).handle get { (resume) -> resume(42) } action {\n\
                  State(i32).get()\n\
                }\n\
              }\n",
@@ -7090,7 +7358,7 @@ mod tests {
 
     #[test]
     fn parses_loop_with_break_value() {
-        let program = parse("let main(): i32 = { loop {\n  break 40 + 2\n} }\n").unwrap();
+        let program = parse("let main(): i32 = { loop {\n  break(40 + 2)\n} }\n").unwrap();
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };
@@ -7137,41 +7405,21 @@ mod tests {
     }
 
     #[test]
-    fn newline_and_comma_end_a_bare_break() {
-        let program = parse(
-            "let choose(value: bool): i32 = {\n\
-               loop {\n\
-                 break\n\
-                 42\n\
-               }\n\
-               value match {\n\
-                 true => break,\n\
-                 false => 0,\n\
-               }\n\
-             }\n",
-        )
-        .unwrap();
-
-        let Item::Function(function) = &program.items[0] else {
-            panic!("expected function");
-        };
-        let Some(Expr::Block(statements, Some(tail))) = &function.body else {
-            panic!("expected block");
-        };
-        assert!(matches!(
-            &statements[0],
-            Stmt::Expr(Expr::Loop { body })
-                if matches!(
-                    body.as_ref(),
-                    Expr::Block(loop_statements, Some(value))
-                        if matches!(loop_statements.as_slice(), [Stmt::Expr(Expr::Break(None))])
-                            && value.as_ref() == &Expr::Integer(42)
-                )
-        ));
-        assert!(matches!(
-            tail.as_ref(),
-            Expr::Match { arms, .. } if matches!(arms[0].body, Expr::Break(None))
-        ));
+    fn rejects_bare_control_exits() {
+        for (source, expected) in [
+            (
+                "let run(): () = { loop { break } }\n",
+                "`break` is a function",
+            ),
+            (
+                "let run(): () = { loop { continue } }\n",
+                "`(` after `continue`",
+            ),
+            ("let run(): () = { return }\n", "`return` is a function"),
+        ] {
+            let error = parse(source).unwrap_err();
+            assert!(error.message.contains(expected), "{}", error.message);
+        }
     }
 
     #[test]

@@ -52,12 +52,12 @@ let Ask = effect {
   let value(right: i32): i32
 }
 
-let answer = Ask.handle(
-  value: { (left, resume) -> resume(left) },
-  value: { (right, resume) -> resume(right) },
-) {
-  Ask.value(left: 19) + Ask.value(right: 23)
-}
+let answer = Ask.handle
+  value { (left, resume) -> resume(left) }
+  value { (right, resume) -> resume(right) }
+  action {
+    Ask.value(left: 19) + Ask.value(right: 23)
+  }
 ```
 
 ## Derived `handle` member
@@ -66,16 +66,17 @@ Every effect declaration automatically satisfies the validated `std.effect.handl
 derives a compiler-lowered associated member named `handle`:
 
 ```sc
-let answer = State(i32).handle(
-  get: { (resume) -> resume(41) },
-  put: { (value, resume) -> resume(()) },
-) {
-  increment() + 1
-}
+let answer = State(i32).handle
+  get { (resume) -> resume(41) }
+  put { (value, resume) -> resume(()) }
+  action {
+    increment() + 1
+  }
 ```
 
-The final trailing closure is the handled action. Every operation signature is supplied exactly
-once as a labeled closure. A non-overloaded operation clause may choose local parameter names; an
+Each operation clause is a labeled trailing-closure parameter group, and the final `action`
+group is the handled computation. Every operation signature is supplied exactly once. A
+non-overloaded operation clause may choose local parameter names; an
 overloaded clause must repeat the selected operation's parameter names in declaration order.
 `handle` is reserved in the effect member namespace. The operation-specific `parameters` schema is derived
 from the source `effect` declaration rather than implemented by ordinary user code, but its public
@@ -96,13 +97,13 @@ By default the action result and handler result are the same type. A `done:` cla
 answer-type transformation:
 
 ```sc
-let text = State(i32).handle(
-  done: { (value) -> format(value) },
-  get: { (resume) -> resume(41) },
-  put: { (value, resume) -> resume(()) },
-) {
-  increment()
-}
+let text = State(i32).handle
+  done { (value) -> format(value) }
+  get { (resume) -> resume(41) }
+  put { (value, resume) -> resume(()) }
+  action {
+    increment()
+  }
 ```
 
 If the action returns `A` and the complete handler returns `R`, `done` has contextual type `(A): R`.

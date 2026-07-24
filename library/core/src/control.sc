@@ -53,12 +53,12 @@ pub let do(E: effect)
 /// Handles `Throws(E)` from `action` and returns a `Result`.
 pub let try(F: effect, T: type, E: type)
   (move action: (): T with(core.effect.Throws(E), F)): core.Result(E)(T) with(F) = {
-  core.effect.Throws(E).handle(
-    raise: { (error) -> core.Result.Err(error) },
-    done: { (value) -> core.Result.Ok(value) },
-  ) {
-    action()
-  }
+  core.effect.Throws(E).handle
+    raise { (error) -> core.Result.Err(error) }
+    done { (value) -> core.Result.Ok(value) }
+    action {
+      action()
+    }
 }
 
 /// Raises a value through the standard `Throws(Error)` effect.
@@ -70,9 +70,10 @@ pub let throw(Error: type)
 /// Runs an action that requires the standard unsafe authority effect.
 pub let unsafe(E: effect, T: type)
   (move action: (): T with(core.effect.Unsafe, E)): T with(E) = {
-  core.effect.Unsafe.handle() {
-    action()
-  }
+  core.effect.Unsafe.handle
+    action {
+      action()
+    }
 }
 
 /// Repeats `body` indefinitely until control exits through another construct.
@@ -87,7 +88,7 @@ pub let while(E: effect)
     if condition() {
       do()
     } else {
-      break
+      break()
     }
   }
 }
@@ -113,4 +114,11 @@ pub let for(E: effect, Iterable: type, Iter: type, Item: type)
   (move iterable: Iterable)
   (move body: (Item): () with(core.control.Break(()), core.control.Continue, E)): () with(E)
 where Iterable: core.iter.IntoIterator(IntoIter = Iter),
-  Iter: core.iter.Iterator(Item = Item)
+  Iter: core.iter.Iterator(Item = Item) = {
+  let mut iterator = iterable.into_iter()
+  loop {
+    match iterator.next()
+      { Some(item) -> body(item) }
+      { None -> break() }
+  }
+}

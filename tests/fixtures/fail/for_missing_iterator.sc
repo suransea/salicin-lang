@@ -1,4 +1,4 @@
-use std.iter.IntoIterator
+let IntoIterator = std.iter.IntoIterator
 
 let Iterable = struct {}
 let Iter = struct {}

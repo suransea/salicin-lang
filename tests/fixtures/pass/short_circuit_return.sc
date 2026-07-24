@@ -1,10 +1,10 @@
 let with_and(flag: bool): i32 = {
-  flag && return 20
+  flag && return(20)
   1
 }
 
 let with_or(flag: bool): i32 = {
-  flag || return 22
+  flag || return(22)
   1
 }
 

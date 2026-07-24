@@ -1,16 +1,27 @@
-pub use core.ops.arith.{Add, Sub, Mul, Div, Rem, Neg}
-pub use core.ops.bit.{BitAnd, BitOr, BitXor, Shl, Shr, Not}
-pub use core.ops.assign.{
-  AddAssign,
-  SubAssign,
-  MulAssign,
-  DivAssign,
-  RemAssign,
-  BitAndAssign,
-  BitOrAssign,
-  BitXorAssign,
-  ShlAssign,
-  ShrAssign,
-}
-pub use core.cmp.{Eq, PartialOrdering, PartialOrd}
-pub use core.flow.{Chain, Coalesce}
+pub let Add = core.ops.arith.Add
+pub let Sub = core.ops.arith.Sub
+pub let Mul = core.ops.arith.Mul
+pub let Div = core.ops.arith.Div
+pub let Rem = core.ops.arith.Rem
+pub let Neg = core.ops.arith.Neg
+pub let BitAnd = core.ops.bit.BitAnd
+pub let BitOr = core.ops.bit.BitOr
+pub let BitXor = core.ops.bit.BitXor
+pub let Shl = core.ops.bit.Shl
+pub let Shr = core.ops.bit.Shr
+pub let Not = core.ops.bit.Not
+pub let AddAssign = core.ops.assign.AddAssign
+pub let SubAssign = core.ops.assign.SubAssign
+pub let MulAssign = core.ops.assign.MulAssign
+pub let DivAssign = core.ops.assign.DivAssign
+pub let RemAssign = core.ops.assign.RemAssign
+pub let BitAndAssign = core.ops.assign.BitAndAssign
+pub let BitOrAssign = core.ops.assign.BitOrAssign
+pub let BitXorAssign = core.ops.assign.BitXorAssign
+pub let ShlAssign = core.ops.assign.ShlAssign
+pub let ShrAssign = core.ops.assign.ShrAssign
+pub let Eq = core.cmp.Eq
+pub let PartialOrdering = core.cmp.PartialOrdering
+pub let PartialOrd = core.cmp.PartialOrd
+pub let Chain = core.flow.Chain
+pub let Coalesce = core.flow.Coalesce

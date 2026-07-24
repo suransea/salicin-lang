@@ -1,4 +1,4 @@
-use std.flow.Unwrap
+let Unwrap = std.flow.Unwrap
 
 let Present = enum {
   Value(i32),

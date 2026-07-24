@@ -1,6 +1,7 @@
-use std.Result
+let Result = std.Result
 
-use std.effect.{Throws, Unsafe}
+let Throws = std.effect.Throws
+let Unsafe = std.effect.Unsafe
 
 let read(fail: bool): i32 with(Throws(bool), Unsafe) = {
   if fail { throw(true) }

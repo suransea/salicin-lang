@@ -1,5 +1,6 @@
-use std.Option
-use std.iter.{Iterator, IntoIterator}
+let Option = std.Option
+let Iterator = std.iter.Iterator
+let IntoIterator = std.iter.IntoIterator
 
 let Values = struct { done: bool }
 let Choice = enum { Some(i32), None }

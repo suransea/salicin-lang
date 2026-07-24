@@ -17,7 +17,7 @@ let Event = enum {
 let consume(move resource: Resource): i32 = { 20 }
 
 let evaluate(counter: MutPtr(i32), accepted: bool): i32 = {
-  Check.handle(accept: { (resume) -> resume(accepted) }) {
+  Check.handle accept { (resume) -> resume(accepted) } action {
     let event = Event.Value( value: Resource { counter: counter } )
     match event
       { Event.Value( value: resource ) if Check.accept() -> consume(resource) }

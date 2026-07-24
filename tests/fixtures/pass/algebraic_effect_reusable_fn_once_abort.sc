@@ -12,7 +12,7 @@ extend Resource: Drop {
 let consume(move resource: Resource): i32 = { 0 }
 
 let run(move action: (): i32 with(Abort)): i32 = {
-  Abort.handle(stop: { (resume) -> 41 }) {
+  Abort.handle stop { (resume) -> 41 } action {
     action()
   }
 }

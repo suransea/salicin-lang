@@ -11,7 +11,7 @@ let invoke(action: (): i32 with(Ask)): i32 with(Ask) = {
 }
 
 let main(): i32 = {
-  Ask.handle(value: { (resume) -> resume(42) }) {
+  Ask.handle value { (resume) -> resume(42) } action {
     let selected = ask
     invoke(selected)
   }

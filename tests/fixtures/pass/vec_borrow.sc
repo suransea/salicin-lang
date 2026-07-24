@@ -1,4 +1,5 @@
-use std.vec.{Vec, vec_at}
+let Vec = std.vec.Vec
+let vec_at = std.vec.vec_at
 
 let Resource = struct { value: i32 }
 

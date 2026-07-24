@@ -1,5 +1,18 @@
-pub use core.never.Never
-pub use core.marker.{Copy, Drop}
-pub use core.primitives.{bool, i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize}
-pub use core.option.Option
-pub use core.result.Result
+pub let Never = core.never.Never
+pub let Copy = core.marker.Copy
+pub let Drop = core.marker.Drop
+pub let bool = core.primitives.bool
+pub let i8 = core.primitives.i8
+pub let i16 = core.primitives.i16
+pub let i32 = core.primitives.i32
+pub let i64 = core.primitives.i64
+pub let i128 = core.primitives.i128
+pub let isize = core.primitives.isize
+pub let u8 = core.primitives.u8
+pub let u16 = core.primitives.u16
+pub let u32 = core.primitives.u32
+pub let u64 = core.primitives.u64
+pub let u128 = core.primitives.u128
+pub let usize = core.primitives.usize
+pub let Option = core.option.Option
+pub let Result = core.result.Result

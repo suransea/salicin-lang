@@ -4,9 +4,7 @@ let State(S: type) = effect {
 }
 
 let main(): i32 = {
-  State(i32).handle(
-    get: { (resume) -> resume(42) },
-  ) {
+  State(i32).handle get { (resume) -> resume(42) } action {
     State(i32).get()
   }
 }

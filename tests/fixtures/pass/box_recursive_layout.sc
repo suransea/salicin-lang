@@ -1,6 +1,7 @@
-use std.Option
+let Option = std.Option
 
-use std.boxed.{Box, box_new}
+let Box = std.boxed.Box
+let box_new = std.boxed.box_new
 
 let Node = struct { value: i32, next: Option(Box(Node)) }
 

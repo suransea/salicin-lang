@@ -1,6 +1,7 @@
-use std.Result
+let Result = std.Result
 
-use std.effect.{Throws, Unsafe}
+let Throws = std.effect.Throws
+let Unsafe = std.effect.Unsafe
 
 let Supply = effect {
   let seed(): i32
@@ -16,7 +17,7 @@ let request(): i32 with(Ask, Supply, Throws(bool), Unsafe) = {
 
 let run(): i32 with(Supply, Throws(bool)) = {
   unsafe {
-    Ask.handle(value: { (resume) -> resume(42) }) {
+    Ask.handle value { (resume) -> resume(42) } action {
       request()
     }
   }
@@ -24,7 +25,7 @@ let run(): i32 with(Supply, Throws(bool)) = {
 
 let main(): i32 = {
   let result: Result(bool)(i32) = try {
-    Supply.handle(seed: { (resume) -> resume(0) }) { run() }
+    Supply.handle seed { (resume) -> resume(0) } action { run() }
   }
   result ?? 0
 }

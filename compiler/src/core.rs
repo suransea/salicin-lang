@@ -107,7 +107,7 @@ pub let EffectCallable(Input: type, Output: type, Answer: type) = struct {}
 pub let Handle = trait(Self: effect) {
   let Clauses(Value: type, Answer: type): parameters
   let handle(Value: type, Answer: type, Rest: effect)
-    (...move clauses: Clauses(Value, Answer))
+    ...Clauses(Value, Answer)
     (move action: (): Value with(Self, Rest)): Answer with(Rest)
 }
 "#;
@@ -2427,7 +2427,7 @@ fn valid_for(function: &Function) -> bool {
         && function.return_type == Some(Type::Unit)
         && function.effects == effect_parameter("E")
         && function.where_predicates == expected_predicates
-        && function.body.is_none()
+        && function.body.is_some()
 }
 
 fn effect_parameter(name: &str) -> crate::ast::FunctionEffects {
@@ -2564,7 +2564,7 @@ fn validate_handle(definition: &TraitDef, diagnostics: &mut Vec<String>) {
         );
     if !valid {
         diagnostics.push(
-            "lang item `Handle` must have shape `pub let Handle = trait(Self: effect) { let Clauses(Value: type, Answer: type): parameters; let handle(Value: type, Answer: type, Rest: effect)(...move clauses: Clauses(Value, Answer))(move action: (): Value with(Self, Rest)): Answer with(Rest) }`"
+            "lang item `Handle` must have shape `pub let Handle = trait(Self: effect) { let Clauses(Value: type, Answer: type): parameters; let handle(Value: type, Answer: type, Rest: effect) ...Clauses(Value, Answer) (move action: (): Value with(Self, Rest)): Answer with(Rest) }`"
                 .to_owned(),
         );
     }
@@ -2592,11 +2592,11 @@ fn valid_handle_method(function: &Function) -> bool {
         && function.effects == effect_parameter("Rest")
         && function.where_predicates.is_empty()
         && function.body.is_none()
-        && clauses.name == "clauses"
-        && clauses.mode == PassMode::Move
+        && clauses.name == "Clauses"
+        && clauses.mode == PassMode::Inferred
         && clauses.ty
             == Type::Named(
-                "$parameters$expand".to_owned(),
+                "$parameter$groups$expand".to_owned(),
                 vec![Type::Named(
                     "Clauses".to_owned(),
                     vec![named_type("Value"), named_type("Answer")],
@@ -3292,7 +3292,7 @@ pub let Shr(Rhs: type) = trait {
             .any(|diagnostic| diagnostic.contains("lang item `unsafe`")));
 
         let bodyless = EDITION_2026_CONTROL.replace(
-            " = {\n  core.effect.Unsafe.handle() {\n    action()\n  }\n}",
+            " = {\n  core.effect.Unsafe.handle\n    action {\n      action()\n    }\n}",
             "",
         );
         let modules = edition_2026_test_modules(&[("control", &bodyless)]);

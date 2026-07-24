@@ -1,4 +1,5 @@
-use std.boxed.{Box, box_as_ref}
+let Box = std.boxed.Box
+let box_as_ref = std.boxed.box_as_ref
 
 let Resource = struct { value: i32 }
 

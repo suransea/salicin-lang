@@ -1,4 +1,4 @@
-use std.boxed.Box
+let Box = std.boxed.Box
 
 let main(): i32 = {
   let mut boxed = Box.new(40)
@@ -8,7 +8,7 @@ let main(): i32 = {
     *pointer
   }
   if observed != 41 {
-    return 0
+    return(0)
   }
   let current = boxed.into_inner()
   current - previous + 41

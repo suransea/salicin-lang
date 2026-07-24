@@ -1,5 +1,5 @@
-use std.marker.Copy
-use std.ops.Add
+let Copy = std.marker.Copy
+let Add = std.ops.Add
 
 let Number = struct { value: i32 }
 

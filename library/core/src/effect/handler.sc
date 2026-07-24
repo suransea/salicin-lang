@@ -18,6 +18,6 @@ pub let Handle = trait(Self: effect) {
   let Clauses(Value: type, Answer: type): parameters
   /// Handles `Self` around `action`, leaving `Rest` as the residual effect row.
   let handle(Value: type, Answer: type, Rest: effect)
-    (...move clauses: Clauses(Value, Answer))
+    ...Clauses(Value, Answer)
     (move action: (): Value with(Self, Rest)): Answer with(Rest)
 }
