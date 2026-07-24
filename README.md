@@ -61,6 +61,8 @@ Documentation starts at [docs/README.md](docs/README.md). In particular:
 - [standard-library organization](docs/standard-library/README.md)
 - [frozen M0 core scope](docs/project/core-scope.md)
 - [implementation status](docs/project/status.md)
+- [language roadmap](docs/project/roadmap.md)
+- [project TODO](docs/project/todo.md)
 - [release history](CHANGELOG.md)
 
 ## Development

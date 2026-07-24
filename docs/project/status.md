@@ -269,4 +269,5 @@ The implementation is broad but not stable. Important incomplete boundaries incl
 
 The [language specification](../language/specification.md) states intended language rules. This file
 records implementation state. Release-specific additions and fixes are recorded only in the
-[changelog](../../CHANGELOG.md).
+[changelog](../../CHANGELOG.md). Milestone order and the executable work queue live in the
+[language roadmap](roadmap.md) and [project TODO](todo.md).

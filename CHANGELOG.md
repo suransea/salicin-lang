@@ -6,6 +6,9 @@ subset.
 
 ## Unreleased
 
+- Added a milestone-based language roadmap and a stable-ID project TODO. The roadmap bounds the
+  current handler-completion work, restores M0 hardening as the next expansion gate, and defers
+  async, ecosystem, and ABI work until their ownership and runtime prerequisites are met.
 - Replaced the compiler-generated `for` iterator name exception with an explicit handler-owned
   closure capture policy. Generated resumable frames now move any non-`Copy` owned nominal root
   while retaining its mutability.
