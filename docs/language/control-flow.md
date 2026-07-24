@@ -24,14 +24,10 @@ same-named declaration never acquires control authority.
 `if` takes an eager condition and lazy branches:
 
 ```sc
-pub let if(T: type, E: effect)
+pub let if(E: effect, T: type)
   (condition: bool)
   (move then: (): T with(E))
   (move else: (): T with(E)): T with(E)
-
-pub let if(E: effect)
-  (condition: bool)
-  (move then: (): () with(E)): () with(E)
 ```
 
 The ordinary source forms are therefore:
@@ -65,7 +61,11 @@ pub let loop(T: type, E: effect)
 
 pub let while(E: effect)
   (move condition: (): bool with(Break(()), Continue, E))
-  (move body: (): () with(Break(()), Continue, E)): () with(E)
+  (move do: (): () with(Break(()), Continue, E)): () with(E)
+
+pub let do(E: effect)
+  (move action: (): () with(Break(()), Continue, E))
+  (move while: (): bool with(Break(()), Continue, E)): () with(E)
 ```
 
 They are called as:
@@ -79,13 +79,20 @@ let answer = loop {
 
 while {
   queue.has_items()
-} {
+} do {
   queue.process_one()
+}
+
+do {
+  queue.process_one()
+} while {
+  queue.has_items()
 }
 ```
 
-The two `while` closures are intentionally symmetric. The former `while condition { body }` form is
-not part of the target language.
+The `do` and `while` labels make the test position explicit. `while { condition } do { body }`
+tests before the body; `do { body } while { condition }` tests after it. The former
+`while condition { body }` form is not part of the target language.
 
 ## 3. Control effects
 
@@ -140,41 +147,12 @@ An irrefutable parameter closure is a total function. A refutable pattern define
 function: applying `{ Some(value) -> value }` to `None` does not enter its body. This partiality is
 neither an error nor an algebraic effect. It is the dispatch result consumed by `match`.
 
-Pattern closures have anonymous concrete types and implement the same call-capability hierarchy as
-ordinary closures, but through partial-call traits:
-
-```sc
-pub let Attempt(Input: type, Output: type) = enum {
-  Miss(Input),
-  Hit(Output),
-}
-
-pub let PartialFnOnce(
-  Input: type,
-  Output: type,
-  E: effect,
-) = trait {
-  let attempt(move self)
-    (move input: Input): Attempt(Input, Output) with(E)
-}
-
-pub let PartialFnMut(Input: type, Output: type, E: effect) = trait
-where Self: PartialFnOnce(Input, Output, E) {
-  let attempt(self: borrow(mut)(Self))
-    (move input: Input): Attempt(Input, Output) with(E)
-}
-
-pub let PartialFn(Input: type, Output: type, E: effect) = trait
-where Self: PartialFnMut(Input, Output, E) {
-  let attempt(self: borrow(Self))
-    (move input: Input): Attempt(Input, Output) with(E)
-}
-```
-
-As with `FnOnce`/`FnMut`/`Fn`, the compiler derives the strongest valid partial-call capability from
-capture use. A matcher that consumes temporary arms needs only `PartialFnOnce`. When the compiler
-proves the parameter pattern irrefutable, the same anonymous closure also implements the
-corresponding total `FnOnce`/`FnMut`/`Fn` capability; its `attempt` can only produce `Hit`.
+The control contract represents this through the existing `parameters` domain rather than
+materializing an ordinary callable value or an `Attempt` result. A `P: parameters` value describes
+one parameter-group schema; `...Cases: parameters` is a variadic pack of those schemas. Each group
+keeps its pattern, bindings, capture ownership, body result, and effect row as compile-time
+structure. `match` consumes the groups in source order, and an irrefutable group is simply a
+partial group whose match is statically total.
 
 A case literal uses an unparenthesized pattern before `->`:
 
@@ -211,25 +189,26 @@ A guarded case never contributes to exhaustiveness because its guard may reject 
 
 ## 5. Heterogeneous repeated runtime groups
 
-Every capturing partial closure has a different anonymous concrete type. Control matching therefore
-needs a statically known pack of case types and the same number of curried runtime groups:
+Each match case is a partial-function parameter group: its leading pattern decides whether the
+group applies, and its body computes the common result. Control matching therefore needs a
+statically known pack of such groups:
 
 ```sc
 pub let match(
   Input: type,
   Output: type,
   E: effect,
-  ...Cases: type,
+  ...Cases: parameters,
 )
   (move input: Input)
-  ...(move case: Cases): Output with(E)
-where ...Cases: PartialFnOnce(Input, Output, E)
+  ...Cases: Output with(E)
 ```
 
-`...Cases: type` is a compile-time type pack. In `...(move case: Cases)`, every pack element expands
-to one complete runtime parameter group, preserving heterogeneous closure types. A repeated
-`where` predicate constrains every element independently. Calls remain statically expanded; there
-is no runtime array, iterator, allocation, or dynamic arity.
+`parameters` describes one runtime parameter-group schema, while the leading `...` makes `Cases`
+a variadic pack of such schemas. Bare `...Cases` then expands that pack into consecutive groups.
+Each expansion retains its own pattern, bindings, captures, and body while sharing `Input`,
+`Output`, and `E`. Calls remain statically expanded; there is no runtime array, iterator,
+allocation, or dynamic arity.
 
 This is deliberately different from:
 
@@ -240,21 +219,8 @@ This is deliberately different from:
 which expands one compile-time `P: parameters` schema inside one runtime group. The two constructs
 have different delimiters and cannot be confused:
 
-- `...(group)` repeats groups;
+- `...Cases` expands a pack into repeated groups;
 - `(...name: P)` expands parameters inside one group.
-
-The earlier candidate
-
-```sc
-...Cases: parameter
-...
-...Cases: Output with(E)
-```
-
-is not used. The insight that a case is a partial function lets the ordinary type system carry its
-anonymous type, ownership capability, input, output, and effect. A `parameter` pack would make one
-metavariable simultaneously describe parameter declarations, patterns, runtime groups, and branch
-result constraints.
 
 ## 6. `match`
 
@@ -300,17 +266,15 @@ There is no separate `if let` or `while let` grammar in the target language.
 
 ```sc
 pub let for(
+  E: effect,
   Iterable: type,
   Iter: type,
   Item: type,
-  E: effect,
-  Body: type,
 )
   (move iterable: Iterable)
-  (move body: Body): () with(E)
+  (move body: (Item): () with(Break(()), Continue, E)): () with(E)
 where Iterable: core.iter.IntoIterator(IntoIter = Iter),
-      Iter: core.iter.Iterator(Item = Item),
-      Body: PartialFnOnce(Item, (), with(Break(()), Continue, E))
+      Iter: core.iter.Iterator(Item = Item)
 ```
 
 The surface form is:
@@ -359,7 +323,8 @@ if condition { then } else { otherwise }
 if condition { then } else if other { second } else { otherwise }
 
 loop { body }
-while { condition } { body }
+while { condition } do { body }
+do { body } while { condition }
 for iterable { pattern -> body }
 
 match value

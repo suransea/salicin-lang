@@ -370,7 +370,9 @@ impl Analyzer {
                     self.validate_explicit_reference_returns(else_branch, expected, context);
                 }
             }
-            HirExprKind::While { condition, body } => {
+            HirExprKind::While {
+                condition, body, ..
+            } => {
                 self.validate_explicit_reference_returns(condition, expected, context);
                 self.validate_explicit_reference_returns(body, expected, context);
             }

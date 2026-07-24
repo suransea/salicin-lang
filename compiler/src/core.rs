@@ -177,17 +177,21 @@ pub enum LangItemKind {
     EffectCallable,
     Handle,
     Do,
+    DoWhile,
     Try,
     Throw,
     Unsafe,
     Loop,
     While,
+    If,
+    Match,
+    For,
     Iterator,
     IntoIterator,
 }
 
 impl LangItemKind {
-    const ALL: [Self; 68] = [
+    const ALL: [Self; 72] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -249,11 +253,15 @@ impl LangItemKind {
         Self::EffectCallable,
         Self::Handle,
         Self::Do,
+        Self::DoWhile,
         Self::Try,
         Self::Throw,
         Self::Unsafe,
         Self::Loop,
         Self::While,
+        Self::If,
+        Self::Match,
+        Self::For,
         Self::Iterator,
         Self::IntoIterator,
     ];
@@ -321,11 +329,15 @@ impl LangItemKind {
             Self::EffectCallable => "EffectCallable",
             Self::Handle => "Handle",
             Self::Do => "do",
+            Self::DoWhile => "do",
             Self::Try => "try",
             Self::Throw => "throw",
             Self::Unsafe => "unsafe",
             Self::Loop => "loop",
             Self::While => "while",
+            Self::If => "if",
+            Self::Match => "match",
+            Self::For => "for",
             Self::Iterator => "Iterator",
             Self::IntoIterator => "IntoIterator",
         }
@@ -357,9 +369,16 @@ impl LangItemKind {
             | Self::U128
             | Self::USize => "type form",
             Self::BorrowValueForm => "function",
-            Self::Do | Self::Try | Self::Throw | Self::Unsafe | Self::Loop | Self::While => {
-                "function"
-            }
+            Self::Do
+            | Self::DoWhile
+            | Self::Try
+            | Self::Throw
+            | Self::Unsafe
+            | Self::Loop
+            | Self::While
+            | Self::If
+            | Self::Match
+            | Self::For => "function",
             Self::Handle
             | Self::Copy
             | Self::Drop
@@ -459,11 +478,15 @@ impl LangItemKind {
             | Self::EffectCallable
             | Self::Handle
             | Self::Do
+            | Self::DoWhile
             | Self::Try
             | Self::Throw
             | Self::Unsafe
             | Self::Loop
-            | Self::While => None,
+            | Self::While
+            | Self::If
+            | Self::Match
+            | Self::For => None,
             Self::Iterator | Self::IntoIterator => None,
         }
     }
@@ -587,11 +610,15 @@ pub struct LangItems {
     effect_callable: LangItem,
     handle: LangItem,
     do_function: LangItem,
+    do_while_function: LangItem,
     try_function: LangItem,
     throw_function: LangItem,
     unsafe_function: LangItem,
     loop_function: LangItem,
     while_function: LangItem,
+    if_function: LangItem,
+    match_function: LangItem,
+    for_function: LangItem,
     iterator: LangItem,
     into_iterator: LangItem,
 }
@@ -772,6 +799,9 @@ impl LangItems {
     pub const fn do_function(&self) -> &LangItem {
         &self.do_function
     }
+    pub const fn do_while_function(&self) -> &LangItem {
+        &self.do_while_function
+    }
     pub const fn try_function(&self) -> &LangItem {
         &self.try_function
     }
@@ -786,6 +816,15 @@ impl LangItems {
     }
     pub const fn while_function(&self) -> &LangItem {
         &self.while_function
+    }
+    pub const fn if_function(&self) -> &LangItem {
+        &self.if_function
+    }
+    pub const fn match_function(&self) -> &LangItem {
+        &self.match_function
+    }
+    pub const fn for_function(&self) -> &LangItem {
+        &self.for_function
     }
     pub const fn iterator(&self) -> &LangItem {
         &self.iterator
@@ -857,11 +896,15 @@ impl LangItems {
             LangItemKind::EffectCallable => &self.effect_callable,
             LangItemKind::Handle => &self.handle,
             LangItemKind::Do => &self.do_function,
+            LangItemKind::DoWhile => &self.do_while_function,
             LangItemKind::Try => &self.try_function,
             LangItemKind::Throw => &self.throw_function,
             LangItemKind::Unsafe => &self.unsafe_function,
             LangItemKind::Loop => &self.loop_function,
             LangItemKind::While => &self.while_function,
+            LangItemKind::If => &self.if_function,
+            LangItemKind::Match => &self.match_function,
+            LangItemKind::For => &self.for_function,
             LangItemKind::Iterator => &self.iterator,
             LangItemKind::IntoIterator => &self.into_iterator,
         }
@@ -1065,11 +1108,15 @@ impl CoreBundle {
             &mut lang_items.effect_callable,
             &mut lang_items.handle,
             &mut lang_items.do_function,
+            &mut lang_items.do_while_function,
             &mut lang_items.try_function,
             &mut lang_items.throw_function,
             &mut lang_items.unsafe_function,
             &mut lang_items.loop_function,
             &mut lang_items.while_function,
+            &mut lang_items.if_function,
+            &mut lang_items.match_function,
+            &mut lang_items.for_function,
             &mut lang_items.iterator,
             &mut lang_items.into_iterator,
         ] {
@@ -1382,11 +1429,15 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         effect_callable: item(LangItemKind::EffectCallable),
         handle: item(LangItemKind::Handle),
         do_function: item(LangItemKind::Do),
+        do_while_function: item(LangItemKind::DoWhile),
         try_function: item(LangItemKind::Try),
         throw_function: item(LangItemKind::Throw),
         unsafe_function: item(LangItemKind::Unsafe),
         loop_function: item(LangItemKind::Loop),
         while_function: item(LangItemKind::While),
+        if_function: item(LangItemKind::If),
+        match_function: item(LangItemKind::Match),
+        for_function: item(LangItemKind::For),
         iterator: item(LangItemKind::Iterator),
         into_iterator: item(LangItemKind::IntoIterator),
     })
@@ -1437,6 +1488,22 @@ fn item_kind(item: &Item) -> &'static str {
 }
 
 fn item_has_expected_kind(kind: LangItemKind, item: &Item) -> bool {
+    if matches!(kind, LangItemKind::Do | LangItemKind::DoWhile) {
+        let Item::Function(function) = item else {
+            return false;
+        };
+        return match kind {
+            LangItemKind::Do => function.groups.len() == 1,
+            LangItemKind::DoWhile => {
+                matches!(
+                    function.groups.as_slice(),
+                    [_, while_group]
+                        if matches!(while_group.as_slice(), [parameter] if parameter.name == "while")
+                )
+            }
+            _ => unreachable!(),
+        };
+    }
     match kind.expected_kind() {
         "enum" => matches!(item, Item::Enum(_)),
         "struct" => matches!(item, Item::Struct(_)),
@@ -1546,11 +1613,15 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         (LangItemKind::Handle, Item::Trait(definition)) => validate_handle(definition, diagnostics),
         (
             LangItemKind::Do
+            | LangItemKind::DoWhile
             | LangItemKind::Try
             | LangItemKind::Throw
             | LangItemKind::Unsafe
             | LangItemKind::Loop
-            | LangItemKind::While,
+            | LangItemKind::While
+            | LangItemKind::If
+            | LangItemKind::Match
+            | LangItemKind::For,
             Item::Function(function),
         ) => validate_control_function(kind, function, diagnostics),
         (LangItemKind::Iterator, Item::Trait(definition)) => {
@@ -2033,16 +2104,24 @@ fn validate_control_function(
     function: &Function,
     diagnostics: &mut Vec<String>,
 ) {
-    let valid = function.where_predicates.is_empty()
-        && match kind {
-            LangItemKind::Do => valid_do(function),
-            LangItemKind::Try => valid_try(function),
-            LangItemKind::Throw => valid_throw(function),
-            LangItemKind::Unsafe => valid_unsafe(function),
-            LangItemKind::Loop => valid_loop(function),
-            LangItemKind::While => valid_while(function),
-            _ => false,
-        };
+    let valid = match kind {
+        LangItemKind::For => valid_for(function),
+        _ => {
+            function.where_predicates.is_empty()
+                && match kind {
+                    LangItemKind::Do => valid_do(function),
+                    LangItemKind::DoWhile => valid_do_while(function),
+                    LangItemKind::Try => valid_try(function),
+                    LangItemKind::Throw => valid_throw(function),
+                    LangItemKind::Unsafe => valid_unsafe(function),
+                    LangItemKind::Loop => valid_loop(function),
+                    LangItemKind::While => valid_while(function),
+                    LangItemKind::If => valid_if(function),
+                    LangItemKind::Match => valid_match(function),
+                    _ => false,
+                }
+        }
+    };
     if !valid {
         diagnostics.push(format!(
             "lang item `{kind}` has an invalid validated control signature"
@@ -2067,6 +2146,39 @@ fn valid_do(function: &Function) -> bool {
         && function.effects.throws.is_none()
         && function.effects.custom.is_empty()
         && function.body.is_some()
+}
+
+fn valid_do_while(function: &Function) -> bool {
+    let [action_group, while_group] = function.groups.as_slice() else {
+        return false;
+    };
+    let [action] = action_group.as_slice() else {
+        return false;
+    };
+    let [condition] = while_group.as_slice() else {
+        return false;
+    };
+    function.compile_groups
+        == vec![vec![CompileParam {
+            name: "E".to_owned(),
+            kind: CompileParamKind::Effect,
+            default: None,
+        }]]
+        && moved_callable_parameter(
+            action,
+            "action",
+            Type::Unit,
+            loop_body_effects(Type::Unit, "E"),
+        )
+        && moved_callable_parameter(
+            condition,
+            "while",
+            Type::Bool,
+            loop_body_effects(Type::Unit, "E"),
+        )
+        && function.return_type == Some(Type::Unit)
+        && function.effects == effect_parameter("E")
+        && function.body.is_none()
 }
 
 fn valid_try(function: &Function) -> bool {
@@ -2150,7 +2262,12 @@ fn valid_loop(function: &Function) -> bool {
             },
             type_parameter("T"),
         ]]
-        && single_moved_callable(function, "body", Type::Unit, effect_parameter("E"))
+        && single_moved_callable(
+            function,
+            "body",
+            Type::Unit,
+            loop_body_effects(named_type("T"), "E"),
+        )
         && function.return_type == Some(named_type("T"))
         && function.effects.parameters == vec!["E"]
         && !function.effects.unsafe_effect
@@ -2160,13 +2277,13 @@ fn valid_loop(function: &Function) -> bool {
 }
 
 fn valid_while(function: &Function) -> bool {
-    let [condition_group, body_group] = function.groups.as_slice() else {
+    let [condition_group, do_group] = function.groups.as_slice() else {
         return false;
     };
     let [condition] = condition_group.as_slice() else {
         return false;
     };
-    let [body] = body_group.as_slice() else {
+    let [body] = do_group.as_slice() else {
         return false;
     };
     function.compile_groups
@@ -2176,7 +2293,7 @@ fn valid_while(function: &Function) -> bool {
             default: None,
         }]]
         && moved_callable_parameter(condition, "condition", Type::Bool, effect_parameter("E"))
-        && moved_callable_parameter(body, "body", Type::Unit, effect_parameter("E"))
+        && moved_callable_parameter(body, "do", Type::Unit, effect_parameter("E"))
         && function.return_type == Some(Type::Unit)
         && function.effects.parameters == vec!["E"]
         && !function.effects.unsafe_effect
@@ -2185,9 +2302,148 @@ fn valid_while(function: &Function) -> bool {
         && function.body.is_some()
 }
 
+fn valid_if(function: &Function) -> bool {
+    let [condition_group, then_group, else_group] = function.groups.as_slice() else {
+        return false;
+    };
+    let [condition] = condition_group.as_slice() else {
+        return false;
+    };
+    let [then] = then_group.as_slice() else {
+        return false;
+    };
+    let [else_branch] = else_group.as_slice() else {
+        return false;
+    };
+    function.compile_groups
+        == vec![vec![
+            CompileParam {
+                name: "E".to_owned(),
+                kind: CompileParamKind::Effect,
+                default: None,
+            },
+            type_parameter("T"),
+        ]]
+        && condition.name == "condition"
+        && condition.mode == PassMode::Inferred
+        && condition.ty == Type::Bool
+        && moved_callable_parameter(then, "then", named_type("T"), effect_parameter("E"))
+        && moved_callable_parameter(else_branch, "else", named_type("T"), effect_parameter("E"))
+        && function.return_type == Some(named_type("T"))
+        && function.effects == effect_parameter("E")
+        && function.body.is_none()
+}
+
+fn valid_match(function: &Function) -> bool {
+    let [input_group, cases_group] = function.groups.as_slice() else {
+        return false;
+    };
+    let [input] = input_group.as_slice() else {
+        return false;
+    };
+    let [cases] = cases_group.as_slice() else {
+        return false;
+    };
+    function.compile_groups
+        == vec![vec![
+            type_parameter("Input"),
+            type_parameter("Output"),
+            CompileParam {
+                name: "E".to_owned(),
+                kind: CompileParamKind::Effect,
+                default: None,
+            },
+            CompileParam {
+                name: "Cases".to_owned(),
+                kind: CompileParamKind::ParameterPack,
+                default: None,
+            },
+        ]]
+        && input.name == "input"
+        && input.mode == PassMode::Move
+        && input.ty == named_type("Input")
+        && cases.name == "Cases"
+        && cases.mode == PassMode::Inferred
+        && cases.ty
+            == Type::Named(
+                "$parameter$groups$expand".to_owned(),
+                vec![named_type("Cases")],
+            )
+        && function.return_type == Some(named_type("Output"))
+        && function.effects == effect_parameter("E")
+        && function.body.is_none()
+}
+
+fn valid_for(function: &Function) -> bool {
+    let [iterable_group, body_group] = function.groups.as_slice() else {
+        return false;
+    };
+    let [iterable] = iterable_group.as_slice() else {
+        return false;
+    };
+    let [body] = body_group.as_slice() else {
+        return false;
+    };
+    let expected_predicates = vec![
+        crate::ast::WherePredicate {
+            subject: named_type("Iterable"),
+            trait_ref: Type::Named("core.iter.IntoIterator".to_owned(), Vec::new()),
+            associated_types: vec![crate::ast::AssociatedTypeBinding {
+                name: "IntoIter".to_owned(),
+                ty: named_type("Iter"),
+            }],
+        },
+        crate::ast::WherePredicate {
+            subject: named_type("Iter"),
+            trait_ref: Type::Named("core.iter.Iterator".to_owned(), Vec::new()),
+            associated_types: vec![crate::ast::AssociatedTypeBinding {
+                name: "Item".to_owned(),
+                ty: named_type("Item"),
+            }],
+        },
+    ];
+    function.compile_groups
+        == vec![vec![
+            CompileParam {
+                name: "E".to_owned(),
+                kind: CompileParamKind::Effect,
+                default: None,
+            },
+            type_parameter("Iterable"),
+            type_parameter("Iter"),
+            type_parameter("Item"),
+        ]]
+        && iterable.name == "iterable"
+        && iterable.mode == PassMode::Move
+        && iterable.ty == named_type("Iterable")
+        && body.name == "body"
+        && body.mode == PassMode::Move
+        && body.ty
+            == Type::Function {
+                groups: vec![vec![named_type("Item")]],
+                effects: loop_body_effects(Type::Unit, "E"),
+                result: Box::new(Type::Unit),
+            }
+        && function.return_type == Some(Type::Unit)
+        && function.effects == effect_parameter("E")
+        && function.where_predicates == expected_predicates
+        && function.body.is_none()
+}
+
 fn effect_parameter(name: &str) -> crate::ast::FunctionEffects {
     crate::ast::FunctionEffects {
         parameters: vec![name.to_owned()],
+        ..crate::ast::FunctionEffects::default()
+    }
+}
+
+fn loop_body_effects(result: Type, rest: &str) -> crate::ast::FunctionEffects {
+    crate::ast::FunctionEffects {
+        custom: vec![
+            Type::Named("core.control.Break".to_owned(), vec![result]),
+            Type::Named("core.control.Continue".to_owned(), Vec::new()),
+        ],
+        parameters: vec![rest.to_owned()],
         ..crate::ast::FunctionEffects::default()
     }
 }
@@ -2840,11 +3096,15 @@ pub let Shr(Rhs: type) = trait {
                     format!("core::effect::handler::{}", kind.source_name())
                 }
                 LangItemKind::Do
+                | LangItemKind::DoWhile
                 | LangItemKind::Try
                 | LangItemKind::Throw
                 | LangItemKind::Unsafe
                 | LangItemKind::Loop
-                | LangItemKind::While => format!("core::control::{}", kind.source_name()),
+                | LangItemKind::While
+                | LangItemKind::If
+                | LangItemKind::Match
+                | LangItemKind::For => format!("core::control::{}", kind.source_name()),
                 LangItemKind::Iterator | LangItemKind::IntoIterator => {
                     format!("core::iter::{}", kind.source_name())
                 }
@@ -2914,11 +3174,15 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::EffectCallable
                 | LangItemKind::Handle => vec!["effect", "handler"],
                 LangItemKind::Do
+                | LangItemKind::DoWhile
                 | LangItemKind::Try
                 | LangItemKind::Throw
                 | LangItemKind::Unsafe
                 | LangItemKind::Loop
-                | LangItemKind::While => vec!["control"],
+                | LangItemKind::While
+                | LangItemKind::If
+                | LangItemKind::Match
+                | LangItemKind::For => vec!["control"],
                 LangItemKind::Iterator | LangItemKind::IntoIterator => vec!["iter"],
             };
             let mut expected_origin_path = vec!["@core".to_owned()];
@@ -2974,6 +3238,48 @@ pub let Shr(Rhs: type) = trait {
 
     #[test]
     fn rejects_malformed_control_contracts() {
+        for (name, malformed) in [
+            (
+                "do",
+                EDITION_2026_CONTROL.replace(
+                    "  (move while: (): bool with(core.control.Break(()), core.control.Continue, E)): () with(E)",
+                    "  (move until: (): bool with(core.control.Break(()), core.control.Continue, E)): () with(E)",
+                ),
+            ),
+            (
+                "if",
+                EDITION_2026_CONTROL.replace(
+                    "  (condition: bool)\n  (move then: (): T with(E))",
+                    "  (condition: i32)\n  (move then: (): T with(E))",
+                ),
+            ),
+            (
+                "match",
+                EDITION_2026_CONTROL.replace(
+                    "  ...Cases: Output with(E)",
+                    "  (case: Input): Output with(E)",
+                ),
+            ),
+            (
+                "for",
+                EDITION_2026_CONTROL.replace(
+                    "  Iter: core.iter.Iterator(Item = Item)",
+                    "  Iter: core.iter.Iterator",
+                ),
+            ),
+        ] {
+            let modules = edition_2026_test_modules(&[("control", &malformed)]);
+            let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
+            assert!(
+                error
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.contains(&format!("lang item `{name}`"))),
+                "{:?}",
+                error.diagnostics()
+            );
+        }
+
         let malformed = EDITION_2026_CONTROL.replace(
             "pub let unsafe(E: effect, T: type)\n  (move action: (): T with(core.effect.Unsafe, E)): T with(E)",
             "pub let unsafe(E: effect, T: type)\n  (move action: (): T with(E)): T with(E)",

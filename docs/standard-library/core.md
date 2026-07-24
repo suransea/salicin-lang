@@ -240,6 +240,9 @@ not ordinary source-level standard-library functions.
 ```sc
 pub let do(E: effect, T: type)
   (move action: (): T with(E)): T with(E)
+pub let do(E: effect)
+  (move action: (): () with(core.control.Break(()), core.control.Continue, E))
+  (move while: (): bool with(core.control.Break(()), core.control.Continue, E)): () with(E)
 pub let try(F: effect, T: type, E: type)
   (move action: (): T with(core.effect.Throws(E), F)): core.Result(E)(T) with(F)
 pub let throw(Error: type)
@@ -247,12 +250,29 @@ pub let throw(Error: type)
 pub let unsafe(E: effect, T: type)
   (move action: (): T with(core.effect.Unsafe, E)): T with(E)
 pub let loop(E: effect, T: type)
-  (move body: (): () with(E)): T with(E)
+  (move body: (): () with(core.control.Break(T), core.control.Continue, E)): T with(E)
+pub let while(E: effect)
+  (move condition: (): bool with(E))
+  (move do: (): () with(E)): () with(E)
+pub let if(E: effect, T: type)
+  (condition: bool)
+  (move then: (): T with(E))
+  (move else: (): T with(E)): T with(E)
+pub let match(Input: type, Output: type, E: effect, ...Cases: parameters)
+  (move input: Input)
+  ...Cases: Output with(E)
+pub let for(E: effect, Iterable: type, Iter: type, Item: type)
+  (move iterable: Iterable)
+  (move body: (Item): () with(core.control.Break(()), core.control.Continue, E)): () with(E)
+where Iterable: core.iter.IntoIterator(IntoIter = Iter),
+  Iter: core.iter.Iterator(Item = Item)
 ```
 
 Here `try` removes only `Throws(E)`, `unsafe` removes only the `Unsafe` requirement, and both forward
-the remainder row. `throw` introduces the standard `Throws(Error)` requirement, while `do` and
-`loop` forward the whole row. The source definitions are intentionally simple:
+the remainder row. `throw` introduces the standard `Throws(Error)` requirement. `loop` and `for`
+handle their declared `Break`/`Continue` effects while forwarding `E`; `if` and `match` evaluate
+only the selected lazy branch or case. The source definitions that do not require intrinsic
+lowering remain intentionally simple:
 
 ```sc
 pub let do(E: effect, T: type)

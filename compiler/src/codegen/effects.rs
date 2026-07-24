@@ -800,7 +800,9 @@ pub(super) fn do_block_requires_function_boundary(expression: &Expr) -> bool {
                     .as_deref()
                     .is_some_and(do_block_requires_function_boundary)
         }
-        Expr::While { condition, body } => {
+        Expr::While {
+            condition, body, ..
+        } => {
             do_block_requires_function_boundary(condition)
                 || do_block_requires_function_boundary(body)
         }

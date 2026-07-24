@@ -453,7 +453,9 @@ pub(super) fn collect_internal_recursion_tokens(expression: &Expr, tokens: &mut 
                 collect_internal_recursion_tokens(value, tokens);
             }
         }
-        Expr::While { condition, body } => {
+        Expr::While {
+            condition, body, ..
+        } => {
             collect_internal_recursion_tokens(condition, tokens);
             collect_internal_recursion_tokens(body, tokens);
         }
@@ -683,7 +685,9 @@ pub(super) fn handler_expression_children(expression: &Expr) -> Vec<&Expr> {
         Expr::Return(value) | Expr::Break(value) => {
             value.iter().map(|value| value.as_ref()).collect()
         }
-        Expr::While { condition, body } => vec![condition, body],
+        Expr::While {
+            condition, body, ..
+        } => vec![condition, body],
         Expr::Match { scrutinee, arms } => {
             let mut children = vec![scrutinee.as_ref()];
             for arm in arms {
@@ -938,7 +942,9 @@ pub(super) fn rewrite_handler_chain_wrappers(
                 rewrite_handler_chain_wrappers(value, canonical, success_variant, residual_variant);
             }
         }
-        Expr::While { condition, body } => {
+        Expr::While {
+            condition, body, ..
+        } => {
             rewrite_handler_chain_wrappers(condition, canonical, success_variant, residual_variant);
             rewrite_handler_chain_wrappers(body, canonical, success_variant, residual_variant);
         }
@@ -2258,7 +2264,9 @@ impl Analyzer {
                     }),
                 )
             }
-            Expr::While { condition, body } => {
+            Expr::While {
+                condition, body, ..
+            } => {
                 self.transform_handler_loop(Some(*condition), *body, handler, resume, continuation)
             }
             Expr::Loop { body } => {

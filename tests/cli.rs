@@ -1968,6 +1968,7 @@ fn m1_loops_and_arrays_run_with_expected_result() {
         "while_mutation.sc",
         "while_let.sc",
         "continue.sc",
+        "do_while_continue.sc",
         "continue_cleanup.sc",
         "loop_break_value.sc",
         "fixed_array_index.sc",

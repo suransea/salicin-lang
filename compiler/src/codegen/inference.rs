@@ -991,6 +991,13 @@ impl Analyzer {
                         ));
                         return None;
                     }
+                    CompileParamKind::ParameterPack => {
+                        self.error(format!(
+                            "explicit parameter-group pack argument `{}` in `{owner}` is not supported; it is inferred from the trailing case groups",
+                            parameter.name
+                        ));
+                        return None;
+                    }
                     CompileParamKind::TypeConstructor { parameter_count } => {
                         let constructor = self.type_constructor_argument_from_expr(
                             &argument.value,

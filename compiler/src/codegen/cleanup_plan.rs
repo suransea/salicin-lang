@@ -1548,8 +1548,16 @@ impl<'a> HirCleanupPlanner<'a> {
                 }
                 None
             }
-            HirExprKind::While { condition, body } => {
-                self.walk_while(condition, body, cursor, result_use)?
+            HirExprKind::While {
+                condition,
+                body,
+                post_test,
+            } => {
+                if *post_test {
+                    self.walk_do_while(condition, body, cursor, result_use)?
+                } else {
+                    self.walk_while(condition, body, cursor, result_use)?
+                }
             }
             HirExprKind::Loop { body } => self.walk_loop(body, cursor, result_use)?,
             HirExprKind::Break(value) => {
@@ -1921,6 +1929,99 @@ impl<'a> HirCleanupPlanner<'a> {
             self.terminate(false_exit, CleanupTerminator::Unreachable)?;
         }
         let frame = self.loops.pop().expect("while loop frame exists");
+        if condition_end.is_some() || frame.saw_break {
+            Ok(Some(CleanupCursor {
+                block: after,
+                scope: cursor.scope,
+            }))
+        } else {
+            self.terminate(after, CleanupTerminator::Unreachable)?;
+            Ok(None)
+        }
+    }
+
+    fn walk_do_while(
+        &mut self,
+        condition: &HirExpr,
+        body: &HirExpr,
+        cursor: CleanupCursor,
+        result_use: ResultUse,
+    ) -> Result<Option<CleanupCursor>, Diagnostic> {
+        let loop_scope = self.new_scope(cursor.scope, CleanupScopeKind::Loop)?;
+        let condition_scope = self.new_scope(loop_scope, CleanupScopeKind::Temporary)?;
+        let body_scope = self.new_scope(loop_scope, CleanupScopeKind::Temporary)?;
+        let condition_block = self.new_block(condition_scope)?;
+        let body_block = self.new_block(body_scope)?;
+        let false_exit = self.new_block(loop_scope)?;
+        let after = self.new_block(cursor.scope)?;
+        self.terminate(
+            cursor.block,
+            CleanupTerminator::Goto(CleanupEdge::new(body_block, Vec::new())),
+        )?;
+        self.loops.push(CleanupLoopFrame {
+            break_target: after,
+            continue_target: condition_block,
+            exit_scope: cursor.scope,
+            continue_scope: loop_scope,
+            result_destination: match &result_use {
+                ResultUse::Store(destination) => Some(destination.clone()),
+                ResultUse::Discard => None,
+            },
+            saw_break: false,
+        });
+        if let Some(body_end) = self.walk_expr(
+            body,
+            CleanupCursor {
+                block: body_block,
+                scope: body_scope,
+            },
+            ResultUse::Discard,
+        )? {
+            self.goto_exiting(body_end, condition_block, loop_scope)?;
+        }
+        let condition_cursor = CleanupCursor {
+            block: condition_block,
+            scope: condition_scope,
+        };
+        let (condition_local, condition_path) =
+            self.prepare_temporary(condition_cursor, &condition.ty)?;
+        let condition_destination = CleanupDestination {
+            place: CleanupPlace::local(condition_local),
+            path: condition_path,
+        };
+        let condition_end = self.walk_expr(
+            condition,
+            condition_cursor,
+            ResultUse::Store(condition_destination),
+        )?;
+        if let Some(condition_end) = condition_end {
+            self.terminate(
+                condition_end.block,
+                CleanupTerminator::Branch {
+                    condition: condition_local,
+                    then_edge: CleanupEdge::new(body_block, vec![condition_scope]),
+                    else_edge: CleanupEdge::new(false_exit, vec![condition_scope]),
+                },
+            )?;
+            self.initialize_result(
+                CleanupCursor {
+                    block: false_exit,
+                    scope: loop_scope,
+                },
+                &result_use,
+            )?;
+            self.goto_exiting(
+                CleanupCursor {
+                    block: false_exit,
+                    scope: loop_scope,
+                },
+                after,
+                cursor.scope,
+            )?;
+        } else {
+            self.terminate(false_exit, CleanupTerminator::Unreachable)?;
+        }
+        let frame = self.loops.pop().expect("do-while loop frame exists");
         if condition_end.is_some() || frame.saw_break {
             Ok(Some(CleanupCursor {
                 block: after,

@@ -268,8 +268,15 @@ pub enum CompileParamKind {
     Passing,
     Effect,
     Parameters,
-    TypeConstructor { parameter_count: usize },
-    EffectConstructor { parameter_count: usize },
+    /// A variadic pack of `parameters` schemas used as repeated runtime groups
+    /// by compiler-validated control contracts such as `match`.
+    ParameterPack,
+    TypeConstructor {
+        parameter_count: usize,
+    },
+    EffectConstructor {
+        parameter_count: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -450,6 +457,7 @@ pub enum Expr {
     While {
         condition: Box<Expr>,
         body: Box<Expr>,
+        post_test: bool,
     },
     Loop {
         body: Box<Expr>,

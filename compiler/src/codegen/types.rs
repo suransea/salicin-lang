@@ -731,6 +731,7 @@ impl Analyzer {
             }
             CompileParamKind::Region
             | CompileParamKind::Parameters
+            | CompileParamKind::ParameterPack
             | CompileParamKind::EffectConstructor { .. } => None,
         }
     }
@@ -758,6 +759,7 @@ impl Analyzer {
             | CompileParamKind::Effect => self.probe_source_ty(source),
             CompileParamKind::Region
             | CompileParamKind::Parameters
+            | CompileParamKind::ParameterPack
             | CompileParamKind::EffectConstructor { .. } => None,
         }
     }
@@ -923,6 +925,7 @@ impl Analyzer {
             }
             CompileParamKind::Region => false,
             CompileParamKind::Parameters => false,
+            CompileParamKind::ParameterPack => false,
             CompileParamKind::EffectConstructor { .. } => false,
         }
     }

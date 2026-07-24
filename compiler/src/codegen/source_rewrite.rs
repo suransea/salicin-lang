@@ -524,7 +524,9 @@ fn normalize_expr_labeled_type_arguments(
                 normalize_expr_labeled_type_arguments(value, constructor_parameters, diagnostics);
             }
         }
-        Expr::While { condition, body } => {
+        Expr::While {
+            condition, body, ..
+        } => {
             normalize_expr_labeled_type_arguments(condition, constructor_parameters, diagnostics);
             normalize_expr_labeled_type_arguments(body, constructor_parameters, diagnostics);
         }
@@ -1082,7 +1084,9 @@ fn expand_expr_aliases(
                 expand_expr_aliases(value, aliases, diagnostics);
             }
         }
-        Expr::While { condition, body } => {
+        Expr::While {
+            condition, body, ..
+        } => {
             expand_expr_aliases(condition, aliases, diagnostics);
             expand_expr_aliases(body, aliases, diagnostics);
         }
@@ -1379,7 +1383,9 @@ pub(super) fn substitute_self_expression_target(expression: &mut Expr, target: &
                 substitute_self_expression_target(value, target);
             }
         }
-        Expr::While { condition, body } => {
+        Expr::While {
+            condition, body, ..
+        } => {
             substitute_self_expression_target(condition, target);
             substitute_self_expression_target(body, target);
         }
@@ -1532,7 +1538,9 @@ pub(super) fn rewrite_abstract_self_qualified_methods(expression: &mut Expr) {
                 rewrite_abstract_self_qualified_methods(value);
             }
         }
-        Expr::While { condition, body } => {
+        Expr::While {
+            condition, body, ..
+        } => {
             rewrite_abstract_self_qualified_methods(condition);
             rewrite_abstract_self_qualified_methods(body);
         }
@@ -1687,7 +1695,9 @@ pub(super) fn substitute_expr_types(expression: &mut Expr, substitutions: &HashM
                 substitute_expr_types(value, substitutions);
             }
         }
-        Expr::While { condition, body } => {
+        Expr::While {
+            condition, body, ..
+        } => {
             substitute_expr_types(condition, substitutions);
             substitute_expr_types(body, substitutions);
         }
@@ -2044,7 +2054,9 @@ pub(super) fn rewrite_handler_returns(expression: &mut Expr, return_name: &str) 
                 rewrite_handler_returns(else_branch, return_name);
             }
         }
-        Expr::While { condition, body } => {
+        Expr::While {
+            condition, body, ..
+        } => {
             rewrite_handler_returns(condition, return_name);
             rewrite_handler_returns(body, return_name);
         }
@@ -2174,7 +2186,9 @@ pub(super) fn rewrite_static_function_values(
                 rewrite_static_function_values(value, replacements);
             }
         }
-        Expr::While { condition, body } => {
+        Expr::While {
+            condition, body, ..
+        } => {
             rewrite_static_function_values(condition, replacements);
             rewrite_static_function_values(body, replacements);
         }
@@ -2279,7 +2293,9 @@ pub(super) fn visit_expr_mut(expression: &mut Expr, visitor: &mut impl FnMut(&mu
                 visit_expr_mut(value, visitor);
             }
         }
-        Expr::While { condition, body } => {
+        Expr::While {
+            condition, body, ..
+        } => {
             visit_expr_mut(condition, visitor);
             visit_expr_mut(body, visitor);
         }
@@ -2481,7 +2497,9 @@ fn hygienic_rename_expr(
                 hygienic_rename_expr(value, prefix, next, scopes);
             }
         }
-        Expr::While { condition, body } => {
+        Expr::While {
+            condition, body, ..
+        } => {
             hygienic_rename_expr(condition, prefix, next, scopes);
             hygienic_rename_expr(body, prefix, next, scopes);
         }
@@ -2705,7 +2723,9 @@ fn expression_mentions_any_name(expression: &Expr, names: &HashSet<String>) -> b
         Expr::Return(value) | Expr::Break(value) => value
             .as_deref()
             .is_some_and(|value| expression_mentions_any_name(value, names)),
-        Expr::While { condition, body } => {
+        Expr::While {
+            condition, body, ..
+        } => {
             expression_mentions_any_name(condition, names)
                 || expression_mentions_any_name(body, names)
         }

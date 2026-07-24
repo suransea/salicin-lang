@@ -14,6 +14,7 @@ impl Analyzer {
         &mut self,
         condition: &Expr,
         body: &Expr,
+        post_test: bool,
         context: &mut LowerCtx,
     ) -> HirExpr {
         let entry_flow = context.flow.clone();
@@ -26,10 +27,31 @@ impl Analyzer {
             continue_flows: Vec::new(),
         });
 
-        let condition = self.lower_expr(condition, Some(&Ty::Bool), context);
-        let condition_flow = context.flow.clone();
-        let body = self.lower_expr(body, Some(&Ty::Unit), context);
-        let backedge_flow = context.flow.clone();
+        let (condition, body, condition_flow, backedge_flow) = if post_test {
+            let body = self.lower_expr(body, Some(&Ty::Unit), context);
+            let body_flow = context.flow.clone();
+            let continue_flows = context
+                .loops
+                .last()
+                .expect("while frame")
+                .continue_flows
+                .clone();
+            context.flow = FlowState::join(
+                &continue_flows
+                    .into_iter()
+                    .chain(body_flow.reachable.then_some(body_flow))
+                    .collect::<Vec<_>>(),
+            );
+            let condition = self.lower_expr(condition, Some(&Ty::Bool), context);
+            let condition_flow = context.flow.clone();
+            (condition, body, condition_flow.clone(), condition_flow)
+        } else {
+            let condition = self.lower_expr(condition, Some(&Ty::Bool), context);
+            let condition_flow = context.flow.clone();
+            let body = self.lower_expr(body, Some(&Ty::Unit), context);
+            let backedge_flow = context.flow.clone();
+            (condition, body, condition_flow, backedge_flow)
+        };
         let frame = context.loops.pop().expect("while frame");
 
         let mut backedge_flows = frame.continue_flows;
@@ -48,6 +70,7 @@ impl Analyzer {
             kind: HirExprKind::While {
                 condition: Box::new(condition),
                 body: Box::new(body),
+                post_test,
             },
         }
     }

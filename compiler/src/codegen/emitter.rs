@@ -2789,7 +2789,11 @@ impl<'a> FunctionEmitter<'a> {
                 }
                 Ok(Operand::never())
             }
-            HirExprKind::While { condition, body } => self.emit_while(condition, body),
+            HirExprKind::While {
+                condition,
+                body,
+                post_test,
+            } => self.emit_while(condition, body, *post_test),
             HirExprKind::Loop { body } => self.emit_loop(expression, body),
             HirExprKind::Break(value) => self.emit_break(value.as_deref()),
             HirExprKind::Continue => self.emit_continue(),
@@ -2952,11 +2956,21 @@ impl<'a> FunctionEmitter<'a> {
         Ok(())
     }
 
-    fn emit_while(&mut self, condition: &HirExpr, body: &HirExpr) -> Result<Operand, Diagnostic> {
+    fn emit_while(
+        &mut self,
+        condition: &HirExpr,
+        body: &HirExpr,
+        post_test: bool,
+    ) -> Result<Operand, Diagnostic> {
         let condition_label = self.fresh_label("while.condition");
         let body_label = self.fresh_label("while.body");
         let end_label = self.fresh_label("while.end");
-        self.terminate(format!("br label %{condition_label}"));
+        let entry_label = if post_test {
+            &body_label
+        } else {
+            &condition_label
+        };
+        self.terminate(format!("br label %{entry_label}"));
         self.loops.push(EmitLoopTarget {
             break_label: end_label.clone(),
             continue_label: condition_label.clone(),
@@ -2964,17 +2978,33 @@ impl<'a> FunctionEmitter<'a> {
             cleanup_depth: self.drop_slots.len(),
         });
 
-        self.start_block(&condition_label);
-        let condition = self.emit_expr(condition)?;
-        if !self.terminated {
-            self.terminate(format!(
-                "br i1 {}, label %{body_label}, label %{end_label}",
-                condition.value()?
-            ));
+        if post_test {
             self.start_block(&body_label);
             self.emit_expr(body)?;
             if !self.terminated {
                 self.terminate(format!("br label %{condition_label}"));
+            }
+            self.start_block(&condition_label);
+            let condition = self.emit_expr(condition)?;
+            if !self.terminated {
+                self.terminate(format!(
+                    "br i1 {}, label %{body_label}, label %{end_label}",
+                    condition.value()?
+                ));
+            }
+        } else {
+            self.start_block(&condition_label);
+            let condition = self.emit_expr(condition)?;
+            if !self.terminated {
+                self.terminate(format!(
+                    "br i1 {}, label %{body_label}, label %{end_label}",
+                    condition.value()?
+                ));
+                self.start_block(&body_label);
+                self.emit_expr(body)?;
+                if !self.terminated {
+                    self.terminate(format!("br label %{condition_label}"));
+                }
             }
         }
 

@@ -626,6 +626,7 @@ pub(super) enum HirExprKind {
     While {
         condition: Box<HirExpr>,
         body: Box<HirExpr>,
+        post_test: bool,
     },
     Loop {
         body: Box<HirExpr>,

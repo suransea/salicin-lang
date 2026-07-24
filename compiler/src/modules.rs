@@ -441,7 +441,7 @@ const CORE_DOMAIN_EXPORTS: &[&str] = &[
 ];
 const CORE_CONTROL_EXPORTS: &[&str] = &[
     "Break", "Continue", "Return", "break", "continue", "return", "do", "try", "throw", "unsafe",
-    "loop", "while",
+    "loop", "while", "if", "match", "for",
 ];
 const CORE_ITER_EXPORTS: &[&str] = &["Iterator", "IntoIterator"];
 const CORE_ALGEBRA_EXPORTS: &[&str] = &["Semigroup", "Monoid"];
@@ -3176,7 +3176,9 @@ impl Resolver {
                     self.rewrite_expr(value, context, type_scope, value_scope);
                 }
             }
-            Expr::While { condition, body } => {
+            Expr::While {
+                condition, body, ..
+            } => {
                 self.rewrite_expr(condition, context, type_scope, value_scope);
                 self.rewrite_expr(body, context, type_scope, value_scope);
             }
@@ -5343,7 +5345,9 @@ let main(): i32 = { Option {} }
                         visit(value, names);
                     }
                 }
-                Expr::While { condition, body } => {
+                Expr::While {
+                    condition, body, ..
+                } => {
                     visit(condition, names);
                     visit(body, names);
                 }

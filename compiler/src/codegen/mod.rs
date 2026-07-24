@@ -434,7 +434,16 @@ impl Analyzer {
                     if origin.package != PackageId::CORE.0
                         && matches!(
                             source_name.rsplit("::").next(),
-                            Some("do" | "try" | "throw" | "unsafe" | "loop")
+                            Some(
+                                "do" | "try"
+                                    | "throw"
+                                    | "unsafe"
+                                    | "loop"
+                                    | "while"
+                                    | "if"
+                                    | "match"
+                                    | "for"
+                            )
                         )
                     {
                         self.error(format!(
@@ -1643,6 +1652,12 @@ impl Analyzer {
                         ));
                         false
                     }
+                    CompileParamKind::ParameterPack => {
+                        self.error(format!(
+                            "parameter-group pack `{name}` in `{trait_name}.{member_name}` can only be used through a complete repeated-group expansion"
+                        ));
+                        false
+                    }
                     CompileParamKind::Access => {
                         self.error(format!(
                             "access parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
@@ -2723,6 +2738,9 @@ impl Analyzer {
                         key.trait_ref.name
                     ));
                     valid = false;
+                }
+                CompileParamKind::ParameterPack => {
+                    unreachable!("associated types cannot be parameter-group packs")
                 }
                 CompileParamKind::EffectConstructor { .. } => {
                     self.error(format!(
@@ -4179,6 +4197,9 @@ impl Analyzer {
                     valid = false;
                     continue;
                 }
+                CompileParamKind::ParameterPack => {
+                    unreachable!("associated types cannot be parameter-group packs")
+                }
                 CompileParamKind::EffectConstructor { .. } => {
                     self.error(format!(
                         "effect associated constructor `{trait_name}.{name}` implementations are not supported yet"
@@ -4290,6 +4311,9 @@ impl Analyzer {
                         "associated parameter schema `{trait_name}.{associated}` implementations are compiler-derived only"
                     ));
                     valid = false;
+                }
+                CompileParamKind::ParameterPack => {
+                    unreachable!("associated types cannot be parameter-group packs")
                 }
                 CompileParamKind::EffectConstructor { .. } => {
                     self.error(format!(
@@ -5043,14 +5067,25 @@ impl Analyzer {
             if template.body.is_none()
                 && [
                     LangItemKind::Do,
+                    LangItemKind::DoWhile,
                     LangItemKind::Try,
                     LangItemKind::Throw,
                     LangItemKind::Unsafe,
                     LangItemKind::Loop,
+                    LangItemKind::If,
+                    LangItemKind::Match,
+                    LangItemKind::For,
                     LangItemKind::BorrowValueForm,
                 ]
                 .into_iter()
-                .any(|kind| self.lang_item_name(kind) == template_name)
+                .any(|kind| {
+                    let lang_item_name = self.lang_item_name(kind);
+                    lang_item_name == template_name
+                        || overloaded_function_name(
+                            lang_item_name,
+                            &function_parameter_labels(&template),
+                        ) == template_name
+                })
             {
                 continue;
             }
@@ -5097,6 +5132,7 @@ impl Analyzer {
                     // concrete instance is lowered again after substituting its selected row.
                     CompileParamKind::Effect => EFFECT_UNSAFE_MARKER.to_owned(),
                     CompileParamKind::Parameters => continue,
+                    CompileParamKind::ParameterPack => continue,
                     CompileParamKind::Region => continue,
                     CompileParamKind::TypeConstructor { .. }
                     | CompileParamKind::EffectConstructor { .. } => unreachable!(
@@ -7473,7 +7509,11 @@ impl Analyzer {
                     kind: HirExprKind::Return(value),
                 }
             }
-            Expr::While { condition, body } => self.lower_while(condition, body, context),
+            Expr::While {
+                condition,
+                body,
+                post_test,
+            } => self.lower_while(condition, body, *post_test, context),
             Expr::Loop { body } => self.lower_loop(body, expected, context),
             Expr::Break(value) => self.lower_break(value.as_deref(), context),
             Expr::Continue => self.lower_continue(context),
@@ -8441,7 +8481,9 @@ impl Analyzer {
                 *bound = saved;
                 valid
             }
-            Expr::While { condition, body } => {
+            Expr::While {
+                condition, body, ..
+            } => {
                 self.scan_simple_closure_captures(condition, bound, outer, captures)
                     & self.scan_simple_closure_captures(body, bound, outer, captures)
             }

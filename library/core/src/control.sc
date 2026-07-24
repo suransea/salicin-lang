@@ -45,6 +45,11 @@ pub let do(E: effect, T: type)
   action()
 }
 
+/// Runs `action` once, then repeats it while the lazy condition remains true.
+pub let do(E: effect)
+  (move action: (): () with(core.control.Break(()), core.control.Continue, E))
+  (move while: (): bool with(core.control.Break(()), core.control.Continue, E)): () with(E)
+
 /// Handles `Throws(E)` from `action` and returns a `Result`.
 pub let try(F: effect, T: type, E: type)
   (move action: (): T with(core.effect.Throws(E), F)): core.Result(E)(T) with(F) = {
@@ -72,17 +77,40 @@ pub let unsafe(E: effect, T: type)
 
 /// Repeats `body` indefinitely until control exits through another construct.
 pub let loop(E: effect, T: type)
-  (move body: (): () with(E)): T with(E)
+  (move body: (): () with(core.control.Break(T), core.control.Continue, E)): T with(E)
 
 /// Repeats `body` while the lazy condition remains true.
 pub let while(E: effect)
   (move condition: (): bool with(E))
-  (move body: (): () with(E)): () with(E) = {
+  (move do: (): () with(E)): () with(E) = {
   loop {
     if condition() {
-      body()
+      do()
     } else {
       break
     }
   }
 }
+
+/// Selects one of two lazy branches from an eager boolean condition.
+pub let if(E: effect, T: type)
+  (condition: bool)
+  (move then: (): T with(E))
+  (move else: (): T with(E)): T with(E)
+
+/// Selects the first matching case parameter group.
+pub let match(
+  Input: type,
+  Output: type,
+  E: effect,
+  ...Cases: parameters,
+)
+  (move input: Input)
+  ...Cases: Output with(E)
+
+/// Iterates through `iterable`, passing each item to the lazy body.
+pub let for(E: effect, Iterable: type, Iter: type, Item: type)
+  (move iterable: Iterable)
+  (move body: (Item): () with(core.control.Break(()), core.control.Continue, E)): () with(E)
+where Iterable: core.iter.IntoIterator(IntoIter = Iter),
+  Iter: core.iter.Iterator(Item = Item)

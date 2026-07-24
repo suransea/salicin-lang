@@ -130,9 +130,10 @@ constructor_kind = compile_parameter_group,
   还可声明无函数体的 operation requirements。这些声明向 `effect` domain 引入成员。旧的
   `(effect): T`、`T(effect)` 与 `T ! effect` 都不属于语法。
 - 声明右侧的 `domain` 同样是上下文词，用于声明编译期参数域。无 body 的 `domain` 是开放域；
-  `domain { ... }` 是封闭域。标准 `type`、`region`、`effect`、`parameters`、`access` 与 `passing` domain 位于
+  `domain { ... }` 是封闭域。标准 `type`、`region`、`effect`、`parameters`、`access`
+  与 `passing` domain 位于
   `core.domains`；effect 身份位于 `core.effect`；控制 lang item 可在声明名位置使用 `do`、`try`、
-  `unsafe`、`loop`。
+  `unsafe`、`loop`、`while`、`if`、`match`、`for`。
 - 声明右侧的 `type` 声明新的不透明名义类型，例如 `pub let i32 = type`。可选的封闭值集合
   声明编译器表示的全部合法值，例如 `pub let bool = type { false, true }`。它不同于
   `let Alias: type = Target` 透明别名；只有经过验证的 core primitive lang item 才获得编译器原生布局。
@@ -171,6 +172,8 @@ access_or_region = IDENT | "shared" | "mut" | REGION ;
 `IDENT` 就是参数名。这是上下文语法，不把 `passing`、`auto` 或参数名加入全局保留字集合。
 `(...move args: P)` 把编译期 `parameters` schema 展开为完整的一个运行时参数组；首版要求该
 展开独占参数组。关联 `parameters` declaration 可由编译器派生，不能作为普通运行时类型使用。
+核心控制契约还可用 `...Cases: parameters` 声明运行时参数组 schema 包，并在普通参数组之后以裸
+`...Cases` 展开为多个参数组；这一形式仅用于经过验证的 variadic control intrinsic。
 
 一个编译期参数组只含 `T: type`、`A: access`、`R: region` 等编译期参数，并位于所有运行时参数组之前；同一组
 不能混合编译期和运行时参数。忽略开头的编译期组后，实例方法的 `self` 独占第一个运行时组，
@@ -374,7 +377,8 @@ named_trailing_closure = IDENT, [ ":" ], closure_literal ;
 多个位置或具名尾随闭包。`f(x) {} {}` 是 `Call(Call(Call(f,[x]),[{}]),[{}])`，
 `f(x) label {}` 的最后一组则包含标签为 `label` 的闭包参数。普通名称后的 `{}` 仍优先解释为
 结构体字面量，因此无显式调用组的通用调用写作 `f() {}`；经过验证的控制形式可以提供更短写法，
-例如 `if condition { then } { else }` 与 `while { condition } { body }`。
+例如 `if condition { then } { else }`、`while { condition } do { body }`
+与 `do { body } while { condition }`。
 
 若调用至少有一个立即求值的首参数并紧跟尾闭包，则该单参数组可省略括号：
 `f value { body }` 等价于 `f(value)({ body })`。复杂首参数按普通表达式优先级解析到第一个

@@ -557,7 +557,9 @@ impl Analyzer {
                         )
                     })
             }
-            Expr::While { condition, body } => {
+            Expr::While {
+                condition, body, ..
+            } => {
                 self.expression_uses_standard_throws_identity(condition, identity, context)
                     || self.expression_uses_standard_throws_identity(body, identity, context)
             }
@@ -698,7 +700,9 @@ impl Analyzer {
                         self.try_body_uses_dedicated_throws_call(else_branch, context)
                     })
             }
-            Expr::While { condition, body } => {
+            Expr::While {
+                condition, body, ..
+            } => {
                 self.try_body_uses_dedicated_throws_call(condition, context)
                     || self.try_body_uses_dedicated_throws_call(body, context)
             }
@@ -1349,7 +1353,9 @@ impl Analyzer {
                     self.collect_escaping_throws(else_branch, context, errors);
                 }
             }
-            Expr::While { condition, body } => {
+            Expr::While {
+                condition, body, ..
+            } => {
                 self.collect_escaping_throws(condition, context, errors);
                 self.collect_escaping_throws(body, context, errors);
             }

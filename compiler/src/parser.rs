@@ -955,9 +955,33 @@ impl Parser {
             }
             self.take_newlines_if_followed_by(&[
                 TokenKind::LParen,
+                TokenKind::Ellipsis,
                 TokenKind::Colon,
                 TokenKind::Equal,
             ]);
+        }
+
+        if self.take(&TokenKind::Ellipsis) {
+            let pack = self.expect_ident("a repeated parameter-group pack name")?;
+            let declared = compile_groups.iter().flatten().any(|parameter| {
+                parameter.name == pack && parameter.kind == CompileParamKind::ParameterPack
+            });
+            if !declared {
+                return Err(self.error_here(format!(
+                    "repeated runtime group `{pack}` requires a preceding `...{pack}: parameters` declaration"
+                )));
+            }
+            runtime_groups.push(vec![Param {
+                mode: PassMode::Inferred,
+                access: None,
+                passing: None,
+                region: None,
+                name: pack.clone(),
+                ty: Type::Named(
+                    "$parameter$groups$expand".to_owned(),
+                    vec![Type::Named(pack, Vec::new())],
+                ),
+            }]);
         }
 
         Ok((compile_groups, runtime_groups))
@@ -967,10 +991,22 @@ impl Parser {
         self.at(&TokenKind::LParen)
             && matches!(
                 self.tokens.get(self.index + 1).map(|token| &token.kind),
-                Some(TokenKind::Ident(_)) | Some(TokenKind::RegionName(_))
+                Some(TokenKind::Ident(_))
+                    | Some(TokenKind::RegionName(_))
+                    | Some(TokenKind::Ellipsis)
             )
-            && self.at_offset(2, &TokenKind::Colon)
-            && self.compile_parameter_kind_starts_at(3)
+            && if self.at_offset(1, &TokenKind::Ellipsis) {
+                matches!(
+                    self.tokens.get(self.index + 2).map(|token| &token.kind),
+                    Some(TokenKind::Ident(_))
+                ) && self.at_offset(3, &TokenKind::Colon)
+                    && matches!(
+                        self.tokens.get(self.index + 4).map(|token| &token.kind),
+                        Some(TokenKind::Ident(kind)) if kind == "parameters"
+                    )
+            } else {
+                self.at_offset(2, &TokenKind::Colon) && self.compile_parameter_kind_starts_at(3)
+            }
     }
 
     fn current_starts_compile_parameter(&self) -> bool {
@@ -1199,6 +1235,25 @@ impl Parser {
         let mut params = Vec::new();
 
         loop {
+            let variadic = self.take(&TokenKind::Ellipsis);
+            if variadic {
+                let name = self.expect_ident("a parameter-pack name")?;
+                self.expect(&TokenKind::Colon, "`:` after parameter-pack name")?;
+                if !matches!(&self.current().kind, TokenKind::Ident(kind) if kind == "parameters") {
+                    return Err(self.error_here(
+                        "`...` compile-time packs currently require kind `parameters`",
+                    ));
+                }
+                self.advance();
+                params.push(CompileParam {
+                    name,
+                    kind: CompileParamKind::ParameterPack,
+                    default: None,
+                });
+                self.take(&TokenKind::Comma);
+                self.expect(&TokenKind::RParen, "`)` after parameter pack")?;
+                break;
+            }
             if !self.current_starts_compile_parameter() {
                 return Err(self.error_here(
                     "compile-time and runtime parameters cannot be mixed in one group",
@@ -1271,6 +1326,9 @@ impl Parser {
             CompileParamKind::Parameters => {
                 return Err(self
                     .error_here("defaults for parameter-schema parameters are not supported yet"));
+            }
+            CompileParamKind::ParameterPack => {
+                return Err(self.error_here("parameter packs cannot have defaults"));
             }
             CompileParamKind::Region => {
                 let token = self.current().clone();
@@ -2981,18 +3039,10 @@ impl Parser {
     }
 
     fn named_trailing_closure_follows(&self) -> bool {
-        matches!(
-            (
-                self.tokens.get(self.index).map(|token| &token.kind),
-                self.tokens.get(self.index + 1).map(|token| &token.kind),
-                self.tokens.get(self.index + 2).map(|token| &token.kind),
-            ),
-            (
-                Some(TokenKind::Ident(_)),
-                Some(TokenKind::Colon),
-                Some(TokenKind::LBrace)
-            )
-        )
+        self.trailing_label_at(self.index)
+            .is_some_and(|label| label != "match")
+            && self.at_offset(1, &TokenKind::Colon)
+            && self.at_offset(2, &TokenKind::LBrace)
     }
 
     fn colonless_named_trailing_closure_follows(&self) -> bool {
@@ -3016,7 +3066,9 @@ impl Parser {
     fn trailing_label_at(&self, index: usize) -> Option<String> {
         match self.tokens.get(index).map(|token| &token.kind) {
             Some(TokenKind::Ident(label)) => Some(label.clone()),
+            Some(TokenKind::Do) => Some("do".to_owned()),
             Some(TokenKind::Else) => Some("else".to_owned()),
+            Some(TokenKind::While) => Some("while".to_owned()),
             _ => None,
         }
     }
@@ -3130,9 +3182,7 @@ impl Parser {
                 if name == "do" && self.at_offset(1, &TokenKind::LBrace) =>
             {
                 self.advance();
-                Ok(Expr::DoBlock {
-                    body: Box::new(self.block()?),
-                })
+                self.do_expression()
             }
             TokenKind::Ident(ref name)
                 if name == "try" && self.at_offset(1, &TokenKind::LBrace) =>
@@ -3175,6 +3225,12 @@ impl Parser {
                 self.return_expression(allow_trailing_closure)
             }
             TokenKind::Ident(ref name) if name == "if" => self.if_expression(),
+            TokenKind::Ident(ref name)
+                if name == "while" && self.at_offset(1, &TokenKind::LParen) =>
+            {
+                self.advance();
+                Ok(Expr::Name("while".to_owned()))
+            }
             TokenKind::Ident(ref name) if name == "while" => self.while_expression(),
             TokenKind::Ident(ref name) if name == "for" => self.for_expression(),
             TokenKind::Ident(ref name) if name == "match" => self.prefix_match_expression(),
@@ -3218,9 +3274,7 @@ impl Parser {
             TokenKind::LBracket => self.array_literal(),
             TokenKind::Do => {
                 self.advance();
-                Ok(Expr::DoBlock {
-                    body: Box::new(self.block()?),
-                })
+                self.do_expression()
             }
             TokenKind::Try => {
                 self.advance();
@@ -3255,6 +3309,10 @@ impl Parser {
                     ));
                 }
                 Ok(Self::core_control_function("throw"))
+            }
+            TokenKind::While if self.at_offset(1, &TokenKind::LParen) => {
+                self.advance();
+                Ok(Expr::Name("while".to_owned()))
             }
             TokenKind::While => self.while_expression(),
             TokenKind::For => self.for_expression(),
@@ -3376,9 +3434,9 @@ impl Parser {
                 || self.colonless_named_trailing_closure_follows()
             {
                 let label = self.take_trailing_label()?;
-                if label != "body" {
+                if label != "do" {
                     return Err(
-                        self.error_here("the second named `while` trailing closure must be `body`")
+                        self.error_here("the second named `while` trailing closure must be `do`")
                     );
                 }
                 self.take(&TokenKind::Colon);
@@ -3390,11 +3448,35 @@ impl Parser {
             return Ok(Expr::While {
                 condition: Box::new(condition),
                 body: Box::new(body),
+                post_test: false,
             });
         }
         Err(self.error_here(
-            "`while` requires two trailing closures; write `while { condition } { body }`",
+            "`while` requires condition and `do` closures; write `while { condition } do { body }`",
         ))
+    }
+
+    fn do_expression(&mut self) -> Result<Expr, ParseError> {
+        let body = self.block()?;
+        let before_newlines = self.index;
+        while self.take(&TokenKind::Newline) {}
+        if self.trailing_label_at(self.index).as_deref() == Some("while")
+            && (self.named_trailing_closure_follows()
+                || self.colonless_named_trailing_closure_follows())
+        {
+            self.advance();
+            self.take(&TokenKind::Colon);
+            let condition = self.zero_parameter_trailing_closure("do-while condition")?;
+            return Ok(Expr::While {
+                condition: Box::new(condition),
+                body: Box::new(body),
+                post_test: true,
+            });
+        }
+        self.index = before_newlines;
+        Ok(Expr::DoBlock {
+            body: Box::new(body),
+        })
     }
 
     fn zero_parameter_trailing_closure(&mut self, context: &str) -> Result<Expr, ParseError> {
@@ -4395,7 +4477,9 @@ fn normalize_expr_region_qualifiers(
             }
             Ok(())
         }
-        Expr::While { condition, body } => {
+        Expr::While {
+            condition, body, ..
+        } => {
             normalize_expr_region_qualifiers(condition, regions, accesses)?;
             normalize_expr_region_qualifiers(body, regions, accesses)
         }
@@ -4620,7 +4704,9 @@ fn validate_expr_accesses(expression: &Expr, accesses: &HashSet<String>) -> Resu
             }
             Ok(())
         }
-        Expr::While { condition, body } => {
+        Expr::While {
+            condition, body, ..
+        } => {
             validate_expr_accesses(condition, accesses)?;
             validate_expr_accesses(body, accesses)
         }
@@ -4829,7 +4915,9 @@ fn validate_expr_regions(expression: &Expr, regions: &HashSet<String>) -> Result
             }
             Ok(())
         }
-        Expr::While { condition, body } => {
+        Expr::While {
+            condition, body, ..
+        } => {
             validate_expr_regions(condition, regions)?;
             validate_expr_regions(body, regions)
         }
@@ -6679,6 +6767,66 @@ mod tests {
     }
 
     #[test]
+    fn parses_variadic_match_control_contract() {
+        let program = parse(
+            "pub let match(\n\
+               Input: type,\n\
+               Output: type,\n\
+               E: effect,\n\
+               ...Cases: parameters,\n\
+             )\n\
+               (move input: Input)\n\
+               ...Cases: Output with(E)\n",
+        )
+        .unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected match function");
+        };
+        assert_eq!(
+            function.compile_groups,
+            vec![vec![
+                CompileParam {
+                    name: "Input".to_owned(),
+                    kind: CompileParamKind::Type,
+                    default: None,
+                },
+                CompileParam {
+                    name: "Output".to_owned(),
+                    kind: CompileParamKind::Type,
+                    default: None,
+                },
+                CompileParam {
+                    name: "E".to_owned(),
+                    kind: CompileParamKind::Effect,
+                    default: None,
+                },
+                CompileParam {
+                    name: "Cases".to_owned(),
+                    kind: CompileParamKind::ParameterPack,
+                    default: None,
+                },
+            ]]
+        );
+        assert!(matches!(
+            function.groups.as_slice(),
+            [input, cases]
+                if input[0].name == "input"
+                    && cases[0].name == "Cases"
+                    && cases[0].ty
+                        == Type::Named(
+                            "$parameter$groups$expand".to_owned(),
+                            vec![Type::Named("Cases".to_owned(), Vec::new())],
+                        )
+        ));
+        assert_eq!(
+            function.return_type,
+            Some(Type::Named("Output".to_owned(), Vec::new()))
+        );
+        assert_eq!(function.effects.parameters, vec!["E"]);
+        assert!(function.body.is_none());
+    }
+
+    #[test]
     fn parses_opaque_type_declarations_from_the_type_domain() {
         let program = parse("pub let i32 = type\npub let bool = type { false, true }\n").unwrap();
         assert!(matches!(
@@ -6867,7 +7015,7 @@ mod tests {
     fn rejects_the_legacy_while_condition_form() {
         let error = parse("let main(): () = { while ready() { work() } }\n").unwrap_err();
         assert!(error.message.contains(
-            "`while` requires two trailing closures; write `while { condition } { body }`"
+            "`while` requires condition and `do` closures; write `while { condition } do { body }`"
         ));
     }
 
@@ -6875,7 +7023,7 @@ mod tests {
     fn parses_while_with_positional_or_named_trailing_closures() {
         for source in [
             "let main(): () = { while { ready() } { work() } }\n",
-            "let main(): () = {\n  while\n    condition { ready() }\n    body { work() }\n}\n",
+            "let main(): () = {\n  while\n    condition { ready() }\n    do { work() }\n}\n",
         ] {
             let program = parse(source).unwrap();
             let Item::Function(function) = &program.items[0] else {
@@ -6883,11 +7031,29 @@ mod tests {
             };
             assert!(matches!(
                 function_tail(function),
-                Expr::While { condition, body }
+                Expr::While { condition, body, post_test: false }
                     if matches!(condition.as_ref(), Expr::Block(_, _))
                         && matches!(body.as_ref(), Expr::Block(_, _))
             ));
         }
+    }
+
+    #[test]
+    fn parses_do_while_as_the_labeled_do_overload() {
+        let program =
+            parse("let main(): () = {\n  do { work() }\n  while { ready() }\n}\n").unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        assert!(matches!(
+            function_tail(function),
+            Expr::While {
+                condition,
+                body,
+                post_test: true,
+            } if matches!(condition.as_ref(), Expr::Block(_, _))
+                && matches!(body.as_ref(), Expr::Block(_, _))
+        ));
     }
 
     #[test]
@@ -6919,7 +7085,7 @@ mod tests {
         let error =
             parse("let main(): () = { while let Some(value) = next() { consume(value) } }\n")
                 .unwrap_err();
-        assert!(error.message.contains("requires two trailing closures"));
+        assert!(error.message.contains("condition and `do` closures"));
     }
 
     #[test]

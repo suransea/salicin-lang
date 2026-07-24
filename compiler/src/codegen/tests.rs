@@ -5149,7 +5149,7 @@ let main(): i32 = {{ {call} }}
 
     for while_expression in [
         "while { value < 42 } { value += 1 }",
-        "while condition { value < 42 } body { value += 1 }",
+        "while condition { value < 42 } do { value += 1 }",
     ] {
         let program = crate::parser::parse(&format!(
             "let main(): i32 = {{ let mut value = 0; {while_expression}; value }}\n"
@@ -5157,6 +5157,15 @@ let main(): i32 = {{ {call} }}
         .expect("multi-trailing-closure while source must parse");
         compile(&program).expect("multi-trailing-closure while must lower");
     }
+
+    compile_text(
+        "let main(): i32 = {\n\
+           let mut value = 0\n\
+           do { value += 1 } while { value < 3 }\n\
+           value\n\
+         }\n",
+    )
+    .expect("labeled do-while overload must lower");
 
     for if_expression in [
         "if true { 42 } { 0 }",
