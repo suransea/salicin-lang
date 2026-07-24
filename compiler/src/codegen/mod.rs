@@ -11151,6 +11151,14 @@ impl Analyzer {
     }
 
     fn diagnostic_function_name(&self, name: &str) -> String {
+        if let Some(operation) = name.strip_prefix("$effect$operation$") {
+            let operation = operation
+                .rsplit_once('$')
+                .map_or(operation, |(operation, _)| operation);
+            if let Some((effect, member)) = operation.rsplit_once('$') {
+                return format!("{effect}.{member}");
+            }
+        }
         let source = self
             .function_instances
             .get(name)

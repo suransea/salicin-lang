@@ -242,6 +242,9 @@ publishing that capability on the closure type. Throwing handler tails return th
 `Result` boundary when wrapping prevents a direct tail call.
 Recursive-frame visibility is limited to callee-body
 transformation, so sequential calls to the same effectful named function remain independent.
+The retained source-level limits, implementation locations, stable diagnostic fragments, and
+negative fixtures are tracked in the
+[handler rejection inventory](handler-rejections.md).
 Abandonment invokes the armed environment's drop entry,
 whereas resumption transfers and disarms it; native resource regressions cover exactly-once cleanup
 on both paths. CPS traversal

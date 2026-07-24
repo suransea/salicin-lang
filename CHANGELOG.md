@@ -6,6 +6,11 @@ subset.
 
 ## Unreleased
 
+- Inventoried every retained source-level algebraic-handler rejection by stable ID, implementation
+  location, diagnostic fragment, negative fixture, and implementation-status boundary. Added
+  coverage for continuation and callable escape, alias binding, finite-target assignment, and
+  overload selection; operation effect errors now report source names such as `State(i32).get`
+  instead of generated `$effect$operation$...` symbols.
 - Extended the built-in `Ptr(A)(T)` family through ordinary source declarations. A generic
   `extend(A: access, T: type) Ptr(A)(T)` supplies `offset` to both access modes, while
   `extend(T: type) Ptr(mut)(T)` specializes `init` and `take` for mutable pointers. Pointer methods

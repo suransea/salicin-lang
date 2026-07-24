@@ -17,14 +17,11 @@ Priority meanings:
 
 Current milestone: **EH1, close the algebraic-handler extension**
 
-Next task: **EFF-DIAG-1**
+Next task: **M0-AUDIT-1**
 
 ### P0 handler queue
 
-- [ ] **EFF-DIAG-1: Inventory handler rejection boundaries**
-  - Give each intentional rejection a source location, stable message, and negative fixture.
-  - Remove diagnostics for shapes completed by the tasks above.
-  - Link every remaining rejection to the implementation-status boundary it enforces.
+No remaining P0 handler task. The EH1 stop condition is active; proceed to the M0 release baseline.
 
 ### EH1 stop condition
 
@@ -107,6 +104,7 @@ Entry gate: all ASYNC1 prerequisites in the roadmap
 
 ## Recently completed
 
+- [x] **EFF-DIAG-1:** Inventory handler rejection boundaries and lock source-level diagnostics.
 - [x] **SCOPE-M0-1:** Freeze the M0 core scope and change gate.
 - [x] **EFF-FOR-1:** Carry iterator ownership through effectful `for` loops.
 - [x] **EFF-OWNED-1:** Replace iterator-name capture exceptions with handler-owned capture policy.

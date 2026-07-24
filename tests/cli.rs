@@ -595,6 +595,58 @@ fn erased_effect_callable_rejects_reuse_and_unsupported_shapes() {
 }
 
 #[test]
+fn algebraic_handler_boundaries_report_source_names() {
+    for (name, expected) in [
+        (
+            "algebraic_effect_overload_positional.sc",
+            "overloaded effect operation `value` requires named arguments",
+        ),
+        (
+            "algebraic_effect_overload_clause_labels.sc",
+            "overloaded handler clause `value` must name the operation parameters in declaration order before `resume`",
+        ),
+        (
+            "algebraic_effect_continuation_escape.sc",
+            "continuation `resume` cannot escape its handler clause",
+        ),
+        (
+            "algebraic_effect_function_alias_escape.sc",
+            "effectful function alias `action` cannot escape its handler or be used as a runtime value",
+        ),
+        (
+            "algebraic_effect_dynamic_callable_escape.sc",
+            "dynamic effectful callable `selected` cannot escape its handler as a runtime value",
+        ),
+        (
+            "algebraic_effect_mutable_function_alias.sc",
+            "effectful function alias `action` must be an inferred immutable binding",
+        ),
+        (
+            "algebraic_effect_dynamic_callable_assignment.sc",
+            "dynamic effectful callable assignment from `second` to `selected` has an incompatible target set",
+        ),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check handler rejection boundary");
+        assert!(!output.status.success(), "{name}: {}", output_text(&output));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected),
+            "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+        assert!(
+            !stderr.contains("$handler$"),
+            "{name} leaked an internal handler symbol:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn non_capturing_function_values_run_through_indirect_calls() {
     let output = salic()
         .arg("run")
@@ -1431,8 +1483,13 @@ fn algebraic_effect_operations_check_their_instantiated_row() {
     assert!(!invalid.status.success());
     let stderr = String::from_utf8_lossy(&invalid.stderr);
     assert!(
-        stderr.contains("requires custom effect") && stderr.contains("State(i32)"),
+        stderr.contains("call to `State(i32).get` requires custom effect `State(i32)`"),
         "{}",
+        output_text(&invalid)
+    );
+    assert!(
+        !stderr.contains("$effect$"),
+        "operation diagnostics leaked an internal symbol:\n{}",
         output_text(&invalid)
     );
 }
