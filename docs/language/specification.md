@@ -1966,6 +1966,24 @@ pub let align_of(T: type): u64
 type family 和同一个 lang-item 身份，不存在独立的 mutable pointer 类型名。构造器同样允许
 `Ptr(borrow(value))`、`Ptr(mut)(borrow(mut)(value))`，也可显式给出 pointee 类型组。
 
+内建 type family 可以在定义它的 core package 中使用普通 inherent extension。通用 access
+参数由 target 决定，具体 access 可直接特化，不需要 `where A == mut`：
+
+```sc
+extend(A: access, T: type) Ptr(A)(T) {
+  let offset(self)(index: u64): Ptr(A)(T) with(Unsafe)
+}
+
+extend(T: type) Ptr(mut)(T) {
+  let init(self)(value: T): () with(Unsafe)
+  let take(self)(): T with(Unsafe)
+}
+```
+
+`offset` 保留 pointer access；`init` 只可用于未初始化 storage，`take` move 出值并把 storage
+留为未初始化。三个方法都要求 `unsafe`。外部 package 不能为 `Ptr` 增加 inherent extension，
+shared pointer 也不会获得 mutable 特化成员。
+
 edition prelude 提供这些声明的短名。用户声明的同名函数或类型不会获得指针或布局 intrinsic
 语义；只有解析到已验证 `core.memory` 项的引用才会触发对应 lowering。
 

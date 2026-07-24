@@ -6,6 +6,11 @@ subset.
 
 ## Unreleased
 
+- Extended the built-in `Ptr(A)(T)` family through ordinary source declarations. A generic
+  `extend(A: access, T: type) Ptr(A)(T)` supplies `offset` to both access modes, while
+  `extend(T: type) Ptr(mut)(T)` specializes `init` and `take` for mutable pointers. Pointer methods
+  use concrete non-nominal method owners internally, retain source-level diagnostics, obey the core
+  package orphan boundary, and do not require general compile-time equality predicates.
 - Unified shared and mutable raw pointers under the access-parameterized
   `Ptr(A: access = shared)(T: type)` family. `Ptr(T)` remains the shared spelling,
   `Ptr(mut)(T)` selects mutable access, and the separate mutable-pointer declaration has been

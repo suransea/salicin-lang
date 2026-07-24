@@ -200,6 +200,11 @@ Borrow types and values are written with the declared `borrow` form: `borrow(T)`
 `borrow(mut)(T)`, and `borrow(A)(R)(T)`. `borrow(A)` and generic passing modes refer to these
 domains in compile-time parameter positions.
 
+`core.memory` declares `Ptr(A: access = shared)(T)` as one raw-pointer family. Its source
+extensions provide `offset(index)` for either access and `init(value)` / `take()` only for
+`Ptr(mut)(T)`. These methods retain the `Unsafe` requirement of their underlying raw intrinsics;
+`init` expects uninitialized storage and `take` leaves storage uninitialized.
+
 `core.control` owns the edition-pinned contracts for compiler-lowered control functions. It is not
 part of the prelude. `do`, `try`, `throw`, and `unsafe` are ordinary source-backed functions over
 the standard effect declarations. The `unsafe` body removes the marker effect with

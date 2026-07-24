@@ -17,16 +17,7 @@ Priority meanings:
 
 Current milestone: **EH1, close the algebraic-handler extension**
 
-Next task: **PTR-EXTEND-1**
-
-### P0 type coherence queue
-
-- [ ] **PTR-EXTEND-1: Extend the access-parameterized pointer family**
-  - Allow a generic inherent extension target such as
-    `extend(A: access, T: type) Ptr(A)(T)`.
-  - Allow direct access specialization such as `extend(T: type) Ptr(mut)(T)`.
-  - Defer general compile-time equality predicates such as `where A == mut` until a concrete
-    generic algorithm needs them.
+Next task: **EFF-DIAG-1**
 
 ### P0 handler queue
 
@@ -130,6 +121,7 @@ Entry gate: all ASYNC1 prerequisites in the roadmap
 - [x] **CORE-MEMORY-1:** Source-back raw pointer and layout-query contracts in `core.memory`.
 - [x] **TYPE-CONST-1:** Add `usize` compile-time values and source-back curried `Array(T)(L)`.
 - [x] **CORE-PTR-1:** Unify raw pointers as `Ptr(A: access = shared)(T: type)`.
+- [x] **PTR-EXTEND-1:** Extend `Ptr(A)(T)` generically and specialize `Ptr(mut)(T)` directly.
 - [x] **CORE-BORROW-1:** Move borrow contracts from `core.domains` into `core.borrow`.
 - [x] **LIB-ALLOC-API-1:** Keep Box/Vec in the allocation-capable layer and expose only their inherent APIs through std.
 - [x] **LIB-BOX-1:** Replace `Box.as_mut_ptr` with consuming `into_raw` and unsafe `from_raw`.

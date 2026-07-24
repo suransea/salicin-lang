@@ -725,6 +725,7 @@ fn raw_allocator_abi_allocates_aligned_storage_and_deallocates_it() {
         "raw_pointer_offset_shared.sc",
         "raw_pointer_offset_unit.sc",
         "raw_pointer_borrow.sc",
+        "raw_pointer_methods.sc",
     ];
     for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
@@ -766,6 +767,14 @@ fn raw_pointer_intrinsic_errors_report_their_cause() {
         (
             "raw_borrow_mut_shared_anchor.sc",
             "requires a mutable borrow anchor",
+        ),
+        (
+            "raw_pointer_mut_method_shared.sc",
+            "unknown method `take` on `Ptr(i32)`",
+        ),
+        (
+            "raw_pointer_foreign_extension.sc",
+            "inherent extension for `Ptr` must be declared in the package that defines the type",
         ),
     ] {
         let output = salic()

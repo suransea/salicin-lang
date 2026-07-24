@@ -131,6 +131,8 @@ struct Analyzer {
     inherent_overloads: HashMap<InherentOverloadKey, Vec<String>>,
     inherent_overload_shapes: HashMap<InherentOverloadKey, HashSet<ParameterLabelShape>>,
     generic_inherent_extensions: HashMap<String, Vec<GenericInherentExtension>>,
+    pointer_inherent_extensions: Vec<PointerInherentExtension>,
+    instantiated_pointer_extensions: HashSet<String>,
     generic_trait_extensions: HashMap<String, Vec<GenericTraitExtension>>,
     instantiating_generic_trait_extension: usize,
     generic_inherent_functions: HashMap<(String, String), String>,
@@ -206,6 +208,8 @@ impl Analyzer {
             inherent_overloads: HashMap::new(),
             inherent_overload_shapes: HashMap::new(),
             generic_inherent_extensions: HashMap::new(),
+            pointer_inherent_extensions: Vec::new(),
+            instantiated_pointer_extensions: HashSet::new(),
             generic_trait_extensions: HashMap::new(),
             instantiating_generic_trait_extension: 0,
             generic_inherent_functions: HashMap::new(),
@@ -4677,10 +4681,21 @@ impl Analyzer {
                 return;
             }
         }
-        let Type::Named(target_template, target_sources) = &extension.target else {
+        let extension_target = extension.target.clone();
+        let Type::Named(target_template, target_sources) = &extension_target else {
             self.error("generic inherent extend target must be a generic nominal type");
             return;
         };
+        if self.is_lang_item_name(target_template, LangItemKind::PtrTypeForm) {
+            self.collect_pointer_inherent_extension(
+                extension,
+                origin,
+                parameters,
+                declared,
+                target_sources.clone(),
+            );
+            return;
+        }
         let expected = self
             .struct_templates
             .get(target_template)
@@ -4940,6 +4955,282 @@ impl Analyzer {
                 &source_arguments,
                 &template,
             );
+        }
+    }
+
+    fn collect_pointer_inherent_extension(
+        &mut self,
+        extension: ExtendDef,
+        origin: ItemOrigin,
+        parameters: Vec<CompileParam>,
+        declared: HashSet<String>,
+        target_sources: Vec<Type>,
+    ) {
+        if origin.package != PackageId::CORE.0 {
+            self.error(
+                "inherent extension for `Ptr` must be declared in the package that defines the type",
+            );
+            return;
+        }
+        let (access_parameter, mutable, pointee_parameter) = match target_sources.as_slice() {
+            [Type::Named(access, access_arguments), Type::Named(pointee, pointee_arguments)]
+                if access_arguments.is_empty()
+                    && pointee_arguments.is_empty()
+                    && declared.contains(pointee) =>
+            {
+                let pointee_is_type = parameters.iter().any(|parameter| {
+                    parameter.name == *pointee && parameter.kind == CompileParamKind::Type
+                });
+                if !pointee_is_type {
+                    self.error("`Ptr` extension pointee must be determined by a `type` parameter");
+                    return;
+                }
+                if access == "shared" || access == "mut" {
+                    (None, Some(access == "mut"), pointee.clone())
+                } else if declared.contains(access)
+                    && parameters.iter().any(|parameter| {
+                        parameter.name == *access && parameter.kind == CompileParamKind::Access
+                    })
+                {
+                    (Some(access.clone()), None, pointee.clone())
+                } else {
+                    self.error(
+                        "`Ptr` extension access must be `shared`, `mut`, or a declared `access` parameter",
+                    );
+                    return;
+                }
+            }
+            [Type::Named(pointee, pointee_arguments)]
+                if pointee_arguments.is_empty() && declared.contains(pointee) =>
+            {
+                if !parameters.iter().any(|parameter| {
+                    parameter.name == *pointee && parameter.kind == CompileParamKind::Type
+                }) {
+                    self.error("`Ptr` extension pointee must be determined by a `type` parameter");
+                    return;
+                }
+                (None, Some(false), pointee.clone())
+            }
+            _ => {
+                self.error(
+                    "generic `Ptr` extend target must be `Ptr(A)(T)`, `Ptr(T)`, or `Ptr(mut)(T)`",
+                );
+                return;
+            }
+        };
+        let determined = access_parameter
+            .iter()
+            .chain(std::iter::once(&pointee_parameter))
+            .cloned()
+            .collect::<HashSet<_>>();
+        if determined != declared {
+            self.error(
+                "every generic `Ptr` extend parameter must be determined by the target type",
+            );
+            return;
+        }
+        for member in &extension.members {
+            let ExtendMember::Function(function) = member else {
+                self.error("generic `Ptr` associated constants are not supported");
+                return;
+            };
+            if !function
+                .groups
+                .first()
+                .is_some_and(|group| group.len() == 1 && group[0].name == "self")
+            {
+                self.error("generic `Ptr` extensions currently support methods only");
+                return;
+            }
+            if let Some(parameter) = function
+                .compile_groups
+                .iter()
+                .flatten()
+                .find(|parameter| declared.contains(&parameter.name))
+            {
+                self.error(format!(
+                    "generic `Ptr` method `{}` redeclares outer compile-time parameter `{}`",
+                    function.name, parameter.name
+                ));
+                return;
+            }
+        }
+        let member_access = AccessBoundary {
+            visibility: Visibility::Public,
+            origin: origin.clone(),
+        };
+        self.pointer_inherent_extensions
+            .push(PointerInherentExtension {
+                access_parameter,
+                mutable,
+                pointee_parameter,
+                where_predicates: extension.where_predicates,
+                members: extension.members,
+                access: member_access,
+                origin,
+            });
+    }
+
+    fn pointer_inherent_owner(pointer: &Ty) -> String {
+        format!("$pointer${}", hex_name(&pointer.to_string()))
+    }
+
+    fn ensure_pointer_inherent_extensions(&mut self, pointer: &Ty) -> Option<String> {
+        let Ty::Pointer { pointee, mutable } = pointer else {
+            return None;
+        };
+        let owner = Self::pointer_inherent_owner(pointer);
+        if !self.instantiated_pointer_extensions.insert(owner.clone()) {
+            return Some(owner);
+        }
+        let Some(pointee_source) = self.source_type_for_ty(pointee) else {
+            self.error(format!(
+                "cannot preserve pointee type `{pointee}` while instantiating `Ptr` extensions"
+            ));
+            return Some(owner);
+        };
+        let pointer_source = Type::Named(
+            self.lang_item_name(LangItemKind::PtrTypeForm).to_owned(),
+            vec![
+                Type::Named(
+                    if *mutable { "mut" } else { "shared" }.to_owned(),
+                    Vec::new(),
+                ),
+                pointee_source.clone(),
+            ],
+        );
+        for extension in self.pointer_inherent_extensions.clone() {
+            if extension
+                .mutable
+                .is_some_and(|required| required != *mutable)
+            {
+                continue;
+            }
+            let mut substitutions = HashMap::new();
+            substitutions.insert(extension.pointee_parameter.clone(), pointee_source.clone());
+            if let Some(access) = &extension.access_parameter {
+                substitutions.insert(
+                    access.clone(),
+                    Type::Named(
+                        if *mutable { "mut" } else { "shared" }.to_owned(),
+                        Vec::new(),
+                    ),
+                );
+            }
+            let mut predicates = extension.where_predicates.clone();
+            for predicate in &mut predicates {
+                substitute_type_parameters(&mut predicate.subject, &substitutions);
+                substitute_type_parameters(&mut predicate.trait_ref, &substitutions);
+                for binding in &mut predicate.associated_types {
+                    substitute_type_parameters(&mut binding.ty, &substitutions);
+                }
+            }
+            if predicates
+                .iter()
+                .any(|predicate| !self.concrete_where_predicate_holds(predicate))
+            {
+                continue;
+            }
+            let mut members = extension.members.clone();
+            for member in &mut members {
+                let ExtendMember::Function(function) = member else {
+                    unreachable!("pointer associated constants were rejected")
+                };
+                substitute_function_types(function, &substitutions);
+                let mut self_substitution = HashMap::new();
+                self_substitution.insert("Self".to_owned(), pointer_source.clone());
+                substitute_function_types(function, &self_substitution);
+            }
+            self.register_pointer_extension_methods(
+                &owner,
+                pointer,
+                members,
+                &extension.access,
+                &extension.origin,
+            );
+        }
+        Some(owner)
+    }
+
+    fn register_pointer_extension_methods(
+        &mut self,
+        owner: &str,
+        pointer: &Ty,
+        members: Vec<ExtendMember>,
+        member_access: &AccessBoundary,
+        origin: &ItemOrigin,
+    ) {
+        for member in members {
+            let ExtendMember::Function(mut function) = member else {
+                unreachable!("pointer associated constants were rejected")
+            };
+            let short_name = function.name.clone();
+            if self
+                .inherent_members
+                .entry(owner.to_owned())
+                .or_default()
+                .methods
+                .contains_key(&short_name)
+            {
+                self.error(format!(
+                    "overlapping inherent method `{short_name}` for `{}`",
+                    self.diagnostic_type_name(pointer)
+                ));
+                continue;
+            }
+            let canonical = inherent_method_name(owner, &short_name);
+            function.name = canonical.clone();
+            if function.compile_groups.is_empty() {
+                let groups = function
+                    .groups
+                    .iter()
+                    .map(|group| {
+                        group
+                            .iter()
+                            .map(|parameter| ParamSig {
+                                name: parameter.name.clone(),
+                                ty: self.lower_source_type(&parameter.ty),
+                                mode: parameter.mode,
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let result = function
+                    .return_type
+                    .as_ref()
+                    .map(|result| self.lower_source_type(result));
+                let throws_error = function
+                    .effects
+                    .throws
+                    .as_deref()
+                    .map(|error| self.lower_source_type(error));
+                self.signatures.insert(
+                    canonical.clone(),
+                    FunctionSig {
+                        groups,
+                        unsafe_effect: self.function_effects_unsafe(&function.effects),
+                        throws_error,
+                        custom_effects: self.function_effects_custom_identities(&function.effects),
+                        result,
+                    },
+                );
+                self.function_order.push(canonical.clone());
+                self.functions.insert(canonical.clone(), function);
+                self.function_origins
+                    .insert(canonical.clone(), origin.clone());
+            } else {
+                self.function_template_order.push(canonical.clone());
+                self.function_templates.insert(canonical.clone(), function);
+                self.function_template_origins
+                    .insert(canonical.clone(), origin.clone());
+            }
+            self.function_accesses
+                .insert(canonical.clone(), member_access.clone());
+            self.inherent_members
+                .entry(owner.to_owned())
+                .or_default()
+                .methods
+                .insert(short_name, canonical);
         }
     }
 
@@ -5256,6 +5547,8 @@ impl Analyzer {
             let effect_callable_adapters_before = self.effect_callable_adapters.clone();
             let next_closure = self.next_closure;
             let inherent_members_before = self.inherent_members.clone();
+            let instantiated_pointer_extensions_before =
+                self.instantiated_pointer_extensions.clone();
             let copy_nominals_before = self.copy_nominals.clone();
             let trait_impl_headers_before = self.trait_impl_headers.clone();
             let trait_impls_before = self.trait_impls.clone();
@@ -5346,6 +5639,7 @@ impl Analyzer {
             self.effect_callable_adapters = effect_callable_adapters_before;
             self.next_closure = next_closure;
             self.inherent_members = inherent_members_before;
+            self.instantiated_pointer_extensions = instantiated_pointer_extensions_before;
             self.copy_nominals = copy_nominals_before;
             self.trait_impl_headers = trait_impl_headers_before;
             self.trait_impls = trait_impls_before;
@@ -9021,19 +9315,24 @@ impl Analyzer {
                     }),
                 )
             };
-        let target = match &receiver_place.ty {
+        let receiver_ty = receiver_place.ty.clone();
+        let target = match &receiver_ty {
             Ty::Struct(name) | Ty::Enum(name) => name.clone(),
+            Ty::Pointer { .. } => self
+                .ensure_pointer_inherent_extensions(&receiver_ty)
+                .expect("pointer extension owner exists for pointer receiver"),
             ty => {
                 self.error(format!(
-                    "method call requires a nominal receiver, found `{ty}`"
+                    "method call requires an extendable receiver, found `{ty}`"
                 ));
                 return error_expr();
             }
         };
+        let target_display = self.diagnostic_type_name(&receiver_ty);
         if let Some(qualified_target) = qualified_target {
             if qualified_target != target {
                 self.error(format!(
-                    "qualified method `{qualified_target}.{member}` requires receiver `{qualified_target}`, found `{target}`"
+                    "qualified method `{qualified_target}.{member}` requires receiver `{qualified_target}`, found `{target_display}`"
                 ));
                 return error_expr();
             }
@@ -9123,7 +9422,7 @@ impl Analyzer {
                     .any(|argument| argument.label.is_some())
                 {
                     self.error(format!(
-                        "ambiguous trait method `{member}` on `{target}` requires named arguments to select an overload"
+                        "ambiguous trait method `{member}` on `{target_display}` requires named arguments to select an overload"
                     ));
                     return error_expr();
                 }
@@ -9132,13 +9431,13 @@ impl Analyzer {
                     [selected] => selected.clone(),
                     [] => {
                         self.error(format!(
-                            "no trait method overload `{member}` on `{target}` matches the supplied named parameter groups"
+                            "no trait method overload `{member}` on `{target_display}` matches the supplied named parameter groups"
                         ));
                         return error_expr();
                     }
                     _ => {
                         self.error(format!(
-                            "trait method overload `{member}` on `{target}` remains ambiguous"
+                            "trait method overload `{member}` on `{target_display}` remains ambiguous"
                         ));
                         return error_expr();
                     }
@@ -9164,7 +9463,7 @@ impl Analyzer {
                     .is_some_and(|members| members.functions.contains_key(member))
                 {
                     self.error(format!(
-                        "associated function `{target}.{member}` must be called on the type"
+                        "associated function `{target_display}.{member}` must be called on the type"
                     ));
                 } else if self
                     .inherent_members
@@ -9172,7 +9471,7 @@ impl Analyzer {
                     .is_some_and(|members| members.constants.contains_key(member))
                 {
                     self.error(format!(
-                        "associated constant `{target}.{member}` must be accessed on the type"
+                        "associated constant `{target_display}.{member}` must be accessed on the type"
                     ));
                 } else if self.has_inaccessible_trait_method(
                     &receiver_place.ty,
@@ -9180,10 +9479,10 @@ impl Analyzer {
                     &context.origin,
                 ) {
                     self.error(format!(
-                        "trait method `{member}` on `{target}` is private or package-visible from another package"
+                        "trait method `{member}` on `{target_display}` is private or package-visible from another package"
                     ));
                 } else {
-                    self.error(format!("unknown method `{member}` on `{target}`"));
+                    self.error(format!("unknown method `{member}` on `{target_display}`"));
                 }
                 return error_expr();
             }

@@ -49,6 +49,12 @@ identity rather than hard-coded declaration names. `L: usize` compile-time param
 non-negative `u64` literals, explicit forwarding, and array-driven inference; selected values are
 part of generic instance identity and are erased before runtime IR. General constant expressions,
 defaults, arithmetic, and scalar kinds other than `usize` remain unsupported.
+The pointer family supports core-owned source extensions through a concrete non-nominal method
+owner. `extend(A: access, T: type) Ptr(A)(T)` applies to shared and mutable pointers, while
+`extend(T: type) Ptr(mut)(T)` is a direct mutable specialization. The standard declarations expose
+`offset` generally and `init`/`take` only for mutable pointers; foreign inherent extensions remain
+rejected by the package orphan boundary. General compile-time equality predicates are not needed
+for this specialization.
 `Never`-returning algebraic operations are handled as abort operations whose clauses omit `resume`,
 so `Throws(Error).raise` can now be exercised through the same handler path as user-defined effects.
 `throw(error)` reads the validated source-backed `std.control.throw` function and then calls the
