@@ -13,8 +13,14 @@ let main(): i32 = {
   let success: Result(bool)(i32) = try {
     read(false) + 2
   }
-  let propagation_ok = propagated match { Ok(_) => false, Err(error) => error }
-  let throw_ok = thrown match { Ok(_) => false, Err(error) => error }
-  let value = success match { Ok(value) => value, Err(_) => 0 }
+  let propagation_ok = match propagated
+    { Ok(_) -> false }
+    { Err(error) -> error }
+  let throw_ok = match thrown
+    { Ok(_) -> false }
+    { Err(error) -> error }
+  let value = match success
+    { Ok(value) -> value }
+    { Err(_) -> 0 }
   if propagation_ok && throw_ok && value == 42 { 42 } else { 0 }
 }

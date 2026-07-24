@@ -11,19 +11,17 @@ let accepted(value: i32): bool with(Decide) = {
 }
 
 let classify_direct(event: Event): i32 with(Decide) = {
-  event match {
-    Value( value: value ) if Decide.accept(value) => value,
-    Value( value: value ) => value + 1,
-    Empty => 0,
-  }
+  match event
+    { Value( value: value ) if Decide.accept(value) -> value }
+    { Value( value: value ) -> value + 1 }
+    { Empty -> 0 }
 }
 
 let classify_named(event: Event): i32 with(Decide) = {
-  event match {
-    Value( value: value ) if accepted(value) => value,
-    Value( value: value ) => value + 1,
-    Empty => 0,
-  }
+  match event
+    { Value( value: value ) if accepted(value) -> value }
+    { Value( value: value ) -> value + 1 }
+    { Empty -> 0 }
 }
 
 let main(): i32 = {

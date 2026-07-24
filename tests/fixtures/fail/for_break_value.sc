@@ -20,7 +20,7 @@ extend Once: IntoIterator {
   let into_iter(move self)(): Once = { self }}
 
 let main(): i32 = {
-  for value in Once { done: false } {
+  for Once { done: false } { value ->
     break value
   }
   0

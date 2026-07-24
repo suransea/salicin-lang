@@ -9,14 +9,13 @@ extend Resource: Drop {
 
 let consume(move value: Resource): () = { () }
 
-let main(): i32 = { Choice.Some(
+let main(): i32 = { match Choice.Some(
   Bundle { left: Resource { value: 1 }, right: Resource { value: 0 } },
   Resource { value: 1 }
-) match {
-  Some(Bundle(left: left, right: _), _) => do {
+)
+  { Some(Bundle(left: left, right: _), _) -> do {
     consume(left)
     0
-  },
-  None => 0
-}
+  } }
+  { None -> 0 }
 }

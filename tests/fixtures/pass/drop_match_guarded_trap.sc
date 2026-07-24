@@ -8,15 +8,14 @@ extend Resource: Drop {
 
 let consume(move value: Resource): () = { () }
 
-let main(): i32 = { Choice.Pair(Resource { value: 1 }, Resource { value: 0 }) match {
-  Pair(left, _) if left.value == 0 => do {
+let main(): i32 = { match Choice.Pair(Resource { value: 1 }, Resource { value: 0 })
+  { Pair(left, _) if left.value == 0 -> do {
     consume(left)
     0
-  },
-  Pair(left, _) => do {
+  } }
+  { Pair(left, _) -> do {
     consume(left)
     0
-  },
-  None => 0
-}
+  } }
+  { None -> 0 }
 }

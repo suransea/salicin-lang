@@ -2065,7 +2065,7 @@ fn m1_loop_errors_report_their_cause() {
         ("for_missing_into_iterator.sc", "IntoIterator"),
         ("for_missing_iterator.sc", "Iterator"),
         ("for_break_value.sc", "type mismatch"),
-        ("for_refutable_pattern.sc", "irrefutable"),
+        ("for_refutable_pattern.sc", "pattern type mismatch"),
     ] {
         let output = salic()
             .arg("check")

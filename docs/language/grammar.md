@@ -21,7 +21,9 @@ x | y         二选一
 
 只有结构性语法词由 lexer 产生固定 token。编译期 domain 名与成员
 `type`、`region`、`mut`、`copy`、`move`，借用构造器 `borrow`，以及
-`core.control` 提供的 `do`、`try`、`throw`、`unsafe` 都按普通 `IDENT` 词法化。
+`core.control` 提供的 `do`、`try`、`throw`、`unsafe`，以及控制拼写
+`if`、`else`、`while`、`for`、`in`、`loop`、`match`、`return`、`break`、`continue`
+都按普通 `IDENT` 词法化。
 parser 只在对应语法位置识别其上下文含义，因此这些拼写可以用于其他声明、成员和路径。
 已经移除的 `await` 也不是表达式关键字。
 
@@ -314,7 +316,7 @@ trait_argument = type_expr | IDENT, "=", type_expr ;
 | 层级 | 构造 | 结合性 |
 |---|---|---|
 | 1 | `=`、`+=`、`-=`、`*=`、`/=` 等赋值 | 右结合 |
-| 2 | 后缀 `match` | 不结合 |
+| 2 | 控制调用 | 不结合 |
 | 3 | `??` | 右结合 |
 | 4 | `||` | 左结合 |
 | 5 | `&&` | 左结合 |
@@ -331,10 +333,9 @@ trait_argument = type_expr | IDENT, "=", type_expr ;
 
 ```ebnf
 expression       = assignment_expr ;
-assignment_expr  = match_expr, [ assign_op, assignment_expr ] ;
+assignment_expr  = coalesce_expr, [ assign_op, assignment_expr ] ;
 assign_op        = "=" | "+=" | "-=" | "*=" | "/=" | "%="
                  | "&=" | "|=" | "^=" | "<<=" | ">>=" ;
-match_expr       = coalesce_expr, [ "match", match_body ] ;
 coalesce_expr    = logical_or_expr, [ "??", coalesce_expr ] ;
 logical_or_expr  = logical_and_expr, { "||", logical_and_expr } ;
 logical_and_expr = bitwise_or_expr, { "&&", bitwise_or_expr } ;
@@ -460,19 +461,18 @@ block_item = let_decl | expression ;
 实际 parser 应保留每个表达式后的终止符类别；最后一个未以 `;` 终止的表达式成为块值。
 
 ```ebnf
-if_expr = "if",
-          ( expression, [ "then", [ ":" ] ], block,
-            [ block | "else", [ ":" ], ( block | if_expr ) ]
-          | "let", pattern, "=", expression, block,
-            [ "else", ( block | if_expr ) ] ) ;
+if_expr = IDENT("if"), expression, [ IDENT("then"), [ ":" ] ], block,
+          [ block | IDENT("else"), [ ":" ], ( block | if_expr ) ] ;
 
-loop_expr  = "loop", block ;
-while_expr = "while",
+loop_expr  = IDENT("loop"), block ;
+while_expr = IDENT("while"),
              ( closure_literal, closure_literal
-             | "condition", [ ":" ], closure_literal,
-               "body", [ ":" ], closure_literal
-             | "let", pattern, "=", expression, block ) ;
-for_expr   = "for", pattern, "in", expression, block ;
+             | IDENT("condition"), [ ":" ], closure_literal,
+               IDENT("body"), [ ":" ], closure_literal ) ;
+for_expr   = IDENT("for"), expression, pattern_case ;
+match_expr = IDENT("match"), expression, pattern_case, { pattern_case } ;
+pattern_case = "{", separators, pattern, [ IDENT("if"), expression ],
+               "->", block_contents, "}" ;
 
 return_expr   = "return", [ expression ] ;
 throw_expr    = "throw", expression ;
@@ -511,11 +511,7 @@ continue_expr = "continue" ;
 ## 8. `match` 与 pattern
 
 ```ebnf
-match_body = "{", separators,
-             [ match_arm, { ",", separators, match_arm }, [ "," ] ],
-             separators, "}" ;
-
-match_arm = pattern, [ "if", expression ], "=>", expression ;
+match_body = pattern_case, { pattern_case } ;
 
 pattern = or_pattern ;
 or_pattern = bind_pattern, { "|", bind_pattern } ;

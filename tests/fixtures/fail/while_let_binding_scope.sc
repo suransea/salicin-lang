@@ -3,8 +3,10 @@ use std.Option
 let next(): Option(i32) = { None }
 
 let main(): i32 = {
-  while let Some(value) = next() {
-    value
+  loop {
+    match next()
+      { Some(value) -> value }
+      { None -> break }
   }
   value
 }

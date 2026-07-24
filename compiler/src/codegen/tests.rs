@@ -6736,7 +6736,7 @@ fn lowers_for_through_validated_iteration_lang_items() {
            let into_iter(move self)(): Counter = { self }\n}\n\
          let main(): i32 = {\n\
            let mut sum = 0\n\
-           for value in Counter { current: 0, end: 4 } {\n\
+           for Counter { current: 0, end: 4 } { value ->\n\
              sum = sum + value\n\
            }\n\
            sum\n\

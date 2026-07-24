@@ -18,10 +18,9 @@ extend(Error: type, T: type) Result(Error)(T): core.flow.Chain {
   let chain(E: effect, U: type)
     (self)
     (transform: (T): U with(E)): Result(Error)(U) with(E) = {
-    self match {
-      Ok(value) => Result.Ok(transform(value)),
-      Err(error) => Result.Err(error),
-    }
+    match self
+      { Ok(value) -> Result.Ok(transform(value)) }
+      { Err(error) -> Result.Err(error) }
   }
 }
 
@@ -34,10 +33,9 @@ extend(Error: type, T: type) Result(Error)(T): core.flow.Coalesce {
   let coalesce(E: effect)
     (self)
     (fallback: (): T with(E)): T with(E) = {
-    self match {
-      Ok(value) => value,
-      Err(_) => fallback(),
-    }
+    match self
+      { Ok(value) -> value }
+      { Err(_) -> fallback() }
   }
 }
 
@@ -46,10 +44,9 @@ extend(Error: type, T: type) Result(Error)(T): core.flow.Unwrap {
   let Output = T
 
   let unwrap(move self): T = {
-    self match {
-      Ok(value) => value,
-      Err(_) => unsafe { raw_trap() },
-    }
+    match self
+      { Ok(value) -> value }
+      { Err(_) -> unsafe { raw_trap() } }
   }
 }
 
@@ -59,10 +56,9 @@ extend(E: type, T: type) Result(E)(T): core.flow.Raise {
   let Error = E
 
   let raise(move self): T with(core.effect.Throws(E)) = {
-    self match {
-      Ok(value) => value,
-      Err(error) => core.effect.Throws(E).raise(error),
-    }
+    match self
+      { Ok(value) -> value }
+      { Err(error) -> core.effect.Throws(E).raise(error) }
   }
 }
 
@@ -72,10 +68,9 @@ extend(Error: type) Result(Error): core.functional.Functor {
   let map(E: effect, A: type, B: type)
     (self: Result(Error)(A))
     (transform: (A): B with(E)): Result(Error)(B) with(E) = {
-    self match {
-      Ok(value) => Result.Ok(transform(value)),
-      Err(error) => Result.Err(error),
-    }
+    match self
+      { Ok(value) -> Result.Ok(transform(value)) }
+      { Err(error) -> Result.Err(error) }
   }
 }
 
@@ -91,13 +86,11 @@ extend(Error: type) Result(Error): core.functional.Applicative {
   let apply(E: effect, A: type, B: type)
     (self: Result(Error)((A): B with(E)))
     (value: Result(Error)(A)): Result(Error)(B) with(E) = {
-    self match {
-      Ok(transform) => value match {
-        Ok(value) => Result.Ok(transform(value)),
-        Err(error) => Result.Err(error),
-      },
-      Err(error) => Result.Err(error),
-    }
+    match self
+      { Ok(transform) -> match value
+        { Ok(value) -> Result.Ok(transform(value)) }
+        { Err(error) -> Result.Err(error) } }
+      { Err(error) -> Result.Err(error) }
   }
 }
 
@@ -107,9 +100,8 @@ extend(Error: type) Result(Error): core.functional.Monad {
   let flat_map(E: effect, A: type, B: type)
     (self: Result(Error)(A))
     (next: (A): Result(Error)(B) with(E)): Result(Error)(B) with(E) = {
-    self match {
-      Ok(value) => next(value),
-      Err(error) => Result.Err(error),
-    }
+    match self
+      { Ok(value) -> next(value) }
+      { Err(error) -> Result.Err(error) }
   }
 }

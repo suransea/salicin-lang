@@ -12,10 +12,9 @@ extend Stored: Raise {
   let Error = bool
 
   let raise(move self): i32 with(Throws(bool)) = {
-    self match {
-      Value(value) => value,
-      Failure(error) => throw(error),
-    }
+    match self
+      { Value(value) -> value }
+      { Failure(error) -> throw(error) }
   }
 }
 

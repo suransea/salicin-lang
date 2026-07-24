@@ -17,11 +17,15 @@ extend Counter {
 let main(): i32 = {
   let mut counter = Counter { current: 0, end: 7 }
   let mut total = 24
-  while let Some(value) = counter.next() {
-    if value < 3 {
-      continue
+  loop {
+    match counter.next()
+      { Some(value) ->
+        if value < 3 {
+          continue
+        }
+        total = total + value
+      }
+      { None -> break }
     }
-    total = total + value
-  }
   total
 }

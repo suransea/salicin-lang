@@ -17,10 +17,9 @@ let conditional(flag: bool): () = {
   if flag { consume(value) }
 }
 
-let inspect(move choice: Choice): i32 = { choice match {
-  Some(_) => 1,
-  None => 0,
-}
+let inspect(move choice: Choice): i32 = { match choice
+  { Some(_) -> 1 }
+  { None -> 0 }
 }
 
 let early(): i32 = {

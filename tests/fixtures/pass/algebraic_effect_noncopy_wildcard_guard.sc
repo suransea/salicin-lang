@@ -21,11 +21,10 @@ let main(): i32 = {
   unsafe { *counter = 0 }
   let result: i32 = Check.handle(accept: { (resume) -> resume(false) }) {
     let event = Event.Value( value: Resource { counter: counter } )
-    event match {
-      Event.Value( value: _ ) if Check.accept() => 40,
-      Event.Value( value: _ ) => 41,
-      Event.Empty => 0,
-    }
+    match event
+      { Event.Value( value: _ ) if Check.accept() -> 40 }
+      { Event.Value( value: _ ) -> 41 }
+      { Event.Empty -> 0 }
   }
   let drops = unsafe { *counter }
   unsafe {

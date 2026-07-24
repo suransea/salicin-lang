@@ -32,9 +32,9 @@
   边界。普通调用不能从下一逻辑行的 `(` 继续，因此 `f\n(x)` 是两个表达式而不是 `f(x)`。
 - 换行只分隔语句，不自动丢弃块尾值；显式 `;` 才强制丢弃表达式值。同一逻辑行包含多个语句时
   必须用 `;`。
-- 固定关键字包括：`let`、`struct`、`enum`、`trait`、`extend`、`match`、
-  `return`、`if`、`else`、`loop`、`while`、`for`、`in`、`break`、`continue`、
-  `pub`、`use`、`as`、`where`、`root`、`super`、`package`。
+- 固定关键字包括：`let`、`struct`、`enum`、`trait`、`extend`、`pub`、`use`、`as`、
+  `where`、`root`、`super`、`package`。控制拼写 `match`、`return`、`if`、`else`、`loop`、
+  `while`、`for`、`in`、`break`、`continue` 是上下文标识符。
 - `self`、`Self`、`root`、`super`、`true`、`false` 是保留字。
 - `type`、`region`、`effect`、`access`、`passing` 和 `parameters` 只在编译期参数位置具有
   上下文含义，`domain` 只在声明右侧具有上下文含义；domain 成员 `mut`、`copy`、`move`、
@@ -1440,13 +1440,12 @@ let main(): i32 = { 0 }
 
 ## 12. 模式匹配
 
-关键字固定为 `match`（原示例中的 `march` 视为拼写错误）：
+`match` 是上下文控制标识符，输入在前缀调用位置，随后是一个或多个 pattern case：
 
 ```sc
-value match {
-  Some(x) => x,
-  None => 0,
-}
+match value
+  { Some(x) -> x }
+  { None -> 0 }
 ```
 
 `match` 是表达式，所有可到达分支必须有可统一的类型，并对封闭类型做穷尽性检查。首版模式包括：
@@ -1465,15 +1464,13 @@ value match {
 
 ### 12.1 `match` 的位置与分支规则
 
-Salicin 固定采用后缀 `match`：先写被检查表达式，再写 `match` 和分支。所谓“与 Rust 相同”指
-pattern 的解构、穷尽和所有权规则相近，不表示关键字位置相同。被检查表达式只求值一次。
+Salicin 固定采用前缀 `match`，每个尾块是一个部分函数 case。被检查表达式只求值一次。
 
 ```sc
-compute() match {
-  Ok(value) if value > 0 => value,
-  Ok(_) => 0,
-  Err(error) => throw(error),
-}
+match compute()
+  { Ok(value) if value > 0 -> value }
+  { Ok(_) -> 0 }
+  { Err(error) -> throw(error) }
 ```
 
 分支从上到下测试；有守卫的 pattern 即使覆盖某个 variant，也不计入无守卫的穷尽覆盖。`|` 两侧

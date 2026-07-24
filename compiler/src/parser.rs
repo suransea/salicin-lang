@@ -2416,6 +2416,40 @@ impl Parser {
         })
     }
 
+    fn prefix_match_expression(&mut self) -> Result<Expr, ParseError> {
+        self.expect(&TokenKind::Match, "`match`")?;
+        let scrutinee = self.expression(false)?;
+        self.take_newlines_if_followed_by(&[TokenKind::LBrace]);
+        if !self.at(&TokenKind::LBrace) {
+            return Err(self.error_here("`match` requires at least one trailing pattern case"));
+        }
+
+        let mut arms = Vec::new();
+        while self.at(&TokenKind::LBrace) {
+            self.expect(&TokenKind::LBrace, "`{` before a match case")?;
+            self.skip_separators();
+            let pattern = self.pattern()?;
+            let guard = if self.take(&TokenKind::If) {
+                Some(self.expression(false)?)
+            } else {
+                None
+            };
+            self.expect(&TokenKind::Arrow, "`->` after match case pattern")?;
+            let body = self.block_contents()?;
+            arms.push(MatchArm {
+                pattern,
+                guard,
+                body,
+            });
+            self.take_newlines_if_followed_by(&[TokenKind::LBrace]);
+        }
+
+        Ok(Expr::Match {
+            scrutinee: Box::new(scrutinee),
+            arms,
+        })
+    }
+
     fn coalesce(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
         let left = self.logical_or(allow_trailing_closure)?;
         if self.take(&TokenKind::QuestionQuestion) {
@@ -2930,20 +2964,20 @@ impl Parser {
     }
 
     fn bare_call_argument_can_start(&self) -> bool {
-        matches!(
-            self.current().kind,
+        match &self.current().kind {
+            TokenKind::Ident(name) => name != "match",
             TokenKind::Integer(_)
-                | TokenKind::True
-                | TokenKind::False
-                | TokenKind::Ident(_)
-                | TokenKind::Root
-                | TokenKind::Super
-                | TokenKind::LParen
-                | TokenKind::LBracket
-                | TokenKind::Minus
-                | TokenKind::Bang
-                | TokenKind::Borrow
-        )
+            | TokenKind::True
+            | TokenKind::False
+            | TokenKind::Root
+            | TokenKind::Super
+            | TokenKind::LParen
+            | TokenKind::LBracket
+            | TokenKind::Minus
+            | TokenKind::Bang
+            | TokenKind::Borrow => true,
+            _ => false,
+        }
     }
 
     fn named_trailing_closure_follows(&self) -> bool {
@@ -2962,7 +2996,8 @@ impl Parser {
     }
 
     fn colonless_named_trailing_closure_follows(&self) -> bool {
-        self.trailing_label_at(self.index).is_some()
+        self.trailing_label_at(self.index)
+            .is_some_and(|label| label != "match")
             && self
                 .tokens
                 .get(self.index + 1)
@@ -2970,7 +3005,8 @@ impl Parser {
     }
 
     fn named_nested_trailing_call_follows(&self) -> bool {
-        self.trailing_label_at(self.index).is_some()
+        self.trailing_label_at(self.index)
+            .is_some_and(|label| label != "match")
             && self
                 .tokens
                 .get(self.index + 1)
@@ -3138,7 +3174,10 @@ impl Parser {
             TokenKind::Ident(ref name) if name == "return" => {
                 self.return_expression(allow_trailing_closure)
             }
+            TokenKind::Ident(ref name) if name == "if" => self.if_expression(),
             TokenKind::Ident(ref name) if name == "while" => self.while_expression(),
+            TokenKind::Ident(ref name) if name == "for" => self.for_expression(),
+            TokenKind::Ident(ref name) if name == "match" => self.prefix_match_expression(),
             TokenKind::Ident(ref name)
                 if name == "loop" && self.at_offset(1, &TokenKind::LBrace) =>
             {
@@ -3205,6 +3244,7 @@ impl Parser {
                 })))
             }
             TokenKind::If => self.if_expression(),
+            TokenKind::Match => self.prefix_match_expression(),
             TokenKind::Return => self.return_expression(allow_trailing_closure),
             TokenKind::Throw => {
                 self.advance();
@@ -3255,33 +3295,6 @@ impl Parser {
 
     fn if_expression(&mut self) -> Result<Expr, ParseError> {
         self.expect(&TokenKind::If, "`if`")?;
-        if self.take(&TokenKind::Let) {
-            let pattern = self.pattern()?;
-            self.expect(&TokenKind::Equal, "`=` after the if-let pattern")?;
-            let scrutinee = self.expression(false)?;
-            if !self.at(&TokenKind::LBrace) {
-                return Err(self.error_here("expected `{` after `if let` scrutinee"));
-            }
-            let then_branch = self.block()?;
-            let else_branch = self
-                .optional_else_branch()?
-                .map_or_else(|| Expr::Block(Vec::new(), None), |branch| *branch);
-            return Ok(Expr::Match {
-                scrutinee: Box::new(scrutinee),
-                arms: vec![
-                    MatchArm {
-                        pattern,
-                        guard: None,
-                        body: then_branch,
-                    },
-                    MatchArm {
-                        pattern: Pattern::Wildcard,
-                        guard: None,
-                        body: else_branch,
-                    },
-                ],
-            });
-        }
         let condition = self.expression(false)?;
         if self.named_trailing_closure_follows() || self.colonless_named_trailing_closure_follows()
         {
@@ -3379,43 +3392,6 @@ impl Parser {
                 body: Box::new(body),
             });
         }
-        if self.take(&TokenKind::Let) {
-            let pattern = self.pattern()?;
-            self.expect(&TokenKind::Equal, "`=` after the while-let pattern")?;
-            let scrutinee = self.expression(false)?;
-            if !self.at(&TokenKind::LBrace) {
-                return Err(self.error_here("expected `{` after `while let` scrutinee"));
-            }
-            let body = self.block()?;
-            let loop_body = Expr::Match {
-                scrutinee: Box::new(scrutinee),
-                arms: vec![
-                    MatchArm {
-                        pattern,
-                        guard: None,
-                        body,
-                    },
-                    MatchArm {
-                        pattern: Pattern::Wildcard,
-                        guard: None,
-                        body: Expr::Break(None),
-                    },
-                ],
-            };
-            let id = self.next_control_binding;
-            self.next_control_binding += 1;
-            return Ok(Expr::Block(
-                vec![Stmt::Let(Binding {
-                    mutable: false,
-                    name: format!("$while$let$result${id}"),
-                    annotation: Some(Type::Unit),
-                    value: Expr::Loop {
-                        body: Box::new(loop_body),
-                    },
-                })],
-                None,
-            ));
-        }
         Err(self.error_here(
             "`while` requires two trailing closures; write `while { condition } { body }`",
         ))
@@ -3434,18 +3410,17 @@ impl Parser {
 
     fn for_expression(&mut self) -> Result<Expr, ParseError> {
         self.expect(&TokenKind::For, "`for`")?;
-        let pattern = self.pattern()?;
-        if !matches!(pattern, Pattern::Binding(_) | Pattern::Wildcard) {
-            return Err(
-                self.error_here("`for` currently requires an irrefutable name or `_` pattern")
-            );
-        }
-        self.expect(&TokenKind::In, "`in` after the for pattern")?;
         let iterable = self.expression(false)?;
         if !self.at(&TokenKind::LBrace) {
-            return Err(self.error_here("expected `{` after `for` iterable"));
+            return Err(self.error_here(
+                "`for` requires a trailing pattern closure; write `for iterable { pattern -> body }`",
+            ));
         }
-        let body = self.block()?;
+        self.expect(&TokenKind::LBrace, "`{` before the `for` body pattern")?;
+        self.skip_separators();
+        let pattern = self.pattern()?;
+        self.expect(&TokenKind::Arrow, "`->` after the `for` body pattern")?;
+        let body = self.block_contents()?;
 
         let id = self.next_control_binding;
         self.next_control_binding += 1;
@@ -4884,11 +4859,15 @@ fn contextual_spelling(kind: &TokenKind) -> Option<&'static str> {
         TokenKind::Do => "do",
         TokenKind::Throw => "throw",
         TokenKind::Try => "try",
+        TokenKind::If => "if",
+        TokenKind::Else => "else",
         TokenKind::Return => "return",
         TokenKind::While => "while",
+        TokenKind::For => "for",
         TokenKind::Loop => "loop",
         TokenKind::Break => "break",
         TokenKind::Continue => "continue",
+        TokenKind::Match => "match",
         _ => return None,
     })
 }
@@ -5905,24 +5884,14 @@ mod tests {
     }
 
     #[test]
-    fn desugars_if_let_to_a_match_with_fallback() {
-        let program = parse(
+    fn rejects_removed_if_let_syntax() {
+        let error = parse(
             "let choose(value: Option(i32)): i32 = {\n\
                if let Some(found) = value { found } else { 0 }\n\
              }\n",
         )
-        .unwrap();
-        let Item::Function(function) = &program.items[0] else {
-            panic!("expected function");
-        };
-        let Expr::Match { arms, .. } = function_tail(function) else {
-            panic!("expected if-let to desugar to match");
-        };
-        assert!(matches!(
-            &arms[0].pattern,
-            Pattern::Constructor { path, .. } if path == &["Some"]
-        ));
-        assert_eq!(arms[1].pattern, Pattern::Wildcard);
+        .unwrap_err();
+        assert!(!error.message.is_empty());
     }
 
     #[test]
@@ -6231,6 +6200,43 @@ mod tests {
         assert_eq!(scrutinee.as_ref(), &Expr::Name("shape".into()));
         assert_eq!(arms.len(), 3);
         assert!(arms[0].guard.is_some());
+        assert!(matches!(
+            &arms[0].pattern,
+            Pattern::Constructor { path, fields: PatternFields::Named(fields) }
+                if path == &vec!["Shape".to_owned(), "Circle".to_owned()]
+                    && fields[0].name == "radius"
+        ));
+        assert_eq!(arms[2].pattern, Pattern::Wildcard);
+    }
+
+    #[test]
+    fn parses_prefix_match_as_trailing_pattern_cases() {
+        let program = parse(
+            "let classify(shape: Shape): i32 = {\n\
+               match shape\n\
+                 { Shape.Circle(radius: value) if value > 0 ->\n\
+                   let adjusted = value + 1\n\
+                   adjusted\n\
+                 }\n\
+                 { Shape.Unit -> 0 }\n\
+                 { _ -> -1 }\n\
+             }\n",
+        )
+        .unwrap();
+
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        let Expr::Match { scrutinee, arms } = function_tail(function) else {
+            panic!("expected match");
+        };
+        assert_eq!(scrutinee.as_ref(), &Expr::Name("shape".into()));
+        assert_eq!(arms.len(), 3);
+        assert!(arms[0].guard.is_some());
+        assert!(matches!(
+            &arms[0].body,
+            Expr::Block(statements, Some(_)) if statements.len() == 1
+        ));
         assert!(matches!(
             &arms[0].pattern,
             Pattern::Constructor { path, fields: PatternFields::Named(fields) }
@@ -6909,27 +6915,11 @@ mod tests {
     }
 
     #[test]
-    fn desugars_while_let_to_a_unit_loop_match() {
-        let program =
+    fn rejects_removed_while_let_syntax() {
+        let error =
             parse("let main(): () = { while let Some(value) = next() { consume(value) } }\n")
-                .unwrap();
-        let Item::Function(function) = &program.items[0] else {
-            panic!("expected function");
-        };
-        let Expr::Block(_, Some(while_let)) = function.body.as_ref().unwrap() else {
-            panic!("expected function block");
-        };
-        let Expr::Block(statements, None) = while_let.as_ref() else {
-            panic!("expected desugared while-let block");
-        };
-        assert!(matches!(
-            &statements[0],
-            Stmt::Let(Binding {
-                annotation: Some(Type::Unit),
-                value: Expr::Loop { body },
-                ..
-            }) if matches!(body.as_ref(), Expr::Match { arms, .. } if arms.len() == 2)
-        ));
+                .unwrap_err();
+        assert!(error.message.contains("requires two trailing closures"));
     }
 
     #[test]
@@ -6955,7 +6945,7 @@ mod tests {
     #[test]
     fn desugars_for_to_iteration_lang_item_calls() {
         let program =
-            parse("let main(): () = { for value in values() { consume(value) } }\n").unwrap();
+            parse("let main(): () = { for values() { value -> consume(value) } }\n").unwrap();
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };

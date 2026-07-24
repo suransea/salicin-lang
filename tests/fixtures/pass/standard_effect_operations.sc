@@ -42,30 +42,27 @@ let tried_throw_sugar_function(): i32 = {
   let result: Result(i32)(i32) = try {
     fail_with_throw_sugar()
   }
-  result match {
-    Ok(value) => value,
-    Err(error) => error,
-  }
+  match result
+    { Ok(value) -> value }
+    { Err(error) -> error }
 }
 
 let tried_throw_sugar_action(): i32 = {
   let result: Result(i32)(i32) = try {
     throw(42)
   }
-  result match {
-    Ok(value) => value,
-    Err(error) => error,
-  }
+  match result
+    { Ok(value) -> value }
+    { Err(error) -> error }
 }
 
 let inferred_try_from_throw_sugar_function(): i32 = {
   let result = try {
     choose_with_throw_sugar(true)
   }
-  result match {
-    Ok(value) => value,
-    Err(error) => error,
-  }
+  match result
+    { Ok(value) -> value }
+    { Err(error) -> error }
 }
 
 let handled_async(): i32 = {

@@ -17,10 +17,9 @@ extend(T: type) Option(T): core.flow.Chain {
   let chain(E: effect, U: type)
     (self)
     (transform: (T): U with(E)): Option(U) with(E) = {
-    self match {
-      Some(value) => Option.Some(transform(value)),
-      None => Option.None,
-    }
+    match self
+      { Some(value) -> Option.Some(transform(value)) }
+      { None -> Option.None }
   }
 }
 
@@ -33,10 +32,9 @@ extend(T: type) Option(T): core.flow.Coalesce {
   let coalesce(E: effect)
     (self)
     (fallback: (): T with(E)): T with(E) = {
-    self match {
-      Some(value) => value,
-      None => fallback(),
-    }
+    match self
+      { Some(value) -> value }
+      { None -> fallback() }
   }
 }
 
@@ -45,10 +43,9 @@ extend(T: type) Option(T): core.flow.Unwrap {
   let Output = T
 
   let unwrap(move self): T = {
-    self match {
-      Some(value) => value,
-      None => unsafe { raw_trap() },
-    }
+    match self
+      { Some(value) -> value }
+      { None -> unsafe { raw_trap() } }
   }
 }
 
@@ -58,10 +55,9 @@ extend Option: core.functional.Functor {
   let map(E: effect, A: type, B: type)
     (self: Option(A))
     (transform: (A): B with(E)): Option(B) with(E) = {
-    self match {
-      Some(value) => Option.Some(transform(value)),
-      None => Option.None,
-    }
+    match self
+      { Some(value) -> Option.Some(transform(value)) }
+      { None -> Option.None }
   }
 }
 
@@ -77,13 +73,11 @@ extend Option: core.functional.Applicative {
   let apply(E: effect, A: type, B: type)
     (self: Option((A): B with(E)))
     (value: Option(A)): Option(B) with(E) = {
-    self match {
-      Some(transform) => value match {
-        Some(value) => Option.Some(transform(value)),
-        None => Option.None,
-      },
-      None => Option.None,
-    }
+    match self
+      { Some(transform) -> match value
+        { Some(value) -> Option.Some(transform(value)) }
+        { None -> Option.None } }
+      { None -> Option.None }
   }
 }
 
@@ -93,9 +87,8 @@ extend Option: core.functional.Monad {
   let flat_map(E: effect, A: type, B: type)
     (self: Option(A))
     (next: (A): Option(B) with(E)): Option(B) with(E) = {
-    self match {
-      Some(value) => next(value),
-      None => Option.None,
-    }
+    match self
+      { Some(value) -> next(value) }
+      { None -> Option.None }
   }
 }

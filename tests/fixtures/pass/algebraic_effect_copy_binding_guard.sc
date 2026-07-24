@@ -19,11 +19,10 @@ let consume(move resource: Resource, value: i32): i32 = { value }
 let evaluate(counter: MutPtr(i32), accepted: bool): i32 = {
   Check.handle(accept: { (resume) -> resume(accepted) }) {
     let event = Event.Value( value: Resource { counter: counter }, field1: 20 )
-    event match {
-      Event.Value( value: resource, field1: value ) if Check.accept() && value > 0 => consume(resource, value),
-      Event.Value( value: resource, field1: value ) => consume(resource, value),
-      Event.Empty => 0,
-    }
+    match event
+      { Event.Value( value: resource, field1: value ) if Check.accept() && value > 0 -> consume(resource, value) }
+      { Event.Value( value: resource, field1: value ) -> consume(resource, value) }
+      { Event.Empty -> 0 }
   }
 }
 

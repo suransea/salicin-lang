@@ -9,22 +9,20 @@ extend Resource: Drop {
 
 let consume(move value: Resource): () = { () }
 
-let inspect(move choice: Choice): i32 = { choice match {
-  Pair(left, _) => do {
+let inspect(move choice: Choice): i32 = { match choice
+  { Pair(left, _) -> do {
     consume(left)
     42
-  },
-  None => 0
-}
+  } }
+  { None -> 0 }
 }
 
-let escape(move choice: Choice): i32 = { choice match {
-  Pair(left, _) => do {
+let escape(move choice: Choice): i32 = { match choice
+  { Pair(left, _) -> do {
     consume(left)
     return 42
-  },
-  None => 0
-}
+  } }
+  { None -> 0 }
 }
 
 let main(): i32 = {

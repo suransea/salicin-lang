@@ -8,8 +8,7 @@ extend Boxed {
 
 let main(): i32 = {
   let nested = Option(Boxed).Some(Boxed { value: 42 })?.optional()
-  nested match {
-    Some(inner) => inner ?? 0,
-    None => 0,
-  }
+  match nested
+    { Some(inner) -> inner ?? 0 }
+    { None -> 0 }
 }

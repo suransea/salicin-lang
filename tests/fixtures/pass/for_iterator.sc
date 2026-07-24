@@ -23,7 +23,7 @@ extend Counter: IntoIterator {
 
 let main(): i32 = {
   let mut total = 21
-  for value in Counter { current: 0, end: 7 } {
+  for Counter { current: 0, end: 7 } { value ->
     total = total + value
   }
   total

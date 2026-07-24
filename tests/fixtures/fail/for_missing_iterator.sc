@@ -8,7 +8,7 @@ extend Iterable: IntoIterator {
   let into_iter(move self)(): Iter = { Iter {} }}
 
 let main(): i32 = {
-  for value in Iterable {} {
+  for Iterable {} { value ->
     value
   }
   0

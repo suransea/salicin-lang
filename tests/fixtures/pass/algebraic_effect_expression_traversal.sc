@@ -7,9 +7,8 @@ let main(): i32 = {
     read: { (resume) -> resume(0) },
   ) {
     let values = [42, 0]
-    values[Read.read()] match {
-      42 => Read.read() + 42,
-      _ => 0
-    }
+    match values[Read.read()]
+      { 42 -> Read.read() + 42 }
+      { _ -> 0 }
   }
 }

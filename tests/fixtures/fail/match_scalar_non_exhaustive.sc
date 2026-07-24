@@ -1,4 +1,3 @@
-let main(): i32 = { 42 match {
-  42 => 42,
-}
+let main(): i32 = { match 42
+  { 42 -> 42 }
 }

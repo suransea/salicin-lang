@@ -11,11 +11,10 @@ let main(): i32 = {
   unsafe {
     *counter = 0
   }
-  let selected = next(counter) match {
-    40 => 0,
-    value if value == 41 => value,
-    _ => 0,
-  }
+  let selected = match next(counter)
+    { 40 -> 0 }
+    { value if value == 41 -> value }
+    { _ -> 0 }
   let evaluations = unsafe {
     *counter
   }
