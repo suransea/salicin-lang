@@ -2197,6 +2197,7 @@ fn emits_flattened_curried_call_and_i32_wrapper() {
 #[test]
 fn emits_global_if_mutation_and_short_circuit() {
     let global = Item::Global(Binding {
+        value_source: None,
         mutable: false,
         name: "answer".into(),
         annotation: Some(Type::I64),
@@ -2209,6 +2210,7 @@ fn emits_global_if_mutation_and_short_circuit() {
     let body = Expr::Block(
         vec![
             Stmt::Let(Binding {
+                value_source: None,
                 mutable: true,
                 name: "x".into(),
                 annotation: Some(Type::I32),
@@ -3011,12 +3013,14 @@ fn tracks_explicit_move_even_for_a_copy_type() {
         Expr::Block(
             vec![
                 Stmt::Let(Binding {
+                    value_source: None,
                     mutable: false,
                     name: "value".into(),
                     annotation: None,
                     value: Expr::Integer(7),
                 }),
                 Stmt::Let(Binding {
+                    value_source: None,
                     mutable: false,
                     name: "consumed".into(),
                     annotation: None,
@@ -6825,6 +6829,7 @@ fn emits_local_non_escaping_partial_application() {
         Type::I32,
         Expr::Block(
             vec![Stmt::Let(Binding {
+                value_source: None,
                 mutable: false,
                 name: "add_one".into(),
                 annotation: None,

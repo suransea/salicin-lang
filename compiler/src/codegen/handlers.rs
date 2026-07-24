@@ -1310,6 +1310,7 @@ impl Analyzer {
                         )
                     };
                     bindings.push(Stmt::Let(Binding {
+                        value_source: None,
                         mutable: false,
                         name: local.clone(),
                         annotation: Some(annotation),
@@ -1322,6 +1323,7 @@ impl Analyzer {
             self.next_closure += 1;
             let local = format!("$handler$direct$action${id}");
             bindings.push(Stmt::Let(Binding {
+                value_source: None,
                 mutable: true,
                 name: local.clone(),
                 annotation: Some(parameter.ty.clone()),
@@ -1805,6 +1807,7 @@ impl Analyzer {
                     analyzer.next_closure += 1;
                     let gate_name = format!("$handler$operation$effects${gate_id}");
                     bindings.push(Stmt::Let(Binding {
+                        value_source: None,
                         mutable: false,
                         name: gate_name.clone(),
                         annotation: Some(Type::Function {
@@ -1824,6 +1827,7 @@ impl Analyzer {
                 bindings.extend(clause.parameters.iter().zip(arguments).map(
                     |(parameter, argument)| {
                         Stmt::Let(Binding {
+                            value_source: None,
                             mutable: false,
                             name: parameter.name.clone(),
                             annotation: contextual_annotation(parameter),
@@ -1863,6 +1867,7 @@ impl Analyzer {
                 let input_name = format!("$handler$resume$value${continuation_id}");
                 let continuation_body = continuation(analyzer, Expr::Name(input_name.clone()))?;
                 bindings.push(Stmt::Let(Binding {
+                    value_source: None,
                     mutable: true,
                     name: runtime_name.clone(),
                     annotation: Some(Type::Function {
@@ -2476,6 +2481,7 @@ impl Analyzer {
                             )?;
                             Ok(Expr::Block(
                                 vec![Stmt::Let(Binding {
+                                    value_source: None,
                                     mutable: false,
                                     name: input,
                                     annotation: None,
@@ -2586,6 +2592,7 @@ impl Analyzer {
                 return Err(());
             }
             let continuation_binding = Binding {
+                value_source: None,
                 mutable: true,
                 name: continuation_name.clone(),
                 annotation: Some(Type::Function {
@@ -2608,6 +2615,7 @@ impl Analyzer {
             let erased_continuation_name =
                 format!("$handler$erased$action$continuation$value${specialization}");
             let erased_continuation_binding = Binding {
+                value_source: None,
                 mutable: true,
                 name: erased_continuation_name.clone(),
                 annotation: Some(Type::Named(
@@ -3108,6 +3116,7 @@ impl Analyzer {
         let transformed = transformed?;
         let frame_name = format!("$handler$loop$frame${specialization}");
         let frame = Binding {
+            value_source: None,
             mutable: true,
             name: frame_name.clone(),
             annotation: Some(Type::Function {
@@ -3307,6 +3316,7 @@ impl Analyzer {
             Err(()) => return Some(Err(())),
         };
         let continuation_binding = Binding {
+            value_source: None,
             mutable: true,
             name: continuation_name.clone(),
             annotation: Some(Type::Function {
@@ -3328,6 +3338,7 @@ impl Analyzer {
         };
         let erased_name = format!("$handler$erased$closure$continuation${specialization}");
         let erased_binding = Binding {
+            value_source: None,
             mutable: true,
             name: erased_name.clone(),
             annotation: Some(Type::Named(
@@ -3454,6 +3465,7 @@ impl Analyzer {
         }
         let rewritten_result = self.effect_abi_result_source(answer.clone(), &rewritten_effects);
         let rewritten = Binding {
+            value_source: binding.value_source.clone(),
             mutable: binding.mutable,
             name: binding.name.clone(),
             annotation: Some(Type::Function {
@@ -3704,6 +3716,7 @@ impl Analyzer {
                 Err(()) => return Some(Err(())),
             };
             let continuation_binding = Binding {
+                value_source: None,
                 mutable: true,
                 name: continuation_name.clone(),
                 annotation: Some(Type::Function {
@@ -3727,6 +3740,7 @@ impl Analyzer {
                 ),
             };
             let erased_binding = Binding {
+                value_source: None,
                 mutable: true,
                 name: erased_name.clone(),
                 annotation: Some(Type::Named(
@@ -4106,6 +4120,7 @@ impl Analyzer {
                     {
                         let index_name = format!("$handler$index${specialization}${index}");
                         parameter_bindings.push(Stmt::Let(Binding {
+                            value_source: None,
                             mutable: false,
                             name: index_name.clone(),
                             annotation: Some(Type::I32),
@@ -4123,6 +4138,7 @@ impl Analyzer {
                     }
                 } else {
                     parameter_bindings.push(Stmt::Let(Binding {
+                        value_source: None,
                         mutable: false,
                         name: parameter.name.clone(),
                         annotation: Some(parameter.ty.clone()),
@@ -4241,6 +4257,7 @@ impl Analyzer {
             },
         );
         let continuation_binding = Binding {
+            value_source: None,
             mutable: true,
             name: continuation_name.clone(),
             annotation: Some(Type::Function {
@@ -4266,6 +4283,7 @@ impl Analyzer {
         let erased_continuation_name =
             format!("$handler$erased$call$continuation${specialization}");
         let erased_continuation_binding = Binding {
+            value_source: None,
             mutable: true,
             name: erased_continuation_name.clone(),
             annotation: Some(Type::Named(
@@ -4505,6 +4523,7 @@ impl Analyzer {
             result: Box::new(frame_result),
         });
         let frame = Binding {
+            value_source: None,
             mutable: true,
             name: frame_name.clone(),
             annotation: frame_annotation,
@@ -4581,6 +4600,7 @@ impl Analyzer {
                                         self.next_closure
                                     );
                                     tag_bindings.push(Stmt::Let(Binding {
+                                        value_source: None,
                                         mutable: false,
                                         name: hidden.clone(),
                                         annotation: Some(Type::I32),
@@ -4649,6 +4669,7 @@ impl Analyzer {
                                         let rest = rest?;
                                         Ok(Expr::Block(
                                             vec![Stmt::Let(Binding {
+                                                value_source: None,
                                                 mutable: false,
                                                 name: name.clone(),
                                                 annotation: Some(Type::I32),
@@ -4797,6 +4818,7 @@ impl Analyzer {
                         )?;
                         Ok(Expr::Block(
                             vec![Stmt::Let(Binding {
+                                value_source: None,
                                 mutable,
                                 name: name.clone(),
                                 annotation: annotation.clone(),

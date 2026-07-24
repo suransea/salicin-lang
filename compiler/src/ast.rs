@@ -73,6 +73,16 @@ pub struct SourceLocation {
     pub path: Option<String>,
     pub line: usize,
     pub column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SourceSpan {
+    pub line: usize,
+    pub column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -374,6 +384,9 @@ pub struct Binding {
     pub name: String,
     pub annotation: Option<Type>,
     pub value: Expr,
+    /// Source range of a local initializer. This stays outside `Expr` so
+    /// closure identity remains stable during handler lowering.
+    pub value_source: Option<Box<SourceSpan>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -438,6 +451,8 @@ pub enum Expr {
     Located {
         line: usize,
         column: usize,
+        end_line: usize,
+        end_column: usize,
         value: Box<Expr>,
     },
     Unit,

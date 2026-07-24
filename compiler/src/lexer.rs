@@ -92,6 +92,8 @@ pub struct Token {
     pub kind: TokenKind,
     pub line: usize,
     pub column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -272,12 +274,20 @@ impl Lexer {
                     }
                 }
             };
-            tokens.push(Token { kind, line, column });
+            tokens.push(Token {
+                kind,
+                line,
+                column,
+                end_line: self.line,
+                end_column: self.column,
+            });
         }
         tokens.push(Token {
             kind: TokenKind::Eof,
             line: self.line,
             column: self.column,
+            end_line: self.line,
+            end_column: self.column,
         });
         Ok(tokens)
     }
@@ -354,6 +364,8 @@ impl Lexer {
                 kind: TokenKind::Newline,
                 line,
                 column,
+                end_line: self.line,
+                end_column: self.column,
             });
         }
     }

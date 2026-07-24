@@ -295,6 +295,16 @@ mod tests {
                 21,
                 "requires custom effect",
             ),
+            (
+                "local initializer",
+                "let main(): i32 = {\n\
+                  let value: i32 = true\n\
+                  value\n\
+                }\n",
+                2,
+                18,
+                "expected `i32`, found `bool`",
+            ),
         ];
 
         for (category, source, line, column, expected) in cases {

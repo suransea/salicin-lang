@@ -7200,6 +7200,8 @@ impl Analyzer {
         if let Expr::Located {
             line,
             column,
+            end_line,
+            end_column,
             value,
         } = expression
         {
@@ -7208,6 +7210,8 @@ impl Analyzer {
                 if let Some(source) = &mut origin.source {
                     source.line = *line;
                     source.column = *column;
+                    source.end_line = *end_line;
+                    source.end_column = *end_column;
                 }
             }
             let lowered = self.lower_expr(value, expected, context);
@@ -7685,6 +7689,19 @@ impl Analyzer {
                 let mut statement_index = 0;
                 while statement_index < source_statements.len() {
                     let statement = source_statements[statement_index].clone();
+                    let previous_statement_origin = self.current_origin.clone();
+                    if let Stmt::Let(binding) = &statement {
+                        if let Some(span) = &binding.value_source {
+                            if let Some(origin) = &mut self.current_origin {
+                                if let Some(source) = &mut origin.source {
+                                    source.line = span.line;
+                                    source.column = span.column;
+                                    source.end_line = span.end_line;
+                                    source.end_column = span.end_column;
+                                }
+                            }
+                        }
+                    }
                     match &statement {
                         Stmt::Let(binding) => {
                             let specialized = if statement_index + 1 < source_statements.len() {
@@ -8000,6 +8017,7 @@ impl Analyzer {
                                 .push(HirStmt::Expr(self.lower_expr(expression, None, context)));
                         }
                     }
+                    self.current_origin = previous_statement_origin;
                     statement_index += 1;
                 }
                 let lowered_tail = source_tail

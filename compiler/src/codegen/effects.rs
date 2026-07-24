@@ -558,6 +558,7 @@ impl Analyzer {
             let handler = handler.clone();
             Rc::new(move |analyzer, value| {
                 let binding = Binding {
+                    value_source: None,
                     mutable: false,
                     name: done.parameters[0].name.clone(),
                     annotation: contextual_annotation(&done.parameters[0]),

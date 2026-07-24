@@ -91,6 +91,8 @@ impl Parser {
                         path: None,
                         line: start.line,
                         column: start.column,
+                        end_line: start.end_line,
+                        end_column: start.end_column,
                     })),
                     ..crate::ast::ItemOrigin::default()
                 });
@@ -458,6 +460,7 @@ impl Parser {
             }
             let value = self.expression(true)?;
             Ok(Item::Global(Binding {
+                value_source: None,
                 mutable,
                 name,
                 annotation,
@@ -860,6 +863,7 @@ impl Parser {
                 return Err(self.error_here("effect annotations require a function member"));
             }
             Ok(ExtendMember::Const(Binding {
+                value_source: None,
                 mutable: false,
                 name,
                 annotation,
@@ -2277,13 +2281,21 @@ impl Parser {
             None
         };
         self.expect(&TokenKind::Equal, "`=`")?;
+        let value_start = self.current().clone();
         let value = self.expression(true)?;
+        let value_end = self.previous().clone();
 
         Ok(Binding {
             mutable,
             name,
             annotation,
             value,
+            value_source: Some(Box::new(crate::ast::SourceSpan {
+                line: value_start.line,
+                column: value_start.column,
+                end_line: value_end.end_line,
+                end_column: value_end.end_column,
+            })),
         })
     }
 
@@ -3867,12 +3879,14 @@ impl Parser {
         Ok(Expr::Block(
             vec![
                 Stmt::Let(Binding {
+                    value_source: None,
                     mutable: true,
                     name: iterator,
                     annotation: None,
                     value: into_iter,
                 }),
                 Stmt::Let(Binding {
+                    value_source: None,
                     mutable: false,
                     name: loop_result,
                     annotation: Some(Type::Unit),
@@ -3938,9 +3952,10 @@ impl Parser {
         Expr::Name("$lang$if".to_owned())
     }
 
-    fn located_expression(token: &Token, value: Expr) -> Expr {
-        // Handler lowering tracks trailing source closures by AST identity, so
-        // keep their enclosing call unwrapped until spans live outside Expr.
+    fn located_expression(start: &Token, end: &Token, value: Expr) -> Expr {
+        // Reusable handler lowering still tracks trailing source closures by
+        // AST identity. Their statement span must move outside `Expr` before
+        // this exception can be removed.
         if matches!(
             &value,
             Expr::Call(_, arguments)
@@ -3954,8 +3969,10 @@ impl Parser {
             return value;
         }
         Expr::Located {
-            line: token.line,
-            column: token.column,
+            line: start.line,
+            column: start.column,
+            end_line: end.end_line,
+            end_column: end.end_column,
             value: Box::new(value),
         }
     }
@@ -3980,7 +3997,10 @@ impl Parser {
             }
 
             let expression_start = self.current().clone();
-            let expression = Self::located_expression(&expression_start, self.expression(true)?);
+            let expression = self.expression(true)?;
+            let expression_end = self.previous().clone();
+            let expression =
+                Self::located_expression(&expression_start, &expression_end, expression);
             if self.take(&TokenKind::RBrace) {
                 return Ok(Expr::Block(statements, Some(Box::new(expression))));
             }
@@ -8307,5 +8327,39 @@ mod tests {
         ));
         assert_eq!(first_group.len(), 1);
         assert_eq!(second_group.len(), 1);
+    }
+
+    #[test]
+    fn records_local_initializer_and_statement_ranges() {
+        let program = parse("let main(): i32 = {\n  let value: i32 = true\n  value\n}\n")
+            .expect("parse source ranges");
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        let Some(Expr::Block(statements, Some(tail))) = &function.body else {
+            panic!("expected function block");
+        };
+        let Stmt::Let(binding) = &statements[0] else {
+            panic!("expected local binding");
+        };
+        assert_eq!(
+            binding.value_source.as_deref(),
+            Some(&crate::ast::SourceSpan {
+                line: 2,
+                column: 20,
+                end_line: 2,
+                end_column: 24,
+            })
+        );
+        assert!(matches!(
+            tail.as_ref(),
+            Expr::Located {
+                line: 3,
+                column: 3,
+                end_line: 3,
+                end_column: 8,
+                ..
+            }
+        ));
     }
 }

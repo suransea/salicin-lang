@@ -167,6 +167,7 @@ impl Analyzer {
         const SCRUTINEE_BINDING: &str = "$coalesce$scrutinee";
         let lowered = Expr::Block(
             vec![Stmt::Let(Binding {
+                value_source: None,
                 mutable: false,
                 name: SCRUTINEE_BINDING.to_owned(),
                 annotation: None,

@@ -23,9 +23,10 @@ Non-unit tuples and C FFI have specification surface but no compiler implementat
 primitive lowering currently covers `i32`, `i64`, `u32`, `u64`, and `bool`, while the core bundle
 also declares narrower, wider, and target-sized integer names. Unicode identifiers are accepted by
 the lexer but lack direct end-to-end evidence. Semantic diagnostics retain each defining file,
-top-level declaration position, and executable expression-statement start through module resolution
-and specialization. Local initializer positions and full expression ranges remain tracked by
-`M0-DIAG-1`; a repository-wide gate rejects generated `$...` names in fail-fixture diagnostics.
+top-level declaration position, local initializer position, and end-exclusive ordinary
+expression-root range through module resolution and specialization. Trailing source-closure calls
+still need statement spans outside `Expr` under `M0-DIAG-1`; a repository-wide gate rejects
+generated `$...` names in fail-fixture diagnostics.
 These are M0 gaps, not implemented extensions.
 
 The unit type has one source spelling, `()`; the former `void` alias is removed before 1.0. The

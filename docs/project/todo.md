@@ -65,7 +65,9 @@ handler or async expansion is admitted.
 - [ ] **M0-DIAG-1: Attach source spans to semantic errors**
   - [x] Preserve defining source paths and declaration positions through semantic specialization.
   - [x] Attach executable expression-statement start positions through semantic lowering.
-  - [ ] Attach exact local-initializer positions and full expression ranges.
+  - [x] Attach exact local-initializer positions and end-exclusive expression-root ranges.
+  - [ ] Move statement spans outside `Expr` so trailing source-closure calls no longer depend on
+        an unlocated AST identity.
   - [x] Prioritize ownership, borrow, handler, trait selection, and generic inference errors.
   - [x] Enforce a repository-wide generated-name zero-leak diagnostic gate.
 

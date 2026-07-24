@@ -2951,6 +2951,7 @@ pub(super) fn handler_match_commit(scrutinee: &str, arms: Vec<MatchArm>) -> Expr
     let input = format!("$handler$match$commit${suffix}");
     Expr::Block(
         vec![Stmt::Let(Binding {
+            value_source: None,
             mutable: false,
             name: input.clone(),
             annotation: None,

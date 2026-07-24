@@ -66,6 +66,7 @@ impl Analyzer {
             if let Some((then_branch, else_branch)) = direct_boolean_branches(arms) {
                 let lowered = Expr::Block(
                     vec![Stmt::Let(Binding {
+                        value_source: None,
                         mutable: false,
                         name: hidden.clone(),
                         annotation: Some(crate::ast::Type::Bool),
@@ -138,6 +139,7 @@ impl Analyzer {
             let scoped = |value: Expr, binding: Option<&String>| {
                 let statements = binding.map_or_else(Vec::new, |name| {
                     vec![Stmt::Let(Binding {
+                        value_source: None,
                         mutable: false,
                         name: name.clone(),
                         annotation: None,
@@ -172,6 +174,7 @@ impl Analyzer {
 
         let lowered = Expr::Block(
             vec![Stmt::Let(Binding {
+                value_source: None,
                 mutable: false,
                 name: hidden,
                 annotation: self.source_type_for_ty(scalar_ty),
