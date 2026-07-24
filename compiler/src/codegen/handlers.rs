@@ -1004,6 +1004,14 @@ fn source_borrow_channel_mode(mode: PassMode, ty: &Type) -> Option<PassMode> {
     }
 }
 
+fn stable_handler_borrow_root(expression: &Expr) -> Option<&str> {
+    match expression {
+        Expr::Name(name) => Some(name),
+        Expr::Member(base, _) => stable_handler_borrow_root(base),
+        _ => None,
+    }
+}
+
 fn handler_expression_calls_named_function(expression: &Expr, name: &str) -> bool {
     let mut expression = expression.clone();
     let mut found = false;
@@ -3730,10 +3738,7 @@ impl Analyzer {
                 .all(|effect| source_effect_identity(effect) == handler.identity);
         let distinct_borrow_roots = borrow_arguments
             .iter()
-            .filter_map(|(_, (_, argument))| match &argument.value {
-                Expr::Name(root) => Some(root.as_str()),
-                _ => None,
-            })
+            .filter_map(|(_, (_, argument))| stable_handler_borrow_root(&argument.value))
             .collect::<HashSet<_>>();
         let can_fuse_borrow_frame = !borrow_arguments.is_empty()
             && distinct_borrow_roots.len() == borrow_arguments.len()
@@ -3741,7 +3746,7 @@ impl Analyzer {
             && !handler_expression_calls_named_function(&body, &name);
         if can_fuse_borrow_frame {
             let mut parameter_bindings = Vec::new();
-            let mut borrowed_roots = HashMap::new();
+            let mut borrowed_places = HashMap::new();
             for (index, (parameter, argument)) in parameters
                 .iter()
                 .flatten()
@@ -3752,10 +3757,7 @@ impl Analyzer {
                     continue;
                 }
                 if source_borrow_channel_mode(parameter.mode, &parameter.ty).is_some() {
-                    let Expr::Name(root) = &argument.value else {
-                        unreachable!("fused borrow arguments were validated as root names");
-                    };
-                    borrowed_roots.insert(parameter.name.clone(), root.clone());
+                    borrowed_places.insert(parameter.name.clone(), argument.value.clone());
                 } else {
                     parameter_bindings.push(Stmt::Let(Binding {
                         mutable: false,
@@ -3769,8 +3771,8 @@ impl Analyzer {
                 let Expr::Name(name) = expression else {
                     return;
                 };
-                if let Some(root) = borrowed_roots.get(name) {
-                    *name = root.clone();
+                if let Some(place) = borrowed_places.get(name).cloned() {
+                    *expression = place;
                 }
             });
             let return_name = format!("$handler$fused$return${specialization}");

@@ -522,10 +522,10 @@ borrow/move 时机；调用点从该环境提升字段，其中共享 `Copy` 为
 字段或索引赋值按完整根进行 mutable 捕获，并同时扫描索引表达式所需的其他捕获。因此连续的直接
 operation 可以保留和修改用户名义状态，恢复与放弃仍保证恰好一次 cleanup；resumable loop
 backedge 也会通过递归 frame call 携带该状态。对于无残余 effect 的已知非递归 effectful 函数，
-若全部 borrow 实参都是互不相同的根局部变量，调用会与 caller handler frame 融合：普通值实参按
-源码顺序物化，borrow 参数代换为 caller 根，内联函数体再进入 selective CPS。因此函数体与后续
-continuation 共享同一个 owned 根，不会建立互相竞争的 borrow 与 move 捕获。递归调用、投影 borrow
-实参及残余 effect 组合仍使用独立 frame ABI。
+若全部 borrow 实参都是根局部变量或稳定字段路径，且其最外层根互不相同，调用会与 caller handler
+frame 融合：普通值实参按源码顺序物化，borrow 参数代换为 caller place，内联函数体再进入 selective
+CPS。因此函数体与后续 continuation 共享同一个 owned 根，不会建立互相竞争的 borrow 与 move 捕获。
+递归调用、索引 borrow 实参、同根的多个投影及残余 effect 组合仍使用独立 frame ABI。
 数组元素、索引、普通与可空成员、`match` scrutinee/arm body 以及 `do`、`unsafe`、`try` 中的
 operation 按源顺序进入 selective CPS，`&&` 与 `||` 保持短路。`??` 的 scrutinee 与 fallback 都可
 挂起，且 fallback 仍只在 `None` 或 `Err` 路径求值。完整可空方法调用会先求值 owned receiver，仅在

@@ -185,6 +185,16 @@ fn owned_nominal_state_crosses_repeated_effectful_calls() {
 }
 
 #[test]
+fn owned_nominal_fields_cross_repeated_effectful_calls() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "algebraic_effect_owned_field_calls.sc"))
+        .output()
+        .expect("run owned handler field-state fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn owned_nominal_state_crosses_effectful_loop_backedges() {
     let output = salic()
         .arg("run")

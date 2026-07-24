@@ -217,11 +217,12 @@ captures the complete root as mutable, including captures required by an index e
 Consequently direct repeated operations can retain and mutate user-defined nominal state, with the
 same exactly-once cleanup on resumption and abandonment. Resumable loop backedges carry the same
 owned state through recursive frame calls. For a known non-recursive effectful function with no
-residual effect, distinct root-local borrow arguments trigger call-frame fusion: ordinary value
-arguments are materialized in source order, borrowed parameters are substituted with their caller
-roots, and the inlined body enters selective CPS in the caller frame. The body and following
-continuation therefore share one owned root instead of creating competing borrow and move captures.
-Recursive calls, projected borrow arguments, and residual-effect combinations retain the separate
+residual effect, borrow arguments that are root locals or stable field paths trigger call-frame
+fusion when their outer roots are distinct. Ordinary value arguments are materialized in source
+order, borrowed parameters are substituted with their caller places, and the inlined body enters
+selective CPS in the caller frame. The body and following continuation therefore share one owned
+root instead of creating competing borrow and move captures. Recursive calls, indexed borrow
+arguments, multiple projections of one root, and residual-effect combinations retain the separate
 frame ABI.
 
 Selective CPS removes only the handled nominal identity. Residual `Unsafe`, `Throws(Error)`, and
