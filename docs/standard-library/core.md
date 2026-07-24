@@ -183,22 +183,27 @@ pub let type = domain
 pub let region = domain
 pub let effect = domain
 pub let parameters = domain
+```
 
-pub let access = domain {
-  shared
+`core.borrow` owns the closed access type:
+
+```sc
+pub let access = type {
+  shared,
   mut
-}
-
-pub let passing = domain {
-  auto
-  copy
-  move
 }
 ```
 
+`core.passing` owns the parameter modifier functions:
+
+```sc
+pub let copy(P: parameters): parameters
+pub let move(P: parameters): parameters
+```
+
 Borrow types and values are written with the declared `borrow` form: `borrow(T)`,
-`borrow(mut)(T)`, and `borrow(A)(R)(T)`. `borrow(A)` and generic passing modes refer to these
-domains in compile-time parameter positions.
+`borrow(mut)(T)`, and `borrow(A)(R)(T)`. `borrow(A)` refers to the closed access type; generic
+passing modifiers use the `(P: parameters): parameters` function kind.
 
 `core.memory` declares `Ptr(A: access = shared)(T)` as one raw-pointer family. Its source
 extensions provide `offset(index)` for either access and `init(value)` / `take()` only for

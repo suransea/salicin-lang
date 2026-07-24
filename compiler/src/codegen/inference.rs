@@ -1,12 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{CallArg, CompileParam, CompileParamKind, Expr, Type, USizeConst};
+use crate::ast::{
+    CallArg, CompileParam, CompileParamDefault, CompileParamKind, Expr, Type, USizeConst,
+};
 use crate::core::LangItemKind;
 
 use super::compile_time::{
-    effect_row_from_marker, effect_row_source, source_effect_identity, type_constructor_marker,
-    usize_value_marker, ACCESS_MUT_MARKER, ACCESS_SHARED_MARKER, PASSING_AUTO_MARKER,
-    PASSING_COPY_MARKER, PASSING_MOVE_MARKER,
+    closed_value_from_marker, closed_value_marker, effect_row_from_marker, effect_row_source,
+    source_effect_identity, type_constructor_marker, usize_value_marker, ACCESS_MUT_MARKER,
+    ACCESS_SHARED_MARKER,
 };
 use super::effects::source_type_is_never;
 use super::flow::LowerCtx;
@@ -961,10 +963,10 @@ impl Analyzer {
             .flatten()
             .filter(|parameter| {
                 matches!(
-                    parameter.kind,
+                    &parameter.kind,
                     CompileParamKind::Type
-                        | CompileParamKind::Access
                         | CompileParamKind::USize
+                        | CompileParamKind::Named(_)
                         | CompileParamKind::TypeConstructor { .. }
                 )
             })
@@ -1059,39 +1061,6 @@ impl Analyzer {
                         _ => {
                             self.error(format!(
                                 "invalid `usize` argument for `{}` in `{owner}`; expected a non-negative integer",
-                                parameter.name
-                            ));
-                            return None;
-                        }
-                    },
-                    CompileParamKind::Access => match &argument.value {
-                        Expr::Name(name) if name == "shared" => {
-                            Type::Named(ACCESS_SHARED_MARKER.to_owned(), Vec::new())
-                        }
-                        Expr::Name(name) if name == "mut" => {
-                            Type::Named(ACCESS_MUT_MARKER.to_owned(), Vec::new())
-                        }
-                        _ => {
-                            self.error(format!(
-                                "invalid access argument for `{}` in `{owner}`; expected `shared` or `mut`",
-                                parameter.name
-                            ));
-                            return None;
-                        }
-                    },
-                    CompileParamKind::Passing => match &argument.value {
-                        Expr::Name(name) if name == "auto" => {
-                            Type::Named(PASSING_AUTO_MARKER.to_owned(), Vec::new())
-                        }
-                        Expr::Name(name) if name == "copy" => {
-                            Type::Named(PASSING_COPY_MARKER.to_owned(), Vec::new())
-                        }
-                        Expr::Name(name) if name == "move" => {
-                            Type::Named(PASSING_MOVE_MARKER.to_owned(), Vec::new())
-                        }
-                        _ => {
-                            self.error(format!(
-                                "invalid passing argument for `{}` in `{owner}`; expected `auto`, `copy`, or `move`",
                                 parameter.name
                             ));
                             return None;
@@ -1193,6 +1162,19 @@ impl Analyzer {
                         ));
                         return None;
                     }
+                    CompileParamKind::ParameterModifier => {
+                        let Some(source) = self.probe_parameter_modifier_source(
+                            &argument.value,
+                            &context.type_substitutions,
+                        ) else {
+                            self.error(format!(
+                                "invalid parameter modifier argument for `{}` in `{owner}`; expected `copy`, `move`, or a declared modifier parameter",
+                                parameter.name
+                            ));
+                            return None;
+                        };
+                        source
+                    }
                     CompileParamKind::TypeConstructor { parameter_count } => {
                         let constructor = self.type_constructor_argument_from_expr(
                             &argument.value,
@@ -1208,6 +1190,55 @@ impl Analyzer {
                             parameter.name
                         ));
                         return None;
+                    }
+                    CompileParamKind::Named(ref compile_type) => {
+                        let member = match &argument.value {
+                            Expr::Bool(value) => if *value { "true" } else { "false" }.to_owned(),
+                            Expr::Name(name) => {
+                                if let Some(Type::Named(marker, arguments)) =
+                                    context.type_substitutions.get(name)
+                                {
+                                    if arguments.is_empty()
+                                        && closed_value_from_marker(marker)
+                                            .is_some_and(|(owner, _)| owner == compile_type)
+                                    {
+                                        marker.clone()
+                                    } else {
+                                        name.clone()
+                                    }
+                                } else {
+                                    name.clone()
+                                }
+                            }
+                            _ => {
+                                self.error(format!(
+                                    "invalid `{compile_type}` argument for `{}` in `{owner}`; expected a closed value member",
+                                    parameter.name
+                                ));
+                                return None;
+                            }
+                        };
+                        if closed_value_from_marker(&member).is_some() {
+                            Type::Named(member, Vec::new())
+                        } else {
+                            let valid = self
+                                .closed_type_values
+                                .get(compile_type)
+                                .is_some_and(|members| members.contains(&member));
+                            if !valid {
+                                let description = if compile_type == "access" {
+                                    "invalid access argument".to_owned()
+                                } else {
+                                    format!("invalid `{compile_type}` argument")
+                                };
+                                self.error(format!(
+                                    "{description} `{member}` for `{}` in `{owner}`",
+                                    parameter.name
+                                ));
+                                return None;
+                            }
+                            Type::Named(closed_value_marker(compile_type, &member), Vec::new())
+                        }
                     }
                 };
                 let ty = if matches!(parameter.kind, CompileParamKind::TypeConstructor { .. }) {
@@ -1241,21 +1272,13 @@ impl Analyzer {
             compile_index = target + 1;
         }
         for parameter in compile_groups.iter().flatten() {
-            if parameter.kind == CompileParamKind::Access {
+            if parameter.kind.is_access() {
                 inferred
                     .entry(parameter.name.clone())
                     .or_insert_with(|| InferredTypeArgument {
                         ty: Ty::Struct(ACCESS_SHARED_MARKER.to_owned()),
                         source: Some(Type::Named(ACCESS_SHARED_MARKER.to_owned(), Vec::new())),
                         origin: "default shared access".to_owned(),
-                    });
-            } else if parameter.kind == CompileParamKind::Passing {
-                inferred
-                    .entry(parameter.name.clone())
-                    .or_insert_with(|| InferredTypeArgument {
-                        ty: Ty::Struct(PASSING_AUTO_MARKER.to_owned()),
-                        source: Some(Type::Named(PASSING_AUTO_MARKER.to_owned(), Vec::new())),
-                        origin: "default automatic passing".to_owned(),
                     });
             } else if parameter.kind == CompileParamKind::Effect {
                 inferred
@@ -1269,6 +1292,25 @@ impl Analyzer {
                         source: Some(effect_row_source(false, None, &[])),
                         origin: "default pure effect".to_owned(),
                     });
+            } else if let (
+                CompileParamKind::Named(compile_type),
+                Some(CompileParamDefault::Name(member)),
+            ) = (&parameter.kind, &parameter.default)
+            {
+                if self
+                    .closed_type_values
+                    .get(compile_type)
+                    .is_some_and(|members| members.contains(member))
+                {
+                    let marker = closed_value_marker(compile_type, member);
+                    inferred.entry(parameter.name.clone()).or_insert_with(|| {
+                        InferredTypeArgument {
+                            ty: Ty::Struct(marker.clone()),
+                            source: Some(Type::Named(marker, Vec::new())),
+                            origin: format!("default `{member}` value"),
+                        }
+                    });
+                }
             }
         }
         Some((compile_parameters, inferred, source_index))
@@ -1290,10 +1332,10 @@ impl Analyzer {
             .flatten()
             .filter(|parameter| {
                 matches!(
-                    parameter.kind,
+                    &parameter.kind,
                     CompileParamKind::Type
-                        | CompileParamKind::Access
                         | CompileParamKind::USize
+                        | CompileParamKind::Named(_)
                         | CompileParamKind::TypeConstructor { .. }
                 )
             })
@@ -1353,21 +1395,13 @@ impl Analyzer {
             compile_index = target + 1;
         }
         for parameter in compile_groups.iter().flatten() {
-            if parameter.kind == CompileParamKind::Access {
+            if parameter.kind.is_access() {
                 inferred
                     .entry(parameter.name.clone())
                     .or_insert_with(|| InferredTypeArgument {
                         ty: Ty::Struct(ACCESS_SHARED_MARKER.to_owned()),
                         source: Some(Type::Named(ACCESS_SHARED_MARKER.to_owned(), Vec::new())),
                         origin: "default shared access".to_owned(),
-                    });
-            } else if parameter.kind == CompileParamKind::Passing {
-                inferred
-                    .entry(parameter.name.clone())
-                    .or_insert_with(|| InferredTypeArgument {
-                        ty: Ty::Struct(PASSING_AUTO_MARKER.to_owned()),
-                        source: Some(Type::Named(PASSING_AUTO_MARKER.to_owned(), Vec::new())),
-                        origin: "default automatic passing".to_owned(),
                     });
             } else if parameter.kind == CompileParamKind::Effect {
                 inferred
@@ -1381,6 +1415,25 @@ impl Analyzer {
                         source: Some(effect_row_source(false, None, &[])),
                         origin: "default pure effect".to_owned(),
                     });
+            } else if let (
+                CompileParamKind::Named(compile_type),
+                Some(CompileParamDefault::Name(member)),
+            ) = (&parameter.kind, &parameter.default)
+            {
+                if self
+                    .closed_type_values
+                    .get(compile_type)
+                    .is_some_and(|members| members.contains(member))
+                {
+                    let marker = closed_value_marker(compile_type, member);
+                    inferred.entry(parameter.name.clone()).or_insert_with(|| {
+                        InferredTypeArgument {
+                            ty: Ty::Struct(marker.clone()),
+                            source: Some(Type::Named(marker, Vec::new())),
+                            origin: format!("default `{member}` value"),
+                        }
+                    });
+                }
             }
         }
         Some((compile_parameters, inferred, source_index))

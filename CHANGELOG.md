@@ -24,6 +24,13 @@ subset.
   `extend(T: type) Ptr(mut)(T)` specializes `init` and `take` for mutable pointers. Pointer methods
   use concrete non-nominal method owners internally, retain source-level diagnostics, obey the core
   package orphan boundary, and do not require general compile-time equality predicates.
+- Moved the closed `access` type into `core.borrow`, and replaced the former closed
+  `passing` type and `auto` value with validated compile-time `copy(P: parameters): parameters` and
+  `move(P: parameters): parameters` functions in `core.passing`. Also allowed `bool` and
+  user-declared closed types in compile-time parameter groups with typed defaults and stable
+  monomorphization identities. Runtime parameter prefixes now accept
+  `M: (P: parameters): parameters` function parameters and compose parameter-schema modifiers
+  rather than using a parser-only passing slot.
 - Unified shared and mutable raw pointers under the access-parameterized
   `Ptr(A: access = shared)(T: type)` family. `Ptr(T)` remains the shared spelling,
   `Ptr(mut)(T)` selects mutable access, and the separate mutable-pointer declaration has been

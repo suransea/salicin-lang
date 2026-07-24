@@ -407,6 +407,25 @@ impl Analyzer {
 
         let mut function = template;
         substitute_function_types(&mut function, &substitutions);
+        let unresolved_modifiers = function
+            .groups
+            .iter()
+            .flatten()
+            .flat_map(|parameter| {
+                parameter
+                    .modifiers
+                    .iter()
+                    .map(move |modifier| (parameter.name.as_str(), modifier.as_str()))
+            })
+            .collect::<Vec<_>>();
+        if !unresolved_modifiers.is_empty() {
+            for (parameter, modifier) in unresolved_modifiers {
+                self.error(format!(
+                    "parameter modifier `{modifier}` on `{template_name}.{parameter}` does not normalize to a `parameters` schema"
+                ));
+            }
+            return None;
+        }
         if !self.validate_concrete_where_predicates(template_name, &function.where_predicates) {
             return None;
         }

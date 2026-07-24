@@ -1400,7 +1400,7 @@ impl Analyzer {
                 Param {
                     mode,
                     access: None,
-                    passing: None,
+                    modifiers: Vec::new(),
                     region: None,
                     name: lifted.clone(),
                     ty: source_ty,
@@ -1817,7 +1817,7 @@ impl Analyzer {
                         vec![Param {
                             mode: PassMode::Inferred,
                             access: None,
-                            passing: None,
+                            modifiers: Vec::new(),
                             region: None,
                             name: input_name,
                             ty: input,
@@ -2518,7 +2518,7 @@ impl Analyzer {
                     vec![Param {
                         mode: PassMode::Inferred,
                         access: None,
-                        passing: None,
+                        modifiers: Vec::new(),
                         region: None,
                         name: continuation_value_name,
                         ty: action.output.clone(),
@@ -3239,7 +3239,7 @@ impl Analyzer {
                 vec![Param {
                     mode: PassMode::Inferred,
                     access: None,
-                    passing: None,
+                    modifiers: Vec::new(),
                     region: None,
                     name: value_name,
                     ty: closure.input.clone(),
@@ -3321,7 +3321,7 @@ impl Analyzer {
             Param {
                 mode: PassMode::Move,
                 access: None,
-                passing: None,
+                modifiers: Vec::new(),
                 region: None,
                 name: continuation_name.clone(),
                 ty: continuation_ty.clone(),
@@ -3639,7 +3639,7 @@ impl Analyzer {
                     vec![Param {
                         mode: PassMode::Inferred,
                         access: None,
-                        passing: None,
+                        modifiers: Vec::new(),
                         region: None,
                         name: value_name,
                         ty: frame.input.clone(),
@@ -4176,7 +4176,7 @@ impl Analyzer {
                 vec![Param {
                     mode: PassMode::Inferred,
                     access: None,
-                    passing: None,
+                    modifiers: Vec::new(),
                     region: None,
                     name: continuation_value_name,
                     ty: input.clone(),
@@ -4282,7 +4282,7 @@ impl Analyzer {
                     return Some(Param {
                         mode: PassMode::Copy,
                         access: None,
-                        passing: None,
+                        modifiers: Vec::new(),
                         region: None,
                         name: channel.pointer_name.clone(),
                         ty: channel.pointer_ty.clone(),
@@ -4295,7 +4295,7 @@ impl Analyzer {
                     return Some(Param {
                         mode: PassMode::Move,
                         access: None,
-                        passing: None,
+                        modifiers: Vec::new(),
                         region: None,
                         name: channel.parameter_name.clone(),
                         ty: channel.callable_ty.clone(),
@@ -4307,7 +4307,7 @@ impl Analyzer {
         flattened_parameters.push(Param {
             mode: PassMode::Move,
             access: None,
-            passing: None,
+            modifiers: Vec::new(),
             region: None,
             name: frame_continuation_name,
             ty: Type::Named(

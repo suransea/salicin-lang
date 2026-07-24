@@ -35,8 +35,9 @@ compile-time parameter names, normalized to declaration order, and erased before
 Compiler-lowered capabilities are now source-backed by validated declarations in ordinary core
 modules: `core.effect` owns `Unsafe`, `Throws(Error)` with `raise(move error: Error): Never`, and
 an ordinary `Async` effect with a minimal `suspend(): ()` operation; `core.domains` owns the
-`type`, `region`, `effect`, `access`, and `passing` compile-time domains; `core.borrow` owns the
-validated borrow type and value forms over those domains; `core.control` owns source
+`type`, `region`, `effect`, and `parameters` compile-time domains; `core.borrow` owns the closed
+`access` type plus the validated borrow type and value forms; `core.passing` owns the `copy`/`move`
+parameter modifiers; `core.control` owns source
 definitions for `do`, post-test `do … while`, `try`, `throw`, and `unsafe`, plus the remaining
 bodyless intrinsic signature for `loop`; `core.effect.handler` owns the handler runtime contracts; `core.flow` owns the standard
 `Chain` and `Coalesce` protocol declarations for `?.` and `??`. These exports remain outside the prelude. `await` is
@@ -191,9 +192,9 @@ The alloc free functions and methods use
 this path internally, while the public container surface uses inherent methods. Mutable borrowing
 has one source spelling, `borrow(mut)`; separately named mutable alloc aliases and the former prefix
 spelling are intentionally absent before 1.0.
-Passing domain generics are also implemented for functions and generic inherent members:
-`P: passing` accepts `auto`, `copy`, or `move` and can be referenced directly in parameter keyword
-position. Functions and trait methods place a contextual `with(...)` clause after the result type:
+Parameter modifier function generics are implemented for functions and generic inherent members:
+`M: (P: parameters): parameters` accepts `copy`, `move`, or another modifier parameter and can be
+referenced directly before a runtime parameter. Functions and trait methods place a contextual `with(...)` clause after the result type:
 `: T with(Unsafe)` adds the checked unsafe call requirement, while `: T with(Throws(E))` declares the
 standard recoverable-error effect. `try { ... }` handles that effect and produces an explicit
 `Result`. Without a contextual result type, direct ordinary `Throws(E)` calls and local function

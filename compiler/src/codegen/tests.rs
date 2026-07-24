@@ -105,7 +105,7 @@ fn param(name: &str, ty: Type) -> Param {
     Param {
         mode: PassMode::Inferred,
         access: None,
-        passing: None,
+        modifiers: Vec::new(),
         region: None,
         name: name.to_owned(),
         ty,
@@ -728,7 +728,7 @@ fn registers_source_backed_core_lang_items() {
             .compile_groups
             .as_slice(),
         [group] if matches!(group.as_slice(), [access, ty]
-            if access.name == "A" && access.kind == CompileParamKind::Access
+            if access.name == "A" && access.kind.is_access()
                 && ty.name == "T" && ty.kind == CompileParamKind::Type)
     ));
     assert!(analyzer.function_templates.contains_key(&vec("vec_new")));
@@ -742,7 +742,7 @@ fn registers_source_backed_core_lang_items() {
             .compile_groups
             .as_slice(),
         [group] if matches!(group.as_slice(), [access, ty]
-            if access.name == "A" && access.kind == CompileParamKind::Access
+            if access.name == "A" && access.kind.is_access()
                 && ty.name == "T" && ty.kind == CompileParamKind::Type)
     ));
     for name in [
@@ -2992,7 +2992,7 @@ fn tracks_explicit_move_even_for_a_copy_type() {
         vec![vec![Param {
             mode: PassMode::Move,
             access: None,
-            passing: None,
+            modifiers: Vec::new(),
             region: None,
             name: "value".into(),
             ty: Type::I32,

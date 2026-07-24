@@ -171,6 +171,63 @@ mod tests {
     }
 
     #[test]
+    fn closed_types_can_parameterize_compile_time_functions() {
+        let source = "let optimization = type { size, speed }\n\
+                      let select_bool(B: bool)(value: i32): i32 = { value }\n\
+                      let select_optimization(O: optimization)(value: i32): i32 = { value }\n\
+                      let main(): i32 = {\n\
+                        select_bool(true)(20) +\n\
+                          select_bool(false)(1) +\n\
+                          select_optimization(size)(1)\n\
+                      }\n";
+        compile_source(source)
+            .expect("bool and user-declared closed types should support compile-time values");
+    }
+
+    #[test]
+    fn closed_compile_time_parameters_use_declared_defaults() {
+        let source = "let select(B: bool = false)(value: i32): i32 = { value }\n\
+                      let main(): i32 = { select(42) }\n";
+        compile_source(source).expect("closed compile-time defaults should be normalized by type");
+    }
+
+    #[test]
+    fn closed_compile_time_defaults_are_checked_against_their_type() {
+        let errors = compile_source(
+            "let optimization = type { size, speed }\n\
+             let select(O: optimization = true)(value: i32): i32 = { value }\n\
+             let main(): i32 = { select(42) }\n",
+        )
+        .unwrap_err();
+        assert!(errors.iter().any(|error| {
+            error.contains("default `true`") && error.contains("is not a member of `optimization`")
+        }));
+    }
+
+    #[test]
+    fn parameter_modifiers_are_type_checked_after_instantiation() {
+        let source = "let decorate(B: bool)(B value: i32): i32 = { value }\n\
+                      let main(): i32 = { decorate(true)(42) }\n";
+        let errors = compile_source(source).unwrap_err();
+        assert!(errors.iter().any(|error| {
+            error.contains("parameter modifier `B`")
+                && error.contains("does not normalize to a `parameters` schema")
+        }));
+    }
+
+    #[test]
+    fn parameter_modifier_functions_can_be_forwarded_generically() {
+        let source = "let modifier_identity(M: (P: parameters): parameters) = M\n\
+             let apply(M: (P: parameters): parameters, T: type)(M value: T): T = { value }\n\
+             let main(): i32 = {\n\
+               apply(modifier_identity(copy), i32)(20) +\n\
+                 apply(modifier_identity(move), i32)(22)\n\
+             }\n";
+        compile_source(source)
+            .expect("copy and move parameter modifier functions should instantiate generically");
+    }
+
+    #[test]
     fn alloc_accessors_use_the_access_generic_entry_points() {
         let source = "let Box = std.boxed.Box\n\
                       let Vec = std.vec.Vec

@@ -8,8 +8,8 @@ use crate::ast::{
 
 use super::compile_time::{
     effect_identity_sources, effect_row_from_source, ACCESS_MUT_MARKER, ACCESS_SHARED_MARKER,
-    EFFECT_PURE_MARKER, EFFECT_UNSAFE_MARKER, PASSING_AUTO_MARKER, PASSING_COPY_MARKER,
-    PASSING_MOVE_MARKER,
+    EFFECT_PURE_MARKER, EFFECT_UNSAFE_MARKER, PARAMETER_MODIFIER_COPY_MARKER,
+    PARAMETER_MODIFIER_MOVE_MARKER,
 };
 
 pub(super) fn normalize_labeled_type_arguments<const N: usize>(
@@ -1307,12 +1307,16 @@ fn substitute_parameter_types(parameter: &mut Param, substitutions: &HashMap<Str
             parameter.access = None;
         }
     }
-    if let Some(passing) = parameter.passing.as_deref() {
-        if let Some(mode) = substituted_passing_mode(passing, substitutions) {
+    let mut unresolved_modifiers = Vec::new();
+    for modifier in parameter.modifiers.iter().rev() {
+        if let Some(mode) = substituted_passing_mode(modifier, substitutions) {
             parameter.mode = mode;
-            parameter.passing = None;
+        } else {
+            unresolved_modifiers.push(modifier.clone());
         }
     }
+    unresolved_modifiers.reverse();
+    parameter.modifiers = unresolved_modifiers;
     substitute_type_parameters(&mut parameter.ty, substitutions);
 }
 
@@ -1613,9 +1617,8 @@ pub(super) fn substitute_expr_types(expression: &mut Expr, substitutions: &HashM
                     match marker.as_str() {
                         ACCESS_SHARED_MARKER => *name = "shared".to_owned(),
                         ACCESS_MUT_MARKER => *name = "mut".to_owned(),
-                        PASSING_AUTO_MARKER => *name = "auto".to_owned(),
-                        PASSING_COPY_MARKER => *name = "copy".to_owned(),
-                        PASSING_MOVE_MARKER => *name = "move".to_owned(),
+                        PARAMETER_MODIFIER_COPY_MARKER => *name = "copy".to_owned(),
+                        PARAMETER_MODIFIER_MOVE_MARKER => *name = "move".to_owned(),
                         EFFECT_PURE_MARKER => *name = "pure".to_owned(),
                         EFFECT_UNSAFE_MARKER => *name = "unsafe".to_owned(),
                         _ => {}
@@ -1990,6 +1993,11 @@ fn substituted_access_mutability(
 }
 
 fn substituted_passing_mode(name: &str, substitutions: &HashMap<String, Type>) -> Option<PassMode> {
+    match name {
+        "copy" => return Some(PassMode::Copy),
+        "move" => return Some(PassMode::Move),
+        _ => {}
+    }
     let Type::Named(marker, arguments) = substitutions.get(name)? else {
         return None;
     };
@@ -1997,9 +2005,8 @@ fn substituted_passing_mode(name: &str, substitutions: &HashMap<String, Type>) -
         return None;
     }
     match marker.as_str() {
-        PASSING_AUTO_MARKER => Some(PassMode::Inferred),
-        PASSING_COPY_MARKER => Some(PassMode::Copy),
-        PASSING_MOVE_MARKER => Some(PassMode::Move),
+        PARAMETER_MODIFIER_COPY_MARKER => Some(PassMode::Copy),
+        PARAMETER_MODIFIER_MOVE_MARKER => Some(PassMode::Move),
         _ => None,
     }
 }

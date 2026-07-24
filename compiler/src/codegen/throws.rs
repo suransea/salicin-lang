@@ -379,7 +379,7 @@ impl Analyzer {
                     vec![Param {
                         mode: PassMode::Inferred,
                         access: None,
-                        passing: None,
+                        modifiers: Vec::new(),
                         region: None,
                         name: done_value.clone(),
                         ty: payload_source,
@@ -402,7 +402,7 @@ impl Analyzer {
                     vec![Param {
                         mode: PassMode::Inferred,
                         access: None,
-                        passing: None,
+                        modifiers: Vec::new(),
                         region: None,
                         name: raise_error.clone(),
                         ty: inferred,

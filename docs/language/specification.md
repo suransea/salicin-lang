@@ -38,10 +38,10 @@
   `where`、`root`、`super`、`package`。控制拼写 `match`、`return`、`if`、`else`、`loop`、
   `while`、`for`、`in`、`break`、`continue` 是上下文标识符。
 - `self`、`Self`、`root`、`super`、`true`、`false` 是保留字。
-- `type`、`region`、`effect`、`access`、`passing` 和 `parameters`
+- `type`、`region`、`effect`、`access` 和 `parameters`
   只在编译期参数位置具有
-  上下文含义，`domain` 只在声明右侧具有上下文含义；domain 成员 `mut`、`copy`、`move`、
-  `auto` 和 `shared` 也由使用位置与语义约束解释。它们都不是全局保留字。
+  上下文含义，`domain` 只在声明右侧具有上下文含义；`mut`、`copy`、`move`
+  和 `shared` 也由使用位置与语义约束解释。它们都不是全局保留字。
 - `borrow` 是上下文识别的借用构造器；`do`、`try`、`throw` 和 `unsafe` 来自
   `core.control`。这些拼写均词法化为普通标识符，不占用声明、成员或路径名称。
 - “上下文关键字”是语法语义分类，不要求 lexer 使用某一种 token。只要在非特殊位置仍可按普通
@@ -52,6 +52,9 @@
   选择原生表示和快速 lowering；`isize`、`usize` 的宽度来自目标指针宽度，不是 `i64`、`u64` 别名。
 - `let Name = type { value, ... }` 声明 primitive type form 的封闭值集合；标准布尔类型
   写作 `let bool = type { false, true }`。
+- 任意封闭类型都可以约束编译期参数，例如 `B: bool` 或用户声明的
+  `O: optimization`。阶段由参数所在的编译期参数组决定，不由类型名称决定；同一个 `bool`
+  仍可用于普通运行时参数。
 - 调用可以连续提供多个尾随闭包，每个闭包应用一个新的参数组；尾随闭包也可以写成
   `label { ... }` 以参与具名参数选择。标签后的嵌套尾调用会自动闭包化，因此
   `else if ...` 是普通的 `else` 标签加嵌套调用。标准循环使用明确的测试位置标签：
@@ -574,8 +577,9 @@ effect 参数抽象整个 row，包括 `Throws(E)` 与未来的异步挂起。�
 effect、trait 或协议，再由编译器校验对应 lang item 并做 lowering；语法糖应尽量脱糖到这些
 源码级契约，而不是为每个类型增加封闭的编译器特例。`core.effect` 声明普通 effect 形态的 `Unsafe`、
 带普通 abort operation `raise(move error: Error): Never` 的 `Throws(Error)`，以及带最小
-`suspend(): ()` operation 的 `Async`；`core.domains` 声明 `type`、`region`、`effect`、
-`parameters`、`access` 与 `passing` 编译期 domain；`core.control`
+`suspend(): ()` operation 的 `Async`；`core.domains` 声明 `type`、`region`、`effect` 与
+`parameters` 编译期 domain；`core.borrow` 声明 `access` 封闭类型；`core.passing`
+声明 `copy`、`move` 参数修饰函数；`core.control`
 声明 `do`、`try`、`throw`、`unsafe`、`loop`、`while`、`if`、`match` 与 `for`
 的控制函数签名；`core.effect.handler`
 声明 handler 运行时契约；`core.functional` 声明使用构造子 kind 的 `Functor`、`Applicative` 与 `Monad`
@@ -664,14 +668,14 @@ let f(
 临时计算值不能作为可变借用实参。共享借用可以短暂借用临时值，但该借用不能逃出当前完整表达式。
 部分应用保存的借用从应用该参数组时开始，并持续到部分应用闭包最后一次使用或析构。
 
-对未标注的泛型参数，传递模式保留为 `auto`，并在单态化时依据实际类型是否实现 `Copy` 决定。
+对未标注的泛型参数，传递模式保持为 inferred，并在单态化时依据实际类型是否实现 `Copy` 决定。
 如果 API 需要对所有实例保持相同的消费行为，必须显式写 `copy` 或 `move`。
-因此，按值参数默认应省略为 `auto`；只有 API 明确承诺消费调用方原绑定时才写 `move`。
+因此，按值参数默认应省略修饰器；只有 API 明确承诺消费调用方原绑定时才写 `move`。
 `move` 是所有权契约，而不是普通按值传递的样板标记。
 
 ### 6.2 Access 关键字泛型
 
-共享和排他访问是编译期能力值，可由 `access` domain 参数化：
+共享和排他访问是编译期能力值，可由封闭 `access` 类型参数化：
 
 ```sc
 let identity(A: access, R: region, T: type)
@@ -690,31 +694,41 @@ access 实参参与单态化。`borrow(A)` 可出现在借用类型与借用表�
 `shared`，需要消歧时使用普通命名编译期实参 `A: mut`，不引入方括号语法或 `_` 占位。
 
 access 参数统一的是同一算法的访问能力，不是函数 effect：它不会表示抛错、异步、IO 或状态修改。
-`type`、`region`、`effect`、`parameters`、`access` 与 `passing`
-都是编译期 domain，描述编译期数据或调用约定；
+`type`、`region`、`effect` 与 `parameters` 是编译期 domain；`access`
+是 `type` domain 中的封闭类型；
 effect 行仍有 row 组合与转发规则，不能误用 access 参数表达控制要求。
 
-### 6.3 Passing 关键字泛型
+### 6.3 参数 schema 修饰器
 
-按值传递策略可由 `passing` domain 参数化，并直接在原本写 `copy` 或 `move` 的关键字位置引用：
+运行时参数的前缀位置接受从 `parameters` schema 到 `parameters` schema 的编译期修饰器，而不是
+一个语法专属的 passing 槽。多个修饰器从右向左组合；parser 保留所有修饰表达式，实例化必须将它们
+归一化成最终 parameter schema。`copy` 与 `move` 是标准的
+`(P: parameters): parameters` 编译期函数：
 
 ```sc
-let identity(P: passing, T: type)(P value: T): T = { value }
-let forward(P: passing, T: type)(P value: T): T = { identity(P, T)(value) }
+let identity(M: (P: parameters): parameters, T: type)(M value: T): T = { value }
+let forward(M: (P: parameters): parameters, T: type)(M value: T): T = {
+  identity(M, T)(value)
+}
 
 let copied = identity(copy, i32)(number)
-let consumed = identity(P: move, T: Buffer)(buffer)
-let automatic = identity(resource) // P 默认 auto，T 由 value 推断
+let consumed = identity(M: move, T: Buffer)(buffer)
+let inferred = forward_without_modifier(resource)
 ```
 
-`passing` 的内建值是 `auto`、`copy` 和 `move`。`auto` 对实现 `Copy` 的实际类型选择复制，否则
-选择移动；`copy` 要求实际类型实现 `Copy`；`move` 即使用于 Copy 类型也会在语言语义上消费原绑定。
-三种实例在函数体内都提供拥有值，因此同一个泛型函数体可以安全地返回、保存或继续转移参数。
-passing 值不进入运行时，但参与单态化；可使用位置或命名编译期实参，省略时不需要 `_`。
+无前缀参数依据实际类型是否实现 `Copy` 选择复制或移动；`copy` 要求实际类型实现 `Copy`；
+`move` 即使用于 Copy 类型也会在语言语义上消费原绑定。modifier 函数值不进入运行时，但参与单态化。
+当前编译期求值子集还接受透明高阶恒等函数
+`let modifier_identity(M: (P: parameters): parameters) = M`；具有任意函数体的用户自定义
+`parameters` 变换留待通用编译期函数求值器实现。
 
-借用没有塞进 `passing`：借用还携带共享/排他能力、来源 region 和不同 ABI，由正交的
-`borrow(A)(R)(T)` 表达。这样 `passing` 只改变调用方的按值所有权效果，`access` 只改变借用能力。
-`P: passing` 当前只允许声明在函数或扩展成员上，不能作为数据类型、trait 或 extend header 参数。
+同一前缀语法接受其他编译期修饰器，例如 `(M P value: T)`；是否合法由修饰器能否归一化
+`parameters` 决定，而不是由 parser 检查其名称或把它分类成 passing。不能产生 parameter schema
+的值在具体实例化时报告类型错误。
+
+借用没有塞进 modifier：借用还携带共享/排他能力、来源 region 和不同 ABI，由正交的
+`borrow(A)(R)(T)` 表达。`M: (P: parameters): parameters` 当前只允许声明在函数或扩展成员上，
+不能作为数据类型、trait 或 extend header 参数。
 
 ### 6.4 借用值与生命周期
 
@@ -1354,7 +1368,7 @@ let PartialOrd(Rhs: type) = trait {
 `Equal | Greater`；`Unordered` 对四种运算都得到 `false`。每个表达式只调用一次
 `partial_cmp`，并只求值一次左右操作数。
 
-一元协议没有右操作数；它们以 `auto` 接收 `self`，并允许通过关联类型改变结果类型：
+一元协议没有右操作数；它们以推断传递模式接收 `self`，并允许通过关联类型改变结果类型：
 
 ```sc
 let Neg = trait {
@@ -1368,7 +1382,7 @@ let Not = trait {
 }
 ```
 
-按位与移位协议同样以 `auto` 接收两个操作数，并通过关联类型决定结果；五个协议分别使用
+按位与移位协议同样以推断传递模式接收两个操作数，并通过关联类型决定结果；五个协议分别使用
 `bit_and`、`bit_or`、`bit_xor`、`shl` 和 `shr` 方法：
 
 ```sc
@@ -1605,7 +1619,7 @@ lang-item 身份，同名 inherent 方法或其他 trait 不能截获展开。�
 
 复合赋值协议为 `AddAssign`、`SubAssign`、`MulAssign`、`DivAssign`、`RemAssign`、
 `BitAndAssign`、`BitOrAssign`、`BitXorAssign`、`ShlAssign`、`ShrAssign`，分别对应 `+=`、`-=`、
-`*=`、`/=`、`%=`、`&=`、`|=`、`^=`、`<<=`、`>>=`。协议方法可变借用 `self`、以 `auto` 接收 `rhs`
+`*=`、`/=`、`%=`、`&=`、`|=`、`^=`、`<<=`、`>>=`。协议方法可变借用 `self`、以推断传递模式接收 `rhs`
 并返回 `()`；语法直接绑定 `core.ops` 中经过验证的 lang item。同名 inherent 方法或其他 trait
 不参与选择。
 

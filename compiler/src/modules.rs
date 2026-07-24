@@ -341,6 +341,8 @@ const CORE_PRELUDE_EXPORTS: &[(&str, &str)] = &[
     ("Ptr", "core::memory::Ptr"),
     ("size_of", "core::memory::size_of"),
     ("align_of", "core::memory::align_of"),
+    ("copy", "core::passing::copy"),
+    ("move", "core::passing::move"),
 ];
 const CORE_ROOT_EXPORTS: &[(&str, &str)] = &[
     ("Never", "core::never::Never"),
@@ -403,15 +405,9 @@ const CORE_EFFECT_HANDLER_EXPORTS: &[&str] = &["Continuation", "EffectCallable",
 const CORE_PRIMITIVE_EXPORTS: &[&str] = &[
     "bool", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
 ];
-const CORE_DOMAIN_EXPORTS: &[&str] = &[
-    "type",
-    "region",
-    "effect",
-    "parameters",
-    "access",
-    "passing",
-];
-const CORE_BORROW_EXPORTS: &[&str] = &["borrow"];
+const CORE_DOMAIN_EXPORTS: &[&str] = &["type", "region", "effect", "parameters"];
+const CORE_PASSING_EXPORTS: &[&str] = &["copy", "move"];
+const CORE_BORROW_EXPORTS: &[&str] = &["access", "borrow"];
 const CORE_MEMORY_EXPORTS: &[&str] = &["Array", "Ptr", "size_of", "align_of"];
 const CORE_CONTROL_EXPORTS: &[&str] = &[
     "Break", "Continue", "Return", "Attempt", "break", "continue", "return", "do", "try", "throw",
@@ -526,8 +522,9 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("domains", "region", "core::domains::region"),
     ("domains", "effect", "core::domains::effect"),
     ("domains", "parameters", "core::domains::parameters"),
-    ("domains", "access", "core::domains::access"),
-    ("domains", "passing", "core::domains::passing"),
+    ("passing", "copy", "core::passing::copy"),
+    ("passing", "move", "core::passing::move"),
+    ("borrow", "access", "core::borrow::access"),
     ("borrow", "borrow", "core::borrow::borrow"),
     ("control", "do", "core::control::do"),
     ("control", "try", "core::control::try"),
@@ -1040,6 +1037,9 @@ fn install_standard_namespaces(
         for name in CORE_DOMAIN_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.domains.{name}"));
         }
+        for name in CORE_PASSING_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.passing.{name}"));
+        }
         for name in CORE_BORROW_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.borrow.{name}"));
         }
@@ -1363,6 +1363,17 @@ fn install_core_namespace(
                 "domains",
                 name,
                 &format!("core::domains::{name}"),
+                "<core>",
+            );
+        }
+        for name in CORE_PASSING_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "passing",
+                name,
+                &format!("core::passing::{name}"),
                 "<core>",
             );
         }
@@ -2790,6 +2801,11 @@ impl Resolver {
             }
             Item::TypeAlias(definition) => {
                 definition.name = canonical_name(context.module_path, &definition.name);
+                self.rewrite_compile_parameter_types(
+                    &mut definition.compile_groups,
+                    context,
+                    &HashSet::new(),
+                );
                 let type_scope =
                     compile_parameter_names(&definition.compile_groups, &HashSet::new());
                 self.rewrite_type(&mut definition.target, context, &type_scope);
@@ -2799,6 +2815,11 @@ impl Resolver {
             Item::Trait(definition) => self.rewrite_trait(definition, context),
             Item::Effect(definition) => {
                 definition.name = canonical_name(context.module_path, &definition.name);
+                self.rewrite_compile_parameter_types(
+                    &mut definition.compile_groups,
+                    context,
+                    &HashSet::new(),
+                );
                 let type_scope =
                     compile_parameter_names(&definition.compile_groups, &HashSet::new());
                 for operation in &mut definition.operations {
@@ -2817,6 +2838,11 @@ impl Resolver {
 
     fn rewrite_struct(&mut self, definition: &mut StructDef, context: ResolveContext<'_>) {
         definition.name = canonical_name(context.module_path, &definition.name);
+        self.rewrite_compile_parameter_types(
+            &mut definition.compile_groups,
+            context,
+            &HashSet::new(),
+        );
         let type_scope = compile_parameter_names(&definition.compile_groups, &HashSet::new());
         for field in &mut definition.fields {
             self.rewrite_field(field, context, &type_scope);
@@ -2825,6 +2851,11 @@ impl Resolver {
 
     fn rewrite_enum(&mut self, definition: &mut EnumDef, context: ResolveContext<'_>) {
         definition.name = canonical_name(context.module_path, &definition.name);
+        self.rewrite_compile_parameter_types(
+            &mut definition.compile_groups,
+            context,
+            &HashSet::new(),
+        );
         let type_scope = compile_parameter_names(&definition.compile_groups, &HashSet::new());
         for variant in &mut definition.variants {
             match &mut variant.fields {
@@ -2845,6 +2876,11 @@ impl Resolver {
 
     fn rewrite_trait(&mut self, definition: &mut TraitDef, context: ResolveContext<'_>) {
         definition.name = canonical_name(context.module_path, &definition.name);
+        self.rewrite_compile_parameter_types(
+            &mut definition.compile_groups,
+            context,
+            &HashSet::new(),
+        );
         let mut trait_types = compile_parameter_names(&definition.compile_groups, &HashSet::new());
         trait_types.insert("Self".to_owned());
         trait_types.extend(definition.members.iter().filter_map(|member| match member {
@@ -2878,6 +2914,11 @@ impl Resolver {
     }
 
     fn rewrite_extend(&mut self, extension: &mut ExtendDef, context: ResolveContext<'_>) {
+        self.rewrite_compile_parameter_types(
+            &mut extension.compile_groups,
+            context,
+            &HashSet::new(),
+        );
         let header_type_scope = compile_parameter_names(&extension.compile_groups, &HashSet::new());
         self.rewrite_type(&mut extension.target, context, &header_type_scope);
         if let Some(trait_ref) = &mut extension.trait_ref {
@@ -2917,6 +2958,7 @@ impl Resolver {
         context: ResolveContext<'_>,
         outer_types: &HashSet<String>,
     ) {
+        self.rewrite_compile_parameter_types(&mut function.compile_groups, context, outer_types);
         let type_scope = compile_parameter_names(&function.compile_groups, outer_types);
         let mut value_scope = type_scope.clone();
         value_scope.extend(
@@ -2950,6 +2992,32 @@ impl Resolver {
         }
         if let Some(body) = &mut function.body {
             self.rewrite_expr(body, context, &type_scope, &value_scope);
+        }
+    }
+
+    fn rewrite_compile_parameter_types(
+        &mut self,
+        groups: &mut [Vec<crate::ast::CompileParam>],
+        context: ResolveContext<'_>,
+        outer_types: &HashSet<String>,
+    ) {
+        for parameter in groups.iter_mut().flatten() {
+            let CompileParamKind::Named(name) = &mut parameter.kind else {
+                continue;
+            };
+            if matches!(
+                name.as_str(),
+                "bool" | "access" | "type" | "region" | "effect" | "parameters"
+            ) {
+                continue;
+            }
+            let mut source = Type::Named(name.clone(), Vec::new());
+            self.rewrite_type(&mut source, context, outer_types);
+            if let Type::Named(resolved, arguments) = source {
+                if arguments.is_empty() {
+                    *name = resolved;
+                }
+            }
         }
     }
 
@@ -3615,6 +3683,7 @@ fn compile_parameter_names(
                     CompileParamKind::Type
                         | CompileParamKind::TypeConstructor { .. }
                         | CompileParamKind::EffectConstructor { .. }
+                        | CompileParamKind::ParameterModifier
                 )
             })
             .map(|parameter| parameter.name.clone()),
@@ -3625,17 +3694,7 @@ fn compile_parameter_names(
 fn compile_argument_name_is_builtin(name: &str) -> bool {
     matches!(
         name,
-        "i32"
-            | "i64"
-            | "u32"
-            | "u64"
-            | "bool"
-            | "shared"
-            | "mut"
-            | "auto"
-            | "copy"
-            | "move"
-            | "pure"
+        "i32" | "i64" | "u32" | "u64" | "bool" | "shared" | "mut" | "copy" | "move" | "pure"
     )
 }
 
@@ -3667,6 +3726,39 @@ mod tests {
             source: source.to_owned(),
             is_root,
         }
+    }
+
+    #[test]
+    fn resolves_user_closed_compile_parameter_types_across_modules() {
+        let program = resolve_sources(&[
+            unit(
+                "root.sc",
+                &[],
+                "use root.config.optimization as optimization\n\
+                 let select(O: optimization)(value: i32): i32 = { value }\n\
+                 let main(): i32 = { 0 }\n",
+                true,
+            ),
+            unit(
+                "config.sc",
+                &["config"],
+                "pub let optimization = type { size, speed }\n",
+                false,
+            ),
+        ])
+        .unwrap();
+        let function = program
+            .items
+            .iter()
+            .find_map(|item| match item {
+                Item::Function(function) if function.name == "select" => Some(function),
+                _ => None,
+            })
+            .expect("resolved select function");
+        assert!(matches!(
+            &function.compile_groups[0][0].kind,
+            CompileParamKind::Named(name) if name == "config::optimization"
+        ));
     }
 
     fn package(
@@ -5235,6 +5327,7 @@ let main(): i32 = { Option {} }
                     .map(|name| ("handler", *name)),
             )
             .chain(CORE_DOMAIN_EXPORTS.iter().map(|name| ("domains", *name)))
+            .chain(CORE_PASSING_EXPORTS.iter().map(|name| ("passing", *name)))
             .chain(CORE_BORROW_EXPORTS.iter().map(|name| ("borrow", *name)))
             .chain(CORE_MEMORY_EXPORTS.iter().map(|name| ("memory", *name)))
             .chain(CORE_CONTROL_EXPORTS.iter().map(|name| ("control", *name)))

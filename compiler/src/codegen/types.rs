@@ -6,10 +6,10 @@ use crate::ast::{
 use crate::core::LangItemKind;
 
 use super::compile_time::{
-    effect_identity_sources, effect_row_from_marker, effect_row_from_source, effect_row_source,
-    is_compile_value_marker, source_effect_identity, type_constructor_from_marker,
-    type_constructor_marker, usize_value_marker, ACCESS_MUT_MARKER, ACCESS_SHARED_MARKER,
-    PASSING_AUTO_MARKER, PASSING_COPY_MARKER, PASSING_MOVE_MARKER,
+    closed_value_from_marker, closed_value_marker, effect_identity_sources, effect_row_from_marker,
+    effect_row_from_source, effect_row_source, is_compile_value_marker, source_effect_identity,
+    type_constructor_from_marker, type_constructor_marker, usize_value_marker, ACCESS_MUT_MARKER,
+    ACCESS_SHARED_MARKER, PARAMETER_MODIFIER_COPY_MARKER, PARAMETER_MODIFIER_MOVE_MARKER,
 };
 use super::flow::LowerCtx;
 use super::hir::{FunctionTy, Ty};
@@ -720,34 +720,13 @@ impl Analyzer {
         expression: &Expr,
         substitutions: &HashMap<String, Type>,
     ) -> Option<Type> {
-        match parameter.kind {
+        match parameter.kind.clone() {
             CompileParamKind::Type => self.probe_type_argument_source(expression, substitutions),
             CompileParamKind::USize => match expression {
                 Expr::Integer(value) => Some(Type::CompileUSize(u64::try_from(*value).ok()?)),
                 Expr::Name(name) => substitutions.get(name).and_then(|value| {
                     matches!(value, Type::CompileUSize(_)).then(|| value.clone())
                 }),
-                _ => None,
-            },
-            CompileParamKind::Access => match expression {
-                Expr::Name(name) if name == "shared" => {
-                    Some(Type::Named(ACCESS_SHARED_MARKER.to_owned(), Vec::new()))
-                }
-                Expr::Name(name) if name == "mut" => {
-                    Some(Type::Named(ACCESS_MUT_MARKER.to_owned(), Vec::new()))
-                }
-                _ => None,
-            },
-            CompileParamKind::Passing => match expression {
-                Expr::Name(name) if name == "auto" => {
-                    Some(Type::Named(PASSING_AUTO_MARKER.to_owned(), Vec::new()))
-                }
-                Expr::Name(name) if name == "copy" => {
-                    Some(Type::Named(PASSING_COPY_MARKER.to_owned(), Vec::new()))
-                }
-                Expr::Name(name) if name == "move" => {
-                    Some(Type::Named(PASSING_MOVE_MARKER.to_owned(), Vec::new()))
-                }
                 _ => None,
             },
             CompileParamKind::Effect => match expression {
@@ -826,10 +805,53 @@ impl Analyzer {
                     .filter(|target| target.parameter_count == parameter_count)
                     .map(|_| source)
             }
+            CompileParamKind::ParameterModifier => {
+                self.probe_parameter_modifier_source(expression, substitutions)
+            }
             CompileParamKind::Region
             | CompileParamKind::Parameters
             | CompileParamKind::ParameterPack
             | CompileParamKind::EffectConstructor { .. } => None,
+            CompileParamKind::Named(compile_type) => match expression {
+                Expr::Bool(value)
+                    if self
+                        .closed_type_values
+                        .get(&compile_type)
+                        .is_some_and(|members| {
+                            members.contains(&if *value {
+                                "true".to_owned()
+                            } else {
+                                "false".to_owned()
+                            })
+                        }) =>
+                {
+                    Some(Type::Named(
+                        closed_value_marker(&compile_type, if *value { "true" } else { "false" }),
+                        Vec::new(),
+                    ))
+                }
+                Expr::Name(name)
+                    if self
+                        .closed_type_values
+                        .get(&compile_type)
+                        .is_some_and(|members| members.contains(name)) =>
+                {
+                    Some(Type::Named(
+                        closed_value_marker(&compile_type, name),
+                        Vec::new(),
+                    ))
+                }
+                Expr::Name(name) => substitutions.get(name).and_then(|value| {
+                    let Type::Named(marker, arguments) = value else {
+                        return None;
+                    };
+                    (arguments.is_empty()
+                        && closed_value_from_marker(marker)
+                            .is_some_and(|(owner, _)| owner == compile_type))
+                    .then(|| value.clone())
+                }),
+                _ => None,
+            },
         }
     }
 
@@ -838,7 +860,7 @@ impl Analyzer {
         parameter: &CompileParam,
         source: &Type,
     ) -> Option<Ty> {
-        match parameter.kind {
+        match parameter.kind.clone() {
             CompileParamKind::TypeConstructor { parameter_count } => {
                 let Type::Named(name, arguments) = source else {
                     return None;
@@ -850,10 +872,9 @@ impl Analyzer {
                     .filter(|target| target.parameter_count == parameter_count)
                     .map(|_| Ty::Struct(type_constructor_marker(name)))
             }
-            CompileParamKind::Type
-            | CompileParamKind::Access
-            | CompileParamKind::Passing
-            | CompileParamKind::Effect => self.probe_source_ty(source),
+            CompileParamKind::Type | CompileParamKind::Effect | CompileParamKind::Named(_) => {
+                self.probe_source_ty(source)
+            }
             CompileParamKind::USize => match source {
                 Type::CompileUSize(value) => Some(Ty::Struct(usize_value_marker(*value))),
                 _ => None,
@@ -861,6 +882,7 @@ impl Analyzer {
             CompileParamKind::Region
             | CompileParamKind::Parameters
             | CompileParamKind::ParameterPack
+            | CompileParamKind::ParameterModifier
             | CompileParamKind::EffectConstructor { .. } => None,
         }
     }
@@ -932,7 +954,7 @@ impl Analyzer {
         }
         if parameters
             .iter()
-            .all(|parameter| parameter.kind == CompileParamKind::Access)
+            .all(|parameter| parameter.kind.is_access())
         {
             return arguments.iter().all(|argument| {
                 matches!(&argument.value, Expr::Name(name) if name == "shared" || name == "mut")
@@ -940,11 +962,11 @@ impl Analyzer {
         }
         if parameters
             .iter()
-            .all(|parameter| parameter.kind == CompileParamKind::Passing)
+            .all(|parameter| parameter.kind.is_parameter_modifier())
         {
             return arguments.iter().all(|argument| {
                 matches!(&argument.value, Expr::Name(name)
-                    if matches!(name.as_str(), "auto" | "copy" | "move"))
+                    if matches!(name.rsplit("::").next().unwrap_or(name), "copy" | "move"))
             });
         }
         if parameters
@@ -1020,7 +1042,7 @@ impl Analyzer {
         context: &LowerCtx,
         unit_is_type: bool,
     ) -> bool {
-        match parameter.kind {
+        match parameter.kind.clone() {
             CompileParamKind::Type => {
                 (unit_is_type && matches!(expression, Expr::Unit))
                     || self.expression_is_explicit_type_argument(expression, context)
@@ -1032,13 +1054,6 @@ impl Analyzer {
                         |value| matches!(value, Type::CompileUSize(_))
                     ))
             }
-            CompileParamKind::Access => {
-                matches!(expression, Expr::Name(name) if name == "shared" || name == "mut")
-            }
-            CompileParamKind::Passing => {
-                matches!(expression, Expr::Name(name)
-                    if matches!(name.as_str(), "auto" | "copy" | "move"))
-            }
             CompileParamKind::Effect => self.expression_is_explicit_effect_argument(expression),
             CompileParamKind::TypeConstructor { parameter_count } => {
                 self.expression_is_explicit_type_constructor_argument(expression, parameter_count)
@@ -1046,7 +1061,38 @@ impl Analyzer {
             CompileParamKind::Region => false,
             CompileParamKind::Parameters => false,
             CompileParamKind::ParameterPack => false,
+            CompileParamKind::ParameterModifier => self
+                .probe_parameter_modifier_source(expression, &context.type_substitutions)
+                .is_some(),
             CompileParamKind::EffectConstructor { .. } => false,
+            CompileParamKind::Named(compile_type) => match expression {
+                Expr::Bool(value) => {
+                    self.closed_type_values
+                        .get(&compile_type)
+                        .is_some_and(|members| {
+                            members.contains(&if *value {
+                                "true".to_owned()
+                            } else {
+                                "false".to_owned()
+                            })
+                        })
+                }
+                Expr::Name(name) => {
+                    self.closed_type_values
+                        .get(&compile_type)
+                        .is_some_and(|members| members.contains(name))
+                        || context.type_substitutions.get(name).is_some_and(|value| {
+                            matches!(
+                                value,
+                                Type::Named(marker, arguments)
+                                    if arguments.is_empty()
+                                        && closed_value_from_marker(marker)
+                                            .is_some_and(|(owner, _)| owner == compile_type)
+                            )
+                        })
+                }
+                _ => false,
+            },
         }
     }
 
@@ -1061,6 +1107,43 @@ impl Analyzer {
         let source = Type::Named(name.clone(), Vec::new());
         self.type_constructor_impl_target(&source)
             .is_some_and(|target| target.parameter_count == parameter_count)
+    }
+
+    pub(super) fn probe_parameter_modifier_source(
+        &self,
+        expression: &Expr,
+        substitutions: &HashMap<String, Type>,
+    ) -> Option<Type> {
+        match expression {
+            Expr::Name(name) => {
+                if let Some(source) = substitutions.get(name) {
+                    return Some(source.clone());
+                }
+                match name.rsplit("::").next().unwrap_or(name).as_ref() {
+                    "copy" => Some(Type::Named(
+                        PARAMETER_MODIFIER_COPY_MARKER.to_owned(),
+                        Vec::new(),
+                    )),
+                    "move" => Some(Type::Named(
+                        PARAMETER_MODIFIER_MOVE_MARKER.to_owned(),
+                        Vec::new(),
+                    )),
+                    _ => None,
+                }
+            }
+            Expr::Call(callee, arguments)
+                if arguments.len() == 1
+                    && arguments[0].label.is_none()
+                    && matches!(
+                        callee.as_ref(),
+                        Expr::Name(name)
+                            if self.transparent_parameter_modifiers.contains(name)
+                    ) =>
+            {
+                self.probe_parameter_modifier_source(&arguments[0].value, substitutions)
+            }
+            _ => None,
+        }
     }
 
     fn expression_is_explicit_effect_argument(&self, expression: &Expr) -> bool {
