@@ -2178,7 +2178,7 @@ fn valid_do_while(function: &Function) -> bool {
         )
         && function.return_type == Some(Type::Unit)
         && function.effects == effect_parameter("E")
-        && function.body.is_none()
+        && function.body.is_some()
 }
 
 fn valid_try(function: &Function) -> bool {

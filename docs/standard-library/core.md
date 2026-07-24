@@ -243,7 +243,14 @@ pub let do(E: effect, T: type)
   (move action: (): T with(E)): T with(E)
 pub let do(E: effect)
   (move action: (): () with(core.control.Break(()), core.control.Continue, E))
-  (move while: (): bool with(core.control.Break(()), core.control.Continue, E)): () with(E)
+  (move while: (): bool with(core.control.Break(()), core.control.Continue, E)): () with(E) = {
+  loop {
+    core.control.Continue.handle
+      next { () }
+      action { action() }
+    if while() { continue() } else { break() }
+  }
+}
 pub let try(F: effect, T: type, E: type)
   (move action: (): T with(core.effect.Throws(E), F)): core.Result(E)(T) with(F)
 pub let throw(Error: type)

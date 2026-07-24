@@ -285,9 +285,20 @@ impl Analyzer {
             || !matches!(action_group[0].label.as_deref(), None | Some("action"))
             || (clause_groups.len() != 1 && clause_groups.iter().any(|group| group.len() != 1))
         {
+            let shape = groups
+                .iter()
+                .map(|group| {
+                    group
+                        .iter()
+                        .map(|argument| argument.label.as_deref().unwrap_or("_"))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .collect::<Vec<_>>()
+                .join(")(");
             self.error(format!(
-                "`{}.handle` expects labeled clause groups followed by an `action` closure",
-                source_effect_identity(instance)
+                "`{}.handle` expects labeled clause groups followed by an `action` closure; found ({shape})",
+                source_effect_identity(instance),
             ));
             return error_expr();
         }

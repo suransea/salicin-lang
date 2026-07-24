@@ -3085,6 +3085,8 @@ impl Parser {
                 let label = self.expect_ident("a trailing closure label")?;
                 self.expect(&TokenKind::Colon, "`:` after trailing closure label")?;
                 let closure = self.closure()?;
+                let completes_handler =
+                    label == "action" && Self::starts_implicit_handler_groups(&expression);
                 expression = Expr::Call(
                     Box::new(expression),
                     vec![CallArg {
@@ -3092,6 +3094,9 @@ impl Parser {
                         value: closure,
                     }],
                 );
+                if completes_handler {
+                    break;
+                }
                 can_take_trailing_closure = true;
             } else if allow_trailing_closure
                 && (can_take_trailing_closure || Self::starts_implicit_handler_groups(&expression))
@@ -3099,6 +3104,8 @@ impl Parser {
             {
                 let label = self.take_trailing_label()?;
                 let closure = self.closure()?;
+                let completes_handler =
+                    label == "action" && Self::starts_implicit_handler_groups(&expression);
                 expression = Expr::Call(
                     Box::new(expression),
                     vec![CallArg {
@@ -3106,6 +3113,9 @@ impl Parser {
                         value: closure,
                     }],
                 );
+                if completes_handler {
+                    break;
+                }
                 can_take_trailing_closure = true;
             } else if allow_trailing_closure
                 && (can_take_trailing_closure || Self::starts_implicit_handler_groups(&expression))
@@ -6352,6 +6362,27 @@ mod tests {
         };
         assert_eq!(value_group[0].label.as_deref(), Some("value"));
         assert!(matches!(handler.as_ref(), Expr::Member(_, member) if member == "handle"));
+    }
+
+    #[test]
+    fn handler_action_ends_the_trailing_group_sequence() {
+        let program = parse(
+            "let run(): i32 = {\n\
+               let ignored = Continue.handle\n\
+                 next { () }\n\
+                 action { () }\n\
+               if true { 42 } else { 0 }\n\
+             }\n",
+        )
+        .unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        let Some(Expr::Block(statements, Some(tail))) = &function.body else {
+            panic!("expected function body");
+        };
+        assert_eq!(statements.len(), 1);
+        assert!(matches!(tail.as_ref(), Expr::If { .. }));
     }
 
     #[test]

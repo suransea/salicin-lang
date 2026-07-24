@@ -30,8 +30,8 @@ Compiler-lowered capabilities are now source-backed by validated declarations in
 modules: `core.effect` owns `Unsafe`, `Throws(Error)` with `raise(move error: Error): Never`, and
 an ordinary `Async` effect with a minimal `suspend(): ()` operation; `core.domains` owns the
 `type`, `region`, `effect`, `access`, and `passing` compile-time domains; `core.control` owns source
-definitions for `do`, `try`, `throw`, and `unsafe`, plus the remaining bodyless intrinsic signature
-for `loop`; `core.effect.handler` owns the handler runtime contracts; `core.flow` owns the standard
+definitions for `do`, post-test `do … while`, `try`, `throw`, and `unsafe`, plus the remaining
+bodyless intrinsic signature for `loop`; `core.effect.handler` owns the handler runtime contracts; `core.flow` owns the standard
 `Chain` and `Coalesce` protocol declarations for `?.` and `??`. These exports remain outside the prelude. `await` is
 intentionally absent until the async/Future lowering slice is implemented, at which point its
 executable standard-library contract must land with the implementation.

@@ -48,7 +48,20 @@ pub let do(E: effect, T: type)
 /// Runs `action` once, then repeats it while the lazy condition remains true.
 pub let do(E: effect)
   (move action: (): () with(core.control.Break(()), core.control.Continue, E))
-  (move while: (): bool with(core.control.Break(()), core.control.Continue, E)): () with(E)
+  (move while: (): bool with(core.control.Break(()), core.control.Continue, E)): () with(E) = {
+  loop {
+    core.control.Continue.handle
+      next { () }
+      action {
+        action()
+      }
+    if while() {
+      continue()
+    } else {
+      break()
+    }
+  }
+}
 
 /// Handles `Throws(E)` from `action` and returns a `Result`.
 pub let try(F: effect, T: type, E: type)

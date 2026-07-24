@@ -5073,19 +5073,24 @@ impl Analyzer {
     fn validate_function_templates(&mut self) {
         for template_name in self.function_template_order.clone() {
             let template = self.function_templates[&template_name].clone();
-            let for_lang_item = self.lang_item_name(LangItemKind::For);
-            if template_name == for_lang_item
-                || overloaded_function_name(for_lang_item, &function_parameter_labels(&template))
-                    == template_name
+            if [LangItemKind::DoWhile, LangItemKind::For]
+                .into_iter()
+                .any(|kind| {
+                    let lang_item = self.lang_item_name(kind);
+                    template_name == lang_item
+                        || overloaded_function_name(
+                            lang_item,
+                            &function_parameter_labels(&template),
+                        ) == template_name
+                })
             {
-                // `for` retains a source body as its portable contract, while
-                // this compiler always takes the iterator/loop fast path.
+                // These retain source bodies as portable contracts, while
+                // this compiler always takes their syntax-directed fast paths.
                 continue;
             }
             if template.body.is_none()
                 && [
                     LangItemKind::Do,
-                    LangItemKind::DoWhile,
                     LangItemKind::Try,
                     LangItemKind::Throw,
                     LangItemKind::Unsafe,

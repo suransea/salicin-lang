@@ -65,7 +65,14 @@ pub let while(E: effect)
 
 pub let do(E: effect)
   (move action: (): () with(Break(()), Continue, E))
-  (move while: (): bool with(Break(()), Continue, E)): () with(E)
+  (move while: (): bool with(Break(()), Continue, E)): () with(E) = {
+  loop {
+    Continue.handle
+      next { () }
+      action { action() }
+    if while() { continue() } else { break() }
+  }
+}
 ```
 
 They are called as:
