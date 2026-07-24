@@ -1,5 +1,5 @@
 let Resource = struct { counter: MutPtr(i32) }
-let Batch = struct { values: Array(Resource, 2) }
+let Batch = struct { values: Array(Resource)(2) }
 
 extend Resource: Drop {
   let drop(self: borrow(mut)(Self))(): () = { unsafe {

@@ -1,17 +1,22 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{CompileParam, CompileParamKind, Type};
+use crate::ast::{CompileParam, CompileParamKind, Type, USizeConst};
 
 pub(super) const ACCESS_SHARED_MARKER: &str = "$access$shared";
 pub(super) const ACCESS_MUT_MARKER: &str = "$access$mut";
 pub(super) const PASSING_AUTO_MARKER: &str = "$passing$auto";
 pub(super) const PASSING_COPY_MARKER: &str = "$passing$copy";
 pub(super) const PASSING_MOVE_MARKER: &str = "$passing$move";
+pub(super) const USIZE_VALUE_PREFIX: &str = "$usize$value$";
 pub(super) const EFFECT_PURE_MARKER: &str = "$effect$pure";
 pub(super) const EFFECT_UNSAFE_MARKER: &str = "$effect$unsafe";
 
 const EFFECT_ROW_MARKER_PREFIX: &str = "$effect$row$";
 const TYPE_CONSTRUCTOR_MARKER_PREFIX: &str = "$type$constructor$";
+
+pub(super) fn usize_value_marker(value: u64) -> String {
+    format!("{USIZE_VALUE_PREFIX}{value}")
+}
 
 fn effect_row_marker(unsafe_effect: bool, custom: &[String]) -> String {
     let mut custom = custom.to_vec();
@@ -102,6 +107,19 @@ pub(super) fn source_effect_identity(effect: &Type) -> String {
         Type::U64 => "u64".to_owned(),
         Type::Bool => "bool".to_owned(),
         Type::Unit => "()".to_owned(),
+        Type::CompileUSize(value) => value.to_string(),
+        Type::ArrayApplication {
+            constructor,
+            element,
+            length,
+        } => format!(
+            "{constructor}({})({})",
+            source_effect_identity(element),
+            match length {
+                USizeConst::Literal(value) => value.to_string(),
+                USizeConst::Parameter(name) => name.clone(),
+            }
+        ),
         Type::Named(name, arguments) if arguments.is_empty() => name.clone(),
         Type::Named(name, arguments) => format!(
             "{name}({})",
@@ -164,6 +182,12 @@ pub(super) fn source_type_mentions_any_name(source: &Type, names: &HashSet<Strin
         }
         Type::Borrow { pointee, .. } => source_type_mentions_any_name(pointee, names),
         Type::Array(element, _) => source_type_mentions_any_name(element, names),
+        Type::ArrayApplication {
+            element, length, ..
+        } => {
+            source_type_mentions_any_name(element, names)
+                || matches!(length, USizeConst::Parameter(name) if names.contains(name))
+        }
         Type::Function {
             groups,
             effects,
@@ -183,7 +207,13 @@ pub(super) fn source_type_mentions_any_name(source: &Type, names: &HashSet<Strin
                     .any(|effect| source_type_mentions_any_name(effect, names))
                 || source_type_mentions_any_name(result, names)
         }
-        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => false,
+        Type::I32
+        | Type::I64
+        | Type::U32
+        | Type::U64
+        | Type::Bool
+        | Type::Unit
+        | Type::CompileUSize(_) => false,
     }
 }
 
@@ -273,6 +303,7 @@ pub(super) fn effect_identity_sources(effects: &[String]) -> Vec<Type> {
 pub(super) fn describe_compile_param_kind(kind: CompileParamKind) -> String {
     match kind {
         CompileParamKind::Type => "`type`".to_owned(),
+        CompileParamKind::USize => "`usize`".to_owned(),
         CompileParamKind::Region => "`region`".to_owned(),
         CompileParamKind::Access => "`access`".to_owned(),
         CompileParamKind::Passing => "`passing`".to_owned(),

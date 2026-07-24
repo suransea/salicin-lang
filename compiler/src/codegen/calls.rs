@@ -4,7 +4,8 @@ use crate::core::LangItemKind;
 use super::fallible::InferredEnumHints;
 use super::flow::{LowerCtx, RecursiveFrameCall};
 use super::hir::{
-    ContinuationAdapter, EffectCallableAdapter, HirExpr, HirExprKind, HirPlace, LocalCapability, Ty,
+    ContinuationAdapter, EffectCallableAdapter, HirExpr, HirExprKind, HirPlace, LayoutQueryKind,
+    LocalCapability, Ty,
 };
 use super::lower::{error_expr, flatten_call, BoundMethodConstraint, TypeProbe};
 use super::registry::NominalKind;
@@ -298,8 +299,11 @@ impl Analyzer {
             return self.lower_chain(base, member, Some(&groups), expected, context);
         }
         if let Expr::Name(name) = root {
-            if matches!(name.as_str(), "size_of" | "align_of") {
-                return self.lower_layout_query(name, &groups, context);
+            if self.is_lang_item_name(name, LangItemKind::SizeOf) {
+                return self.lower_layout_query(LayoutQueryKind::Size, &groups, context);
+            }
+            if self.is_lang_item_name(name, LangItemKind::AlignOf) {
+                return self.lower_layout_query(LayoutQueryKind::Align, &groups, context);
             }
             if name == "raw_alloc" {
                 return self.lower_raw_alloc(&groups, expected, context);
@@ -325,8 +329,11 @@ impl Analyzer {
             if name == "forget" {
                 return self.lower_forget(&groups, context);
             }
-            if matches!(name.as_str(), "Ptr" | "MutPtr") {
-                return self.lower_raw_pointer_constructor(name, &groups, context);
+            if self.is_lang_item_name(name, LangItemKind::PtrValueForm) {
+                return self.lower_raw_pointer_constructor(false, &groups, context);
+            }
+            if self.is_lang_item_name(name, LangItemKind::MutPtrValueForm) {
+                return self.lower_raw_pointer_constructor(true, &groups, context);
             }
             if let Some(local) = context.lookup(name).cloned() {
                 if local.closure.is_some() {

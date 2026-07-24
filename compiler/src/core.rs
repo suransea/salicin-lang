@@ -35,10 +35,12 @@ const EDITION_2026_OPS_ASSIGN: &str = include_str!("../../library/core/src/ops/a
 const EDITION_2026_EFFECT: &str = include_str!("../../library/core/src/effect.sc");
 const EDITION_2026_EFFECT_HANDLER: &str = include_str!("../../library/core/src/effect/handler.sc");
 const EDITION_2026_DOMAINS: &str = include_str!("../../library/core/src/domains.sc");
+const EDITION_2026_BORROW: &str = include_str!("../../library/core/src/borrow.sc");
 const EDITION_2026_CONTROL: &str = include_str!("../../library/core/src/control.sc");
 const EDITION_2026_ITER: &str = include_str!("../../library/core/src/iter.sc");
 const EDITION_2026_ALGEBRA: &str = include_str!("../../library/core/src/algebra.sc");
 const EDITION_2026_FUNCTIONAL: &str = include_str!("../../library/core/src/functional.sc");
+const EDITION_2026_MEMORY: &str = include_str!("../../library/core/src/memory.sc");
 
 const NON_LANG_ITEM_CORE_MODULES: &[&str] =
     &["primitives", "effect", "control", "algebra", "functional"];
@@ -176,6 +178,13 @@ pub enum LangItemKind {
     ParametersDomain,
     BorrowTypeForm,
     BorrowValueForm,
+    ArrayTypeForm,
+    PtrTypeForm,
+    MutPtrTypeForm,
+    PtrValueForm,
+    MutPtrValueForm,
+    SizeOf,
+    AlignOf,
     Continuation,
     EffectCallable,
     Handle,
@@ -194,7 +203,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 72] = [
+    const ALL: [Self; 79] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -252,6 +261,13 @@ impl LangItemKind {
         Self::ParametersDomain,
         Self::BorrowTypeForm,
         Self::BorrowValueForm,
+        Self::ArrayTypeForm,
+        Self::PtrTypeForm,
+        Self::MutPtrTypeForm,
+        Self::PtrValueForm,
+        Self::MutPtrValueForm,
+        Self::SizeOf,
+        Self::AlignOf,
         Self::Continuation,
         Self::EffectCallable,
         Self::Handle,
@@ -328,6 +344,11 @@ impl LangItemKind {
             Self::ParametersDomain => "parameters",
             Self::BorrowTypeForm => "borrow",
             Self::BorrowValueForm => "borrow",
+            Self::ArrayTypeForm => "Array",
+            Self::PtrTypeForm | Self::PtrValueForm => "Ptr",
+            Self::MutPtrTypeForm | Self::MutPtrValueForm => "MutPtr",
+            Self::SizeOf => "size_of",
+            Self::AlignOf => "align_of",
             Self::Continuation => "Continuation",
             Self::EffectCallable => "EffectCallable",
             Self::Handle => "Handle",
@@ -358,6 +379,9 @@ impl LangItemKind {
             | Self::EffectDomain
             | Self::ParametersDomain => "domain",
             Self::BorrowTypeForm
+            | Self::ArrayTypeForm
+            | Self::PtrTypeForm
+            | Self::MutPtrTypeForm
             | Self::Bool
             | Self::I8
             | Self::I16
@@ -371,7 +395,11 @@ impl LangItemKind {
             | Self::U64
             | Self::U128
             | Self::USize => "type form",
-            Self::BorrowValueForm => "function",
+            Self::BorrowValueForm
+            | Self::PtrValueForm
+            | Self::MutPtrValueForm
+            | Self::SizeOf
+            | Self::AlignOf => "function",
             Self::Do
             | Self::DoWhile
             | Self::Try
@@ -477,6 +505,13 @@ impl LangItemKind {
             | Self::ParametersDomain
             | Self::BorrowTypeForm
             | Self::BorrowValueForm
+            | Self::ArrayTypeForm
+            | Self::PtrTypeForm
+            | Self::MutPtrTypeForm
+            | Self::PtrValueForm
+            | Self::MutPtrValueForm
+            | Self::SizeOf
+            | Self::AlignOf
             | Self::Continuation
             | Self::EffectCallable
             | Self::Handle
@@ -609,6 +644,13 @@ pub struct LangItems {
     parameters_domain: LangItem,
     borrow_type_form: LangItem,
     borrow_value_form: LangItem,
+    array_type_form: LangItem,
+    ptr_type_form: LangItem,
+    mut_ptr_type_form: LangItem,
+    ptr_value_form: LangItem,
+    mut_ptr_value_form: LangItem,
+    size_of: LangItem,
+    align_of: LangItem,
     continuation: LangItem,
     effect_callable: LangItem,
     handle: LangItem,
@@ -790,6 +832,9 @@ impl LangItems {
     pub const fn borrow_value_form(&self) -> &LangItem {
         &self.borrow_value_form
     }
+    pub const fn array_type_form(&self) -> &LangItem {
+        &self.array_type_form
+    }
     pub const fn continuation(&self) -> &LangItem {
         &self.continuation
     }
@@ -895,6 +940,13 @@ impl LangItems {
             LangItemKind::ParametersDomain => &self.parameters_domain,
             LangItemKind::BorrowTypeForm => &self.borrow_type_form,
             LangItemKind::BorrowValueForm => &self.borrow_value_form,
+            LangItemKind::ArrayTypeForm => &self.array_type_form,
+            LangItemKind::PtrTypeForm => &self.ptr_type_form,
+            LangItemKind::MutPtrTypeForm => &self.mut_ptr_type_form,
+            LangItemKind::PtrValueForm => &self.ptr_value_form,
+            LangItemKind::MutPtrValueForm => &self.mut_ptr_value_form,
+            LangItemKind::SizeOf => &self.size_of,
+            LangItemKind::AlignOf => &self.align_of,
             LangItemKind::Continuation => &self.continuation,
             LangItemKind::EffectCallable => &self.effect_callable,
             LangItemKind::Handle => &self.handle,
@@ -950,10 +1002,12 @@ impl CoreBundle {
                         ("effect", EDITION_2026_EFFECT),
                         ("effect/handler", EDITION_2026_EFFECT_HANDLER),
                         ("domains", EDITION_2026_DOMAINS),
+                        ("borrow", EDITION_2026_BORROW),
                         ("control", EDITION_2026_CONTROL),
                         ("iter", EDITION_2026_ITER),
                         ("algebra", EDITION_2026_ALGEBRA),
                         ("functional", EDITION_2026_FUNCTIONAL),
+                        ("memory", EDITION_2026_MEMORY),
                     ],
                 )
             }) {
@@ -980,7 +1034,7 @@ impl CoreBundle {
         // Most contract tests isolate one prelude/operator declaration. Keep
         // the independently tested control module present in those fixtures.
         let source = format!(
-            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{TEST_EFFECT}\n{TEST_EFFECT_HANDLER}\n{EDITION_2026_PRIMITIVES}\n{EDITION_2026_DOMAINS}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}"
+            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{TEST_EFFECT}\n{TEST_EFFECT_HANDLER}\n{EDITION_2026_PRIMITIVES}\n{EDITION_2026_DOMAINS}\n{EDITION_2026_BORROW}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}\n{EDITION_2026_MEMORY}"
         );
         let mut program = parser::parse(&source).map_err(|error| {
             CoreBundleError::new(
@@ -1116,6 +1170,13 @@ impl CoreBundle {
             &mut lang_items.parameters_domain,
             &mut lang_items.borrow_type_form,
             &mut lang_items.borrow_value_form,
+            &mut lang_items.array_type_form,
+            &mut lang_items.ptr_type_form,
+            &mut lang_items.mut_ptr_type_form,
+            &mut lang_items.ptr_value_form,
+            &mut lang_items.mut_ptr_value_form,
+            &mut lang_items.size_of,
+            &mut lang_items.align_of,
             &mut lang_items.continuation,
             &mut lang_items.effect_callable,
             &mut lang_items.handle,
@@ -1437,6 +1498,13 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         parameters_domain: item(LangItemKind::ParametersDomain),
         borrow_type_form: item(LangItemKind::BorrowTypeForm),
         borrow_value_form: item(LangItemKind::BorrowValueForm),
+        array_type_form: item(LangItemKind::ArrayTypeForm),
+        ptr_type_form: item(LangItemKind::PtrTypeForm),
+        mut_ptr_type_form: item(LangItemKind::MutPtrTypeForm),
+        ptr_value_form: item(LangItemKind::PtrValueForm),
+        mut_ptr_value_form: item(LangItemKind::MutPtrValueForm),
+        size_of: item(LangItemKind::SizeOf),
+        align_of: item(LangItemKind::AlignOf),
         continuation: item(LangItemKind::Continuation),
         effect_callable: item(LangItemKind::EffectCallable),
         handle: item(LangItemKind::Handle),
@@ -1561,6 +1629,9 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         (LangItemKind::BorrowTypeForm, Item::TypeForm(definition)) => {
             validate_borrow_type_form(definition, diagnostics)
         }
+        (LangItemKind::ArrayTypeForm, Item::TypeForm(definition)) => {
+            validate_array_type_form(definition, diagnostics)
+        }
         (LangItemKind::Bool, Item::TypeForm(definition)) => {
             if !definition.compile_groups.is_empty()
                 || definition.values.as_slice() != ["false", "true"]
@@ -1595,6 +1666,17 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         }
         (LangItemKind::BorrowValueForm, Item::Function(function)) => {
             validate_borrow_value_form(function, diagnostics)
+        }
+        (
+            kind @ (LangItemKind::PtrTypeForm | LangItemKind::MutPtrTypeForm),
+            Item::TypeForm(definition),
+        ) => validate_pointer_type_form(kind, definition, diagnostics),
+        (
+            kind @ (LangItemKind::PtrValueForm | LangItemKind::MutPtrValueForm),
+            Item::Function(function),
+        ) => validate_pointer_value_form(kind, function, diagnostics),
+        (kind @ (LangItemKind::SizeOf | LangItemKind::AlignOf), Item::Function(function)) => {
+            validate_layout_query(kind, function, diagnostics)
         }
         (LangItemKind::Continuation, Item::Struct(definition)) => {
             let valid = definition.compile_groups
@@ -1731,6 +1813,81 @@ fn validate_borrow_value_form(function: &Function, diagnostics: &mut Vec<String>
             "lang item `borrow` value form must have shape `pub let borrow(A: access = shared)(R: region)(T: type)(value: T): borrow(A)(R)(T)`"
                 .to_owned(),
         );
+    }
+}
+
+fn validate_pointer_type_form(
+    kind: LangItemKind,
+    definition: &TypeFormDef,
+    diagnostics: &mut Vec<String>,
+) {
+    let valid = definition.compile_groups == vec![vec![type_parameter("T")]]
+        && definition.values.is_empty();
+    if !valid {
+        let name = kind.source_name();
+        diagnostics.push(format!(
+            "lang item `{name}` type form must have shape `pub let {name}(T: type): type`"
+        ));
+    }
+}
+
+fn validate_array_type_form(definition: &TypeFormDef, diagnostics: &mut Vec<String>) {
+    let valid = definition.compile_groups
+        == vec![vec![type_parameter("T")], vec![usize_parameter("L")]]
+        && definition.values.is_empty();
+    if !valid {
+        diagnostics.push(
+            "lang item `Array` type form must have shape `pub let Array(T: type)(L: usize): type`"
+                .to_owned(),
+        );
+    }
+}
+
+fn validate_pointer_value_form(
+    kind: LangItemKind,
+    function: &Function,
+    diagnostics: &mut Vec<String>,
+) {
+    let mutable = kind == LangItemKind::MutPtrValueForm;
+    let name = kind.source_name();
+    let valid = function.compile_groups == vec![vec![type_parameter("T")]]
+        && function.return_type == Some(Type::Named(name.to_owned(), vec![named_type("T")]))
+        && function.effects == crate::ast::FunctionEffects::default()
+        && function.where_predicates.is_empty()
+        && function.body.is_none()
+        && matches!(
+            function.groups.as_slice(),
+            [group] if matches!(
+                group.as_slice(),
+                [parameter] if parameter.name == "value"
+                    && parameter.mode == PassMode::Inferred
+                    && parameter.ty == simple_borrow_type(mutable, named_type("T"))
+            )
+        );
+    if !valid {
+        diagnostics.push(format!(
+            "lang item `{name}` value form must have shape `pub let {name}(T: type)(value: {}): {name}(T)`",
+            if mutable {
+                "borrow(mut)(T)"
+            } else {
+                "borrow(T)"
+            }
+        ));
+    }
+}
+
+fn validate_layout_query(kind: LangItemKind, function: &Function, diagnostics: &mut Vec<String>) {
+    let name = kind.source_name();
+    let valid = function.compile_groups == vec![vec![type_parameter("T")]]
+        && function.groups.is_empty()
+        && function.return_type == Some(Type::U64)
+        && function.effects == crate::ast::FunctionEffects::default()
+        && function.where_predicates.is_empty()
+        && function.body.is_none();
+    if !valid {
+        diagnostics.push(format!(
+            "lang item `{name}` must have shape `pub let {name}(T: type): u64`"
+        ));
     }
 }
 
@@ -2509,6 +2666,14 @@ fn type_parameter(name: &str) -> CompileParam {
     }
 }
 
+fn usize_parameter(name: &str) -> CompileParam {
+    CompileParam {
+        name: name.to_owned(),
+        kind: CompileParamKind::USize,
+        default: None,
+    }
+}
+
 fn access_parameter(name: &str, default: Option<&str>) -> CompileParam {
     CompileParam {
         name: name.to_owned(),
@@ -3008,10 +3173,12 @@ pub let Shr(Rhs: type) = trait {
             ("effect", EDITION_2026_EFFECT),
             ("effect/handler", EDITION_2026_EFFECT_HANDLER),
             ("domains", EDITION_2026_DOMAINS),
+            ("borrow", EDITION_2026_BORROW),
             ("control", EDITION_2026_CONTROL),
             ("iter", EDITION_2026_ITER),
             ("algebra", EDITION_2026_ALGEBRA),
             ("functional", EDITION_2026_FUNCTIONAL),
+            ("memory", EDITION_2026_MEMORY),
         ];
         for (module, source) in overrides {
             let Some((_, target)) = modules
@@ -3097,10 +3264,20 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::AccessDomain
                 | LangItemKind::PassingDomain
                 | LangItemKind::EffectDomain
-                | LangItemKind::ParametersDomain
-                | LangItemKind::BorrowTypeForm
-                | LangItemKind::BorrowValueForm => {
+                | LangItemKind::ParametersDomain => {
                     format!("core::domains::{}", kind.source_name())
+                }
+                LangItemKind::BorrowTypeForm | LangItemKind::BorrowValueForm => {
+                    format!("core::borrow::{}", kind.source_name())
+                }
+                LangItemKind::ArrayTypeForm
+                | LangItemKind::PtrTypeForm
+                | LangItemKind::MutPtrTypeForm
+                | LangItemKind::PtrValueForm
+                | LangItemKind::MutPtrValueForm
+                | LangItemKind::SizeOf
+                | LangItemKind::AlignOf => {
+                    format!("core::memory::{}", kind.source_name())
                 }
                 LangItemKind::Continuation
                 | LangItemKind::EffectCallable
@@ -3179,9 +3356,15 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::AccessDomain
                 | LangItemKind::PassingDomain
                 | LangItemKind::EffectDomain
-                | LangItemKind::ParametersDomain
-                | LangItemKind::BorrowTypeForm
-                | LangItemKind::BorrowValueForm => vec!["domains"],
+                | LangItemKind::ParametersDomain => vec!["domains"],
+                LangItemKind::BorrowTypeForm | LangItemKind::BorrowValueForm => vec!["borrow"],
+                LangItemKind::ArrayTypeForm
+                | LangItemKind::PtrTypeForm
+                | LangItemKind::MutPtrTypeForm
+                | LangItemKind::PtrValueForm
+                | LangItemKind::MutPtrValueForm
+                | LangItemKind::SizeOf
+                | LangItemKind::AlignOf => vec!["memory"],
                 LangItemKind::Continuation
                 | LangItemKind::EffectCallable
                 | LangItemKind::Handle => vec!["effect", "handler"],
@@ -3246,6 +3429,82 @@ pub let Shr(Rhs: type) = trait {
             diagnostic
                 == "primitive lang item `bool` must have shape `pub let bool = type { false, true }`"
         }));
+    }
+
+    #[test]
+    fn pointer_and_layout_lang_items_require_memory_contracts() {
+        let modules = edition_2026_test_modules(&[("memory", "")]);
+        let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
+        for name in ["Array", "Ptr", "MutPtr", "size_of", "align_of"] {
+            assert!(
+                error
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic == &format!("missing lang item `{name}`")),
+                "{:?}",
+                error.diagnostics()
+            );
+        }
+
+        for (name, malformed) in [
+            (
+                "Array",
+                EDITION_2026_MEMORY.replace(
+                    "pub let Array(T: type)\n  (L: usize): type",
+                    "pub let Array(T: type, L: usize): type",
+                ),
+            ),
+            (
+                "Ptr",
+                EDITION_2026_MEMORY.replace("(value: borrow(T)): Ptr(T)", "(value: T): Ptr(T)"),
+            ),
+            (
+                "MutPtr",
+                EDITION_2026_MEMORY.replace(
+                    "(value: borrow(mut)(T)): MutPtr(T)",
+                    "(value: borrow(T)): MutPtr(T)",
+                ),
+            ),
+            (
+                "size_of",
+                EDITION_2026_MEMORY.replace(
+                    "pub let size_of(T: type): u64",
+                    "pub let size_of(T: type): i32",
+                ),
+            ),
+            (
+                "align_of",
+                EDITION_2026_MEMORY.replace(
+                    "pub let align_of(T: type): u64",
+                    "pub let align_of(T: type)(value: T): u64",
+                ),
+            ),
+        ] {
+            let modules = edition_2026_test_modules(&[("memory", &malformed)]);
+            let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
+            assert!(
+                error
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.contains(&format!("lang item `{name}`"))),
+                "{:?}",
+                error.diagnostics()
+            );
+        }
+    }
+
+    #[test]
+    fn borrow_lang_items_require_the_borrow_module() {
+        let modules = edition_2026_test_modules(&[("borrow", "")]);
+        let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
+        assert_eq!(
+            error
+                .diagnostics()
+                .iter()
+                .filter(|diagnostic| diagnostic.as_str() == "missing lang item `borrow`")
+                .count(),
+            2
+        );
     }
 
     #[test]

@@ -5,8 +5,8 @@ use crate::ast::{
     CallArg, CompileParam, CompileParamDefault, CompileParamKind, DomainDef, EffectDef, EnumDef,
     Expr, ExtendDef, ExtendMember, Field, Function, FunctionEffects, Item, MatchArm, Param,
     PassMode, Pattern, PatternField, PatternFields, Program, Stmt, StructDef, TraitDef,
-    TraitMember, Type, TypeAliasDef, TypeArg, TypeFormDef, UnaryOp, UseDecl, VariantDef,
-    VariantFields, Visibility, WherePredicate,
+    TraitMember, Type, TypeAliasDef, TypeArg, TypeFormDef, USizeConst, UnaryOp, UseDecl,
+    VariantDef, VariantFields, Visibility, WherePredicate,
 };
 use crate::lexer::{lex, LexError, Token, TokenKind};
 
@@ -1099,18 +1099,16 @@ impl Parser {
         }
         let name = path.join(".");
         let mut arguments = Vec::new();
-        if self.take(&TokenKind::LParen) {
-            if !self.take(&TokenKind::RParen) {
-                loop {
-                    arguments.push(self.type_expr()?);
-                    if self.take(&TokenKind::Comma) {
-                        if self.take(&TokenKind::RParen) {
-                            break;
-                        }
-                    } else {
-                        self.expect(&TokenKind::RParen, "`)` after parameter schema arguments")?;
+        if self.take(&TokenKind::LParen) && !self.take(&TokenKind::RParen) {
+            loop {
+                arguments.push(self.type_expr()?);
+                if self.take(&TokenKind::Comma) {
+                    if self.take(&TokenKind::RParen) {
                         break;
                     }
+                } else {
+                    self.expect(&TokenKind::RParen, "`)` after parameter schema arguments")?;
+                    break;
                 }
             }
         }
@@ -1156,7 +1154,7 @@ impl Parser {
                 Some(TokenKind::Ident(name))
                     if matches!(
                         name.as_str(),
-                        "access" | "passing" | "effect" | "parameters"
+                        "usize" | "access" | "passing" | "effect" | "parameters"
                     )
             )
     }
@@ -1256,6 +1254,7 @@ impl Parser {
 
         if let TokenKind::Ident(kind) = self.current().kind.clone() {
             let parameter_kind = match kind.as_str() {
+                "usize" => Some(CompileParamKind::USize),
                 "access" => Some(CompileParamKind::Access),
                 "passing" => Some(CompileParamKind::Passing),
                 "effect" => Some(CompileParamKind::Effect),
@@ -1282,7 +1281,7 @@ impl Parser {
 
         self.expect(
             &TokenKind::Region,
-            "`type`, `access`, `passing`, `effect`, `parameters`, a constructor kind, or `region`",
+            "`type`, `usize`, `access`, `passing`, `effect`, `parameters`, a constructor kind, or `region`",
         )?;
         if name == "static" {
             return Err(self.error_at(
@@ -1472,6 +1471,7 @@ impl Parser {
                 CompileParamDefault::Region(name)
             }
             CompileParamKind::Type
+            | CompileParamKind::USize
             | CompileParamKind::TypeConstructor { .. }
             | CompileParamKind::EffectConstructor { .. } => {
                 return Err(self.error_here(
@@ -2265,9 +2265,29 @@ impl Parser {
             path.push(segment);
         }
         let name = path.join(".");
-        if name == "Array" && self.take(&TokenKind::LParen) {
+        if name.split('.').next_back() == Some("Array") && self.take(&TokenKind::LParen) {
+            if matches!(&self.current().kind, TokenKind::Ident(label) if label == "T")
+                && self.at_offset(1, &TokenKind::Colon)
+            {
+                self.advance();
+                self.advance();
+            }
             let element = self.type_expr()?;
-            self.expect(&TokenKind::Comma, "`,` before array length")?;
+            self.take(&TokenKind::Comma);
+            self.expect(
+                &TokenKind::RParen,
+                "`)` after the array element type; write the length in a second group",
+            )?;
+            self.expect(
+                &TokenKind::LParen,
+                "`(` before the array length; write `Array(T)(L)`",
+            )?;
+            if matches!(&self.current().kind, TokenKind::Ident(label) if label == "L")
+                && self.at_offset(1, &TokenKind::Colon)
+            {
+                self.advance();
+                self.advance();
+            }
             let length_token = self.current().clone();
             if matches!(&length_token.kind, TokenKind::Ident(name) if name == "_") {
                 return Err(self.error_at(
@@ -2275,22 +2295,32 @@ impl Parser {
                     "`_` compile-time argument inference has been removed; provide an explicit array length",
                 ));
             }
-            let TokenKind::Integer(length) = length_token.kind else {
-                return Err(self.error_at(
-                    &length_token,
-                    "array length must be a non-negative decimal integer",
-                ));
+            let length = match length_token.kind {
+                TokenKind::Integer(length) => {
+                    let length = u64::try_from(length).map_err(|_| {
+                        self.error_at(
+                            &length_token,
+                            "array length must fit in an unsigned 64-bit integer",
+                        )
+                    })?;
+                    USizeConst::Literal(length)
+                }
+                TokenKind::Ident(name) => USizeConst::Parameter(name),
+                _ => {
+                    return Err(self.error_at(
+                        &length_token,
+                        "array length must be a non-negative decimal integer or `usize` parameter",
+                    ));
+                }
             };
-            let length = u64::try_from(length).map_err(|_| {
-                self.error_at(
-                    &length_token,
-                    "array length must fit in an unsigned 64-bit integer",
-                )
-            })?;
             self.advance();
             self.take(&TokenKind::Comma);
             self.expect(&TokenKind::RParen, "`)` after array length")?;
-            return Ok(Type::Array(Box::new(element), length));
+            return Ok(Type::ArrayApplication {
+                constructor: name,
+                element: Box::new(element),
+                length,
+            });
         }
 
         let mut arguments = Vec::new();
@@ -3157,8 +3187,8 @@ impl Parser {
             } else if allow_trailing_closure && self.at(&TokenKind::Newline) {
                 let before_newlines = self.index;
                 while self.take(&TokenKind::Newline) {}
-                if (can_take_trailing_closure && self.at(&TokenKind::LBrace))
-                    || (can_take_trailing_closure && self.named_trailing_closure_follows())
+                if (can_take_trailing_closure
+                    && (self.at(&TokenKind::LBrace) || self.named_trailing_closure_follows()))
                     || (Self::starts_implicit_handler_groups(&expression)
                         && (self.colonless_named_trailing_closure_follows()
                             || self.named_nested_trailing_call_follows()))
@@ -4491,7 +4521,9 @@ fn normalize_type_region_qualifiers(
             normalize_borrow_region_qualifier(access, region, regions, accesses)?;
             normalize_type_region_qualifiers(pointee, regions, accesses)
         }
-        Type::Array(element, _) => normalize_type_region_qualifiers(element, regions, accesses),
+        Type::Array(element, _) | Type::ArrayApplication { element, .. } => {
+            normalize_type_region_qualifiers(element, regions, accesses)
+        }
         Type::Function {
             groups,
             effects,
@@ -4515,7 +4547,13 @@ fn normalize_type_region_qualifiers(
             }
             Ok(())
         }
-        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => Ok(()),
+        Type::I32
+        | Type::I64
+        | Type::U32
+        | Type::U64
+        | Type::Bool
+        | Type::Unit
+        | Type::CompileUSize(_) => Ok(()),
     }
 }
 
@@ -4681,9 +4719,11 @@ fn validate_type_effects(ty: &Type, effects: &HashSet<String>) -> Result<(), Str
         Type::NamedArgs(name, _) if effects.contains(name) => Err(format!(
             "effect parameter `{name}` cannot be used as a runtime type"
         )),
-        Type::Borrow { pointee, .. } | Type::Array(pointee, _) => {
-            validate_type_effects(pointee, effects)
-        }
+        Type::Borrow { pointee, .. }
+        | Type::Array(pointee, _)
+        | Type::ArrayApplication {
+            element: pointee, ..
+        } => validate_type_effects(pointee, effects),
         Type::Function {
             groups,
             effects: function_effects,
@@ -4714,7 +4754,13 @@ fn validate_type_effects(ty: &Type, effects: &HashSet<String>) -> Result<(), Str
             }
             Ok(())
         }
-        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => Ok(()),
+        Type::I32
+        | Type::I64
+        | Type::U32
+        | Type::U64
+        | Type::Bool
+        | Type::Unit
+        | Type::CompileUSize(_) => Ok(()),
     }
 }
 
@@ -4738,7 +4784,9 @@ fn validate_type_accesses(ty: &Type, accesses: &HashSet<String>) -> Result<(), S
             }
             validate_type_accesses(pointee, accesses)
         }
-        Type::Array(element, _) => validate_type_accesses(element, accesses),
+        Type::Array(element, _) | Type::ArrayApplication { element, .. } => {
+            validate_type_accesses(element, accesses)
+        }
         Type::Function {
             groups,
             effects,
@@ -4764,7 +4812,13 @@ fn validate_type_accesses(ty: &Type, accesses: &HashSet<String>) -> Result<(), S
             }
             Ok(())
         }
-        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => Ok(()),
+        Type::I32
+        | Type::I64
+        | Type::U32
+        | Type::U64
+        | Type::Bool
+        | Type::Unit
+        | Type::CompileUSize(_) => Ok(()),
     }
 }
 
@@ -4930,7 +4984,9 @@ fn validate_type_regions(ty: &Type, regions: &HashSet<String>) -> Result<(), Str
             }
             validate_type_regions(pointee, regions)
         }
-        Type::Array(element, _) => validate_type_regions(element, regions),
+        Type::Array(element, _) | Type::ArrayApplication { element, .. } => {
+            validate_type_regions(element, regions)
+        }
         Type::Function {
             groups,
             effects,
@@ -4956,7 +5012,13 @@ fn validate_type_regions(ty: &Type, regions: &HashSet<String>) -> Result<(), Str
             }
             Ok(())
         }
-        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => Ok(()),
+        Type::I32
+        | Type::I64
+        | Type::U32
+        | Type::U64
+        | Type::Bool
+        | Type::Unit
+        | Type::CompileUSize(_) => Ok(()),
     }
 }
 
@@ -5871,7 +5933,7 @@ mod tests {
             "let value = Cell(T: _) { value: 20 }\n",
             "let value = Cell(Cell(_)) { value: Cell(i32) { value: 20 } }\n",
             "let value = _\n",
-            "let value: Array(i32, _) = []\n",
+            "let value: Array(i32)(_) = []\n",
         ] {
             let error = parse(source).unwrap_err();
             assert!(error.message.contains("`_`"));
@@ -6730,8 +6792,8 @@ mod tests {
     #[test]
     fn parses_fixed_array_types_multiline_literals_and_indexes() {
         let program = parse(
-            "let read(values: Array(i32, 2)): i32 = {\n\
-               let local: Array(i32, 3) = [\n\
+            "let read(values: Array(i32)(2)): i32 = {\n\
+               let local: Array(i32)(3) = [\n\
                  40,\n\
                  1,\n\
                  1,\n\
@@ -6746,7 +6808,11 @@ mod tests {
         };
         assert_eq!(
             function.groups[0][0].ty,
-            Type::Array(Box::new(Type::I32), 2)
+            Type::ArrayApplication {
+                constructor: "Array".to_owned(),
+                element: Box::new(Type::I32),
+                length: USizeConst::Literal(2),
+            }
         );
         let Some(Expr::Block(statements, Some(tail))) = &function.body else {
             panic!("expected block");
@@ -6756,7 +6822,11 @@ mod tests {
         };
         assert_eq!(
             binding.annotation,
-            Some(Type::Array(Box::new(Type::I32), 3))
+            Some(Type::ArrayApplication {
+                constructor: "Array".to_owned(),
+                element: Box::new(Type::I32),
+                length: USizeConst::Literal(3),
+            })
         );
         assert!(matches!(&binding.value, Expr::Array(elements) if elements.len() == 3));
         assert!(matches!(
@@ -7455,8 +7525,39 @@ mod tests {
 
     #[test]
     fn array_length_must_be_a_non_negative_decimal_integer() {
-        let error = parse("let main(values: Array(i32, -1)): i32 = { 0 }\n").unwrap_err();
+        let error = parse("let main(values: Array(i32)(-1)): i32 = { 0 }\n").unwrap_err();
         assert!(error.message.contains("non-negative decimal integer"));
+    }
+
+    #[test]
+    fn array_type_preserves_curried_compile_parameter_groups() {
+        let program = parse(
+            "pub let Array(T: type)(L: usize): type\n\
+             let first(L: usize)(values: Array(i32)(L)): i32 = { values[0] }\n",
+        )
+        .unwrap();
+
+        let Item::TypeForm(array) = &program.items[0] else {
+            panic!("expected Array type form");
+        };
+        assert_eq!(
+            array.compile_groups,
+            vec![
+                vec![CompileParam {
+                    name: "T".to_owned(),
+                    kind: CompileParamKind::Type,
+                    default: None,
+                }],
+                vec![CompileParam {
+                    name: "L".to_owned(),
+                    kind: CompileParamKind::USize,
+                    default: None,
+                }]
+            ]
+        );
+
+        let error = parse("let values: Array(i32, 2) = [1, 2]\n").unwrap_err();
+        assert!(error.message.contains("second group"), "{}", error.message);
     }
 
     #[test]

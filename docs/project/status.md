@@ -35,12 +35,20 @@ compile-time parameter names, normalized to declaration order, and erased before
 Compiler-lowered capabilities are now source-backed by validated declarations in ordinary core
 modules: `core.effect` owns `Unsafe`, `Throws(Error)` with `raise(move error: Error): Never`, and
 an ordinary `Async` effect with a minimal `suspend(): ()` operation; `core.domains` owns the
-`type`, `region`, `effect`, `access`, and `passing` compile-time domains; `core.control` owns source
+`type`, `region`, `effect`, `access`, and `passing` compile-time domains; `core.borrow` owns the
+validated borrow type and value forms over those domains; `core.control` owns source
 definitions for `do`, post-test `do … while`, `try`, `throw`, and `unsafe`, plus the remaining
 bodyless intrinsic signature for `loop`; `core.effect.handler` owns the handler runtime contracts; `core.flow` owns the standard
 `Chain` and `Coalesce` protocol declarations for `?.` and `??`. These exports remain outside the prelude. `await` is
 intentionally absent until the async/Future lowering slice is implemented, at which point its
 executable standard-library contract must land with the implementation.
+`core.memory` owns the validated curried `Array(T)(L)` type form, type and value forms for
+`Ptr(T)` and `MutPtr(T)`, plus
+`size_of(T): u64` and `align_of(T): u64`; their prelude aliases lower by canonical lang-item
+identity rather than hard-coded declaration names. `L: usize` compile-time parameters accept
+non-negative `u64` literals, explicit forwarding, and array-driven inference; selected values are
+part of generic instance identity and are erased before runtime IR. General constant expressions,
+defaults, arithmetic, and scalar kinds other than `usize` remain unsupported.
 `Never`-returning algebraic operations are handled as abort operations whose clauses omit `resume`,
 so `Throws(Error).raise` can now be exercised through the same handler path as user-defined effects.
 `throw(error)` reads the validated source-backed `std.control.throw` function and then calls the

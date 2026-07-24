@@ -3,7 +3,7 @@ let Step = effect {
 }
 
 let State = struct {
-  values: Array(i32, 2),
+  values: Array(i32)(2),
   drops: MutPtr(i32),
 }
 

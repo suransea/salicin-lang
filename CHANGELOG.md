@@ -6,6 +6,14 @@ subset.
 
 ## Unreleased
 
+- Added bounded `L: usize` compile-time parameters with non-negative literal arguments, explicit
+  forwarding, array-driven inference, and monomorphization identity. Fixed arrays now use the
+  validated curried `core.memory.Array(T)(L)` declaration; the old `Array(T, L)` grouping is rejected.
+- Added validated `core.memory` declarations for `Ptr(T)`, `MutPtr(T)`, their explicit-borrow value
+  constructors, `size_of(T)`, and `align_of(T)`. Pointer and layout lowering now follows validated
+  lang-item identities instead of an unvalidated reserved-name list.
+- Moved the borrow type and value lang-item declarations from the compile-time domain module into
+  the dedicated `core.borrow` module.
 - Fused eligible `Copy`-element indexed borrow arguments into non-recursive handler frames. Index
   expressions are materialized once in source order, carried across resume and abandonment, and
   bounds-checked when the element address is rebuilt from the frame-owned root. Native regressions

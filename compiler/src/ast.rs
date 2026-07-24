@@ -263,6 +263,7 @@ pub enum CompileParamDefault {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompileParamKind {
     Type,
+    USize,
     Region,
     Access,
     Passing,
@@ -277,6 +278,12 @@ pub enum CompileParamKind {
     EffectConstructor {
         parameter_count: usize,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum USizeConst {
+    Literal(u64),
+    Parameter(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -317,6 +324,12 @@ pub enum Type {
         pointee: Box<Type>,
     },
     Array(Box<Type>, u64),
+    ArrayApplication {
+        constructor: String,
+        element: Box<Type>,
+        length: USizeConst,
+    },
+    CompileUSize(u64),
     Function {
         groups: Vec<Vec<Type>>,
         effects: FunctionEffects,

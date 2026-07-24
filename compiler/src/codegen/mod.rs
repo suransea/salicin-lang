@@ -282,11 +282,31 @@ impl Analyzer {
         self.lang_items.get(kind).canonical_name()
     }
 
+    fn is_lang_item_name(&self, name: &str, kind: LangItemKind) -> bool {
+        name == self.lang_item_name(kind) || name == kind.source_name()
+    }
+
     fn collect_items(&mut self, core: &Program, alloc: &Program, program: &Program) {
         let mut names = HashMap::<String, HashSet<TopLevelNamespace>>::new();
+        for (kind, namespaces) in [
+            (LangItemKind::ArrayTypeForm, &[TopLevelNamespace::Type][..]),
+            (
+                LangItemKind::PtrTypeForm,
+                &[TopLevelNamespace::Type, TopLevelNamespace::Function][..],
+            ),
+            (
+                LangItemKind::MutPtrTypeForm,
+                &[TopLevelNamespace::Type, TopLevelNamespace::Function][..],
+            ),
+            (LangItemKind::SizeOf, &[TopLevelNamespace::Function][..]),
+            (LangItemKind::AlignOf, &[TopLevelNamespace::Function][..]),
+        ] {
+            names
+                .entry(kind.source_name().to_owned())
+                .or_default()
+                .extend(namespaces.iter().copied());
+        }
         for reserved in [
-            "Ptr",
-            "MutPtr",
             "raw_alloc",
             "raw_dealloc",
             "raw_init",
@@ -295,8 +315,6 @@ impl Analyzer {
             "raw_borrow",
             "raw_trap",
             "forget",
-            "size_of",
-            "align_of",
         ] {
             names
                 .entry(reserved.to_owned())
@@ -1513,6 +1531,12 @@ impl Analyzer {
                 })
             }
             Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => true,
+            Type::CompileUSize(value) => {
+                self.error(format!(
+                    "compile-time `usize` value `{value}` cannot be used as a runtime type in trait member `{trait_name}.{member_name}`"
+                ));
+                false
+            }
             Type::Borrow { pointee, .. } => self.validate_trait_source_type(
                 trait_name,
                 member_name,
@@ -1534,6 +1558,42 @@ impl Analyzer {
                     compile_parameters,
                 );
                 valid
+            }
+            Type::ArrayApplication {
+                constructor,
+                element,
+                length,
+            } => {
+                let mut valid = self.is_lang_item_name(constructor, LangItemKind::ArrayTypeForm);
+                if !valid {
+                    self.error(format!(
+                        "array syntax in trait member `{trait_name}.{member_name}` resolved to non-standard constructor `{constructor}`"
+                    ));
+                }
+                match length {
+                    crate::ast::USizeConst::Literal(length) if *length > i32::MAX as u64 => {
+                        self.error(format!(
+                            "array length {length} in trait member `{trait_name}.{member_name}` exceeds the first-version limit"
+                        ));
+                        valid = false;
+                    }
+                    crate::ast::USizeConst::Parameter(name)
+                        if compile_parameters.get(name) != Some(&CompileParamKind::USize) =>
+                    {
+                        self.error(format!(
+                            "array length `{name}` in trait member `{trait_name}.{member_name}` is not a declared `usize` parameter"
+                        ));
+                        valid = false;
+                    }
+                    _ => {}
+                }
+                valid
+                    & self.validate_trait_source_type(
+                        trait_name,
+                        member_name,
+                        element,
+                        compile_parameters,
+                    )
             }
             Type::Function {
                 groups,
@@ -1569,6 +1629,12 @@ impl Analyzer {
                             ));
                             false
                         }
+                    }
+                    CompileParamKind::USize => {
+                        self.error(format!(
+                            "`usize` parameter `{name}` in `{trait_name}.{member_name}` can only be used as a compile-time value"
+                        ));
+                        false
                     }
                     CompileParamKind::TypeConstructor { parameter_count } => {
                         let mut valid = true;
@@ -1845,8 +1911,18 @@ impl Analyzer {
     fn source_type_is_concrete(&self, source: &Type) -> bool {
         match source {
             Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => true,
+            Type::CompileUSize(_) => false,
             Type::Borrow { pointee, .. } => self.source_type_is_concrete(pointee),
             Type::Array(element, _) => self.source_type_is_concrete(element),
+            Type::ArrayApplication {
+                constructor,
+                element,
+                length,
+            } => {
+                self.is_lang_item_name(constructor, LangItemKind::ArrayTypeForm)
+                    && matches!(length, crate::ast::USizeConst::Literal(_))
+                    && self.source_type_is_concrete(element)
+            }
             Type::Function {
                 groups,
                 effects,
@@ -1885,8 +1961,17 @@ impl Analyzer {
     fn source_type_is_abstract_or_concrete(&self, source: &Type) -> bool {
         match source {
             Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => true,
+            Type::CompileUSize(_) => false,
             Type::Borrow { pointee, .. } => self.source_type_is_abstract_or_concrete(pointee),
             Type::Array(element, _) => self.source_type_is_abstract_or_concrete(element),
+            Type::ArrayApplication {
+                constructor,
+                element,
+                ..
+            } => {
+                self.is_lang_item_name(constructor, LangItemKind::ArrayTypeForm)
+                    && self.source_type_is_abstract_or_concrete(element)
+            }
             Type::Function { groups, result, .. } => {
                 groups
                     .iter()
@@ -2397,6 +2482,28 @@ impl Analyzer {
                 )?),
                 *length,
             )),
+            Type::ArrayApplication {
+                constructor,
+                element,
+                length,
+            } => Some(Type::ArrayApplication {
+                constructor: constructor.clone(),
+                element: Box::new(self.normalize_trait_impl_type(
+                    trait_name,
+                    element,
+                    raw,
+                    base_substitutions,
+                    normalized,
+                    visiting,
+                )?),
+                length: match length {
+                    crate::ast::USizeConst::Parameter(name) => match base_substitutions.get(name) {
+                        Some(Type::CompileUSize(value)) => crate::ast::USizeConst::Literal(*value),
+                        _ => length.clone(),
+                    },
+                    _ => length.clone(),
+                },
+            }),
             Type::Function {
                 groups,
                 effects,
@@ -2465,9 +2572,13 @@ impl Analyzer {
                     })
                     .collect::<Option<Vec<_>>>()?,
             )),
-            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => {
-                Some(source.clone())
-            }
+            Type::I32
+            | Type::I64
+            | Type::U32
+            | Type::U64
+            | Type::Bool
+            | Type::Unit
+            | Type::CompileUSize(_) => Some(source.clone()),
         }
     }
 
@@ -2705,6 +2816,7 @@ impl Analyzer {
                     valid = false;
                 }
                 CompileParamKind::Region
+                | CompileParamKind::USize
                 | CompileParamKind::Access
                 | CompileParamKind::Passing
                 | CompileParamKind::Effect => {
@@ -4163,6 +4275,7 @@ impl Analyzer {
                     continue;
                 }
                 CompileParamKind::Region
+                | CompileParamKind::USize
                 | CompileParamKind::Access
                 | CompileParamKind::Passing
                 | CompileParamKind::Effect => {
@@ -4277,6 +4390,7 @@ impl Analyzer {
                     valid = false;
                 }
                 CompileParamKind::Region
+                | CompileParamKind::USize
                 | CompileParamKind::Access
                 | CompileParamKind::Passing
                 | CompileParamKind::Effect => {
@@ -5045,6 +5159,10 @@ impl Analyzer {
                     LangItemKind::If,
                     LangItemKind::Match,
                     LangItemKind::BorrowValueForm,
+                    LangItemKind::PtrValueForm,
+                    LangItemKind::MutPtrValueForm,
+                    LangItemKind::SizeOf,
+                    LangItemKind::AlignOf,
                 ]
                 .into_iter()
                 .any(|kind| {
@@ -5087,6 +5205,10 @@ impl Analyzer {
 
             let mut substitutions = HashMap::new();
             for (index, parameter) in template.compile_groups.iter().flatten().enumerate() {
+                if parameter.kind == CompileParamKind::USize {
+                    substitutions.insert(parameter.name.clone(), Type::CompileUSize(0));
+                    continue;
+                }
                 let marker = match parameter.kind {
                     CompileParamKind::Type => {
                         let marker =
@@ -5103,6 +5225,7 @@ impl Analyzer {
                     CompileParamKind::Parameters => continue,
                     CompileParamKind::ParameterPack => continue,
                     CompileParamKind::Region => continue,
+                    CompileParamKind::USize => unreachable!("handled before marker selection"),
                     CompileParamKind::TypeConstructor { .. }
                     | CompileParamKind::EffectConstructor { .. } => unreachable!(
                         "constructor parameters are validated through concrete instances"

@@ -111,6 +111,12 @@ Purpose: make ordinary programs useful without expanding the language for librar
 
 Scope:
 
+- keep allocator ABI and raw helpers below the public container API, while retaining `Box` and
+  `Vec` implementations in the allocation-capable layer for freestanding use;
+- expose owning containers through stable `std.boxed` and `std.vec` type APIs without duplicating
+  every inherent operation as a public prefixed free function;
+- make raw ownership conversion explicit and unsafe instead of exposing ordinary mutable-pointer
+  accessors from `Box`;
 - slices and trait-based indexing;
 - standard iteration for arrays, slices, `Box`, and `Vec` where semantically applicable;
 - complete `Vec` ownership, borrowing, growth, and iterator cleanup behavior;
@@ -132,6 +138,8 @@ Purpose: finish the higher-kinded and callable bridges already justified by stan
 
 Scope:
 
+- extend bounded compile-time scalar arguments from functions and `Array` to nominal types and type
+  aliases when library code demonstrates the required inference and constructor semantics;
 - generic associated constructor lowering and constructor equality solving;
 - captured callable-to-function bridging for `Chain`, `Coalesce`, and higher-order protocols;
 - generic trait methods where coherent static dispatch can be preserved;

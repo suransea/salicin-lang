@@ -6,7 +6,7 @@ extend Resource: Drop {
   }
   }}
 
-let make(counter: MutPtr(i32)): Array(Resource, 2) = { [Resource { counter: counter }, Resource { counter: counter }] }
+let make(counter: MutPtr(i32)): Array(Resource)(2) = { [Resource { counter: counter }, Resource { counter: counter }] }
 
 let main(): i32 = {
   let counter = unsafe {

@@ -272,7 +272,7 @@ callable_group = "(", [ signature_slot, { ",", signature_slot }, [ "," ] ], ")" 
 signature_slot = type_expr
                | IDENT, ":", type_expr ;
 
-type_atom = path, [ type_arguments ]
+type_atom = path, { type_arguments }
           | "(", ")"
           | "(", type_expr, ")"
           | "(", type_expr, ",", [ type_expr, { ",", type_expr }, [ "," ] ], ")"
@@ -285,6 +285,9 @@ type_argument  = [ IDENT, ":" ], type_expr | INTEGER ;
 `_` 不是类型实参。调用中的编译期参数组可整体省略，并由运行时实参和期望类型推断；显式消歧使用
 普通的 `IDENT ":" expression` 命名实参，不增加另一套括号或关键字。
 类型位置的构造子实参同样可以写 `IDENT ":" type_expr` 标签；一个实参组不能混用具名和位置形式。
+`L: usize` 声明受限的编译期无符号整数参数。首版实参是非负 `u64` 范围字面量或另一个
+`usize` 参数；可从数组类型约束推断，但不执行任意常量表达式。标准数组声明为
+`core.memory.Array(T: type)(L: usize): type`，因此完整应用必须写成 `Array(T)(L)`，不能合并两组。
 `access` 是 `core.domains` 声明的封闭编译期 domain；其内建实参为 `shared` 与 `mut`。`borrow(A)(T)` 和
 `borrow(A)(R)(T)` 分别携带 access 参数以及 access/region 参数组合。
 `passing` 是函数编译期 domain；其内建实参为 `auto`、`copy` 与 `move`，并在参数模式位置以
@@ -446,8 +449,9 @@ async_expr = "async", closure_literal ;
 再次读取或释放 owner 前重新初始化，或只释放 allocation。`forget(value)` 则消费一个 owning value
 而不运行 drop glue；它不需要 `unsafe`，但会有意泄漏该值拥有的资源。
 
-`size_of(T)` 与 `align_of(T)` 同样使用普通单组调用外形，但该组只接受一个类型实参；结果为 `u64`，
-布局由最终 LLVM target 决定。
+`size_of(T)` 与 `align_of(T)` 是 `core.memory` 中经过验证的 source-backed intrinsic 声明。
+它们使用普通单组调用外形，但该组只接受一个类型实参；结果为 `u64`，布局由最终 LLVM target
+决定。只有解析到这些规范声明的调用才具有 intrinsic 语义。
 
 每个花括号表达式都是闭包。`{}` 是零参空闭包，`{ expression }` 是非空零参闭包，
 `{ (x: T)(y: U) -> expression }` 是带多组参数的闭包。只有显式参数前缀需要 `->`；

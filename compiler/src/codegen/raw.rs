@@ -10,10 +10,14 @@ use super::Analyzer;
 impl Analyzer {
     pub(super) fn lower_layout_query(
         &mut self,
-        name: &str,
+        kind: LayoutQueryKind,
         groups: &[&[CallArg]],
         context: &LowerCtx,
     ) -> HirExpr {
+        let name = match kind {
+            LayoutQueryKind::Size => "size_of",
+            LayoutQueryKind::Align => "align_of",
+        };
         let [group] = groups else {
             self.error(format!("`{name}` expects exactly one type argument group"));
             return error_expr();
@@ -27,14 +31,7 @@ impl Analyzer {
         }
         HirExpr {
             ty: Ty::U64,
-            kind: HirExprKind::LayoutQuery {
-                queried,
-                kind: if name == "size_of" {
-                    LayoutQueryKind::Size
-                } else {
-                    LayoutQueryKind::Align
-                },
-            },
+            kind: HirExprKind::LayoutQuery { queried, kind },
         }
     }
 
@@ -502,14 +499,15 @@ impl Analyzer {
 
     pub(super) fn lower_raw_pointer_constructor(
         &mut self,
-        name: &str,
+        required_mutable: bool,
         groups: &[&[CallArg]],
         context: &mut LowerCtx,
     ) -> HirExpr {
+        let name = if required_mutable { "MutPtr" } else { "Ptr" };
         if groups.len() != 1 || groups[0].len() != 1 {
             self.error(format!(
                 "`{name}` expects exactly one argument: `{name}({}borrow(place))`",
-                if name == "MutPtr" { "mut " } else { "" }
+                if required_mutable { "mut " } else { "" }
             ));
             return error_expr();
         }
@@ -518,7 +516,6 @@ impl Analyzer {
             self.error(format!("`{name}` does not accept a named argument"));
             return error_expr();
         }
-        let required_mutable = name == "MutPtr";
         let Expr::Borrow { mutable, value, .. } = &argument.value else {
             self.error(format!(
                 "`{name}` requires an explicit `{}borrow` argument",

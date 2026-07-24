@@ -491,7 +491,7 @@ pub(super) fn collect_nominal_type_dependencies(
         Type::Borrow { pointee, .. } => {
             collect_nominal_type_dependencies(pointee, nominal_names, bound, output)
         }
-        Type::Array(element, _) => {
+        Type::Array(element, _) | Type::ArrayApplication { element, .. } => {
             collect_nominal_type_dependencies(element, nominal_names, bound, output)
         }
         Type::Function { groups, result, .. } => {
@@ -526,6 +526,7 @@ pub(super) fn collect_nominal_type_dependencies(
         | Type::U64
         | Type::Bool
         | Type::Unit
+        | Type::CompileUSize(_)
         | Type::Named(_, _) => {}
     }
 }
@@ -637,6 +638,26 @@ fn impl_type_pattern(
             Box::new(impl_type_pattern(element, variables, side)),
             *length,
         ),
+        Type::ArrayApplication {
+            constructor,
+            element,
+            length,
+        } => ImplTypePattern::Named(
+            constructor.clone(),
+            vec![
+                impl_type_pattern(element, variables, side),
+                ImplTypePattern::Named(
+                    match length {
+                        crate::ast::USizeConst::Literal(value) => format!("$usize${value}"),
+                        crate::ast::USizeConst::Parameter(name) => {
+                            format!("$usize$parameter${name}")
+                        }
+                    },
+                    Vec::new(),
+                ),
+            ],
+        ),
+        Type::CompileUSize(value) => ImplTypePattern::Named(format!("$usize${value}"), Vec::new()),
         Type::Function {
             groups,
             effects,
@@ -768,7 +789,9 @@ fn impl_pattern_contains_variable(
 pub(super) fn substitute_self_type(ty: &mut Type, target: &str) {
     match ty {
         Type::Borrow { pointee, .. } => substitute_self_type(pointee, target),
-        Type::Array(element, _) => substitute_self_type(element, target),
+        Type::Array(element, _) | Type::ArrayApplication { element, .. } => {
+            substitute_self_type(element, target)
+        }
         Type::Function { groups, result, .. } => {
             for ty in groups.iter_mut().flatten() {
                 substitute_self_type(ty, target);
@@ -788,7 +811,13 @@ pub(super) fn substitute_self_type(ty: &mut Type, target: &str) {
                 substitute_self_type(&mut argument.ty, target);
             }
         }
-        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => {}
+        Type::I32
+        | Type::I64
+        | Type::U32
+        | Type::U64
+        | Type::Bool
+        | Type::Unit
+        | Type::CompileUSize(_) => {}
     }
 }
 

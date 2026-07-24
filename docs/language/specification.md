@@ -152,6 +152,8 @@ bool char () type
 
 - `()` 是单元类型，只有一个值 `()`。
 - `type` 是类型参数的 kind，只能出现在编译期参数位置，不能作为普通运行时值类型。
+- `usize` 既是无符号运行时整数类型，也是首个受限编译期标量参数 kind；在 `L: usize` 中，
+  `L` 只接受非负且可表示为 `u64` 的整数字面量，并在进入运行时 IR 前擦除。
 
 `Never` 不是额外的原始类型；edition prelude 包含以下普通声明：
 
@@ -205,11 +207,22 @@ let pair: Pair(V: bool, K: i32) = Pair(K: i32, V: bool) { key: 1, value: true }
 
 ```sc
 (i32, String)       // 元组
-Array(i32, 4)       // 固定长度数组；长度是编译期 usize
+Array(i32)(4)       // 固定长度数组；长度是编译期 usize
 Slice(i32)          // 连续元素的非拥有视图
 Str                 // 不可变 UTF-8 字符串视图
 String              // 拥有的 UTF-8 字符串
 ```
+
+`Array` 的规范身份和参数分组由 `core.memory` 中的 lang-item 声明提供：
+
+```sc
+pub let Array(T: type)(L: usize): type
+```
+
+两个编译期参数组是有意的：`Array(T)` 是等待长度的类型构造器，完整类型写作
+`Array(i32)(4)`。`Array(i32, 4)` 不兼容该声明并是语法错误。当前 `usize` 编译期值只支持
+整数字面量、显式转发已有 `usize` 参数，以及从数组实参/期望数组类型推断；任意常量表达式、
+默认值和编译期算术尚未定义。
 
 对应字面量：
 
@@ -1152,6 +1165,11 @@ let identity(T: type)(value: T): T = { value }
 identity(i32)(0)
 identity(20)
 identity(T: i32)(20)
+
+let array_identity(L: usize)
+  (move values: Array(i32)(L)): Array(i32)(L) = { values }
+array_identity(2)([40, 2])
+array_identity([40, 2]) // 从运行时数组实参推断 L = 2
 ```
 
 类型参数必须位于运行时参数组之前。调用可以省略任意未显式提供的编译期参数组；编译器从后续
@@ -1918,6 +1936,22 @@ pub extern "C" let add(a: c_int, b: c_int): c_int = { a + b }
 `Ptr(T)` 和 `MutPtr(T)` 是不受借用检查器保护、可以为空的原始指针。解引用、指针算术和调用导入的
 C 函数需要 `unsafe`。`core.ffi` 提供 `c_char`、`c_int`、`c_long` 等平台 C 类型；Salicin
 `char` 是 Unicode scalar，不能代替 C `char`。
+
+数组、这些指针类型、从显式借用生成指针的构造器以及布局查询由 `core.memory` 声明，并由编译器按
+lang-item 形状和规范身份验证：
+
+```sc
+pub let Array(T: type)(L: usize): type
+pub let Ptr(T: type): type
+pub let MutPtr(T: type): type
+pub let Ptr(T: type)(value: borrow(T)): Ptr(T)
+pub let MutPtr(T: type)(value: borrow(mut)(T)): MutPtr(T)
+pub let size_of(T: type): u64
+pub let align_of(T: type): u64
+```
+
+edition prelude 提供这些声明的短名。用户声明的同名函数或类型不会获得指针或布局 intrinsic
+语义；只有解析到已验证 `core.memory` 项的引用才会触发对应 lowering。
 
 ```sc
 let pointer = unsafe { raw_alloc(T)(size: bytes, align: alignment) }

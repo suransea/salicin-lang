@@ -156,7 +156,7 @@ impl fmt::Display for Ty {
                     write!(f, "{qualifier} {pointee}")
                 }
             }
-            Self::Array(element, length) => write!(f, "Array({element}, {length})"),
+            Self::Array(element, length) => write!(f, "Array({element})({length})"),
             Self::Struct(name) | Self::Enum(name) => f.write_str(name),
             Self::Never => f.write_str("Never"),
             Self::Error => f.write_str("<error>"),

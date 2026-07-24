@@ -3627,7 +3627,7 @@ fn copy_validation_is_structural_transitive_and_source_order_independent() {
 let Inner = struct { value: i32 }
 let Outer = struct { inner: Inner }
 let Choice = enum { Empty, Value(value: Outer), Named(value: Inner) }
-let Holder = struct { values: Array(Outer, 2) }
+let Holder = struct { values: Array(Outer)(2) }
 
 extend Holder: Copy {}
 extend Choice: Copy {}
@@ -6574,7 +6574,7 @@ fn emits_resource_array_drop_glue_for_unconstructed_layout_fields() {
 let Payload = struct { value: i32 }
 extend Payload: Drop {
   let drop(self: borrow(mut)(Self))(): () = { () }}
-let Holder = struct { values: Array(Payload, 1) }
+let Holder = struct { values: Array(Payload)(1) }
 let main(): i32 = { 42 }
 "#,
     )
@@ -6632,7 +6632,7 @@ let main(): i32 = {
 fn emits_dynamic_array_bounds_check_before_inbounds_gep_and_hoists_allocas() {
     let ir = compile_text(
         r#"
-let read(values: Array(i32, 2), index: i32): i32 = { values[index] }
+let read(values: Array(i32)(2), index: i32): i32 = { values[index] }
 let main(): i32 = { read([40, 2], 1) }
 "#,
     )
@@ -6649,11 +6649,41 @@ let main(): i32 = { read([40, 2], 1) }
 }
 
 #[test]
+fn instantiates_and_infers_usize_compile_parameters_from_arrays() {
+    compile_text(
+        r#"
+let identity(L: usize)
+  (move values: Array(i32)(L)): Array(i32)(L) = { values }
+let main(): i32 = {
+  let explicit = identity(2)([19, 1])
+  let inferred = identity([20, 2])
+  explicit[0] + inferred[0]
+}
+"#,
+    )
+    .expect("usize parameters should instantiate explicitly and infer from array arguments");
+
+    let errors = compile_text(
+        r#"
+let same(L: usize)
+  (left: Array(i32)(L), right: Array(i32)(L)): () = { () }
+let main(): i32 = { same([1], [2, 3]); 0 }
+"#,
+    )
+    .expect_err("one usize parameter cannot infer two different array lengths");
+    assert!(errors.iter().any(|error| {
+        error.message.contains("conflicting inference")
+            && error.message.contains("usize")
+            && error.message.contains("L")
+    }));
+}
+
+#[test]
 fn rejects_array_lengths_beyond_the_first_version_limit() {
     let errors = compile_text(
         r#"
 let main(): i32 = {
-  let values: Array(i32, 2147483648) = [42]
+  let values: Array(i32)(2147483648) = [42]
   0
 }
 "#,
@@ -7440,7 +7470,7 @@ let make(): Choice = { Choice.Value(value: Payload { value: 7 }) }
         r#"
 let Payload = struct { value: i32 }
 extend Payload: Copy {}
-let make(): Array(Payload, 2) = { [Payload { value: 1 }, Payload { value: 2 }] }
+let make(): Array(Payload)(2) = { [Payload { value: 1 }, Payload { value: 2 }] }
 "#,
         "make",
     );
@@ -7477,7 +7507,7 @@ extend Empty: Copy {}
 let Pair = struct { left: i32, right: Empty }
 extend Pair: Copy {}
 let Choice = enum { First(next: Pair), Second(i32), Unit }
-let inspect(move empty: Empty, move pair: Pair, move choice: Choice, move values: Array(Pair, 3), alias: borrow(Pair)): () = { () }
+let inspect(move empty: Empty, move pair: Pair, move choice: Choice, move values: Array(Pair)(3), alias: borrow(Pair)): () = { () }
 "#,
         "inspect",
     );
@@ -7607,7 +7637,7 @@ let take(): Payload = { [Payload { value: 1 }, Payload { value: 2 }][1] }
 #[test]
 fn cleanup_plan_dynamic_index_uses_only_pre_registered_constant_paths() {
     let plan = cleanup_plan_text(
-        "let take(values: Array(i32, 3), index: i32): i32 = { values[index] }\n",
+        "let take(values: Array(i32)(3), index: i32): i32 = { values[index] }\n",
         "take",
     );
     assert!(plan.move_paths.iter().all(|path| {
@@ -7704,7 +7734,7 @@ let main(): i32 = {
 #[test]
 fn cleanup_plan_reports_the_move_path_budget() {
     let errors =
-        compile_library_text("let too_wide(move values: Array(i32, 65536)): () = { () }\n")
+        compile_library_text("let too_wide(move values: Array(i32)(65536)): () = { () }\n")
             .unwrap_err();
     assert!(errors.iter().any(|error| {
         error.message.contains("cleanup move-path limit")
@@ -7857,7 +7887,7 @@ let make(): Choice = { Choice.Pair(Payload { value: 1 }, return(Choice.Pair(Payl
         r#"
 let Payload = struct { value: i32 }
 extend Payload: Copy {}
-let make(): Array(Payload, 2) = { [Payload { value: 1 }, return([Payload { value: 2 }, Payload { value: 3 }])] }
+let make(): Array(Payload)(2) = { [Payload { value: 1 }, return([Payload { value: 2 }, Payload { value: 3 }])] }
 "#,
         "make",
     );
@@ -8212,8 +8242,8 @@ let absurd(move holder: Holder): i32 = { holder.value }
         r#"
 let Empty = enum {}
 extend Empty: Copy {}
-let identity(move values: Array(Empty, 1)): Array(Empty, 1) = { values }
-let absurd(move values: Array(Empty, 1)): i32 = { identity(values)[0] }
+let identity(move values: Array(Empty)(1)): Array(Empty)(1) = { values }
+let absurd(move values: Array(Empty)(1)): i32 = { identity(values)[0] }
 "#,
         "absurd",
     );

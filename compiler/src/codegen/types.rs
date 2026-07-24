@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 
 use crate::ast::{
-    CallArg, CompileParam, CompileParamKind, Expr, FunctionEffects, Type, VariantFields,
+    CallArg, CompileParam, CompileParamKind, Expr, FunctionEffects, Type, USizeConst, VariantFields,
 };
 use crate::core::LangItemKind;
 
 use super::compile_time::{
     effect_identity_sources, effect_row_from_marker, effect_row_from_source, effect_row_source,
     is_compile_value_marker, source_effect_identity, type_constructor_from_marker,
-    type_constructor_marker, ACCESS_MUT_MARKER, ACCESS_SHARED_MARKER, PASSING_AUTO_MARKER,
-    PASSING_COPY_MARKER, PASSING_MOVE_MARKER,
+    type_constructor_marker, usize_value_marker, ACCESS_MUT_MARKER, ACCESS_SHARED_MARKER,
+    PASSING_AUTO_MARKER, PASSING_COPY_MARKER, PASSING_MOVE_MARKER,
 };
 use super::flow::LowerCtx;
 use super::hir::{FunctionTy, Ty};
@@ -86,6 +86,44 @@ impl Analyzer {
                     array
                 }
             }
+            Type::ArrayApplication {
+                constructor,
+                element,
+                length,
+            } => {
+                if !self.is_lang_item_name(constructor, LangItemKind::ArrayTypeForm) {
+                    self.error(format!(
+                        "array syntax resolved to non-standard constructor `{constructor}`"
+                    ));
+                    return Ty::Error;
+                }
+                let USizeConst::Literal(length) = length else {
+                    self.error(format!(
+                        "array length parameter `{}` was not resolved during generic instantiation",
+                        match length {
+                            USizeConst::Parameter(name) => name,
+                            USizeConst::Literal(_) => unreachable!(),
+                        }
+                    ));
+                    return Ty::Error;
+                };
+                let element = self.lower_source_type(element);
+                if *length > i32::MAX as u64 {
+                    self.error(format!(
+                        "array length {length} exceeds the first-version limit of {}",
+                        i32::MAX
+                    ));
+                    Ty::Error
+                } else {
+                    Ty::Array(Box::new(element), *length)
+                }
+            }
+            Type::CompileUSize(value) => {
+                self.error(format!(
+                    "compile-time `usize` value `{value}` cannot be used as a runtime type"
+                ));
+                Ty::Error
+            }
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => Ty::Unit,
             Type::Named(name, arguments)
                 if arguments.is_empty()
@@ -130,14 +168,17 @@ impl Analyzer {
             {
                 Ty::Struct(name.clone())
             }
-            Type::Named(name, arguments) if matches!(name.as_str(), "Ptr" | "MutPtr") => {
+            Type::Named(name, arguments)
+                if self.is_lang_item_name(name, LangItemKind::PtrTypeForm)
+                    || self.is_lang_item_name(name, LangItemKind::MutPtrTypeForm) =>
+            {
                 if arguments.len() != 1 {
                     self.error(format!("type `{name}` expects exactly one type argument"));
                     Ty::Error
                 } else {
                     Ty::Pointer {
                         pointee: Box::new(self.lower_source_type(&arguments[0])),
-                        mutable: name == "MutPtr",
+                        mutable: self.is_lang_item_name(name, LangItemKind::MutPtrTypeForm),
                     }
                 }
             }
@@ -258,12 +299,18 @@ impl Analyzer {
             Ty::U64 => Some(Type::U64),
             Ty::Bool => Some(Type::Bool),
             Ty::Unit => Some(Type::Unit),
-            Ty::Array(element, length) => Some(Type::Array(
-                Box::new(self.source_type_for_ty(element)?),
-                *length,
-            )),
+            Ty::Array(element, length) => Some(Type::ArrayApplication {
+                constructor: self.lang_item_name(LangItemKind::ArrayTypeForm).to_owned(),
+                element: Box::new(self.source_type_for_ty(element)?),
+                length: USizeConst::Literal(*length),
+            }),
             Ty::Pointer { pointee, mutable } => Some(Type::Named(
-                if *mutable { "MutPtr" } else { "Ptr" }.to_owned(),
+                self.lang_item_name(if *mutable {
+                    LangItemKind::MutPtrTypeForm
+                } else {
+                    LangItemKind::PtrTypeForm
+                })
+                .to_owned(),
                 vec![self.source_type_for_ty(pointee)?],
             )),
             Ty::Reference {
@@ -374,7 +421,7 @@ impl Analyzer {
             Ty::Bool => "bool".to_owned(),
             Ty::Unit => "()".to_owned(),
             Ty::Array(element, length) => {
-                format!("Array({}, {length})", self.diagnostic_type_name(element))
+                format!("Array({})({length})", self.diagnostic_type_name(element))
             }
             Ty::Pointer { pointee, mutable } => format!(
                 "{}({})",
@@ -501,23 +548,37 @@ impl Analyzer {
                     self.error("generic type arguments cannot contain labeled arguments");
                     return None;
                 }
-                if name == "Array" {
-                    if groups.len() != 1 || groups[0].len() != 2 {
-                        self.error("`Array` type arguments require an element type and length");
+                if self.is_lang_item_name(name, LangItemKind::ArrayTypeForm) {
+                    if groups.len() != 2 || groups[0].len() != 1 || groups[1].len() != 1 {
+                        self.error("`Array` type arguments require `Array(Element)(Length)`");
                         return None;
                     }
-                    let call_arguments = groups[0];
                     let element =
-                        self.type_argument_from_expr(&call_arguments[0].value, substitutions)?;
-                    let Expr::Integer(length) = call_arguments[1].value else {
-                        self.error("array type argument length must be a non-negative integer");
-                        return None;
+                        self.type_argument_from_expr(&groups[0][0].value, substitutions)?;
+                    let length = match &groups[1][0].value {
+                        Expr::Integer(length) => {
+                            let Ok(length) = u64::try_from(*length) else {
+                                self.error("array type argument length must fit in `u64`");
+                                return None;
+                            };
+                            USizeConst::Literal(length)
+                        }
+                        Expr::Name(name) => match substitutions.get(name) {
+                            Some(Type::CompileUSize(value)) => USizeConst::Literal(*value),
+                            _ => USizeConst::Parameter(name.clone()),
+                        },
+                        _ => {
+                            self.error(
+                                "array type argument length must be a non-negative integer or `usize` parameter",
+                            );
+                            return None;
+                        }
                     };
-                    let Ok(length) = u64::try_from(length) else {
-                        self.error("array type argument length must fit in `u64`");
-                        return None;
-                    };
-                    Some(Type::Array(Box::new(element), length))
+                    Some(Type::ArrayApplication {
+                        constructor: name.clone(),
+                        element: Box::new(element),
+                        length,
+                    })
                 } else {
                     let mut arguments = Vec::new();
                     for argument in groups.iter().flat_map(|group| group.iter()) {
@@ -598,17 +659,25 @@ impl Analyzer {
                 {
                     return None;
                 }
-                if name == "Array" {
-                    if groups.len() != 1 || groups[0].len() != 2 {
+                if self.is_lang_item_name(name, LangItemKind::ArrayTypeForm) {
+                    if groups.len() != 2 || groups[0].len() != 1 || groups[1].len() != 1 {
                         return None;
                     }
-                    let arguments = groups[0];
                     let element =
-                        self.probe_type_argument_source(&arguments[0].value, substitutions)?;
-                    let Expr::Integer(length) = arguments[1].value else {
-                        return None;
+                        self.probe_type_argument_source(&groups[0][0].value, substitutions)?;
+                    let length = match &groups[1][0].value {
+                        Expr::Integer(length) => USizeConst::Literal(u64::try_from(*length).ok()?),
+                        Expr::Name(name) => match substitutions.get(name) {
+                            Some(Type::CompileUSize(value)) => USizeConst::Literal(*value),
+                            _ => USizeConst::Parameter(name.clone()),
+                        },
+                        _ => return None,
                     };
-                    Some(Type::Array(Box::new(element), u64::try_from(length).ok()?))
+                    Some(Type::ArrayApplication {
+                        constructor: name.clone(),
+                        element: Box::new(element),
+                        length,
+                    })
                 } else {
                     let arguments = groups
                         .iter()
@@ -632,6 +701,13 @@ impl Analyzer {
     ) -> Option<Type> {
         match parameter.kind {
             CompileParamKind::Type => self.probe_type_argument_source(expression, substitutions),
+            CompileParamKind::USize => match expression {
+                Expr::Integer(value) => Some(Type::CompileUSize(u64::try_from(*value).ok()?)),
+                Expr::Name(name) => substitutions.get(name).and_then(|value| {
+                    matches!(value, Type::CompileUSize(_)).then(|| value.clone())
+                }),
+                _ => None,
+            },
             CompileParamKind::Access => match expression {
                 Expr::Name(name) if name == "shared" => {
                     Some(Type::Named(ACCESS_SHARED_MARKER.to_owned(), Vec::new()))
@@ -757,6 +833,10 @@ impl Analyzer {
             | CompileParamKind::Access
             | CompileParamKind::Passing
             | CompileParamKind::Effect => self.probe_source_ty(source),
+            CompileParamKind::USize => match source {
+                Type::CompileUSize(value) => Some(Ty::Struct(usize_value_marker(*value))),
+                _ => None,
+            },
             CompileParamKind::Region
             | CompileParamKind::Parameters
             | CompileParamKind::ParameterPack
@@ -815,6 +895,18 @@ impl Analyzer {
             return arguments.iter().all(|argument| {
                 (unit_is_type && matches!(argument.value, Expr::Unit))
                     || self.expression_is_explicit_type_argument(&argument.value, context)
+            });
+        }
+        if parameters
+            .iter()
+            .all(|parameter| parameter.kind == CompileParamKind::USize)
+        {
+            return arguments.iter().all(|argument| {
+                matches!(argument.value, Expr::Integer(value) if value >= 0)
+                    || matches!(&argument.value, Expr::Name(name)
+                    if context.type_substitutions.get(name).is_some_and(
+                        |value| matches!(value, Type::CompileUSize(_))
+                    ))
             });
         }
         if parameters
@@ -912,6 +1004,13 @@ impl Analyzer {
                 (unit_is_type && matches!(expression, Expr::Unit))
                     || self.expression_is_explicit_type_argument(expression, context)
             }
+            CompileParamKind::USize => {
+                matches!(expression, Expr::Integer(value) if *value >= 0)
+                    || matches!(expression, Expr::Name(name)
+                    if context.type_substitutions.get(name).is_some_and(
+                        |value| matches!(value, Type::CompileUSize(_))
+                    ))
+            }
             CompileParamKind::Access => {
                 matches!(expression, Expr::Name(name) if name == "shared" || name == "mut")
             }
@@ -994,11 +1093,12 @@ impl Analyzer {
                 {
                     return false;
                 }
-                if name == "Array" {
-                    return groups.len() == 1
-                        && groups[0].len() == 2
+                if self.is_lang_item_name(name, LangItemKind::ArrayTypeForm) {
+                    return groups.len() == 2
+                        && groups[0].len() == 1
+                        && groups[1].len() == 1
                         && self.expression_is_explicit_type_argument(&groups[0][0].value, context)
-                        && matches!(groups[0][1].value, Expr::Integer(_));
+                        && matches!(groups[1][0].value, Expr::Integer(value) if value >= 0);
                 }
                 self.struct_templates.contains_key(name) || self.enum_templates.contains_key(name)
             }
@@ -1054,6 +1154,14 @@ impl Analyzer {
             Type::Array(element, length) => {
                 Some(Ty::Array(Box::new(self.probe_source_ty(element)?), *length))
             }
+            Type::ArrayApplication {
+                constructor,
+                element,
+                length: USizeConst::Literal(length),
+            } if self.is_lang_item_name(constructor, LangItemKind::ArrayTypeForm) => {
+                Some(Ty::Array(Box::new(self.probe_source_ty(element)?), *length))
+            }
+            Type::ArrayApplication { .. } | Type::CompileUSize(_) => None,
             Type::Named(name, arguments) if name == "()" && arguments.is_empty() => Some(Ty::Unit),
             Type::Named(name, _) if effect_row_from_marker(name).is_some() => {
                 let (unsafe_effect, throws_error, custom_effects) = effect_row_from_source(source)?;
@@ -1070,6 +1178,18 @@ impl Analyzer {
                 if arguments.is_empty() && is_compile_value_marker(name) =>
             {
                 Some(Ty::Struct(name.clone()))
+            }
+            Type::Named(name, arguments)
+                if self.is_lang_item_name(name, LangItemKind::PtrTypeForm)
+                    || self.is_lang_item_name(name, LangItemKind::MutPtrTypeForm) =>
+            {
+                let [pointee] = arguments.as_slice() else {
+                    return None;
+                };
+                Some(Ty::Pointer {
+                    pointee: Box::new(self.probe_source_ty(pointee)?),
+                    mutable: self.is_lang_item_name(name, LangItemKind::MutPtrTypeForm),
+                })
             }
             Type::Named(name, arguments)
                 if arguments.is_empty()

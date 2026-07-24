@@ -1,12 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{CallArg, CompileParam, CompileParamKind, Expr, Type};
+use crate::ast::{CallArg, CompileParam, CompileParamKind, Expr, Type, USizeConst};
 use crate::core::LangItemKind;
 
 use super::compile_time::{
     effect_row_from_marker, effect_row_source, source_effect_identity, type_constructor_marker,
-    ACCESS_MUT_MARKER, ACCESS_SHARED_MARKER, PASSING_AUTO_MARKER, PASSING_COPY_MARKER,
-    PASSING_MOVE_MARKER,
+    usize_value_marker, ACCESS_MUT_MARKER, ACCESS_SHARED_MARKER, PASSING_AUTO_MARKER,
+    PASSING_COPY_MARKER, PASSING_MOVE_MARKER,
 };
 use super::effects::source_type_is_never;
 use super::flow::LowerCtx;
@@ -346,6 +346,63 @@ impl Analyzer {
                     origin,
                 )
             }
+            Type::ArrayApplication {
+                constructor,
+                element,
+                length,
+            } => {
+                if !self.is_lang_item_name(constructor, LangItemKind::ArrayTypeForm) {
+                    return Err(mismatch());
+                }
+                let Ty::Array(actual_element, actual_length) = actual else {
+                    return Err(mismatch());
+                };
+                let mut changed = false;
+                match length {
+                    USizeConst::Literal(length) if length != actual_length => {
+                        return Err(mismatch());
+                    }
+                    USizeConst::Literal(_) => {}
+                    USizeConst::Parameter(name) => {
+                        let selected = InferredTypeArgument {
+                            ty: Ty::Struct(usize_value_marker(*actual_length)),
+                            source: Some(Type::CompileUSize(*actual_length)),
+                            origin: origin.to_owned(),
+                        };
+                        match inferred.get(name) {
+                            Some(previous) if previous.ty != selected.ty => {
+                                return Err(format!(
+                                    "conflicting inference for `usize` parameter `{name}`: `{}` from {} conflicts with `{actual_length}` from {origin}",
+                                    match &previous.source {
+                                        Some(Type::CompileUSize(value)) => value.to_string(),
+                                        _ => previous.ty.to_string(),
+                                    },
+                                    previous.origin,
+                                ));
+                            }
+                            Some(_) => {}
+                            None => {
+                                inferred.insert(name.clone(), selected);
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+                self.unify_template_ty(
+                    element,
+                    actual_element,
+                    match actual_source {
+                        Some(Type::ArrayApplication { element, .. })
+                        | Some(Type::Array(element, _)) => Some(element),
+                        _ => None,
+                    },
+                    compile_parameters,
+                    inferred,
+                    origin,
+                )
+                .map(|element_changed| changed || element_changed)
+            }
+            Type::CompileUSize(_) => Err(mismatch()),
             Type::Function {
                 groups,
                 effects,
@@ -496,12 +553,14 @@ impl Analyzer {
                 }
             }
             Type::Named(name, arguments)
-                if matches!(name.as_str(), "Ptr" | "MutPtr") && arguments.len() == 1 =>
+                if (self.is_lang_item_name(name, LangItemKind::PtrTypeForm)
+                    || self.is_lang_item_name(name, LangItemKind::MutPtrTypeForm))
+                    && arguments.len() == 1 =>
             {
                 let Ty::Pointer { pointee, mutable } = actual else {
                     return Err(mismatch());
                 };
-                if *mutable != (name == "MutPtr") {
+                if *mutable != self.is_lang_item_name(name, LangItemKind::MutPtrTypeForm) {
                     return Err(mismatch());
                 }
                 self.unify_template_ty(
@@ -663,6 +722,29 @@ impl Analyzer {
                 Box::new(self.resolved_template_ty(element, compile_parameters, inferred)?),
                 *length,
             )),
+            Type::ArrayApplication {
+                constructor,
+                element,
+                length,
+            } => {
+                if !self.is_lang_item_name(constructor, LangItemKind::ArrayTypeForm) {
+                    return None;
+                }
+                let length = match length {
+                    USizeConst::Literal(value) => *value,
+                    USizeConst::Parameter(name) => {
+                        let Type::CompileUSize(value) = inferred.get(name)?.source.as_ref()? else {
+                            return None;
+                        };
+                        *value
+                    }
+                };
+                Some(Ty::Array(
+                    Box::new(self.resolved_template_ty(element, compile_parameters, inferred)?),
+                    length,
+                ))
+            }
+            Type::CompileUSize(_) => None,
             Type::Function {
                 groups,
                 effects,
@@ -801,7 +883,9 @@ impl Analyzer {
             .filter(|parameter| {
                 matches!(
                     parameter.kind,
-                    CompileParamKind::Type | CompileParamKind::TypeConstructor { .. }
+                    CompileParamKind::Type
+                        | CompileParamKind::USize
+                        | CompileParamKind::TypeConstructor { .. }
                 )
             })
             .map(|parameter| parameter.name.clone())
@@ -869,6 +953,37 @@ impl Analyzer {
                     CompileParamKind::Type => {
                         self.type_argument_from_expr(&argument.value, &context.type_substitutions)?
                     }
+                    CompileParamKind::USize => match &argument.value {
+                        Expr::Integer(value) => {
+                            let Ok(value) = u64::try_from(*value) else {
+                                self.error(format!(
+                                    "invalid `usize` argument for `{}` in `{owner}`; expected a non-negative integer fitting in `u64`",
+                                    parameter.name
+                                ));
+                                return None;
+                            };
+                            Type::CompileUSize(value)
+                        }
+                        Expr::Name(name) => {
+                            let Some(Type::CompileUSize(value)) =
+                                context.type_substitutions.get(name)
+                            else {
+                                self.error(format!(
+                                    "invalid `usize` argument for `{}` in `{owner}`",
+                                    parameter.name
+                                ));
+                                return None;
+                            };
+                            Type::CompileUSize(*value)
+                        }
+                        _ => {
+                            self.error(format!(
+                                "invalid `usize` argument for `{}` in `{owner}`; expected a non-negative integer",
+                                parameter.name
+                            ));
+                            return None;
+                        }
+                    },
                     CompileParamKind::Access => match &argument.value {
                         Expr::Name(name) if name == "shared" => {
                             Type::Named(ACCESS_SHARED_MARKER.to_owned(), Vec::new())
@@ -1021,6 +1136,8 @@ impl Analyzer {
                     };
                     debug_assert!(arguments.is_empty());
                     Ty::Struct(type_constructor_marker(name))
+                } else if let Type::CompileUSize(value) = &source {
+                    Ty::Struct(usize_value_marker(*value))
                 } else {
                     let Some(ty) = self.probe_source_ty(&source) else {
                         self.error(format!(
@@ -1094,7 +1211,9 @@ impl Analyzer {
             .filter(|parameter| {
                 matches!(
                     parameter.kind,
-                    CompileParamKind::Type | CompileParamKind::TypeConstructor { .. }
+                    CompileParamKind::Type
+                        | CompileParamKind::USize
+                        | CompileParamKind::TypeConstructor { .. }
                 )
             })
             .map(|parameter| parameter.name.clone())

@@ -292,8 +292,7 @@ impl Lexer {
                 let before_bangs = tokens
                     .iter()
                     .rev()
-                    .skip_while(|token| token.kind == TokenKind::Bang)
-                    .next();
+                    .find(|token| token.kind != TokenKind::Bang);
                 return !before_bangs.is_some_and(|token| {
                     matches!(
                         token.kind,

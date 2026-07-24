@@ -27,6 +27,8 @@ library/
     effect.sc
     effect/handler.sc
     domains.sc
+    borrow.sc
+    memory.sc
     control.sc
     iter.sc
     algebra.sc
@@ -40,10 +42,11 @@ library/
 
 ## Prelude policy
 
-The edition prelude must stay small. It is intended only for names that the language constantly
-produces or needs as universal contracts, currently `Never`, `Copy`, and `Drop`. `Option` and
-`Result` are fundamental `core` declarations, but ordinary source should name them through the
-`std` facade:
+The edition prelude must stay small. It contains the universal `Never`, `Copy`, and `Drop`
+contracts, primitive type names, and the `Array`, `Ptr`, `MutPtr`, `size_of`, and `align_of`
+memory contracts that compiler-generated types and low-level library code routinely need.
+`Option` and `Result` are fundamental `core` declarations, but ordinary source should name them
+through the `std` facade:
 
 ```sc
 let Option = std.Option

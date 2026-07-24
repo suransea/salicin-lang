@@ -92,6 +92,8 @@ After the P0 handler queue passes its exit conditions, stop adding handler featu
 
 Entry gate: **M0-QUALITY-1** and **M0-AUDIT-1**
 
+- [ ] **LIB-ALLOC-API-1: Keep Box/Vec implementations in the allocation-capable layer while exposing only stable type and inherent-method APIs through std**
+- [ ] **LIB-BOX-1: Replace ordinary raw-pointer accessors with an explicit unsafe ownership-conversion boundary**
 - [ ] **LIB-SLICE-1: Specify and implement slices**
 - [ ] **LIB-INDEX-1: Route indexing through source-backed traits**
 - [ ] **LIB-ITER-1: Add array, slice, and Vec iterator implementations**
@@ -110,6 +112,7 @@ Entry gate: concrete requirements from LIB1
 - [ ] **TYPE-EQ-1: Add bounded constructor-equation solving**
 - [ ] **TYPE-CALLABLE-1: Bridge capturing callables into source protocols**
 - [ ] **TYPE-TRAIT-METHOD-1: Support coherent generic trait methods**
+- [ ] **TYPE-CONST-NOMINAL-1: Extend compile-time scalar arguments to nominal types and type aliases**
 - [ ] **TYPE-DIAG-1: Improve kind and constructor inference diagnostics**
 
 ## P2 async exploration
@@ -140,6 +143,9 @@ Entry gate: all ASYNC1 prerequisites in the roadmap
 - [x] **EFF-FRAME-1:** Fuse distinct borrowed roots into eligible non-recursive handler frames.
 - [x] **EFF-FIELD-1:** Extend frame fusion to stable nested field places.
 - [x] **EFF-INDEX-1:** Stage indexed borrow places once and rebuild them from frame-owned roots.
+- [x] **CORE-MEMORY-1:** Source-back raw pointer and layout-query contracts in `core.memory`.
+- [x] **TYPE-CONST-1:** Add `usize` compile-time values and source-back curried `Array(T)(L)`.
+- [x] **CORE-BORROW-1:** Move borrow contracts from `core.domains` into `core.borrow`.
 - [x] **EXAMPLE-LEDGER-1:** Process non-`Copy` transactions in an effectful native ledger loop.
 
 ## Definition of done

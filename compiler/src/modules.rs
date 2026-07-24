@@ -368,6 +368,11 @@ const CORE_PRELUDE_EXPORTS: &[(&str, &str)] = &[
     ("Never", "core::never::Never"),
     ("Copy", "core::marker::Copy"),
     ("Drop", "core::marker::Drop"),
+    ("Array", "core::memory::Array"),
+    ("Ptr", "core::memory::Ptr"),
+    ("MutPtr", "core::memory::MutPtr"),
+    ("size_of", "core::memory::size_of"),
+    ("align_of", "core::memory::align_of"),
 ];
 const CORE_ROOT_EXPORTS: &[(&str, &str)] = &[
     ("Never", "core::never::Never"),
@@ -437,8 +442,9 @@ const CORE_DOMAIN_EXPORTS: &[&str] = &[
     "parameters",
     "access",
     "passing",
-    "borrow",
 ];
+const CORE_BORROW_EXPORTS: &[&str] = &["borrow"];
+const CORE_MEMORY_EXPORTS: &[&str] = &["Array", "Ptr", "MutPtr", "size_of", "align_of"];
 const CORE_CONTROL_EXPORTS: &[&str] = &[
     "Break", "Continue", "Return", "break", "continue", "return", "do", "try", "throw", "unsafe",
     "loop", "while", "if", "match", "for",
@@ -554,7 +560,7 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("domains", "parameters", "core::domains::parameters"),
     ("domains", "access", "core::domains::access"),
     ("domains", "passing", "core::domains::passing"),
-    ("domains", "borrow", "core::domains::borrow"),
+    ("borrow", "borrow", "core::borrow::borrow"),
     ("control", "do", "core::control::do"),
     ("control", "try", "core::control::try"),
     ("control", "throw", "core::control::throw"),
@@ -1094,6 +1100,12 @@ fn install_standard_namespaces(
         for name in CORE_DOMAIN_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.domains.{name}"));
         }
+        for name in CORE_BORROW_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.borrow.{name}"));
+        }
+        for name in CORE_MEMORY_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.memory.{name}"));
+        }
         for name in CORE_ALGEBRA_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.algebra.{name}"));
         }
@@ -1411,6 +1423,28 @@ fn install_core_namespace(
                 "domains",
                 name,
                 &format!("core::domains::{name}"),
+                "<core>",
+            );
+        }
+        for name in CORE_BORROW_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "borrow",
+                name,
+                &format!("core::borrow::{name}"),
+                "<core>",
+            );
+        }
+        for name in CORE_MEMORY_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "memory",
+                name,
+                &format!("core::memory::{name}"),
                 "<core>",
             );
         }
@@ -2512,6 +2546,33 @@ fn validate_exposed_type(
             nominal_boundaries,
             diagnostics,
         ),
+        Type::ArrayApplication {
+            constructor,
+            element,
+            ..
+        } => {
+            if !is_bound_api_type(constructor, bound_types) {
+                if let Some(referenced) = nominal_boundaries.get(constructor.as_str()) {
+                    if !api_audience_is_contained(exposed, referenced) {
+                        diagnostics.push(format!(
+                            "{source_path}: error: {description} with {} visibility exposes {} type `{constructor}` beyond its access boundary{}",
+                            visibility_description(exposed.visibility),
+                            visibility_description(referenced.visibility),
+                            boundary_location(referenced),
+                        ));
+                    }
+                }
+            }
+            validate_exposed_type(
+                element,
+                exposed,
+                source_path,
+                bound_types,
+                description,
+                nominal_boundaries,
+                diagnostics,
+            );
+        }
         Type::Function {
             groups,
             effects,
@@ -2599,7 +2660,13 @@ fn validate_exposed_type(
                 );
             }
         }
-        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => {}
+        Type::I32
+        | Type::I64
+        | Type::U32
+        | Type::U64
+        | Type::Bool
+        | Type::Unit
+        | Type::CompileUSize(_) => {}
     }
 }
 
@@ -2986,6 +3053,19 @@ impl Resolver {
         match ty {
             Type::Borrow { pointee, .. } => self.rewrite_type(pointee, context, type_scope),
             Type::Array(element, _) => self.rewrite_type(element, context, type_scope),
+            Type::ArrayApplication {
+                constructor,
+                element,
+                ..
+            } => {
+                self.rewrite_type(element, context, type_scope);
+                let segments: Vec<String> = constructor.split('.').map(str::to_owned).collect();
+                if let Some(canonical) = self.resolve_logical_path(&segments, context) {
+                    *constructor = canonical;
+                } else if !self.reject_unimported_standard(&segments, context) {
+                    self.reject_bare_module(&segments, context, "an array type constructor");
+                }
+            }
             Type::Function {
                 groups,
                 effects,
@@ -3040,7 +3120,13 @@ impl Resolver {
                     }
                 }
             }
-            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => {}
+            Type::I32
+            | Type::I64
+            | Type::U32
+            | Type::U64
+            | Type::Bool
+            | Type::Unit
+            | Type::CompileUSize(_) => {}
         }
     }
 
@@ -5195,6 +5281,8 @@ let main(): i32 = { Option {} }
                     .map(|name| ("handler", *name)),
             )
             .chain(CORE_DOMAIN_EXPORTS.iter().map(|name| ("domains", *name)))
+            .chain(CORE_BORROW_EXPORTS.iter().map(|name| ("borrow", *name)))
+            .chain(CORE_MEMORY_EXPORTS.iter().map(|name| ("memory", *name)))
             .chain(CORE_CONTROL_EXPORTS.iter().map(|name| ("control", *name)))
             .chain(CORE_ITER_EXPORTS.iter().map(|name| ("iter", *name)))
             .chain(CORE_ALGEBRA_EXPORTS.iter().map(|name| ("algebra", *name)))

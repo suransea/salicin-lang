@@ -260,6 +260,9 @@ fn normalize_type_labeled_arguments(
         Type::Array(element, _) => {
             normalize_type_labeled_arguments(element, constructor_parameters, diagnostics)
         }
+        Type::ArrayApplication { element, .. } => {
+            normalize_type_labeled_arguments(element, constructor_parameters, diagnostics)
+        }
         Type::Function {
             groups,
             effects,
@@ -362,7 +365,13 @@ fn normalize_type_labeled_arguments(
                 Type::Named(name.clone(), positional)
             };
         }
-        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => {}
+        Type::I32
+        | Type::I64
+        | Type::U32
+        | Type::U64
+        | Type::Bool
+        | Type::Unit
+        | Type::CompileUSize(_) => {}
     }
 }
 
@@ -861,6 +870,9 @@ pub(super) fn expand_alias_type(
     match source {
         Type::Borrow { pointee, .. } => expand_alias_type(pointee, aliases, stack, diagnostics),
         Type::Array(element, _) => expand_alias_type(element, aliases, stack, diagnostics),
+        Type::ArrayApplication { element, .. } => {
+            expand_alias_type(element, aliases, stack, diagnostics)
+        }
         Type::Function { groups, result, .. } => {
             for ty in groups.iter_mut().flatten() {
                 expand_alias_type(ty, aliases, stack, diagnostics);
@@ -909,7 +921,13 @@ pub(super) fn expand_alias_type(
                 "internal error: labeled type arguments for `{name}` were not normalized before type alias expansion"
             ));
         }
-        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => {}
+        Type::I32
+        | Type::I64
+        | Type::U32
+        | Type::U64
+        | Type::Bool
+        | Type::Unit
+        | Type::CompileUSize(_) => {}
     }
 }
 
@@ -1752,19 +1770,40 @@ pub(super) fn source_type_expression(source: &Type) -> Expr {
         Type::U32 => Expr::Name("u32".to_owned()),
         Type::U64 => Expr::Name("u64".to_owned()),
         Type::Bool => Expr::Name("bool".to_owned()),
+        Type::CompileUSize(value) => Expr::Integer(i128::from(*value)),
         Type::Borrow { .. } | Type::Function { .. } => Expr::Type(source.clone()),
         Type::Array(element, length) => Expr::Call(
-            Box::new(Expr::Name("Array".to_owned())),
-            vec![
-                CallArg {
+            Box::new(Expr::Call(
+                Box::new(Expr::Name("Array".to_owned())),
+                vec![CallArg {
                     label: None,
                     value: source_type_expression(element),
-                },
-                CallArg {
+                }],
+            )),
+            vec![CallArg {
+                label: None,
+                value: Expr::Integer(i128::from(*length)),
+            }],
+        ),
+        Type::ArrayApplication {
+            constructor,
+            element,
+            length,
+        } => Expr::Call(
+            Box::new(Expr::Call(
+                Box::new(Expr::Name(constructor.clone())),
+                vec![CallArg {
                     label: None,
-                    value: Expr::Integer(i128::from(*length)),
+                    value: source_type_expression(element),
+                }],
+            )),
+            vec![CallArg {
+                label: None,
+                value: match length {
+                    crate::ast::USizeConst::Literal(value) => Expr::Integer(i128::from(*value)),
+                    crate::ast::USizeConst::Parameter(name) => Expr::Name(name.clone()),
                 },
-            ],
+            }],
         ),
         Type::Named(name, arguments) if arguments.is_empty() => Expr::Name(name.clone()),
         Type::Named(name, arguments) => Expr::Call(
@@ -1822,6 +1861,16 @@ pub(super) fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<
             substitute_type_parameters(pointee, substitutions)
         }
         Type::Array(element, _) => substitute_type_parameters(element, substitutions),
+        Type::ArrayApplication {
+            element, length, ..
+        } => {
+            substitute_type_parameters(element, substitutions);
+            if let crate::ast::USizeConst::Parameter(name) = length {
+                if let Some(Type::CompileUSize(value)) = substitutions.get(name) {
+                    *length = crate::ast::USizeConst::Literal(*value);
+                }
+            }
+        }
         Type::Function {
             groups,
             effects,
@@ -1883,7 +1932,13 @@ pub(super) fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<
                 substitute_type_parameters(&mut argument.ty, substitutions);
             }
         }
-        Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => {}
+        Type::I32
+        | Type::I64
+        | Type::U32
+        | Type::U64
+        | Type::Bool
+        | Type::Unit
+        | Type::CompileUSize(_) => {}
     }
 }
 
