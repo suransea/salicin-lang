@@ -19,8 +19,8 @@ source file is named.
 
 | M0 capability | Positive evidence | Negative and diagnostic evidence | Native evidence | Status / owner |
 |---|---|---|---|---|
-| Unicode source and identifiers | Lexer accepts alphabetic Unicode identifiers | No dedicated confusable, malformed, or diagnostic fixture | No Unicode native fixture | **Partial**, `M0-FRONTEND-EVIDENCE-1` |
-| Logical newlines, declarations, and lexical scopes | Lexer/parser newline tests; `pass/block_mutation.sc`; `local_bindings_shadow_imports_without_hiding_them_from_outer_scopes` | Parser separator tests; scope and import fail fixtures | `run_supports_grouped_calls_and_unit_main`, `pass/block_mutation.sc` | **Covered** |
+| Unicode source and identifiers | Lexer enforces Unicode XID and NFC normalization; dedicated unit and source fixtures cover composed/decomposed and non-ASCII identifiers | Non-XID zero-width source spelling and cross-script lookalike file-module diagnostics | `pass/unicode_identifiers.sc` | **Covered** |
+| Logical newlines, declarations, and lexical scopes | Lexer/parser newline tests; `pass/logical_newlines.sc`; `pass/block_mutation.sc`; `local_bindings_shadow_imports_without_hiding_them_from_outer_scopes` | Parser separator tests; scope and import fail fixtures | `pass/logical_newlines.sc`, `run_supports_grouped_calls_and_unit_main`, `pass/block_mutation.sc` | **Covered** |
 | Modules, packages, local dependencies, and explicit visibility | File-module, facade-use, package-target, and dependency CLI tests | Module path, import, package boundary, manifest, and dependency diagnostics | `local_path_dependency_runs_only_its_library_and_writes_a_stable_lockfile`, module/package native tests | **Covered** |
 | Immutable/mutable bindings and implemented primitive scalars | `pass/block_mutation.sc`; scalar operator fixture families | type mismatch, invalid operator, division/remainder and shift diagnostics | scalar/operator CLI test families | **Partial**: runtime lowering currently covers `i32`, `i64`, `u32`, `u64`, and `bool`; `M0-SCALAR-1` owns the declared remaining widths |
 | Tuples and unit | Unit parameters/results are covered throughout parser, ABI, and CLI tests | Unit misuse receives ordinary type diagnostics | `run_supports_grouped_calls_and_unit_main` | **Missing** for non-unit tuple types, literals, fields, and patterns; `M0-TUPLE-1` |
@@ -45,13 +45,11 @@ source file is named.
 
 The matrix creates these release-blocking tasks without changing the frozen scope:
 
-1. `M0-FRONTEND-EVIDENCE-1`: add Unicode identifier/confusable and logical-newline end-to-end
-   fixtures.
-2. `M0-TUPLE-1`: implement and test non-unit tuple types, values, projection, patterns, ownership,
+1. `M0-TUPLE-1`: implement and test non-unit tuple types, values, projection, patterns, ownership,
    and cleanup.
-3. `M0-SCALAR-1`: either lower every declared M0 primitive scalar width and target-sized integer,
+2. `M0-SCALAR-1`: either lower every declared M0 primitive scalar width and target-sized integer,
    or narrow declarations and the frozen scope through the formal change gate.
-4. `M0-FFI-1`: implement the bounded C FFI slice promised by M0, including ABI admissibility,
+3. `M0-FFI-1`: implement the bounded C FFI slice promised by M0, including ABI admissibility,
    unsafe calls, linking, diagnostics, and native round trips.
 `M0-QUALITY-1` cannot close merely because the current suite is green; the implementation gaps
 above must either be completed or pass the M0 change gate.

@@ -17,7 +17,7 @@ Priority meanings:
 
 Current milestone: **M0 release baseline**
 
-Next task: **M0-FRONTEND-EVIDENCE-1**
+Next task: **M0-TUPLE-1**
 
 ### P0 control-source queue
 
@@ -46,7 +46,7 @@ handler or async expansion is admitted.
   - Map every bullet in `core-scope.md` to positive, negative, diagnostic, and native tests.
   - Mark missing evidence as a task; do not silently reclassify it as an extension.
 
-- [ ] **M0-FRONTEND-EVIDENCE-1: Close Unicode and logical-newline evidence**
+- [x] **M0-FRONTEND-EVIDENCE-1: Close Unicode and logical-newline evidence**
   - Add positive native Unicode identifier and multiline source fixtures.
   - Add stable diagnostics for malformed or disallowed source/module spellings.
 

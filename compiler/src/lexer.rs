@@ -1,5 +1,8 @@
 use std::fmt;
 
+use unicode_ident::{is_xid_continue, is_xid_start};
+use unicode_normalization::UnicodeNormalization;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     Let,
@@ -183,7 +186,7 @@ impl Lexer {
                 self.number()?
             } else if ch == '\'' {
                 self.region_name()?
-            } else if ch == '_' || ch.is_alphabetic() {
+            } else if ch == '_' || is_xid_start(ch) {
                 self.identifier()
             } else {
                 self.bump();
@@ -420,9 +423,10 @@ impl Lexer {
 
     fn identifier(&mut self) -> TokenKind {
         let mut text = String::new();
-        while self.peek().is_some_and(|c| c == '_' || c.is_alphanumeric()) {
+        while self.peek().is_some_and(|c| c == '_' || is_xid_continue(c)) {
             text.push(self.bump().expect("peeked character exists"));
         }
+        let text = text.nfc().collect::<String>();
         match keyword(&text) {
             Some(keyword) => keyword,
             None => TokenKind::Ident(text),
@@ -436,14 +440,14 @@ impl Lexer {
         let Some(first) = self.peek() else {
             return Err(self.error("expected a region name after `'`".into(), line, column));
         };
-        if first != '_' && !first.is_alphabetic() {
+        if first != '_' && !is_xid_start(first) {
             return Err(self.error("expected a region name after `'`".into(), line, column));
         }
         let mut name = String::new();
-        while self.peek().is_some_and(|c| c == '_' || c.is_alphanumeric()) {
+        while self.peek().is_some_and(|c| c == '_' || is_xid_continue(c)) {
             name.push(self.bump().expect("peeked character exists"));
         }
-        Ok(TokenKind::RegionName(name))
+        Ok(TokenKind::RegionName(name.nfc().collect()))
     }
 
     fn peek(&self) -> Option<char> {
@@ -620,6 +624,26 @@ mod tests {
                 .count(),
             3
         );
+    }
+
+    #[test]
+    fn accepts_xid_identifiers_and_normalizes_them_to_nfc() {
+        let tokens = lex("let cafe\u{301} = café\nlet 加法 = cafe\u{301}\n").unwrap();
+        let identifiers = tokens
+            .iter()
+            .filter_map(|token| match &token.kind {
+                TokenKind::Ident(name) => Some(name.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(identifiers, ["café", "café", "加法", "café"]);
+    }
+
+    #[test]
+    fn rejects_non_xid_format_characters_inside_identifiers() {
+        let error = lex("let ab\u{200b}cd = 1\n").unwrap_err();
+        assert_eq!((error.line, error.column), (1, 7));
+        assert_eq!(error.message, "unexpected character `\u{200b}`");
     }
 
     #[test]

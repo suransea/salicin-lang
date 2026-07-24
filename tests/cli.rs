@@ -290,6 +290,60 @@ fn core_diagnostics_are_stable_source_level_contracts() {
 }
 
 #[test]
+fn unicode_identifiers_and_logical_newlines_run_natively() {
+    for (name, output) in
+        native_fixture_outputs_in_parallel(&["unicode_identifiers.sc", "logical_newlines.sc"])
+    {
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn malformed_unicode_source_and_confusable_module_names_are_diagnostic() {
+    let temporary = TestDirectory::new();
+    let malformed = temporary.write("malformed.sc", "let ab\u{200b}cd = 1\n");
+    let output = salic()
+        .arg("check")
+        .arg(&malformed)
+        .output()
+        .expect("check malformed Unicode source");
+    assert_eq!(output.status.code(), Some(1), "{}", output_text(&output));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        format!(
+            "{}: error: 1:7: unexpected character `\u{200b}`\n",
+            malformed.display()
+        )
+    );
+
+    temporary.write(
+        "project/salicin.toml",
+        "[package]\nname = \"unicode-boundary\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    );
+    temporary.write("project/src/main.sc", "let main(): i32 = { 42 }\n");
+    temporary.write("project/src/mоdule.sc", "let value = 1\n");
+    let project = temporary.join("project");
+    let output = salic()
+        .arg("check")
+        .arg(&project)
+        .output()
+        .expect("check confusable module path");
+    assert_eq!(output.status.code(), Some(2), "{}", output_text(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(
+            "file module segment `mоdule` in 'mоdule.sc' must be a non-reserved ASCII snake_case identifier"
+        ),
+        "{}",
+        output_text(&output)
+    );
+}
+
+#[test]
 fn return_type_effect_groups_run_with_expected_result() {
     let output = salic()
         .arg("run")

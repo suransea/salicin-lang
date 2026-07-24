@@ -7,10 +7,13 @@ subset.
 ## Unreleased
 
 - Semantic diagnostics now retain defining source paths, declaration positions, and executable
-  expression-statement starts through module resolution, generic instantiation, trait dispatch,
-  and handler lowering. Single-file CLI errors use `path:line:column: error` formatting, all fail
-  fixtures reject generated `$...` names, and internal generic types/functions render with
-  source-level names. Local initializer positions and full expression ranges remain follow-up work.
+  expression ranges through module resolution, generic instantiation, trait dispatch, and handler
+  lowering, including local initializers and trailing source-closure calls. Single-file CLI errors
+  use `path:line:column: error` formatting, all fail fixtures reject generated `$...` names, and
+  internal generic types/functions render with source-level names.
+- Source and region identifiers now follow Unicode XID and normalize to NFC. Native fixtures cover
+  Unicode identifiers and logical newline continuation, while non-XID format characters and
+  cross-script lookalike file-module names receive stable diagnostics at the UTF-8/ASCII boundary.
 - Abstract compile-time domains now use `let Name: domain`; a domain with a known empty member set
   uses `let Name = domain {}`. Bare `let Name = domain` is rejected so abstract and empty domains
   cannot collapse into the same source form. Core `type`, `region`, `effect`, and `parameters`
