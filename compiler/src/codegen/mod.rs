@@ -10,9 +10,9 @@ use std::fmt;
 use crate::alloc::AllocBundle;
 use crate::ast::{
     AssociatedKind, BinaryOp, Binding, CallArg, CompileParam, CompileParamKind, EffectDef, EnumDef,
-    Expr, ExtendDef, ExtendMember, Function, FunctionEffects, Item, ItemOrigin, Param, PassMode,
-    Program, Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp, VariantFields, Visibility,
-    WherePredicate,
+    Expr, ExtendDef, ExtendMember, Function, FunctionEffects, Item, ItemOrigin, MatchArm, Param,
+    PassMode, Pattern, Program, Stmt, StructDef, TraitDef, TraitMember, Type, UnaryOp,
+    VariantFields, Visibility, WherePredicate,
 };
 use crate::core::{
     copy_trait_has_required_shape, drop_trait_has_required_shape,
@@ -6392,6 +6392,7 @@ impl Analyzer {
             Expr::Assign(_, _)
             | Expr::CompoundAssign(_, _, _)
             | Expr::Closure(_, _)
+            | Expr::PatternClosure { .. }
             | Expr::If { .. }
             | Expr::Return(_)
             | Expr::While { .. }
@@ -7579,6 +7580,37 @@ impl Analyzer {
                                         context,
                                     )
                                 }
+                                Expr::PatternClosure {
+                                    pattern,
+                                    guard,
+                                    body,
+                                } => {
+                                    let annotation_custom_effect_sources = binding
+                                        .annotation
+                                        .as_ref()
+                                        .and_then(|annotation| match annotation {
+                                            Type::Function { effects, .. } => Some(
+                                                self.function_effects_custom_source_map(effects),
+                                            ),
+                                            _ => None,
+                                        })
+                                        .unwrap_or_default();
+                                    let Some(Ty::Function(function)) = annotation.as_ref() else {
+                                        self.error(format!(
+                                            "pattern closure binding `{}` requires a function type annotation",
+                                            binding.name
+                                        ));
+                                        return error_expr();
+                                    };
+                                    self.lower_local_pattern_closure(
+                                        pattern,
+                                        guard.as_deref(),
+                                        body,
+                                        function,
+                                        annotation_custom_effect_sources,
+                                        context,
+                                    )
+                                }
                                 Expr::Name(_) if callable_source.is_some() => {
                                     let source = callable_source
                                         .as_ref()
@@ -7788,6 +7820,10 @@ impl Analyzer {
             }
             Expr::Closure(_, _) => {
                 self.error("closures are not supported in M0");
+                error_expr()
+            }
+            Expr::PatternClosure { .. } => {
+                self.error("pattern closure requires a contextual partial-function type");
                 error_expr()
             }
             Expr::If {
@@ -8446,6 +8482,109 @@ impl Analyzer {
         }
     }
 
+    fn lower_local_pattern_closure(
+        &mut self,
+        pattern: &Pattern,
+        guard: Option<&Expr>,
+        body: &Expr,
+        function: &FunctionTy,
+        custom_effect_sources: HashMap<String, Type>,
+        outer: &mut LowerCtx,
+    ) -> HirExpr {
+        let [input_group] = function.groups.as_slice() else {
+            self.error("pattern closure type must contain exactly one parameter group");
+            return error_expr();
+        };
+        let [input] = input_group.as_slice() else {
+            self.error("pattern closure type must contain exactly one input parameter");
+            return error_expr();
+        };
+        let Ty::Enum(attempt_name) = function.result.as_ref() else {
+            self.error("pattern closure result must be `Attempt(Input)(Output)`");
+            return error_expr();
+        };
+        let attempt_template = self.lang_item_name(LangItemKind::Attempt);
+        if self
+            .nominal_instances
+            .get(attempt_name)
+            .is_none_or(|instance| instance.key.template != attempt_template)
+        {
+            self.error("pattern closure result must use `core.control.Attempt`");
+            return error_expr();
+        }
+        let Some(layout) = self.enum_layout_or_diagnostic(attempt_name) else {
+            return error_expr();
+        };
+        let hit = layout.variants.iter().find(|variant| variant.name == "Hit");
+        let miss = layout
+            .variants
+            .iter()
+            .find(|variant| variant.name == "Miss");
+        let (Some(hit), Some(miss)) = (hit, miss) else {
+            self.error("pattern closure result must provide `Hit(Output)` and `Miss(Input)`");
+            return error_expr();
+        };
+        if hit.fields.len() != 1 || miss.fields.len() != 1 || miss.fields[0].ty != *input {
+            self.error("pattern closure result must be `Attempt(Input)(Output)`");
+            return error_expr();
+        }
+
+        let Some(input_source) = self.source_type_for_ty(input) else {
+            self.error(format!(
+                "pattern closure input type `{input}` cannot be represented in source"
+            ));
+            return error_expr();
+        };
+        let hidden_input = format!("$pattern$input${}", self.next_closure);
+        let missed_input = format!("$pattern$miss${}", self.next_closure);
+        let variant = |name: &str, value: Expr| {
+            Expr::Call(
+                Box::new(Expr::Member(
+                    Box::new(Expr::Name(attempt_name.clone())),
+                    name.to_owned(),
+                )),
+                vec![CallArg { label: None, value }],
+            )
+        };
+        let match_body = Expr::Match {
+            scrutinee: Box::new(Expr::Name(hidden_input.clone())),
+            arms: vec![
+                MatchArm {
+                    pattern: pattern.clone(),
+                    guard: guard.cloned(),
+                    body: variant("Hit", body.clone()),
+                },
+                MatchArm {
+                    pattern: Pattern::Binding(missed_input.clone()),
+                    guard: None,
+                    body: variant("Miss", Expr::Name(missed_input)),
+                },
+            ],
+        };
+        self.lower_local_closure(
+            &[crate::ast::Param {
+                mode: PassMode::Move,
+                access: None,
+                passing: None,
+                region: None,
+                name: hidden_input,
+                ty: input_source,
+            }],
+            &match_body,
+            Some((*function.result).clone()),
+            ClosureEffectContext {
+                unsafe_depth: usize::from(function.unsafe_effect),
+                throws_error: function.throws_error.as_deref().cloned(),
+                custom_effects: function.custom_effects.iter().cloned().collect(),
+                custom_effect_sources,
+                lexical_handler_effects: HashSet::new(),
+                lexical_handler_effect_sources: HashMap::new(),
+            },
+            ClosureCapturePolicy::Lexical,
+            outer,
+        )
+    }
+
     fn scan_simple_closure_captures(
         &mut self,
         expression: &Expr,
@@ -8916,6 +9055,20 @@ impl Analyzer {
                     valid &= self.scan_simple_closure_captures(&arm.body, bound, outer, captures);
                     *bound = saved;
                 }
+                valid
+            }
+            Expr::PatternClosure {
+                pattern,
+                guard,
+                body,
+            } => {
+                let saved = bound.clone();
+                collect_pattern_binding_names(pattern, bound);
+                let mut valid = guard.as_ref().is_none_or(|guard| {
+                    self.scan_simple_closure_captures(guard, bound, outer, captures)
+                });
+                valid &= self.scan_simple_closure_captures(body, bound, outer, captures);
+                *bound = saved;
                 valid
             }
             Expr::Continue => true,
@@ -10937,6 +11090,23 @@ impl Analyzer {
                         &parameter.name,
                         context,
                     )
+                } else if let (
+                    Ty::Function(function_ty),
+                    Expr::PatternClosure {
+                        pattern,
+                        guard,
+                        body,
+                    },
+                ) = (&parameter.ty, argument)
+                {
+                    self.lower_noncapturing_pattern_closure_argument_as_function(
+                        pattern,
+                        guard.as_deref(),
+                        body,
+                        function_ty,
+                        &parameter.name,
+                        context,
+                    )
                 } else if let Some(place) = self.lower_place_without_diagnostic(argument, context) {
                     let access = if mode == PassMode::Copy {
                         AccessKind::Copy
@@ -11060,6 +11230,50 @@ impl Analyzer {
         if !closure.captures.is_empty() {
             self.error(format!(
                 "capturing closure cannot be passed to function-typed parameter `{parameter_name}` yet"
+            ));
+            return error_expr();
+        }
+        HirExpr {
+            ty: Ty::Function(FunctionTy {
+                groups: closure
+                    .groups
+                    .iter()
+                    .map(|group| group.iter().map(|parameter| parameter.ty.clone()).collect())
+                    .collect(),
+                unsafe_effect: closure.unsafe_effect,
+                throws_error: closure.throws_error.clone().map(Box::new),
+                custom_effects: closure.custom_effects.clone(),
+                result: Box::new(closure.result.clone()),
+            }),
+            kind: HirExprKind::Function(closure.function),
+        }
+    }
+
+    fn lower_noncapturing_pattern_closure_argument_as_function(
+        &mut self,
+        pattern: &Pattern,
+        guard: Option<&Expr>,
+        body: &Expr,
+        function_ty: &FunctionTy,
+        parameter_name: &str,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let custom_effect_sources =
+            source_effect_source_map(&effect_identity_sources(&function_ty.custom_effects));
+        let lowered = self.lower_local_pattern_closure(
+            pattern,
+            guard,
+            body,
+            function_ty,
+            custom_effect_sources,
+            context,
+        );
+        let HirExprKind::LocalClosure(closure) = lowered.kind else {
+            return error_expr();
+        };
+        if !closure.captures.is_empty() {
+            self.error(format!(
+                "capturing pattern closure cannot be passed to function-typed parameter `{parameter_name}` yet"
             ));
             return error_expr();
         }

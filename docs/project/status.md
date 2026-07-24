@@ -123,7 +123,14 @@ callable environment combines the closure's original captures with already appli
 preserves labels and passing modes for the remaining groups, delays latent effect checks until the
 final call, and retains `Fn`, `FnMut`, or `FnOnce` behavior. Owned captures transfer across
 successive partial values and are dropped exactly once on invocation, abandonment, or early exit.
-Pattern closures remain the separate `PARTIAL-FN-1` work needed for source-defined `match`.
+
+Pattern partial functions are typed callable values. A contextually typed
+`{ Pattern [if guard] -> body }` returns the validated
+`core.control.Attempt(Input)(Output)` lang item, can be stored or moved, preserves latent effects,
+and follows ordinary `Fn`/`FnMut`/`FnOnce` capture rules. Its lowering reuses the match ownership
+engine: a failed pattern or guard returns the exact non-`Copy` input through `Miss`, while payload
+moves commit only on `Hit`. Noncapturing pattern functions can also fill ordinary function-typed
+parameters. Source-backed case-pack dispatch remains `MATCH-SOURCE-1`.
 
 Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
 `continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs

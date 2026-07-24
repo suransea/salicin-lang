@@ -17,6 +17,12 @@ pub let Return(T: type) = effect {
   let exit(move value: T): Never
 }
 
+/// The observable result of trying one refutable pattern function.
+pub let Attempt(Input: type)(Output: type) = enum {
+  Hit(Output),
+  Miss(Input),
+}
+
 pub let break(T: type)
   (move value: T): Never with(Break(T)) = {
   Break(T).exit(value)

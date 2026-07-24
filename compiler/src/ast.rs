@@ -461,6 +461,11 @@ pub enum Expr {
     Block(Vec<Stmt>, Option<Box<Expr>>),
     Unsafe(Box<Expr>),
     Closure(Vec<Param>, Box<Expr>),
+    PatternClosure {
+        pattern: Pattern,
+        guard: Option<Box<Expr>>,
+        body: Box<Expr>,
+    },
     If {
         condition: Box<Expr>,
         then_branch: Box<Expr>,

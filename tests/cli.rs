@@ -2237,6 +2237,11 @@ fn m1_local_closure_programs_run_with_expected_result() {
         "closure_partial_move_argument.sc",
         "closure_partial_effect.sc",
         "closure_partial_resource_multistage.sc",
+        "pattern_partial_attempt.sc",
+        "pattern_partial_guard_miss.sc",
+        "pattern_partial_pass.sc",
+        "pattern_partial_fnonce.sc",
+        "pattern_partial_effect.sc",
         "closure_mut_capture.sc",
         "closure_move_once.sc",
     ];
@@ -2262,6 +2267,11 @@ fn m1_local_closure_errors_report_their_cause() {
         ("closure_capture_borrow_conflict.sc", "borrowed"),
         ("closure_fnonce_twice.sc", "consumed"),
         ("closure_partial_fnonce_twice.sc", "consumed"),
+        (
+            "pattern_partial_missing_context.sc",
+            "requires a function type annotation",
+        ),
+        ("pattern_partial_fnonce_twice.sc", "consumed"),
         ("closure_move_capture_source_use.sc", "moved"),
     ] {
         let output = salic()

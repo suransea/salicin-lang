@@ -6,6 +6,10 @@ subset.
 
 ## Unreleased
 
+- Added first-class, contextually typed pattern partial functions. Applying
+  `{ Pattern [if guard] -> body }` now returns `core.control.Attempt(Input)(Output)`, preserves the
+  original non-`Copy` input on `Miss`, delays payload moves until `Hit`, and carries closure
+  captures and latent effects through storage and calls.
 - Added multi-stage partial application for curried capturing closures. Partial environments combine
   original closure captures with applied arguments, preserve remaining parameter labels and modes,
   defer effect checks until the final call, retain `FnMut`/`FnOnce` behavior, and transfer or drop

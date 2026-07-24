@@ -414,8 +414,8 @@ const CORE_DOMAIN_EXPORTS: &[&str] = &[
 const CORE_BORROW_EXPORTS: &[&str] = &["borrow"];
 const CORE_MEMORY_EXPORTS: &[&str] = &["Array", "Ptr", "size_of", "align_of"];
 const CORE_CONTROL_EXPORTS: &[&str] = &[
-    "Break", "Continue", "Return", "break", "continue", "return", "do", "try", "throw", "unsafe",
-    "loop", "while", "if", "match", "for",
+    "Break", "Continue", "Return", "Attempt", "break", "continue", "return", "do", "try", "throw",
+    "unsafe", "loop", "while", "if", "match", "for",
 ];
 const CORE_ITER_EXPORTS: &[&str] = &["Iterator", "IntoIterator"];
 const CORE_ALGEBRA_EXPORTS: &[&str] = &["Semigroup", "Monoid"];
@@ -3186,6 +3186,20 @@ impl Resolver {
                 }
                 self.rewrite_expr(body, context, type_scope, &closure_scope);
             }
+            Expr::PatternClosure {
+                pattern,
+                guard,
+                body,
+            } => {
+                let mut bindings = HashSet::new();
+                self.rewrite_pattern(pattern, context, value_scope, &mut bindings);
+                let mut closure_scope = value_scope.clone();
+                closure_scope.extend(bindings);
+                if let Some(guard) = guard {
+                    self.rewrite_expr(guard, context, type_scope, &closure_scope);
+                }
+                self.rewrite_expr(body, context, type_scope, &closure_scope);
+            }
             Expr::If {
                 condition,
                 then_branch,
@@ -5358,6 +5372,12 @@ let main(): i32 = { Option {} }
                     }
                 }
                 Expr::Closure(_, body) => visit(body, names),
+                Expr::PatternClosure { guard, body, .. } => {
+                    if let Some(guard) = guard {
+                        visit(guard, names);
+                    }
+                    visit(body, names);
+                }
                 Expr::If {
                     condition,
                     then_branch,

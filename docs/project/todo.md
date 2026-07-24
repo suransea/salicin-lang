@@ -17,11 +17,11 @@ Priority meanings:
 
 Current milestone: **source-backed pattern control**
 
-Next task: **PARTIAL-FN-1**
+Next task: **MATCH-SOURCE-1**
 
 ### P0 control-source queue
 
-- [ ] **PARTIAL-FN-1: Make pattern partial functions first-class**
+- [x] **PARTIAL-FN-1: Make pattern partial functions first-class**
   - Preserve the unmatched non-`Copy` input on `Miss`.
   - Delay pattern moves until the pattern and guard both succeed.
   - Carry captures, result type, and latent effect row through storage and calls.
@@ -116,6 +116,9 @@ Entry gate: all ASYNC1 prerequisites in the roadmap
 
 ## Recently completed
 
+- [x] **PARTIAL-FN-1:** Add typed pattern closures returning `Attempt(Input)(Output)`, including
+  guarded non-`Copy` misses, capture ownership, latent effects, storage, and direct function
+  arguments.
 - [x] **CALL-PARTIAL-1:** Support multi-stage partial application of curried capturing closures.
 - [x] **EFF-DIAG-1:** Inventory handler rejection boundaries and lock source-level diagnostics.
 - [x] **SCOPE-M0-1:** Freeze the M0 core scope and change gate.

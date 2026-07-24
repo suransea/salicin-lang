@@ -513,6 +513,12 @@ fn normalize_expr_labeled_type_arguments(
             }
             normalize_expr_labeled_type_arguments(body, constructor_parameters, diagnostics);
         }
+        Expr::PatternClosure { guard, body, .. } => {
+            if let Some(guard) = guard {
+                normalize_expr_labeled_type_arguments(guard, constructor_parameters, diagnostics);
+            }
+            normalize_expr_labeled_type_arguments(body, constructor_parameters, diagnostics);
+        }
         Expr::If {
             condition,
             then_branch,
@@ -1086,6 +1092,12 @@ fn expand_expr_aliases(
             }
             expand_expr_aliases(body, aliases, diagnostics);
         }
+        Expr::PatternClosure { guard, body, .. } => {
+            if let Some(guard) = guard {
+                expand_expr_aliases(guard, aliases, diagnostics);
+            }
+            expand_expr_aliases(body, aliases, diagnostics);
+        }
         Expr::If {
             condition,
             then_branch,
@@ -1385,6 +1397,12 @@ pub(super) fn substitute_self_expression_target(expression: &mut Expr, target: &
             }
         }
         Expr::Closure(_, body) => substitute_self_expression_target(body, target),
+        Expr::PatternClosure { guard, body, .. } => {
+            if let Some(guard) = guard {
+                substitute_self_expression_target(guard, target);
+            }
+            substitute_self_expression_target(body, target);
+        }
         Expr::If {
             condition,
             then_branch,
@@ -1540,6 +1558,12 @@ pub(super) fn rewrite_abstract_self_qualified_methods(expression: &mut Expr) {
             }
         }
         Expr::Closure(_, body) => rewrite_abstract_self_qualified_methods(body),
+        Expr::PatternClosure { guard, body, .. } => {
+            if let Some(guard) = guard {
+                rewrite_abstract_self_qualified_methods(guard);
+            }
+            rewrite_abstract_self_qualified_methods(body);
+        }
         Expr::If {
             condition,
             then_branch,
@@ -1694,6 +1718,12 @@ pub(super) fn substitute_expr_types(expression: &mut Expr, substitutions: &HashM
         Expr::Closure(parameters, body) => {
             for parameter in parameters {
                 substitute_parameter_types(parameter, substitutions);
+            }
+            substitute_expr_types(body, substitutions);
+        }
+        Expr::PatternClosure { guard, body, .. } => {
+            if let Some(guard) = guard {
+                substitute_expr_types(guard, substitutions);
             }
             substitute_expr_types(body, substitutions);
         }
@@ -2032,7 +2062,7 @@ pub(super) fn rewrite_handler_returns(expression: &mut Expr, return_name: &str) 
                 vec![CallArg { label: None, value }],
             );
         }
-        Expr::Closure(_, _) => {}
+        Expr::Closure(_, _) | Expr::PatternClosure { .. } => {}
         Expr::Unary(_, value)
         | Expr::Try(value)
         | Expr::DoBlock { body: value }
@@ -2225,6 +2255,22 @@ pub(super) fn rewrite_static_function_values(
             }
             rewrite_static_function_values(body, &visible);
         }
+        Expr::PatternClosure {
+            pattern,
+            guard,
+            body,
+        } => {
+            let mut visible = replacements.clone();
+            let mut bindings = HashSet::new();
+            collect_pattern_binding_names(pattern, &mut bindings);
+            for binding in bindings {
+                visible.remove(&binding);
+            }
+            if let Some(guard) = guard {
+                rewrite_static_function_values(guard, &visible);
+            }
+            rewrite_static_function_values(body, &visible);
+        }
         Expr::If {
             condition,
             then_branch,
@@ -2332,6 +2378,12 @@ pub(super) fn visit_expr_mut(expression: &mut Expr, visitor: &mut impl FnMut(&mu
             }
         }
         Expr::Closure(_, body) => visit_expr_mut(body, visitor),
+        Expr::PatternClosure { guard, body, .. } => {
+            if let Some(guard) = guard {
+                visit_expr_mut(guard, visitor);
+            }
+            visit_expr_mut(body, visitor);
+        }
         Expr::If {
             condition,
             then_branch,
@@ -2608,6 +2660,19 @@ fn hygienic_rename_expr(
             hygienic_rename_expr(body, prefix, next, scopes);
             scopes.pop();
         }
+        Expr::PatternClosure {
+            pattern,
+            guard,
+            body,
+        } => {
+            scopes.push(HashMap::new());
+            hygienic_rename_pattern(pattern, prefix, next, scopes);
+            if let Some(guard) = guard {
+                hygienic_rename_expr(guard, prefix, next, scopes);
+            }
+            hygienic_rename_expr(body, prefix, next, scopes);
+            scopes.pop();
+        }
         Expr::If {
             condition,
             then_branch,
@@ -2836,6 +2901,12 @@ fn expression_mentions_any_name(expression: &Expr, names: &HashSet<String>) -> b
                 .is_some_and(|tail| expression_mentions_any_name(tail, names))
         }
         Expr::Closure(_, body) => expression_mentions_any_name(body, names),
+        Expr::PatternClosure { guard, body, .. } => {
+            guard
+                .as_deref()
+                .is_some_and(|guard| expression_mentions_any_name(guard, names))
+                || expression_mentions_any_name(body, names)
+        }
         Expr::If {
             condition,
             then_branch,

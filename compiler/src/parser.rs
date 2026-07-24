@@ -3870,6 +3870,25 @@ impl Parser {
             );
         }
 
+        if !self.at(&TokenKind::LParen) {
+            let pattern_start = self.index;
+            if let Ok(pattern) = self.pattern() {
+                let guard = if self.take(&TokenKind::If) {
+                    Some(Box::new(self.expression(false)?))
+                } else {
+                    None
+                };
+                if self.take(&TokenKind::Arrow) {
+                    return Ok(Expr::PatternClosure {
+                        pattern,
+                        guard,
+                        body: Box::new(self.block_contents()?),
+                    });
+                }
+            }
+            self.index = pattern_start;
+        }
+
         let mut groups = Vec::new();
         if self.closure_parameter_arrow_follows() {
             while self.at(&TokenKind::LParen) {
@@ -4672,6 +4691,12 @@ fn normalize_expr_region_qualifiers(
             }
             normalize_expr_region_qualifiers(body, regions, accesses)
         }
+        Expr::PatternClosure { guard, body, .. } => {
+            if let Some(guard) = guard {
+                normalize_expr_region_qualifiers(guard, regions, accesses)?;
+            }
+            normalize_expr_region_qualifiers(body, regions, accesses)
+        }
         Expr::If {
             condition,
             then_branch,
@@ -4915,6 +4940,12 @@ fn validate_expr_accesses(expression: &Expr, accesses: &HashSet<String>) -> Resu
             }
             validate_expr_accesses(body, accesses)
         }
+        Expr::PatternClosure { guard, body, .. } => {
+            if let Some(guard) = guard {
+                validate_expr_accesses(guard, accesses)?;
+            }
+            validate_expr_accesses(body, accesses)
+        }
         Expr::If {
             condition,
             then_branch,
@@ -5131,6 +5162,12 @@ fn validate_expr_regions(expression: &Expr, regions: &HashSet<String>) -> Result
                     validate_region_name(region, regions)?;
                 }
                 validate_type_regions(&parameter.ty, regions)?;
+            }
+            validate_expr_regions(body, regions)
+        }
+        Expr::PatternClosure { guard, body, .. } => {
+            if let Some(guard) = guard {
+                validate_expr_regions(guard, regions)?;
             }
             validate_expr_regions(body, regions)
         }

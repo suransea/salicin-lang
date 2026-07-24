@@ -226,7 +226,10 @@ pub(super) fn rewrite_handler_loop_control(
         }
     }
     match expression {
-        Expr::While { .. } | Expr::Loop { .. } | Expr::Closure(_, _) => {}
+        Expr::While { .. }
+        | Expr::Loop { .. }
+        | Expr::Closure(_, _)
+        | Expr::PatternClosure { .. } => {}
         Expr::Unary(_, value)
         | Expr::Try(value)
         | Expr::DoBlock { body: value }
@@ -456,6 +459,12 @@ pub(super) fn collect_internal_recursion_tokens(expression: &Expr, tokens: &mut 
             }
         }
         Expr::Closure(_, body) => collect_internal_recursion_tokens(body, tokens),
+        Expr::PatternClosure { guard, body, .. } => {
+            if let Some(guard) = guard {
+                collect_internal_recursion_tokens(guard, tokens);
+            }
+            collect_internal_recursion_tokens(body, tokens);
+        }
         Expr::If {
             condition,
             then_branch,
@@ -721,6 +730,7 @@ pub(super) fn handler_expression_children(expression: &Expr) -> Vec<&Expr> {
         | Expr::Bool(_)
         | Expr::Name(_)
         | Expr::Closure(_, _)
+        | Expr::PatternClosure { .. }
         | Expr::Continue => Vec::new(),
     }
 }
@@ -936,6 +946,12 @@ pub(super) fn rewrite_handler_chain_wrappers(
         }
         Expr::Closure(_, body) => {
             rewrite_handler_chain_wrappers(body, canonical, success_variant, residual_variant)
+        }
+        Expr::PatternClosure { guard, body, .. } => {
+            if let Some(guard) = guard {
+                rewrite_handler_chain_wrappers(guard, canonical, success_variant, residual_variant);
+            }
+            rewrite_handler_chain_wrappers(body, canonical, success_variant, residual_variant);
         }
         Expr::If {
             condition,

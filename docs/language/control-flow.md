@@ -154,12 +154,13 @@ An irrefutable parameter closure is a total function. A refutable pattern define
 function: applying `{ Some(value) -> value }` to `None` does not enter its body. This partiality is
 neither an error nor an algebraic effect. It is the dispatch result consumed by `match`.
 
-The control contract represents this through the existing `parameters` domain rather than
-materializing an ordinary callable value or an `Attempt` result. A `P: parameters` value describes
-one parameter-group schema; `...Cases: parameters` is a variadic pack of those schemas. Each group
-keeps its pattern, bindings, capture ownership, body result, and effect row as compile-time
-structure. `match` consumes the groups in source order, and an irrefutable group is simply a
-partial group whose match is statically total.
+An individual partial function is an ordinary callable value whose application returns
+`Attempt(Input)(Output)`. The existing `parameters` domain separately describes the compile-time
+case sequence consumed by `match`: a `P: parameters` value describes one parameter-group schema,
+and `...Cases: parameters` is a variadic pack of those schemas. Each group keeps its pattern,
+bindings, capture ownership, body result, and effect row as compile-time structure. `match`
+consumes the groups in source order, and an irrefutable group is simply a partial group whose match
+is statically total.
 
 A case literal uses an unparenthesized pattern before `->`:
 
@@ -176,13 +177,13 @@ This stays unambiguous with ordinary closures:
 { value -> value + 1 }        // pattern closure; irrefutable, so also a total callable
 ```
 
-On `Miss`, `attempt` returns the exact unmatched input so another partial function can try it. This
+On `Miss`, application returns the exact unmatched input so another partial function can try it. This
 is essential for non-`Copy` input: pattern inspection may read the discriminant and borrow fields,
 but it cannot commit moves until the pattern and guard have both succeeded. On `Hit`, ownership
 transfers into the selected bindings and body.
 
 A partial closure retains its body's latent effect row and may be stored, moved, or passed to another
-matcher. Calling `attempt` directly exposes `Attempt`; only an exhaustive matcher may erase the
+matcher. Applying it directly exposes `Attempt`; only an exhaustive matcher may erase the
 `Miss` possibility and return `Output` directly. In an effect-kind argument position,
 `with(A, B, E)` denotes row union.
 

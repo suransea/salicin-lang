@@ -452,7 +452,7 @@ impl Analyzer {
     ) -> bool {
         match expression {
             Expr::Throw(_) => true,
-            Expr::Try(_) | Expr::Closure(_, _) => false,
+            Expr::Try(_) | Expr::Closure(_, _) | Expr::PatternClosure { .. } => false,
             Expr::Call(callee, arguments) => {
                 handled_operation_call(expression, identity).is_some()
                     || self
@@ -624,7 +624,7 @@ impl Analyzer {
 
     fn try_body_uses_dedicated_throws_call(&self, expression: &Expr, context: &LowerCtx) -> bool {
         match expression {
-            Expr::Try(_) | Expr::Closure(_, _) => false,
+            Expr::Try(_) | Expr::Closure(_, _) | Expr::PatternClosure { .. } => false,
             Expr::Call(callee, arguments) => {
                 self.call_throws_info(expression, context).is_some()
                     || self.try_body_uses_dedicated_throws_call(callee, context)
@@ -1214,7 +1214,8 @@ impl Analyzer {
             | Expr::Integer(_)
             | Expr::Bool(_)
             | Expr::Name(_)
-            | Expr::Closure(_, _) => {}
+            | Expr::Closure(_, _)
+            | Expr::PatternClosure { .. } => {}
             Expr::Try(_) => {}
             Expr::Throw(value) => {
                 match self.probe_expr_ty(value, None, context) {

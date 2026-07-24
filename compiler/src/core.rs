@@ -186,6 +186,7 @@ pub enum LangItemKind {
     Continuation,
     EffectCallable,
     Handle,
+    Attempt,
     Do,
     DoWhile,
     Try,
@@ -201,7 +202,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 77] = [
+    const ALL: [Self; 78] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -267,6 +268,7 @@ impl LangItemKind {
         Self::Continuation,
         Self::EffectCallable,
         Self::Handle,
+        Self::Attempt,
         Self::Do,
         Self::DoWhile,
         Self::Try,
@@ -347,6 +349,7 @@ impl LangItemKind {
             Self::Continuation => "Continuation",
             Self::EffectCallable => "EffectCallable",
             Self::Handle => "Handle",
+            Self::Attempt => "Attempt",
             Self::Do => "do",
             Self::DoWhile => "do",
             Self::Try => "try",
@@ -364,7 +367,9 @@ impl LangItemKind {
 
     const fn expected_kind(self) -> &'static str {
         match self {
-            Self::Option | Self::Result | Self::Never | Self::PartialOrdering => "enum",
+            Self::Option | Self::Result | Self::Never | Self::PartialOrdering | Self::Attempt => {
+                "enum"
+            }
             Self::Continuation | Self::EffectCallable => "struct",
             Self::UnsafeEffect | Self::ThrowsEffect => "effect",
             Self::TypeDomain
@@ -503,6 +508,7 @@ impl LangItemKind {
             | Self::Continuation
             | Self::EffectCallable
             | Self::Handle
+            | Self::Attempt
             | Self::Do
             | Self::DoWhile
             | Self::Try
@@ -640,6 +646,7 @@ pub struct LangItems {
     continuation: LangItem,
     effect_callable: LangItem,
     handle: LangItem,
+    attempt: LangItem,
     do_function: LangItem,
     do_while_function: LangItem,
     try_function: LangItem,
@@ -830,6 +837,9 @@ impl LangItems {
     pub const fn handle(&self) -> &LangItem {
         &self.handle
     }
+    pub const fn attempt(&self) -> &LangItem {
+        &self.attempt
+    }
     pub const fn do_function(&self) -> &LangItem {
         &self.do_function
     }
@@ -934,6 +944,7 @@ impl LangItems {
             LangItemKind::Continuation => &self.continuation,
             LangItemKind::EffectCallable => &self.effect_callable,
             LangItemKind::Handle => &self.handle,
+            LangItemKind::Attempt => &self.attempt,
             LangItemKind::Do => &self.do_function,
             LangItemKind::DoWhile => &self.do_while_function,
             LangItemKind::Try => &self.try_function,
@@ -1162,6 +1173,7 @@ impl CoreBundle {
             &mut lang_items.continuation,
             &mut lang_items.effect_callable,
             &mut lang_items.handle,
+            &mut lang_items.attempt,
             &mut lang_items.do_function,
             &mut lang_items.do_while_function,
             &mut lang_items.try_function,
@@ -1488,6 +1500,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         continuation: item(LangItemKind::Continuation),
         effect_callable: item(LangItemKind::EffectCallable),
         handle: item(LangItemKind::Handle),
+        attempt: item(LangItemKind::Attempt),
         do_function: item(LangItemKind::Do),
         do_while_function: item(LangItemKind::DoWhile),
         try_function: item(LangItemKind::Try),
@@ -1589,6 +1602,9 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         (LangItemKind::Option, Item::Enum(definition)) => validate_option(definition, diagnostics),
         (LangItemKind::Result, Item::Enum(definition)) => validate_result(definition, diagnostics),
         (LangItemKind::Never, Item::Enum(definition)) => validate_never(definition, diagnostics),
+        (LangItemKind::Attempt, Item::Enum(definition)) => {
+            validate_attempt(definition, diagnostics)
+        }
         (LangItemKind::PartialOrdering, Item::Enum(definition)) => {
             validate_partial_ordering(definition, diagnostics)
         }
@@ -2834,6 +2850,23 @@ fn validate_result(definition: &EnumDef, diagnostics: &mut Vec<String>) {
     }
 }
 
+fn validate_attempt(definition: &EnumDef, diagnostics: &mut Vec<String>) {
+    let expected_groups = vec![
+        vec![type_parameter("Input")],
+        vec![type_parameter("Output")],
+    ];
+    let expected_variants = vec![
+        positional_variant("Hit", named_type("Output")),
+        positional_variant("Miss", named_type("Input")),
+    ];
+    if definition.compile_groups != expected_groups || definition.variants != expected_variants {
+        diagnostics.push(
+            "lang item `Attempt` must have shape `pub let Attempt(Input: type)(Output: type) = enum { Hit(Output), Miss(Input) }`"
+                .to_owned(),
+        );
+    }
+}
+
 fn validate_never(definition: &EnumDef, diagnostics: &mut Vec<String>) {
     if !definition.compile_groups.is_empty() || !definition.variants.is_empty() {
         diagnostics.push("lang item `Never` must have shape `pub let Never = enum {}`".to_owned());
@@ -3266,7 +3299,8 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::Handle => {
                     format!("core::effect::handler::{}", kind.source_name())
                 }
-                LangItemKind::Do
+                LangItemKind::Attempt
+                | LangItemKind::Do
                 | LangItemKind::DoWhile
                 | LangItemKind::Try
                 | LangItemKind::Throw
@@ -3348,7 +3382,8 @@ pub let Shr(Rhs: type) = trait {
                 LangItemKind::Continuation
                 | LangItemKind::EffectCallable
                 | LangItemKind::Handle => vec!["effect", "handler"],
-                LangItemKind::Do
+                LangItemKind::Attempt
+                | LangItemKind::Do
                 | LangItemKind::DoWhile
                 | LangItemKind::Try
                 | LangItemKind::Throw
