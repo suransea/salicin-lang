@@ -230,7 +230,10 @@ declarations.
 The compiler-internal action entry has the logical signature
 `(environment, Input, Continuation(Output, Answer)): Answer`. Erasing or invoking an action consumes
 its owner; a dropped, uninvoked action releases its captured environment through the stored drop
-entry. `Handle` is an effect-kinded lang trait automatically satisfied by every source
+entry. Within an active handler, compatible open runtime action parameters use this representation
+when crossing named effectful frames or another reusable handler. The source closure may have
+shared, mutable, or moved captures, but the erased owner itself is always one-shot and cannot escape
+with a borrow-capturing environment. `Handle` is an effect-kinded lang trait automatically satisfied by every source
 `effect` declaration. Its `Clauses` associated parameter schema names the compiler-derived labeled
 clause groups used by `.handle`; `...` expands that schema into an ordered sequence of runtime
 parameter groups. Consequently source calls use named trailing closures directly, for example

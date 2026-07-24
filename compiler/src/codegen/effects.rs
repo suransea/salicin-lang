@@ -527,6 +527,7 @@ impl Analyzer {
                         Some((
                             parameter.name.clone(),
                             SourceErasedCallable {
+                                source_name: parameter.name.clone(),
                                 output: self.source_type_for_ty(&action.output)?,
                                 answer: self.source_type_for_ty(&action.answer)?,
                                 accepts_input: action.accepts_input,

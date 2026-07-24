@@ -530,7 +530,9 @@ borrow/move 时机；调用点从该环境提升字段，其中共享 `Copy` 为
 顺序物化为带参数类型的内部局部值，确保副作用和所有权转移发生在闭包捕获之前。此前若有 `borrow` 或
 `borrow(mut)` 的根或稳定字段实参，也会在原位置物化为显式 reference local，而不是 owned 临时值。
 其 lexical loan 覆盖 direct action 的捕获和完整一次性调用，在恢复或放弃返回后释放；与 action 的
-mutable capture 重叠时直接报借用冲突。条件 action 值、跨函数传递和任意擦除 action 仍待后续 ABI。
+mutable capture 重叠时直接报借用冲突。
+有限条件 action 值继续使用静态 tag specialization；活动 handler 中的开放 action 参数使用下述
+`EffectCallable` ABI。
 编译器生成的 handler closure 使用独立的 owned 捕获策略，不依赖内部局部变量的特定名称。continuation
 若需要非 `Copy` 的 owned 名义根，该根会 move 进 frame；源 binding 为 `mut` 时，frame 内仍保持可变。
 字段或索引赋值按完整根进行 mutable 捕获，并同时扫描索引表达式所需的其他捕获。因此连续的直接
@@ -590,6 +592,12 @@ domain 引入名义成员。effect row 参数按参数名解析，不受该名�
 编译器 ABI，不暴露为普通结构体数据或标准库函数。`std.effect.handler.Handle` 是 `Self: effect` 的
 语言协议，声明 `Clauses(Value, Answer): parameters` 以及展开该 schema 的 compiler-derived
 `handle` 成员；每个 source `effect` 自动满足它，实际 handler body 仍由编译器 lowering。
+活动 handler 内若 effectful named frame 接收未知的 callable 参数，`move`、单一零或一个输入组且
+row 恰好为当前 handled effect 的参数会改写成 `EffectCallable`。它可以继续 move 到其他 named frame
+或 reusable handler，并由 call/drop/environment/flag ABI 统一调用或清理。源 closure 的 shared、
+mutable、move 捕获分别保留 `Fn`、`FnMut`、`FnOnce` 环境行为，但擦除后的 owner 本身始终是 one-shot：
+不能 copy、起别名后重复使用或调用两次。带 borrow 的环境只能在当前 handler 的 lexical 区域内传递，
+不能作为普通 callable 返回或逃逸。
 未来实现 async 时，必须在同一个实现切片加入 `Future`、`async` 与 handler 契约；当前 `Async`
 只有普通的 `suspend(): ()` operation，不代表 `await` 已经可执行。
 

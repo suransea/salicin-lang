@@ -176,8 +176,10 @@ callable parameter: the higher-order frame specializes that parameter to the sou
 it from the runtime frame, and transforms the resulting direct call normally. A finite
 `if / else if / else` selection between named callable targets is represented by an integer tag
 evaluated once at the binding, then dispatched at each call into the selected resumable entry with
-the same caller continuation. Escaping closures and open-ended callable values still require the
-general handler-aware runtime ABI and are rejected explicitly.
+the same caller continuation. An unknown callable parameter reached inside the active handler uses
+the general handler-aware ABI: compatible `move` parameters with zero or one input and exactly the
+handled effect are rewritten to owned `EffectCallable` values and may cross named effectful frames
+or another reusable handler.
 
 A function that defines a handler may itself accept an effectful callable parameter. When a call
 supplies a named function or an immutable alias with no captured runtime environment, the
@@ -210,8 +212,8 @@ remain observable before the action captures its environment. Earlier `borrow` a
 root or stable field arguments are materialized as explicit reference locals at the same source
 positions. Their loans remain live through direct action creation and the complete one-shot call,
 then end on either resumption or abandonment; an overlapping mutable action capture is rejected.
-Conditional action values and actions crossing another function boundary still require the general
-erased value integration.
+Finite conditional action values retain their tag specialization, while open action parameters use
+the erased value integration described below.
 
 Compiler-generated handler closures have a distinct owned-capture policy rather than relying on
 reserved local names. A non-`Copy` owned nominal root used by the continuation moves into its frame
@@ -263,7 +265,9 @@ cleanup. The finite selection tag may be copied into immutable local aliases und
 handler; those aliases retain the target set, may be called directly, and may specialize a
 higher-order resumable frame. Mutable aliases may be reassigned between values with the same
 signature and finite target set; assignment remaps tags when target order differs. Values escaping
-that lexical handler and open-ended target sets remain dynamic-ABI work. Existing dynamic values may
+that lexical handler remain rejected, especially when their environments contain borrows. Open
+runtime action parameters use the erased one-shot ABI rather than this finite-tag representation.
+Existing dynamic values may
 also form branches of another finite selection: their target sets are merged and their runtime tags
 are remapped into the union. The outer selector may suspend and transfer capturing branch
 environments into its one-shot continuation. Borrowed callable environments are materialized for

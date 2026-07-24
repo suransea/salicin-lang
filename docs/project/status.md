@@ -85,8 +85,10 @@ as typed locals in source order before that action, preserving side effects and 
 borrowed root and field arguments are materialized as explicit reference locals at their original
 source positions before a direct action closure is created. Their lexical loans cover action
 capture and the complete handler call, reject overlapping mutable captures, and end after either
-resumption or abandonment. Conditional values, cross-function transport, and fully general erased
-action construction remain the next implementation stages.
+resumption or abandonment. An unknown effectful callable parameter inside an active handler is
+rewritten to the owned `EffectCallable` ABI when it crosses a named effectful frame or another
+reusable handler. Zero- or one-input call entries preserve shared, mutable, and moved captures;
+invocation consumes the erased owner, while abandonment or an uninvoked path runs its drop entry.
 Compiler-generated handler closures use an explicit owned-capture policy: every non-`Copy` owned
 nominal root required after an operation moves into the resumable frame and retains its source
 mutability. Projected assignments capture their whole mutable root, so repeated direct operations
@@ -203,8 +205,9 @@ named function or immutable function alias create a deduplicated static speciali
 parameter from the runtime groups, and run the substituted action through the handler's ordinary CPS
 pass. A complete call may select that leading action through a nested conditional tree; the call is
 distributed into target-specific specializations after evaluating the selector and before later
-curried arguments. Truly unknown runtime callable parameters still require the general handler-aware
-callable ABI.
+curried arguments. Truly unknown runtime action parameters use the general handler-aware
+`EffectCallable` ABI when their move-only zero- or one-input shape requires exactly the handled
+effect; broader rows and callable shapes receive a direct diagnostic.
 Inferred immutable local aliases of statically known effectful functions are resolved through the same CPS
 path, including chained aliases. Statically known function arguments also specialize higher-order
 effectful frames and are erased from those frames' runtime parameter lists. Explicitly typed
@@ -214,8 +217,11 @@ including repeated mutable calls and exactly-once abandonment cleanup, and they 
 higher-order frame. Finite conditional trees between named targets use a binding-site integer tag
 and call-time resumable branch dispatch, including forwarding through a higher-order frame.
 Finite selections may target lexically registered capturing resumable closures while preserving
-`FnMut` state, `FnOnce` consumption, and exactly-once cleanup. Escaping callables and open-ended
-dynamic targets remain implementation work and receive dedicated diagnostics. A finite selection tag
+`FnMut` state, `FnOnce` consumption, and exactly-once cleanup. Open runtime action parameters use
+the owned `EffectCallable` call/drop/environment/flag ABI through named CPS frames instead of a
+finite target tag. The erased value is one-shot even when its source closure has `Fn` or `FnMut`
+captures; copying, repeated invocation, and borrow-capturing escape beyond the active handler are
+rejected. A finite selection tag
 may be copied through immutable handler-local aliases and forwarded into a specialized higher-order
 frame. Mutable aliases accept assignments with the same signature and finite target set, remapping
 runtime tags across different target orders; incompatible sets are rejected before ordinary value

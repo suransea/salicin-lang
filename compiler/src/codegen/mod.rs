@@ -9799,6 +9799,19 @@ impl Analyzer {
                         output: Box::new(action.output.clone()),
                         answer: Box::new(action.answer.clone()),
                     };
+                    if let Expr::Name(local_name) = &argument.value {
+                        if context
+                            .lookup(local_name)
+                            .is_some_and(|local| local.ty == expected_action)
+                        {
+                            let place = self
+                                .lower_place(&argument.value, context)
+                                .expect("a resolved erased action local is a place");
+                            let value = self.access_place(place, AccessKind::Move, context);
+                            arguments.push(HirArgument::Move(value));
+                            continue;
+                        }
+                    }
                     let erased = Expr::Call(
                         Box::new(Expr::Name("$handler$erase$effect$callable".to_owned())),
                         vec![CallArg {

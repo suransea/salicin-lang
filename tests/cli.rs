@@ -458,6 +458,7 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
         "algebraic_effect_reusable_direct_action.sc",
         "algebraic_effect_reusable_ordered_direct_action.sc",
         "algebraic_effect_reusable_borrowed_action.sc",
+        "algebraic_effect_erased_callable_forward.sc",
         "algebraic_effect_reusable_fn_mut_action.sc",
         "algebraic_effect_reusable_fn_once_abort.sc",
         "algebraic_effect_reusable_fn_once_resume.sc",
@@ -564,6 +565,33 @@ fn reusable_handler_action_rejects_overlapping_staged_borrows() {
         "{}",
         output_text(&output)
     );
+}
+
+#[test]
+fn erased_effect_callable_rejects_reuse_and_unsupported_shapes() {
+    for (name, expected) in [
+        ("algebraic_effect_erased_callable_twice.sc", "one-shot"),
+        (
+            "algebraic_effect_erased_callable_borrow_escape.sc",
+            "cannot escape while it captures a borrow",
+        ),
+        (
+            "algebraic_effect_erased_callable_shape.sc",
+            "requires one optional input group, move passing, and exactly the handled effect",
+        ),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid erased effect callable fixture");
+        assert!(!output.status.success(), "{name}: {}", output_text(&output));
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+    }
 }
 
 #[test]

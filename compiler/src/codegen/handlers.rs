@@ -60,6 +60,7 @@ pub(super) struct AlgebraicHandler {
 
 #[derive(Clone)]
 pub(super) struct SourceErasedCallable {
+    pub(super) source_name: String,
     pub(super) output: Type,
     pub(super) answer: Type,
     pub(super) accepts_input: bool,
@@ -99,6 +100,14 @@ pub(super) struct SourceInlineBorrowChannel {
     pub(super) pointer_name: String,
     pub(super) pointer_ty: Type,
     pub(super) mutable: bool,
+}
+
+#[derive(Clone)]
+struct SourceInlineEffectCallableChannel {
+    argument_index: usize,
+    parameter_name: String,
+    callable_ty: Type,
+    action: SourceErasedCallable,
 }
 
 #[derive(Clone)]
@@ -1094,6 +1103,17 @@ fn collect_handler_named_calls(expression: &Expr, calls: &mut Vec<String>) {
             calls.push(callee.clone());
         }
     });
+}
+
+fn handler_expression_references_name(expression: &Expr, name: &str) -> bool {
+    let mut expression = expression.clone();
+    let mut found = false;
+    visit_expr_mut(&mut expression, &mut |expression| {
+        if matches!(expression, Expr::Name(candidate) if candidate == name) {
+            found = true;
+        }
+    });
+    found
 }
 
 impl Analyzer {
@@ -2463,6 +2483,13 @@ impl Analyzer {
             let continuation_value_name = format!("$handler$erased$action$value${specialization}");
             let continuation_body =
                 continuation(analyzer, Expr::Name(continuation_value_name.clone()))?;
+            if handler_expression_references_name(&continuation_body, &action_name) {
+                analyzer.error(format!(
+                    "erased effect callable parameter `{}` is one-shot and cannot be invoked more than once",
+                    action.source_name
+                ));
+                return Err(());
+            }
             let continuation_binding = Binding {
                 mutable: true,
                 name: continuation_name.clone(),
@@ -3810,36 +3837,76 @@ impl Analyzer {
         if !static_function_values.is_empty() {
             rewrite_static_function_values(&mut body, &static_function_values);
         }
-        if let Some(parameter_index) =
-            parameters
-                .iter()
-                .flatten()
-                .enumerate()
-                .find_map(|(index, parameter)| {
-                    if omitted_parameters.contains(&index) {
-                        return None;
-                    }
-                    let Type::Function { effects, .. } = &parameter.ty else {
-                        return None;
-                    };
-                    effects
-                        .custom
-                        .iter()
-                        .any(|effect| source_effect_identity(effect) == handler.identity)
-                        .then_some(index)
-                })
-        {
-            let parameter = function
-                .groups
-                .iter()
-                .flatten()
-                .nth(parameter_index)
-                .expect("hygienic and source parameter lists have identical shapes");
-            self.error(format!(
-                "dynamic effectful callable parameter `{}` requires the handler-aware runtime ABI",
-                parameter.name
-            ));
+        let Some(answer) = handler.result_source.clone() else {
+            self.error("a resumable named call requires a contextual handler answer type");
+            handler.inlining.borrow_mut().remove(&name);
             return Some(Err(()));
+        };
+        let mut effect_callable_channels = Vec::new();
+        for (index, parameter) in parameters.iter().flatten().enumerate() {
+            if omitted_parameters.contains(&index) {
+                continue;
+            }
+            let Type::Function {
+                groups,
+                effects,
+                result,
+            } = &parameter.ty
+            else {
+                continue;
+            };
+            if !effects
+                .custom
+                .iter()
+                .any(|effect| source_effect_identity(effect) == handler.identity)
+            {
+                continue;
+            }
+            let custom_effects = self.function_effects_custom_identities(effects);
+            if parameter.mode != PassMode::Move
+                || groups.len() != 1
+                || groups[0].len() > 1
+                || self.function_effects_unsafe(effects)
+                || effects.throws.is_some()
+                || !effects.parameters.is_empty()
+                || custom_effects.as_slice() != [handler.identity.as_str()]
+            {
+                let source_parameter = function
+                    .groups
+                    .iter()
+                    .flatten()
+                    .nth(index)
+                    .expect("hygienic and source parameter lists have identical shapes");
+                self.error(format!(
+                    "dynamic effectful callable parameter `{}` requires one optional input group, move passing, and exactly the handled effect",
+                    source_parameter.name
+                ));
+                return Some(Err(()));
+            }
+            let input = groups[0].first().cloned().unwrap_or(Type::Unit);
+            let output = logical_effect_result_source(result, effects);
+            let action = SourceErasedCallable {
+                source_name: function
+                    .groups
+                    .iter()
+                    .flatten()
+                    .nth(index)
+                    .expect("hygienic and source parameter lists have identical shapes")
+                    .name
+                    .clone(),
+                output: output.clone(),
+                answer: answer.clone(),
+                accepts_input: !groups[0].is_empty(),
+            };
+            effect_callable_channels.push(SourceInlineEffectCallableChannel {
+                argument_index: index,
+                parameter_name: parameter.name.clone(),
+                callable_ty: Type::Named(
+                    self.lang_item_name(LangItemKind::EffectCallable).to_owned(),
+                    vec![input, output, answer.clone()],
+                ),
+                action,
+            });
         }
         if let Some(alias) = source_arguments
             .iter()
@@ -3858,11 +3925,6 @@ impl Analyzer {
             self.error(format!(
                 "resumable function `{name}` requires an explicit return type"
             ));
-            handler.inlining.borrow_mut().remove(&name);
-            return Some(Err(()));
-        };
-        let Some(answer) = handler.result_source.clone() else {
-            self.error("a resumable named call requires a contextual handler answer type");
             handler.inlining.borrow_mut().remove(&name);
             return Some(Err(()));
         };
@@ -3927,7 +3989,8 @@ impl Analyzer {
         let can_fuse_borrow_frame = !borrow_arguments.is_empty()
             && borrow_places_are_compatible
             && has_concrete_effect_row
-            && !function_is_recursive;
+            && !function_is_recursive
+            && effect_callable_channels.is_empty();
         if can_fuse_borrow_frame {
             let mut parameter_bindings = Vec::new();
             let mut borrowed_places = HashMap::new();
@@ -4143,13 +4206,24 @@ impl Analyzer {
             .return_continuations
             .borrow_mut()
             .insert(return_name.clone(), tail_continuation.clone());
+        let body_handler = if effect_callable_channels.is_empty() {
+            handler.clone()
+        } else {
+            let mut body_handler = handler.as_ref().clone();
+            body_handler.erased_callables.extend(
+                effect_callable_channels
+                    .iter()
+                    .map(|channel| (channel.parameter_name.clone(), channel.action.clone())),
+            );
+            Rc::new(body_handler)
+        };
         let unsafe_depth = handler.lexical_unsafe_depth.get();
         if !recursive_borrow_channels.is_empty() {
             handler.lexical_unsafe_depth.set(unsafe_depth + 1);
         }
         let transformed_body = match self.transform_handler_expr(
             body,
-            handler.clone(),
+            body_handler,
             resume.clone(),
             tail_continuation,
         ) {
@@ -4179,19 +4253,33 @@ impl Analyzer {
                 if omitted_parameters.contains(&index) {
                     return None;
                 }
-                recursive_borrow_channels
+                if let Some(channel) = recursive_borrow_channels
                     .iter()
                     .find(|channel| channel.argument_index == index)
-                    .map_or(Some(parameter), |channel| {
-                        Some(Param {
-                            mode: PassMode::Copy,
-                            access: None,
-                            passing: None,
-                            region: None,
-                            name: channel.pointer_name.clone(),
-                            ty: channel.pointer_ty.clone(),
-                        })
-                    })
+                {
+                    return Some(Param {
+                        mode: PassMode::Copy,
+                        access: None,
+                        passing: None,
+                        region: None,
+                        name: channel.pointer_name.clone(),
+                        ty: channel.pointer_ty.clone(),
+                    });
+                }
+                if let Some(channel) = effect_callable_channels
+                    .iter()
+                    .find(|channel| channel.argument_index == index)
+                {
+                    return Some(Param {
+                        mode: PassMode::Move,
+                        access: None,
+                        passing: None,
+                        region: None,
+                        name: channel.parameter_name.clone(),
+                        ty: channel.callable_ty.clone(),
+                    });
+                }
+                Some(parameter)
             })
             .collect::<Vec<_>>();
         flattened_parameters.push(Param {
@@ -4211,6 +4299,34 @@ impl Analyzer {
             .filter_map(|(index, argument)| {
                 if omitted_parameters.contains(&index) {
                     return None;
+                }
+                if let Some(channel) = effect_callable_channels
+                    .iter()
+                    .find(|channel| channel.argument_index == index)
+                {
+                    let Expr::Name(name) = &argument.value else {
+                        self.error(format!(
+                            "dynamic effectful callable argument for `{}` must be a local binding",
+                            channel.parameter_name
+                        ));
+                        return Some(CallArg {
+                            label: None,
+                            value: Expr::Unit,
+                        });
+                    };
+                    if handler.erased_callables.contains_key(name) {
+                        return Some(argument);
+                    }
+                    return Some(CallArg {
+                        label: None,
+                        value: Expr::Call(
+                            Box::new(Expr::Name("$handler$erase$effect$callable".to_owned())),
+                            vec![CallArg {
+                                label: None,
+                                value: argument.value,
+                            }],
+                        ),
+                    });
                 }
                 let Some(channel) = recursive_borrow_channels
                     .iter()

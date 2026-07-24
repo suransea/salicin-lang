@@ -17,15 +17,9 @@ Priority meanings:
 
 Current milestone: **EH1, close the algebraic-handler extension**
 
-Next task: **EFF-CALLABLE-1**
+Next task: **EFF-DIAG-1**
 
 ### P0 handler queue
-
-- [ ] **EFF-CALLABLE-1: Complete the erased EffectCallable value path**
-  - Allow an explicitly typed capturing effectful callable to cross a function boundary.
-  - Support open runtime target sets through the validated erased call/drop/environment ABI.
-  - Define `Fn`, `FnMut`, and `FnOnce` invocation and aliasing rules.
-  - Reject escaping borrows whose regions do not outlive the callable.
 
 - [ ] **EFF-DIAG-1: Inventory handler rejection boundaries**
   - Give each intentional rejection a source location, stable message, and negative fixture.
@@ -123,6 +117,7 @@ Entry gate: all ASYNC1 prerequisites in the roadmap
 - [x] **EFF-RESIDUAL-1:** Share owned roots through concrete residual effect rows.
 - [x] **EFF-RECUR-1:** Share owned roots through direct and mutually recursive effectful calls.
 - [x] **EFF-ACTION-1:** Stage borrowed root and field arguments before direct handler actions.
+- [x] **EFF-CALLABLE-1:** Carry open one-shot actions through the erased `EffectCallable` ABI.
 - [x] **CORE-MEMORY-1:** Source-back raw pointer and layout-query contracts in `core.memory`.
 - [x] **TYPE-CONST-1:** Add `usize` compile-time values and source-back curried `Array(T)(L)`.
 - [x] **CORE-BORROW-1:** Move borrow contracts from `core.domains` into `core.borrow`.

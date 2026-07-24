@@ -132,9 +132,15 @@ impl Analyzer {
                     self.error("an erased effect callable must have one parameter group");
                     return error_expr();
                 };
-                let [input_parameter, continuation_parameter] = group.as_slice() else {
-                    self.error("an erased effect callable must accept an input and a continuation");
-                    return error_expr();
+                let (input, continuation_parameter) = match group.as_slice() {
+                    [continuation] => (Ty::Unit, continuation),
+                    [input, continuation] => (input.ty.clone(), continuation),
+                    _ => {
+                        self.error(
+                            "an erased effect callable must accept an optional input and a continuation",
+                        );
+                        return error_expr();
+                    }
                 };
                 let Ty::Continuation {
                     input: output,
@@ -161,7 +167,7 @@ impl Analyzer {
                 self.ensure_available(&callable, context);
                 self.mark_moved(&callable, context);
                 let action_ty = Ty::EffectCallable {
-                    input: Box::new(input_parameter.ty.clone()),
+                    input: Box::new(input.clone()),
                     output: output.clone(),
                     answer: answer.clone(),
                 };
@@ -180,7 +186,7 @@ impl Analyzer {
                         callable_ty: local.ty.clone(),
                         function: closure.function,
                         captures: callable_ty.captures.clone(),
-                        input: input_parameter.ty.clone(),
+                        input,
                         output: (**output).clone(),
                         answer: (**answer).clone(),
                     });

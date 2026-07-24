@@ -53,6 +53,11 @@ subset.
   direct reusable handler action. Explicit reference locals preserve source places and keep loans
   live through action capture and the one-shot call; overlapping mutable captures are rejected, and
   resume or abandonment releases the loans before following code.
+- Completed the owned `EffectCallable` path for open runtime action parameters inside active
+  handlers. Compatible zero- and one-input action parameters now move through named CPS frames and
+  reusable handler boundaries via the call/drop/environment/flag ABI. Native coverage exercises
+  shared, mutable, and moved captures, resumption, abandonment, and uninvoked cleanup; repeated use,
+  unsupported rows/shapes, and escaping borrowed environments receive source-level diagnostics.
 - Restored `examples/ledger.sc` to effectful state processing: its `for` loop now consumes
   non-`Copy` transactions and performs overdraft operations while retaining both iterator and
   mutable ledger state.
