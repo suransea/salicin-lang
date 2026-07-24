@@ -35,7 +35,8 @@ compile-time parameter names, normalized to declaration order, and erased before
 Compiler-lowered capabilities are now source-backed by validated declarations in ordinary core
 modules: `core.effect` owns `Unsafe`, `Throws(Error)` with `raise(move error: Error): Never`, and
 an ordinary `Async` effect with a minimal `suspend(): ()` operation; `core.domains` owns the
-`type`, `region`, and `effect` compile-time domains plus closed `access` and `passing` types; `core.borrow` owns the
+`type`, `region`, and `effect` compile-time domains; `core.qualifiers` owns the closed `access` and
+`passing` types; `core.borrow` owns the
 validated borrow type and value forms over those domains; `core.control` owns source
 definitions for `do`, post-test `do … while`, `try`, `throw`, and `unsafe`, plus the remaining
 bodyless intrinsic signature for `loop`; `core.effect.handler` owns the handler runtime contracts; `core.flow` owns the standard

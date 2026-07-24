@@ -6,7 +6,8 @@ subset.
 
 ## Unreleased
 
-- Recast `access` and `passing` as closed `type` declarations alongside `bool`, allowed `bool` and
+- Recast `access` and `passing` as closed `type` declarations in `core.qualifiers`, alongside the
+  closed primitive `bool` type, allowed `bool` and
   user-declared closed types in compile-time parameter groups with typed defaults and stable
   monomorphization identities, and removed the dedicated access/passing parameter kinds. Runtime
   parameter prefixes are now composable compile-time parameter-schema modifiers rather than a

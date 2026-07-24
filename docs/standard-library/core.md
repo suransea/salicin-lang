@@ -183,7 +183,11 @@ pub let type = domain
 pub let region = domain
 pub let effect = domain
 pub let parameters = domain
+```
 
+`core.qualifiers` owns the closed compile-time qualifier types:
+
+```sc
 pub let access = type {
   shared,
   mut

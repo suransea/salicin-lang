@@ -403,14 +403,8 @@ const CORE_EFFECT_HANDLER_EXPORTS: &[&str] = &["Continuation", "EffectCallable",
 const CORE_PRIMITIVE_EXPORTS: &[&str] = &[
     "bool", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
 ];
-const CORE_DOMAIN_EXPORTS: &[&str] = &[
-    "type",
-    "region",
-    "effect",
-    "parameters",
-    "access",
-    "passing",
-];
+const CORE_DOMAIN_EXPORTS: &[&str] = &["type", "region", "effect", "parameters"];
+const CORE_QUALIFIER_EXPORTS: &[&str] = &["access", "passing"];
 const CORE_BORROW_EXPORTS: &[&str] = &["borrow"];
 const CORE_MEMORY_EXPORTS: &[&str] = &["Array", "Ptr", "size_of", "align_of"];
 const CORE_CONTROL_EXPORTS: &[&str] = &[
@@ -526,8 +520,8 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("domains", "region", "core::domains::region"),
     ("domains", "effect", "core::domains::effect"),
     ("domains", "parameters", "core::domains::parameters"),
-    ("domains", "access", "core::domains::access"),
-    ("domains", "passing", "core::domains::passing"),
+    ("qualifiers", "access", "core::qualifiers::access"),
+    ("qualifiers", "passing", "core::qualifiers::passing"),
     ("borrow", "borrow", "core::borrow::borrow"),
     ("control", "do", "core::control::do"),
     ("control", "try", "core::control::try"),
@@ -1040,6 +1034,9 @@ fn install_standard_namespaces(
         for name in CORE_DOMAIN_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.domains.{name}"));
         }
+        for name in CORE_QUALIFIER_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.qualifiers.{name}"));
+        }
         for name in CORE_BORROW_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.borrow.{name}"));
         }
@@ -1363,6 +1360,17 @@ fn install_core_namespace(
                 "domains",
                 name,
                 &format!("core::domains::{name}"),
+                "<core>",
+            );
+        }
+        for name in CORE_QUALIFIER_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "qualifiers",
+                name,
+                &format!("core::qualifiers::{name}"),
                 "<core>",
             );
         }
@@ -5311,6 +5319,11 @@ let main(): i32 = { Option {} }
                     .map(|name| ("handler", *name)),
             )
             .chain(CORE_DOMAIN_EXPORTS.iter().map(|name| ("domains", *name)))
+            .chain(
+                CORE_QUALIFIER_EXPORTS
+                    .iter()
+                    .map(|name| ("qualifiers", *name)),
+            )
             .chain(CORE_BORROW_EXPORTS.iter().map(|name| ("borrow", *name)))
             .chain(CORE_MEMORY_EXPORTS.iter().map(|name| ("memory", *name)))
             .chain(CORE_CONTROL_EXPORTS.iter().map(|name| ("control", *name)))
