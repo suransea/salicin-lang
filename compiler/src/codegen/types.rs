@@ -9,7 +9,7 @@ use super::compile_time::{
     closed_value_from_marker, closed_value_marker, effect_identity_sources, effect_row_from_marker,
     effect_row_from_source, effect_row_source, is_compile_value_marker, source_effect_identity,
     type_constructor_from_marker, type_constructor_marker, usize_value_marker, ACCESS_MUT_MARKER,
-    ACCESS_SHARED_MARKER,
+    ACCESS_SHARED_MARKER, PARAMETER_MODIFIER_COPY_MARKER, PARAMETER_MODIFIER_MOVE_MARKER,
 };
 use super::flow::LowerCtx;
 use super::hir::{FunctionTy, Ty};
@@ -805,6 +805,9 @@ impl Analyzer {
                     .filter(|target| target.parameter_count == parameter_count)
                     .map(|_| source)
             }
+            CompileParamKind::ParameterModifier => {
+                self.probe_parameter_modifier_source(expression, substitutions)
+            }
             CompileParamKind::Region
             | CompileParamKind::Parameters
             | CompileParamKind::ParameterPack
@@ -879,6 +882,7 @@ impl Analyzer {
             CompileParamKind::Region
             | CompileParamKind::Parameters
             | CompileParamKind::ParameterPack
+            | CompileParamKind::ParameterModifier
             | CompileParamKind::EffectConstructor { .. } => None,
         }
     }
@@ -958,11 +962,11 @@ impl Analyzer {
         }
         if parameters
             .iter()
-            .all(|parameter| parameter.kind.is_passing())
+            .all(|parameter| parameter.kind.is_parameter_modifier())
         {
             return arguments.iter().all(|argument| {
                 matches!(&argument.value, Expr::Name(name)
-                    if matches!(name.as_str(), "auto" | "copy" | "move"))
+                    if matches!(name.rsplit("::").next().unwrap_or(name), "copy" | "move"))
             });
         }
         if parameters
@@ -1057,6 +1061,9 @@ impl Analyzer {
             CompileParamKind::Region => false,
             CompileParamKind::Parameters => false,
             CompileParamKind::ParameterPack => false,
+            CompileParamKind::ParameterModifier => self
+                .probe_parameter_modifier_source(expression, &context.type_substitutions)
+                .is_some(),
             CompileParamKind::EffectConstructor { .. } => false,
             CompileParamKind::Named(compile_type) => match expression {
                 Expr::Bool(value) => {
@@ -1100,6 +1107,43 @@ impl Analyzer {
         let source = Type::Named(name.clone(), Vec::new());
         self.type_constructor_impl_target(&source)
             .is_some_and(|target| target.parameter_count == parameter_count)
+    }
+
+    pub(super) fn probe_parameter_modifier_source(
+        &self,
+        expression: &Expr,
+        substitutions: &HashMap<String, Type>,
+    ) -> Option<Type> {
+        match expression {
+            Expr::Name(name) => {
+                if let Some(source) = substitutions.get(name) {
+                    return Some(source.clone());
+                }
+                match name.rsplit("::").next().unwrap_or(name).as_ref() {
+                    "copy" => Some(Type::Named(
+                        PARAMETER_MODIFIER_COPY_MARKER.to_owned(),
+                        Vec::new(),
+                    )),
+                    "move" => Some(Type::Named(
+                        PARAMETER_MODIFIER_MOVE_MARKER.to_owned(),
+                        Vec::new(),
+                    )),
+                    _ => None,
+                }
+            }
+            Expr::Call(callee, arguments)
+                if arguments.len() == 1
+                    && arguments[0].label.is_none()
+                    && matches!(
+                        callee.as_ref(),
+                        Expr::Name(name)
+                            if self.transparent_parameter_modifiers.contains(name)
+                    ) =>
+            {
+                self.probe_parameter_modifier_source(&arguments[0].value, substitutions)
+            }
+            _ => None,
+        }
     }
 
     fn expression_is_explicit_effect_argument(&self, expression: &Expr) -> bool {

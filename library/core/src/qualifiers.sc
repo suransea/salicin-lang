@@ -1,4 +1,4 @@
-// Closed compile-time qualifier types used by borrows and parameter schemas.
+// Compile-time qualifiers and parameter-schema modifiers.
 /// Describes whether a borrow is shared or mutable.
 pub let access = type {
   /// Shared read-only access.
@@ -7,12 +7,8 @@ pub let access = type {
   mut
 }
 
-/// Describes how a runtime argument is passed to a callable.
-pub let passing = type {
-  /// Lets the compiler choose copy, move, or borrow passing from context.
-  auto,
-  /// Passes by copying the argument value.
-  copy,
-  /// Passes by moving ownership of the argument value.
-  move
-}
+/// Changes a runtime parameter schema to copy its argument.
+pub let copy(P: parameters): parameters
+
+/// Changes a runtime parameter schema to move its argument.
+pub let move(P: parameters): parameters

@@ -185,7 +185,7 @@ pub let effect = domain
 pub let parameters = domain
 ```
 
-`core.qualifiers` owns the closed compile-time qualifier types:
+`core.qualifiers` owns the closed access type and parameter modifier functions:
 
 ```sc
 pub let access = type {
@@ -193,16 +193,13 @@ pub let access = type {
   mut
 }
 
-pub let passing = type {
-  auto,
-  copy,
-  move
-}
+pub let copy(P: parameters): parameters
+pub let move(P: parameters): parameters
 ```
 
 Borrow types and values are written with the declared `borrow` form: `borrow(T)`,
-`borrow(mut)(T)`, and `borrow(A)(R)(T)`. `borrow(A)` and generic passing modes refer to these
-closed types in compile-time parameter positions.
+`borrow(mut)(T)`, and `borrow(A)(R)(T)`. `borrow(A)` refers to the closed access type; generic
+passing modifiers use the `(P: parameters): parameters` function kind.
 
 `core.control` owns the edition-pinned contracts for compiler-lowered control functions. It is not
 part of the prelude. `do`, `try`, `throw`, and `unsafe` are ordinary source-backed functions over

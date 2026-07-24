@@ -270,6 +270,9 @@ pub enum CompileParamKind {
     /// A variadic pack of `parameters` schemas used as repeated runtime groups
     /// by compiler-validated control contracts such as `match`.
     ParameterPack,
+    /// A compile-time parameter-schema transformer with the exact kind
+    /// `(P: parameters): parameters`.
+    ParameterModifier,
     TypeConstructor {
         parameter_count: usize,
     },
@@ -285,8 +288,8 @@ impl CompileParamKind {
         matches!(self, Self::Named(name) if name == "access")
     }
 
-    pub fn is_passing(&self) -> bool {
-        matches!(self, Self::Named(name) if name == "passing")
+    pub fn is_parameter_modifier(&self) -> bool {
+        matches!(self, Self::ParameterModifier)
     }
 }
 

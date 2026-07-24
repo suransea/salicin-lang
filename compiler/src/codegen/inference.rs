@@ -8,7 +8,7 @@ use crate::core::LangItemKind;
 use super::compile_time::{
     closed_value_from_marker, closed_value_marker, effect_row_from_marker, effect_row_source,
     source_effect_identity, type_constructor_marker, usize_value_marker, ACCESS_MUT_MARKER,
-    ACCESS_SHARED_MARKER, PASSING_AUTO_MARKER,
+    ACCESS_SHARED_MARKER,
 };
 use super::effects::source_type_is_never;
 use super::flow::LowerCtx;
@@ -1162,6 +1162,19 @@ impl Analyzer {
                         ));
                         return None;
                     }
+                    CompileParamKind::ParameterModifier => {
+                        let Some(source) = self.probe_parameter_modifier_source(
+                            &argument.value,
+                            &context.type_substitutions,
+                        ) else {
+                            self.error(format!(
+                                "invalid parameter modifier argument for `{}` in `{owner}`; expected `copy`, `move`, or a declared modifier parameter",
+                                parameter.name
+                            ));
+                            return None;
+                        };
+                        source
+                    }
                     CompileParamKind::TypeConstructor { parameter_count } => {
                         let constructor = self.type_constructor_argument_from_expr(
                             &argument.value,
@@ -1213,9 +1226,7 @@ impl Analyzer {
                                 .get(compile_type)
                                 .is_some_and(|members| members.contains(&member));
                             if !valid {
-                                let description = if compile_type == "passing" {
-                                    "invalid passing argument".to_owned()
-                                } else if compile_type == "access" {
+                                let description = if compile_type == "access" {
                                     "invalid access argument".to_owned()
                                 } else {
                                     format!("invalid `{compile_type}` argument")
@@ -1268,14 +1279,6 @@ impl Analyzer {
                         ty: Ty::Struct(ACCESS_SHARED_MARKER.to_owned()),
                         source: Some(Type::Named(ACCESS_SHARED_MARKER.to_owned(), Vec::new())),
                         origin: "default shared access".to_owned(),
-                    });
-            } else if parameter.kind.is_passing() {
-                inferred
-                    .entry(parameter.name.clone())
-                    .or_insert_with(|| InferredTypeArgument {
-                        ty: Ty::Struct(PASSING_AUTO_MARKER.to_owned()),
-                        source: Some(Type::Named(PASSING_AUTO_MARKER.to_owned(), Vec::new())),
-                        origin: "default automatic passing".to_owned(),
                     });
             } else if parameter.kind == CompileParamKind::Effect {
                 inferred
@@ -1399,14 +1402,6 @@ impl Analyzer {
                         ty: Ty::Struct(ACCESS_SHARED_MARKER.to_owned()),
                         source: Some(Type::Named(ACCESS_SHARED_MARKER.to_owned(), Vec::new())),
                         origin: "default shared access".to_owned(),
-                    });
-            } else if parameter.kind.is_passing() {
-                inferred
-                    .entry(parameter.name.clone())
-                    .or_insert_with(|| InferredTypeArgument {
-                        ty: Ty::Struct(PASSING_AUTO_MARKER.to_owned()),
-                        source: Some(Type::Named(PASSING_AUTO_MARKER.to_owned(), Vec::new())),
-                        origin: "default automatic passing".to_owned(),
                     });
             } else if parameter.kind == CompileParamKind::Effect {
                 inferred

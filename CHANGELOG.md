@@ -6,12 +6,13 @@ subset.
 
 ## Unreleased
 
-- Recast `access` and `passing` as closed `type` declarations in `core.qualifiers`, alongside the
-  closed primitive `bool` type, allowed `bool` and
+- Kept `access` as a closed `type` declaration in `core.qualifiers`, replaced the former closed
+  `passing` type and `auto` value with validated compile-time `copy(P: parameters): parameters` and
+  `move(P: parameters): parameters` functions, and allowed `bool` and
   user-declared closed types in compile-time parameter groups with typed defaults and stable
-  monomorphization identities, and removed the dedicated access/passing parameter kinds. Runtime
-  parameter prefixes are now composable compile-time parameter-schema modifiers rather than a
-  parser-only passing slot.
+  monomorphization identities. Runtime parameter prefixes now accept
+  `M: (P: parameters): parameters` function parameters and compose parameter-schema modifiers
+  rather than using a parser-only passing slot.
 - Unified shared and mutable raw pointers under the access-parameterized
   `Ptr(A: access = shared)(T: type)` family. `Ptr(T)` remains the shared spelling,
   `Ptr(mut)(T)` selects mutable access, and the separate mutable-pointer declaration has been

@@ -480,6 +480,23 @@ impl Parser {
                 value,
             }))
         } else {
+            let transparent_modifier = groups.is_empty()
+                && annotation.is_none()
+                && compile_groups.len() == 1
+                && compile_groups[0].len() == 1
+                && compile_groups[0][0].kind == CompileParamKind::ParameterModifier;
+            if transparent_modifier && !self.at(&TokenKind::LBrace) {
+                let body = self.expression(true)?;
+                return Ok(Item::Function(Function {
+                    name,
+                    compile_groups,
+                    groups,
+                    return_type: None,
+                    effects,
+                    where_predicates,
+                    body: Some(body),
+                }));
+            }
             if !self.at(&TokenKind::LBrace) {
                 return Err(self.error_here(
                     "named closure declarations require a braced body; write `= { expression }`",
@@ -946,7 +963,7 @@ impl Parser {
                         && !matches!(
                             self.tokens.get(self.index + 2).map(|token| &token.kind),
                             Some(TokenKind::Ident(kind))
-                                if matches!(kind.as_str(), "access" | "passing" | "effect")
+                                if matches!(kind.as_str(), "access" | "effect")
                         ) {
                         labeled += 1;
                         let label = self.expect_ident("a trait argument label")?;
@@ -1081,7 +1098,7 @@ impl Parser {
                 let passing_parameters = compile_groups
                     .iter()
                     .flatten()
-                    .filter(|parameter| parameter.kind.is_passing())
+                    .filter(|parameter| parameter.kind.is_parameter_modifier())
                     .map(|parameter| parameter.name.clone())
                     .collect::<HashSet<_>>();
                 runtime_groups
@@ -1169,7 +1186,7 @@ impl Parser {
                     if conventionally_compile_time
                         || matches!(
                             name.as_str(),
-                            "usize" | "access" | "passing" | "effect" | "parameters"
+                            "usize" | "access" | "effect" | "parameters"
                         )
             )
     }
@@ -1198,7 +1215,12 @@ impl Parser {
                     return false;
                 }
                 index += 1;
-                if !self.kind_at(index, &TokenKind::Type) {
+                if !self.kind_at(index, &TokenKind::Type)
+                    && !matches!(
+                        self.tokens.get(index).map(|token| &token.kind),
+                        Some(TokenKind::Ident(name)) if name == "parameters"
+                    )
+                {
                     return false;
                 }
                 index += 1;
@@ -1238,7 +1260,7 @@ impl Parser {
         self.kind_at(index, &TokenKind::Type)
             || matches!(
                 self.tokens.get(index).map(|token| &token.kind),
-                Some(TokenKind::Ident(name)) if name == "effect"
+                Some(TokenKind::Ident(name)) if matches!(name.as_str(), "effect" | "parameters")
             )
     }
 
@@ -1287,7 +1309,6 @@ impl Parser {
             let parameter_kind = match kind.as_str() {
                 "usize" => Some(CompileParamKind::USize),
                 "access" => Some(CompileParamKind::Named("access".to_owned())),
-                "passing" => Some(CompileParamKind::Named("passing".to_owned())),
                 "effect" => Some(CompileParamKind::Effect),
                 "parameters" => Some(CompileParamKind::Parameters),
                 _ => Some(CompileParamKind::Named(kind)),
@@ -1312,7 +1333,7 @@ impl Parser {
 
         self.expect(
             &TokenKind::Region,
-            "`type`, `usize`, `access`, `passing`, `effect`, `parameters`, a constructor kind, or `region`",
+            "`type`, `usize`, `access`, `effect`, `parameters`, a constructor kind, or `region`",
         )?;
         if name == "static" {
             return Err(self.error_at(
@@ -1331,8 +1352,11 @@ impl Parser {
 
     fn constructor_compile_parameter_kind(&mut self) -> Result<CompileParamKind, ParseError> {
         let mut parameter_count = 0;
+        let mut parameter_kinds = Vec::new();
         while self.at(&TokenKind::LParen) {
-            parameter_count += self.constructor_kind_parameter_group()?;
+            let kinds = self.constructor_kind_parameter_group()?;
+            parameter_count += kinds.len();
+            parameter_kinds.extend(kinds);
         }
         self.expect(&TokenKind::Colon, "`:` before constructor result kind")?;
         if self.take(&TokenKind::Type) {
@@ -1342,16 +1366,25 @@ impl Parser {
             self.advance();
             return Ok(CompileParamKind::EffectConstructor { parameter_count });
         }
-        Err(self.error_here("expected constructor result kind `type` or `effect`"))
+        if matches!(&self.current().kind, TokenKind::Ident(name) if name == "parameters") {
+            self.advance();
+            if parameter_kinds == [CompileParamKind::Parameters] {
+                return Ok(CompileParamKind::ParameterModifier);
+            }
+            return Err(self.error_here(
+                "parameter modifier kinds must have the exact shape `(P: parameters): parameters`",
+            ));
+        }
+        Err(self.error_here("expected constructor result kind `type`, `effect`, or `parameters`"))
     }
 
-    fn constructor_kind_parameter_group(&mut self) -> Result<usize, ParseError> {
+    fn constructor_kind_parameter_group(&mut self) -> Result<Vec<CompileParamKind>, ParseError> {
         self.expect(&TokenKind::LParen, "`(` in constructor kind")?;
         if self.take(&TokenKind::RParen) {
             return Err(self.error_here("constructor kind parameter groups cannot be empty"));
         }
 
-        let mut parameter_count = 0;
+        let mut parameter_kinds = Vec::new();
         loop {
             let name_token = self.current().clone();
             let name = self.expect_ident("a constructor kind parameter name")?;
@@ -1370,12 +1403,18 @@ impl Parser {
                 &TokenKind::Colon,
                 "`:` after constructor kind parameter name",
             )?;
-            if !self.take(&TokenKind::Type) {
-                return Err(
-                    self.error_here("constructor kind parameters currently must have kind `type`")
-                );
-            }
-            parameter_count += 1;
+            let kind = if self.take(&TokenKind::Type) {
+                CompileParamKind::Type
+            } else if matches!(&self.current().kind, TokenKind::Ident(kind) if kind == "parameters")
+            {
+                self.advance();
+                CompileParamKind::Parameters
+            } else {
+                return Err(self.error_here(
+                    "constructor kind parameters currently must have kind `type` or `parameters`",
+                ));
+            };
+            parameter_kinds.push(kind);
 
             if self.take(&TokenKind::Comma) {
                 if self.take(&TokenKind::RParen) {
@@ -1387,7 +1426,7 @@ impl Parser {
             }
         }
 
-        Ok(parameter_count)
+        Ok(parameter_kinds)
     }
 
     fn compile_parameter_group(&mut self) -> Result<Vec<CompileParam>, ParseError> {
@@ -1471,6 +1510,11 @@ impl Parser {
             }
             CompileParamKind::ParameterPack => {
                 return Err(self.error_here("parameter packs cannot have defaults"));
+            }
+            CompileParamKind::ParameterModifier => {
+                return Err(self.error_here(
+                    "defaults for parameter modifier functions are not supported yet",
+                ));
             }
             CompileParamKind::Region => {
                 let token = self.current().clone();
@@ -1567,7 +1611,7 @@ impl Parser {
                 let modifier = match self.current().kind.clone() {
                     TokenKind::Ident(name)
                         if modifier_parameters.contains(&name)
-                            || matches!(name.as_str(), "auto" | "copy" | "move") =>
+                            || matches!(name.as_str(), "copy" | "move") =>
                     {
                         name
                     }
@@ -1580,10 +1624,6 @@ impl Parser {
             }
             let mut mode = PassMode::Inferred;
             modifiers.retain(|modifier| match modifier.as_str() {
-                "auto" => {
-                    mode = PassMode::Inferred;
-                    false
-                }
                 "copy" => {
                     mode = PassMode::Copy;
                     false
@@ -2078,7 +2118,7 @@ impl Parser {
                                 && !matches!(
                                     self.tokens.get(self.index + 2).map(|token| &token.kind),
                                     Some(TokenKind::Ident(kind))
-                                        if matches!(kind.as_str(), "access" | "passing" | "effect")
+                                        if matches!(kind.as_str(), "access" | "effect")
                                 ) {
                                 labeled += 1;
                                 let label = self.expect_ident("an effect argument label")?;
@@ -2376,7 +2416,7 @@ impl Parser {
                     && !matches!(
                         self.tokens.get(self.index + 2).map(|token| &token.kind),
                         Some(TokenKind::Ident(kind))
-                            if matches!(kind.as_str(), "access" | "passing" | "effect")
+                            if matches!(kind.as_str(), "access" | "effect")
                     ) {
                     labeled += 1;
                     let label = self.expect_ident("a type argument label")?;
@@ -4195,7 +4235,7 @@ fn normalize_and_validate_scopes(items: &mut [Item]) -> Result<(), String> {
                 validate_type_accesses(&definition.target, &accesses)?;
             }
             Item::Effect(definition) => {
-                reject_passing_parameters(
+                reject_parameter_modifier_parameters(
                     &definition.compile_groups,
                     &format!("effect `{}`", definition.name),
                 )?;
@@ -4224,7 +4264,7 @@ fn normalize_and_validate_scopes(items: &mut [Item]) -> Result<(), String> {
                 let _accesses = declared_accesses(&definition.compile_groups, &empty)?;
             }
             Item::Struct(definition) => {
-                reject_passing_parameters(
+                reject_parameter_modifier_parameters(
                     &definition.compile_groups,
                     &format!("struct `{}`", definition.name),
                 )?;
@@ -4241,7 +4281,7 @@ fn normalize_and_validate_scopes(items: &mut [Item]) -> Result<(), String> {
                 }
             }
             Item::Enum(definition) => {
-                reject_passing_parameters(
+                reject_parameter_modifier_parameters(
                     &definition.compile_groups,
                     &format!("enum `{}`", definition.name),
                 )?;
@@ -4276,7 +4316,7 @@ fn normalize_and_validate_scopes(items: &mut [Item]) -> Result<(), String> {
                 }
             }
             Item::Trait(definition) => {
-                reject_passing_parameters(
+                reject_parameter_modifier_parameters(
                     &definition.compile_groups,
                     &format!("trait `{}`", definition.name),
                 )?;
@@ -4301,7 +4341,7 @@ fn normalize_and_validate_scopes(items: &mut [Item]) -> Result<(), String> {
                             default,
                             ..
                         } => {
-                            reject_passing_parameters(
+                            reject_parameter_modifier_parameters(
                                 compile_groups,
                                 &format!("associated type `{}`", name),
                             )?;
@@ -4325,7 +4365,7 @@ fn normalize_and_validate_scopes(items: &mut [Item]) -> Result<(), String> {
                 }
             }
             Item::Extend(extension) => {
-                reject_passing_parameters(&extension.compile_groups, "extend header")?;
+                reject_parameter_modifier_parameters(&extension.compile_groups, "extend header")?;
                 reject_effect_parameters(&extension.compile_groups, "extend header")?;
                 let regions = declared_regions(&extension.compile_groups, &empty)?;
                 let accesses = declared_accesses(&extension.compile_groups, &empty)?;
@@ -4367,14 +4407,17 @@ fn normalize_and_validate_scopes(items: &mut [Item]) -> Result<(), String> {
     Ok(())
 }
 
-fn reject_passing_parameters(groups: &[Vec<CompileParam>], owner: &str) -> Result<(), String> {
+fn reject_parameter_modifier_parameters(
+    groups: &[Vec<CompileParam>],
+    owner: &str,
+) -> Result<(), String> {
     if groups
         .iter()
         .flatten()
-        .any(|parameter| parameter.kind.is_passing())
+        .any(|parameter| parameter.kind.is_parameter_modifier())
     {
         Err(format!(
-            "{owner} cannot declare a `passing` parameter; passing parameters belong to functions"
+            "{owner} cannot declare a parameter modifier function; modifier parameters belong to functions"
         ))
     } else {
         Ok(())
@@ -4463,9 +4506,7 @@ fn validate_function_scopes(
     }
     for parameter in function.groups.iter_mut().flatten() {
         for modifier in &parameter.modifiers {
-            if !compile_names.contains(modifier)
-                && !matches!(modifier.as_str(), "auto" | "copy" | "move")
-            {
+            if !compile_names.contains(modifier) && !matches!(modifier.as_str(), "copy" | "move") {
                 return Err(format!("use of undeclared parameter modifier `{modifier}`"));
             }
         }
@@ -7048,26 +7089,46 @@ mod tests {
     }
 
     #[test]
-    fn parses_passing_parameters_in_keyword_position() {
-        let program =
-            parse("let identity(P: passing, T: type)(P value: T): T = { value }\n").unwrap();
+    fn parses_parameter_modifier_functions_in_prefix_position() {
+        let program = parse(
+            "let identity(M: (P: parameters): parameters, T: type)(M value: T): T = { value }\n",
+        )
+        .unwrap();
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };
-        assert!(function.compile_groups[0][0].kind.is_passing());
+        assert!(function.compile_groups[0][0].kind.is_parameter_modifier());
         assert_eq!(function.groups[0][0].mode, PassMode::Inferred);
-        assert_eq!(function.groups[0][0].modifiers, ["P"]);
+        assert_eq!(function.groups[0][0].modifiers, ["M"]);
     }
 
     #[test]
     fn parses_parameter_prefixes_as_composable_modifiers() {
-        let program =
-            parse("let decorate(B: bool, P: passing)(B P value: i32): i32 = { value }\n").unwrap();
+        let program = parse(
+            "let decorate(B: bool, M: (P: parameters): parameters)(B M value: i32): i32 = { value }\n",
+        )
+        .unwrap();
         let Item::Function(function) = &program.items[0] else {
             panic!("expected a function");
         };
-        assert_eq!(function.groups[0][0].modifiers, ["B", "P"]);
+        assert_eq!(function.groups[0][0].modifiers, ["B", "M"]);
         assert_eq!(function.groups[0][0].mode, PassMode::Inferred);
+    }
+
+    #[test]
+    fn parses_parameter_modifier_function_kind() {
+        let program = parse(
+            "let identity(M: (P: parameters): parameters, T: type)(M value: T): T = { value }\n",
+        )
+        .unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        assert_eq!(
+            function.compile_groups[0][0].kind,
+            CompileParamKind::ParameterModifier
+        );
+        assert_eq!(function.groups[0][0].modifiers, ["M"]);
     }
 
     #[test]
@@ -7423,11 +7484,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_passing_parameters_on_data_declarations() {
-        let error = parse("let Wrapper(P: passing) = struct { value: i32 }\n").unwrap_err();
+    fn rejects_parameter_modifier_parameters_on_data_declarations() {
+        let error = parse("let Wrapper(M: (P: parameters): parameters) = struct { value: i32 }\n")
+            .unwrap_err();
         assert!(error
             .message
-            .contains("passing parameters belong to functions"));
+            .contains("modifier parameters belong to functions"));
     }
 
     #[test]

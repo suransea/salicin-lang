@@ -136,7 +136,7 @@ constructor_kind = compile_parameter_group,
   `(effect): T`、`T(effect)` 与 `T ! effect` 都不属于语法。
 - 声明右侧的 `domain` 同样是上下文词，用于声明编译期参数域。无 body 的 `domain` 是开放域；
   `domain { ... }` 是封闭域。标准 `type`、`region`、`effect` 与 `parameters` 位于
-  `core.domains`；`access` 与 `passing` 封闭类型位于 `core.qualifiers`；effect 身份位于
+  `core.domains`；`access` 封闭类型及 `copy`、`move` 参数修饰函数位于 `core.qualifiers`；effect 身份位于
   `core.effect`；控制 lang item 可在声明名位置使用 `do`、`try`、
   `unsafe`、`loop`、`while`、`if`、`match`、`for`。
 - 声明右侧的 `type` 声明新的不透明名义类型，例如 `pub let i32 = type`。可选的封闭值集合
@@ -173,8 +173,9 @@ pass_mode = "copy" | "move" ;
 access_or_region = IDENT | "shared" | "mut" | REGION ;
 ```
 
-参数模式位置的 `IDENT` 只有在它引用当前函数已声明的 `P: passing` 参数时才合法；否则第一个
-`IDENT` 就是参数名。这是上下文语法，不把 `passing`、`auto` 或参数名加入全局保留字集合。
+参数模式位置的 `IDENT` 只有在它引用当前函数已声明的
+`M: (P: parameters): parameters` 参数时才合法；否则第一个 `IDENT` 就是参数名。
+这是上下文语法，不把修饰器或参数名加入全局保留字集合。
 `(...move args: P)` 把编译期 `parameters` schema 展开为完整的一个运行时参数组；首版要求该
 展开独占参数组。关联 `parameters` declaration 可由编译器派生，不能作为普通运行时类型使用。
 核心控制契约还可用 `...Cases: parameters` 声明运行时参数组 schema 包，并在普通参数组之后以裸
@@ -227,7 +228,7 @@ extend_decl = "extend", [ compile_parameter_group ], type_expr,
 
 compile_parameter_group = "(", compile_parameter,
                           { ",", compile_parameter }, [ "," ], ")" ;
-compile_parameter = IDENT, ":", ( "type" | "access" | "passing" | "effect" | constructor_kind )
+compile_parameter = IDENT, ":", ( "type" | "access" | "effect" | constructor_kind )
                   | REGION, ":", "region" ;
 ```
 
@@ -290,9 +291,9 @@ type_argument  = [ IDENT, ":" ], type_expr | INTEGER ;
 `core.memory.Array(T: type)(L: usize): type`，因此完整应用必须写成 `Array(T)(L)`，不能合并两组。
 `access` 是 `core.qualifiers` 声明的封闭类型；其内建实参为 `shared` 与 `mut`。`borrow(A)(T)` 和
 `borrow(A)(R)(T)` 分别携带 access 参数以及 access/region 参数组合。
-`passing` 是封闭类型；其内建实参为 `auto`、`copy` 与 `move`。参数核心之前可以写一个或多个
-编译期 parameter-schema 修饰器，例如 `(P value: T)` 或 `(M P value: T)`；该位置不由 parser
-限定为 `passing`，每个修饰器必须在实例化时归一化成 `parameters`。
+`copy` 与 `move` 是 `(P: parameters): parameters` 编译期函数。参数核心之前可以写一个或多个
+parameter-schema 修饰器，例如 `(M value: T)` 或 `(A M value: T)`；每个修饰器必须在实例化时
+归一化成 `parameters`。没有修饰器表示由编译器推断传递模式。
 `effect` 是函数编译期 domain；实参是完整 effect row：`pure`、`Unsafe`、名义 marker 或其组合。
 默认值为 `pure`。参数名只可出现在函数签名的 `with(...)` 子句和其他 effect 编译期实参位置，
 例如 `with(E)` 与 `forward(E)(value)`；它也可由 callable 实参或期望类型推断。
@@ -301,10 +302,10 @@ type_argument  = [ IDENT, ":" ], type_expr | INTEGER ;
 `let Never = enum {}`，不是 lexer 关键字。零 variant enum 合法；其值位置可以用空的
 `match {}` 消除。
 
-匿名签名槽只有在模式为 `auto` 时可省略 `_:`：
+匿名签名槽在使用推断传递模式时可省略 `_:`：
 
 ```sc
-(T): U                 // auto 参数，类型 T
+(T): U                 // 推断传递模式的参数，类型 T
 (_: borrow(T)): U      // 传入或自动借用一个共享借用值
 (_: borrow(mut)(T)): U // 传入或自动借用一个可变借用值
 ```

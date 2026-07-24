@@ -11,9 +11,9 @@ use std::fmt;
 use std::sync::OnceLock;
 
 use crate::ast::{
-    AssociatedKind, CompileParam, CompileParamDefault, CompileParamKind, EnumDef, Function, Item,
-    ItemOrigin, PassMode, Program, TraitDef, TraitMember, Type, TypeFormDef, VariantDef,
-    VariantFields, Visibility,
+    AssociatedKind, CompileParam, CompileParamDefault, CompileParamKind, EnumDef, Function,
+    FunctionEffects, Item, ItemOrigin, PassMode, Program, TraitDef, TraitMember, Type, TypeFormDef,
+    VariantDef, VariantFields, Visibility,
 };
 use crate::manifest::Edition;
 use crate::modules::{self, PackageId, SourceUnit};
@@ -43,8 +43,14 @@ const EDITION_2026_ALGEBRA: &str = include_str!("../../library/core/src/algebra.
 const EDITION_2026_FUNCTIONAL: &str = include_str!("../../library/core/src/functional.sc");
 const EDITION_2026_MEMORY: &str = include_str!("../../library/core/src/memory.sc");
 
-const NON_LANG_ITEM_CORE_MODULES: &[&str] =
-    &["primitives", "effect", "control", "algebra", "functional"];
+const NON_LANG_ITEM_CORE_MODULES: &[&str] = &[
+    "primitives",
+    "effect",
+    "control",
+    "qualifiers",
+    "algebra",
+    "functional",
+];
 
 static EDITION_2026_BUNDLE: OnceLock<Result<CoreBundle, CoreBundleError>> = OnceLock::new();
 
@@ -174,7 +180,6 @@ pub enum LangItemKind {
     TypeDomain,
     RegionDomain,
     AccessType,
-    PassingType,
     EffectDomain,
     ParametersDomain,
     BorrowTypeForm,
@@ -202,7 +207,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 77] = [
+    const ALL: [Self; 76] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -255,7 +260,6 @@ impl LangItemKind {
         Self::TypeDomain,
         Self::RegionDomain,
         Self::AccessType,
-        Self::PassingType,
         Self::EffectDomain,
         Self::ParametersDomain,
         Self::BorrowTypeForm,
@@ -336,7 +340,6 @@ impl LangItemKind {
             Self::TypeDomain => "type",
             Self::RegionDomain => "region",
             Self::AccessType => "access",
-            Self::PassingType => "passing",
             Self::EffectDomain => "effect",
             Self::ParametersDomain => "parameters",
             Self::BorrowTypeForm => "borrow",
@@ -371,7 +374,7 @@ impl LangItemKind {
             Self::TypeDomain | Self::RegionDomain | Self::EffectDomain | Self::ParametersDomain => {
                 "domain"
             }
-            Self::AccessType | Self::PassingType => "type form",
+            Self::AccessType => "type form",
             Self::BorrowTypeForm
             | Self::ArrayTypeForm
             | Self::PtrTypeForm
@@ -489,7 +492,6 @@ impl LangItemKind {
             | Self::TypeDomain
             | Self::RegionDomain
             | Self::AccessType
-            | Self::PassingType
             | Self::EffectDomain
             | Self::ParametersDomain
             | Self::BorrowTypeForm
@@ -626,7 +628,6 @@ pub struct LangItems {
     type_domain: LangItem,
     region_domain: LangItem,
     access_type: LangItem,
-    passing_type: LangItem,
     effect_domain: LangItem,
     parameters_domain: LangItem,
     borrow_type_form: LangItem,
@@ -802,9 +803,6 @@ impl LangItems {
     pub const fn access_type(&self) -> &LangItem {
         &self.access_type
     }
-    pub const fn passing_type(&self) -> &LangItem {
-        &self.passing_type
-    }
     pub const fn effect_domain(&self) -> &LangItem {
         &self.effect_domain
     }
@@ -920,7 +918,6 @@ impl LangItems {
             LangItemKind::TypeDomain => &self.type_domain,
             LangItemKind::RegionDomain => &self.region_domain,
             LangItemKind::AccessType => &self.access_type,
-            LangItemKind::PassingType => &self.passing_type,
             LangItemKind::EffectDomain => &self.effect_domain,
             LangItemKind::ParametersDomain => &self.parameters_domain,
             LangItemKind::BorrowTypeForm => &self.borrow_type_form,
@@ -1149,7 +1146,6 @@ impl CoreBundle {
             &mut lang_items.type_domain,
             &mut lang_items.region_domain,
             &mut lang_items.access_type,
-            &mut lang_items.passing_type,
             &mut lang_items.effect_domain,
             &mut lang_items.parameters_domain,
             &mut lang_items.borrow_type_form,
@@ -1342,6 +1338,24 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
             .copied()
             .filter(|kind| kind.source_name() == name)
             .collect::<Vec<_>>();
+        if matches!(name, "copy" | "move") {
+            if *visibility != Visibility::Public {
+                diagnostics.push(format!(
+                    "parameter modifier `{name}` must be `pub`, found {} visibility",
+                    visibility_name(*visibility)
+                ));
+            }
+            match item {
+                Item::Function(function) => {
+                    validate_parameter_modifier(name, function, &mut diagnostics)
+                }
+                _ => diagnostics.push(format!(
+                    "parameter modifier `{name}` must be a function, found {}",
+                    item_kind(item)
+                )),
+            }
+            continue;
+        }
         let matching = candidates
             .iter()
             .copied()
@@ -1475,7 +1489,6 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         type_domain: item(LangItemKind::TypeDomain),
         region_domain: item(LangItemKind::RegionDomain),
         access_type: item(LangItemKind::AccessType),
-        passing_type: item(LangItemKind::PassingType),
         effect_domain: item(LangItemKind::EffectDomain),
         parameters_domain: item(LangItemKind::ParametersDomain),
         borrow_type_form: item(LangItemKind::BorrowTypeForm),
@@ -1528,7 +1541,7 @@ fn is_allowed_non_lang_item(origin: &ItemOrigin) -> bool {
 fn is_control_support_item(name: &str) -> bool {
     matches!(
         name,
-        "Break" | "Continue" | "Return" | "break" | "continue" | "return"
+        "Break" | "Continue" | "Return" | "break" | "continue" | "return" | "copy" | "move"
     )
 }
 
@@ -1604,10 +1617,9 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
             | LangItemKind::ParametersDomain,
             Item::Domain(definition),
         ) => validate_domain(kind, definition, diagnostics),
-        (
-            kind @ (LangItemKind::AccessType | LangItemKind::PassingType),
-            Item::TypeForm(definition),
-        ) => validate_closed_compile_type(kind, definition, diagnostics),
+        (kind @ LangItemKind::AccessType, Item::TypeForm(definition)) => {
+            validate_closed_compile_type(kind, definition, diagnostics)
+        }
         (LangItemKind::BorrowTypeForm, Item::TypeForm(definition)) => {
             validate_borrow_type_form(definition, diagnostics)
         }
@@ -1751,6 +1763,26 @@ fn validate_domain(
     }
 }
 
+fn validate_parameter_modifier(name: &str, function: &Function, diagnostics: &mut Vec<String>) {
+    let valid = function.compile_groups.len() == 1
+        && function.compile_groups[0].len() == 1
+        && function.compile_groups[0][0].kind == CompileParamKind::Parameters
+        && function.groups.is_empty()
+        && matches!(
+            function.return_type.as_ref(),
+            Some(Type::Named(result, arguments))
+                if result == "parameters" && arguments.is_empty()
+        )
+        && function.effects == FunctionEffects::default()
+        && function.where_predicates.is_empty()
+        && function.body.is_none();
+    if !valid {
+        diagnostics.push(format!(
+            "parameter modifier `{name}` must have shape `pub let {name}(P: parameters): parameters`"
+        ));
+    }
+}
+
 fn validate_closed_compile_type(
     kind: LangItemKind,
     definition: &TypeFormDef,
@@ -1761,11 +1793,6 @@ fn validate_closed_compile_type(
             "access",
             &["shared", "mut"],
             "pub let access = type { shared, mut }",
-        ),
-        LangItemKind::PassingType => (
-            "passing",
-            &["auto", "copy", "move"],
-            "pub let passing = type { auto, copy, move }",
         ),
         _ => unreachable!("closed compile type validation requires a closed type lang item"),
     };
@@ -3202,7 +3229,7 @@ pub let Shr(Rhs: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 124);
+        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 126);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -3270,7 +3297,7 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::ParametersDomain => {
                     format!("core::domains::{}", kind.source_name())
                 }
-                LangItemKind::AccessType | LangItemKind::PassingType => {
+                LangItemKind::AccessType => {
                     format!("core::qualifiers::{}", kind.source_name())
                 }
                 LangItemKind::BorrowTypeForm | LangItemKind::BorrowValueForm => {
@@ -3359,7 +3386,7 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::RegionDomain
                 | LangItemKind::EffectDomain
                 | LangItemKind::ParametersDomain => vec!["domains"],
-                LangItemKind::AccessType | LangItemKind::PassingType => vec!["qualifiers"],
+                LangItemKind::AccessType => vec!["qualifiers"],
                 LangItemKind::BorrowTypeForm | LangItemKind::BorrowValueForm => vec!["borrow"],
                 LangItemKind::ArrayTypeForm
                 | LangItemKind::PtrTypeForm

@@ -216,6 +216,18 @@ mod tests {
     }
 
     #[test]
+    fn parameter_modifier_functions_can_be_forwarded_generically() {
+        let source = "let modifier_identity(M: (P: parameters): parameters) = M\n\
+             let apply(M: (P: parameters): parameters, T: type)(M value: T): T = { value }\n\
+             let main(): i32 = {\n\
+               apply(modifier_identity(copy), i32)(20) +\n\
+                 apply(modifier_identity(move), i32)(22)\n\
+             }\n";
+        compile_source(source)
+            .expect("copy and move parameter modifier functions should instantiate generically");
+    }
+
+    #[test]
     fn alloc_accessors_use_the_access_generic_entry_points() {
         let source = "let Box = std.boxed.Box\n\
                       let Vec = std.vec.Vec

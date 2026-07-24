@@ -109,6 +109,7 @@ struct Analyzer {
     function_instances: HashMap<String, FunctionInstanceInfo>,
     function_type_substitutions: HashMap<String, HashMap<String, Type>>,
     abstract_type_parameters: HashMap<String, String>,
+    transparent_parameter_modifiers: HashSet<String>,
     globals: HashMap<String, Binding>,
     global_origins: HashMap<String, ItemOrigin>,
     global_accesses: HashMap<String, AccessBoundary>,
@@ -185,6 +186,7 @@ impl Analyzer {
             function_instances: HashMap::new(),
             function_type_substitutions: HashMap::new(),
             abstract_type_parameters: HashMap::new(),
+            transparent_parameter_modifiers: HashSet::new(),
             globals: HashMap::new(),
             global_origins: HashMap::new(),
             global_accesses: HashMap::new(),
@@ -365,10 +367,6 @@ impl Analyzer {
                         self.closed_type_values
                             .insert("access".to_owned(), definition.values.clone());
                     }
-                    if self.is_lang_item_name(&definition.name, LangItemKind::PassingType) {
-                        self.closed_type_values
-                            .insert("passing".to_owned(), definition.values.clone());
-                    }
                 }
             }
         }
@@ -414,6 +412,40 @@ impl Analyzer {
                 Item::Function(function) => {
                     let mut function = function.clone();
                     let source_name = function.name.clone();
+                    let transparent_modifier = function.compile_groups.len() == 1
+                        && function.compile_groups[0].len() == 1
+                        && function.compile_groups[0][0].kind
+                            == CompileParamKind::ParameterModifier
+                        && function.groups.is_empty()
+                        && function.return_type.is_none()
+                        && function.effects == FunctionEffects::default()
+                        && function.where_predicates.is_empty()
+                        && matches!(
+                            function.body.as_ref(),
+                            Some(Expr::Name(name)) if name == &function.compile_groups[0][0].name
+                        );
+                    if transparent_modifier {
+                        self.transparent_parameter_modifiers
+                            .insert(source_name.clone());
+                        continue;
+                    }
+                    let modifier_name = source_name.rsplit("::").next();
+                    let parameter_modifier_intrinsic = origin.package == PackageId::CORE.0
+                        && matches!(modifier_name, Some("copy" | "move"))
+                        && function.compile_groups.as_slice().iter().flatten().count() == 1
+                        && function.compile_groups[0][0].kind == CompileParamKind::Parameters
+                        && function.groups.is_empty()
+                        && matches!(
+                            function.return_type.as_ref(),
+                            Some(Type::Named(name, arguments))
+                                if name == "parameters" && arguments.is_empty()
+                        )
+                        && function.effects == FunctionEffects::default()
+                        && function.where_predicates.is_empty()
+                        && function.body.is_none();
+                    if parameter_modifier_intrinsic {
+                        continue;
+                    }
                     for parameter in function.compile_groups.iter().flatten() {
                         let CompileParamKind::Named(compile_type) = &parameter.kind else {
                             continue;
@@ -1725,6 +1757,12 @@ impl Analyzer {
                         ));
                         false
                     }
+                    CompileParamKind::ParameterModifier => {
+                        self.error(format!(
+                            "parameter modifier `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
+                        ));
+                        false
+                    }
                     CompileParamKind::Region => {
                         self.error(format!(
                             "region parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
@@ -2847,6 +2885,9 @@ impl Analyzer {
                 }
                 CompileParamKind::ParameterPack => {
                     unreachable!("associated types cannot be parameter-group packs")
+                }
+                CompileParamKind::ParameterModifier => {
+                    unreachable!("associated types cannot be parameter modifiers")
                 }
                 CompileParamKind::EffectConstructor { .. } => {
                     self.error(format!(
@@ -4306,6 +4347,9 @@ impl Analyzer {
                 CompileParamKind::ParameterPack => {
                     unreachable!("associated types cannot be parameter-group packs")
                 }
+                CompileParamKind::ParameterModifier => {
+                    unreachable!("associated types cannot be parameter modifiers")
+                }
                 CompileParamKind::EffectConstructor { .. } => {
                     self.error(format!(
                         "effect associated constructor `{trait_name}.{name}` implementations are not supported yet"
@@ -4420,6 +4464,9 @@ impl Analyzer {
                 }
                 CompileParamKind::ParameterPack => {
                     unreachable!("associated types cannot be parameter-group packs")
+                }
+                CompileParamKind::ParameterModifier => {
+                    unreachable!("associated types cannot be parameter modifiers")
                 }
                 CompileParamKind::EffectConstructor { .. } => {
                     self.error(format!(
@@ -5258,6 +5305,7 @@ impl Analyzer {
                     CompileParamKind::Effect => EFFECT_UNSAFE_MARKER.to_owned(),
                     CompileParamKind::Parameters => continue,
                     CompileParamKind::ParameterPack => continue,
+                    CompileParamKind::ParameterModifier => continue,
                     CompileParamKind::Region => continue,
                     CompileParamKind::USize => unreachable!("handled before marker selection"),
                     CompileParamKind::TypeConstructor { .. }

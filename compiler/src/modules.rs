@@ -341,6 +341,8 @@ const CORE_PRELUDE_EXPORTS: &[(&str, &str)] = &[
     ("Ptr", "core::memory::Ptr"),
     ("size_of", "core::memory::size_of"),
     ("align_of", "core::memory::align_of"),
+    ("copy", "core::qualifiers::copy"),
+    ("move", "core::qualifiers::move"),
 ];
 const CORE_ROOT_EXPORTS: &[(&str, &str)] = &[
     ("Never", "core::never::Never"),
@@ -404,7 +406,7 @@ const CORE_PRIMITIVE_EXPORTS: &[&str] = &[
     "bool", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
 ];
 const CORE_DOMAIN_EXPORTS: &[&str] = &["type", "region", "effect", "parameters"];
-const CORE_QUALIFIER_EXPORTS: &[&str] = &["access", "passing"];
+const CORE_QUALIFIER_EXPORTS: &[&str] = &["access", "copy", "move"];
 const CORE_BORROW_EXPORTS: &[&str] = &["borrow"];
 const CORE_MEMORY_EXPORTS: &[&str] = &["Array", "Ptr", "size_of", "align_of"];
 const CORE_CONTROL_EXPORTS: &[&str] = &[
@@ -521,7 +523,8 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("domains", "effect", "core::domains::effect"),
     ("domains", "parameters", "core::domains::parameters"),
     ("qualifiers", "access", "core::qualifiers::access"),
-    ("qualifiers", "passing", "core::qualifiers::passing"),
+    ("qualifiers", "copy", "core::qualifiers::copy"),
+    ("qualifiers", "move", "core::qualifiers::move"),
     ("borrow", "borrow", "core::borrow::borrow"),
     ("control", "do", "core::control::do"),
     ("control", "try", "core::control::try"),
@@ -3004,7 +3007,7 @@ impl Resolver {
             };
             if matches!(
                 name.as_str(),
-                "bool" | "access" | "passing" | "type" | "region" | "effect" | "parameters"
+                "bool" | "access" | "type" | "region" | "effect" | "parameters"
             ) {
                 continue;
             }
@@ -3666,6 +3669,7 @@ fn compile_parameter_names(
                     CompileParamKind::Type
                         | CompileParamKind::TypeConstructor { .. }
                         | CompileParamKind::EffectConstructor { .. }
+                        | CompileParamKind::ParameterModifier
                 )
             })
             .map(|parameter| parameter.name.clone()),
@@ -3676,17 +3680,7 @@ fn compile_parameter_names(
 fn compile_argument_name_is_builtin(name: &str) -> bool {
     matches!(
         name,
-        "i32"
-            | "i64"
-            | "u32"
-            | "u64"
-            | "bool"
-            | "shared"
-            | "mut"
-            | "auto"
-            | "copy"
-            | "move"
-            | "pure"
+        "i32" | "i64" | "u32" | "u64" | "bool" | "shared" | "mut" | "copy" | "move" | "pure"
     )
 }
 

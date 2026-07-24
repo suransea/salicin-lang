@@ -4,9 +4,8 @@ use crate::ast::{CompileParam, CompileParamKind, Type, USizeConst};
 
 pub(super) const ACCESS_SHARED_MARKER: &str = "$access$shared";
 pub(super) const ACCESS_MUT_MARKER: &str = "$access$mut";
-pub(super) const PASSING_AUTO_MARKER: &str = "$passing$auto";
-pub(super) const PASSING_COPY_MARKER: &str = "$passing$copy";
-pub(super) const PASSING_MOVE_MARKER: &str = "$passing$move";
+pub(super) const PARAMETER_MODIFIER_COPY_MARKER: &str = "$parameters$modifier$copy";
+pub(super) const PARAMETER_MODIFIER_MOVE_MARKER: &str = "$parameters$modifier$move";
 pub(super) const USIZE_VALUE_PREFIX: &str = "$usize$value$";
 pub(super) const EFFECT_PURE_MARKER: &str = "$effect$pure";
 pub(super) const EFFECT_UNSAFE_MARKER: &str = "$effect$unsafe";
@@ -19,9 +18,6 @@ pub(super) fn closed_value_marker(owner: &str, member: &str) -> String {
     match (owner, member) {
         ("access", "shared") => return ACCESS_SHARED_MARKER.to_owned(),
         ("access", "mut") => return ACCESS_MUT_MARKER.to_owned(),
-        ("passing", "auto") => return PASSING_AUTO_MARKER.to_owned(),
-        ("passing", "copy") => return PASSING_COPY_MARKER.to_owned(),
-        ("passing", "move") => return PASSING_MOVE_MARKER.to_owned(),
         _ => {}
     }
     format!(
@@ -34,9 +30,6 @@ pub(super) fn closed_value_from_marker(marker: &str) -> Option<(&str, &str)> {
     match marker {
         ACCESS_SHARED_MARKER => return Some(("access", "shared")),
         ACCESS_MUT_MARKER => return Some(("access", "mut")),
-        PASSING_AUTO_MARKER => return Some(("passing", "auto")),
-        PASSING_COPY_MARKER => return Some(("passing", "copy")),
-        PASSING_MOVE_MARKER => return Some(("passing", "move")),
         _ => {}
     }
     let encoded = marker.strip_prefix(CLOSED_VALUE_MARKER_PREFIX)?;
@@ -115,9 +108,8 @@ pub(super) fn is_compile_value_marker(name: &str) -> bool {
             name,
             ACCESS_SHARED_MARKER
                 | ACCESS_MUT_MARKER
-                | PASSING_AUTO_MARKER
-                | PASSING_COPY_MARKER
-                | PASSING_MOVE_MARKER
+                | PARAMETER_MODIFIER_COPY_MARKER
+                | PARAMETER_MODIFIER_MOVE_MARKER
                 | EFFECT_PURE_MARKER
                 | EFFECT_UNSAFE_MARKER
         )
@@ -342,6 +334,7 @@ pub(super) fn describe_compile_param_kind(kind: CompileParamKind) -> String {
         CompileParamKind::Effect => "`effect`".to_owned(),
         CompileParamKind::Parameters => "`parameters`".to_owned(),
         CompileParamKind::ParameterPack => "`parameters` pack".to_owned(),
+        CompileParamKind::ParameterModifier => "`(P: parameters): parameters`".to_owned(),
         CompileParamKind::TypeConstructor { parameter_count } => {
             format!(
                 "`({} type parameter{}): type`",
