@@ -13,6 +13,23 @@ pub(super) const EFFECT_UNSAFE_MARKER: &str = "$effect$unsafe";
 
 const EFFECT_ROW_MARKER_PREFIX: &str = "$effect$row$";
 const TYPE_CONSTRUCTOR_MARKER_PREFIX: &str = "$type$constructor$";
+const CLOSED_VALUE_MARKER_PREFIX: &str = "$closed$value$";
+
+pub(super) fn closed_value_marker(owner: &str, member: &str) -> String {
+    format!(
+        "{CLOSED_VALUE_MARKER_PREFIX}{}:{owner}{member}",
+        owner.len()
+    )
+}
+
+pub(super) fn closed_value_from_marker(marker: &str) -> Option<(&str, &str)> {
+    let encoded = marker.strip_prefix(CLOSED_VALUE_MARKER_PREFIX)?;
+    let (owner_len, value) = encoded.split_once(':')?;
+    let owner_len = owner_len.parse::<usize>().ok()?;
+    let owner = value.get(..owner_len)?;
+    let member = value.get(owner_len..)?;
+    Some((owner, member))
+}
 
 pub(super) fn usize_value_marker(value: u64) -> String {
     format!("{USIZE_VALUE_PREFIX}{value}")
@@ -77,6 +94,7 @@ pub(super) fn effect_row_from_source(source: &Type) -> Option<(bool, Option<Type
 pub(super) fn is_compile_value_marker(name: &str) -> bool {
     name.starts_with(EFFECT_ROW_MARKER_PREFIX)
         || name.starts_with(TYPE_CONSTRUCTOR_MARKER_PREFIX)
+        || name.starts_with(CLOSED_VALUE_MARKER_PREFIX)
         || matches!(
             name,
             ACCESS_SHARED_MARKER
@@ -324,6 +342,7 @@ pub(super) fn describe_compile_param_kind(kind: CompileParamKind) -> String {
                 if parameter_count == 1 { "" } else { "s" }
             )
         }
+        CompileParamKind::Named(name) => format!("`{name}`"),
     }
 }
 
@@ -333,7 +352,7 @@ pub(super) fn compile_parameter_kinds(
     groups
         .iter()
         .flatten()
-        .map(|parameter| (parameter.name.clone(), parameter.kind))
+        .map(|parameter| (parameter.name.clone(), parameter.kind.clone()))
         .collect()
 }
 

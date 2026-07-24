@@ -4,9 +4,9 @@ use crate::ast::{CallArg, CompileParam, CompileParamKind, Expr, Type, USizeConst
 use crate::core::LangItemKind;
 
 use super::compile_time::{
-    effect_row_from_marker, effect_row_source, source_effect_identity, type_constructor_marker,
-    usize_value_marker, ACCESS_MUT_MARKER, ACCESS_SHARED_MARKER, PASSING_AUTO_MARKER,
-    PASSING_COPY_MARKER, PASSING_MOVE_MARKER,
+    closed_value_from_marker, closed_value_marker, effect_row_from_marker, effect_row_source,
+    source_effect_identity, type_constructor_marker, usize_value_marker, ACCESS_MUT_MARKER,
+    ACCESS_SHARED_MARKER, PASSING_AUTO_MARKER, PASSING_COPY_MARKER, PASSING_MOVE_MARKER,
 };
 use super::effects::source_type_is_never;
 use super::flow::LowerCtx;
@@ -961,10 +961,11 @@ impl Analyzer {
             .flatten()
             .filter(|parameter| {
                 matches!(
-                    parameter.kind,
+                    &parameter.kind,
                     CompileParamKind::Type
                         | CompileParamKind::Access
                         | CompileParamKind::USize
+                        | CompileParamKind::Named(_)
                         | CompileParamKind::TypeConstructor { .. }
                 )
             })
@@ -1208,6 +1209,50 @@ impl Analyzer {
                             parameter.name
                         ));
                         return None;
+                    }
+                    CompileParamKind::Named(ref compile_type) => {
+                        let member = match &argument.value {
+                            Expr::Bool(value) => if *value { "true" } else { "false" }.to_owned(),
+                            Expr::Name(name) => {
+                                if let Some(Type::Named(marker, arguments)) =
+                                    context.type_substitutions.get(name)
+                                {
+                                    if arguments.is_empty()
+                                        && closed_value_from_marker(marker)
+                                            .is_some_and(|(owner, _)| owner == compile_type)
+                                    {
+                                        marker.clone()
+                                    } else {
+                                        name.clone()
+                                    }
+                                } else {
+                                    name.clone()
+                                }
+                            }
+                            _ => {
+                                self.error(format!(
+                                    "invalid `{compile_type}` argument for `{}` in `{owner}`; expected a closed value member",
+                                    parameter.name
+                                ));
+                                return None;
+                            }
+                        };
+                        if closed_value_from_marker(&member).is_some() {
+                            Type::Named(member, Vec::new())
+                        } else {
+                            let valid = self
+                                .closed_type_values
+                                .get(compile_type)
+                                .is_some_and(|members| members.contains(&member));
+                            if !valid {
+                                self.error(format!(
+                                    "invalid `{compile_type}` argument `{member}` for `{}` in `{owner}`",
+                                    parameter.name
+                                ));
+                                return None;
+                            }
+                            Type::Named(closed_value_marker(compile_type, &member), Vec::new())
+                        }
                     }
                 };
                 let ty = if matches!(parameter.kind, CompileParamKind::TypeConstructor { .. }) {

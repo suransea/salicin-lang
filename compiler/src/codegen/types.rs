@@ -6,10 +6,10 @@ use crate::ast::{
 use crate::core::LangItemKind;
 
 use super::compile_time::{
-    effect_identity_sources, effect_row_from_marker, effect_row_from_source, effect_row_source,
-    is_compile_value_marker, source_effect_identity, type_constructor_from_marker,
-    type_constructor_marker, usize_value_marker, ACCESS_MUT_MARKER, ACCESS_SHARED_MARKER,
-    PASSING_AUTO_MARKER, PASSING_COPY_MARKER, PASSING_MOVE_MARKER,
+    closed_value_from_marker, closed_value_marker, effect_identity_sources, effect_row_from_marker,
+    effect_row_from_source, effect_row_source, is_compile_value_marker, source_effect_identity,
+    type_constructor_from_marker, type_constructor_marker, usize_value_marker, ACCESS_MUT_MARKER,
+    ACCESS_SHARED_MARKER, PASSING_AUTO_MARKER, PASSING_COPY_MARKER, PASSING_MOVE_MARKER,
 };
 use super::flow::LowerCtx;
 use super::hir::{FunctionTy, Ty};
@@ -720,7 +720,7 @@ impl Analyzer {
         expression: &Expr,
         substitutions: &HashMap<String, Type>,
     ) -> Option<Type> {
-        match parameter.kind {
+        match parameter.kind.clone() {
             CompileParamKind::Type => self.probe_type_argument_source(expression, substitutions),
             CompileParamKind::USize => match expression {
                 Expr::Integer(value) => Some(Type::CompileUSize(u64::try_from(*value).ok()?)),
@@ -830,6 +830,46 @@ impl Analyzer {
             | CompileParamKind::Parameters
             | CompileParamKind::ParameterPack
             | CompileParamKind::EffectConstructor { .. } => None,
+            CompileParamKind::Named(compile_type) => match expression {
+                Expr::Bool(value)
+                    if self
+                        .closed_type_values
+                        .get(&compile_type)
+                        .is_some_and(|members| {
+                            members.contains(&if *value {
+                                "true".to_owned()
+                            } else {
+                                "false".to_owned()
+                            })
+                        }) =>
+                {
+                    Some(Type::Named(
+                        closed_value_marker(&compile_type, if *value { "true" } else { "false" }),
+                        Vec::new(),
+                    ))
+                }
+                Expr::Name(name)
+                    if self
+                        .closed_type_values
+                        .get(&compile_type)
+                        .is_some_and(|members| members.contains(name)) =>
+                {
+                    Some(Type::Named(
+                        closed_value_marker(&compile_type, name),
+                        Vec::new(),
+                    ))
+                }
+                Expr::Name(name) => substitutions.get(name).and_then(|value| {
+                    let Type::Named(marker, arguments) = value else {
+                        return None;
+                    };
+                    (arguments.is_empty()
+                        && closed_value_from_marker(marker)
+                            .is_some_and(|(owner, _)| owner == compile_type))
+                    .then(|| value.clone())
+                }),
+                _ => None,
+            },
         }
     }
 
@@ -838,7 +878,7 @@ impl Analyzer {
         parameter: &CompileParam,
         source: &Type,
     ) -> Option<Ty> {
-        match parameter.kind {
+        match parameter.kind.clone() {
             CompileParamKind::TypeConstructor { parameter_count } => {
                 let Type::Named(name, arguments) = source else {
                     return None;
@@ -853,7 +893,8 @@ impl Analyzer {
             CompileParamKind::Type
             | CompileParamKind::Access
             | CompileParamKind::Passing
-            | CompileParamKind::Effect => self.probe_source_ty(source),
+            | CompileParamKind::Effect
+            | CompileParamKind::Named(_) => self.probe_source_ty(source),
             CompileParamKind::USize => match source {
                 Type::CompileUSize(value) => Some(Ty::Struct(usize_value_marker(*value))),
                 _ => None,
@@ -1020,7 +1061,7 @@ impl Analyzer {
         context: &LowerCtx,
         unit_is_type: bool,
     ) -> bool {
-        match parameter.kind {
+        match parameter.kind.clone() {
             CompileParamKind::Type => {
                 (unit_is_type && matches!(expression, Expr::Unit))
                     || self.expression_is_explicit_type_argument(expression, context)
@@ -1047,6 +1088,34 @@ impl Analyzer {
             CompileParamKind::Parameters => false,
             CompileParamKind::ParameterPack => false,
             CompileParamKind::EffectConstructor { .. } => false,
+            CompileParamKind::Named(compile_type) => match expression {
+                Expr::Bool(value) => {
+                    self.closed_type_values
+                        .get(&compile_type)
+                        .is_some_and(|members| {
+                            members.contains(&if *value {
+                                "true".to_owned()
+                            } else {
+                                "false".to_owned()
+                            })
+                        })
+                }
+                Expr::Name(name) => {
+                    self.closed_type_values
+                        .get(&compile_type)
+                        .is_some_and(|members| members.contains(name))
+                        || context.type_substitutions.get(name).is_some_and(|value| {
+                            matches!(
+                                value,
+                                Type::Named(marker, arguments)
+                                    if arguments.is_empty()
+                                        && closed_value_from_marker(marker)
+                                            .is_some_and(|(owner, _)| owner == compile_type)
+                            )
+                        })
+                }
+                _ => false,
+            },
         }
     }
 

@@ -367,10 +367,9 @@ impl LangItemKind {
             Self::Option | Self::Result | Self::Never | Self::PartialOrdering => "enum",
             Self::Continuation | Self::EffectCallable => "struct",
             Self::UnsafeEffect | Self::ThrowsEffect => "effect",
-            Self::TypeDomain
-            | Self::RegionDomain
-            | Self::EffectDomain
-            | Self::ParametersDomain => "domain",
+            Self::TypeDomain | Self::RegionDomain | Self::EffectDomain | Self::ParametersDomain => {
+                "domain"
+            }
             Self::AccessType | Self::PassingType => "type form",
             Self::BorrowTypeForm
             | Self::ArrayTypeForm

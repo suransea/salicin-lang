@@ -260,7 +260,7 @@ pub enum CompileParamDefault {
     Region(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CompileParamKind {
     Type,
     USize,
@@ -278,6 +278,8 @@ pub enum CompileParamKind {
     EffectConstructor {
         parameter_count: usize,
     },
+    /// A value whose compile-time type is a source-declared closed type.
+    Named(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

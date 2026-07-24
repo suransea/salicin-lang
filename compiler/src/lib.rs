@@ -171,6 +171,20 @@ mod tests {
     }
 
     #[test]
+    fn closed_types_can_parameterize_compile_time_functions() {
+        let source = "let optimization = type { size, speed }\n\
+                      let select_bool(B: bool)(value: i32): i32 = { value }\n\
+                      let select_optimization(O: optimization)(value: i32): i32 = { value }\n\
+                      let main(): i32 = {\n\
+                        select_bool(true)(20) +\n\
+                          select_bool(false)(1) +\n\
+                          select_optimization(size)(1)\n\
+                      }\n";
+        compile_source(source)
+            .expect("bool and user-declared closed types should support compile-time values");
+    }
+
+    #[test]
     fn alloc_accessors_use_the_access_generic_entry_points() {
         let source = "let Box = std.boxed.Box\n\
                       let Vec = std.vec.Vec

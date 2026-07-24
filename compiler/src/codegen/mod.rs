@@ -136,6 +136,7 @@ struct Analyzer {
     generic_inherent_functions: HashMap<(String, String), String>,
     suppress_generic_inherent_instantiation: usize,
     traits: HashMap<String, TraitSchema>,
+    closed_type_values: HashMap<String, Vec<String>>,
     effects: HashSet<String>,
     effect_defs: HashMap<String, EffectDef>,
     trait_impl_headers: HashSet<TraitImplKey>,
@@ -211,6 +212,7 @@ impl Analyzer {
             generic_inherent_functions: HashMap::new(),
             suppress_generic_inherent_instantiation: 0,
             traits: HashMap::new(),
+            closed_type_values: HashMap::new(),
             effects: HashSet::new(),
             effect_defs: HashMap::new(),
             trait_impl_headers: HashSet::new(),
@@ -300,7 +302,7 @@ impl Analyzer {
             names
                 .entry(kind.source_name().to_owned())
                 .or_default()
-                .extend(namespaces.iter().copied());
+                .extend(namespaces.iter().cloned());
         }
         for reserved in [
             "raw_alloc",
@@ -372,7 +374,7 @@ impl Analyzer {
             };
             let namespace = top_level_namespace(item);
             let overloaded_function = matches!(item, Item::Function(_))
-                && function_counts.get(name).copied().unwrap_or_default() > 1;
+                && function_counts.get(name).cloned().unwrap_or_default() > 1;
             let occupied = names.get(name).cloned().unwrap_or_default();
             let duplicate = match namespace {
                 TopLevelNamespace::Function => {
@@ -589,7 +591,16 @@ impl Analyzer {
                         .insert(definition.name.clone(), definition.clone());
                 }
                 Item::Domain(_) => {}
-                Item::TypeForm(_) => {}
+                Item::TypeForm(definition) => {
+                    if !definition.values.is_empty() {
+                        self.closed_type_values
+                            .insert(definition.name.clone(), definition.values.clone());
+                        if self.is_lang_item_name(&definition.name, LangItemKind::Bool) {
+                            self.closed_type_values
+                                .insert("bool".to_owned(), definition.values.clone());
+                        }
+                    }
+                }
                 Item::TypeAlias(_) => {
                     unreachable!("type aliases are expanded before item collection")
                 }
@@ -1047,7 +1058,7 @@ impl Analyzer {
         }
         let operator_trait = BINARY_OPERATOR_TRAITS
             .iter()
-            .copied()
+            .cloned()
             .find(|candidate| definition.name == self.lang_item_name(candidate.lang_item));
         if let Some(operator_trait) = operator_trait {
             if !operator_trait_has_required_shape(operator_trait.lang_item, &definition) {
@@ -1072,7 +1083,7 @@ impl Analyzer {
         }
         let unary_operator = UNARY_OPERATOR_TRAITS
             .iter()
-            .copied()
+            .cloned()
             .find(|candidate| definition.name == self.lang_item_name(candidate.lang_item));
         if let Some(operator) = unary_operator {
             if !unary_operator_trait_has_required_shape(operator.lang_item, &definition) {
@@ -1107,7 +1118,7 @@ impl Analyzer {
             self.error(format!(
                 "trait `{}` self kind must be `type`, a type-constructor kind, or `effect`, found {}",
                 definition.name,
-                describe_compile_param_kind(definition.self_parameter.kind)
+                describe_compile_param_kind(definition.self_parameter.kind.clone())
             ));
             valid = false;
         }
@@ -1298,14 +1309,14 @@ impl Analyzer {
             let mut compile_parameter_kinds = schema
                 .compile_parameters
                 .iter()
-                .map(|parameter| (parameter.name.clone(), parameter.kind))
+                .map(|parameter| (parameter.name.clone(), parameter.kind.clone()))
                 .collect::<HashMap<_, _>>();
-            compile_parameter_kinds.insert("Self".to_owned(), schema.self_parameter.kind);
+            compile_parameter_kinds.insert("Self".to_owned(), schema.self_parameter.kind.clone());
             compile_parameter_kinds.extend(
                 schema
                     .associated_types
                     .iter()
-                    .map(|name| (name.clone(), schema.associated_type_kinds[name])),
+                    .map(|name| (name.clone(), schema.associated_type_kinds[name].clone())),
             );
             let mut valid = schema.valid;
             valid &= self.validate_where_predicate_shapes(
@@ -1321,7 +1332,7 @@ impl Analyzer {
                         .compile_groups
                         .iter()
                         .flatten()
-                        .map(|parameter| (parameter.name.clone(), parameter.kind)),
+                        .map(|parameter| (parameter.name.clone(), parameter.kind.clone())),
                 );
                 for parameter in method.groups.iter().flatten() {
                     if let Type::Named(wrapper, schemas) = &parameter.ty {
@@ -1351,7 +1362,7 @@ impl Analyzer {
                                 let expected = schema
                                     .associated_parameter_counts
                                     .get(name)
-                                    .copied()
+                                    .cloned()
                                     .unwrap_or(0);
                                 if arguments.len() != expected {
                                     self.error(format!(
@@ -1414,12 +1425,12 @@ impl Analyzer {
         let mut compile_parameters = schema.compile_parameters.clone();
         compile_parameters.push(CompileParam {
             name: self_parameter.clone(),
-            kind: schema.self_parameter.kind,
+            kind: schema.self_parameter.kind.clone(),
             default: None,
         });
         compile_parameters.extend(schema.associated_types.iter().map(|name| CompileParam {
             name: name.clone(),
-            kind: schema.associated_type_kinds[name],
+            kind: schema.associated_type_kinds[name].clone(),
             default: None,
         }));
         let trait_arguments = schema
@@ -1613,7 +1624,7 @@ impl Analyzer {
             Type::Named(name, arguments) if compile_parameters.contains_key(name) => {
                 let kind = compile_parameters
                     .get(name)
-                    .copied()
+                    .cloned()
                     .expect("checked compile parameter exists");
                 match kind {
                     CompileParamKind::Type => {
@@ -1690,6 +1701,12 @@ impl Analyzer {
                     CompileParamKind::Region => {
                         self.error(format!(
                             "region parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
+                        ));
+                        false
+                    }
+                    CompileParamKind::Named(compile_type) => {
+                        self.error(format!(
+                            "`{compile_type}` value parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
                         ));
                         false
                     }
@@ -1775,7 +1792,7 @@ impl Analyzer {
                 self.validate_trait_source_type(trait_name, member_name, error, compile_parameters);
         }
         for parameter in &effects.parameters {
-            match compile_parameters.get(parameter).copied() {
+            match compile_parameters.get(parameter).cloned() {
                 Some(CompileParamKind::Effect) => {}
                 Some(kind) => {
                     self.error(format!(
@@ -1822,7 +1839,7 @@ impl Analyzer {
                         compile_parameters,
                     );
                 }
-                if let Some(kind) = compile_parameters.get(name).copied() {
+                if let Some(kind) = compile_parameters.get(name).cloned() {
                     return match kind {
                         CompileParamKind::EffectConstructor { parameter_count } => {
                             if arguments.len() == parameter_count {
@@ -1855,7 +1872,7 @@ impl Analyzer {
             _ => return true,
         };
 
-        if let Some(kind) = compile_parameters.get(name).copied() {
+        if let Some(kind) = compile_parameters.get(name).cloned() {
             match kind {
                 CompileParamKind::EffectConstructor { parameter_count } => {
                     let mut valid = true;
@@ -2777,7 +2794,7 @@ impl Analyzer {
 
         let mut normalized_sources = HashMap::new();
         for associated in &schema.associated_types {
-            match schema.associated_type_kinds[associated] {
+            match schema.associated_type_kinds[associated].clone() {
                 CompileParamKind::Type => {
                     if self
                         .normalize_trait_impl_associated_type(
@@ -2815,7 +2832,8 @@ impl Analyzer {
                 | CompileParamKind::USize
                 | CompileParamKind::Access
                 | CompileParamKind::Passing
-                | CompileParamKind::Effect => {
+                | CompileParamKind::Effect
+                | CompileParamKind::Named(_) => {
                     unreachable!("associated types only store type kinds")
                 }
             }
@@ -2837,7 +2855,7 @@ impl Analyzer {
         }
         for associated in &schema.associated_types {
             let CompileParamKind::TypeConstructor { parameter_count } =
-                schema.associated_type_kinds[associated]
+                schema.associated_type_kinds[associated].clone()
             else {
                 continue;
             };
@@ -3149,7 +3167,7 @@ impl Analyzer {
                 self.error(format!(
                     "constructor trait implementation argument `{}` for `{trait_name}` has unsupported compile-time kind {}",
                     parameter.name,
-                    describe_compile_param_kind(parameter.kind)
+                    describe_compile_param_kind(parameter.kind.clone())
                 ));
                 return;
             }
@@ -3418,7 +3436,7 @@ impl Analyzer {
                     let overloaded = self
                         .inherent_overload_counts
                         .get(&overload_key)
-                        .copied()
+                        .cloned()
                         .unwrap_or_default()
                         > 1;
                     if is_method
@@ -4005,7 +4023,7 @@ impl Analyzer {
                 self.error(format!(
                     "constructor trait implementation argument `{}` for `{trait_name}` has unsupported compile-time kind {}",
                     parameter.name,
-                    describe_compile_param_kind(parameter.kind)
+                    describe_compile_param_kind(parameter.kind.clone())
                 ));
                 return;
             }
@@ -4251,7 +4269,7 @@ impl Analyzer {
             }
         }
         for name in &schema.associated_types {
-            match schema.associated_type_kinds[name] {
+            match schema.associated_type_kinds[name].clone() {
                 CompileParamKind::Type | CompileParamKind::TypeConstructor { .. } => {}
                 CompileParamKind::Parameters => {
                     self.error(format!(
@@ -4274,7 +4292,8 @@ impl Analyzer {
                 | CompileParamKind::USize
                 | CompileParamKind::Access
                 | CompileParamKind::Passing
-                | CompileParamKind::Effect => {
+                | CompileParamKind::Effect
+                | CompileParamKind::Named(_) => {
                     unreachable!("associated types only store type kinds")
                 }
             }
@@ -4339,7 +4358,7 @@ impl Analyzer {
         }
         let mut normalized = HashMap::new();
         for associated in &schema.associated_types {
-            match schema.associated_type_kinds[associated] {
+            match schema.associated_type_kinds[associated].clone() {
                 CompileParamKind::Type => {
                     if let Some(source) = self.normalize_trait_impl_associated_type(
                         trait_name,
@@ -4389,7 +4408,8 @@ impl Analyzer {
                 | CompileParamKind::USize
                 | CompileParamKind::Access
                 | CompileParamKind::Passing
-                | CompileParamKind::Effect => {
+                | CompileParamKind::Effect
+                | CompileParamKind::Named(_) => {
                     unreachable!("associated types only store type kinds")
                 }
             }
@@ -4787,7 +4807,7 @@ impl Analyzer {
             let overloaded = self
                 .inherent_overload_counts
                 .get(&overload_key)
-                .copied()
+                .cloned()
                 .unwrap_or_default()
                 > 1;
             if overloaded {
@@ -4865,7 +4885,7 @@ impl Analyzer {
             let overloaded = self
                 .inherent_overload_counts
                 .get(&overload_key)
-                .copied()
+                .cloned()
                 .unwrap_or_default()
                 > 1;
             if self.generic_inherent_functions.contains_key(&key) && !overloaded {
@@ -4993,7 +5013,7 @@ impl Analyzer {
             let count = self
                 .inherent_overload_counts
                 .get(&(target_template.to_owned(), member.clone(), *is_method))
-                .copied()
+                .cloned()
                 .unwrap_or(1);
             self.inherent_overload_counts
                 .insert((canonical.to_owned(), member.clone(), *is_method), count);
@@ -5030,7 +5050,7 @@ impl Analyzer {
             if self
                 .inherent_overload_counts
                 .get(&(canonical.to_owned(), member.clone(), is_method))
-                .copied()
+                .cloned()
                 .unwrap_or_default()
                 > 1
             {
@@ -5204,7 +5224,7 @@ impl Analyzer {
                     substitutions.insert(parameter.name.clone(), Type::CompileUSize(0));
                     continue;
                 }
-                let marker = match parameter.kind {
+                let marker = match parameter.kind.clone() {
                     CompileParamKind::Type => {
                         let marker =
                             generic_parameter_marker(&template_name, index, &parameter.name);
@@ -5225,6 +5245,20 @@ impl Analyzer {
                     | CompileParamKind::EffectConstructor { .. } => unreachable!(
                         "constructor parameters are validated through concrete instances"
                     ),
+                    CompileParamKind::Named(compile_type) => {
+                        let Some(member) = self
+                            .closed_type_values
+                            .get(&compile_type)
+                            .and_then(|members| members.first())
+                        else {
+                            self.error(format!(
+                                "compile-time parameter `{}` uses unknown or empty closed type `{compile_type}`",
+                                parameter.name
+                            ));
+                            continue;
+                        };
+                        closed_value_marker(&compile_type, member)
+                    }
                 };
                 if substitutions
                     .insert(parameter.name.clone(), Type::Named(marker, Vec::new()))
@@ -8418,7 +8452,7 @@ impl Analyzer {
                                 let mode = modes
                                     .as_ref()
                                     .and_then(|modes| modes.get(index))
-                                    .copied()
+                                    .cloned()
                                     .unwrap_or(PassMode::Inferred);
                                 let capture = match mode {
                                     PassMode::Borrow => ClosureCaptureMode::Shared,
@@ -10085,7 +10119,7 @@ impl Analyzer {
             if candidate != name {
                 continue;
             }
-            let arguments = groups.get(*group_index).copied()?;
+            let arguments = groups.get(*group_index).cloned()?;
             let parameter = function.groups.get(*group_index)?.get(*parameter_index)?;
             let argument_index = if arguments.iter().all(|argument| argument.label.is_none()) {
                 *parameter_index

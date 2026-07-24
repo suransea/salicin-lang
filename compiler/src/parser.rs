@@ -1152,16 +1152,24 @@ impl Parser {
     }
 
     fn compile_parameter_kind_starts_at(&self, offset: usize) -> bool {
+        let conventionally_compile_time = matches!(
+            self.tokens
+                .get(self.index + offset.saturating_sub(2))
+                .map(|token| &token.kind),
+            Some(TokenKind::Ident(name))
+                if name.chars().next().is_some_and(char::is_uppercase)
+        );
         self.at_offset(offset, &TokenKind::Type)
             || self.at_offset(offset, &TokenKind::Region)
             || self.constructor_compile_parameter_kind_starts_at(offset)
             || matches!(
                 self.tokens.get(self.index + offset).map(|token| &token.kind),
                 Some(TokenKind::Ident(name))
-                    if matches!(
-                        name.as_str(),
-                        "usize" | "access" | "passing" | "effect" | "parameters"
-                    )
+                    if conventionally_compile_time
+                        || matches!(
+                            name.as_str(),
+                            "usize" | "access" | "passing" | "effect" | "parameters"
+                        )
             )
     }
 
@@ -1265,7 +1273,8 @@ impl Parser {
                 "passing" => Some(CompileParamKind::Passing),
                 "effect" => Some(CompileParamKind::Effect),
                 "parameters" => Some(CompileParamKind::Parameters),
-                _ => None,
+                "region" => Some(CompileParamKind::Region),
+                _ => Some(CompileParamKind::Named(kind)),
             };
             if let Some(parameter_kind) = parameter_kind {
                 self.advance();
@@ -1408,7 +1417,7 @@ impl Parser {
             };
             self.expect(&TokenKind::Colon, "`:` after compile-time parameter name")?;
             let kind = self.compile_parameter_kind(&name_token, &name, region_name)?;
-            let default = self.compile_parameter_default(kind)?;
+            let default = self.compile_parameter_default(kind.clone())?;
             params.push(CompileParam {
                 name,
                 kind,
@@ -1484,6 +1493,9 @@ impl Parser {
                     "defaults for type and constructor parameters are not supported yet",
                 ));
             }
+            CompileParamKind::Named(_) => CompileParamDefault::Name(
+                self.compile_parameter_default_name("a compile-time value default")?,
+            ),
         };
         Ok(Some(default))
     }
@@ -6998,6 +7010,26 @@ mod tests {
                 access: Some(ref access),
                 ..
             } if access == "A"
+        ));
+    }
+
+    #[test]
+    fn parses_closed_types_as_compile_parameter_types() {
+        let program = parse(
+            "let optimization = type { size, speed }\n\
+             let select(B: bool, O: optimization)(value: i32): i32 = { value }\n",
+        )
+        .unwrap();
+        let Item::Function(function) = &program.items[1] else {
+            panic!("expected a function");
+        };
+        assert!(matches!(
+            &function.compile_groups[0][0].kind,
+            CompileParamKind::Named(name) if name == "bool"
+        ));
+        assert!(matches!(
+            &function.compile_groups[0][1].kind,
+            CompileParamKind::Named(name) if name == "optimization"
         ));
     }
 
