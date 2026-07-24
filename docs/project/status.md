@@ -76,9 +76,9 @@ materialized automatically. Earlier `copy` and `move` arguments across the compl
 as typed locals in source order before that action, preserving side effects and ownership. Earlier
 borrowed arguments remain pending loan-aware staging; conditional values, cross-function transport,
 and fully general erased action construction remain the next implementation stages.
-Effectful frames that retain and mutate nominal local state across an operation are likewise not yet
-general M0 behavior; current complete programs should place the effect at a source-level validation
-boundary or use one of the explicitly covered handler forms.
+Effectful frames that retain and mutate arbitrary user nominal local state across an operation are
+not yet general M0 behavior. Compiler-generated `for` iterator state is covered separately by
+owned continuation transport.
 
 Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
 `continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs
@@ -87,9 +87,9 @@ all lexical cleanup required when leaving nested scopes before starting the next
 `std.iter.IntoIterator` and `std.iter.Iterator` identities. The iterable is evaluated once,
 `into_iter` consumes it, and each iteration mutably borrows the iterator for `next`; unrelated
 same-named methods cannot intercept the lowering. Break, continue, ownership flow, and cleanup reuse
-the ordinary loop machinery. A `for` body that performs an algebraic operation, including standard
-`Throws`, is not yet supported through handler CPS; keep the effectful operation outside `for` until
-that M0 interaction is implemented.
+the ordinary loop machinery. Effectful bodies, including standard `Throws`, move the iterator
+through one-shot continuation and recursive loop-frame environments while retaining its mutability.
+Both resumption and abandonment run iterator cleanup exactly once.
 `if let pattern = value { ... }` supports conditional enum destructuring with optional `else` or
 `else if`. It evaluates the scrutinee once and lowers through ordinary `match`, so successful-arm
 bindings stay scoped to that arm and share the same ownership and cleanup analysis.

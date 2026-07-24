@@ -7546,6 +7546,11 @@ impl Analyzer {
         if !self.scan_simple_closure_captures(body, &mut bound, outer, &mut capture_uses) {
             return error_expr();
         }
+        for capture in &mut capture_uses {
+            if capture.name.contains("$for$iterator$") {
+                capture.mode = ClosureCaptureMode::Move;
+            }
+        }
         let mut reconstructed_inspections = Vec::new();
         if deferred_handler_continuation {
             let mut retained_captures = Vec::with_capacity(capture_uses.len());
@@ -7753,10 +7758,12 @@ impl Analyzer {
                 }
                 ClosureCaptureMode::Move => {
                     let value = self.access_place(place.clone(), AccessKind::Move, outer);
+                    let keeps_mutability =
+                        deferred_handler_continuation || name.contains("$for$iterator$");
                     (
                         PassMode::Move,
                         LocalCapability::Owned,
-                        false,
+                        keeps_mutability && local.mutable,
                         Some(Box::new(value)),
                     )
                 }

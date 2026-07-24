@@ -428,6 +428,7 @@ pub(super) fn collect_internal_recursion_tokens(expression: &Expr, tokens: &mut 
         Expr::Block(statements, tail) => {
             for statement in statements {
                 match statement {
+                    Stmt::Let(binding) if binding.name.starts_with("$handler$loop$frame$") => {}
                     Stmt::Let(binding) => collect_internal_recursion_tokens(&binding.value, tokens),
                     Stmt::Expr(expression) => collect_internal_recursion_tokens(expression, tokens),
                 }

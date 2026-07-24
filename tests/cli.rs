@@ -153,6 +153,18 @@ fn ledger_example_exercises_the_m0_core_as_a_complete_program() {
 }
 
 #[test]
+fn effectful_for_preserves_iterator_state_and_cleanup() {
+    for fixture_name in ["for_throws.sc", "for_throws_cleanup.sc"] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", fixture_name))
+            .output()
+            .expect("run effectful for fixture");
+        assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+    }
+}
+
+#[test]
 fn effect_generics_select_pure_and_unsafe_instances() {
     let output = salic()
         .arg("run")

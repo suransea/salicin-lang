@@ -6,6 +6,12 @@ subset.
 
 ## Unreleased
 
+- Allowed `for` bodies to perform handled algebraic operations, including standard `Throws`.
+  Compiler-generated iterator state now moves through one-shot continuation and recursive loop-frame
+  environments while retaining mutability; resumption and abandonment both run iterator cleanup
+  exactly once.
+- Scoped generated recursion tokens to their owning closure, preventing an enclosing continuation
+  from claiming an internal loop frame's recursive backedge and imposing the wrong parameters.
 - Added source-backed `core.flow.Raise` and `core.flow.Unwrap` lang-item traits: postfix `value!`
   turns stored `Result` errors into `Throws`, while `value!!` force-extracts or aborts. `Option`
   and `Result` implement `Unwrap`, `Result` implements `Raise`, and user containers may implement
