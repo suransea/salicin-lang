@@ -925,36 +925,41 @@ pub struct CoreBundle {
 impl CoreBundle {
     /// Load the compiler-embedded `core` declarations for `edition`.
     pub fn for_edition(edition: Edition) -> Result<Self, CoreBundleError> {
+        Self::cached_for_edition(edition).cloned()
+    }
+
+    pub(crate) fn cached_for_edition(edition: Edition) -> Result<&'static Self, CoreBundleError> {
         match edition {
-            Edition::Edition2026 => EDITION_2026_BUNDLE
-                .get_or_init(|| {
-                    Self::from_modules(
-                        edition,
-                        &[
-                            ("lib", EDITION_2026_LIB),
-                            ("prelude", EDITION_2026_PRELUDE),
-                            ("never", EDITION_2026_NEVER),
-                            ("marker", EDITION_2026_MARKER),
-                            ("primitives", EDITION_2026_PRIMITIVES),
-                            ("option", EDITION_2026_OPTION),
-                            ("result", EDITION_2026_RESULT),
-                            ("cmp", EDITION_2026_CMP),
-                            ("flow", EDITION_2026_FLOW),
-                            ("ops", EDITION_2026_OPS),
-                            ("ops/arith", EDITION_2026_OPS_ARITH),
-                            ("ops/bit", EDITION_2026_OPS_BIT),
-                            ("ops/assign", EDITION_2026_OPS_ASSIGN),
-                            ("effect", EDITION_2026_EFFECT),
-                            ("effect/handler", EDITION_2026_EFFECT_HANDLER),
-                            ("domains", EDITION_2026_DOMAINS),
-                            ("control", EDITION_2026_CONTROL),
-                            ("iter", EDITION_2026_ITER),
-                            ("algebra", EDITION_2026_ALGEBRA),
-                            ("functional", EDITION_2026_FUNCTIONAL),
-                        ],
-                    )
-                })
-                .clone(),
+            Edition::Edition2026 => match EDITION_2026_BUNDLE.get_or_init(|| {
+                Self::from_modules(
+                    edition,
+                    &[
+                        ("lib", EDITION_2026_LIB),
+                        ("prelude", EDITION_2026_PRELUDE),
+                        ("never", EDITION_2026_NEVER),
+                        ("marker", EDITION_2026_MARKER),
+                        ("primitives", EDITION_2026_PRIMITIVES),
+                        ("option", EDITION_2026_OPTION),
+                        ("result", EDITION_2026_RESULT),
+                        ("cmp", EDITION_2026_CMP),
+                        ("flow", EDITION_2026_FLOW),
+                        ("ops", EDITION_2026_OPS),
+                        ("ops/arith", EDITION_2026_OPS_ARITH),
+                        ("ops/bit", EDITION_2026_OPS_BIT),
+                        ("ops/assign", EDITION_2026_OPS_ASSIGN),
+                        ("effect", EDITION_2026_EFFECT),
+                        ("effect/handler", EDITION_2026_EFFECT_HANDLER),
+                        ("domains", EDITION_2026_DOMAINS),
+                        ("control", EDITION_2026_CONTROL),
+                        ("iter", EDITION_2026_ITER),
+                        ("algebra", EDITION_2026_ALGEBRA),
+                        ("functional", EDITION_2026_FUNCTIONAL),
+                    ],
+                )
+            }) {
+                Ok(bundle) => Ok(bundle),
+                Err(error) => Err(error.clone()),
+            },
         }
     }
 

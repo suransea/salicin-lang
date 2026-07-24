@@ -167,10 +167,10 @@ struct Analyzer {
 
 impl Analyzer {
     fn try_new(program: &Program) -> Result<Self, String> {
-        let core =
-            CoreBundle::for_edition(Edition::Edition2026).map_err(|error| error.to_string())?;
-        let alloc =
-            AllocBundle::for_edition(Edition::Edition2026).map_err(|error| error.to_string())?;
+        let core = CoreBundle::cached_for_edition(Edition::Edition2026)
+            .map_err(|error| error.to_string())?;
+        let alloc = AllocBundle::cached_for_edition(Edition::Edition2026)
+            .map_err(|error| error.to_string())?;
         let mut analyzer = Self {
             lang_items: core.lang_items().clone(),
             functions: HashMap::new(),

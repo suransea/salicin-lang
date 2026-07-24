@@ -25,9 +25,14 @@ pub struct AllocBundle {
 
 impl AllocBundle {
     pub fn for_edition(edition: Edition) -> Result<Self, AllocBundleError> {
-        EDITION_2026_BUNDLE
-            .get_or_init(|| Self::load(edition))
-            .clone()
+        Self::cached_for_edition(edition).cloned()
+    }
+
+    pub(crate) fn cached_for_edition(edition: Edition) -> Result<&'static Self, AllocBundleError> {
+        match EDITION_2026_BUNDLE.get_or_init(|| Self::load(edition)) {
+            Ok(bundle) => Ok(bundle),
+            Err(error) => Err(error.clone()),
+        }
     }
 
     fn load(edition: Edition) -> Result<Self, AllocBundleError> {
