@@ -2185,13 +2185,10 @@ impl Analyzer {
                 )
             }
             Expr::Try(value) => {
-                let next = continuation.clone();
-                self.transform_handler_expr(
-                    *value,
-                    handler,
-                    resume,
-                    Rc::new(move |analyzer, value| next(analyzer, Expr::Try(Box::new(value)))),
-                )
+                // The fallible boundary must enclose the complete CPS-transformed computation.
+                let identity: SourceContinuation = Rc::new(|_, value| Ok(value));
+                let transformed = self.transform_handler_expr(*value, handler, resume, identity)?;
+                continuation(self, Expr::Try(Box::new(transformed)))
             }
             Expr::Throw(value) => {
                 if standard_throws_error_source(
@@ -3768,14 +3765,7 @@ impl Analyzer {
                     && source_borrow_channel_mode(parameter.mode, &parameter.ty).is_some()
             })
             .collect::<Vec<_>>();
-        let has_only_handled_effect = !function.effects.unsafe_effect
-            && function.effects.throws.is_none()
-            && function.effects.parameters.is_empty()
-            && function
-                .effects
-                .custom
-                .iter()
-                .all(|effect| source_effect_identity(effect) == handler.identity);
+        let has_concrete_effect_row = function.effects.parameters.is_empty();
         let borrow_places = borrow_arguments
             .iter()
             .filter_map(|(_, (parameter, argument))| {
@@ -3808,9 +3798,23 @@ impl Analyzer {
             return Some(Err(()));
         }
         let borrow_places_are_compatible = overlapping_mutable_borrows == Some(false);
+        if !has_concrete_effect_row && !borrow_arguments.is_empty() && borrow_places_are_compatible
+        {
+            let display_name = self.diagnostic_function_name(&name);
+            self.error(format!(
+                "effectful call `{display_name}` cannot share borrowed arguments through unresolved residual effect parameter{} `{}`",
+                if function.effects.parameters.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                },
+                function.effects.parameters.join(", ")
+            ));
+            return Some(Err(()));
+        }
         let can_fuse_borrow_frame = !borrow_arguments.is_empty()
             && borrow_places_are_compatible
-            && has_only_handled_effect
+            && has_concrete_effect_row
             && !handler_expression_calls_named_function(&body, &name);
         if can_fuse_borrow_frame {
             let mut parameter_bindings = Vec::new();

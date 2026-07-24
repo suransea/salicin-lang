@@ -89,18 +89,21 @@ nominal root required after an operation moves into the resumable frame and reta
 mutability. Projected assignments capture their whole mutable root, so repeated direct operations
 can retain and update user-defined state; resumption and abandonment both preserve exactly-once
 cleanup. Resumable loop backedges carry user-owned state alongside compiler-generated iterator
-state. A known non-recursive effectful function with no residual effect is fused into the caller's
-handler frame when every borrowed argument is a root local, stable field path, or eligible indexed
-path and every pair involving a mutable borrow is statically disjoint. Distinct fields and distinct
-constant indexes of one owned root are accepted; identical and parent/child paths are rejected, and
+state. A known non-recursive effectful function with a concrete effect row is fused into the
+caller's handler frame when every borrowed argument is a root local, stable field path, or eligible
+indexed path and every pair involving a mutable borrow is statically disjoint. Concrete residual
+`Throws(E)`, `Unsafe`, and nominal effects remain on the fused computation while the selected
+handler identity is removed. Standard `try` stays around the complete transformed computation, so
+its physical `Result(E)(T)` boundary survives suspension. Distinct fields and distinct constant
+indexes of one owned root are accepted; identical and parent/child paths are rejected, and
 same-root dynamic indexes remain conservatively overlapping. Eligible dynamic indexed paths still
-require distinct roots, a stable root/field array base, and a `Copy` element. Their `i32` indexes are
-materialized once in source argument order, then carried through resumption while the element
+require distinct roots, a stable root/field array base, and a `Copy` element. Their `i32` indexes
+are materialized once in source argument order, then carried through resumption while the element
 address is rebuilt from the frame-owned root with a bounds check. Value arguments remain
 materialized in source order, and each borrowed place remains available to both the inlined body
-and following continuation. Recursive calls, non-`Copy` or nested dynamic indexed places, and calls
-with residual effects still use the separate frame ABI and do not yet share an owned root with
-their caller continuation.
+and following continuation. Recursive calls and non-`Copy` or nested dynamic indexed places still
+use the separate frame ABI. An unresolved effect-row parameter is explicitly rejected if that path
+would need to share borrowed arguments with the caller continuation.
 
 Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
 `continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs
@@ -179,9 +182,10 @@ checked for parameter modes, result types, arity, visibility, and missing row re
 Operations share the language's name-only overload rule: runtime label shapes must differ, calls
 let  = named arguments, and repeated handler labels select signatures through clause parameter names.
 Handling removes only the selected nominal identity: operation gates and generated resumable frames
-retain residual `Unsafe`, `Throws(E)`, and other nominal requirements. Concrete residual
-`Throws(E)` rows now compose through nested handlers using the ordinary standard effect path; fully
-effect-parameterized residual rows remain implementation work.
+retain residual `Unsafe`, `Throws(E)`, and other nominal requirements. Concrete residual rows now
+share owned roots through nested handlers in either ordering, including physical standard
+`Result(E)(T)` boundaries and exactly-once cleanup on failure or abandonment. Fully
+effect-parameterized rows remain outside shared-root fusion until they are concretely instantiated.
 Derived handlers support typed one-shot resumption, abandonment, `done:` answer conversion, named-call
 propagation, direct recursion, and resumable loop backedges. Cross-function abandonment and
 computation after `resume` use explicit CPS continuation closures. Direct and mutually recursive
@@ -254,7 +258,8 @@ Fixed ordinary `Throws(E)` direct calls, contextual `try` handling, `do` return-
 forwarding, mixed `Throws(E)`/`Unsafe` rows, and concrete residual-handler composition are
 implemented for the public direct, explicitly instantiated generic, mixed-effect, and residual
 fixtures.
-Effect-parameterized residual-handler lowering still needs full standard-row coverage. Ordinary
+Open effect-parameter residual-handler lowering remains explicitly outside shared-root fusion.
+Ordinary
 `Option` and `Result` functions require
 explicit variant construction; the removed `Try`, `FromResidual`, `FromError`, and `ControlFlow`
 language protocols no

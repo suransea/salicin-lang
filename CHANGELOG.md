@@ -38,6 +38,11 @@ subset.
   overlapping-borrow diagnostic. Value arguments remain materialized in source order, while each
   borrowed place is shared with the following continuation instead of being borrowed and moved by
   competing frames.
+- Extended borrowed-root frame fusion across concrete residual `Throws(E)`, `Unsafe`, and nominal
+  effect rows. Standard `try` now encloses the complete CPS-transformed computation, preserving its
+  physical `Result(E)(T)` boundary. Native regressions cover both handler orderings, success,
+  failure, resumption, abandonment, and exactly-once root cleanup; unresolved effect-row parameters
+  are rejected before entering the shared-root path.
 - Restored `examples/ledger.sc` to effectful state processing: its `for` loop now consumes
   non-`Copy` transactions and performs overdraft operations while retaining both iterator and
   mutable ledger state.

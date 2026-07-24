@@ -346,6 +346,23 @@ fn disjoint_owned_projections_cross_repeated_effectful_calls() {
 }
 
 #[test]
+fn owned_roots_cross_concrete_residual_effect_rows() {
+    for (name, output) in native_fixture_outputs_in_parallel(&[
+        "algebraic_effect_owned_residual_throws_outer.sc",
+        "algebraic_effect_owned_residual_throws_inner.sc",
+        "algebraic_effect_owned_residual_nominal.sc",
+        "algebraic_effect_owned_residual_unsafe.sc",
+    ]) {
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn indexed_nominal_state_crosses_effectful_calls_once() {
     let output = salic()
         .arg("run")
