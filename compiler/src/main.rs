@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, ExitStatus};
@@ -14,7 +15,7 @@ use salicin_lang::manifest::{
 };
 use salicin_lang::modules::{is_valid_module_segment, PackageId, SourcePackage, SourceUnit};
 use salicin_lang::{
-    check_library_source, check_library_source_packages, check_source_packages,
+    check_library_source, check_library_source_packages, check_source, check_source_packages,
     compile_library_source, compile_library_source_packages, compile_source,
     compile_source_packages,
 };
@@ -796,12 +797,13 @@ fn compile_target(target: &ResolvedTarget) -> Result<String, ()> {
 }
 
 fn check_file(source: &Path, library: bool) -> Result<(), ()> {
-    if !library {
-        return compile_file(source, false).map(|_| ());
-    }
-
     let text = read_source(source)?;
-    report_compilation(source, check_library_source(&text))
+    let result = if library {
+        check_library_source(&text)
+    } else {
+        check_source(&text)
+    };
+    report_compilation(source, result)
 }
 
 fn check_target(target: &ResolvedTarget) -> Result<(), ()> {
@@ -959,15 +961,15 @@ fn invoke_clang(ir: &Path, runtime: &Path, output: &Path) -> Result<(), String> 
         OsStr::new("clang")
     };
 
+    let runtime_object = cached_allocator_runtime(compiler, runtime)?;
     let status = Command::new(compiler)
         .arg("-Wno-override-module")
         .arg("-x")
         .arg("ir")
         .arg(ir)
         .arg("-x")
-        .arg("c")
-        .arg("-std=c11")
-        .arg(runtime)
+        .arg("none")
+        .arg(&runtime_object)
         .arg("-o")
         .arg(output)
         .status()
@@ -1011,6 +1013,59 @@ fn executable_name(stem: &str) -> OsString {
         OsString::from(stem)
     } else {
         OsString::from(format!("{stem}.{}", env::consts::EXE_EXTENSION))
+    }
+}
+
+fn cached_allocator_runtime(compiler: &OsStr, source: &Path) -> Result<PathBuf, String> {
+    let mut hasher = DefaultHasher::new();
+    env!("CARGO_PKG_VERSION").hash(&mut hasher);
+    env::consts::OS.hash(&mut hasher);
+    env::consts::ARCH.hash(&mut hasher);
+    compiler.hash(&mut hasher);
+    DEFAULT_ALLOCATOR_RUNTIME.hash(&mut hasher);
+    let cache_key = hasher.finish();
+    let cache_directory = env::temp_dir().join("salic-runtime-cache");
+    let cached = cache_directory.join(format!("allocator-{cache_key:016x}.o"));
+    if cached.is_file() {
+        return Ok(cached);
+    }
+
+    fs::create_dir_all(&cache_directory).map_err(|error| {
+        format!(
+            "could not create runtime cache '{}': {error}",
+            cache_directory.display()
+        )
+    })?;
+    let temporary = TemporaryDirectory::new()?;
+    let object = temporary.path().join("allocator.o");
+    let status = Command::new(compiler)
+        .arg("-c")
+        .arg("-x")
+        .arg("c")
+        .arg("-std=c11")
+        .arg(source)
+        .arg("-o")
+        .arg(&object)
+        .status()
+        .map_err(|error| {
+            format!(
+                "could not compile allocator runtime '{}': {error}",
+                source.display()
+            )
+        })?;
+    if !status.success() {
+        return Err(format!(
+            "allocator runtime compilation failed with {status}"
+        ));
+    }
+
+    match fs::rename(&object, &cached) {
+        Ok(()) => Ok(cached),
+        Err(_) if cached.is_file() => Ok(cached),
+        Err(error) => Err(format!(
+            "could not cache allocator runtime as '{}': {error}",
+            cached.display()
+        )),
     }
 }
 

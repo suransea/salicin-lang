@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
+use std::sync::OnceLock;
 
 use crate::ast::{
     AssociatedKind, CompileParam, CompileParamDefault, CompileParamKind, EnumDef, Function, Item,
@@ -41,6 +42,8 @@ const EDITION_2026_FUNCTIONAL: &str = include_str!("../../library/core/src/funct
 
 const NON_LANG_ITEM_CORE_MODULES: &[&str] =
     &["primitives", "effect", "control", "algebra", "functional"];
+
+static EDITION_2026_BUNDLE: OnceLock<Result<CoreBundle, CoreBundleError>> = OnceLock::new();
 
 #[cfg(test)]
 const TEST_ASSIGNMENT_OPS: &str = r#"
@@ -923,31 +926,35 @@ impl CoreBundle {
     /// Load the compiler-embedded `core` declarations for `edition`.
     pub fn for_edition(edition: Edition) -> Result<Self, CoreBundleError> {
         match edition {
-            Edition::Edition2026 => Self::from_modules(
-                edition,
-                &[
-                    ("lib", EDITION_2026_LIB),
-                    ("prelude", EDITION_2026_PRELUDE),
-                    ("never", EDITION_2026_NEVER),
-                    ("marker", EDITION_2026_MARKER),
-                    ("primitives", EDITION_2026_PRIMITIVES),
-                    ("option", EDITION_2026_OPTION),
-                    ("result", EDITION_2026_RESULT),
-                    ("cmp", EDITION_2026_CMP),
-                    ("flow", EDITION_2026_FLOW),
-                    ("ops", EDITION_2026_OPS),
-                    ("ops/arith", EDITION_2026_OPS_ARITH),
-                    ("ops/bit", EDITION_2026_OPS_BIT),
-                    ("ops/assign", EDITION_2026_OPS_ASSIGN),
-                    ("effect", EDITION_2026_EFFECT),
-                    ("effect/handler", EDITION_2026_EFFECT_HANDLER),
-                    ("domains", EDITION_2026_DOMAINS),
-                    ("control", EDITION_2026_CONTROL),
-                    ("iter", EDITION_2026_ITER),
-                    ("algebra", EDITION_2026_ALGEBRA),
-                    ("functional", EDITION_2026_FUNCTIONAL),
-                ],
-            ),
+            Edition::Edition2026 => EDITION_2026_BUNDLE
+                .get_or_init(|| {
+                    Self::from_modules(
+                        edition,
+                        &[
+                            ("lib", EDITION_2026_LIB),
+                            ("prelude", EDITION_2026_PRELUDE),
+                            ("never", EDITION_2026_NEVER),
+                            ("marker", EDITION_2026_MARKER),
+                            ("primitives", EDITION_2026_PRIMITIVES),
+                            ("option", EDITION_2026_OPTION),
+                            ("result", EDITION_2026_RESULT),
+                            ("cmp", EDITION_2026_CMP),
+                            ("flow", EDITION_2026_FLOW),
+                            ("ops", EDITION_2026_OPS),
+                            ("ops/arith", EDITION_2026_OPS_ARITH),
+                            ("ops/bit", EDITION_2026_OPS_BIT),
+                            ("ops/assign", EDITION_2026_OPS_ASSIGN),
+                            ("effect", EDITION_2026_EFFECT),
+                            ("effect/handler", EDITION_2026_EFFECT_HANDLER),
+                            ("domains", EDITION_2026_DOMAINS),
+                            ("control", EDITION_2026_CONTROL),
+                            ("iter", EDITION_2026_ITER),
+                            ("algebra", EDITION_2026_ALGEBRA),
+                            ("functional", EDITION_2026_FUNCTIONAL),
+                        ],
+                    )
+                })
+                .clone(),
         }
     }
 

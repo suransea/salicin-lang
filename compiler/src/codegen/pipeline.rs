@@ -39,6 +39,13 @@ pub fn compile_library(program: &Program) -> Result<String, Vec<Diagnostic>> {
     compile_target(program, false)
 }
 
+/// Type-check a binary target, including its required `main` entry point,
+/// without emitting LLVM IR. Cleanup plans and global constants are still
+/// prepared so `check` reports the same frontend diagnostics as compilation.
+pub fn check(program: &Program) -> Result<(), Vec<Diagnostic>> {
+    analyze(program, true).and_then(prepare).map(|_| ())
+}
+
 /// Type-check a library target without requiring or emitting a binary entry
 /// point. Global constants are still evaluated so library checks report the
 /// same constant-expression diagnostics as binary compilation. The program
@@ -91,5 +98,18 @@ mod tests {
         check_library(&program).expect("check library");
         let ir = compile_library(&program).expect("compile library");
         assert!(ir.contains("@sali.global.76616c7565"));
+    }
+
+    #[test]
+    fn binary_check_validates_the_entry_point_without_emitting_ir() {
+        let valid = parse("let main(): i32 = { 42 }\n").expect("parse binary");
+        check(&valid).expect("check binary");
+
+        let library = parse("let answer(): i32 = { 42 }\n").expect("parse library");
+        let diagnostics = check(&library).expect_err("binary check requires main");
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("main")));
+        check_library(&library).expect("library check does not require main");
     }
 }

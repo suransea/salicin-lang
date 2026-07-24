@@ -77,6 +77,13 @@ pub fn compile_library_source_packages(
     codegen::compile_library(&program).map_err(format_codegen_diagnostics)
 }
 
+/// Parse and type-check one Salicin binary source file, including its required
+/// `main` entry point, without generating LLVM IR.
+pub fn check_source(source: &str) -> Result<(), Vec<String>> {
+    let program = parse_and_resolve_single_source(source)?;
+    codegen::check(&program).map_err(format_codegen_diagnostics)
+}
+
 /// Parse and type-check one Salicin library source file without requiring a
 /// `main` entry point.
 pub fn check_library_source(source: &str) -> Result<(), Vec<String>> {
@@ -88,17 +95,13 @@ pub fn check_library_source(source: &str) -> Result<(), Vec<String>> {
 /// units. A valid `main` entry point is required.
 pub fn check_source_units(units: &[modules::SourceUnit]) -> Result<(), Vec<String>> {
     let program = modules::resolve_sources(units)?;
-    codegen::compile(&program)
-        .map(|_| ())
-        .map_err(format_codegen_diagnostics)
+    codegen::check(&program).map_err(format_codegen_diagnostics)
 }
 
 /// Resolve and type-check a binary assembled from a package dependency graph.
 pub fn check_source_packages(packages: &[modules::SourcePackage]) -> Result<(), Vec<String>> {
     let program = modules::resolve_packages(packages)?;
-    codegen::compile(&program)
-        .map(|_| ())
-        .map_err(format_codegen_diagnostics)
+    codegen::check(&program).map_err(format_codegen_diagnostics)
 }
 
 /// Resolve and type-check a Salicin library assembled from multiple source

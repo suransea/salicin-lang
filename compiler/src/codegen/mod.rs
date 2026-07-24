@@ -68,7 +68,7 @@ use operators::*;
 use registry::*;
 use source_rewrite::*;
 
-pub use pipeline::{check_library, compile, compile_library};
+pub use pipeline::{check, check_library, compile, compile_library};
 
 fn primitive_scalar_type(ty: &Ty) -> bool {
     matches!(ty, Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool)

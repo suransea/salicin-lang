@@ -2,6 +2,7 @@
 
 use std::error::Error;
 use std::fmt;
+use std::sync::OnceLock;
 
 use crate::ast::{
     CompileParamKind, Function, Item, ItemOrigin, PassMode, Program, StructDef, Type, Visibility,
@@ -15,6 +16,8 @@ const EDITION_2026_LIB: &str = include_str!("../../library/alloc/src/lib.sc");
 const EDITION_2026_RAW: &str = include_str!("../../library/alloc/src/raw.sc");
 const EDITION_2026_VEC: &str = include_str!("../../library/alloc/src/vec.sc");
 
+static EDITION_2026_BUNDLE: OnceLock<Result<AllocBundle, AllocBundleError>> = OnceLock::new();
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct AllocBundle {
     program: Program,
@@ -22,6 +25,12 @@ pub struct AllocBundle {
 
 impl AllocBundle {
     pub fn for_edition(edition: Edition) -> Result<Self, AllocBundleError> {
+        EDITION_2026_BUNDLE
+            .get_or_init(|| Self::load(edition))
+            .clone()
+    }
+
+    fn load(edition: Edition) -> Result<Self, AllocBundleError> {
         let modules = match edition {
             Edition::Edition2026 => [
                 ("lib", EDITION_2026_LIB),
