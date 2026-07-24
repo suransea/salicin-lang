@@ -1004,6 +1004,18 @@ fn source_borrow_channel_mode(mode: PassMode, ty: &Type) -> Option<PassMode> {
     }
 }
 
+fn handler_expression_calls_named_function(expression: &Expr, name: &str) -> bool {
+    let mut expression = expression.clone();
+    let mut found = false;
+    visit_expr_mut(&mut expression, &mut |expression| {
+        let mut groups = Vec::new();
+        if matches!(flatten_call(expression, &mut groups), Expr::Name(callee) if callee == name) {
+            found = true;
+        }
+    });
+    found
+}
+
 impl Analyzer {
     pub(super) fn materialize_direct_handler_action(
         &mut self,
@@ -3698,6 +3710,85 @@ impl Analyzer {
             handler.inlining.borrow_mut().remove(&name);
             return Some(Err(()));
         };
+        let borrow_arguments = parameters
+            .iter()
+            .flatten()
+            .zip(&source_arguments)
+            .enumerate()
+            .filter(|(index, (parameter, _))| {
+                !omitted_parameters.contains(index)
+                    && source_borrow_channel_mode(parameter.mode, &parameter.ty).is_some()
+            })
+            .collect::<Vec<_>>();
+        let has_only_handled_effect = !function.effects.unsafe_effect
+            && function.effects.throws.is_none()
+            && function.effects.parameters.is_empty()
+            && function
+                .effects
+                .custom
+                .iter()
+                .all(|effect| source_effect_identity(effect) == handler.identity);
+        let distinct_borrow_roots = borrow_arguments
+            .iter()
+            .filter_map(|(_, (_, argument))| match &argument.value {
+                Expr::Name(root) => Some(root.as_str()),
+                _ => None,
+            })
+            .collect::<HashSet<_>>();
+        let can_fuse_borrow_frame = !borrow_arguments.is_empty()
+            && distinct_borrow_roots.len() == borrow_arguments.len()
+            && has_only_handled_effect
+            && !handler_expression_calls_named_function(&body, &name);
+        if can_fuse_borrow_frame {
+            let mut parameter_bindings = Vec::new();
+            let mut borrowed_roots = HashMap::new();
+            for (index, (parameter, argument)) in parameters
+                .iter()
+                .flatten()
+                .zip(&source_arguments)
+                .enumerate()
+            {
+                if omitted_parameters.contains(&index) {
+                    continue;
+                }
+                if source_borrow_channel_mode(parameter.mode, &parameter.ty).is_some() {
+                    let Expr::Name(root) = &argument.value else {
+                        unreachable!("fused borrow arguments were validated as root names");
+                    };
+                    borrowed_roots.insert(parameter.name.clone(), root.clone());
+                } else {
+                    parameter_bindings.push(Stmt::Let(Binding {
+                        mutable: false,
+                        name: parameter.name.clone(),
+                        annotation: Some(parameter.ty.clone()),
+                        value: argument.value.clone(),
+                    }));
+                }
+            }
+            visit_expr_mut(&mut body, &mut |expression| {
+                let Expr::Name(name) = expression else {
+                    return;
+                };
+                if let Some(root) = borrowed_roots.get(name) {
+                    *name = root.clone();
+                }
+            });
+            let return_name = format!("$handler$fused$return${specialization}");
+            rewrite_handler_returns(&mut body, &return_name);
+            handler
+                .return_continuations
+                .borrow_mut()
+                .insert(return_name.clone(), continuation.clone());
+            let transformed =
+                self.transform_handler_expr(body, handler.clone(), resume, continuation);
+            handler
+                .return_continuations
+                .borrow_mut()
+                .remove(&return_name);
+            return Some(
+                transformed.map(|body| Expr::Block(parameter_bindings, Some(Box::new(body)))),
+            );
+        }
         let continuation_name = format!("$handler$call$continuation${specialization}");
         let continuation_value_name = format!("$handler$call$continuation$value${specialization}");
         let continuation_body =

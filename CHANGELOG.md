@@ -12,8 +12,13 @@ subset.
 - Allowed closures and handler frames to capture projected assignment targets by their mutable root.
   Native regressions cover repeated operations, direct field mutation, resumption, abandonment, and
   exactly-once cleanup of user-defined nominal state.
-- Restored `examples/ledger.sc` to effectful state processing: overdraft checks now perform a nominal
-  algebraic operation while the resumable frame retains the mutable ledger.
+- Fused eligible non-recursive effectful calls into their caller's handler frame when borrow
+  parameters receive distinct root locals. Value arguments remain materialized in source order,
+  while the borrowed root is shared with the following continuation instead of being borrowed and
+  moved by competing frames.
+- Restored `examples/ledger.sc` to effectful state processing: its `for` loop now consumes
+  non-`Copy` transactions and performs overdraft operations while retaining both iterator and
+  mutable ledger state.
 - Allowed `for` bodies to perform handled algebraic operations, including standard `Throws`.
   Compiler-generated iterator state now moves through one-shot continuation and recursive loop-frame
   environments while retaining mutability; resumption and abandonment both run iterator cleanup

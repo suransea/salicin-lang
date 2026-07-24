@@ -80,9 +80,13 @@ Compiler-generated handler closures use an explicit owned-capture policy: every 
 nominal root required after an operation moves into the resumable frame and retains its source
 mutability. Projected assignments capture their whole mutable root, so repeated direct operations
 can retain and update user-defined state; resumption and abandonment both preserve exactly-once
-cleanup. Repeated effectful named calls that each borrow the same owned root, and loop backedges that
-combine user-owned state with the generated iterator frame, still require a shared frame-ownership
-lowering. Compiler-generated `for` iterator state itself is covered by owned continuation transport.
+cleanup. Resumable loop backedges carry user-owned state alongside compiler-generated iterator
+state. A known non-recursive effectful function with no residual effect is fused into the caller's
+handler frame when every borrowed argument is a distinct root local. Its value arguments are
+materialized in source order, while each borrowed root remains available to both the inlined body
+and following continuation. Recursive calls, projected borrow arguments, and calls with residual
+effects still use the separate frame ABI and do not yet share an owned root with their caller
+continuation.
 
 Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
 `continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs

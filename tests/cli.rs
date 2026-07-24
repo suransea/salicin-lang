@@ -175,6 +175,26 @@ fn owned_nominal_state_crosses_handler_resume_and_abandonment() {
 }
 
 #[test]
+fn owned_nominal_state_crosses_repeated_effectful_calls() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "algebraic_effect_owned_state_calls.sc"))
+        .output()
+        .expect("run owned handler call-state fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
+fn owned_nominal_state_crosses_effectful_loop_backedges() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "algebraic_effect_owned_state_loop.sc"))
+        .output()
+        .expect("run owned handler loop-state fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn effect_generics_select_pure_and_unsafe_instances() {
     let output = salic()
         .arg("run")

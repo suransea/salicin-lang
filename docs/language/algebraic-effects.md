@@ -215,9 +215,14 @@ reserved local names. A non-`Copy` owned nominal root used by the continuation m
 and remains mutable when the source binding was mutable. Assignment through a field or index
 captures the complete root as mutable, including captures required by an index expression.
 Consequently direct repeated operations can retain and mutate user-defined nominal state, with the
-same exactly-once cleanup on resumption and abandonment. Repeated effectful named calls that each
-borrow the same owned root, and user-owned state crossing an effectful loop backedge, remain outside
-this slice.
+same exactly-once cleanup on resumption and abandonment. Resumable loop backedges carry the same
+owned state through recursive frame calls. For a known non-recursive effectful function with no
+residual effect, distinct root-local borrow arguments trigger call-frame fusion: ordinary value
+arguments are materialized in source order, borrowed parameters are substituted with their caller
+roots, and the inlined body enters selective CPS in the caller frame. The body and following
+continuation therefore share one owned root instead of creating competing borrow and move captures.
+Recursive calls, projected borrow arguments, and residual-effect combinations retain the separate
+frame ABI.
 
 Selective CPS removes only the handled nominal identity. Residual `Unsafe`, `Throws(Error)`, and
 other nominal requirements remain on generated resumable frames. Intercepted operations also retain
