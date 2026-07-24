@@ -87,32 +87,26 @@ fn run_source_in_process(path: &Path) -> Output {
 
 fn native_fixture_outputs_in_parallel(names: &[&str]) -> Vec<(String, Output)> {
     let paths: Vec<_> = names.iter().map(|name| fixture("pass", name)).collect();
-    let available = thread::available_parallelism()
-        .map(|parallelism| parallelism.get())
-        .unwrap_or(2);
-    let worker_count = ((available + 1) / 2).clamp(1, 6).min(paths.len());
     let jobs = Arc::new(Mutex::new(paths.into_iter().enumerate()));
     let results = Arc::new(Mutex::new(Vec::new()));
 
     thread::scope(|scope| {
-        for _ in 0..worker_count {
-            let jobs = Arc::clone(&jobs);
-            let results = Arc::clone(&results);
-            thread::Builder::new()
-                .name("salic-native-fixture".into())
-                .stack_size(16 * 1024 * 1024)
-                .spawn_scoped(scope, move || loop {
-                    let Some((index, path)) = jobs.lock().expect("lock native jobs").next() else {
-                        break;
-                    };
-                    let output = run_source_in_process(&path);
-                    results
-                        .lock()
-                        .expect("lock native results")
-                        .push((index, path, output));
-                })
-                .expect("spawn native fixture worker");
-        }
+        let jobs = Arc::clone(&jobs);
+        let results = Arc::clone(&results);
+        thread::Builder::new()
+            .name("salic-native-fixture".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn_scoped(scope, move || loop {
+                let Some((index, path)) = jobs.lock().expect("lock native jobs").next() else {
+                    break;
+                };
+                let output = run_source_in_process(&path);
+                results
+                    .lock()
+                    .expect("lock native results")
+                    .push((index, path, output));
+            })
+            .expect("spawn native fixture worker");
     });
 
     let mut results = Arc::try_unwrap(results)
@@ -309,12 +303,8 @@ fn ledger_example_exercises_the_m0_core_as_a_complete_program() {
 
 #[test]
 fn effectful_for_preserves_iterator_state_and_cleanup() {
-    for fixture_name in ["for_throws.sc", "for_throws_cleanup.sc"] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", fixture_name))
-            .output()
-            .expect("run effectful for fixture");
+    let fixtures = ["for_throws.sc", "for_throws_cleanup.sc"];
+    for (_fixture_name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
     }
 }
@@ -599,16 +589,12 @@ fn run_supports_grouped_calls_and_unit_main() {
 
 #[test]
 fn raw_pointer_read_and_write_run_with_expected_result() {
-    for name in [
+    let fixtures = [
         "raw_pointer_read.sc",
         "raw_pointer_write.sc",
         "do_forwards_unsafe_color.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run raw pointer fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -620,7 +606,7 @@ fn raw_pointer_read_and_write_run_with_expected_result() {
 
 #[test]
 fn raw_allocator_abi_allocates_aligned_storage_and_deallocates_it() {
-    for name in [
+    let fixtures = [
         "raw_allocator_i32.sc",
         "raw_allocator_inferred.sc",
         "raw_allocator_layout.sc",
@@ -628,12 +614,8 @@ fn raw_allocator_abi_allocates_aligned_storage_and_deallocates_it() {
         "raw_pointer_offset_shared.sc",
         "raw_pointer_offset_unit.sc",
         "raw_pointer_borrow.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run raw allocator fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -683,12 +665,8 @@ fn raw_pointer_intrinsic_errors_report_their_cause() {
 
 #[test]
 fn target_layout_intrinsics_cover_globals_aggregates_and_generic_instances() {
-    for name in ["layout_intrinsics.sc", "layout_intrinsics_generic.sc"] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run target layout fixture");
+    let fixtures = ["layout_intrinsics.sc", "layout_intrinsics_generic.sc"];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -700,7 +678,7 @@ fn target_layout_intrinsics_cover_globals_aggregates_and_generic_instances() {
 
 #[test]
 fn alloc_box_owns_copy_and_resource_payloads() {
-    for name in [
+    let fixtures = [
         "box_i32.sc",
         "box_resource.sc",
         "box_drop_once.sc",
@@ -712,12 +690,8 @@ fn alloc_box_owns_copy_and_resource_payloads() {
         "box_borrow.sc",
         "forget_resource.sc",
         "forget_temporary_resource.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run Box fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -846,7 +820,7 @@ fn alloc_vec_owns_copy_and_resource_elements() {
 
 #[test]
 fn generic_inherent_extensions_infer_and_dispatch_concrete_instances() {
-    for name in [
+    let fixtures = [
         "generic_inherent_extend.sc",
         "generic_inherent_reordered.sc",
         "generic_inherent_resource.sc",
@@ -858,12 +832,8 @@ fn generic_inherent_extensions_infer_and_dispatch_concrete_instances() {
         "box_methods.sc",
         "box_method_context_inference.sc",
         "access_generic.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run generic inherent extension fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -957,12 +927,8 @@ fn where_copy_bounds_validate_generic_bodies_and_concrete_calls() {
 
 #[test]
 fn where_trait_bounds_enable_abstract_method_dispatch() {
-    for name in ["where_method_dispatch.sc", "where_generic_trait_method.sc"] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run generic where-bound method dispatch");
+    let fixtures = ["where_method_dispatch.sc", "where_generic_trait_method.sc"];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -986,12 +952,8 @@ fn where_trait_bounds_enable_abstract_method_dispatch() {
 
 #[test]
 fn where_associated_equalities_enable_operator_dispatch() {
-    for name in ["where_operator_output.sc", "where_associated_method.sc"] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run generic dispatch through an associated type equality");
+    let fixtures = ["where_operator_output.sc", "where_associated_method.sc"];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -1241,16 +1203,12 @@ fn vec_drop_releases_its_allocation_through_the_allocator_abi() {
 
 #[test]
 fn m1_struct_programs_run_with_expected_result() {
-    for name in [
+    let fixtures = [
         "struct_fields.sc",
         "struct_mutation.sc",
         "positional_constructor.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run M1 struct fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -1262,15 +1220,11 @@ fn m1_struct_programs_run_with_expected_result() {
 
 #[test]
 fn type_constructor_aliases_run_and_report_kind_errors() {
-    for name in [
+    let fixtures = [
         "type_constructor_alias.sc",
         "type_constructor_labeled_arguments.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run type-constructor fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -1383,7 +1337,7 @@ fn m1_struct_errors_report_their_cause() {
 
 #[test]
 fn m1_match_and_partial_programs_run_with_expected_result() {
-    for name in [
+    let fixtures = [
         "enum_match.sc",
         "nested_match.sc",
         "match_guard.sc",
@@ -1393,12 +1347,8 @@ fn m1_match_and_partial_programs_run_with_expected_result() {
         "match_scalar_single_evaluation.sc",
         "if_let.sc",
         "partial_application.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run M1 match or partial-application fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -1643,7 +1593,7 @@ fn borrow_value_parameter_errors_report_their_cause() {
 
 #[test]
 fn v09_reinitialization_programs_run_with_expected_result() {
-    for name in [
+    let fixtures = [
         "reinit_after_root_move.sc",
         "reinit_partial_field.sc",
         "reinit_root_move_field_by_field.sc",
@@ -1651,12 +1601,8 @@ fn v09_reinitialization_programs_run_with_expected_result() {
         "reinit_loop_backedge.sc",
         "reinit_after_explicit_copy_move.sc",
         "match_guard_copy_binding.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run v0.9 reinitialization fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -1711,17 +1657,13 @@ fn v09_reinitialization_errors_preserve_flow_safety() {
 
 #[test]
 fn source_backed_copy_programs_run_with_expected_result() {
-    for name in [
+    let fixtures = [
         "copy_nominal_repeated_and_parameters.sc",
         "copy_nominal_capture.sc",
         "copy_nominal_enum_array.sc",
         "copy_generic_blanket.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run source-backed Copy fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2062,19 +2004,15 @@ fn source_backed_copy_errors_report_their_cause() {
 
 #[test]
 fn m1_local_closure_programs_run_with_expected_result() {
-    for name in [
+    let fixtures = [
         "capturing_closure.sc",
         "closure_shared_repeat.sc",
         "closure_capture_parameter.sc",
         "closure_curried_capture.sc",
         "closure_mut_capture.sc",
         "closure_move_once.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run M1 closure fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2171,17 +2109,13 @@ fn every_pass_fixture_checks_successfully() {
 
 #[test]
 fn raise_and_unwrap_operators_run_through_standard_and_custom_protocols() {
-    for name in [
+    let fixtures = [
         "raise_result.sc",
         "raise_custom.sc",
         "unwrap_option_result.sc",
         "unwrap_custom.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run raise or unwrap fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2229,17 +2163,13 @@ fn m1_loops_and_arrays_run_with_expected_result() {
 
 #[test]
 fn named_arguments_select_function_overloads_in_resolved_sources() {
-    for name in [
+    let fixtures = [
         "function_overload_named.sc",
         "generic_overload_named.sc",
         "inherent_overload_named.sc",
         "trait_overload_named.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run named function overload fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2325,15 +2255,11 @@ fn dynamic_array_out_of_bounds_traps() {
 
 #[test]
 fn invalid_builtin_division_and_remainder_trap() {
-    for name in [
+    let fixtures = [
         "runtime_division_by_zero.sc",
         "runtime_remainder_overflow.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run invalid built-in arithmetic fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert!(
             !output.status.success(),
             "{name} unexpectedly avoided its arithmetic trap:\n{}",
@@ -2428,7 +2354,7 @@ fn m1_inherent_member_errors_report_their_cause() {
 
 #[test]
 fn m2_generic_function_programs_run_with_expected_result() {
-    for name in [
+    let fixtures = [
         "generic_identity.sc",
         "generic_multiple_instances.sc",
         "generic_type_application_partial.sc",
@@ -2436,12 +2362,8 @@ fn m2_generic_function_programs_run_with_expected_result() {
         "generic_same_instance_recursion.sc",
         "generic_call_inside_closure.sc",
         "generic_validation_rollback.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run M2 generic-function fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2477,18 +2399,14 @@ fn m2_generic_function_errors_report_their_cause() {
 
 #[test]
 fn m2_generic_nominal_programs_run_with_expected_result() {
-    for name in [
+    let fixtures = [
         "generic_struct.sc",
         "generic_nested_struct.sc",
         "generic_enum_match.sc",
         "generic_function_constructs_nominal.sc",
         "generic_nominal_multiple_instances.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run M2 generic-nominal fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2523,7 +2441,7 @@ fn m2_generic_nominal_errors_report_their_cause() {
 
 #[test]
 fn m2_inferred_type_arguments_run_with_expected_result() {
-    for name in [
+    let fixtures = [
         "infer_generic_function.sc",
         "infer_function_from_expected.sc",
         "infer_generic_struct.sc",
@@ -2537,12 +2455,8 @@ fn m2_inferred_type_arguments_run_with_expected_result() {
         "infer_named_arguments.sc",
         "infer_nonempty_block.sc",
         "infer_borrow_temporary.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run inferred-type-argument fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2580,7 +2494,7 @@ fn m2_inferred_type_argument_errors_report_their_cause() {
 
 #[test]
 fn m2_concrete_trait_programs_run_with_expected_result() {
-    for name in [
+    let fixtures = [
         "trait_unique_method.sc",
         "trait_associated_output.sc",
         "trait_generic_nominal_impl.sc",
@@ -2591,12 +2505,8 @@ fn m2_concrete_trait_programs_run_with_expected_result() {
         "trait_temporary_mut_receiver.sc",
         "trait_inherent_precedence.sc",
         "trait_declaration_order.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run concrete-trait fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2645,19 +2555,15 @@ fn m2_concrete_trait_errors_report_their_cause() {
 
 #[test]
 fn m2_add_trait_programs_run_with_expected_result() {
-    for name in [
+    let fixtures = [
         "add_trait_nominal_pair.sc",
         "add_trait_nominal_i32_nominal_output.sc",
         "add_trait_nominal_i32_scalar_output.sc",
         "add_trait_builtin_integer_precedence.sc",
         "add_trait_operands_once.sc",
         "add_trait_expected_output.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run Add-trait fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2694,7 +2600,7 @@ fn m2_add_trait_errors_report_their_cause() {
 
 #[test]
 fn arithmetic_trait_programs_run_with_expected_result() {
-    for name in [
+    let fixtures = [
         "arithmetic_traits_nominal_dispatch.sc",
         "arithmetic_trait_operands_once.sc",
         "arithmetic_trait_expected_output.sc",
@@ -2702,12 +2608,8 @@ fn arithmetic_trait_programs_run_with_expected_result() {
         "add_trait_copy_operands_reusable.sc",
         "compound_assign_builtin.sc",
         "compound_assign_trait.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run arithmetic-trait fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2744,7 +2646,7 @@ fn arithmetic_trait_errors_report_their_cause() {
 
 #[test]
 fn m2_core_option_and_result_programs_run_with_expected_result() {
-    for name in [
+    let fixtures = [
         "core_option_some.sc",
         "core_option_none.sc",
         "core_result_ok.sc",
@@ -2752,12 +2654,8 @@ fn m2_core_option_and_result_programs_run_with_expected_result() {
         "core_nested_option_result.sc",
         "core_multiple_instances.sc",
         "core_inferred_variants.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run Option/Result prelude fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2798,7 +2696,7 @@ fn m2_core_option_and_result_errors_report_their_cause() {
 
 #[test]
 fn m2_coalesce_programs_run_with_expected_result() {
-    for name in [
+    let fixtures = [
         "coalesce_option_some_short_circuit.sc",
         "coalesce_option_none_fallback.sc",
         "coalesce_result_ok_short_circuit.sc",
@@ -2812,12 +2710,8 @@ fn m2_coalesce_programs_run_with_expected_result() {
         "coalesce_infer_result_err.sc",
         "coalesce_infer_right_associative_none.sc",
         "coalesce_infer_local_without_annotation.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run null-coalescing fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2858,17 +2752,13 @@ fn m2_coalesce_errors_report_their_cause() {
 
 #[test]
 fn explicit_result_values_and_throws_handlers_run_with_expected_result() {
-    for name in [
+    let fixtures = [
         "try_full_container_unchanged.sc",
         "do_try_boundary.sc",
         "do_function_boundary.sc",
         "do_forwards_throws.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run try-propagation fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2946,12 +2836,8 @@ fn bitwise_protocols_run_and_invalid_shifts_trap() {
         .expect("run bitwise operator fixture");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 
-    for name in ["shift_out_of_range.sc", "shift_negative.sc"] {
-        let invalid = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run invalid shift fixture");
+    let invalid_shifts = ["shift_out_of_range.sc", "shift_negative.sc"];
+    for (name, invalid) in native_fixture_outputs_in_parallel(&invalid_shifts) {
         assert!(
             !invalid.status.success(),
             "invalid shift in {name} unexpectedly succeeded"
@@ -2961,7 +2847,7 @@ fn bitwise_protocols_run_and_invalid_shifts_trap() {
 
 #[test]
 fn m2_optional_chain_programs_run_with_expected_result() {
-    for name in [
+    let fixtures = [
         "chain_option_some_field.sc",
         "chain_option_none_field.sc",
         "chain_result_ok_field.sc",
@@ -2977,12 +2863,8 @@ fn m2_optional_chain_programs_run_with_expected_result() {
         "chain_lhs_once.sc",
         "chain_method_result_is_nested.sc",
         "chain_then_coalesce.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run optional-chain fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -3021,18 +2903,14 @@ fn m2_optional_chain_errors_report_their_cause() {
 
 #[test]
 fn throws_programs_run_with_expected_result() {
-    for name in [
+    let fixtures = [
         "throw_result_err_propagate.sc",
         "throw_error_once.sc",
         "throw_if_flow.sc",
         "throw_generic_error.sc",
         "throw_unit_error.sc",
-    ] {
-        let output = salic()
-            .arg("run")
-            .arg(fixture("pass", name))
-            .output()
-            .expect("run throw-propagation fixture");
+    ];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
