@@ -25,6 +25,8 @@ top-level [changelog](../CHANGELOG.md).
 
 - [M0 core scope](project/core-scope.md): frozen implementation target, maturity labels, exclusions,
   and the gate for expanding the language.
+- [M0 conformance matrix](project/m0-conformance.md): positive, negative, diagnostic, and native
+  evidence for every frozen M0 capability.
 - [Implementation status](project/status.md): supported surface and known structural gaps.
 - [Language roadmap](project/roadmap.md): milestone order, dependencies, exit conditions, and
   explicit deferrals.

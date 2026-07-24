@@ -18,6 +18,13 @@ normal effect with `raise`, and `do`, `try`, and `throw` are now ordinary source
 those effects. The remaining compiler-only surface should stay limited to features that genuinely
 need authority or primitive control-flow lowering.
 
+The [M0 conformance audit](m0-conformance.md) identifies current release-blocking core gaps.
+Non-unit tuples and C FFI have specification surface but no compiler implementation. Runtime
+primitive lowering currently covers `i32`, `i64`, `u32`, `u64`, and `bool`, while the core bundle
+also declares narrower, wider, and target-sized integer names. Unicode identifiers are accepted by
+the lexer but lack direct end-to-end evidence. Semantic diagnostics remain mostly locationless;
+source spans are tracked by `M0-DIAG-1`. These are M0 gaps, not implemented extensions.
+
 The unit type has one source spelling, `()`; the former `void` alias is removed before 1.0. The
 uninhabited prelude enum is spelled `Never`; the former lowercase `never` spelling has no
 compatibility alias.

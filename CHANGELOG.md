@@ -6,6 +6,9 @@ subset.
 
 ## Unreleased
 
+- Added an explicit M0 conformance matrix covering positive, negative, diagnostic, and native
+  evidence. The audit tracks non-unit tuples, remaining primitive scalar widths, C FFI, Unicode
+  frontend evidence, and semantic source spans as release-blocking gaps rather than extensions.
 - Removed declaration-value `type` forms. Opaque primitive declarations now use the abstract
   `type` domain as in `pub let i32: type`; `bool` and compile-time `access` are ordinary closed
   enums, and the legacy `let Name = type` / `let Name = type { ... }` spellings are rejected.

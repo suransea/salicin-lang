@@ -105,10 +105,8 @@ let_decl = "let", [ "mut" ], IDENT,
 with_clause = IDENT("with"), "(", effect, { ",", effect }, [ "," ], ")" ;
 effect = IDENT, [ "(", type_expr, { ",", type_expr }, [ "," ], ")" ] ;
 
-initializer = expression | opaque_type_decl | effect_decl | domain_decl
+initializer = expression | effect_decl | domain_decl
             | struct_decl | enum_decl | trait_decl ;
-
-opaque_type_decl = "type" ;
 
 effect_decl = "effect", [ "{", separators,
               { effect_operation, separators }, "}" ] ;

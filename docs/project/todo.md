@@ -17,7 +17,7 @@ Priority meanings:
 
 Current milestone: **M0 release baseline**
 
-Next task: **M0-AUDIT-1**
+Next task: **M0-DIAG-1**
 
 ### P0 control-source queue
 
@@ -42,9 +42,25 @@ handler or async expansion is admitted.
 
 ## P1 M0 release baseline
 
-- [ ] **M0-AUDIT-1: Build the M0 conformance matrix**
+- [x] **M0-AUDIT-1: Build the M0 conformance matrix**
   - Map every bullet in `core-scope.md` to positive, negative, diagnostic, and native tests.
   - Mark missing evidence as a task; do not silently reclassify it as an extension.
+
+- [ ] **M0-FRONTEND-EVIDENCE-1: Close Unicode and logical-newline evidence**
+  - Add positive native Unicode identifier and multiline source fixtures.
+  - Add stable diagnostics for malformed or disallowed source/module spellings.
+
+- [ ] **M0-TUPLE-1: Implement the frozen non-unit tuple slice**
+  - Cover tuple types, literals, projection, patterns, ownership, and cleanup.
+  - Add positive, negative, diagnostic, and native evidence.
+
+- [ ] **M0-SCALAR-1: Reconcile declared primitive scalar widths**
+  - Lower the declared narrow, wide, and target-sized runtime integer types.
+  - Cover layout, arithmetic, conversion boundaries, diagnostics, and native execution.
+
+- [ ] **M0-FFI-1: Implement the frozen bounded C FFI slice**
+  - Define admissible C ABI signatures and require `unsafe` at foreign call sites.
+  - Add parser, semantic, linking, diagnostic, and native round-trip tests.
 
 - [ ] **M0-DIAG-1: Attach source spans to semantic errors**
   - Prioritize ownership, borrow, handler, trait selection, and generic inference errors.
