@@ -21,6 +21,12 @@ impl Analyzer {
         let mut groups = Vec::new();
         let root = flatten_call(expression, &mut groups);
         if let Expr::Name(name) = root {
+            if self.is_lang_item_name(name, LangItemKind::If) {
+                return self.lower_if_match_call(&groups, expected, context);
+            }
+            if self.is_lang_item_name(name, LangItemKind::Match) {
+                return self.lower_pattern_match_call(&groups, expected, context);
+            }
             if name == "$handler$erase$continuation" {
                 if groups.len() != 1 || groups[0].len() != 1 {
                     self.error("internal continuation erasure expects one callable argument");

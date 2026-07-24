@@ -27,7 +27,11 @@ same-named declaration never acquires control authority.
 pub let if(E: effect, T: type)
   (condition: bool)
   (move then: (): T with(E))
-  (move else: (): T with(E)): T with(E)
+  (move else: (): T with(E)): T with(E) = {
+  match condition
+    { true -> then() }
+    { false -> else() }
+}
 ```
 
 The ordinary source forms are therefore:
@@ -217,6 +221,10 @@ a variadic pack of such schemas. Bare `...Cases` then expands that pack into con
 Each expansion retains its own pattern, bindings, captures, and body while sharing `Input`,
 `Output`, and `E`. Calls remain statically expanded; there is no runtime array, iterator,
 allocation, or dynamic arity.
+
+After module resolution, the compiler expands the validated internal control call before effect,
+throws, ownership, and cleanup analysis. This leaves those passes with one `match` representation
+while preserving the source-level parameter groups and partial-function boundary.
 
 This is deliberately different from:
 

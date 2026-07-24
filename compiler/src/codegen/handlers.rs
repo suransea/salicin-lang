@@ -603,6 +603,40 @@ pub(super) fn static_callable_selection(
     expression: &Expr,
     targets: &mut Vec<String>,
 ) -> Option<Expr> {
+    fn if_branch(group: &[CallArg]) -> Option<&Expr> {
+        let [CallArg {
+            label: None,
+            value: Expr::Closure(parameters, body),
+        }] = group
+        else {
+            return None;
+        };
+        parameters.is_empty().then_some(body.as_ref())
+    }
+
+    if matches!(expression, Expr::Call(_, _)) {
+        let mut groups = Vec::new();
+        if matches!(flatten_call(expression, &mut groups), Expr::Name(name) if name == "$lang$if") {
+            let [condition_group, then_group, else_group] = groups.as_slice() else {
+                return None;
+            };
+            let [CallArg {
+                label: None,
+                value: condition,
+            }] = *condition_group
+            else {
+                return None;
+            };
+            return Some(Expr::If {
+                condition: Box::new(condition.clone()),
+                then_branch: Box::new(static_callable_selection(if_branch(then_group)?, targets)?),
+                else_branch: Some(Box::new(static_callable_selection(
+                    if_branch(else_group)?,
+                    targets,
+                )?)),
+            });
+        }
+    }
     match expression {
         Expr::Name(name) => {
             let index = targets.len();
@@ -621,6 +655,24 @@ pub(super) fn static_callable_selection(
             then_branch: Box::new(static_callable_selection(then_branch, targets)?),
             else_branch: Some(Box::new(static_callable_selection(else_branch, targets)?)),
         }),
+        Expr::Match { scrutinee, arms } => {
+            let [first, second] = arms.as_slice() else {
+                return None;
+            };
+            if first.guard.is_some() || second.guard.is_some() {
+                return None;
+            }
+            let (then_branch, else_branch) = match (&first.pattern, &second.pattern) {
+                (Pattern::Bool(true), Pattern::Bool(false)) => (&first.body, &second.body),
+                (Pattern::Bool(false), Pattern::Bool(true)) => (&second.body, &first.body),
+                _ => return None,
+            };
+            Some(Expr::If {
+                condition: scrutinee.clone(),
+                then_branch: Box::new(static_callable_selection(then_branch, targets)?),
+                else_branch: Some(Box::new(static_callable_selection(else_branch, targets)?)),
+            })
+        }
         _ => None,
     }
 }
@@ -2459,6 +2511,21 @@ impl Analyzer {
                 self.transform_handler_loop(None, *body, handler, resume, continuation)
             }
             Expr::Call(callee, arguments) => {
+                let expression = Expr::Call(callee, arguments);
+                if let Some(match_expression) = self
+                    .pattern_match_call_expression(&expression)
+                    .or_else(|| self.if_call_expression_for_transform(&expression))
+                {
+                    return self.transform_handler_expr(
+                        match_expression,
+                        handler,
+                        resume,
+                        continuation,
+                    );
+                }
+                let Expr::Call(callee, arguments) = expression else {
+                    unreachable!()
+                };
                 let completed: SourceArgumentsContinuation = Rc::new(move |analyzer, arguments| {
                     continuation(analyzer, Expr::Call(callee.clone(), arguments))
                 });
@@ -4478,7 +4545,6 @@ impl Analyzer {
                         .custom
                         .iter()
                         .any(|effect| source_effect_identity(effect) == handler.identity)
-                        && matches!(binding.value, Expr::If { .. })
                     {
                         let mut targets = Vec::new();
                         if let Some(selection) =

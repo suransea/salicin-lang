@@ -15,9 +15,9 @@ Priority meanings:
 
 ## Current focus
 
-Current milestone: **source-backed pattern control**
+Current milestone: **M0 release baseline**
 
-Next task: **MATCH-SOURCE-1**
+Next task: **M0-AUDIT-1**
 
 ### P0 control-source queue
 
@@ -26,12 +26,12 @@ Next task: **MATCH-SOURCE-1**
   - Delay pattern moves until the pattern and guard both succeed.
   - Carry captures, result type, and latent effect row through storage and calls.
 
-- [ ] **MATCH-SOURCE-1: Implement `match` through partial functions**
+- [x] **MATCH-SOURCE-1: Implement `match` through partial functions**
   - Define the minimal source-backed `Hit`/`Miss` attempt contract.
   - Consume heterogeneous case parameter groups in source order.
   - Keep exhaustiveness and unreachable-case checking static.
 
-- [ ] **IF-SOURCE-1: Implement `if` through `match`**
+- [x] **IF-SOURCE-1: Implement `if` through `match`**
   - Give `core.control.if` an ordinary source body over boolean cases.
   - Remove the independent compiler-only `if` selection path after parity tests pass.
 

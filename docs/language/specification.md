@@ -47,11 +47,12 @@
 - “上下文关键字”是语法语义分类，不要求 lexer 使用某一种 token。只要在非特殊位置仍可按普通
   标识符使用，实现既可以统一产生 `IDENT`，也可以产生专用 token 后由 parser 按上下文接受。
   当前 `salic` 为上述拼写统一产生 `IDENT`；这是实现策略，不是源码兼容性规则。
-- `let Name = type` 声明不透明名义类型。标准 `bool`、固定宽度有符号/无符号整数以及
+- `let Name: type` 声明以 `type` domain 为 kind 的不透明名义类型。固定宽度有符号/无符号整数以及
   `isize`、`usize` 由 `core.primitives` 以这种形式声明，并由经过验证的 lang-item identity
   选择原生表示和快速 lowering；`isize`、`usize` 的宽度来自目标指针宽度，不是 `i64`、`u64` 别名。
-- `let Name = type { value, ... }` 声明 primitive type form 的封闭值集合；标准布尔类型
-  写作 `let bool = type { false, true }`。
+- `type` 是抽象 domain/kind，不是声明右侧的构造表达式；`let Name = type` 与
+  `let Name = type { ... }` 均不属于语法。标准布尔类型与编译期 `access` 使用普通 enum，
+  分别写作 `let bool = enum { false, true }` 与 `let access = enum { shared, mut }`。
 - 任意封闭类型都可以约束编译期参数，例如 `B: bool` 或用户声明的
   `O: optimization`。阶段由参数所在的编译期参数组决定，不由类型名称决定；同一个 `bool`
   仍可用于普通运行时参数。
@@ -707,8 +708,9 @@ effect 行仍有 row 组合与转发规则，不能误用 access 参数表达控
 
 ```sc
 let identity(M: (P: parameters): parameters, T: type)(M value: T): T = { value }
+let modifier_identity(M: (P: parameters): parameters) = M
 let forward(M: (P: parameters): parameters, T: type)(M value: T): T = {
-  identity(M, T)(value)
+  identity(modifier_identity(M), T)(value)
 }
 
 let copied = identity(copy, i32)(number)

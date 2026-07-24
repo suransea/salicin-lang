@@ -70,6 +70,8 @@ The implementation lives under `compiler/src`:
     lowering for validated lang-item protocols.
   - `ownership.rs` centralizes Copy/drop type predicates, custom Drop crossing checks, and inferred
     pass-mode selection used by ownership-sensitive lowering.
+  - `source_rewrite.rs` normalizes validated control-call groups, including static expansion of
+    `if` and heterogeneous partial-function `match` cases, before semantic control-flow passes.
   - `places.rs` lowers local place expressions and owns move initialization plus lexical loan
     bookkeeping over HIR places.
   - `pipeline.rs` sequences semantic analysis, cleanup preparation, constant evaluation, and LLVM

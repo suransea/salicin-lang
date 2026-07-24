@@ -6,6 +6,14 @@ subset.
 
 ## Unreleased
 
+- Removed declaration-value `type` forms. Opaque primitive declarations now use the abstract
+  `type` domain as in `pub let i32: type`; `bool` and compile-time `access` are ordinary closed
+  enums, and the legacy `let Name = type` / `let Name = type { ... }` spellings are rejected.
+- Routed prefix and postfix `match` syntax through the validated heterogeneous case-pack contract.
+  Each case remains a pattern partial function, while the compiler statically expands the complete
+  control call before effect, throws, ownership, and cleanup analysis. `if` now forms a boolean
+  case pair over the same path, and `core.control.if` has an ordinary source body implemented with
+  `match`.
 - Added first-class, contextually typed pattern partial functions. Applying
   `{ Pattern [if guard] -> body }` now returns `core.control.Attempt(Input)(Output)`, preserves the
   original non-`Copy` input on `Miss`, delays payload moves until `Hit`, and carries closure

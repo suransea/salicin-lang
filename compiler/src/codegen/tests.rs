@@ -995,11 +995,14 @@ let main(): i32 = {
 "#,
     )
     .unwrap_err();
-    assert!(ambiguous.iter().any(|error| {
-        error
-            .message
-            .contains("multiple escaping error types: `bool`, `i64`")
-    }));
+    assert!(
+        ambiguous.iter().any(|error| {
+            error
+                .message
+                .contains("multiple escaping error types: `bool`, `i64`")
+        }),
+        "{ambiguous:?}"
+    );
 
     let handled = compile_resolved_text(
         r#"

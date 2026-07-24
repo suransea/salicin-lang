@@ -1,19 +1,19 @@
 // Opaque primitive types. Their source identities and contracts participate in
 // ordinary type and trait resolution; the compiler only supplies representation
 // and intrinsic lowering after validating this core bundle.
-pub let bool = type { false, true }
-pub let i8 = type
-pub let i16 = type
-pub let i32 = type
-pub let i64 = type
-pub let i128 = type
-pub let isize = type
-pub let u8 = type
-pub let u16 = type
-pub let u32 = type
-pub let u64 = type
-pub let u128 = type
-pub let usize = type
+pub let bool = enum { false, true }
+pub let i8: type
+pub let i16: type
+pub let i32: type
+pub let i64: type
+pub let i128: type
+pub let isize: type
+pub let u8: type
+pub let u16: type
+pub let u32: type
+pub let u64: type
+pub let u128: type
+pub let usize: type
 
 extend bool: core.marker.Copy {}
 extend bool: core.ops.bit.Not {

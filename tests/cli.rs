@@ -1037,7 +1037,7 @@ fn generic_inherent_extensions_infer_and_dispatch_concrete_instances() {
 }
 
 #[test]
-fn passing_keyword_generics_select_auto_copy_and_move() {
+fn parameter_modifier_generics_select_copy_and_move() {
     let output = salic()
         .arg("run")
         .arg(fixture("pass", "passing_generic.sc"))
@@ -1059,7 +1059,10 @@ fn passing_keyword_generics_select_auto_copy_and_move() {
 
     for (name, expected) in [
         ("passing_move_copy_use_after.sc", "moved"),
-        ("passing_invalid_argument.sc", "invalid passing argument"),
+        (
+            "passing_invalid_argument.sc",
+            "invalid parameter modifier argument",
+        ),
     ] {
         let output = salic()
             .arg("check")
@@ -2321,7 +2324,10 @@ fn source_errors_fail_check_without_creating_output() {
 
     for (path, checked) in check_sources_in_parallel(fixtures) {
         let name = path.file_name().unwrap().to_string_lossy();
-        let diagnostics = checked.unwrap_err();
+        let diagnostics = match checked {
+            Ok(()) => panic!("{name} unexpectedly passed source checking"),
+            Err(diagnostics) => diagnostics,
+        };
         assert!(
             !diagnostics.is_empty(),
             "{name} produced no diagnostic output"

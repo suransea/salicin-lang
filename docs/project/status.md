@@ -131,7 +131,10 @@ Pattern partial functions are typed callable values. A contextually typed
 and follows ordinary `Fn`/`FnMut`/`FnOnce` capture rules. Its lowering reuses the match ownership
 engine: a failed pattern or guard returns the exact non-`Copy` input through `Miss`, while payload
 moves commit only on `Hit`. Noncapturing pattern functions can also fill ordinary function-typed
-parameters. Source-backed case-pack dispatch remains `MATCH-SOURCE-1`.
+parameters. Prefix and postfix `match` syntax now form validated heterogeneous case-group calls,
+which are statically expanded to ordinary match ownership analysis before effect, throws, and
+cleanup processing. `if` forms the corresponding boolean case pair; `core.control.if` has an
+ordinary source body over `match`, and source `if` no longer enters an independent selection path.
 
 Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
 `continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs

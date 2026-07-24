@@ -188,7 +188,7 @@ pub let parameters = domain
 `core.borrow` owns the closed access type:
 
 ```sc
-pub let access = type {
+pub let access = enum {
   shared,
   mut
 }
@@ -278,7 +278,11 @@ pub let while(E: effect)
 pub let if(E: effect, T: type)
   (condition: bool)
   (move then: (): T with(E))
-  (move else: (): T with(E)): T with(E)
+  (move else: (): T with(E)): T with(E) = {
+  match condition
+    { true -> then() }
+    { false -> else() }
+}
 pub let match(Input: type, Output: type, E: effect, ...Cases: parameters)
   (move input: Input)
   ...Cases: Output with(E)

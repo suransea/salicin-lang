@@ -351,61 +351,10 @@ impl Parser {
 
         self.expect(&TokenKind::Equal, "`=`")?;
 
-        if self.at(&TokenKind::Type) {
-            if mutable
-                || annotation.is_some()
-                || has_effect_group
-                || !compile_groups.is_empty()
-                || !groups.is_empty()
-                || !where_predicates.is_empty()
-            {
-                return Err(self.error_here(
-                    "opaque type declarations cannot be mutable, generic, annotated, or have parameters",
-                ));
-            }
-            self.advance();
-            let values = if self.take(&TokenKind::LBrace) {
-                let mut values = Vec::new();
-                self.skip_separators();
-                while !self.take(&TokenKind::RBrace) {
-                    let value = match self.current().kind.clone() {
-                        TokenKind::True => "true".to_owned(),
-                        TokenKind::False => "false".to_owned(),
-                        TokenKind::Ident(value) => value,
-                        TokenKind::Mut => "mut".to_owned(),
-                        TokenKind::Copy => "copy".to_owned(),
-                        TokenKind::Move => "move".to_owned(),
-                        _ => {
-                            return Err(self
-                                .error_here("expected a value name in the closed type value set"));
-                        }
-                    };
-                    self.advance();
-                    if values.contains(&value) {
-                        return Err(self.error_here(format!(
-                            "duplicate value `{value}` in closed type value set"
-                        )));
-                    }
-                    values.push(value);
-                    self.skip_separators();
-                    if self.take(&TokenKind::RBrace) {
-                        break;
-                    }
-                    self.expect(&TokenKind::Comma, "`,` between closed type values")?;
-                    self.skip_separators();
-                    if self.take(&TokenKind::RBrace) {
-                        break;
-                    }
-                }
-                values
-            } else {
-                Vec::new()
-            };
-            return Ok(Item::TypeForm(TypeFormDef {
-                name,
-                compile_groups: Vec::new(),
-                values,
-            }));
+        if self.at_context_ident("type") {
+            return Err(self.error_here(
+                "`type` is an abstract domain and cannot appear as a declaration value; write `let Name: type`",
+            ));
         }
 
         if self.at_context_ident("effect") {
@@ -655,9 +604,6 @@ impl Parser {
     ) -> Result<Item, ParseError> {
         if mutable {
             return Err(self.error_here("type forms cannot be declared with `let mut`"));
-        }
-        if compile_groups.is_empty() {
-            return Err(self.error_here("type form declarations require compile-time parameters"));
         }
         Ok(Item::TypeForm(TypeFormDef {
             name,
@@ -1856,13 +1802,17 @@ impl Parser {
         self.expect(&TokenKind::LBrace, "`{` after `enum`")?;
         self.skip_separators();
         let mut variants = Vec::new();
+        let mut variant_names = HashSet::new();
 
         while !self.at(&TokenKind::RBrace) {
             if self.at(&TokenKind::Eof) {
                 return Err(self.error_here("expected `}` before end of enum declaration"));
             }
 
-            let variant_name = self.expect_ident("a variant name")?;
+            let variant_name = self.enum_variant_name()?;
+            if !variant_names.insert(variant_name.clone()) {
+                return Err(self.error_here(format!("duplicate enum variant `{variant_name}`")));
+            }
             let fields = if self.take(&TokenKind::LParen) {
                 self.skip_separators();
                 if self.take(&TokenKind::RParen) {
@@ -1911,6 +1861,27 @@ impl Parser {
             compile_groups,
             variants,
         })
+    }
+
+    fn enum_variant_name(&mut self) -> Result<String, ParseError> {
+        let token = self.current().clone();
+        let name = match token.kind {
+            TokenKind::Ident(name) => name,
+            TokenKind::True => "true".to_owned(),
+            TokenKind::False => "false".to_owned(),
+            TokenKind::Mut => "mut".to_owned(),
+            _ => {
+                return Err(self.error_at(
+                    &token,
+                    format!(
+                        "expected an enum variant name, found {}",
+                        describe(&token.kind)
+                    ),
+                ))
+            }
+        };
+        self.advance();
+        Ok(name)
     }
 
     fn trait_definition(
@@ -2673,7 +2644,7 @@ impl Parser {
 
         self.expect(&TokenKind::LBrace, "`{` after `match`")?;
         self.skip_separators();
-        let mut arms = Vec::new();
+        let mut cases = Vec::new();
         while !self.at(&TokenKind::RBrace) {
             if self.at(&TokenKind::Eof) {
                 return Err(self.error_here("expected `}` before end of match expression"));
@@ -2687,10 +2658,10 @@ impl Parser {
             };
             self.expect(&TokenKind::FatArrow, "`=>` after match pattern")?;
             let body = self.expression(true)?;
-            arms.push(MatchArm {
+            cases.push(Expr::PatternClosure {
                 pattern,
-                guard,
-                body,
+                guard: guard.map(Box::new),
+                body: Box::new(body),
             });
 
             if self.take(&TokenKind::Comma) {
@@ -2705,10 +2676,23 @@ impl Parser {
         }
         self.expect(&TokenKind::RBrace, "`}` after match arms")?;
 
-        Ok(Expr::Match {
-            scrutinee: Box::new(scrutinee),
-            arms,
-        })
+        let mut call = Expr::Call(
+            Box::new(Self::core_match_function()),
+            vec![CallArg {
+                label: None,
+                value: scrutinee,
+            }],
+        );
+        for case in cases {
+            call = Expr::Call(
+                Box::new(call),
+                vec![CallArg {
+                    label: None,
+                    value: case,
+                }],
+            );
+        }
+        Ok(call)
     }
 
     fn prefix_match_expression(&mut self) -> Result<Expr, ParseError> {
@@ -2719,7 +2703,7 @@ impl Parser {
             return Err(self.error_here("`match` requires at least one trailing pattern case"));
         }
 
-        let mut arms = Vec::new();
+        let mut cases = Vec::new();
         while self.at(&TokenKind::LBrace) {
             self.expect(&TokenKind::LBrace, "`{` before a match case")?;
             self.skip_separators();
@@ -2731,18 +2715,31 @@ impl Parser {
             };
             self.expect(&TokenKind::Arrow, "`->` after match case pattern")?;
             let body = self.block_contents()?;
-            arms.push(MatchArm {
+            cases.push(Expr::PatternClosure {
                 pattern,
-                guard,
-                body,
+                guard: guard.map(Box::new),
+                body: Box::new(body),
             });
             self.take_newlines_if_followed_by(&[TokenKind::LBrace]);
         }
 
-        Ok(Expr::Match {
-            scrutinee: Box::new(scrutinee),
-            arms,
-        })
+        let mut call = Expr::Call(
+            Box::new(Self::core_match_function()),
+            vec![CallArg {
+                label: None,
+                value: scrutinee,
+            }],
+        );
+        for case in cases {
+            call = Expr::Call(
+                Box::new(call),
+                vec![CallArg {
+                    label: None,
+                    value: case,
+                }],
+            );
+        }
+        Ok(call)
     }
 
     fn coalesce(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
@@ -3633,13 +3630,29 @@ impl Parser {
             return Err(self.error_here("expected `{` after `if` condition"));
         }
         let then_branch = self.block()?;
-        let else_branch = self.optional_else_branch()?;
+        let else_branch = self
+            .optional_else_branch()?
+            .map_or(Expr::Unit, |branch| *branch);
 
-        Ok(Expr::If {
-            condition: Box::new(condition),
-            then_branch: Box::new(then_branch),
-            else_branch,
-        })
+        Ok(Expr::Call(
+            Box::new(Expr::Call(
+                Box::new(Expr::Call(
+                    Box::new(Self::core_if_function()),
+                    vec![CallArg {
+                        label: None,
+                        value: condition,
+                    }],
+                )),
+                vec![CallArg {
+                    label: None,
+                    value: Expr::Closure(Vec::new(), Box::new(then_branch)),
+                }],
+            )),
+            vec![CallArg {
+                label: None,
+                value: Expr::Closure(Vec::new(), Box::new(else_branch)),
+            }],
+        ))
     }
 
     fn optional_else_branch(&mut self) -> Result<Option<Box<Expr>>, ParseError> {
@@ -3880,6 +3893,14 @@ impl Parser {
             )),
             name.to_owned(),
         )
+    }
+
+    fn core_match_function() -> Expr {
+        Expr::Name("$lang$match".to_owned())
+    }
+
+    fn core_if_function() -> Expr {
+        Expr::Name("$lang$if".to_owned())
     }
 
     fn block_contents(&mut self) -> Result<Expr, ParseError> {
@@ -5412,6 +5433,64 @@ mod tests {
         tail
     }
 
+    fn flatten_test_call<'a>(expression: &'a Expr, groups: &mut Vec<&'a [CallArg]>) -> &'a Expr {
+        if let Expr::Call(callee, arguments) = expression {
+            let root = flatten_test_call(callee, groups);
+            groups.push(arguments);
+            root
+        } else {
+            expression
+        }
+    }
+
+    fn match_call_parts(expression: &Expr) -> (&Expr, Vec<&Expr>) {
+        let mut groups = Vec::new();
+        let root = flatten_test_call(expression, &mut groups);
+        assert_eq!(root, &Parser::core_match_function());
+        assert!(groups.len() >= 2, "expected an input and at least one case");
+        let values = groups
+            .into_iter()
+            .map(|group| {
+                let [CallArg { label: None, value }] = group else {
+                    panic!("expected a single unlabeled match argument");
+                };
+                value
+            })
+            .collect::<Vec<_>>();
+        (values[0], values[1..].to_vec())
+    }
+
+    fn if_call_parts(expression: &Expr) -> (&Expr, &Expr, &Expr) {
+        fn branch(group: &[CallArg]) -> &Expr {
+            let [CallArg {
+                label: None,
+                value: Expr::Closure(parameters, body),
+            }] = group
+            else {
+                panic!("expected one unlabeled if branch closure");
+            };
+            assert!(parameters.is_empty());
+            body.as_ref()
+        }
+
+        let mut groups = Vec::new();
+        assert_eq!(
+            flatten_test_call(expression, &mut groups),
+            &Parser::core_if_function()
+        );
+        let [condition_group, then_group, else_group] = groups.as_slice() else {
+            panic!("expected condition, then, and else groups");
+        };
+        let [CallArg {
+            label: None,
+            value: condition,
+        }] = *condition_group
+        else {
+            panic!("expected one unlabeled if condition");
+        };
+        (condition, branch(then_group), branch(else_group))
+    }
+
     #[test]
     fn parses_globals_and_curried_functions() {
         let program = parse(
@@ -5744,11 +5823,12 @@ mod tests {
         let Item::Function(unwrap) = &program.items[1] else {
             panic!("expected function");
         };
-        let Expr::Match { arms, .. } = function_tail(unwrap) else {
-            panic!("expected match");
+        let (_, cases) = match_call_parts(function_tail(unwrap));
+        let Expr::PatternClosure { pattern, .. } = cases[0] else {
+            panic!("expected pattern closure");
         };
         assert!(matches!(
-            &arms[0].pattern,
+            pattern,
             Pattern::Constructor { path, fields: PatternFields::Positional(fields) }
                 if path == &vec!["root".to_owned(), "Option".to_owned(), "Some".to_owned()]
                     && fields == &vec![Pattern::Binding("self".into())]
@@ -6554,7 +6634,10 @@ mod tests {
             panic!("expected function body");
         };
         assert_eq!(statements.len(), 1);
-        assert!(matches!(tail.as_ref(), Expr::If { .. }));
+        let (condition, then_branch, else_branch) = if_call_parts(tail);
+        assert_eq!(condition, &Expr::Bool(true));
+        assert!(matches!(then_branch, Expr::Block(_, _)));
+        assert!(matches!(else_branch, Expr::Block(_, _)));
     }
 
     #[test]
@@ -6753,19 +6836,26 @@ mod tests {
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };
-        let Expr::Match { scrutinee, arms } = function_tail(function) else {
-            panic!("expected match");
+        let (input, cases) = match_call_parts(function_tail(function));
+        assert_eq!(input, &Expr::Name("shape".into()));
+        assert_eq!(cases.len(), 3);
+        let Expr::PatternClosure { pattern, guard, .. } = cases[0] else {
+            panic!("expected pattern closure");
         };
-        assert_eq!(scrutinee.as_ref(), &Expr::Name("shape".into()));
-        assert_eq!(arms.len(), 3);
-        assert!(arms[0].guard.is_some());
+        assert!(guard.is_some());
         assert!(matches!(
-            &arms[0].pattern,
+            pattern,
             Pattern::Constructor { path, fields: PatternFields::Named(fields) }
                 if path == &vec!["Shape".to_owned(), "Circle".to_owned()]
                     && fields[0].name == "radius"
         ));
-        assert_eq!(arms[2].pattern, Pattern::Wildcard);
+        assert!(matches!(
+            cases[2],
+            Expr::PatternClosure {
+                pattern: Pattern::Wildcard,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -6786,23 +6876,35 @@ mod tests {
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };
-        let Expr::Match { scrutinee, arms } = function_tail(function) else {
-            panic!("expected match");
+        let (input, cases) = match_call_parts(function_tail(function));
+        assert_eq!(input, &Expr::Name("shape".into()));
+        assert_eq!(cases.len(), 3);
+        let Expr::PatternClosure {
+            pattern,
+            guard,
+            body,
+        } = cases[0]
+        else {
+            panic!("expected pattern closure");
         };
-        assert_eq!(scrutinee.as_ref(), &Expr::Name("shape".into()));
-        assert_eq!(arms.len(), 3);
-        assert!(arms[0].guard.is_some());
+        assert!(guard.is_some());
         assert!(matches!(
-            &arms[0].body,
+            body.as_ref(),
             Expr::Block(statements, Some(_)) if statements.len() == 1
         ));
         assert!(matches!(
-            &arms[0].pattern,
+            pattern,
             Pattern::Constructor { path, fields: PatternFields::Named(fields) }
                 if path == &vec!["Shape".to_owned(), "Circle".to_owned()]
                     && fields[0].name == "radius"
         ));
-        assert_eq!(arms[2].pattern, Pattern::Wildcard);
+        assert!(matches!(
+            cases[2],
+            Expr::PatternClosure {
+                pattern: Pattern::Wildcard,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -6832,11 +6934,9 @@ mod tests {
         let Item::Global(matched) = &program.items[1] else {
             panic!("expected match binding");
         };
-        assert!(matches!(
-            &matched.value,
-            Expr::Match { scrutinee, .. }
-                if matches!(scrutinee.as_ref(), Expr::Coalesce(_, _))
-        ));
+        let (input, cases) = match_call_parts(&matched.value);
+        assert!(matches!(input, Expr::Coalesce(_, _)));
+        assert_eq!(cases.len(), 1);
 
         let Item::Global(assigned) = &program.items[2] else {
             panic!("expected assignment binding");
@@ -7108,7 +7208,7 @@ mod tests {
     #[test]
     fn parses_closed_types_as_compile_parameter_types() {
         let program = parse(
-            "let optimization = type { size, speed }\n\
+            "let optimization = enum { size, speed }\n\
              let select(B: bool, O: optimization)(value: i32): i32 = { value }\n",
         )
         .unwrap();
@@ -7255,7 +7355,7 @@ mod tests {
              pub let Throws(Error: type) = effect { let raise(move error: Error): Never }\n\
              pub let type = domain\n\
              pub let effect = domain\n\
-             pub let access = type {\n\
+             pub let access = enum {\n\
                /// Shared read-only access.\n\
                shared,\n\
                /// Exclusive mutable access.\n\
@@ -7282,8 +7382,9 @@ mod tests {
         ));
         assert!(matches!(
             &program.items[4],
-            Item::TypeForm(definition) if definition.name == "access"
-                && definition.values == ["shared", "mut"]
+            Item::Enum(definition) if definition.name == "access"
+                && definition.variants.iter().map(|variant| variant.name.as_str())
+                    .eq(["shared", "mut"])
         ));
         assert!(matches!(
             &program.items[5],
@@ -7352,8 +7453,8 @@ mod tests {
     }
 
     #[test]
-    fn parses_opaque_type_declarations_from_the_type_domain() {
-        let program = parse("pub let i32 = type\npub let bool = type { false, true }\n").unwrap();
+    fn parses_type_forms_and_closed_enums_from_the_type_domain() {
+        let program = parse("pub let i32: type\npub let bool = enum { false, true }\n").unwrap();
         assert!(matches!(
             &program.items[0],
             Item::TypeForm(definition)
@@ -7363,19 +7464,24 @@ mod tests {
         ));
         assert!(matches!(
             &program.items[1],
-            Item::TypeForm(definition)
+            Item::Enum(definition)
                 if definition.name == "bool"
                     && definition.compile_groups.is_empty()
-                    && definition.values == ["false", "true"]
+                    && definition.variants.iter().map(|variant| variant.name.as_str())
+                        .eq(["false", "true"])
         ));
     }
 
     #[test]
-    fn rejects_duplicate_closed_type_values() {
-        let error = parse("let bool = type { false, false }\n").unwrap_err();
-        assert!(error
-            .message
-            .contains("duplicate value `false` in closed type value set"));
+    fn rejects_removed_type_value_syntax_and_duplicate_enum_variants() {
+        let error = parse("let i32 = type\n").unwrap_err();
+        assert!(error.message.contains("abstract domain"));
+
+        let error = parse("let bool = type { false, true }\n").unwrap_err();
+        assert!(error.message.contains("abstract domain"));
+
+        let error = parse("let bool = enum { false, false }\n").unwrap_err();
+        assert!(error.message.contains("duplicate enum variant `false`"));
     }
 
     #[test]
@@ -7593,16 +7699,14 @@ mod tests {
             let Item::Function(function) = &program.items[0] else {
                 panic!("expected function");
             };
-            assert!(matches!(
-                function_tail(function),
-                Expr::If {
-                    then_branch,
-                    else_branch: Some(else_branch),
-                    ..
-                } if matches!(then_branch.as_ref(), Expr::Block(_, _))
-                    && matches!(else_branch.as_ref(), Expr::Block(_, _))
-                        || matches!(else_branch.as_ref(), Expr::If { .. })
-            ));
+            let (_, then_branch, else_branch) = if_call_parts(function_tail(function));
+            assert!(matches!(then_branch, Expr::Block(_, _)));
+            let mut nested_groups = Vec::new();
+            assert!(
+                matches!(else_branch, Expr::Block(_, _))
+                    || flatten_test_call(else_branch, &mut nested_groups)
+                        == &Parser::core_if_function()
+            );
         }
     }
 

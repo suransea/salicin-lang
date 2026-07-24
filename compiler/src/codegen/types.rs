@@ -1119,7 +1119,7 @@ impl Analyzer {
                 if let Some(source) = substitutions.get(name) {
                     return Some(source.clone());
                 }
-                match name.rsplit("::").next().unwrap_or(name).as_ref() {
+                match name.rsplit("::").next().unwrap_or(name) {
                     "copy" => Some(Type::Named(
                         PARAMETER_MODIFIER_COPY_MARKER.to_owned(),
                         Vec::new(),

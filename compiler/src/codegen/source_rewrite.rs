@@ -2314,6 +2314,17 @@ pub(super) fn rewrite_static_function_values(
 }
 
 pub(super) fn visit_expr_mut(expression: &mut Expr, visitor: &mut impl FnMut(&mut Expr)) {
+    visit_expr_mut_ordered(expression, visitor, false);
+}
+
+fn visit_expr_mut_ordered(
+    expression: &mut Expr,
+    visitor: &mut impl FnMut(&mut Expr),
+    preorder: bool,
+) {
+    if preorder {
+        visitor(expression);
+    }
     match expression {
         Expr::Unary(_, value)
         | Expr::Try(value)
@@ -2323,13 +2334,13 @@ pub(super) fn visit_expr_mut(expression: &mut Expr, visitor: &mut impl FnMut(&mu
         | Expr::Borrow { value, .. }
         | Expr::Member(value, _)
         | Expr::ChainMember(value, _)
-        | Expr::Loop { body: value } => visit_expr_mut(value, visitor),
+        | Expr::Loop { body: value } => visit_expr_mut_ordered(value, visitor, preorder),
         Expr::Binary(left, _, right)
         | Expr::Coalesce(left, right)
         | Expr::Assign(left, right)
         | Expr::CompoundAssign(left, _, right) => {
-            visit_expr_mut(left, visitor);
-            visit_expr_mut(right, visitor);
+            visit_expr_mut_ordered(left, visitor, preorder);
+            visit_expr_mut_ordered(right, visitor, preorder);
         }
         Expr::HandlerCoalesce {
             scrutinee,
@@ -2337,89 +2348,91 @@ pub(super) fn visit_expr_mut(expression: &mut Expr, visitor: &mut impl FnMut(&mu
             fallback,
             ..
         } => {
-            visit_expr_mut(scrutinee, visitor);
-            visit_expr_mut(success, visitor);
-            visit_expr_mut(fallback, visitor);
+            visit_expr_mut_ordered(scrutinee, visitor, preorder);
+            visit_expr_mut_ordered(success, visitor, preorder);
+            visit_expr_mut_ordered(fallback, visitor, preorder);
         }
         Expr::HandlerChainCall(chain) => {
-            visit_expr_mut(&mut chain.scrutinee, visitor);
+            visit_expr_mut_ordered(&mut chain.scrutinee, visitor, preorder);
             for argument in chain.groups.iter_mut().flatten() {
-                visit_expr_mut(&mut argument.value, visitor);
+                visit_expr_mut_ordered(&mut argument.value, visitor, preorder);
             }
-            visit_expr_mut(&mut chain.success, visitor);
-            visit_expr_mut(&mut chain.residual, visitor);
+            visit_expr_mut_ordered(&mut chain.success, visitor, preorder);
+            visit_expr_mut_ordered(&mut chain.residual, visitor, preorder);
         }
         Expr::Call(callee, arguments) => {
-            visit_expr_mut(callee, visitor);
+            visit_expr_mut_ordered(callee, visitor, preorder);
             for argument in arguments {
-                visit_expr_mut(&mut argument.value, visitor);
+                visit_expr_mut_ordered(&mut argument.value, visitor, preorder);
             }
         }
         Expr::StructLiteral {
             constructor,
             fields,
         } => {
-            visit_expr_mut(constructor, visitor);
+            visit_expr_mut_ordered(constructor, visitor, preorder);
             for field in fields {
-                visit_expr_mut(&mut field.value, visitor);
+                visit_expr_mut_ordered(&mut field.value, visitor, preorder);
             }
         }
         Expr::Array(elements) => {
             for element in elements {
-                visit_expr_mut(element, visitor);
+                visit_expr_mut_ordered(element, visitor, preorder);
             }
         }
         Expr::Index { base, index } => {
-            visit_expr_mut(base, visitor);
-            visit_expr_mut(index, visitor);
+            visit_expr_mut_ordered(base, visitor, preorder);
+            visit_expr_mut_ordered(index, visitor, preorder);
         }
         Expr::Block(statements, tail) => {
             for statement in statements {
                 match statement {
-                    Stmt::Let(binding) => visit_expr_mut(&mut binding.value, visitor),
-                    Stmt::Expr(expression) => visit_expr_mut(expression, visitor),
+                    Stmt::Let(binding) => {
+                        visit_expr_mut_ordered(&mut binding.value, visitor, preorder)
+                    }
+                    Stmt::Expr(expression) => visit_expr_mut_ordered(expression, visitor, preorder),
                 }
             }
             if let Some(tail) = tail {
-                visit_expr_mut(tail, visitor);
+                visit_expr_mut_ordered(tail, visitor, preorder);
             }
         }
-        Expr::Closure(_, body) => visit_expr_mut(body, visitor),
+        Expr::Closure(_, body) => visit_expr_mut_ordered(body, visitor, preorder),
         Expr::PatternClosure { guard, body, .. } => {
             if let Some(guard) = guard {
-                visit_expr_mut(guard, visitor);
+                visit_expr_mut_ordered(guard, visitor, preorder);
             }
-            visit_expr_mut(body, visitor);
+            visit_expr_mut_ordered(body, visitor, preorder);
         }
         Expr::If {
             condition,
             then_branch,
             else_branch,
         } => {
-            visit_expr_mut(condition, visitor);
-            visit_expr_mut(then_branch, visitor);
+            visit_expr_mut_ordered(condition, visitor, preorder);
+            visit_expr_mut_ordered(then_branch, visitor, preorder);
             if let Some(else_branch) = else_branch {
-                visit_expr_mut(else_branch, visitor);
+                visit_expr_mut_ordered(else_branch, visitor, preorder);
             }
         }
         Expr::Return(value) | Expr::Break(value) => {
             if let Some(value) = value {
-                visit_expr_mut(value, visitor);
+                visit_expr_mut_ordered(value, visitor, preorder);
             }
         }
         Expr::While {
             condition, body, ..
         } => {
-            visit_expr_mut(condition, visitor);
-            visit_expr_mut(body, visitor);
+            visit_expr_mut_ordered(condition, visitor, preorder);
+            visit_expr_mut_ordered(body, visitor, preorder);
         }
         Expr::Match { scrutinee, arms } => {
-            visit_expr_mut(scrutinee, visitor);
+            visit_expr_mut_ordered(scrutinee, visitor, preorder);
             for arm in arms {
                 if let Some(guard) = &mut arm.guard {
-                    visit_expr_mut(guard, visitor);
+                    visit_expr_mut_ordered(guard, visitor, preorder);
                 }
-                visit_expr_mut(&mut arm.body, visitor);
+                visit_expr_mut_ordered(&mut arm.body, visitor, preorder);
             }
         }
         Expr::Type(_)
@@ -2429,40 +2442,131 @@ pub(super) fn visit_expr_mut(expression: &mut Expr, visitor: &mut impl FnMut(&mu
         | Expr::Name(_)
         | Expr::Continue => {}
     }
-    visitor(expression);
+    if !preorder {
+        visitor(expression);
+    }
 }
 
-pub(super) fn normalize_handler_call_groups(program: &mut Program) {
-    fn normalize(expression: &mut Expr) {
-        visit_expr_mut(expression, &mut |expression| {
-            let Expr::Call(inner, action) = expression else {
-                return;
+pub(super) fn normalize_source_call_groups(program: &mut Program) {
+    fn expand_control_call(expression: &Expr) -> Option<Expr> {
+        let mut groups = Vec::new();
+        let Expr::Name(name) = super::lower::flatten_call(expression, &mut groups) else {
+            return None;
+        };
+        if name == "$lang$if" {
+            let [condition_group, then_group, else_group] = groups.as_slice() else {
+                return None;
             };
-            if !matches!(
-                action.as_slice(),
-                [CallArg {
-                    label: Some(label),
-                    value: Expr::Closure(parameters, _),
-                }] if label == "action" && parameters.is_empty()
-            ) {
-                return;
-            }
-            let mut groups = Vec::new();
-            let root = super::lower::flatten_call(inner, &mut groups);
-            if !matches!(root, Expr::Member(_, member) if member == "handle")
-                || groups.iter().any(|group| group.len() != 1)
-            {
-                return;
-            }
-            let clauses = groups
-                .iter()
-                .flat_map(|group| group.iter().cloned())
-                .collect::<Vec<_>>();
-            let normalized_inner = Expr::Call(Box::new(root.clone()), clauses);
-            let mut normalized_action = action.clone();
-            normalized_action[0].label = None;
-            *expression = Expr::Call(Box::new(normalized_inner), normalized_action);
-        });
+            let [CallArg {
+                label: None,
+                value: condition,
+            }] = *condition_group
+            else {
+                return None;
+            };
+            let branch = |group: &[CallArg]| {
+                let [CallArg {
+                    label: None,
+                    value: Expr::Closure(parameters, body),
+                }] = group
+                else {
+                    return None;
+                };
+                parameters.is_empty().then(|| (**body).clone())
+            };
+            return Some(Expr::Match {
+                scrutinee: Box::new(condition.clone()),
+                arms: vec![
+                    MatchArm {
+                        pattern: Pattern::Bool(true),
+                        guard: None,
+                        body: branch(then_group)?,
+                    },
+                    MatchArm {
+                        pattern: Pattern::Bool(false),
+                        guard: None,
+                        body: branch(else_group)?,
+                    },
+                ],
+            });
+        }
+        if name != "$lang$match" {
+            return None;
+        }
+        let (input_group, case_groups) = groups.split_first()?;
+        let [CallArg {
+            label: None,
+            value: input,
+        }] = *input_group
+        else {
+            return None;
+        };
+        let arms = case_groups
+            .iter()
+            .map(|group| {
+                let [CallArg {
+                    label: None,
+                    value:
+                        Expr::PatternClosure {
+                            pattern,
+                            guard,
+                            body,
+                        },
+                }] = *group
+                else {
+                    return None;
+                };
+                Some(MatchArm {
+                    pattern: pattern.clone(),
+                    guard: guard.as_deref().cloned(),
+                    body: (**body).clone(),
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Expr::Match {
+            scrutinee: Box::new(input.clone()),
+            arms,
+        })
+    }
+
+    fn normalize(expression: &mut Expr) {
+        visit_expr_mut_ordered(
+            expression,
+            &mut |expression| {
+                if let Some(expanded) = expand_control_call(expression) {
+                    *expression = expanded;
+                    return;
+                }
+                let Expr::Call(inner, action) = expression else {
+                    return;
+                };
+                if !matches!(
+                    action.as_slice(),
+                    [CallArg {
+                        label: Some(label),
+                        value: Expr::Closure(parameters, _),
+                    }] if label == "action" && parameters.is_empty()
+                ) {
+                    return;
+                }
+                let mut groups = Vec::new();
+                let root = super::lower::flatten_call(inner, &mut groups);
+                if !matches!(root, Expr::Member(_, member) if member == "handle")
+                    || groups.iter().any(|group| group.len() != 1)
+                {
+                    return;
+                }
+                let clauses = groups
+                    .iter()
+                    .flat_map(|group| group.iter().cloned())
+                    .collect::<Vec<_>>();
+                let normalized_inner = Expr::Call(Box::new(root.clone()), clauses);
+                let mut normalized_action = action.clone();
+                normalized_action[0].label = None;
+                *expression = Expr::Call(Box::new(normalized_inner), normalized_action);
+            },
+            true,
+        );
     }
 
     fn function(function: &mut Function) {

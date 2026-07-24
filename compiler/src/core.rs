@@ -379,11 +379,10 @@ impl LangItemKind {
             Self::TypeDomain | Self::RegionDomain | Self::EffectDomain | Self::ParametersDomain => {
                 "domain"
             }
-            Self::AccessType => "type form",
+            Self::AccessType | Self::Bool => "enum",
             Self::BorrowTypeForm
             | Self::ArrayTypeForm
             | Self::PtrTypeForm
-            | Self::Bool
             | Self::I8
             | Self::I16
             | Self::I32
@@ -1633,25 +1632,26 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
             | LangItemKind::ParametersDomain,
             Item::Domain(definition),
         ) => validate_domain(kind, definition, diagnostics),
-        (kind @ LangItemKind::AccessType, Item::TypeForm(definition)) => {
-            validate_closed_compile_type(kind, definition, diagnostics)
-        }
+        (LangItemKind::AccessType, Item::Enum(definition)) => validate_closed_enum(
+            "access",
+            &["shared", "mut"],
+            "pub let access = enum { shared, mut }",
+            definition,
+            diagnostics,
+        ),
         (LangItemKind::BorrowTypeForm, Item::TypeForm(definition)) => {
             validate_borrow_type_form(definition, diagnostics)
         }
         (LangItemKind::ArrayTypeForm, Item::TypeForm(definition)) => {
             validate_array_type_form(definition, diagnostics)
         }
-        (LangItemKind::Bool, Item::TypeForm(definition)) => {
-            if !definition.compile_groups.is_empty()
-                || definition.values.as_slice() != ["false", "true"]
-            {
-                diagnostics.push(
-                    "primitive lang item `bool` must have shape `pub let bool = type { false, true }`"
-                        .to_owned(),
-                );
-            }
-        }
+        (LangItemKind::Bool, Item::Enum(definition)) => validate_closed_enum(
+            "bool",
+            &["false", "true"],
+            "pub let bool = enum { false, true }",
+            definition,
+            diagnostics,
+        ),
         (
             LangItemKind::I8
             | LangItemKind::I16
@@ -1799,25 +1799,23 @@ fn validate_parameter_modifier(name: &str, function: &Function, diagnostics: &mu
     }
 }
 
-fn validate_closed_compile_type(
-    kind: LangItemKind,
-    definition: &TypeFormDef,
+fn validate_closed_enum(
+    name: &str,
+    variants: &[&str],
+    shape: &str,
+    definition: &EnumDef,
     diagnostics: &mut Vec<String>,
 ) {
-    let (name, values, shape): (&str, &[&str], &str) = match kind {
-        LangItemKind::AccessType => (
-            "access",
-            &["shared", "mut"],
-            "pub let access = type { shared, mut }",
-        ),
-        _ => unreachable!("closed compile type validation requires a closed type lang item"),
-    };
     let valid = definition.compile_groups.is_empty()
         && definition
-            .values
+            .variants
             .iter()
-            .map(String::as_str)
-            .eq(values.iter().copied());
+            .filter_map(|variant| match variant.fields {
+                crate::ast::VariantFields::Unit => Some(variant.name.as_str()),
+                _ => None,
+            })
+            .eq(variants.iter().copied())
+        && definition.variants.len() == variants.len();
     if !valid {
         diagnostics.push(format!("lang item `{name}` must have shape `{shape}`"));
     }
@@ -2531,7 +2529,7 @@ fn valid_if(function: &Function) -> bool {
         && moved_callable_parameter(else_branch, "else", named_type("T"), effect_parameter("E"))
         && function.return_type == Some(named_type("T"))
         && function.effects == effect_parameter("E")
-        && function.body.is_none()
+        && function.body.is_some()
 }
 
 fn valid_match(function: &Function) -> bool {
@@ -3262,7 +3260,7 @@ pub let Shr(Rhs: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 126);
+        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 128);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -3483,14 +3481,15 @@ pub let Shr(Rhs: type) = trait {
     }
 
     #[test]
-    fn bool_lang_item_requires_its_closed_value_set() {
-        let malformed = EDITION_2026_PRIMITIVES
-            .replace("pub let bool = type { false, true }", "pub let bool = type");
+    fn bool_lang_item_requires_its_enum_variants() {
+        let malformed = EDITION_2026_PRIMITIVES.replace(
+            "pub let bool = enum { false, true }",
+            "pub let bool = enum { true }",
+        );
         let modules = edition_2026_test_modules(&[("primitives", &malformed)]);
         let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
         assert!(error.diagnostics().iter().any(|diagnostic| {
-            diagnostic
-                == "primitive lang item `bool` must have shape `pub let bool = type { false, true }`"
+            diagnostic == "lang item `bool` must have shape `pub let bool = enum { false, true }`"
         }));
     }
 

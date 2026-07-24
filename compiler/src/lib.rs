@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn closed_types_can_parameterize_compile_time_functions() {
-        let source = "let optimization = type { size, speed }\n\
+        let source = "let optimization = enum { size, speed }\n\
                       let select_bool(B: bool)(value: i32): i32 = { value }\n\
                       let select_optimization(O: optimization)(value: i32): i32 = { value }\n\
                       let main(): i32 = {\n\
@@ -194,7 +194,7 @@ mod tests {
     #[test]
     fn closed_compile_time_defaults_are_checked_against_their_type() {
         let errors = compile_source(
-            "let optimization = type { size, speed }\n\
+            "let optimization = enum { size, speed }\n\
              let select(O: optimization = true)(value: i32): i32 = { value }\n\
              let main(): i32 = { select(42) }\n",
         )
@@ -219,9 +219,11 @@ mod tests {
     fn parameter_modifier_functions_can_be_forwarded_generically() {
         let source = "let modifier_identity(M: (P: parameters): parameters) = M\n\
              let apply(M: (P: parameters): parameters, T: type)(M value: T): T = { value }\n\
+             let forward(M: (P: parameters): parameters, T: type)(M value: T): T = {\n\
+               apply(modifier_identity(M), T)(value)\n\
+             }\n\
              let main(): i32 = {\n\
-               apply(modifier_identity(copy), i32)(20) +\n\
-                 apply(modifier_identity(move), i32)(22)\n\
+               forward(copy, i32)(20) + forward(move, i32)(22)\n\
              }\n";
         compile_source(source)
             .expect("copy and move parameter modifier functions should instantiate generically");

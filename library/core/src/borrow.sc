@@ -1,6 +1,6 @@
 // Borrow access, type, and value contracts.
 /// Describes whether a borrow is shared or mutable.
-pub let access = type {
+pub let access = enum {
   /// Shared read-only access.
   shared,
   /// Exclusive mutable access.

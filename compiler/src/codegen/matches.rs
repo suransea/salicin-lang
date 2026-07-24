@@ -18,6 +18,9 @@ impl Analyzer {
         expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
+        if direct_boolean_branches(arms).is_some() {
+            return self.lower_scalar_match(scrutinee, arms, expected, context, &Ty::Bool);
+        }
         let scalar_ty = match self.probe_expr_ty(scrutinee, None, context) {
             TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _)
                 if ty == Ty::Bool || ty.is_integer() =>
@@ -59,6 +62,24 @@ impl Analyzer {
         scalar_ty: &Ty,
     ) -> HirExpr {
         let hidden = format!("$match$scalar${}", context.next_local);
+        if *scalar_ty == Ty::Bool {
+            if let Some((then_branch, else_branch)) = direct_boolean_branches(arms) {
+                let lowered = Expr::Block(
+                    vec![Stmt::Let(Binding {
+                        mutable: false,
+                        name: hidden.clone(),
+                        annotation: Some(crate::ast::Type::Bool),
+                        value: scrutinee.clone(),
+                    })],
+                    Some(Box::new(Expr::If {
+                        condition: Box::new(Expr::Name(hidden)),
+                        then_branch: Box::new(then_branch.clone()),
+                        else_branch: Some(Box::new(else_branch.clone())),
+                    })),
+                );
+                return self.lower_expr(&lowered, expected, context);
+            }
+        }
         let mut covers_all = false;
         let mut covers_true = false;
         let mut covers_false = false;
@@ -618,5 +639,19 @@ impl Analyzer {
             ty,
             path,
         });
+    }
+}
+
+fn direct_boolean_branches(arms: &[MatchArm]) -> Option<(&Expr, &Expr)> {
+    let [first, second] = arms else {
+        return None;
+    };
+    if first.guard.is_some() || second.guard.is_some() {
+        return None;
+    }
+    match (&first.pattern, &second.pattern) {
+        (Pattern::Bool(true), Pattern::Bool(false)) => Some((&first.body, &second.body)),
+        (Pattern::Bool(false), Pattern::Bool(true)) => Some((&second.body, &first.body)),
+        _ => None,
     }
 }

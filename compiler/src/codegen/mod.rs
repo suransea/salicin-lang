@@ -275,9 +275,9 @@ impl Analyzer {
         {
             analyzer.error(diagnostic);
         }
-        normalize_handler_call_groups(&mut core_program);
-        normalize_handler_call_groups(&mut alloc_program);
-        normalize_handler_call_groups(&mut source_program);
+        normalize_source_call_groups(&mut core_program);
+        normalize_source_call_groups(&mut alloc_program);
+        normalize_source_call_groups(&mut source_program);
         analyzer.collect_items(&core_program, &alloc_program, &source_program);
         Ok(analyzer)
     }
@@ -293,7 +293,12 @@ impl Analyzer {
     }
 
     fn is_lang_item_name(&self, name: &str, kind: LangItemKind) -> bool {
-        name == self.lang_item_name(kind) || name == kind.source_name()
+        name == self.lang_item_name(kind)
+            || name == kind.source_name()
+            || matches!(
+                (kind, name),
+                (LangItemKind::If, "$lang$if") | (LangItemKind::Match, "$lang$match")
+            )
     }
 
     fn collect_items(&mut self, core: &Program, alloc: &Program, program: &Program) {
@@ -372,6 +377,26 @@ impl Analyzer {
                     if self.is_lang_item_name(&definition.name, LangItemKind::AccessType) {
                         self.closed_type_values
                             .insert("access".to_owned(), definition.values.clone());
+                    }
+                }
+            }
+            if let Item::Enum(definition) = item {
+                let all_unit = definition
+                    .variants
+                    .iter()
+                    .all(|variant| matches!(variant.fields, VariantFields::Unit));
+                if all_unit && !definition.variants.is_empty() {
+                    let values = definition
+                        .variants
+                        .iter()
+                        .map(|variant| variant.name.clone())
+                        .collect::<Vec<_>>();
+                    self.closed_type_values
+                        .insert(definition.name.clone(), values.clone());
+                    if self.is_lang_item_name(&definition.name, LangItemKind::Bool) {
+                        self.closed_type_values.insert("bool".to_owned(), values);
+                    } else if self.is_lang_item_name(&definition.name, LangItemKind::AccessType) {
+                        self.closed_type_values.insert("access".to_owned(), values);
                     }
                 }
             }
@@ -626,6 +651,11 @@ impl Analyzer {
                     }
                 }
                 Item::Enum(definition) => {
+                    if self.is_lang_item_name(&definition.name, LangItemKind::Bool)
+                        || self.is_lang_item_name(&definition.name, LangItemKind::AccessType)
+                    {
+                        continue;
+                    }
                     self.nominal_accesses.insert(
                         definition.name.clone(),
                         AccessBoundary {
@@ -5602,7 +5632,9 @@ impl Analyzer {
                     CompileParamKind::Effect => EFFECT_UNSAFE_MARKER.to_owned(),
                     CompileParamKind::Parameters => continue,
                     CompileParamKind::ParameterPack => continue,
-                    CompileParamKind::ParameterModifier => continue,
+                    CompileParamKind::ParameterModifier => {
+                        PARAMETER_MODIFIER_MOVE_MARKER.to_owned()
+                    }
                     CompileParamKind::Region => continue,
                     CompileParamKind::USize => unreachable!("handled before marker selection"),
                     CompileParamKind::TypeConstructor { .. }
@@ -6468,31 +6500,20 @@ impl Analyzer {
                 then_branch,
                 else_branch: Some(else_branch),
                 ..
-            } => {
-                let then_ty = self.probe_expr_ty(then_branch, hint, context);
-                let else_ty = self.probe_expr_ty(else_branch, hint, context);
-                if then_ty == else_ty {
-                    then_ty
-                } else {
-                    match (then_ty, else_ty) {
-                        (TypeProbe::Defaultable(default), exact)
-                        | (exact, TypeProbe::Defaultable(default)) => match exact {
-                            TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _)
-                                if default.is_integer() && ty.is_integer() =>
-                            {
-                                TypeProbe::Known(ty)
-                            }
-                            _ => TypeProbe::Unsupported,
-                        },
-                        (TypeProbe::Known(left), TypeProbe::KnownSource(right, source))
-                        | (TypeProbe::KnownSource(right, source), TypeProbe::Known(left))
-                            if left == right =>
-                        {
-                            TypeProbe::KnownSource(left, source)
-                        }
-                        _ => TypeProbe::Unsupported,
-                    }
+            } => self.probe_conditional_result_ty(then_branch, else_branch, hint, context),
+            Expr::Match { arms, .. } => {
+                let [first, second] = arms.as_slice() else {
+                    return TypeProbe::Unsupported;
+                };
+                if first.guard.is_some() || second.guard.is_some() {
+                    return TypeProbe::Unsupported;
                 }
+                let (then_branch, else_branch) = match (&first.pattern, &second.pattern) {
+                    (Pattern::Bool(true), Pattern::Bool(false)) => (&first.body, &second.body),
+                    (Pattern::Bool(false), Pattern::Bool(true)) => (&second.body, &first.body),
+                    _ => return TypeProbe::Unsupported,
+                };
+                self.probe_conditional_result_ty(then_branch, else_branch, hint, context)
             }
             Expr::Assign(_, _)
             | Expr::CompoundAssign(_, _, _)
@@ -6503,8 +6524,40 @@ impl Analyzer {
             | Expr::While { .. }
             | Expr::Loop { .. }
             | Expr::Break(_)
-            | Expr::Continue
-            | Expr::Match { .. } => TypeProbe::Unsupported,
+            | Expr::Continue => TypeProbe::Unsupported,
+        }
+    }
+
+    fn probe_conditional_result_ty(
+        &self,
+        then_branch: &Expr,
+        else_branch: &Expr,
+        hint: Option<&Ty>,
+        context: &LowerCtx,
+    ) -> TypeProbe {
+        let then_ty = self.probe_expr_ty(then_branch, hint, context);
+        let else_ty = self.probe_expr_ty(else_branch, hint, context);
+        if then_ty == else_ty {
+            return then_ty;
+        }
+        match (then_ty, else_ty) {
+            (TypeProbe::Defaultable(default), exact) | (exact, TypeProbe::Defaultable(default)) => {
+                match exact {
+                    TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _)
+                        if default.is_integer() && ty.is_integer() =>
+                    {
+                        TypeProbe::Known(ty)
+                    }
+                    _ => TypeProbe::Unsupported,
+                }
+            }
+            (TypeProbe::Known(left), TypeProbe::KnownSource(right, source))
+            | (TypeProbe::KnownSource(right, source), TypeProbe::Known(left))
+                if left == right =>
+            {
+                TypeProbe::KnownSource(left, source)
+            }
+            _ => TypeProbe::Unsupported,
         }
     }
 
@@ -9522,12 +9575,194 @@ impl Analyzer {
         expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
+        if self.is_lang_item_name(name, LangItemKind::Match) {
+            return self.lower_pattern_match_call(groups, expected, context);
+        }
         let Some((canonical, runtime_start)) =
             self.resolve_inferred_generic_function_instance(name, groups, expected, context)
         else {
             return error_expr();
         };
         self.lower_named_function_call(&canonical, &groups[runtime_start..], expected, context)
+    }
+
+    fn lower_pattern_match_call(
+        &mut self,
+        groups: &[&[CallArg]],
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let Some((input_group, case_groups)) = groups.split_first() else {
+            self.error("`match` requires an input group");
+            return error_expr();
+        };
+        let [input] = *input_group else {
+            self.error("`match` input group requires exactly one unlabeled argument");
+            return error_expr();
+        };
+        if input.label.is_some() {
+            self.error("`match` input must be unlabeled");
+        }
+        let mut arms = Vec::with_capacity(case_groups.len());
+        for (index, group) in case_groups.iter().enumerate() {
+            let [case] = *group else {
+                self.error(format!(
+                    "`match` case group {} requires exactly one pattern closure",
+                    index + 1
+                ));
+                return error_expr();
+            };
+            if case.label.is_some() {
+                self.error(format!(
+                    "`match` case group {} must be unlabeled",
+                    index + 1
+                ));
+            }
+            let Expr::PatternClosure {
+                pattern,
+                guard,
+                body,
+            } = &case.value
+            else {
+                self.error(format!(
+                    "`match` case group {} requires `{{ Pattern [if guard] -> body }}`",
+                    index + 1
+                ));
+                return error_expr();
+            };
+            arms.push(MatchArm {
+                pattern: pattern.clone(),
+                guard: guard.as_deref().cloned(),
+                body: (**body).clone(),
+            });
+        }
+        self.lower_match(&input.value, &arms, expected, context)
+    }
+
+    fn lower_if_match_call(
+        &mut self,
+        groups: &[&[CallArg]],
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let Some(Expr::Match { scrutinee, arms }) = self.if_match_call_expression(groups) else {
+            self.error(
+                "`if` requires `(condition)(then closure)(else closure)` with zero-parameter branches",
+            );
+            return error_expr();
+        };
+        self.lower_match(&scrutinee, &arms, expected, context)
+    }
+
+    fn if_match_call_expression(&self, groups: &[&[CallArg]]) -> Option<Expr> {
+        let [condition_group, then_group, else_group] = groups else {
+            return None;
+        };
+        let [condition] = *condition_group else {
+            return None;
+        };
+        if !matches!(condition.label.as_deref(), None | Some("condition")) {
+            return None;
+        }
+        let branch = |group: &[CallArg], label: &str| {
+            let [argument] = group else {
+                return None;
+            };
+            if argument
+                .label
+                .as_deref()
+                .is_some_and(|found| found != label)
+            {
+                return None;
+            }
+            let Expr::Closure(parameters, body) = &argument.value else {
+                return None;
+            };
+            if !parameters.is_empty() {
+                return None;
+            }
+            Some((**body).clone())
+        };
+        Some(Expr::Match {
+            scrutinee: Box::new(condition.value.clone()),
+            arms: vec![
+                MatchArm {
+                    pattern: Pattern::Bool(true),
+                    guard: None,
+                    body: branch(then_group, "then")?,
+                },
+                MatchArm {
+                    pattern: Pattern::Bool(false),
+                    guard: None,
+                    body: branch(else_group, "else")?,
+                },
+            ],
+        })
+    }
+
+    fn pattern_match_call_expression(&self, expression: &Expr) -> Option<Expr> {
+        let mut groups = Vec::new();
+        let Expr::Name(name) = flatten_call(expression, &mut groups) else {
+            return None;
+        };
+        if !self.is_lang_item_name(name, LangItemKind::Match) {
+            return None;
+        }
+        let (input_group, case_groups) = groups.split_first()?;
+        let [CallArg {
+            label: None,
+            value: input,
+        }] = *input_group
+        else {
+            return None;
+        };
+        let arms = case_groups
+            .iter()
+            .map(|group| {
+                let [CallArg {
+                    label: None,
+                    value:
+                        Expr::PatternClosure {
+                            pattern,
+                            guard,
+                            body,
+                        },
+                }] = *group
+                else {
+                    return None;
+                };
+                Some(MatchArm {
+                    pattern: pattern.clone(),
+                    guard: guard.as_deref().cloned(),
+                    body: (**body).clone(),
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Expr::Match {
+            scrutinee: Box::new(input.clone()),
+            arms,
+        })
+    }
+
+    fn if_call_expression_for_transform(&self, expression: &Expr) -> Option<Expr> {
+        let mut groups = Vec::new();
+        let Expr::Name(name) = flatten_call(expression, &mut groups) else {
+            return None;
+        };
+        if !self.is_lang_item_name(name, LangItemKind::If) {
+            return None;
+        }
+        let Expr::Match { scrutinee, arms } = self.if_match_call_expression(&groups)? else {
+            return None;
+        };
+        let [then_arm, else_arm] = arms.as_slice() else {
+            return None;
+        };
+        Some(Expr::If {
+            condition: scrutinee,
+            then_branch: Box::new(then_arm.body.clone()),
+            else_branch: Some(Box::new(else_arm.body.clone())),
+        })
     }
 
     fn lower_bound_method_call(

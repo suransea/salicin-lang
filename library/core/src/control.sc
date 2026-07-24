@@ -116,7 +116,11 @@ pub let while(E: effect)
 pub let if(E: effect, T: type)
   (condition: bool)
   (move then: (): T with(E))
-  (move else: (): T with(E)): T with(E)
+  (move else: (): T with(E)): T with(E) = {
+  match condition
+    { true -> then() }
+    { false -> else() }
+}
 
 /// Selects the first matching case parameter group.
 pub let match(

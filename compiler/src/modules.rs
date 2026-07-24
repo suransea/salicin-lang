@@ -3715,6 +3715,7 @@ fn collect_member_segments(expression: &Expr, segments: &mut Vec<String>) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::CallArg;
 
     fn unit(path: &str, module_path: &[&str], source: &str, is_root: bool) -> SourceUnit {
         SourceUnit {
@@ -3742,7 +3743,7 @@ mod tests {
             unit(
                 "config.sc",
                 &["config"],
-                "pub let optimization = type { size, speed }\n",
+                "pub let optimization = enum { size, speed }\n",
                 false,
             ),
         ])
@@ -3794,6 +3795,34 @@ mod tests {
             panic!("expected function body block with a tail value");
         };
         tail
+    }
+
+    fn match_cases(expression: &Expr) -> Vec<&Expr> {
+        fn flatten<'a>(expression: &'a Expr, groups: &mut Vec<&'a [CallArg]>) -> &'a Expr {
+            if let Expr::Call(callee, arguments) = expression {
+                let root = flatten(callee, groups);
+                groups.push(arguments);
+                root
+            } else {
+                expression
+            }
+        }
+
+        let mut groups = Vec::new();
+        assert_eq!(
+            flatten(expression, &mut groups),
+            &Expr::Name("$lang$match".into())
+        );
+        groups
+            .into_iter()
+            .skip(1)
+            .map(|group| {
+                let [CallArg { label: None, value }] = group else {
+                    panic!("expected one unlabeled match case");
+                };
+                value
+            })
+            .collect()
     }
 
     #[test]
@@ -3903,11 +3932,12 @@ mod tests {
             closure_body.as_ref(),
             Expr::Block(_, Some(value)) if value.as_ref() == &Expr::Name("math".into())
         ));
-        let Expr::Match { arms, .. } = tail.as_ref() else {
-            panic!("expected match");
+        let cases = match_cases(tail);
+        let Expr::PatternClosure { body, .. } = cases[0] else {
+            panic!("expected pattern closure");
         };
         assert!(matches!(
-            &arms[0].body,
+            body.as_ref(),
             Expr::Call(_, arguments)
                 if arguments[0].value == Expr::Name("math".into())
         ));
