@@ -741,13 +741,14 @@ impl Analyzer {
         groups: &[&[CallArg]],
     ) -> Option<String> {
         let candidates = self.function_overloads.get(name)?.clone();
+        let display_name = self.diagnostic_function_name(name);
         if !groups
             .iter()
             .flat_map(|group| group.iter())
             .any(|argument| argument.label.is_some())
         {
             self.error(format!(
-                "overloaded call `{name}` requires named arguments to select an overload"
+                "overloaded call `{display_name}` requires named arguments to select an overload"
             ));
             return None;
         }
@@ -770,13 +771,13 @@ impl Analyzer {
                     .collect::<Vec<_>>()
                     .join("");
                 self.error(format!(
-                    "no overload of `{name}` matches named parameter groups {supplied}"
+                    "no overload of `{display_name}` matches named parameter groups {supplied}"
                 ));
                 None
             }
             _ => {
                 self.error(format!(
-                    "overloaded call `{name}` remains ambiguous; supply a parameter group whose names distinguish one overload"
+                    "overloaded call `{display_name}` remains ambiguous; supply a parameter group whose names distinguish one overload"
                 ));
                 None
             }
@@ -792,6 +793,7 @@ impl Analyzer {
     ) -> Option<String> {
         let key = (target.to_owned(), member.to_owned(), is_method);
         let candidates = self.inherent_overloads.get(&key)?.clone();
+        let target = self.diagnostic_type_name(&Ty::Struct(target.to_owned()));
         if !groups
             .iter()
             .flat_map(|group| group.iter())

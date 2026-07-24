@@ -433,6 +433,13 @@ pub struct PatternField {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
+    /// Source position for an executable expression root. This is transparent
+    /// to language semantics and is preserved through source rewrites.
+    Located {
+        line: usize,
+        column: usize,
+        value: Box<Expr>,
+    },
     Unit,
     /// Compiler-internal representation of a compile-time type argument after
     /// substitution. User source does not parse directly to this node.
@@ -507,6 +514,22 @@ pub enum Expr {
         scrutinee: Box<Expr>,
         arms: Vec<MatchArm>,
     },
+}
+
+impl Expr {
+    pub fn unlocated(&self) -> &Self {
+        match self {
+            Self::Located { value, .. } => value.unlocated(),
+            _ => self,
+        }
+    }
+
+    pub fn unlocated_mut(&mut self) -> &mut Self {
+        match self {
+            Self::Located { value, .. } => value.unlocated_mut(),
+            _ => self,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

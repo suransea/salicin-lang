@@ -250,20 +250,23 @@ fn source_extension_is_sc_without_a_legacy_alias() {
 
 #[test]
 fn core_diagnostics_are_stable_source_level_contracts() {
-    for (fixture_name, line, message) in [
+    for (fixture_name, line, column, message) in [
         (
             "use_after_move.sc",
-            5,
+            8,
+            3,
             "use of moved or uninitialized value",
         ),
         (
             "array_index_type.sc",
-            1,
+            3,
+            3,
             "type mismatch for array index: expected `i32`, found `bool`",
         ),
         (
             "throw_in_plain_return.sc",
-            1,
+            2,
+            3,
             "call to `throw` requires `Throws(bool)`; handle it with `try { ... }` or propagate it from the current function",
         ),
     ] {
@@ -276,7 +279,10 @@ fn core_diagnostics_are_stable_source_level_contracts() {
         assert_eq!(output.status.code(), Some(1), "{}", output_text(&output));
         assert_eq!(
             String::from_utf8_lossy(&output.stderr),
-            format!("{}:{line}:1: error: {message}\n", source.display()),
+            format!(
+                "{}:{line}:{column}: error: {message}\n",
+                source.display()
+            ),
             "{}",
             output_text(&output)
         );
@@ -2334,6 +2340,12 @@ fn source_errors_fail_check_without_creating_output() {
         assert!(
             !diagnostics.is_empty(),
             "{name} produced no diagnostic output"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| !diagnostic.contains('$')),
+            "{name} leaked an internal compiler name: {diagnostics:?}"
         );
     }
 }

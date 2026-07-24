@@ -38,9 +38,10 @@
   `where`、`root`、`super`、`package`。控制拼写 `match`、`return`、`if`、`else`、`loop`、
   `while`、`for`、`in`、`break`、`continue` 是上下文标识符。
 - `self`、`Self`、`root`、`super`、`true`、`false` 是保留字。
-- `type`、`region`、`effect`、`access` 和 `parameters`
-  只在编译期参数位置具有
-  上下文含义，`domain` 只在声明右侧具有上下文含义；`mut`、`copy`、`move`
+- `type`、`region`、`effect`、`access`、`parameters` 和 `domain`
+  只在相应的编译期参数或声明位置具有上下文含义；`domain` 在
+  `let Name: domain` 和 `let Name = domain { ... }`
+  中区分抽象 domain 与成员集合已定义的 domain。`mut`、`copy`、`move`
   和 `shared` 也由使用位置与语义约束解释。它们都不是全局保留字。
 - `borrow` 是上下文识别的借用构造器；`do`、`try`、`throw` 和 `unsafe` 来自
   `core.control`。这些拼写均词法化为普通标识符，不占用声明、成员或路径名称。
@@ -53,6 +54,9 @@
 - `type` 是抽象 domain/kind，不是声明右侧的构造表达式；`let Name = type` 与
   `let Name = type { ... }` 均不属于语法。标准布尔类型与编译期 `access` 使用普通 enum，
   分别写作 `let bool = enum { false, true }` 与 `let access = enum { shared, mut }`。
+- 抽象 domain 写作 `let Name: domain`；成员集合已定义的 domain 写作
+  `let Name = domain { ... }`。因此 `domain {}` 是空 domain，而不是抽象 domain；
+  裸 `let Name = domain` 不属于语法。
 - 任意封闭类型都可以约束编译期参数，例如 `B: bool` 或用户声明的
   `O: optimization`。阶段由参数所在的编译期参数组决定，不由类型名称决定；同一个 `bool`
   仍可用于普通运行时参数。

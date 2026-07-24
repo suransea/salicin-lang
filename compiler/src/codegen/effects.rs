@@ -757,6 +757,7 @@ impl Analyzer {
 
 pub(super) fn do_block_requires_function_boundary(expression: &Expr) -> bool {
     match expression {
+        Expr::Located { value, .. } => do_block_requires_function_boundary(value),
         Expr::Return(_) | Expr::Try(_) | Expr::Throw(_) => true,
         Expr::Closure(_, _) | Expr::PatternClosure { .. } | Expr::DoBlock { .. } => false,
         Expr::Unary(_, value)

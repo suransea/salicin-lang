@@ -97,7 +97,7 @@ visibility = "pub", [ "(", "package", ")" ] ;
 ```ebnf
 let_decl = "let", [ "mut" ], IDENT,
            { parameter_group },
-           [ ":", ( type_expr | "type" | constructor_kind ) ],
+           [ ":", ( type_expr | "type" | "domain" | constructor_kind ) ],
            [ with_clause ],
            [ where_clause ],
            [ "=", initializer ] ;
@@ -113,8 +113,8 @@ effect_decl = "effect", [ "{", separators,
 effect_operation = "let", IDENT, parameter_group, { parameter_group },
                    ":", type_expr, [ with_clause ] ;
 
-domain_decl = "domain", [ "{", separators,
-              { domain_member, separators }, "}" ] ;
+domain_decl = "domain", "{", separators,
+              { domain_member, separators }, "}" ;
 domain_member = IDENT | "mut" | "copy" | "move" | "type" | "region" ;
 
 constructor_kind = compile_parameter_group,
@@ -132,8 +132,10 @@ constructor_kind = compile_parameter_group,
   `let Unsafe = effect {}` 是等价的显式空 operation 形式；`let State(S: type) = effect { ... }`
   还可声明无函数体的 operation requirements。这些声明向 `effect` domain 引入成员。旧的
   `(effect): T`、`T(effect)` 与 `T ! effect` 都不属于语法。
-- 声明右侧的 `domain` 同样是上下文词，用于声明编译期参数域。无 body 的 `domain` 是开放域；
-  `domain { ... }` 是封闭域。标准 `type`、`region`、`effect` 与 `parameters` 位于
+- `let Name: domain` 声明一个不给出成员集合的抽象编译期 domain；
+  `let Name = domain { ... }` 定义成员集合已知的 domain，其中 `domain {}` 是空 domain。
+  裸 `let Name = domain` 不存在，以免混淆抽象 domain 与已定义的空 domain。标准
+  `type`、`region`、`effect` 与 `parameters` 位于
   `core.domains`；`access` 封闭类型位于 `core.borrow`；`copy`、`move` 参数修饰函数位于
   `core.passing`；effect 身份位于
   `core.effect`；控制 lang item 可在声明名位置使用 `do`、`try`、

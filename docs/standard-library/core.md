@@ -179,10 +179,10 @@ pretending `await` already works.
 `core.domains` owns standard compile-time domains, also outside the prelude:
 
 ```sc
-pub let type = domain
-pub let region = domain
-pub let effect = domain
-pub let parameters = domain
+pub let type: domain
+pub let region: domain
+pub let effect: domain
+pub let parameters: domain
 ```
 
 `core.borrow` owns the closed access type:

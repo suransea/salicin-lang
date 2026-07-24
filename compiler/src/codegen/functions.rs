@@ -266,6 +266,7 @@ impl Analyzer {
     fn validate_parameter_mode(&mut self, function: &str, param: &ParamSig) {
         if param.mode == PassMode::Copy && !self.is_copy_type(&param.ty) {
             let ty = self.diagnostic_type_name(&param.ty);
+            let function = self.diagnostic_function_name(function);
             self.error(format!(
                 "parameter `{}` in function `{function}` requires `Copy`, but nominal type `{}` does not implement Copy",
                 param.name, ty

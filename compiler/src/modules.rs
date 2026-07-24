@@ -3153,6 +3153,9 @@ impl Resolver {
         value_scope: &HashSet<String>,
     ) {
         match expression {
+            Expr::Located { value, .. } => {
+                self.rewrite_expr(value, context, type_scope, value_scope)
+            }
             Expr::Name(name) => {
                 if !value_scope.contains(name) {
                     let logical = vec![name.clone()];
@@ -3801,11 +3804,12 @@ mod tests {
         let Some(Expr::Block(_, Some(tail))) = &function.body else {
             panic!("expected function body block with a tail value");
         };
-        tail
+        tail.unlocated()
     }
 
     fn match_cases(expression: &Expr) -> Vec<&Expr> {
         fn flatten<'a>(expression: &'a Expr, groups: &mut Vec<&'a [CallArg]>) -> &'a Expr {
+            let expression = expression.unlocated();
             if let Expr::Call(callee, arguments) = expression {
                 let root = flatten(callee, groups);
                 groups.push(arguments);
@@ -3937,7 +3941,7 @@ mod tests {
         };
         assert!(matches!(
             closure_body.as_ref(),
-            Expr::Block(_, Some(value)) if value.as_ref() == &Expr::Name("math".into())
+            Expr::Block(_, Some(value)) if value.unlocated() == &Expr::Name("math".into())
         ));
         let cases = match_cases(tail);
         let Expr::PatternClosure { body, .. } = cases[0] else {
@@ -5429,6 +5433,7 @@ let main(): i32 = { Option {} }
     fn expression_names(expression: Option<&Expr>) -> HashSet<String> {
         fn visit(expression: &Expr, names: &mut HashSet<String>) {
             match expression {
+                Expr::Located { value, .. } => visit(value, names),
                 Expr::Name(name) => {
                     names.insert(name.clone());
                 }

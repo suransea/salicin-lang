@@ -244,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    fn priority_semantic_diagnostics_include_source_declaration_locations() {
+    fn priority_semantic_diagnostics_include_source_statement_locations() {
         let cases = [
             (
                 "ownership",
@@ -254,8 +254,9 @@ mod tests {
                    let value = Resource { value: 42 }\n\
                    consume(value)\n\
                    value.value\n\
-                 }\n",
-                3,
+                }\n",
+                6,
+                1,
                 "moved",
             ),
             (
@@ -265,41 +266,45 @@ mod tests {
                    let alias = borrow(value)\n\
                    value = 0\n\
                    alias\n\
-                 }\n",
+                }\n",
+                4,
                 1,
                 "borrow",
             ),
             (
                 "trait",
                 "let Missing = struct { value: i32 }\n\
-                 let main(): i32 = { Missing { value: 42 } + Missing { value: 0 } }\n",
+                let main(): i32 = { Missing { value: 42 } + Missing { value: 0 } }\n",
                 2,
+                21,
                 "no matching `Add` implementation",
             ),
             (
                 "generic",
                 "let identity(T: type)(value: T): T = { value }\n\
-                 let main(): i32 = { identity() }\n",
+                let main(): i32 = { identity() }\n",
                 2,
+                21,
                 "argument",
             ),
             (
                 "handler",
                 "let Ask = effect { let value(): i32 }\n\
-                 let main(): i32 = { Ask.value() }\n",
+                let main(): i32 = { Ask.value() }\n",
                 2,
+                21,
                 "requires custom effect",
             ),
         ];
 
-        for (category, source, line, expected) in cases {
+        for (category, source, line, column, expected) in cases {
             let diagnostics = match check_source(source) {
                 Ok(()) => panic!("{category} source unexpectedly passed"),
                 Err(diagnostics) => diagnostics,
             };
             assert!(
                 diagnostics.iter().any(|diagnostic| {
-                    diagnostic.starts_with(&format!("{line}:1: error:"))
+                    diagnostic.starts_with(&format!("{line}:{column}: error:"))
                         && diagnostic.contains(expected)
                 }),
                 "{category}: {diagnostics:?}"
@@ -331,7 +336,7 @@ mod tests {
         assert!(
             diagnostics
                 .iter()
-                .any(|diagnostic| diagnostic.starts_with("src/main.sc:2:1: error:")),
+                .any(|diagnostic| diagnostic.starts_with("src/main.sc:5:1: error:")),
             "{diagnostics:?}"
         );
     }

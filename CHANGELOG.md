@@ -6,9 +6,15 @@ subset.
 
 ## Unreleased
 
-- Semantic diagnostics now retain defining source paths and declaration positions through module
-  resolution, generic instantiation, trait dispatch, and handler lowering. Single-file CLI errors
-  use `path:line:column: error` formatting; expression-level spans remain follow-up work.
+- Semantic diagnostics now retain defining source paths, declaration positions, and executable
+  expression-statement starts through module resolution, generic instantiation, trait dispatch,
+  and handler lowering. Single-file CLI errors use `path:line:column: error` formatting, all fail
+  fixtures reject generated `$...` names, and internal generic types/functions render with
+  source-level names. Local initializer positions and full expression ranges remain follow-up work.
+- Abstract compile-time domains now use `let Name: domain`; a domain with a known empty member set
+  uses `let Name = domain {}`. Bare `let Name = domain` is rejected so abstract and empty domains
+  cannot collapse into the same source form. Core `type`, `region`, `effect`, and `parameters`
+  declarations use the abstract form.
 - Added an explicit M0 conformance matrix covering positive, negative, diagnostic, and native
   evidence. The audit tracks non-unit tuples, remaining primitive scalar widths, C FFI, Unicode
   frontend evidence, and semantic source spans as release-blocking gaps rather than extensions.

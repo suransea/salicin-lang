@@ -305,6 +305,21 @@ impl Parser {
         }
 
         if groups.is_empty() && self.at(&TokenKind::Colon) {
+            if matches!(
+                self.tokens.get(self.index + 1).map(|token| &token.kind),
+                Some(TokenKind::Ident(name)) if name == "domain"
+            ) {
+                if mutable || !compile_groups.is_empty() {
+                    return Err(self
+                        .error_here("abstract domain declarations cannot be mutable or generic"));
+                }
+                self.advance();
+                self.advance();
+                return Ok(Item::Domain(DomainDef {
+                    name,
+                    members: None,
+                }));
+            }
             if self.at_offset(1, &TokenKind::Type) {
                 self.advance();
                 self.advance();
@@ -402,6 +417,11 @@ impl Parser {
                 ));
             }
             self.advance();
+            if !self.at(&TokenKind::LBrace) {
+                return Err(self.error_here(
+                    "abstract domains use `let Name: domain`; an empty defined domain uses `let Name = domain {}`",
+                ));
+            }
             return self.domain_definition(name).map(Item::Domain);
         }
 
@@ -3918,6 +3938,28 @@ impl Parser {
         Expr::Name("$lang$if".to_owned())
     }
 
+    fn located_expression(token: &Token, value: Expr) -> Expr {
+        // Handler lowering tracks trailing source closures by AST identity, so
+        // keep their enclosing call unwrapped until spans live outside Expr.
+        if matches!(
+            &value,
+            Expr::Call(_, arguments)
+                if arguments.iter().any(|argument| {
+                    matches!(
+                        argument.value,
+                        Expr::Closure(_, _) | Expr::PatternClosure { .. }
+                    )
+                })
+        ) {
+            return value;
+        }
+        Expr::Located {
+            line: token.line,
+            column: token.column,
+            value: Box::new(value),
+        }
+    }
+
     fn block_contents(&mut self) -> Result<Expr, ParseError> {
         let mut statements = Vec::new();
         self.skip_separators();
@@ -3937,7 +3979,8 @@ impl Parser {
                 continue;
             }
 
-            let expression = self.expression(true)?;
+            let expression_start = self.current().clone();
+            let expression = Self::located_expression(&expression_start, self.expression(true)?);
             if self.take(&TokenKind::RBrace) {
                 return Ok(Expr::Block(statements, Some(Box::new(expression))));
             }
@@ -4705,6 +4748,7 @@ fn normalize_expr_region_qualifiers(
     accesses: &HashSet<String>,
 ) -> Result<(), String> {
     match expression {
+        Expr::Located { value, .. } => normalize_expr_region_qualifiers(value, regions, accesses),
         Expr::Type(ty) => normalize_type_region_qualifiers(ty, regions, accesses),
         Expr::Borrow { access, value, .. } => {
             if let Some(access) = access {
@@ -4958,6 +5002,7 @@ fn validate_type_accesses(ty: &Type, accesses: &HashSet<String>) -> Result<(), S
 
 fn validate_expr_accesses(expression: &Expr, accesses: &HashSet<String>) -> Result<(), String> {
     match expression {
+        Expr::Located { value, .. } => validate_expr_accesses(value, accesses),
         Expr::Borrow { access, value, .. } => {
             if let Some(access) = access {
                 validate_access_name(access, accesses)?;
@@ -5183,6 +5228,7 @@ fn display_region_name(region: &str) -> String {
 
 fn validate_expr_regions(expression: &Expr, regions: &HashSet<String>) -> Result<(), String> {
     match expression {
+        Expr::Located { value, .. } => validate_expr_regions(value, regions),
         Expr::Type(_)
         | Expr::Unit
         | Expr::Integer(_)
@@ -5445,10 +5491,11 @@ mod tests {
         let Some(Expr::Block(_, Some(tail))) = &function.body else {
             panic!("expected function body block with a tail value");
         };
-        tail
+        tail.unlocated()
     }
 
     fn flatten_test_call<'a>(expression: &'a Expr, groups: &mut Vec<&'a [CallArg]>) -> &'a Expr {
+        let expression = expression.unlocated();
         if let Expr::Call(callee, arguments) = expression {
             let root = flatten_test_call(callee, groups);
             groups.push(arguments);
@@ -6158,12 +6205,15 @@ mod tests {
         let Some(Expr::Block(statements, _)) = &function.body else {
             panic!("expected function block");
         };
+        let Stmt::Expr(unsafe_expression) = &statements[2] else {
+            panic!("expected unsafe expression");
+        };
         assert!(matches!(
-            &statements[2],
-            Stmt::Expr(Expr::Unsafe(body))
+            unsafe_expression.unlocated(),
+            Expr::Unsafe(body)
                 if matches!(body.as_ref(), Expr::DoBlock { body } if matches!(
                     body.as_ref(), Expr::Block(_, Some(tail)) if matches!(
-                        tail.as_ref(),
+                        tail.unlocated(),
                         Expr::Assign(left, _)
                             if matches!(left.as_ref(), Expr::Unary(UnaryOp::Deref, _))
                     )
@@ -6360,9 +6410,12 @@ mod tests {
         let Some(Expr::Block(statements, Some(tail))) = &function.body else {
             panic!("expected block");
         };
+        let [Stmt::Expr(expression)] = statements.as_slice() else {
+            panic!("expected one expression statement");
+        };
         assert!(matches!(
-            statements.as_slice(),
-            [Stmt::Expr(Expr::Call(_, arguments))]
+            expression.unlocated(),
+            Expr::Call(_, arguments)
                 if matches!(
                     arguments.as_slice(),
                     [CallArg {
@@ -6371,7 +6424,7 @@ mod tests {
                     }]
                 )
         ));
-        assert_eq!(tail.as_ref(), &Expr::Integer(2));
+        assert_eq!(tail.unlocated(), &Expr::Integer(2));
     }
 
     #[test]
@@ -6391,7 +6444,7 @@ mod tests {
             panic!("expected block with a tail value");
         };
         assert_eq!(statements.len(), 2);
-        assert_eq!(tail.as_ref(), &Expr::Name("x".into()));
+        assert_eq!(tail.unlocated(), &Expr::Name("x".into()));
     }
 
     #[test]
@@ -6428,7 +6481,7 @@ mod tests {
         let Expr::Block(statements, Some(tail)) = function.body.as_ref().unwrap() else {
             panic!("expected block");
         };
-        assert_eq!(tail.as_ref(), &Expr::Unit);
+        assert_eq!(tail.unlocated(), &Expr::Unit);
         for (statement, operator) in statements[1..].iter().zip([
             BinaryOp::Add,
             BinaryOp::Sub,
@@ -6441,9 +6494,12 @@ mod tests {
             BinaryOp::Shl,
             BinaryOp::Shr,
         ]) {
+            let Stmt::Expr(expression) = statement else {
+                panic!("expected compound assignment");
+            };
             assert!(matches!(
-                statement,
-                Stmt::Expr(Expr::CompoundAssign(_, found, _)) if *found == operator
+                expression.unlocated(),
+                Expr::CompoundAssign(_, found, _) if *found == operator
             ));
         }
     }
@@ -6828,13 +6884,16 @@ mod tests {
                 if fields.iter().map(|argument| argument.label.as_deref()).collect::<Vec<_>>()
                     == vec![Some("x"), Some("y")]
         ));
+        let Stmt::Expr(assignment) = &statements[1] else {
+            panic!("expected assignment");
+        };
         assert!(matches!(
-            &statements[1],
-            Stmt::Expr(Expr::Assign(left, right))
+            assignment.unlocated(),
+            Expr::Assign(left, right)
                 if matches!(left.as_ref(), Expr::Member(_, field) if field == "x")
                     && right.as_ref() == &Expr::Integer(3)
         ));
-        assert!(matches!(tail.as_ref(), Expr::Member(_, field) if field == "x"));
+        assert!(matches!(tail.unlocated(), Expr::Member(_, field) if field == "x"));
     }
 
     #[test]
@@ -7055,7 +7114,7 @@ mod tests {
         );
         assert!(matches!(&binding.value, Expr::Array(elements) if elements.len() == 3));
         assert!(matches!(
-            tail.as_ref(),
+            tail.unlocated(),
             Expr::Binary(left, BinaryOp::Add, right)
                 if matches!(left.as_ref(), Expr::Index { .. })
                     && matches!(right.as_ref(), Expr::Index { .. })
@@ -7080,9 +7139,12 @@ mod tests {
         let Some(Expr::Block(statements, Some(tail))) = &function.body else {
             panic!("expected block");
         };
+        let Stmt::Expr(assignment) = &statements[1] else {
+            panic!("expected assignment");
+        };
         assert!(matches!(
-            &statements[1],
-            Stmt::Expr(Expr::Assign(left, _)) if matches!(left.as_ref(), Expr::Index { .. })
+            assignment.unlocated(),
+            Expr::Assign(left, _) if matches!(left.as_ref(), Expr::Index { .. })
         ));
         assert!(matches!(
             &statements[2],
@@ -7091,7 +7153,7 @@ mod tests {
                 ..
             }) if matches!(value.as_ref(), Expr::Index { .. })
         ));
-        assert!(matches!(tail.as_ref(), Expr::Index { .. }));
+        assert!(matches!(tail.unlocated(), Expr::Index { .. }));
     }
 
     #[test]
@@ -7368,8 +7430,9 @@ mod tests {
         let program = parse(
             "pub let Unsafe = effect {}\n\
              pub let Throws(Error: type) = effect { let raise(move error: Error): Never }\n\
-             pub let type = domain\n\
-             pub let effect = domain\n\
+             pub let type: domain\n\
+             pub let effect: domain\n\
+             pub let Empty = domain {}\n\
              pub let access = enum {\n\
                /// Shared read-only access.\n\
                shared,\n\
@@ -7397,12 +7460,16 @@ mod tests {
         ));
         assert!(matches!(
             &program.items[4],
+            Item::Domain(domain) if domain.name == "Empty" && domain.members == Some(Vec::new())
+        ));
+        assert!(matches!(
+            &program.items[5],
             Item::Enum(definition) if definition.name == "access"
                 && definition.variants.iter().map(|variant| variant.name.as_str())
                     .eq(["shared", "mut"])
         ));
         assert!(matches!(
-            &program.items[5],
+            &program.items[6],
             Item::Function(function) if function.name == "do" && function.body.is_none()
         ));
     }
@@ -7494,6 +7561,10 @@ mod tests {
 
         let error = parse("let bool = type { false, true }\n").unwrap_err();
         assert!(error.message.contains("abstract domain"));
+
+        let error = parse("let kind = domain\n").unwrap_err();
+        assert!(error.message.contains("let Name: domain"));
+        assert!(error.message.contains("domain {}"));
 
         let error = parse("let bool = enum { false, false }\n").unwrap_err();
         assert!(error.message.contains("duplicate enum variant `false`"));
@@ -7746,7 +7817,7 @@ mod tests {
             body.as_ref(),
             Expr::Block(_, Some(tail))
                 if matches!(
-                    tail.as_ref(),
+                    tail.unlocated(),
                     Expr::Break(Some(value))
                         if matches!(value.as_ref(), Expr::Binary(_, BinaryOp::Add, _))
                 )
@@ -7763,7 +7834,7 @@ mod tests {
         let Expr::Block(_, Some(for_loop)) = function.body.as_ref().unwrap() else {
             panic!("expected function block");
         };
-        let Expr::Block(statements, None) = for_loop.as_ref() else {
+        let Expr::Block(statements, None) = for_loop.unlocated() else {
             panic!("expected desugared for block");
         };
         assert!(matches!(

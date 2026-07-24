@@ -381,6 +381,9 @@ fn normalize_expr_labeled_type_arguments(
     diagnostics: &mut Vec<String>,
 ) {
     match expression {
+        Expr::Located { value, .. } => {
+            normalize_expr_labeled_type_arguments(value, constructor_parameters, diagnostics)
+        }
         Expr::Type(_)
         | Expr::Unit
         | Expr::Integer(_)
@@ -939,6 +942,7 @@ pub(super) fn expand_alias_type(
 
 fn expression_type_source(expression: &Expr) -> Option<Type> {
     match expression {
+        Expr::Located { value, .. } => expression_type_source(value),
         Expr::Unit => Some(Type::Unit),
         Expr::Name(name) => Some(match name.as_str() {
             "i32" => Type::I32,
@@ -1009,6 +1013,7 @@ fn expand_expr_aliases(
     }
 
     match expression {
+        Expr::Located { value, .. } => expand_expr_aliases(value, aliases, diagnostics),
         Expr::Name(name) => {
             if let Some(alias) = aliases.get(name) {
                 if let Some(target) = transparent_alias_constructor(alias) {
@@ -1322,6 +1327,7 @@ fn substitute_parameter_types(parameter: &mut Param, substitutions: &HashMap<Str
 
 pub(super) fn substitute_self_expression_target(expression: &mut Expr, target: &str) {
     match expression {
+        Expr::Located { value, .. } => substitute_self_expression_target(value, target),
         Expr::Name(name) if name == "Self" => *name = target.to_owned(),
         Expr::Type(_)
         | Expr::Unit
@@ -1467,6 +1473,7 @@ fn substitute_self_pattern_target(pattern: &mut Pattern, target: &str) {
 
 pub(super) fn rewrite_abstract_self_qualified_methods(expression: &mut Expr) {
     match expression {
+        Expr::Located { value, .. } => rewrite_abstract_self_qualified_methods(value),
         Expr::Call(callee, arguments) => {
             rewrite_abstract_self_qualified_methods(callee);
             for argument in &mut *arguments {
@@ -1605,6 +1612,7 @@ pub(super) fn rewrite_abstract_self_qualified_methods(expression: &mut Expr) {
 
 pub(super) fn substitute_expr_types(expression: &mut Expr, substitutions: &HashMap<String, Type>) {
     match expression {
+        Expr::Located { value, .. } => substitute_expr_types(value, substitutions),
         Expr::Name(name) => {
             if let Some(replacement) = substitutions.get(name) {
                 if effect_row_from_source(replacement).is_some() {
@@ -2061,6 +2069,7 @@ pub(super) fn source_type_expression_name(expression: &Expr) -> Option<String> {
 
 pub(super) fn rewrite_handler_returns(expression: &mut Expr, return_name: &str) {
     match expression {
+        Expr::Located { value, .. } => rewrite_handler_returns(value, return_name),
         Expr::Return(value) => {
             let mut value = value.take().map_or(Expr::Unit, |value| *value);
             rewrite_handler_returns(&mut value, return_name);
@@ -2181,6 +2190,7 @@ pub(super) fn rewrite_static_function_values(
     replacements: &HashMap<String, String>,
 ) {
     match expression {
+        Expr::Located { value, .. } => rewrite_static_function_values(value, replacements),
         Expr::Name(name) => {
             if let Some(replacement) = replacements.get(name) {
                 *name = replacement.clone();
@@ -2326,6 +2336,7 @@ fn visit_expr_mut_ordered(
         visitor(expression);
     }
     match expression {
+        Expr::Located { value, .. } => visit_expr_mut_ordered(value, visitor, preorder),
         Expr::Unary(_, value)
         | Expr::Try(value)
         | Expr::DoBlock { body: value }
@@ -2612,10 +2623,11 @@ pub(super) fn append_innermost_closure_parameter(
     expression: &mut Expr,
     parameter: Param,
 ) -> Option<&mut Expr> {
+    let expression = expression.unlocated_mut();
     let Expr::Closure(parameters, body) = expression else {
         return None;
     };
-    if matches!(body.as_ref(), Expr::Closure(_, _)) {
+    if matches!(body.unlocated(), Expr::Closure(_, _)) {
         return append_innermost_closure_parameter(body, parameter);
     }
     parameters.push(parameter);
@@ -2647,6 +2659,7 @@ fn hygienic_rename_expr(
     scopes: &mut Vec<HashMap<String, String>>,
 ) {
     match expression {
+        Expr::Located { value, .. } => hygienic_rename_expr(value, prefix, next, scopes),
         Expr::Name(name) => {
             if let Some(renamed) = scopes.iter().rev().find_map(|scope| scope.get(name)) {
                 *name = renamed.clone();
@@ -2952,6 +2965,7 @@ pub(super) fn handler_match_commit(scrutinee: &str, arms: Vec<MatchArm>) -> Expr
 
 fn expression_mentions_any_name(expression: &Expr, names: &HashSet<String>) -> bool {
     match expression {
+        Expr::Located { value, .. } => expression_mentions_any_name(value, names),
         Expr::Name(name) => names.contains(name),
         Expr::Unary(_, value)
         | Expr::Try(value)

@@ -64,9 +64,10 @@ handler or async expansion is admitted.
 
 - [ ] **M0-DIAG-1: Attach source spans to semantic errors**
   - [x] Preserve defining source paths and declaration positions through semantic specialization.
-  - [ ] Attach exact expression spans instead of falling back to the enclosing declaration.
-  - Prioritize ownership, borrow, handler, trait selection, and generic inference errors.
-  - Ensure generated internal names do not leak into user-facing diagnostics.
+  - [x] Attach executable expression-statement start positions through semantic lowering.
+  - [ ] Attach exact local-initializer positions and full expression ranges.
+  - [x] Prioritize ownership, borrow, handler, trait selection, and generic inference errors.
+  - [x] Enforce a repository-wide generated-name zero-leak diagnostic gate.
 
 - [ ] **M0-QUALITY-1: Make the repository quality gate clean**
   - `cargo fmt --check`

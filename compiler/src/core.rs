@@ -1769,10 +1769,10 @@ fn validate_domain(
     };
     if !valid {
         let shape = match kind {
-            LangItemKind::TypeDomain => "pub let type = domain",
-            LangItemKind::RegionDomain => "pub let region = domain",
-            LangItemKind::EffectDomain => "pub let effect = domain",
-            LangItemKind::ParametersDomain => "pub let parameters = domain",
+            LangItemKind::TypeDomain => "pub let type: domain",
+            LangItemKind::RegionDomain => "pub let region: domain",
+            LangItemKind::EffectDomain => "pub let effect: domain",
+            LangItemKind::ParametersDomain => "pub let parameters: domain",
             _ => unreachable!("validate_domain called for non-domain lang item"),
         };
         diagnostics.push(format!("lang item `{kind}` must have shape `{shape}`"));

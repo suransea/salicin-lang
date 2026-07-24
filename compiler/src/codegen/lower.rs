@@ -277,18 +277,18 @@ pub(super) fn reference_value_types_compatible(actual: &Ty, expected: &Ty) -> bo
 }
 
 pub(super) fn flatten_call<'a>(expression: &'a Expr, groups: &mut Vec<&'a [CallArg]>) -> &'a Expr {
-    match expression {
+    match expression.unlocated() {
         Expr::Call(callee, arguments) => {
             let root = flatten_call(callee, groups);
             groups.push(arguments);
             root
         }
-        _ => expression,
+        expression => expression,
     }
 }
 
 pub(super) fn place_root_name(expression: &Expr) -> Option<&str> {
-    match expression {
+    match expression.unlocated() {
         Expr::Name(name) => Some(name),
         Expr::Member(base, _) | Expr::ChainMember(base, _) | Expr::Index { base, .. } => {
             place_root_name(base)
@@ -401,7 +401,7 @@ pub(super) fn function_ty_contains_nominal(function: &FunctionTy, nominal: &str)
 }
 
 pub(super) fn is_unconstrained_integer(expression: &Expr) -> bool {
-    match expression {
+    match expression.unlocated() {
         Expr::Integer(_) => true,
         Expr::Unary(UnaryOp::Neg, operand) => matches!(operand.as_ref(), Expr::Integer(_)),
         Expr::Block(_, Some(tail)) | Expr::DoBlock { body: tail } => is_unconstrained_integer(tail),
@@ -410,7 +410,7 @@ pub(super) fn is_unconstrained_integer(expression: &Expr) -> bool {
 }
 
 pub(super) fn integer_literal_value(expression: &Expr) -> Option<i128> {
-    match expression {
+    match expression.unlocated() {
         Expr::Integer(value) => Some(*value),
         Expr::Unary(UnaryOp::Neg, operand) => {
             let Expr::Integer(value) = operand.as_ref() else {

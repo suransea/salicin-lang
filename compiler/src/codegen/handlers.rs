@@ -226,6 +226,9 @@ pub(super) fn rewrite_handler_loop_control(
         }
     }
     match expression {
+        Expr::Located { value, .. } => {
+            rewrite_handler_loop_control(value, recursive_name, break_name, nested_loop_depth)
+        }
         Expr::While { .. }
         | Expr::Loop { .. }
         | Expr::Closure(_, _)
@@ -389,6 +392,7 @@ pub(super) fn rewrite_handler_loop_control(
 
 pub(super) fn collect_internal_recursion_tokens(expression: &Expr, tokens: &mut HashSet<String>) {
     match expression {
+        Expr::Located { value, .. } => collect_internal_recursion_tokens(value, tokens),
         Expr::Name(name) if name.starts_with("$handler$recursive$") => {
             tokens.insert(name.clone());
         }
@@ -614,6 +618,7 @@ pub(super) fn static_callable_selection(
         parameters.is_empty().then_some(body.as_ref())
     }
 
+    let expression = expression.unlocated();
     if matches!(expression, Expr::Call(_, _)) {
         let mut groups = Vec::new();
         if matches!(flatten_call(expression, &mut groups), Expr::Name(name) if name == "$lang$if") {
@@ -701,6 +706,7 @@ pub(super) fn replace_static_selection_leaves(selection: Expr, calls: &[Expr]) -
 
 pub(super) fn handler_expression_children(expression: &Expr) -> Vec<&Expr> {
     match expression {
+        Expr::Located { value, .. } => vec![value],
         Expr::Unary(_, value)
         | Expr::Try(value)
         | Expr::DoBlock { body: value }
@@ -893,6 +899,9 @@ pub(super) fn rewrite_handler_chain_wrappers(
         }
     }
     match expression {
+        Expr::Located { value, .. } => {
+            rewrite_handler_chain_wrappers(value, canonical, success_variant, residual_variant)
+        }
         Expr::Unary(_, value)
         | Expr::Try(value)
         | Expr::DoBlock { body: value }
@@ -1337,7 +1346,7 @@ impl Analyzer {
         let Some(Type::Function { effects, .. }) = binding.annotation.as_ref() else {
             return false;
         };
-        let Expr::Closure(parameters, body) = &binding.value else {
+        let Expr::Closure(parameters, body) = binding.value.unlocated() else {
             return false;
         };
         let mut group_refs = Vec::new();
@@ -1701,6 +1710,9 @@ impl Analyzer {
         resume: Option<SourceResume>,
         continuation: SourceContinuation,
     ) -> Result<Expr, ()> {
+        if let Expr::Located { value, .. } = expression {
+            return self.transform_handler_expr(*value, handler, resume, continuation);
+        }
         if let Expr::Name(name) = &expression {
             if handler.function_aliases.borrow().contains_key(name) {
                 self.error(format!(
@@ -3367,7 +3379,7 @@ impl Analyzer {
         {
             return None;
         }
-        if !matches!(binding.value, Expr::Closure(_, _)) {
+        if !matches!(binding.value.unlocated(), Expr::Closure(_, _)) {
             return None;
         }
         let Some(answer) = handler.result_source.clone() else {
@@ -4679,7 +4691,7 @@ impl Analyzer {
                     return rest
                         .map(|rest| Expr::Block(vec![Stmt::Let(binding)], Some(Box::new(rest))));
                 }
-                if let Expr::Name(target) = &binding.value {
+                if let Expr::Name(target) = binding.value.unlocated() {
                     let dynamic = handler.dynamic_callables.borrow().get(target).cloned();
                     if let Some(dynamic) = dynamic {
                         let name = binding.name.clone();
@@ -4707,7 +4719,7 @@ impl Analyzer {
                         });
                     }
                 }
-                if let Expr::Name(target) = &binding.value {
+                if let Expr::Name(target) = binding.value.unlocated() {
                     let resolved_target = handler
                         .function_aliases
                         .borrow()
@@ -4755,15 +4767,15 @@ impl Analyzer {
                     || binding.name.starts_with("$handler$continuation$")
                     || binding.name.starts_with("$handler$call$continuation$")
                 {
-                    if let Expr::Closure(parameters, body) = binding.value {
+                    if let Expr::Closure(_, body) = binding.value.unlocated_mut() {
                         let identity: SourceContinuation = Rc::new(|_, value| Ok(value));
                         let transformed = self.transform_handler_expr(
-                            *body,
+                            *body.clone(),
                             handler.clone(),
                             resume.clone(),
                             identity,
                         )?;
-                        binding.value = Expr::Closure(parameters, Box::new(transformed));
+                        **body = transformed;
                     }
                 }
                 let name = binding.name.clone();

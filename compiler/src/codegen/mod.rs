@@ -6166,6 +6166,7 @@ impl Analyzer {
         function: &str,
         predicates: &[crate::ast::WherePredicate],
     ) -> bool {
+        let function = self.diagnostic_function_name(function);
         let mut valid = true;
         for predicate in predicates {
             if let Some(required) = self.constructor_trait_impl_key_from_predicate(predicate) {
@@ -6272,6 +6273,7 @@ impl Analyzer {
 
     fn probe_expr_ty(&self, expression: &Expr, hint: Option<&Ty>, context: &LowerCtx) -> TypeProbe {
         match expression {
+            Expr::Located { value, .. } => self.probe_expr_ty(value, hint, context),
             Expr::Type(_) => TypeProbe::Unsupported,
             Expr::Integer(_) => hint
                 .filter(|ty| ty.is_integer())
@@ -7195,7 +7197,26 @@ impl Analyzer {
         expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
+        if let Expr::Located {
+            line,
+            column,
+            value,
+        } = expression
+        {
+            let previous = self.current_origin.clone();
+            if let Some(origin) = &mut self.current_origin {
+                if let Some(source) = &mut origin.source {
+                    source.line = *line;
+                    source.column = *column;
+                }
+            }
+            let lowered = self.lower_expr(value, expected, context);
+            self.current_origin = previous;
+            return lowered;
+        }
+
         let lowered = match expression {
+            Expr::Located { .. } => unreachable!("source locations are lowered transparently"),
             Expr::Type(_) => {
                 self.error("compile-time type expression cannot be used as a runtime value");
                 error_expr()
@@ -7205,6 +7226,7 @@ impl Analyzer {
                     Some(ty) if ty.is_integer() => ty.clone(),
                     Some(Ty::Error) => Ty::Error,
                     Some(ty) => {
+                        let ty = self.diagnostic_type_name(ty);
                         self.error(format!(
                             "integer literal cannot be used where `{ty}` is expected"
                         ));
@@ -7450,6 +7472,7 @@ impl Analyzer {
                             Some(ty) if ty.is_signed() => ty.clone(),
                             Some(Ty::Error) => Ty::Error,
                             Some(ty) => {
+                                let ty = self.diagnostic_type_name(ty);
                                 self.error(format!(
                                     "negative integer literal cannot be used where `{ty}` is expected"
                                 ));
@@ -7691,13 +7714,13 @@ impl Analyzer {
                                 .annotation
                                 .as_ref()
                                 .map(|annotation| self.lower_source_type(annotation));
-                            let callable_source = match &binding.value {
+                            let callable_source = match binding.value.unlocated() {
                                 Expr::Name(name) => context.lookup(name).cloned().filter(|local| {
                                     local.partial.is_some() || local.closure.is_some()
                                 }),
                                 _ => None,
                             };
-                            let value = match &binding.value {
+                            let value = match binding.value.unlocated() {
                                 Expr::Closure(params, body) => {
                                     let annotation_custom_effect_sources = binding
                                         .annotation
@@ -7940,7 +7963,8 @@ impl Analyzer {
                                 if !reference_loans.is_empty() {
                                     context.reference_loans.insert(id, reference_loans);
                                 }
-                                if matches!(binding.value, Expr::Closure(_, _)) && closure.is_some()
+                                if matches!(binding.value.unlocated(), Expr::Closure(_, _))
+                                    && closure.is_some()
                                 {
                                     context.source_closures.insert(id, binding.clone());
                                 } else if let Some(source) = callable_source
@@ -9251,6 +9275,9 @@ impl Analyzer {
                 valid
             }
             Expr::Continue => true,
+            Expr::Located { value, .. } => {
+                self.scan_simple_closure_captures(value, bound, outer, captures)
+            }
         }
     }
 
@@ -11785,6 +11812,8 @@ impl Analyzer {
         {
             return;
         }
+        let expected = self.diagnostic_type_name(expected);
+        let actual = self.diagnostic_type_name(actual);
         self.error(format!(
             "type mismatch for {context}: expected `{expected}`, found `{actual}`"
         ));
@@ -11840,6 +11869,12 @@ impl Analyzer {
                 return format!("{effect}.{member}");
             }
         }
+        if let Some(inherent) = name.strip_prefix("$generic$inherent$") {
+            let inherent = inherent.split("$overload$").next().unwrap_or(inherent);
+            if let Some((target, member)) = inherent.split_once("::function::") {
+                return format!("{target}.{member}");
+            }
+        }
         let source = self
             .function_instances
             .get(name)
@@ -11858,7 +11893,10 @@ impl Analyzer {
         let source = source_type_from_identity(identity)?;
         let error =
             standard_throws_error_source(&source, self.lang_item_name(LangItemKind::ThrowsEffect))?;
-        let error = source_type_expression_name(&source_type_expression(&error))?;
+        let error = self
+            .probe_source_ty(&error)
+            .map(|error| self.diagnostic_type_name(&error))
+            .or_else(|| source_type_expression_name(&source_type_expression(&error)))?;
         Some(format!("Throws({error})"))
     }
 

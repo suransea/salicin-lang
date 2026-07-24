@@ -451,6 +451,9 @@ impl Analyzer {
         context: &LowerCtx,
     ) -> bool {
         match expression {
+            Expr::Located { value, .. } => {
+                self.expression_uses_standard_throws_identity(value, identity, context)
+            }
             Expr::Throw(_) => true,
             Expr::Try(_) | Expr::Closure(_, _) | Expr::PatternClosure { .. } => false,
             Expr::Call(callee, arguments) => {
@@ -624,6 +627,7 @@ impl Analyzer {
 
     fn try_body_uses_dedicated_throws_call(&self, expression: &Expr, context: &LowerCtx) -> bool {
         match expression {
+            Expr::Located { value, .. } => self.try_body_uses_dedicated_throws_call(value, context),
             Expr::Try(_) | Expr::Closure(_, _) | Expr::PatternClosure { .. } => false,
             Expr::Call(callee, arguments) => {
                 self.call_throws_info(expression, context).is_some()
@@ -1209,6 +1213,7 @@ impl Analyzer {
         errors: &mut HashSet<Ty>,
     ) {
         match expression {
+            Expr::Located { value, .. } => self.collect_escaping_throws(value, context, errors),
             Expr::Type(_)
             | Expr::Unit
             | Expr::Integer(_)
