@@ -48,6 +48,7 @@ mod names;
 mod nominals;
 mod operators;
 mod ownership;
+mod pipeline;
 mod places;
 mod raw;
 mod references;
@@ -56,10 +57,8 @@ mod source_rewrite;
 mod throws;
 mod types;
 
-use cleanup_plan::build_and_verify_cleanup_plans;
 use compile_time::*;
 use effects::*;
-use emitter::{evaluate_globals, Emitter};
 use flow::*;
 use handlers::*;
 use hir::*;
@@ -68,6 +67,8 @@ use names::*;
 use operators::*;
 use registry::*;
 use source_rewrite::*;
+
+pub use pipeline::{check_library, compile, compile_library};
 
 fn primitive_scalar_type(ty: &Ty) -> bool {
     matches!(ty, Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool)
@@ -93,61 +94,6 @@ impl fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.message)
     }
-}
-
-/// Type-check `program` and emit portable textual LLVM IR using opaque
-/// pointers.  The returned module deliberately omits a target triple so that
-/// the caller can compile it for the selected LLVM target. The program must
-/// already have passed module resolution; use the crate-level source entry
-/// points when compiling parser input.
-pub fn compile(program: &Program) -> Result<String, Vec<Diagnostic>> {
-    compile_target(program, true)
-}
-
-/// Type-check `program` and emit LLVM IR for a library target. Unlike
-/// [`compile`], this does not require `main` or generate the platform entry
-/// wrapper. The program must already have passed module resolution.
-pub fn compile_library(program: &Program) -> Result<String, Vec<Diagnostic>> {
-    compile_target(program, false)
-}
-
-fn compile_target(program: &Program, require_entry_point: bool) -> Result<String, Vec<Diagnostic>> {
-    let mut analyzer =
-        Analyzer::try_new(program).map_err(|error| vec![Diagnostic::new(error.to_string())])?;
-    let hir = if require_entry_point {
-        analyzer.analyze()
-    } else {
-        analyzer.analyze_target(false)
-    };
-    if !analyzer.diagnostics.is_empty() {
-        return Err(analyzer.diagnostics);
-    }
-
-    let hir = hir.expect("analysis without diagnostics must produce HIR");
-    let cleanup_plans = build_and_verify_cleanup_plans(&hir)?;
-    let constants = evaluate_globals(&hir)?;
-
-    match Emitter::new(&hir, constants, &cleanup_plans).emit_module(require_entry_point) {
-        Ok(ir) => Ok(ir),
-        Err(error) => Err(vec![error]),
-    }
-}
-
-/// Type-check a library target without requiring or emitting a binary entry
-/// point. Global constants are still evaluated so library checks report the
-/// same constant-expression diagnostics as binary compilation. The program
-/// must already have passed module resolution.
-pub fn check_library(program: &Program) -> Result<(), Vec<Diagnostic>> {
-    let mut analyzer =
-        Analyzer::try_new(program).map_err(|error| vec![Diagnostic::new(error.to_string())])?;
-    let hir = analyzer.analyze_target(false);
-    if !analyzer.diagnostics.is_empty() {
-        return Err(analyzer.diagnostics);
-    }
-
-    let hir = hir.expect("analysis without diagnostics must produce HIR");
-    let _cleanup_plans = build_and_verify_cleanup_plans(&hir)?;
-    evaluate_globals(&hir).map(|_| ())
 }
 
 struct Analyzer {
@@ -4993,6 +4939,7 @@ impl Analyzer {
         }
     }
 
+    #[cfg(test)]
     fn analyze(&mut self) -> Option<HirProgram> {
         self.analyze_target(true)
     }
@@ -10718,9 +10665,10 @@ impl Analyzer {
         else {
             return;
         };
+        let display_name = self.diagnostic_function_name(name);
         if self.function_effects_unsafe(&effects) && context.unsafe_depth == 0 {
             self.error(format!(
-                "call to unsafe function `{name}` requires an `unsafe` handler"
+                "call to unsafe function `{display_name}` requires an `unsafe` handler"
             ));
         }
         let required = self.function_effects_custom_identities(&effects);
@@ -10730,17 +10678,18 @@ impl Analyzer {
             .cloned()
             .collect::<Vec<_>>();
         if !missing.is_empty() {
-            self.report_missing_custom_effects(format!("call to `{name}`"), missing);
+            self.report_missing_custom_effects(format!("call to `{display_name}`"), missing);
         }
     }
 
     fn report_missing_custom_effects(&mut self, prefix: String, missing: Vec<String>) {
-        if missing.len() == 1 && self.effect_identity_is_standard_throws(&missing[0]) {
-            self.error(format!(
-                "{prefix} requires `{}`; handle it with `try {{ ... }}` or propagate it from the current function",
-                missing[0]
-            ));
-            return;
+        if missing.len() == 1 {
+            if let Some(display) = self.standard_throws_diagnostic_name(&missing[0]) {
+                self.error(format!(
+                    "{prefix} requires `{display}`; handle it with `try {{ ... }}` or propagate it from the current function"
+                ));
+                return;
+            }
         }
         self.error(format!(
             "{prefix} requires custom effect{} `{}`",
@@ -10749,11 +10698,27 @@ impl Analyzer {
         ));
     }
 
-    fn effect_identity_is_standard_throws(&self, identity: &str) -> bool {
-        source_type_from_identity(identity).is_some_and(|source| {
-            standard_throws_error_source(&source, self.lang_item_name(LangItemKind::ThrowsEffect))
-                .is_some()
-        })
+    fn diagnostic_function_name(&self, name: &str) -> String {
+        let source = self
+            .function_instances
+            .get(name)
+            .map_or(name, |instance| instance.key.template.as_str());
+        source
+            .split("$overload$")
+            .next()
+            .unwrap_or(source)
+            .rsplit("::")
+            .next()
+            .unwrap_or(source)
+            .to_owned()
+    }
+
+    fn standard_throws_diagnostic_name(&self, identity: &str) -> Option<String> {
+        let source = source_type_from_identity(identity)?;
+        let error =
+            standard_throws_error_source(&source, self.lang_item_name(LangItemKind::ThrowsEffect))?;
+        let error = source_type_expression_name(&source_type_expression(&error))?;
+        Some(format!("Throws({error})"))
     }
 
     fn unify_types(&mut self, left: &Ty, right: &Ty, context: impl fmt::Display) -> Ty {

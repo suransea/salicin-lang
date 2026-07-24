@@ -12,6 +12,11 @@ runtime for native builds.
   -> clang and runtime linkage
 ```
 
+The top-level phase order is encoded in `codegen/pipeline.rs`. Private `AnalyzedProgram` and
+`PreparedProgram` wrappers prevent LLVM emission before semantic analysis, cleanup-plan
+verification, and global constant evaluation have succeeded. These wrappers are phase markers,
+not a stable compiler API.
+
 The implementation lives under `compiler/src`:
 
 - `lexer.rs`, `parser.rs`, and `ast.rs` define the source frontend.
@@ -67,6 +72,8 @@ The implementation lives under `compiler/src`:
     pass-mode selection used by ownership-sensitive lowering.
   - `places.rs` lowers local place expressions and owns move initialization plus lexical loan
     bookkeeping over HIR places.
+  - `pipeline.rs` sequences semantic analysis, cleanup preparation, constant evaluation, and LLVM
+    emission behind explicit phase-marker types.
   - `raw.rs` lowers layout queries, raw pointer constructors, raw allocation primitives, raw
     borrow/take/offset/trap operations, and `forget`.
   - `references.rs` lowers contextual reference values and reference call arguments, promotes

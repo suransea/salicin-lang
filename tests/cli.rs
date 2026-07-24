@@ -100,12 +100,55 @@ fn source_extension_is_sc_without_a_legacy_alias() {
 }
 
 #[test]
+fn core_diagnostics_are_stable_source_level_contracts() {
+    for (fixture_name, message) in [
+        (
+            "use_after_move.sc",
+            "use of moved or uninitialized value",
+        ),
+        (
+            "array_index_type.sc",
+            "type mismatch for array index: expected `i32`, found `bool`",
+        ),
+        (
+            "throw_in_plain_return.sc",
+            "call to `throw` requires `Throws(bool)`; handle it with `try { ... }` or propagate it from the current function",
+        ),
+    ] {
+        let source = fixture("fail", fixture_name);
+        let output = salic()
+            .arg("check")
+            .arg(&source)
+            .output()
+            .expect("check diagnostic contract fixture");
+        assert_eq!(output.status.code(), Some(1), "{}", output_text(&output));
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            format!("{}: error: {message}\n", source.display()),
+            "{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn return_type_effect_groups_run_with_expected_result() {
     let output = salic()
         .arg("run")
         .arg(fixture("pass", "return_type_effects.sc"))
         .output()
         .expect("run return-type effect fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
+fn ledger_example_exercises_the_m0_core_as_a_complete_program() {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/ledger.sc");
+    let output = salic()
+        .arg("run")
+        .arg(source)
+        .output()
+        .expect("run M0 ledger example");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 }
 
@@ -2832,10 +2875,7 @@ fn throws_errors_report_their_cause() {
             "throw_omitted_return_type.sc",
             "handle it with `try { ... }`",
         ),
-        (
-            "throw_error_type_mismatch.sc",
-            "requires `core::effect::Throws(i32)`",
-        ),
+        ("throw_error_type_mismatch.sc", "requires `Throws(i32)`"),
         (
             "throw_without_value.sc",
             "standard-library item `throw` is not in the prelude",

@@ -1341,7 +1341,7 @@ fn throw_requires_an_exact_active_throws_boundary() {
     for (source, expected) in [
         (
             "let fail(): i32 with(Throws(bool)) = { throw(0) }\nlet main(): i32 = { 0 }\n",
-            "requires `core::effect::Throws(i32)`",
+            "requires `Throws(i32)`",
         ),
         (
             "let fail(): Option(i32) = { throw(false) }\nlet main(): i32 = { 0 }\n",
@@ -3963,11 +3963,9 @@ let main(): i32 = { 0 }
 "#,
     )
     .unwrap_err();
-    assert!(errors.iter().any(|error| {
-        error
-            .message
-            .contains("requires `core::effect::Throws(i64)`")
-    }));
+    assert!(errors
+        .iter()
+        .any(|error| { error.message.contains("requires `Throws(i64)`") }));
 }
 
 #[test]
@@ -4154,10 +4152,7 @@ let main(): i32 = { run() }
     )
     .expect_err("handling an operation must not erase its throws requirement");
     assert!(missing_throws.iter().any(|error| {
-        error
-            .message
-            .contains("requires `core::effect::Throws(bool)`")
-            && error.message.contains("core::effect::Throws(bool)")
+        error.message.contains("requires `Throws(bool)`") && error.message.contains("Throws(bool)")
     }));
 }
 

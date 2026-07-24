@@ -7,6 +7,8 @@
 本文定义“源程序是什么意思”，不把 LLVM 的实现限制暴露成语言规则。实现状态与未完成工作记录在
 [项目状态](../project/status.md)，版本变化记录在[更新日志](../../CHANGELOG.md)。Salicin 源文件统一
 使用 `.sc` 后缀；它可理解为 successor C 或 super C 的简写，但这两个展开不构成语言正式名称。
+功能成熟度由 [M0 核心范围](../project/core-scope.md)定义。本规范可以记录探索功能的目标语义；
+这不表示当前编译器已经完整实现该功能。
 
 ## 1. 设计原则
 
@@ -42,6 +44,9 @@
   `auto` 和 `shared` 也由使用位置与语义约束解释。它们都不是全局保留字。
 - `borrow` 是上下文识别的借用构造器；`do`、`try`、`throw` 和 `unsafe` 来自
   `core.control`。这些拼写均词法化为普通标识符，不占用声明、成员或路径名称。
+- “上下文关键字”是语法语义分类，不要求 lexer 使用某一种 token。只要在非特殊位置仍可按普通
+  标识符使用，实现既可以统一产生 `IDENT`，也可以产生专用 token 后由 parser 按上下文接受。
+  当前 `salic` 为上述拼写统一产生 `IDENT`；这是实现策略，不是源码兼容性规则。
 - `let Name = type` 声明不透明名义类型。标准 `bool`、固定宽度有符号/无符号整数以及
   `isize`、`usize` 由 `core.primitives` 以这种形式声明，并由经过验证的 lang-item identity
   选择原生表示和快速 lowering；`isize`、`usize` 的宽度来自目标指针宽度，不是 `i64`、`u64` 别名。
@@ -1743,6 +1748,10 @@ result match {
 均已在 1.0 前移除，不提供兼容别名。
 
 ## 16. 异步
+
+> 成熟度：**Exploration**。本节描述目标语义；当前编译器只有 `Async` effect identity 和通用
+> handler 能力，尚未实现这里描述的 `async` Future 状态机 lowering。参见
+> [M0 核心范围](../project/core-scope.md)。
 
 ```sc
 let f(x: i32): i32 with(Async) = {

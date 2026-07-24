@@ -23,5 +23,7 @@ top-level [changelog](../CHANGELOG.md).
 
 ## Project
 
+- [M0 core scope](project/core-scope.md): frozen implementation target, maturity labels, exclusions,
+  and the gate for expanding the language.
 - [Implementation status](project/status.md): supported surface and known structural gaps.
 - [Changelog](../CHANGELOG.md): release-by-release history.

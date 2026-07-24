@@ -26,6 +26,10 @@ cargo build --release
 target/release/salic run examples/basics.sc
 ```
 
+`examples/ledger.sc` is the complete M0 usability example: it combines nominal data, a custom
+iterator, ownership-aware methods, mutation through borrowing, and recoverable errors in one native
+batch program.
+
 Common commands:
 
 ```sh
@@ -55,6 +59,7 @@ Documentation starts at [docs/README.md](docs/README.md). In particular:
 - [grammar](docs/language/grammar.md)
 - [compiler architecture](docs/compiler/architecture.md)
 - [standard-library organization](docs/standard-library/README.md)
+- [frozen M0 core scope](docs/project/core-scope.md)
 - [implementation status](docs/project/status.md)
 - [release history](CHANGELOG.md)
 
