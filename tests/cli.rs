@@ -2068,6 +2068,31 @@ fn resource_partial_applications_transfer_and_drop_captures() {
 }
 
 #[test]
+fn closure_partial_applications_drop_captures_on_abandonment_and_early_exit() {
+    for (fixture_name, failure) in [
+        (
+            "closure_partial_abandon_trap.sc",
+            "an abandoned closure partial capture was not dropped",
+        ),
+        (
+            "closure_partial_early_trap.sc",
+            "a closure partial capture survived an early argument return",
+        ),
+    ] {
+        let trapped = salic()
+            .arg("run")
+            .arg(fixture("pass", fixture_name))
+            .output()
+            .expect("run closure partial cleanup trap");
+        assert!(
+            !trapped.status.success(),
+            "{failure}:\n{}",
+            output_text(&trapped)
+        );
+    }
+}
+
+#[test]
 fn callable_aliases_move_named_partial_closure_and_resource_environments() {
     let output = salic()
         .arg("run")
@@ -2205,6 +2230,13 @@ fn m1_local_closure_programs_run_with_expected_result() {
         "closure_shared_repeat.sc",
         "closure_capture_parameter.sc",
         "closure_curried_capture.sc",
+        "closure_partial_application.sc",
+        "closure_partial_multistage.sc",
+        "closure_partial_fnmut.sc",
+        "closure_partial_fnonce.sc",
+        "closure_partial_move_argument.sc",
+        "closure_partial_effect.sc",
+        "closure_partial_resource_multistage.sc",
         "closure_mut_capture.sc",
         "closure_move_once.sc",
     ];
@@ -2222,10 +2254,14 @@ fn m1_local_closure_programs_run_with_expected_result() {
 fn m1_local_closure_errors_report_their_cause() {
     for (name, expected) in [
         ("closure_escape_return.sc", "escape"),
-        ("closure_partial_application.sc", "partial application"),
         ("closure_fnmut_immutable.sc", "FnMut"),
+        (
+            "closure_partial_fnmut_immutable.sc",
+            "FnMut partial application",
+        ),
         ("closure_capture_borrow_conflict.sc", "borrowed"),
         ("closure_fnonce_twice.sc", "consumed"),
+        ("closure_partial_fnonce_twice.sc", "consumed"),
         ("closure_move_capture_source_use.sc", "moved"),
     ] {
         let output = salic()

@@ -158,6 +158,7 @@ struct Analyzer {
     hir_functions: HashMap<String, HirFunction>,
     lifted_functions: Vec<HirFunction>,
     next_closure: usize,
+    partial_parameter_shapes: HashMap<(String, usize), Vec<Vec<ParamSig>>>,
     handler_frame_parameter_modes: HashMap<String, Vec<PassMode>>,
     hir_globals: HashMap<String, HirGlobal>,
     array_types: HashSet<Ty>,
@@ -235,6 +236,7 @@ impl Analyzer {
             hir_functions: HashMap::new(),
             lifted_functions: Vec::new(),
             next_closure: 0,
+            partial_parameter_shapes: HashMap::new(),
             handler_frame_parameter_modes: HashMap::new(),
             hir_globals: HashMap::new(),
             array_types: HashSet::new(),
@@ -7617,22 +7619,12 @@ impl Analyzer {
                                 annotation.unwrap_or_else(|| value.ty.clone())
                             };
                             let partial = match &value.kind {
-                                HirExprKind::Partial {
-                                    function,
-                                    consumed_groups,
-                                    captures,
-                                } => Some(PartialInfo {
-                                    function: function.clone(),
-                                    consumed_groups: *consumed_groups,
-                                    capture_count: captures.len(),
-                                    is_fn_once: captures
-                                        .iter()
-                                        .any(|capture| matches!(capture, HirArgument::Move(_))),
-                                }),
+                                HirExprKind::Partial { .. } => partial_info_for_callable(&ty),
                                 HirExprKind::Function(function) => Some(PartialInfo {
                                     function: function.clone(),
                                     consumed_groups: 0,
                                     capture_count: 0,
+                                    is_fn_mut: false,
                                     is_fn_once: false,
                                 }),
                                 HirExprKind::Read { .. } => callable_source
@@ -7693,9 +7685,19 @@ impl Analyzer {
                                     binding.name
                                 ));
                             }
-                            if partial.is_some() && binding.mutable {
+                            if partial.as_ref().is_some_and(|partial| !partial.is_fn_mut)
+                                && binding.mutable
+                            {
                                 self.error(format!(
                                     "local partial application `{}` must be immutable",
+                                    binding.name
+                                ));
+                            }
+                            if partial.as_ref().is_some_and(|partial| partial.is_fn_mut)
+                                && !binding.mutable
+                            {
+                                self.error(format!(
+                                    "FnMut partial application `{}` requires a mutable binding (`let mut`)",
                                     binding.name
                                 ));
                             }
@@ -9740,13 +9742,6 @@ impl Analyzer {
             .closure
             .as_ref()
             .expect("closure call requires closure metadata");
-        if groups.len() < closure.groups.len() {
-            self.error(format!(
-                "curried closures require all {} parameter groups in one call; partial application of closure `{local_name}` is not supported",
-                closure.groups.len()
-            ));
-            return error_expr();
-        }
         if groups.len() > closure.groups.len() {
             self.error(format!(
                 "too many parameter groups in call to closure `{local_name}`: expected {}, found {}",
@@ -9765,19 +9760,25 @@ impl Analyzer {
                 ));
             }
         }
-        if closure.unsafe_effect && context.unsafe_depth == 0 {
-            self.error(format!(
-                "call to unsafe closure `{local_name}` requires an `unsafe` handler"
-            ));
-        }
-        let missing = closure
-            .custom_effects
-            .iter()
-            .filter(|effect| !context.active_custom_effects.contains(*effect))
-            .cloned()
-            .collect::<Vec<_>>();
-        if !missing.is_empty() {
-            self.report_missing_custom_effects(format!("call to closure `{local_name}`"), missing);
+        let complete = groups.len() == closure.groups.len();
+        if complete {
+            if closure.unsafe_effect && context.unsafe_depth == 0 {
+                self.error(format!(
+                    "call to unsafe closure `{local_name}` requires an `unsafe` handler"
+                ));
+            }
+            let missing = closure
+                .custom_effects
+                .iter()
+                .filter(|effect| !context.active_custom_effects.contains(*effect))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !missing.is_empty() {
+                self.report_missing_custom_effects(
+                    format!("call to closure `{local_name}`"),
+                    missing,
+                );
+            }
         }
 
         let callable = HirPlace {
@@ -9851,6 +9852,7 @@ impl Analyzer {
                 }
             })
             .collect();
+        let closure_capture_count = lowered_arguments.len();
         let mut temporary_loans = Vec::new();
         let mut temporary_bindings = Vec::new();
         for (group_index, (argument_group, parameters)) in
@@ -9878,18 +9880,65 @@ impl Analyzer {
                 ));
             }
         }
+        if !complete
+            && lowered_arguments[closure_capture_count..]
+                .iter()
+                .any(|argument| {
+                    matches!(
+                        argument,
+                        HirArgument::SharedBorrow(_) | HirArgument::MutBorrow(_)
+                    ) || matches!(argument, HirArgument::Copy(value) | HirArgument::Move(value) if matches!(value.ty, Ty::Reference { .. }))
+                })
+        {
+            self.error("partial application cannot capture borrowed arguments");
+        }
         self.release_loans(&temporary_loans, context);
-        let call = HirExpr {
-            ty: closure.result.clone(),
-            kind: HirExprKind::Call {
-                function: closure.function.clone(),
-                arguments: lowered_arguments.clone(),
-                consumed_callable: closure.is_fn_once.then_some(local.id),
-                diverges: self.is_uninhabited_type(&closure.result),
-            },
+        let call = if complete {
+            HirExpr {
+                ty: closure.result.clone(),
+                kind: HirExprKind::Call {
+                    function: closure.function.clone(),
+                    arguments: lowered_arguments.clone(),
+                    consumed_callable: closure.is_fn_once.then_some(local.id),
+                    diverges: self.is_uninhabited_type(&closure.result),
+                },
+            }
+        } else {
+            let consumed_groups = groups.len();
+            self.partial_parameter_shapes.insert(
+                (closure.function.clone(), consumed_groups),
+                closure.groups[consumed_groups..].to_vec(),
+            );
+            let callable_ty = partial_callable_ty(
+                closure.function.clone(),
+                consumed_groups,
+                FunctionTy {
+                    groups: closure.groups[consumed_groups..]
+                        .iter()
+                        .map(|group| group.iter().map(|parameter| parameter.ty.clone()).collect())
+                        .collect(),
+                    unsafe_effect: closure.unsafe_effect,
+                    throws_error: closure.throws_error.clone().map(Box::new),
+                    custom_effects: closure.custom_effects.clone(),
+                    result: Box::new(closure.result.clone()),
+                },
+                &lowered_arguments,
+            );
+            HirExpr {
+                ty: callable_ty,
+                kind: HirExprKind::Partial {
+                    function: closure.function.clone(),
+                    consumed_groups,
+                    captures: lowered_arguments.clone(),
+                },
+            }
         };
-        let call = if let Some(error) = closure.throws_error.as_ref() {
-            self.lower_automatic_throws(call, error, expected, context)
+        let call = if complete {
+            if let Some(error) = closure.throws_error.as_ref() {
+                self.lower_automatic_throws(call, error, expected, context)
+            } else {
+                call
+            }
         } else {
             call
         };
@@ -10589,12 +10638,48 @@ impl Analyzer {
             .partial
             .as_ref()
             .expect("partial call requires partial metadata");
-        let function_ty = self.function_type(&partial.function);
-        let Ty::Function(function_ty) = function_ty else {
-            return error_expr();
+        let (function_ty, callable_captures, remaining_parameters) = match &local.ty {
+            Ty::Callable(callable_ty) => {
+                if !matches!(callable_ty.kind, CallableKind::Partial { .. }) {
+                    self.error(format!(
+                        "internal error: partial `{local_name}` has a non-partial callable type"
+                    ));
+                    return error_expr();
+                }
+                let parameters = self
+                    .signatures
+                    .get(&partial.function)
+                    .map(|signature| signature.groups[partial.consumed_groups..].to_vec())
+                    .or_else(|| {
+                        self.partial_parameter_shapes
+                            .get(&(partial.function.clone(), partial.consumed_groups))
+                            .cloned()
+                    });
+                let Some(parameters) = parameters else {
+                    self.error(format!(
+                        "internal error: partial `{local_name}` has no remaining parameter metadata"
+                    ));
+                    return error_expr();
+                };
+                (
+                    callable_ty.signature.clone(),
+                    callable_ty.captures.clone(),
+                    parameters,
+                )
+            }
+            Ty::Function(function_ty) if partial.capture_count == 0 => (
+                function_ty.clone(),
+                Vec::new(),
+                self.signatures[&partial.function].groups.clone(),
+            ),
+            _ => {
+                self.error(format!(
+                    "internal error: partial `{local_name}` has no callable type"
+                ));
+                return error_expr();
+            }
         };
-        let signature = self.signatures[&partial.function].clone();
-        let remaining_groups = function_ty.groups.len() - partial.consumed_groups;
+        let remaining_groups = remaining_parameters.len();
         if groups.len() > remaining_groups {
             self.error(format!(
                 "too many parameter groups in call to `{local_name}`: expected at most {remaining_groups}, found {}",
@@ -10603,14 +10688,7 @@ impl Analyzer {
             return error_expr();
         }
 
-        let captured_params: Vec<_> = signature
-            .groups
-            .iter()
-            .take(partial.consumed_groups)
-            .flatten()
-            .cloned()
-            .collect();
-        if captured_params.len() != partial.capture_count {
+        if callable_captures.len() != partial.capture_count {
             self.error(format!(
                 "internal error: invalid capture count for partial `{local_name}`"
             ));
@@ -10649,36 +10727,41 @@ impl Analyzer {
             }
             InitializationStatus::Initialized => {}
         }
-        let mut arguments: Vec<_> = captured_params
+        let mut arguments: Vec<_> = callable_captures
             .into_iter()
             .enumerate()
-            .map(|(index, parameter)| {
+            .map(|(index, capture_ty)| {
                 let capture = HirExpr {
-                    ty: parameter.ty.clone(),
+                    ty: capture_ty.ty.clone(),
                     kind: HirExprKind::PartialCapture {
                         binding: local.id,
                         index,
-                        moves: self.effective_pass_mode(parameter.mode, &parameter.ty)
-                            == PassMode::Move,
+                        moves: capture_ty.mode == PassMode::Move,
                         callable_ty: local.ty.clone(),
                     },
                 };
-                match self.effective_pass_mode(parameter.mode, &parameter.ty) {
+                match capture_ty.mode {
                     PassMode::Copy => HirArgument::Copy(capture),
                     PassMode::Move => HirArgument::Move(capture),
-                    PassMode::Borrow | PassMode::MutBorrow => {
-                        unreachable!("borrowed partial applications are rejected at creation")
+                    PassMode::Borrow | PassMode::MutBorrow => HirArgument::CallableCaptureBorrow {
+                        binding: local.id,
+                        index,
+                        callable_ty: local.ty.clone(),
+                        capture_ty: capture_ty.ty,
+                        mutable: capture_ty.mode == PassMode::MutBorrow,
+                    },
+                    PassMode::Inferred => {
+                        unreachable!("callable capture mode is always explicit")
                     }
-                    PassMode::Inferred => unreachable!("effective mode is explicit"),
                 }
             })
             .collect();
+        let captured_argument_count = arguments.len();
 
         let mut temporary_loans = Vec::new();
         let mut temporary_bindings = Vec::new();
         for (relative_group, arguments_ast) in groups.iter().enumerate() {
-            let group_index = partial.consumed_groups + relative_group;
-            let params = &signature.groups[group_index];
+            let params = &remaining_parameters[relative_group];
             let parameter_names = params
                 .iter()
                 .map(|parameter| parameter.name.clone())
@@ -10703,11 +10786,30 @@ impl Analyzer {
         }
 
         let consumed_groups = partial.consumed_groups + groups.len();
-        if consumed_groups == function_ty.groups.len() {
-            self.require_function_effects(&partial.function, context);
+        let complete = groups.len() == remaining_groups;
+        if complete {
+            if function_ty.unsafe_effect && context.unsafe_depth == 0 {
+                self.error(format!(
+                    "call to unsafe partial `{local_name}` requires an `unsafe` handler"
+                ));
+            }
+            let missing = function_ty
+                .custom_effects
+                .iter()
+                .filter(|effect| !context.active_custom_effects.contains(*effect))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !missing.is_empty() {
+                self.report_missing_custom_effects(
+                    format!("call to partial `{local_name}`"),
+                    missing,
+                );
+            }
         }
-        if consumed_groups != function_ty.groups.len()
-            && arguments.iter().any(|argument| {
+        if !complete
+            && arguments[captured_argument_count..]
+                .iter()
+                .any(|argument| {
                 matches!(
                     argument,
                     HirArgument::SharedBorrow(_) | HirArgument::MutBorrow(_)
@@ -10717,7 +10819,7 @@ impl Analyzer {
             self.error("partial application cannot capture borrowed arguments");
         }
         self.release_loans(&temporary_loans, context);
-        let call = if consumed_groups == function_ty.groups.len() {
+        let call = if complete {
             let call = HirExpr {
                 ty: (*function_ty.result).clone(),
                 kind: HirExprKind::Call {
@@ -10733,11 +10835,15 @@ impl Analyzer {
                 call
             }
         } else {
+            self.partial_parameter_shapes.insert(
+                (partial.function.clone(), consumed_groups),
+                remaining_parameters[groups.len()..].to_vec(),
+            );
             let callable_ty = partial_callable_ty(
                 partial.function.clone(),
                 consumed_groups,
                 FunctionTy {
-                    groups: function_ty.groups[consumed_groups..].to_vec(),
+                    groups: function_ty.groups[groups.len()..].to_vec(),
                     unsafe_effect: function_ty.unsafe_effect,
                     throws_error: function_ty.throws_error.clone(),
                     custom_effects: function_ty.custom_effects.clone(),

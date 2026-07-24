@@ -6,6 +6,10 @@ subset.
 
 ## Unreleased
 
+- Added multi-stage partial application for curried capturing closures. Partial environments combine
+  original closure captures with applied arguments, preserve remaining parameter labels and modes,
+  defer effect checks until the final call, retain `FnMut`/`FnOnce` behavior, and transfer or drop
+  owned captures exactly once across invocation, abandonment, and early argument exits.
 - Inventoried every retained source-level algebraic-handler rejection by stable ID, implementation
   location, diagnostic fragment, negative fixture, and implementation-status boundary. Added
   coverage for continuation and callable escape, alias binding, finite-target assignment, and

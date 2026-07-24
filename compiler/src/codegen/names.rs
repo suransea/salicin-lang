@@ -136,11 +136,16 @@ pub(super) fn canonical_type_encoding(ty: &Ty) -> String {
                 CallableKind::Partial {
                     function,
                     consumed_groups,
+                    is_fn_mut,
                     is_fn_once,
                 } => {
                     encoded.push('p');
                     push_canonical_component(&mut encoded, function);
-                    encoded.push_str(&format!("{consumed_groups}:{}:", u8::from(*is_fn_once)));
+                    encoded.push_str(&format!(
+                        "{consumed_groups}:{}:{}:",
+                        u8::from(*is_fn_mut),
+                        u8::from(*is_fn_once)
+                    ));
                 }
                 CallableKind::Closure {
                     function,

@@ -114,12 +114,17 @@ pub(super) fn partial_callable_ty(
     let is_fn_once = captures
         .iter()
         .any(|capture| capture.mode == PassMode::Move);
+    let is_fn_mut = !is_fn_once
+        && captures
+            .iter()
+            .any(|capture| capture.mode == PassMode::MutBorrow);
     Ty::Callable(CallableTy {
         signature,
         captures,
         kind: CallableKind::Partial {
             function,
             consumed_groups,
+            is_fn_mut,
             is_fn_once,
         },
     })
@@ -132,6 +137,7 @@ pub(super) fn partial_info_for_callable(ty: &Ty) -> Option<PartialInfo> {
     let CallableKind::Partial {
         function,
         consumed_groups,
+        is_fn_mut,
         is_fn_once,
     } = &callable.kind
     else {
@@ -141,6 +147,7 @@ pub(super) fn partial_info_for_callable(ty: &Ty) -> Option<PartialInfo> {
         function: function.clone(),
         consumed_groups: *consumed_groups,
         capture_count: callable.captures.len(),
+        is_fn_mut: *is_fn_mut,
         is_fn_once: *is_fn_once,
     })
 }

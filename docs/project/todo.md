@@ -15,18 +15,30 @@ Priority meanings:
 
 ## Current focus
 
-Current milestone: **EH1, close the algebraic-handler extension**
+Current milestone: **source-backed pattern control**
 
-Next task: **M0-AUDIT-1**
+Next task: **PARTIAL-FN-1**
 
-### P0 handler queue
+### P0 control-source queue
 
-No remaining P0 handler task. The EH1 stop condition is active; proceed to the M0 release baseline.
+- [ ] **PARTIAL-FN-1: Make pattern partial functions first-class**
+  - Preserve the unmatched non-`Copy` input on `Miss`.
+  - Delay pattern moves until the pattern and guard both succeed.
+  - Carry captures, result type, and latent effect row through storage and calls.
+
+- [ ] **MATCH-SOURCE-1: Implement `match` through partial functions**
+  - Define the minimal source-backed `Hit`/`Miss` attempt contract.
+  - Consume heterogeneous case parameter groups in source order.
+  - Keep exhaustiveness and unreachable-case checking static.
+
+- [ ] **IF-SOURCE-1: Implement `if` through `match`**
+  - Give `core.control.if` an ordinary source body over boolean cases.
+  - Remove the independent compiler-only `if` selection path after parity tests pass.
 
 ### EH1 stop condition
 
-After the P0 handler queue passes its exit conditions, stop adding handler features. Move to
-**M0-AUDIT-1** even if adjacent handler or async work looks convenient.
+EH1 is closed. The explicit control-source priority above runs before **M0-AUDIT-1**; no adjacent
+handler or async expansion is admitted.
 
 ## P1 M0 release baseline
 
@@ -104,6 +116,7 @@ Entry gate: all ASYNC1 prerequisites in the roadmap
 
 ## Recently completed
 
+- [x] **CALL-PARTIAL-1:** Support multi-stage partial application of curried capturing closures.
 - [x] **EFF-DIAG-1:** Inventory handler rejection boundaries and lock source-level diagnostics.
 - [x] **SCOPE-M0-1:** Freeze the M0 core scope and change gate.
 - [x] **EFF-FOR-1:** Carry iterator ownership through effectful `for` loops.

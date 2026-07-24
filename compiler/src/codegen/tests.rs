@@ -5068,8 +5068,8 @@ let main(): i32 = {
 }
 
 #[test]
-fn rejects_partial_application_of_a_curried_closure() {
-    let errors = compile_text(
+fn partially_applies_a_curried_capturing_closure() {
+    let ir = compile_text(
         r#"
 let main(): i32 = {
   let base = 40
@@ -5079,10 +5079,9 @@ let main(): i32 = {
 }
 "#,
     )
-    .unwrap_err();
-    assert!(errors
-        .iter()
-        .any(|error| error.message.contains("partial application")));
+    .expect("curried closures should support partial application");
+    let symbol = function_symbol("__closure.0");
+    assert!(ir.contains(&format!("call i32 @{symbol}(ptr")));
 }
 
 #[test]

@@ -70,6 +70,7 @@ pub(super) enum CallableKind {
     Partial {
         function: String,
         consumed_groups: usize,
+        is_fn_mut: bool,
         is_fn_once: bool,
     },
     Closure {
@@ -657,7 +658,7 @@ pub(super) enum HirIndex {
     Dynamic(Box<HirExpr>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct ParamSig {
     pub(super) name: String,
     pub(super) ty: Ty,
@@ -703,6 +704,7 @@ pub(super) struct PartialInfo {
     pub(super) function: String,
     pub(super) consumed_groups: usize,
     pub(super) capture_count: usize,
+    pub(super) is_fn_mut: bool,
     pub(super) is_fn_once: bool,
 }
 

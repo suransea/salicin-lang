@@ -2662,19 +2662,52 @@ impl<'a> FunctionEmitter<'a> {
                                 for capture in captures {
                                     let capture = match capture {
                                         HirArgument::Copy(capture) | HirArgument::Move(capture) => {
-                                            self.emit_expr(capture)?
+                                            Some(self.emit_expr(capture)?)
                                         }
-                                        HirArgument::SharedBorrow(_)
-                                        | HirArgument::MutBorrow(_) => {
-                                            return Err(Diagnostic::new(
-                                                "borrowed argument reached partial application emission",
+                                        HirArgument::SharedBorrow(place)
+                                        | HirArgument::MutBorrow(place) => {
+                                            let address = self.emit_borrow_address(place)?;
+                                            let pointer = self
+                                                .entry_alloca("ptr", "borrowed partial capture");
+                                            self.instruction(format!(
+                                                "store ptr {address}, ptr {pointer}"
                                             ));
+                                            stored.push(Some(StoredCapture {
+                                                ty: place.ty.clone(),
+                                                pointer,
+                                                drop_flag: None,
+                                            }));
+                                            None
                                         }
-                                        HirArgument::CallableCaptureBorrow { .. } => {
-                                            return Err(Diagnostic::new(
-                                                "forwarded borrowed argument reached partial application emission",
+                                        HirArgument::CallableCaptureBorrow {
+                                            binding,
+                                            index,
+                                            callable_ty,
+                                            capture_ty,
+                                            ..
+                                        } => {
+                                            let address = self.emit_callable_capture_borrow(
+                                                *binding,
+                                                *index,
+                                                callable_ty,
+                                            )?;
+                                            let pointer = self.entry_alloca(
+                                                "ptr",
+                                                "forwarded borrowed partial capture",
+                                            );
+                                            self.instruction(format!(
+                                                "store ptr {address}, ptr {pointer}"
                                             ));
+                                            stored.push(Some(StoredCapture {
+                                                ty: capture_ty.clone(),
+                                                pointer,
+                                                drop_flag: None,
+                                            }));
+                                            None
                                         }
+                                    };
+                                    let Some(capture) = capture else {
+                                        continue;
                                     };
                                     if self.terminated {
                                         break;

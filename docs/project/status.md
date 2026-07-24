@@ -118,6 +118,13 @@ recursive node retains its one-shot call/drop environment. Non-`Copy` or nested 
 places still use the separate frame ABI. An unresolved effect-row parameter is explicitly rejected if that path
 would need to share borrowed arguments with the caller continuation.
 
+Curried capturing closures support complete and multi-stage partial application. The resulting
+callable environment combines the closure's original captures with already applied arguments,
+preserves labels and passing modes for the remaining groups, delays latent effect checks until the
+final call, and retains `Fn`, `FnMut`, or `FnOnce` behavior. Owned captures transfer across
+successive partial values and are dropped exactly once on invocation, abandonment, or early exit.
+Pattern closures remain the separate `PARTIAL-FN-1` work needed for source-defined `match`.
+
 Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
 `continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs
 all lexical cleanup required when leaving nested scopes before starting the next iteration.
