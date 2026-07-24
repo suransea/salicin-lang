@@ -390,14 +390,14 @@ fn parameter_matches(parameter: &crate::ast::Param, name: &str, mode: PassMode, 
         PassMode::Borrow => {
             parameter.mode == PassMode::Inferred
                 && parameter.access.is_none()
-                && parameter.passing.is_none()
+                && parameter.modifiers.is_empty()
                 && parameter.region.is_none()
                 && parameter.ty == borrow_type(false, None, None, ty)
         }
         PassMode::MutBorrow => {
             parameter.mode == PassMode::Inferred
                 && parameter.access.is_none()
-                && parameter.passing.is_none()
+                && parameter.modifiers.is_empty()
                 && parameter.region.is_none()
                 && parameter.ty == borrow_type(true, None, None, ty)
         }
@@ -521,7 +521,7 @@ fn valid_box_borrow(function: &Function) -> bool {
         && matches!(function.compile_groups.as_slice(), [group]
             if matches!(group.as_slice(), [access, region, element]
                 if access.name == "A"
-                    && access.kind == CompileParamKind::Access
+                    && access.kind.is_access()
                     && region.name == "R"
                     && region.kind == CompileParamKind::Region
                     && element.name == "T"
@@ -531,7 +531,7 @@ fn valid_box_borrow(function: &Function) -> bool {
                 if parameter.name == "boxed"
                     && parameter.mode == PassMode::Inferred
                     && parameter.access.is_none()
-                    && parameter.passing.is_none()
+                    && parameter.modifiers.is_empty()
                     && parameter.region.is_none()
                     && parameter.ty == borrow_type(false, Some("A"), Some("R"), applied("Box", named("T")))))
         && function.return_type
@@ -602,14 +602,14 @@ fn valid_box_access_method(function: &Function) -> bool {
     function.name == "as_ref"
         && matches!(function.compile_groups.as_slice(), [group]
             if matches!(group.as_slice(), [access]
-                if access.name == "A" && access.kind == CompileParamKind::Access))
+                if access.name == "A" && access.kind.is_access()))
         && matches!(function.groups.as_slice(), [receiver, arguments]
             if arguments.is_empty()
                 && matches!(receiver.as_slice(), [parameter]
                     if parameter.name == "self"
                         && parameter.mode == PassMode::Inferred
                         && parameter.access.is_none()
-                        && parameter.passing.is_none()
+                        && parameter.modifiers.is_empty()
                         && parameter.region.is_none()
                         && parameter.ty == borrow_type(false, Some("A"), None, named("Self"))))
         && function.return_type
@@ -764,7 +764,7 @@ fn valid_vec_at(function: &Function) -> bool {
         && matches!(function.compile_groups.as_slice(), [group]
             if matches!(group.as_slice(), [access, region, element]
                 if access.name == "A"
-                    && access.kind == CompileParamKind::Access
+                    && access.kind.is_access()
                     && region.name == "R"
                     && region.kind == CompileParamKind::Region
                     && element.name == "T"
@@ -774,7 +774,7 @@ fn valid_vec_at(function: &Function) -> bool {
                 if parameter.name == "values"
                     && parameter.mode == PassMode::Inferred
                     && parameter.access.is_none()
-                    && parameter.passing.is_none()
+                    && parameter.modifiers.is_empty()
                     && parameter.region.is_none()
                     && parameter.ty == borrow_type(false, Some("A"), Some("R"), applied("Vec", named("T"))))
                 && has_parameter(index, "index", PassMode::Inferred, Type::U64))
@@ -997,13 +997,13 @@ fn valid_vec_access_method(function: &Function) -> bool {
     function.name == "at"
         && matches!(function.compile_groups.as_slice(), [group]
             if matches!(group.as_slice(), [access]
-                if access.name == "A" && access.kind == CompileParamKind::Access))
+                if access.name == "A" && access.kind.is_access()))
         && matches!(function.groups.as_slice(), [receiver, index]
             if matches!(receiver.as_slice(), [parameter]
                 if parameter.name == "self"
                     && parameter.mode == PassMode::Inferred
                     && parameter.access.is_none()
-                    && parameter.passing.is_none()
+                    && parameter.modifiers.is_empty()
                     && parameter.region.is_none()
                     && parameter.ty == borrow_type(false, Some("A"), None, named("Self")))
                 && has_parameter(index, "index", PassMode::Inferred, Type::U64))

@@ -16,6 +16,14 @@ const TYPE_CONSTRUCTOR_MARKER_PREFIX: &str = "$type$constructor$";
 const CLOSED_VALUE_MARKER_PREFIX: &str = "$closed$value$";
 
 pub(super) fn closed_value_marker(owner: &str, member: &str) -> String {
+    match (owner, member) {
+        ("access", "shared") => return ACCESS_SHARED_MARKER.to_owned(),
+        ("access", "mut") => return ACCESS_MUT_MARKER.to_owned(),
+        ("passing", "auto") => return PASSING_AUTO_MARKER.to_owned(),
+        ("passing", "copy") => return PASSING_COPY_MARKER.to_owned(),
+        ("passing", "move") => return PASSING_MOVE_MARKER.to_owned(),
+        _ => {}
+    }
     format!(
         "{CLOSED_VALUE_MARKER_PREFIX}{}:{owner}{member}",
         owner.len()
@@ -23,6 +31,14 @@ pub(super) fn closed_value_marker(owner: &str, member: &str) -> String {
 }
 
 pub(super) fn closed_value_from_marker(marker: &str) -> Option<(&str, &str)> {
+    match marker {
+        ACCESS_SHARED_MARKER => return Some(("access", "shared")),
+        ACCESS_MUT_MARKER => return Some(("access", "mut")),
+        PASSING_AUTO_MARKER => return Some(("passing", "auto")),
+        PASSING_COPY_MARKER => return Some(("passing", "copy")),
+        PASSING_MOVE_MARKER => return Some(("passing", "move")),
+        _ => {}
+    }
     let encoded = marker.strip_prefix(CLOSED_VALUE_MARKER_PREFIX)?;
     let (owner_len, value) = encoded.split_once(':')?;
     let owner_len = owner_len.parse::<usize>().ok()?;
@@ -323,8 +339,6 @@ pub(super) fn describe_compile_param_kind(kind: CompileParamKind) -> String {
         CompileParamKind::Type => "`type`".to_owned(),
         CompileParamKind::USize => "`usize`".to_owned(),
         CompileParamKind::Region => "`region`".to_owned(),
-        CompileParamKind::Access => "`access`".to_owned(),
-        CompileParamKind::Passing => "`passing`".to_owned(),
         CompileParamKind::Effect => "`effect`".to_owned(),
         CompileParamKind::Parameters => "`parameters`".to_owned(),
         CompileParamKind::ParameterPack => "`parameters` pack".to_owned(),

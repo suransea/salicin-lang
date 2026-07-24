@@ -1295,12 +1295,16 @@ fn substitute_parameter_types(parameter: &mut Param, substitutions: &HashMap<Str
             parameter.access = None;
         }
     }
-    if let Some(passing) = parameter.passing.as_deref() {
-        if let Some(mode) = substituted_passing_mode(passing, substitutions) {
+    let mut unresolved_modifiers = Vec::new();
+    for modifier in parameter.modifiers.iter().rev() {
+        if let Some(mode) = substituted_passing_mode(modifier, substitutions) {
             parameter.mode = mode;
-            parameter.passing = None;
+        } else {
+            unresolved_modifiers.push(modifier.clone());
         }
     }
+    unresolved_modifiers.reverse();
+    parameter.modifiers = unresolved_modifiers;
     substitute_type_parameters(&mut parameter.ty, substitutions);
 }
 
@@ -1960,6 +1964,12 @@ fn substituted_access_mutability(
 }
 
 fn substituted_passing_mode(name: &str, substitutions: &HashMap<String, Type>) -> Option<PassMode> {
+    match name {
+        "auto" => return Some(PassMode::Inferred),
+        "copy" => return Some(PassMode::Copy),
+        "move" => return Some(PassMode::Move),
+        _ => {}
+    }
     let Type::Named(marker, arguments) = substitutions.get(name)? else {
         return None;
     };

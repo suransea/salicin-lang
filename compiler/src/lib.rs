@@ -185,6 +185,17 @@ mod tests {
     }
 
     #[test]
+    fn parameter_modifiers_are_type_checked_after_instantiation() {
+        let source = "let decorate(B: bool)(B value: i32): i32 = { value }\n\
+                      let main(): i32 = { decorate(true)(42) }\n";
+        let errors = compile_source(source).unwrap_err();
+        assert!(errors.iter().any(|error| {
+            error.contains("parameter modifier `B`")
+                && error.contains("does not normalize to a `parameters` schema")
+        }));
+    }
+
+    #[test]
     fn alloc_accessors_use_the_access_generic_entry_points() {
         let source = "let Box = std.boxed.Box\n\
                       let Vec = std.vec.Vec

@@ -1005,14 +1005,13 @@ impl Parser {
             let group = if self.group_starts_with_compile_parameter() {
                 self.compile_parameter_group().map(HeaderGroup::Compile)?
             } else {
-                let passing_parameters = compile_groups
+                let modifier_parameters = compile_groups
                     .iter()
                     .flatten()
-                    .filter(|parameter| parameter.kind == CompileParamKind::Passing)
                     .map(|parameter| parameter.name.clone())
                     .collect::<HashSet<_>>();
                 HeaderGroup::Runtime(
-                    self.runtime_parameter_group(allow_receiver, &passing_parameters)?,
+                    self.runtime_parameter_group(allow_receiver, &modifier_parameters)?,
                 )
             };
             match group {
@@ -1061,7 +1060,7 @@ impl Parser {
             runtime_groups.push(vec![Param {
                 mode: PassMode::Inferred,
                 access: None,
-                passing: None,
+                modifiers: Vec::new(),
                 region: None,
                 name: pack.clone(),
                 ty: Type::Named("$parameter$groups$expand".to_owned(), vec![schema]),
@@ -1080,7 +1079,7 @@ impl Parser {
                 let passing_parameters = compile_groups
                     .iter()
                     .flatten()
-                    .filter(|parameter| parameter.kind == CompileParamKind::Passing)
+                    .filter(|parameter| parameter.kind.is_passing())
                     .map(|parameter| parameter.name.clone())
                     .collect::<HashSet<_>>();
                 runtime_groups
@@ -1269,8 +1268,8 @@ impl Parser {
         if let TokenKind::Ident(kind) = self.current().kind.clone() {
             let parameter_kind = match kind.as_str() {
                 "usize" => Some(CompileParamKind::USize),
-                "access" => Some(CompileParamKind::Access),
-                "passing" => Some(CompileParamKind::Passing),
+                "access" => Some(CompileParamKind::Named("access".to_owned())),
+                "passing" => Some(CompileParamKind::Named("passing".to_owned())),
                 "effect" => Some(CompileParamKind::Effect),
                 "parameters" => Some(CompileParamKind::Parameters),
                 "region" => Some(CompileParamKind::Region),
@@ -1446,24 +1445,6 @@ impl Parser {
         }
 
         let default = match kind {
-            CompileParamKind::Access => {
-                let name = self.compile_parameter_default_name("an access default")?;
-                if !matches!(name.as_str(), "shared" | "mut") {
-                    return Err(
-                        self.error_here("access parameter defaults must be `shared` or `mut`")
-                    );
-                }
-                CompileParamDefault::Name(name)
-            }
-            CompileParamKind::Passing => {
-                let name = self.compile_parameter_default_name("a passing default")?;
-                if !matches!(name.as_str(), "auto" | "copy" | "move") {
-                    return Err(self.error_here(
-                        "passing parameter defaults must be `auto`, `copy`, or `move`",
-                    ));
-                }
-                CompileParamDefault::Name(name)
-            }
             CompileParamKind::Effect => {
                 CompileParamDefault::Name(self.compile_parameter_default_name("an effect default")?)
             }
@@ -1521,7 +1502,7 @@ impl Parser {
     fn runtime_parameter_group(
         &mut self,
         allow_receiver: bool,
-        passing_parameters: &HashSet<String>,
+        modifier_parameters: &HashSet<String>,
     ) -> Result<Vec<Param>, ParseError> {
         self.expect(&TokenKind::LParen, "`(`")?;
         let mut params = Vec::new();
@@ -1547,7 +1528,7 @@ impl Parser {
             return Ok(vec![Param {
                 mode,
                 access: None,
-                passing: None,
+                modifiers: Vec::new(),
                 region: None,
                 name,
                 ty: Type::Named("$parameters$expand".to_owned(), vec![schema]),
@@ -1555,32 +1536,51 @@ impl Parser {
         }
 
         loop {
-            let passing = match &self.current().kind {
-                TokenKind::Ident(name)
-                    if passing_parameters.contains(name)
-                        && matches!(
-                            self.tokens.get(self.index + 1).map(|token| &token.kind),
-                            Some(TokenKind::Ident(_))
-                        ) =>
-                {
-                    let name = name.clone();
-                    self.advance();
-                    Some(name)
+            let mut modifiers = Vec::new();
+            loop {
+                let followed_by_parameter = matches!(
+                    self.tokens.get(self.index + 1).map(|token| &token.kind),
+                    Some(TokenKind::Ident(_)) | Some(TokenKind::Copy) | Some(TokenKind::Move)
+                );
+                if !followed_by_parameter {
+                    break;
                 }
-                _ => None,
-            };
-            let (mode, access, region) = if passing.is_some() {
-                (PassMode::Inferred, None, None)
-            } else if self.take(&TokenKind::Copy) {
-                (PassMode::Copy, None, None)
-            } else if self.take(&TokenKind::Move) {
-                (PassMode::Move, None, None)
-            } else if self.at(&TokenKind::Borrow) {
+                let modifier = match self.current().kind.clone() {
+                    TokenKind::Ident(name)
+                        if modifier_parameters.contains(&name)
+                            || matches!(name.as_str(), "auto" | "copy" | "move") =>
+                    {
+                        name
+                    }
+                    TokenKind::Copy => "copy".to_owned(),
+                    TokenKind::Move => "move".to_owned(),
+                    _ => break,
+                };
+                self.advance();
+                modifiers.push(modifier);
+            }
+            let mut mode = PassMode::Inferred;
+            modifiers.retain(|modifier| match modifier.as_str() {
+                "auto" => {
+                    mode = PassMode::Inferred;
+                    false
+                }
+                "copy" => {
+                    mode = PassMode::Copy;
+                    false
+                }
+                "move" => {
+                    mode = PassMode::Move;
+                    false
+                }
+                _ => true,
+            });
+            let (mode, access, region) = if self.at(&TokenKind::Borrow) {
                 return Err(self.error_here(
                     "borrow parameter mode was removed; write `name: borrow(T)` and pass `borrow(value)` at the call site",
                 ));
             } else {
-                (PassMode::Inferred, None, None)
+                (mode, None, None)
             };
 
             if self.current_starts_compile_parameter() {
@@ -1612,7 +1612,7 @@ impl Parser {
             params.push(Param {
                 mode,
                 access,
-                passing,
+                modifiers,
                 region,
                 name,
                 ty,
@@ -2231,7 +2231,7 @@ impl Parser {
                 parameters.push(Param {
                     mode: PassMode::Inferred,
                     access: None,
-                    passing: None,
+                    modifiers: Vec::new(),
                     region: None,
                     name,
                     ty: Type::Named("$context$infer".into(), Vec::new()),
@@ -4352,7 +4352,7 @@ fn reject_passing_parameters(groups: &[Vec<CompileParam>], owner: &str) -> Resul
     if groups
         .iter()
         .flatten()
-        .any(|parameter| parameter.kind == CompileParamKind::Passing)
+        .any(|parameter| parameter.kind.is_passing())
     {
         Err(format!(
             "{owner} cannot declare a `passing` parameter; passing parameters belong to functions"
@@ -4386,7 +4386,7 @@ fn declared_accesses(
 ) -> Result<HashSet<String>, String> {
     let mut accesses = outer.clone();
     for parameter in groups.iter().flatten() {
-        if parameter.kind == CompileParamKind::Access && !accesses.insert(parameter.name.clone()) {
+        if parameter.kind.is_access() && !accesses.insert(parameter.name.clone()) {
             return Err(format!("duplicate access parameter `{}`", parameter.name));
         }
     }
@@ -4422,13 +4422,6 @@ fn validate_function_scopes(
 ) -> Result<(), String> {
     let regions = declared_regions(&function.compile_groups, outer_regions)?;
     let accesses = declared_accesses(&function.compile_groups, outer_accesses)?;
-    let passings = function
-        .compile_groups
-        .iter()
-        .flatten()
-        .filter(|parameter| parameter.kind == CompileParamKind::Passing)
-        .map(|parameter| parameter.name.clone())
-        .collect::<HashSet<_>>();
     let mut effects = outer_effects.clone();
     for parameter in function
         .compile_groups
@@ -4450,9 +4443,11 @@ fn validate_function_scopes(
         }
     }
     for parameter in function.groups.iter_mut().flatten() {
-        if let Some(passing) = &parameter.passing {
-            if !passings.contains(passing) {
-                return Err(format!("use of undeclared passing parameter `{passing}`"));
+        for modifier in &parameter.modifiers {
+            if !compile_names.contains(modifier)
+                && !matches!(modifier.as_str(), "auto" | "copy" | "move")
+            {
+                return Err(format!("use of undeclared parameter modifier `{modifier}`"));
             }
         }
         if let Some(access) = &parameter.access {
@@ -6984,7 +6979,7 @@ mod tests {
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };
-        assert_eq!(function.compile_groups[0][0].kind, CompileParamKind::Access);
+        assert!(function.compile_groups[0][0].kind.is_access());
         assert_eq!(
             function.groups[0][0].ty,
             Type::Borrow {
@@ -7040,12 +7035,20 @@ mod tests {
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
         };
-        assert_eq!(
-            function.compile_groups[0][0].kind,
-            CompileParamKind::Passing
-        );
+        assert!(function.compile_groups[0][0].kind.is_passing());
         assert_eq!(function.groups[0][0].mode, PassMode::Inferred);
-        assert_eq!(function.groups[0][0].passing.as_deref(), Some("P"));
+        assert_eq!(function.groups[0][0].modifiers, ["P"]);
+    }
+
+    #[test]
+    fn parses_parameter_prefixes_as_composable_modifiers() {
+        let program =
+            parse("let decorate(B: bool, P: passing)(B P value: i32): i32 = { value }\n").unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected a function");
+        };
+        assert_eq!(function.groups[0][0].modifiers, ["B", "P"]);
+        assert_eq!(function.groups[0][0].mode, PassMode::Inferred);
     }
 
     #[test]

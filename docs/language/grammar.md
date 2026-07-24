@@ -290,8 +290,9 @@ type_argument  = [ IDENT, ":" ], type_expr | INTEGER ;
 `core.memory.Array(T: type)(L: usize): type`，因此完整应用必须写成 `Array(T)(L)`，不能合并两组。
 `access` 是 `core.domains` 声明的封闭类型；其内建实参为 `shared` 与 `mut`。`borrow(A)(T)` 和
 `borrow(A)(R)(T)` 分别携带 access 参数以及 access/region 参数组合。
-`passing` 是封闭类型；其内建实参为 `auto`、`copy` 与 `move`，并在参数模式位置以
-已声明的参数名引用，例如 `(P value: T)`。
+`passing` 是封闭类型；其内建实参为 `auto`、`copy` 与 `move`。参数核心之前可以写一个或多个
+编译期 parameter-schema 修饰器，例如 `(P value: T)` 或 `(M P value: T)`；该位置不由 parser
+限定为 `passing`，每个修饰器必须在实例化时归一化成 `parameters`。
 `effect` 是函数编译期 domain；实参是完整 effect row：`pure`、`Unsafe`、名义 marker 或其组合。
 默认值为 `pure`。参数名只可出现在函数签名的 `with(...)` 子句和其他 effect 编译期实参位置，
 例如 `with(E)` 与 `forward(E)(value)`；它也可由 callable 实参或期望类型推断。

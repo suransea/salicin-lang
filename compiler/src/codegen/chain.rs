@@ -677,7 +677,7 @@ impl Analyzer {
             vec![Param {
                 mode: PassMode::Inferred,
                 access: None,
-                passing: None,
+                modifiers: Vec::new(),
                 region: None,
                 name: PAYLOAD_BINDING.to_owned(),
                 ty: plan.item_source,

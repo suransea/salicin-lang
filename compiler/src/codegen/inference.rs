@@ -6,7 +6,7 @@ use crate::core::LangItemKind;
 use super::compile_time::{
     closed_value_from_marker, closed_value_marker, effect_row_from_marker, effect_row_source,
     source_effect_identity, type_constructor_marker, usize_value_marker, ACCESS_MUT_MARKER,
-    ACCESS_SHARED_MARKER, PASSING_AUTO_MARKER, PASSING_COPY_MARKER, PASSING_MOVE_MARKER,
+    ACCESS_SHARED_MARKER, PASSING_AUTO_MARKER,
 };
 use super::effects::source_type_is_never;
 use super::flow::LowerCtx;
@@ -963,7 +963,6 @@ impl Analyzer {
                 matches!(
                     &parameter.kind,
                     CompileParamKind::Type
-                        | CompileParamKind::Access
                         | CompileParamKind::USize
                         | CompileParamKind::Named(_)
                         | CompileParamKind::TypeConstructor { .. }
@@ -1060,39 +1059,6 @@ impl Analyzer {
                         _ => {
                             self.error(format!(
                                 "invalid `usize` argument for `{}` in `{owner}`; expected a non-negative integer",
-                                parameter.name
-                            ));
-                            return None;
-                        }
-                    },
-                    CompileParamKind::Access => match &argument.value {
-                        Expr::Name(name) if name == "shared" => {
-                            Type::Named(ACCESS_SHARED_MARKER.to_owned(), Vec::new())
-                        }
-                        Expr::Name(name) if name == "mut" => {
-                            Type::Named(ACCESS_MUT_MARKER.to_owned(), Vec::new())
-                        }
-                        _ => {
-                            self.error(format!(
-                                "invalid access argument for `{}` in `{owner}`; expected `shared` or `mut`",
-                                parameter.name
-                            ));
-                            return None;
-                        }
-                    },
-                    CompileParamKind::Passing => match &argument.value {
-                        Expr::Name(name) if name == "auto" => {
-                            Type::Named(PASSING_AUTO_MARKER.to_owned(), Vec::new())
-                        }
-                        Expr::Name(name) if name == "copy" => {
-                            Type::Named(PASSING_COPY_MARKER.to_owned(), Vec::new())
-                        }
-                        Expr::Name(name) if name == "move" => {
-                            Type::Named(PASSING_MOVE_MARKER.to_owned(), Vec::new())
-                        }
-                        _ => {
-                            self.error(format!(
-                                "invalid passing argument for `{}` in `{owner}`; expected `auto`, `copy`, or `move`",
                                 parameter.name
                             ));
                             return None;
@@ -1286,7 +1252,7 @@ impl Analyzer {
             compile_index = target + 1;
         }
         for parameter in compile_groups.iter().flatten() {
-            if parameter.kind == CompileParamKind::Access {
+            if parameter.kind.is_access() {
                 inferred
                     .entry(parameter.name.clone())
                     .or_insert_with(|| InferredTypeArgument {
@@ -1294,7 +1260,7 @@ impl Analyzer {
                         source: Some(Type::Named(ACCESS_SHARED_MARKER.to_owned(), Vec::new())),
                         origin: "default shared access".to_owned(),
                     });
-            } else if parameter.kind == CompileParamKind::Passing {
+            } else if parameter.kind.is_passing() {
                 inferred
                     .entry(parameter.name.clone())
                     .or_insert_with(|| InferredTypeArgument {
@@ -1337,7 +1303,6 @@ impl Analyzer {
                 matches!(
                     parameter.kind,
                     CompileParamKind::Type
-                        | CompileParamKind::Access
                         | CompileParamKind::USize
                         | CompileParamKind::TypeConstructor { .. }
                 )
@@ -1398,7 +1363,7 @@ impl Analyzer {
             compile_index = target + 1;
         }
         for parameter in compile_groups.iter().flatten() {
-            if parameter.kind == CompileParamKind::Access {
+            if parameter.kind.is_access() {
                 inferred
                     .entry(parameter.name.clone())
                     .or_insert_with(|| InferredTypeArgument {
@@ -1406,7 +1371,7 @@ impl Analyzer {
                         source: Some(Type::Named(ACCESS_SHARED_MARKER.to_owned(), Vec::new())),
                         origin: "default shared access".to_owned(),
                     });
-            } else if parameter.kind == CompileParamKind::Passing {
+            } else if parameter.kind.is_passing() {
                 inferred
                     .entry(parameter.name.clone())
                     .or_insert_with(|| InferredTypeArgument {

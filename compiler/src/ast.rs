@@ -265,8 +265,6 @@ pub enum CompileParamKind {
     Type,
     USize,
     Region,
-    Access,
-    Passing,
     Effect,
     Parameters,
     /// A variadic pack of `parameters` schemas used as repeated runtime groups
@@ -282,6 +280,16 @@ pub enum CompileParamKind {
     Named(String),
 }
 
+impl CompileParamKind {
+    pub fn is_access(&self) -> bool {
+        matches!(self, Self::Named(name) if name == "access")
+    }
+
+    pub fn is_passing(&self) -> bool {
+        matches!(self, Self::Named(name) if name == "passing")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum USizeConst {
     Literal(u64),
@@ -294,9 +302,9 @@ pub struct Param {
     /// An access compile-time parameter used by `borrow(A)` until generic
     /// instantiation selects shared or mutable borrowing.
     pub access: Option<String>,
-    /// A `passing` compile-time parameter used in keyword position until
-    /// generic instantiation selects auto, copy, or move passing.
-    pub passing: Option<String>,
+    /// Compile-time parameter-schema modifiers written before the parameter
+    /// core. Instantiation normalizes them from right to left.
+    pub modifiers: Vec<String>,
     pub region: Option<String>,
     pub name: String,
     pub ty: Type,

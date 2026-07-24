@@ -460,6 +460,14 @@ impl Analyzer {
                         },
                     );
                     if function.compile_groups.is_empty() {
+                        for parameter in function.groups.iter().flatten() {
+                            for modifier in &parameter.modifiers {
+                                self.error(format!(
+                                    "parameter modifier `{modifier}` on `{}.{}` does not normalize to a `parameters` schema",
+                                    function.name, parameter.name
+                                ));
+                            }
+                        }
                         self.function_order.push(function.name.clone());
                         self.functions
                             .insert(function.name.clone(), function.clone());
@@ -598,6 +606,14 @@ impl Analyzer {
                         if self.is_lang_item_name(&definition.name, LangItemKind::Bool) {
                             self.closed_type_values
                                 .insert("bool".to_owned(), definition.values.clone());
+                        }
+                        if self.is_lang_item_name(&definition.name, LangItemKind::AccessType) {
+                            self.closed_type_values
+                                .insert("access".to_owned(), definition.values.clone());
+                        }
+                        if self.is_lang_item_name(&definition.name, LangItemKind::PassingType) {
+                            self.closed_type_values
+                                .insert("passing".to_owned(), definition.values.clone());
                         }
                     }
                 }
@@ -1683,18 +1699,6 @@ impl Analyzer {
                     CompileParamKind::ParameterPack => {
                         self.error(format!(
                             "parameter-group pack `{name}` in `{trait_name}.{member_name}` can only be used through a complete repeated-group expansion"
-                        ));
-                        false
-                    }
-                    CompileParamKind::Access => {
-                        self.error(format!(
-                            "access parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
-                        ));
-                        false
-                    }
-                    CompileParamKind::Passing => {
-                        self.error(format!(
-                            "passing parameter `{name}` in `{trait_name}.{member_name}` cannot be used as a runtime type"
                         ));
                         false
                     }
@@ -2830,8 +2834,6 @@ impl Analyzer {
                 }
                 CompileParamKind::Region
                 | CompileParamKind::USize
-                | CompileParamKind::Access
-                | CompileParamKind::Passing
                 | CompileParamKind::Effect
                 | CompileParamKind::Named(_) => {
                     unreachable!("associated types only store type kinds")
@@ -4290,8 +4292,6 @@ impl Analyzer {
                 }
                 CompileParamKind::Region
                 | CompileParamKind::USize
-                | CompileParamKind::Access
-                | CompileParamKind::Passing
                 | CompileParamKind::Effect
                 | CompileParamKind::Named(_) => {
                     unreachable!("associated types only store type kinds")
@@ -4406,8 +4406,6 @@ impl Analyzer {
                 }
                 CompileParamKind::Region
                 | CompileParamKind::USize
-                | CompileParamKind::Access
-                | CompileParamKind::Passing
                 | CompileParamKind::Effect
                 | CompileParamKind::Named(_) => {
                     unreachable!("associated types only store type kinds")
@@ -5232,8 +5230,6 @@ impl Analyzer {
                             .insert(marker.clone(), parameter.name.clone());
                         marker
                     }
-                    CompileParamKind::Access => ACCESS_SHARED_MARKER.to_owned(),
-                    CompileParamKind::Passing => PASSING_AUTO_MARKER.to_owned(),
                     // Abstract validation uses the maximal currently supported row. Every
                     // concrete instance is lowered again after substituting its selected row.
                     CompileParamKind::Effect => EFFECT_UNSAFE_MARKER.to_owned(),
@@ -10199,7 +10195,7 @@ impl Analyzer {
                 Param {
                     mode,
                     access: None,
-                    passing: None,
+                    modifiers: Vec::new(),
                     region: None,
                     name: lifted.clone(),
                     ty: source_ty,

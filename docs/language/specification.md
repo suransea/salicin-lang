@@ -693,13 +693,16 @@ access 实参参与单态化。`borrow(A)` 可出现在借用类型与借用表�
 `shared`，需要消歧时使用普通命名编译期实参 `A: mut`，不引入方括号语法或 `_` 占位。
 
 access 参数统一的是同一算法的访问能力，不是函数 effect：它不会表示抛错、异步、IO 或状态修改。
-`type`、`region`、`effect`、`parameters`、`access` 与 `passing`
-都是编译期 domain，描述编译期数据或调用约定；
+`type`、`region`、`effect` 与 `parameters` 是编译期 domain；`access` 与 `passing`
+是 `type` domain 中的封闭类型；
 effect 行仍有 row 组合与转发规则，不能误用 access 参数表达控制要求。
 
-### 6.3 Passing 关键字泛型
+### 6.3 参数 schema 修饰器
 
-按值传递策略可由封闭 `passing` 类型参数化，并直接在原本写 `copy` 或 `move` 的关键字位置引用：
+运行时参数的前缀位置接受从 `parameters` schema 到 `parameters` schema 的编译期修饰器，而不是
+一个语法专属的 passing 槽。多个修饰器从右向左组合；parser 保留所有修饰表达式，实例化必须将它们
+归一化成最终 parameter schema。封闭 `passing` 类型的值是标准修饰器，可以直接在原本写 `copy`
+或 `move` 的位置引用：
 
 ```sc
 let identity(P: passing, T: type)(P value: T): T = { value }
@@ -714,6 +717,10 @@ let automatic = identity(resource) // P 默认 auto，T 由 value 推断
 选择移动；`copy` 要求实际类型实现 `Copy`；`move` 即使用于 Copy 类型也会在语言语义上消费原绑定。
 三种实例在函数体内都提供拥有值，因此同一个泛型函数体可以安全地返回、保存或继续转移参数。
 passing 值不进入运行时，但参与单态化；可使用位置或命名编译期实参，省略时不需要 `_`。
+
+同一前缀语法接受其他编译期修饰器，例如 `(M P value: T)`；是否合法由修饰器能否归一化
+`parameters` 决定，而不是由 parser 检查其名称或把它分类成 passing。不能产生 parameter schema
+的值在具体实例化时报告类型错误。
 
 借用没有塞进 `passing`：借用还携带共享/排他能力、来源 region 和不同 ABI，由正交的
 `borrow(A)(R)(T)` 表达。这样 `passing` 只改变调用方的按值所有权效果，`access` 只改变借用能力。

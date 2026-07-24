@@ -9,7 +9,7 @@ use super::compile_time::{
     closed_value_from_marker, closed_value_marker, effect_identity_sources, effect_row_from_marker,
     effect_row_from_source, effect_row_source, is_compile_value_marker, source_effect_identity,
     type_constructor_from_marker, type_constructor_marker, usize_value_marker, ACCESS_MUT_MARKER,
-    ACCESS_SHARED_MARKER, PASSING_AUTO_MARKER, PASSING_COPY_MARKER, PASSING_MOVE_MARKER,
+    ACCESS_SHARED_MARKER,
 };
 use super::flow::LowerCtx;
 use super::hir::{FunctionTy, Ty};
@@ -729,27 +729,6 @@ impl Analyzer {
                 }),
                 _ => None,
             },
-            CompileParamKind::Access => match expression {
-                Expr::Name(name) if name == "shared" => {
-                    Some(Type::Named(ACCESS_SHARED_MARKER.to_owned(), Vec::new()))
-                }
-                Expr::Name(name) if name == "mut" => {
-                    Some(Type::Named(ACCESS_MUT_MARKER.to_owned(), Vec::new()))
-                }
-                _ => None,
-            },
-            CompileParamKind::Passing => match expression {
-                Expr::Name(name) if name == "auto" => {
-                    Some(Type::Named(PASSING_AUTO_MARKER.to_owned(), Vec::new()))
-                }
-                Expr::Name(name) if name == "copy" => {
-                    Some(Type::Named(PASSING_COPY_MARKER.to_owned(), Vec::new()))
-                }
-                Expr::Name(name) if name == "move" => {
-                    Some(Type::Named(PASSING_MOVE_MARKER.to_owned(), Vec::new()))
-                }
-                _ => None,
-            },
             CompileParamKind::Effect => match expression {
                 Expr::Name(name) if name == "pure" => Some(effect_row_source(false, None, &[])),
                 Expr::Name(name) if name == self.lang_item_name(LangItemKind::UnsafeEffect) => {
@@ -890,11 +869,9 @@ impl Analyzer {
                     .filter(|target| target.parameter_count == parameter_count)
                     .map(|_| Ty::Struct(type_constructor_marker(name)))
             }
-            CompileParamKind::Type
-            | CompileParamKind::Access
-            | CompileParamKind::Passing
-            | CompileParamKind::Effect
-            | CompileParamKind::Named(_) => self.probe_source_ty(source),
+            CompileParamKind::Type | CompileParamKind::Effect | CompileParamKind::Named(_) => {
+                self.probe_source_ty(source)
+            }
             CompileParamKind::USize => match source {
                 Type::CompileUSize(value) => Some(Ty::Struct(usize_value_marker(*value))),
                 _ => None,
@@ -973,7 +950,7 @@ impl Analyzer {
         }
         if parameters
             .iter()
-            .all(|parameter| parameter.kind == CompileParamKind::Access)
+            .all(|parameter| parameter.kind.is_access())
         {
             return arguments.iter().all(|argument| {
                 matches!(&argument.value, Expr::Name(name) if name == "shared" || name == "mut")
@@ -981,7 +958,7 @@ impl Analyzer {
         }
         if parameters
             .iter()
-            .all(|parameter| parameter.kind == CompileParamKind::Passing)
+            .all(|parameter| parameter.kind.is_passing())
         {
             return arguments.iter().all(|argument| {
                 matches!(&argument.value, Expr::Name(name)
@@ -1072,13 +1049,6 @@ impl Analyzer {
                     if context.type_substitutions.get(name).is_some_and(
                         |value| matches!(value, Type::CompileUSize(_))
                     ))
-            }
-            CompileParamKind::Access => {
-                matches!(expression, Expr::Name(name) if name == "shared" || name == "mut")
-            }
-            CompileParamKind::Passing => {
-                matches!(expression, Expr::Name(name)
-                    if matches!(name.as_str(), "auto" | "copy" | "move"))
             }
             CompileParamKind::Effect => self.expression_is_explicit_effect_argument(expression),
             CompileParamKind::TypeConstructor { parameter_count } => {

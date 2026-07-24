@@ -2663,7 +2663,7 @@ fn usize_parameter(name: &str) -> CompileParam {
 fn access_parameter(name: &str, default: Option<&str>) -> CompileParam {
     CompileParam {
         name: name.to_owned(),
-        kind: CompileParamKind::Access,
+        kind: CompileParamKind::Named("access".to_owned()),
         default: default.map(|value| CompileParamDefault::Name(value.to_owned())),
     }
 }
