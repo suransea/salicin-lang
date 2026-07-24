@@ -86,6 +86,7 @@ fn origin(package: usize, module_path: &[&str]) -> ItemOrigin {
             .iter()
             .map(|segment| (*segment).to_owned())
             .collect(),
+        ..ItemOrigin::default()
     }
 }
 

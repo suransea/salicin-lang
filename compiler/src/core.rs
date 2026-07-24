@@ -1033,13 +1033,13 @@ impl CoreBundle {
                 vec![format!("embedded prelude does not parse: {error}")],
             )
         })?;
-        program.item_origins = vec![
-            ItemOrigin {
-                package: PackageId::CORE.0,
-                module_path: vec!["@core".to_owned()],
-            };
-            program.items.len()
-        ];
+        for origin in &mut program.item_origins {
+            origin.package = PackageId::CORE.0;
+            origin.module_path = vec!["@core".to_owned()];
+            if let Some(location) = &mut origin.source {
+                location.path = Some("<core:test>".to_owned());
+            }
+        }
         let lang_items = validate_program(edition, &program)?;
         Ok(Self {
             edition,
@@ -1059,13 +1059,13 @@ impl CoreBundle {
                     )],
                 )
             })?;
-            program.item_origins = vec![
-                ItemOrigin {
-                    package: PackageId::CORE.0,
-                    module_path: core_origin_module_path(module),
-                };
-                program.items.len()
-            ];
+            for origin in &mut program.item_origins {
+                origin.package = PackageId::CORE.0;
+                origin.module_path = core_origin_module_path(module);
+                if let Some(location) = &mut origin.source {
+                    location.path = Some(format!("<core:{module}>"));
+                }
+            }
             combined.items.append(&mut program.items);
             combined
                 .item_visibilities
@@ -3443,13 +3443,12 @@ pub let Shr(Rhs: type) = trait {
             };
             let mut expected_origin_path = vec!["@core".to_owned()];
             expected_origin_path.extend(module_path.into_iter().map(str::to_owned));
-            assert_eq!(
-                bundle.program().item_origins[lang_item.item_index()],
-                ItemOrigin {
-                    package: PackageId::CORE.0,
-                    module_path: expected_origin_path,
-                }
-            );
+            let origin = &bundle.program().item_origins[lang_item.item_index()];
+            assert_eq!(origin.package, PackageId::CORE.0);
+            assert_eq!(origin.module_path, expected_origin_path);
+            let location = origin.source.as_deref().expect("core item source location");
+            assert!(location.line > 0);
+            assert!(location.column > 0);
         }
 
         let throws = &bundle.program().items[bundle.lang_items().throws_effect().item_index()];

@@ -69,6 +69,7 @@ impl Parser {
     fn program(mut self) -> Result<Program, ParseError> {
         let mut items = Vec::new();
         let mut item_visibilities = Vec::new();
+        let mut item_origins = Vec::new();
         let mut uses = Vec::new();
         self.skip_separators();
 
@@ -82,8 +83,17 @@ impl Parser {
                 if visibility != Visibility::Private && self.at(&TokenKind::Extend) {
                     return Err(self.error_here("`extend` declarations cannot have visibility"));
                 }
+                let start = self.current().clone();
                 items.push(self.item()?);
                 item_visibilities.push(visibility);
+                item_origins.push(crate::ast::ItemOrigin {
+                    source: Some(Box::new(crate::ast::SourceLocation {
+                        path: None,
+                        line: start.line,
+                        column: start.column,
+                    })),
+                    ..crate::ast::ItemOrigin::default()
+                });
             }
             if !self.at(&TokenKind::Eof) && !self.at_separator() {
                 return Err(self.error_here("expected a newline or `;` after declaration"));
@@ -94,7 +104,12 @@ impl Parser {
         if let Err(message) = normalize_and_validate_scopes(&mut items) {
             return Err(self.error_here(message));
         }
-        Ok(Program::with_uses(items, item_visibilities, uses))
+        Ok(Program::with_metadata(
+            items,
+            item_visibilities,
+            item_origins,
+            uses,
+        ))
     }
 
     fn qualified_alias_declaration_follows(&self) -> bool {

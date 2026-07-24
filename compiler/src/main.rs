@@ -862,7 +862,14 @@ fn report_compilation<T>(source: &Path, result: Result<T, Vec<String>>) -> Resul
                 eprintln!("{}: error: compilation failed", source.display());
             } else {
                 for diagnostic in diagnostics {
-                    eprintln!("{}: {diagnostic}", source.display());
+                    if diagnostic
+                        .split_once(':')
+                        .is_some_and(|(line, _)| line.bytes().all(|byte| byte.is_ascii_digit()))
+                    {
+                        eprintln!("{}:{diagnostic}", source.display());
+                    } else {
+                        eprintln!("{}: {diagnostic}", source.display());
+                    }
                 }
             }
             Err(())

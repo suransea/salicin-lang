@@ -5,7 +5,7 @@ use std::fmt;
 use std::sync::OnceLock;
 
 use crate::ast::{
-    CompileParamKind, Function, Item, ItemOrigin, PassMode, Program, StructDef, Type, Visibility,
+    CompileParamKind, Function, Item, PassMode, Program, StructDef, Type, Visibility,
 };
 use crate::manifest::Edition;
 use crate::modules::{self, PackageId, SourceUnit};
@@ -54,13 +54,13 @@ impl AllocBundle {
                     )],
                 )
             })?;
-            program.item_origins = vec![
-                ItemOrigin {
-                    package: PackageId::ALLOC.0,
-                    module_path: vec!["@alloc".to_owned(), module.to_owned()],
-                };
-                program.items.len()
-            ];
+            for origin in &mut program.item_origins {
+                origin.package = PackageId::ALLOC.0;
+                origin.module_path = vec!["@alloc".to_owned(), module.to_owned()];
+                if let Some(location) = &mut origin.source {
+                    location.path = Some(format!("<alloc:{module}>"));
+                }
+            }
             combined.items.append(&mut program.items);
             combined
                 .item_visibilities
@@ -1122,13 +1122,13 @@ mod tests {
 
     fn parse_alloc(source: &str) -> Program {
         let mut program = parser::parse(source).expect("test alloc source must parse");
-        program.item_origins = vec![
-            ItemOrigin {
-                package: PackageId::ALLOC.0,
-                module_path: vec!["@alloc".to_owned()],
-            };
-            program.items.len()
-        ];
+        for origin in &mut program.item_origins {
+            origin.package = PackageId::ALLOC.0;
+            origin.module_path = vec!["@alloc".to_owned()];
+            if let Some(location) = &mut origin.source {
+                location.path = Some("<alloc:test>".to_owned());
+            }
+        }
         program
     }
 

@@ -198,24 +198,31 @@ fn resolve_packages_impl(
         let Program {
             items: unit_items,
             item_visibilities: unit_visibilities,
-            item_origins: _,
+            item_origins: unit_origins,
             uses: _,
         } = program;
         debug_assert_eq!(unit_items.len(), unit_visibilities.len());
+        debug_assert_eq!(unit_items.len(), unit_origins.len());
 
         let context = ResolveContext {
             source_path: &source.path,
             module_path: &module_path,
             package_root: &package_root,
         };
-        for (mut item, visibility) in unit_items.into_iter().zip(unit_visibilities) {
+        for ((mut item, visibility), mut origin) in unit_items
+            .into_iter()
+            .zip(unit_visibilities)
+            .zip(unit_origins)
+        {
             resolver.rewrite_item(&mut item, context);
             items.push(item);
             item_visibilities.push(visibility);
-            item_origins.push(ItemOrigin {
-                package: package_id.0,
-                module_path: source.module_path.clone(),
-            });
+            origin.package = package_id.0;
+            origin.module_path = source.module_path.clone();
+            if let Some(location) = &mut origin.source {
+                location.path = Some(source.path.clone());
+            }
+            item_origins.push(origin);
             item_source_paths.push(source.path.clone());
         }
     }

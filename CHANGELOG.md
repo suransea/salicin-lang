@@ -6,6 +6,9 @@ subset.
 
 ## Unreleased
 
+- Semantic diagnostics now retain defining source paths and declaration positions through module
+  resolution, generic instantiation, trait dispatch, and handler lowering. Single-file CLI errors
+  use `path:line:column: error` formatting; expression-level spans remain follow-up work.
 - Added an explicit M0 conformance matrix covering positive, negative, diagnostic, and native
   evidence. The audit tracks non-unit tuples, remaining primitive scalar widths, C FFI, Unicode
   frontend evidence, and semantic source spans as release-blocking gaps rather than extensions.

@@ -39,7 +39,7 @@ source file is named.
 | `Unsafe`, `unsafe`, and raw primitives behind authority | raw pointer, allocator, layout-query, and access-family fixtures | `fail/raw_*` validates authority, mutability, layout, type, and ownership boundaries | raw pointer, allocator, replacement ABI, invalid layout, and trap CLI tests | **Covered** |
 | C FFI | No parser, AST, semantic, ABI, or emitter implementation | No rejection contract or diagnostic fixtures | None | **Missing**, `M0-FFI-1`; stable external ABI remains outside M0 |
 | Binary/library targets and native LLVM emission | check/emit/build/run, explicit targets, default targets, and library dependency tests | output collision, target selection, manifest, dependency, and cycle diagnostics | shorthand native build, package binaries, dependencies, and ledger | **Covered** |
-| Diagnostics suitable for source-level debugging | Stable source-name fragments are asserted across CLI and codegen tests | Broad fail fixture corpus checks semantic rejection | N/A | **Partial**: semantic source spans and generated-name zero-leak gate remain `M0-DIAG-1` |
+| Diagnostics suitable for source-level debugging | Stable source-name fragments and defining declaration positions are asserted across CLI and codegen tests | Broad fail fixture corpus checks semantic rejection | N/A | **Partial**: exact expression spans and the repository-wide generated-name zero-leak gate remain `M0-DIAG-1` |
 
 ## Audit tasks
 

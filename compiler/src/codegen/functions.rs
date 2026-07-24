@@ -15,6 +15,15 @@ use super::Analyzer;
 
 impl Analyzer {
     pub(super) fn lower_function(&mut self, name: &str) -> Ty {
+        let previous = self.current_origin.replace(Box::new(
+            self.function_origins.get(name).cloned().unwrap_or_default(),
+        ));
+        let result = self.lower_function_with_origin(name);
+        self.current_origin = previous;
+        result
+    }
+
+    fn lower_function_with_origin(&mut self, name: &str) -> Ty {
         if self.function_states.get(name) == Some(&ResolutionState::Resolved) {
             return self.signatures[name].result.clone().unwrap_or(Ty::Error);
         }
@@ -282,6 +291,15 @@ impl Analyzer {
     }
 
     pub(super) fn lower_global(&mut self, name: &str) -> Ty {
+        let previous = self.current_origin.replace(Box::new(
+            self.global_origins.get(name).cloned().unwrap_or_default(),
+        ));
+        let result = self.lower_global_with_origin(name);
+        self.current_origin = previous;
+        result
+    }
+
+    fn lower_global_with_origin(&mut self, name: &str) -> Ty {
         if self.global_states.get(name) == Some(&ResolutionState::Resolved) {
             return self.hir_globals[name].ty.clone();
         }

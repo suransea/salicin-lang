@@ -63,6 +63,8 @@ handler or async expansion is admitted.
   - Add parser, semantic, linking, diagnostic, and native round-trip tests.
 
 - [ ] **M0-DIAG-1: Attach source spans to semantic errors**
+  - [x] Preserve defining source paths and declaration positions through semantic specialization.
+  - [ ] Attach exact expression spans instead of falling back to the enclosing declaration.
   - Prioritize ownership, borrow, handler, trait selection, and generic inference errors.
   - Ensure generated internal names do not leak into user-facing diagnostics.
 

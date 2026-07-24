@@ -80,12 +80,21 @@ use cleanup_plan::{HirCleanupPlanner, MAX_CLEANUP_MOVE_PATHS};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     pub message: String,
+    pub origin: Option<ItemOrigin>,
 }
 
 impl Diagnostic {
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            origin: None,
+        }
+    }
+
+    fn at_origin(message: impl Into<String>, origin: Option<ItemOrigin>) -> Self {
+        Self {
+            message: message.into(),
+            origin,
         }
     }
 }
@@ -168,6 +177,7 @@ struct Analyzer {
     effect_callable_adapters: Vec<EffectCallableAdapter>,
     runtime_handler_actions: HashMap<(String, usize, usize), RuntimeHandlerAction>,
     diagnostics: Vec<Diagnostic>,
+    current_origin: Option<Box<ItemOrigin>>,
 }
 
 impl Analyzer {
@@ -248,6 +258,7 @@ impl Analyzer {
             effect_callable_adapters: Vec::new(),
             runtime_handler_actions: HashMap::new(),
             diagnostics: Vec::new(),
+            current_origin: None,
         };
         if !program.uses.is_empty() {
             analyzer.error(
@@ -404,6 +415,7 @@ impl Analyzer {
         let mut overload_shapes = HashMap::<String, HashSet<ParameterLabelShape>>::new();
         let mut overload_visibilities = HashMap::<String, Visibility>::new();
         for (item, visibility, origin) in all_items {
+            self.current_origin = Some(Box::new(origin.clone()));
             let name = match item {
                 Item::Function(function) => &function.name,
                 Item::Global(binding) => &binding.name,
@@ -747,6 +759,7 @@ impl Analyzer {
         }
         let mut remaining_extensions = Vec::new();
         for (extension, origin) in extensions {
+            self.current_origin = Some(Box::new(origin.clone()));
             if self.is_core_copy_extension(&extension) {
                 self.collect_extension(extension, origin);
             } else {
@@ -759,8 +772,10 @@ impl Analyzer {
         self.copy_impls_finalized = true;
         self.validate_trait_schemas();
         for (extension, origin) in remaining_extensions {
+            self.current_origin = Some(Box::new(origin.clone()));
             self.collect_extension(extension, origin);
         }
+        self.current_origin = None;
         self.validate_trait_inheritance_implementations();
 
         let never = self.lang_item_name(LangItemKind::Never);
@@ -5544,6 +5559,11 @@ impl Analyzer {
 
     fn validate_function_templates(&mut self) {
         for template_name in self.function_template_order.clone() {
+            self.current_origin = self
+                .function_template_origins
+                .get(&template_name)
+                .cloned()
+                .map(Box::new);
             let template = self.function_templates[&template_name].clone();
             if [LangItemKind::DoWhile, LangItemKind::For]
                 .into_iter()
@@ -5784,6 +5804,7 @@ impl Analyzer {
             self.trait_impls = trait_impls_before;
             self.trait_methods_by_receiver = trait_methods_before;
         }
+        self.current_origin = None;
     }
 
     fn install_assumed_where_predicates(
@@ -11866,7 +11887,10 @@ impl Analyzer {
     }
 
     fn error(&mut self, message: impl Into<String>) {
-        self.diagnostics.push(Diagnostic::new(message));
+        self.diagnostics.push(Diagnostic::at_origin(
+            message,
+            self.current_origin.as_deref().cloned(),
+        ));
     }
 }
 

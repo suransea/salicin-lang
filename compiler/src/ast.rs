@@ -65,6 +65,14 @@ impl Program {
 pub struct ItemOrigin {
     pub package: usize,
     pub module_path: Vec<String>,
+    pub source: Option<Box<SourceLocation>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SourceLocation {
+    pub path: Option<String>,
+    pub line: usize,
+    pub column: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
