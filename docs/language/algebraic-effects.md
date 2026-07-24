@@ -206,9 +206,12 @@ same source/action identity and relocates borrowed pointer slots separately from
 A direct trailing-closure literal is materialized into the same typed local representation
 automatically. Earlier `copy` and `move` arguments, including values in preceding curried groups,
 are first materialized as typed locals in source order, so their side effects and ownership transfer
-remain observable before the action captures its environment. An earlier `borrow` or `borrow(mut)`
-parameter, conditional action values, and actions crossing another function boundary still require
-the remaining loan-aware or general erased value integration.
+remain observable before the action captures its environment. Earlier `borrow` and `borrow(mut)`
+root or stable field arguments are materialized as explicit reference locals at the same source
+positions. Their loans remain live through direct action creation and the complete one-shot call,
+then end on either resumption or abandonment; an overlapping mutable action capture is rejected.
+Conditional action values and actions crossing another function boundary still require the general
+erased value integration.
 
 Compiler-generated handler closures have a distinct owned-capture policy rather than relying on
 reserved local names. A non-`Copy` owned nominal root used by the continuation moves into its frame

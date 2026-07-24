@@ -8756,3 +8756,29 @@ Ask.value() + order
     .expect("arguments before a direct action must be materialized in source order");
     assert!(llvm.contains("24636170747572696e672468616e646c657224"));
 }
+
+#[test]
+fn reusable_handler_stages_borrowed_arguments_before_direct_action() {
+    compile_text(
+        r#"
+let Ask = effect { let value(): i32 }
+let run(left: borrow(i32), right: borrow(mut)(i32))(move action: (): i32 with(Ask)): i32 = {
+  Ask.handle value { (resume) -> resume(2) } action {
+    right = right + action()
+    left + right
+  }
+}
+let main(): i32 = {
+  let left = 10
+  let mut right = 20
+  let mut order = 1
+  let result = run(left, right) { () ->
+    order = order * 2
+    Ask.value() + order
+  }
+  result + left + right + order - 28
+}
+"#,
+    )
+    .expect("borrowed arguments before a direct action must retain their source places");
+}

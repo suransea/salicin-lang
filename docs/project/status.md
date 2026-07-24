@@ -82,8 +82,11 @@ Local callable alias moves now carry the original action metadata and relocate b
 slots without confusing them with owned pointee values. A direct trailing-closure action is also
 materialized automatically. Earlier `copy` and `move` arguments across the complete call are staged
 as typed locals in source order before that action, preserving side effects and ownership. Earlier
-borrowed arguments remain pending loan-aware staging; conditional values, cross-function transport,
-and fully general erased action construction remain the next implementation stages.
+borrowed root and field arguments are materialized as explicit reference locals at their original
+source positions before a direct action closure is created. Their lexical loans cover action
+capture and the complete handler call, reject overlapping mutable captures, and end after either
+resumption or abandonment. Conditional values, cross-function transport, and fully general erased
+action construction remain the next implementation stages.
 Compiler-generated handler closures use an explicit owned-capture policy: every non-`Copy` owned
 nominal root required after an operation moves into the resumable frame and retains its source
 mutability. Projected assignments capture their whole mutable root, so repeated direct operations

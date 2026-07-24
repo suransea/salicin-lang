@@ -457,6 +457,7 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
         "algebraic_effect_reusable_capturing_action.sc",
         "algebraic_effect_reusable_direct_action.sc",
         "algebraic_effect_reusable_ordered_direct_action.sc",
+        "algebraic_effect_reusable_borrowed_action.sc",
         "algebraic_effect_reusable_fn_mut_action.sc",
         "algebraic_effect_reusable_fn_once_abort.sc",
         "algebraic_effect_reusable_fn_once_resume.sc",
@@ -542,6 +543,24 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
     assert!(!output.status.success(), "{}", output_text(&output));
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("missing handler clause `put`"),
+        "{}",
+        output_text(&output)
+    );
+}
+
+#[test]
+fn reusable_handler_action_rejects_overlapping_staged_borrows() {
+    let output = salic()
+        .arg("check")
+        .arg(fixture(
+            "fail",
+            "algebraic_effect_reusable_borrowed_action_overlap.sc",
+        ))
+        .output()
+        .expect("check overlapping borrowed handler action fixture");
+    assert!(!output.status.success(), "{}", output_text(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("already borrowed"),
         "{}",
         output_text(&output)
     );

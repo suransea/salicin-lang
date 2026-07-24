@@ -1176,20 +1176,47 @@ impl Analyzer {
                     let earlier_parameter =
                         function.groups.get(earlier_group)?.get(earlier_argument)?;
                     let parameter_ty = self.lower_source_type(&earlier_parameter.ty);
-                    if self
-                        .borrow_channel_mode(earlier_parameter.mode, &parameter_ty)
-                        .is_some()
-                    {
-                        return None;
-                    }
                     let id = self.next_closure;
                     self.next_closure += 1;
                     let local = format!("$handler$direct$argument${id}");
+                    let borrow_mode =
+                        self.borrow_channel_mode(earlier_parameter.mode, &parameter_ty);
+                    let (annotation, value) = if let Some(mode) = borrow_mode {
+                        let mutable = mode == PassMode::MutBorrow;
+                        let value = match &rewritten_argument.value {
+                            Expr::Borrow { value, .. }
+                                if stable_handler_borrow_place(value).is_some() =>
+                            {
+                                rewritten_argument.value.clone()
+                            }
+                            value if stable_handler_borrow_place(value).is_some() => Expr::Borrow {
+                                mutable,
+                                access: earlier_parameter.access.clone(),
+                                value: Box::new(value.clone()),
+                            },
+                            _ => return None,
+                        };
+                        let annotation = match &earlier_parameter.ty {
+                            ty @ Type::Borrow { .. } => ty.clone(),
+                            ty => Type::Borrow {
+                                mutable,
+                                access: earlier_parameter.access.clone(),
+                                region: earlier_parameter.region.clone(),
+                                pointee: Box::new(ty.clone()),
+                            },
+                        };
+                        (annotation, value)
+                    } else {
+                        (
+                            earlier_parameter.ty.clone(),
+                            rewritten_argument.value.clone(),
+                        )
+                    };
                     bindings.push(Stmt::Let(Binding {
                         mutable: false,
                         name: local.clone(),
-                        annotation: Some(earlier_parameter.ty.clone()),
-                        value: rewritten_argument.value.clone(),
+                        annotation: Some(annotation),
+                        value,
                     }));
                     rewritten_argument.value = Expr::Name(local);
                 }

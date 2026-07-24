@@ -49,6 +49,10 @@ subset.
 - Allowed an unsafe local raw-pointer dereference to serve as a field or constant-index place base.
   A selected Copy field can be read without copying its non-Copy root, and writes still require
   `MutPtr(T)`.
+- Staged shared and mutable root/field arguments at their original positions before materializing a
+  direct reusable handler action. Explicit reference locals preserve source places and keep loans
+  live through action capture and the one-shot call; overlapping mutable captures are rejected, and
+  resume or abandonment releases the loans before following code.
 - Restored `examples/ledger.sc` to effectful state processing: its `for` loop now consumes
   non-`Copy` transactions and performs overdraft operations while retaining both iterator and
   mutable ledger state.

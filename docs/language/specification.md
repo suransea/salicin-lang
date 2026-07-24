@@ -528,8 +528,9 @@ borrow/move 时机；调用点从该环境提升字段，其中共享 `Copy` 为
 完整调用也可以直接写尾闭包 literal；编译器把它物化为带 handler 参数函数类型的内部局部 binding，
 再进入同一捕获提升路径。action 之前的 `copy`、`move` 参数（包括更早的柯里化参数组）会先按源码
 顺序物化为带参数类型的内部局部值，确保副作用和所有权转移发生在闭包捕获之前。此前若有 `borrow` 或
-`borrow(mut)` 参数则暂不改写，以免把 place 借用错误地延长或转换成 owned 临时值；条件 action 值、
-跨函数传递和任意擦除 action 仍待后续 ABI。
+`borrow(mut)` 的根或稳定字段实参，也会在原位置物化为显式 reference local，而不是 owned 临时值。
+其 lexical loan 覆盖 direct action 的捕获和完整一次性调用，在恢复或放弃返回后释放；与 action 的
+mutable capture 重叠时直接报借用冲突。条件 action 值、跨函数传递和任意擦除 action 仍待后续 ABI。
 编译器生成的 handler closure 使用独立的 owned 捕获策略，不依赖内部局部变量的特定名称。continuation
 若需要非 `Copy` 的 owned 名义根，该根会 move 进 frame；源 binding 为 `mut` 时，frame 内仍保持可变。
 字段或索引赋值按完整根进行 mutable 捕获，并同时扫描索引表达式所需的其他捕获。因此连续的直接
