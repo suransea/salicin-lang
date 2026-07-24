@@ -6,9 +6,9 @@ subset.
 
 ## Unreleased
 
-- Kept `access` as a closed `type` declaration in `core.qualifiers`, replaced the former closed
+- Moved the closed `access` type into `core.borrow`, and replaced the former closed
   `passing` type and `auto` value with validated compile-time `copy(P: parameters): parameters` and
-  `move(P: parameters): parameters` functions, and allowed `bool` and
+  `move(P: parameters): parameters` functions in `core.passing`. Also allowed `bool` and
   user-declared closed types in compile-time parameter groups with typed defaults and stable
   monomorphization identities. Runtime parameter prefixes now accept
   `M: (P: parameters): parameters` function parameters and compose parameter-schema modifiers

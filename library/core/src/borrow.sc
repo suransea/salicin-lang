@@ -1,5 +1,12 @@
-// Borrow type and value contracts built over the compile-time access, region,
-// and type domains.
+// Borrow access, type, and value contracts.
+/// Describes whether a borrow is shared or mutable.
+pub let access = type {
+  /// Shared read-only access.
+  shared,
+  /// Exclusive mutable access.
+  mut
+}
+
 /// Type constructor for a borrow with access `A`, region `R`, and pointee `T`.
 pub let borrow(A: access = shared)
   (R: region)

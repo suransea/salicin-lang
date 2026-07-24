@@ -341,8 +341,8 @@ const CORE_PRELUDE_EXPORTS: &[(&str, &str)] = &[
     ("Ptr", "core::memory::Ptr"),
     ("size_of", "core::memory::size_of"),
     ("align_of", "core::memory::align_of"),
-    ("copy", "core::qualifiers::copy"),
-    ("move", "core::qualifiers::move"),
+    ("copy", "core::passing::copy"),
+    ("move", "core::passing::move"),
 ];
 const CORE_ROOT_EXPORTS: &[(&str, &str)] = &[
     ("Never", "core::never::Never"),
@@ -406,8 +406,8 @@ const CORE_PRIMITIVE_EXPORTS: &[&str] = &[
     "bool", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
 ];
 const CORE_DOMAIN_EXPORTS: &[&str] = &["type", "region", "effect", "parameters"];
-const CORE_QUALIFIER_EXPORTS: &[&str] = &["access", "copy", "move"];
-const CORE_BORROW_EXPORTS: &[&str] = &["borrow"];
+const CORE_PASSING_EXPORTS: &[&str] = &["copy", "move"];
+const CORE_BORROW_EXPORTS: &[&str] = &["access", "borrow"];
 const CORE_MEMORY_EXPORTS: &[&str] = &["Array", "Ptr", "size_of", "align_of"];
 const CORE_CONTROL_EXPORTS: &[&str] = &[
     "Break", "Continue", "Return", "break", "continue", "return", "do", "try", "throw", "unsafe",
@@ -522,9 +522,9 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("domains", "region", "core::domains::region"),
     ("domains", "effect", "core::domains::effect"),
     ("domains", "parameters", "core::domains::parameters"),
-    ("qualifiers", "access", "core::qualifiers::access"),
-    ("qualifiers", "copy", "core::qualifiers::copy"),
-    ("qualifiers", "move", "core::qualifiers::move"),
+    ("passing", "copy", "core::passing::copy"),
+    ("passing", "move", "core::passing::move"),
+    ("borrow", "access", "core::borrow::access"),
     ("borrow", "borrow", "core::borrow::borrow"),
     ("control", "do", "core::control::do"),
     ("control", "try", "core::control::try"),
@@ -1037,8 +1037,8 @@ fn install_standard_namespaces(
         for name in CORE_DOMAIN_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.domains.{name}"));
         }
-        for name in CORE_QUALIFIER_EXPORTS {
-            required_imports.insert((*name).to_owned(), format!("core.qualifiers.{name}"));
+        for name in CORE_PASSING_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.passing.{name}"));
         }
         for name in CORE_BORROW_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.borrow.{name}"));
@@ -1366,14 +1366,14 @@ fn install_core_namespace(
                 "<core>",
             );
         }
-        for name in CORE_QUALIFIER_EXPORTS {
+        for name in CORE_PASSING_EXPORTS {
             insert_standard_symbol(
                 symbols,
                 package_root,
                 &core_root,
-                "qualifiers",
+                "passing",
                 name,
-                &format!("core::qualifiers::{name}"),
+                &format!("core::passing::{name}"),
                 "<core>",
             );
         }
@@ -5313,11 +5313,7 @@ let main(): i32 = { Option {} }
                     .map(|name| ("handler", *name)),
             )
             .chain(CORE_DOMAIN_EXPORTS.iter().map(|name| ("domains", *name)))
-            .chain(
-                CORE_QUALIFIER_EXPORTS
-                    .iter()
-                    .map(|name| ("qualifiers", *name)),
-            )
+            .chain(CORE_PASSING_EXPORTS.iter().map(|name| ("passing", *name)))
             .chain(CORE_BORROW_EXPORTS.iter().map(|name| ("borrow", *name)))
             .chain(CORE_MEMORY_EXPORTS.iter().map(|name| ("memory", *name)))
             .chain(CORE_CONTROL_EXPORTS.iter().map(|name| ("control", *name)))

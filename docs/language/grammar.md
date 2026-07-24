@@ -136,7 +136,8 @@ constructor_kind = compile_parameter_group,
   `(effect): T`、`T(effect)` 与 `T ! effect` 都不属于语法。
 - 声明右侧的 `domain` 同样是上下文词，用于声明编译期参数域。无 body 的 `domain` 是开放域；
   `domain { ... }` 是封闭域。标准 `type`、`region`、`effect` 与 `parameters` 位于
-  `core.domains`；`access` 封闭类型及 `copy`、`move` 参数修饰函数位于 `core.qualifiers`；effect 身份位于
+  `core.domains`；`access` 封闭类型位于 `core.borrow`；`copy`、`move` 参数修饰函数位于
+  `core.passing`；effect 身份位于
   `core.effect`；控制 lang item 可在声明名位置使用 `do`、`try`、
   `unsafe`、`loop`、`while`、`if`、`match`、`for`。
 - 声明右侧的 `type` 声明新的不透明名义类型，例如 `pub let i32 = type`。可选的封闭值集合
@@ -289,7 +290,7 @@ type_argument  = [ IDENT, ":" ], type_expr | INTEGER ;
 `L: usize` 声明受限的编译期无符号整数参数。首版实参是非负 `u64` 范围字面量或另一个
 `usize` 参数；可从数组类型约束推断，但不执行任意常量表达式。标准数组声明为
 `core.memory.Array(T: type)(L: usize): type`，因此完整应用必须写成 `Array(T)(L)`，不能合并两组。
-`access` 是 `core.qualifiers` 声明的封闭类型；其内建实参为 `shared` 与 `mut`。`borrow(A)(T)` 和
+`access` 是 `core.borrow` 声明的封闭类型；其内建实参为 `shared` 与 `mut`。`borrow(A)(T)` 和
 `borrow(A)(R)(T)` 分别携带 access 参数以及 access/region 参数组合。
 `copy` 与 `move` 是 `(P: parameters): parameters` 编译期函数。参数核心之前可以写一个或多个
 parameter-schema 修饰器，例如 `(M value: T)` 或 `(A M value: T)`；每个修饰器必须在实例化时

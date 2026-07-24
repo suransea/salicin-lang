@@ -185,14 +185,18 @@ pub let effect = domain
 pub let parameters = domain
 ```
 
-`core.qualifiers` owns the closed access type and parameter modifier functions:
+`core.borrow` owns the closed access type:
 
 ```sc
 pub let access = type {
   shared,
   mut
 }
+```
 
+`core.passing` owns the parameter modifier functions:
+
+```sc
 pub let copy(P: parameters): parameters
 pub let move(P: parameters): parameters
 ```

@@ -35,7 +35,7 @@ const EDITION_2026_OPS_ASSIGN: &str = include_str!("../../library/core/src/ops/a
 const EDITION_2026_EFFECT: &str = include_str!("../../library/core/src/effect.sc");
 const EDITION_2026_EFFECT_HANDLER: &str = include_str!("../../library/core/src/effect/handler.sc");
 const EDITION_2026_DOMAINS: &str = include_str!("../../library/core/src/domains.sc");
-const EDITION_2026_QUALIFIERS: &str = include_str!("../../library/core/src/qualifiers.sc");
+const EDITION_2026_PASSING: &str = include_str!("../../library/core/src/passing.sc");
 const EDITION_2026_BORROW: &str = include_str!("../../library/core/src/borrow.sc");
 const EDITION_2026_CONTROL: &str = include_str!("../../library/core/src/control.sc");
 const EDITION_2026_ITER: &str = include_str!("../../library/core/src/iter.sc");
@@ -47,7 +47,7 @@ const NON_LANG_ITEM_CORE_MODULES: &[&str] = &[
     "primitives",
     "effect",
     "control",
-    "qualifiers",
+    "passing",
     "algebra",
     "functional",
 ];
@@ -982,7 +982,7 @@ impl CoreBundle {
                         ("effect", EDITION_2026_EFFECT),
                         ("effect/handler", EDITION_2026_EFFECT_HANDLER),
                         ("domains", EDITION_2026_DOMAINS),
-                        ("qualifiers", EDITION_2026_QUALIFIERS),
+                        ("passing", EDITION_2026_PASSING),
                         ("borrow", EDITION_2026_BORROW),
                         ("control", EDITION_2026_CONTROL),
                         ("iter", EDITION_2026_ITER),
@@ -1015,7 +1015,7 @@ impl CoreBundle {
         // Most contract tests isolate one prelude/operator declaration. Keep
         // the independently tested control module present in those fixtures.
         let source = format!(
-            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{TEST_EFFECT}\n{TEST_EFFECT_HANDLER}\n{EDITION_2026_PRIMITIVES}\n{EDITION_2026_DOMAINS}\n{EDITION_2026_QUALIFIERS}\n{EDITION_2026_BORROW}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}\n{EDITION_2026_MEMORY}"
+            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{TEST_EFFECT}\n{TEST_EFFECT_HANDLER}\n{EDITION_2026_PRIMITIVES}\n{EDITION_2026_DOMAINS}\n{EDITION_2026_PASSING}\n{EDITION_2026_BORROW}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}\n{EDITION_2026_MEMORY}"
         );
         let mut program = parser::parse(&source).map_err(|error| {
             CoreBundleError::new(
@@ -3204,7 +3204,7 @@ pub let Shr(Rhs: type) = trait {
             ("effect", EDITION_2026_EFFECT),
             ("effect/handler", EDITION_2026_EFFECT_HANDLER),
             ("domains", EDITION_2026_DOMAINS),
-            ("qualifiers", EDITION_2026_QUALIFIERS),
+            ("passing", EDITION_2026_PASSING),
             ("borrow", EDITION_2026_BORROW),
             ("control", EDITION_2026_CONTROL),
             ("iter", EDITION_2026_ITER),
@@ -3298,7 +3298,7 @@ pub let Shr(Rhs: type) = trait {
                     format!("core::domains::{}", kind.source_name())
                 }
                 LangItemKind::AccessType => {
-                    format!("core::qualifiers::{}", kind.source_name())
+                    format!("core::borrow::{}", kind.source_name())
                 }
                 LangItemKind::BorrowTypeForm | LangItemKind::BorrowValueForm => {
                     format!("core::borrow::{}", kind.source_name())
@@ -3386,7 +3386,7 @@ pub let Shr(Rhs: type) = trait {
                 | LangItemKind::RegionDomain
                 | LangItemKind::EffectDomain
                 | LangItemKind::ParametersDomain => vec!["domains"],
-                LangItemKind::AccessType => vec!["qualifiers"],
+                LangItemKind::AccessType => vec!["borrow"],
                 LangItemKind::BorrowTypeForm | LangItemKind::BorrowValueForm => vec!["borrow"],
                 LangItemKind::ArrayTypeForm
                 | LangItemKind::PtrTypeForm

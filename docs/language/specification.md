@@ -578,8 +578,8 @@ effect、trait 或协议，再由编译器校验对应 lang item 并做 lowering
 源码级契约，而不是为每个类型增加封闭的编译器特例。`core.effect` 声明普通 effect 形态的 `Unsafe`、
 带普通 abort operation `raise(move error: Error): Never` 的 `Throws(Error)`，以及带最小
 `suspend(): ()` operation 的 `Async`；`core.domains` 声明 `type`、`region`、`effect` 与
-`parameters` 编译期 domain；`core.qualifiers` 声明 `access` 封闭类型以及 `copy`、`move`
-参数修饰函数；`core.control`
+`parameters` 编译期 domain；`core.borrow` 声明 `access` 封闭类型；`core.passing`
+声明 `copy`、`move` 参数修饰函数；`core.control`
 声明 `do`、`try`、`throw`、`unsafe`、`loop`、`while`、`if`、`match` 与 `for`
 的控制函数签名；`core.effect.handler`
 声明 handler 运行时契约；`core.functional` 声明使用构造子 kind 的 `Functor`、`Applicative` 与 `Monad`
