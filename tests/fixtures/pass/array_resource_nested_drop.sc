@@ -1,4 +1,4 @@
-let Resource = struct { counter: MutPtr(i32) }
+let Resource = struct { counter: Ptr(mut)(i32) }
 let Batch = struct { values: Array(Resource)(2) }
 
 extend Resource: Drop {

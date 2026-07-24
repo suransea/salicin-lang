@@ -1,7 +1,7 @@
 /// Owning heap allocation for a single value of type `T`.
 pub let Box(T: type) = struct {
   /// Raw pointer to the initialized heap slot owned by this box.
-  pointer: MutPtr(T),
+  pointer: Ptr(mut)(T),
 }
 
 /// Allocates heap storage and moves `value` into a new box.
@@ -16,7 +16,7 @@ let box_new(T: type)(value: T): Box(T) = {
 }
 
 /// Consumes `boxed` without deallocating and returns its owned raw pointer.
-let box_into_raw(T: type)(move boxed: Box(T)): MutPtr(T) = {
+let box_into_raw(T: type)(move boxed: Box(T)): Ptr(mut)(T) = {
   let pointer = boxed.pointer
   forget(boxed)
   pointer
@@ -76,7 +76,7 @@ extend(T: type) Box(T) {
   /// Allocates a new box containing `value`.
   let new(value: T): Box(T) = { box_new(value) }
   /// Rebuilds unique ownership from a pointer returned by `Box.into_raw`.
-  let from_raw(pointer: MutPtr(T)): Box(T) with(core.effect.Unsafe) = {
+  let from_raw(pointer: Ptr(mut)(T)): Box(T) with(core.effect.Unsafe) = {
     Box(T) { pointer: pointer }
   }
   /// Borrows the boxed value with the requested access.
@@ -88,7 +88,7 @@ extend(T: type) Box(T) {
   /// Consumes this box and returns its owned value.
   let into_inner(move self)(): T = { box_into_inner(self) }
   /// Consumes this box without deallocating and returns its owned raw pointer.
-  let into_raw(move self)(): MutPtr(T) = { box_into_raw(self) }
+  let into_raw(move self)(): Ptr(mut)(T) = { box_into_raw(self) }
   /// Replaces the boxed value and returns the previous value.
   let replace(self: borrow(mut)(Self))(value: T): T = { box_replace(self)(value) }
 }

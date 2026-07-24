@@ -4,7 +4,7 @@ let Step = effect {
 
 let State = struct {
   value: i32,
-  drops: MutPtr(i32),
+  drops: Ptr(mut)(i32),
 }
 
 extend State: Drop {
@@ -19,7 +19,7 @@ extend State {
   }
 }
 
-let program(drops: MutPtr(i32)): i32 with(Step) = {
+let program(drops: Ptr(mut)(i32)): i32 with(Step) = {
   let mut state = State { value: 40, drops: drops }
   state.add(1)
   let delta = Step.delta()

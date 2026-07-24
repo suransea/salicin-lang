@@ -8,7 +8,7 @@ let Counter = struct {
 
 let State = struct {
   counter: Counter,
-  drops: MutPtr(i32),
+  drops: Ptr(mut)(i32),
 }
 
 extend State: Drop {
@@ -22,7 +22,7 @@ let update(value: borrow(mut)(i32)): () with(Step) = {
   value = value + delta
 }
 
-let program(drops: MutPtr(i32)): i32 with(Step) = {
+let program(drops: Ptr(mut)(i32)): i32 with(Step) = {
   let mut state = State { counter: Counter { value: 40 }, drops: drops }
   update(state.counter.value)
   update(state.counter.value)

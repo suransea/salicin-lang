@@ -1942,26 +1942,29 @@ extern "C" {
 pub extern "C" let add(a: c_int, b: c_int): c_int = { a + b }
 ```
 
-`Ptr(T)` 和 `MutPtr(T)` 是不受借用检查器保护、可以为空的原始指针。解引用、指针算术和调用导入的
+`Ptr(T)` 和 `Ptr(mut)(T)` 是不受借用检查器保护、可以为空的原始指针。解引用、指针算术和调用导入的
 C 函数需要 `unsafe`。`core.ffi` 提供 `c_char`、`c_int`、`c_long` 等平台 C 类型；Salicin
 `char` 是 Unicode scalar，不能代替 C `char`。
 
-在 `unsafe` 块内，局部 `Ptr(T)` 或 `MutPtr(T)` 的解引用可以作为字段或常量索引 place 的基址，
+在 `unsafe` 块内，局部 `Ptr(T)` 或 `Ptr(mut)(T)` 的解引用可以作为字段或常量索引 place 的基址，
 例如 `(*pointer).field`。读取只要求最终选择的值为 `Copy`，不要求整个 `T` 为 `Copy`；
-写入仍要求 `MutPtr(T)`。直接读取非 `Copy` 的 `*pointer` 仍不受支持。
+写入仍要求 `Ptr(mut)(T)`。直接读取非 `Copy` 的 `*pointer` 仍不受支持。
 
 数组、这些指针类型、从显式借用生成指针的构造器以及布局查询由 `core.memory` 声明，并由编译器按
 lang-item 形状和规范身份验证：
 
 ```sc
 pub let Array(T: type)(L: usize): type
-pub let Ptr(T: type): type
-pub let MutPtr(T: type): type
-pub let Ptr(T: type)(value: borrow(T)): Ptr(T)
-pub let MutPtr(T: type)(value: borrow(mut)(T)): MutPtr(T)
+pub let Ptr(A: access = shared)(T: type): type
+pub let Ptr(A: access = shared)(T: type)
+  (value: borrow(A)(T)): Ptr(A)(T)
 pub let size_of(T: type): u64
 pub let align_of(T: type): u64
 ```
+
+`Ptr(T)` 省略默认的 `shared` access；`Ptr(mut)(T)` 选择可写 raw pointer。两者属于同一个
+type family 和同一个 lang-item 身份，不存在独立的 mutable pointer 类型名。构造器同样允许
+`Ptr(borrow(value))`、`Ptr(mut)(borrow(mut)(value))`，也可显式给出 pointee 类型组。
 
 edition prelude 提供这些声明的短名。用户声明的同名函数或类型不会获得指针或布局 intrinsic
 语义；只有解析到已验证 `core.memory` 项的引用才会触发对应 lowering。
@@ -1971,8 +1974,8 @@ let pointer = unsafe { raw_alloc(T)(size: bytes, align: alignment) }
 unsafe { raw_dealloc(pointer: pointer, size: bytes, align: alignment) }
 ```
 
-`raw_alloc` 返回非空 `MutPtr(T)`，失败或非法 layout 会终止进程；若期望类型是 `MutPtr(T)`，类型组可
-省略。`raw_dealloc` 从 `MutPtr(T)` 推断 `T`，也允许显式写出。`size` 与 `align` 是 `u64`，alignment
+`raw_alloc` 返回非空 `Ptr(mut)(T)`，失败或非法 layout 会终止进程；若期望类型是 `Ptr(mut)(T)`，类型组可
+省略。`raw_dealloc` 从 `Ptr(mut)(T)` 推断 `T`，也允许显式写出。`size` 与 `align` 是 `u64`，alignment
 必须是非零二次幂；释放必须传回创建 allocation 时完全相同的 layout。使用已释放指针、重复释放、
 错误 layout 或访问未初始化内存均属于调用者在 `unsafe` 边界内承担的责任。
 

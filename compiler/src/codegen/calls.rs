@@ -336,10 +336,7 @@ impl Analyzer {
                 return self.lower_forget(&groups, context);
             }
             if self.is_lang_item_name(name, LangItemKind::PtrValueForm) {
-                return self.lower_raw_pointer_constructor(false, &groups, context);
-            }
-            if self.is_lang_item_name(name, LangItemKind::MutPtrValueForm) {
-                return self.lower_raw_pointer_constructor(true, &groups, context);
+                return self.lower_raw_pointer_constructor(&groups, context);
             }
             if let Some(local) = context.lookup(name).cloned() {
                 if local.closure.is_some() {

@@ -2,7 +2,7 @@ let Abort = effect {
   let stop(): i32
 }
 
-let Resource = struct { counter: MutPtr(i32) }
+let Resource = struct { counter: Ptr(mut)(i32) }
 
 extend Resource: Drop {
   let drop(self: borrow(mut)(Self))(): () = { unsafe {
@@ -17,7 +17,7 @@ let run(move action: (): i32 with(Abort)): i32 = {
   }
 }
 
-let execute(counter: MutPtr(i32)): i32 = {
+let execute(counter: Ptr(mut)(i32)): i32 = {
   let resource = Resource { counter: counter }
   let action: (): i32 with(Abort) = { () ->
     Abort.stop() + consume(resource)

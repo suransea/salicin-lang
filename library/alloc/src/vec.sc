@@ -3,7 +3,7 @@ let Option = core.Option
 /// Growable contiguous heap allocation for values of type `T`.
 pub let Vec(T: type) = struct {
   /// Pointer to the start of the allocated storage.
-  pointer: MutPtr(T),
+  pointer: Ptr(mut)(T),
   /// Number of initialized elements.
   length: u64,
   /// Number of elements that fit in the allocated storage.
@@ -22,14 +22,14 @@ let vec_layout_size(T: type)(capacity: u64): u64 = {
 }
 
 /// Allocates raw storage for `capacity` elements of `T`.
-let vec_allocate(T: type)(capacity: u64): MutPtr(T) = {
+let vec_allocate(T: type)(capacity: u64): Ptr(mut)(T) = {
   unsafe {
     raw_alloc(T)(vec_layout_size(T: T)(capacity), align_of(T))
   }
 }
 
 /// Deallocates raw vector storage previously allocated for `capacity` elements.
-let vec_deallocate(T: type)(pointer: MutPtr(T), capacity: u64): () = {
+let vec_deallocate(T: type)(pointer: Ptr(mut)(T), capacity: u64): () = {
   unsafe {
     raw_dealloc(T)(pointer, vec_layout_size(T: T)(capacity), align_of(T))
   }

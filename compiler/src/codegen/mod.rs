@@ -294,10 +294,6 @@ impl Analyzer {
                 LangItemKind::PtrTypeForm,
                 &[TopLevelNamespace::Type, TopLevelNamespace::Function][..],
             ),
-            (
-                LangItemKind::MutPtrTypeForm,
-                &[TopLevelNamespace::Type, TopLevelNamespace::Function][..],
-            ),
             (LangItemKind::SizeOf, &[TopLevelNamespace::Function][..]),
             (LangItemKind::AlignOf, &[TopLevelNamespace::Function][..]),
         ] {
@@ -5160,7 +5156,6 @@ impl Analyzer {
                     LangItemKind::Match,
                     LangItemKind::BorrowValueForm,
                     LangItemKind::PtrValueForm,
-                    LangItemKind::MutPtrValueForm,
                     LangItemKind::SizeOf,
                     LangItemKind::AlignOf,
                 ]
@@ -7099,7 +7094,7 @@ impl Analyzer {
                     }
                     let Ty::Pointer { pointee, mutable } = &pointer.ty else {
                         self.error(format!(
-                            "raw pointer assignment requires `MutPtr(T)`, found `{}`",
+                            "raw pointer assignment requires `Ptr(mut)(T)`, found `{}`",
                             pointer.ty
                         ));
                         return error_expr();

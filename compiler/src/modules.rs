@@ -339,7 +339,6 @@ const CORE_PRELUDE_EXPORTS: &[(&str, &str)] = &[
     ("Drop", "core::marker::Drop"),
     ("Array", "core::memory::Array"),
     ("Ptr", "core::memory::Ptr"),
-    ("MutPtr", "core::memory::MutPtr"),
     ("size_of", "core::memory::size_of"),
     ("align_of", "core::memory::align_of"),
 ];
@@ -413,7 +412,7 @@ const CORE_DOMAIN_EXPORTS: &[&str] = &[
     "passing",
 ];
 const CORE_BORROW_EXPORTS: &[&str] = &["borrow"];
-const CORE_MEMORY_EXPORTS: &[&str] = &["Array", "Ptr", "MutPtr", "size_of", "align_of"];
+const CORE_MEMORY_EXPORTS: &[&str] = &["Array", "Ptr", "size_of", "align_of"];
 const CORE_CONTROL_EXPORTS: &[&str] = &[
     "Break", "Continue", "Return", "break", "continue", "return", "do", "try", "throw", "unsafe",
     "loop", "while", "if", "match", "for",

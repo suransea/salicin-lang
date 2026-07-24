@@ -8,7 +8,7 @@ use crate::ast::{
 };
 use crate::core::LangItemKind;
 
-use super::compile_time::source_effect_identity;
+use super::compile_time::{source_effect_identity, ACCESS_MUT_MARKER, ACCESS_SHARED_MARKER};
 use super::effects::{
     call_argument_labels, handled_operation_call, logical_effect_result_source,
     logical_function_result_source, standard_throws_error_source,
@@ -4076,17 +4076,23 @@ impl Analyzer {
                         } => (pointee.as_ref().clone(), *mutable),
                         ty => (ty.clone(), mode == PassMode::MutBorrow),
                     };
-                    let pointer_kind = if mutable {
-                        LangItemKind::MutPtrTypeForm
-                    } else {
-                        LangItemKind::PtrTypeForm
-                    };
                     Some(SourceInlineBorrowChannel {
                         argument_index: index,
                         pointer_name: format!("$handler$borrow$pointer${specialization}${index}"),
                         pointer_ty: Type::Named(
-                            self.lang_item_name(pointer_kind).to_owned(),
-                            vec![pointee],
+                            self.lang_item_name(LangItemKind::PtrTypeForm).to_owned(),
+                            vec![
+                                Type::Named(
+                                    if mutable {
+                                        ACCESS_MUT_MARKER
+                                    } else {
+                                        ACCESS_SHARED_MARKER
+                                    }
+                                    .to_owned(),
+                                    Vec::new(),
+                                ),
+                                pointee,
+                            ],
                         ),
                         mutable,
                     })
@@ -4340,15 +4346,23 @@ impl Analyzer {
                         value: Expr::Name(pointer.to_owned()),
                     });
                 }
-                let pointer_kind = if channel.mutable {
-                    LangItemKind::MutPtrValueForm
+                let pointer =
+                    Expr::Name(self.lang_item_name(LangItemKind::PtrValueForm).to_owned());
+                let pointer = if channel.mutable {
+                    Expr::Call(
+                        Box::new(pointer),
+                        vec![CallArg {
+                            label: None,
+                            value: Expr::Name("mut".to_owned()),
+                        }],
+                    )
                 } else {
-                    LangItemKind::PtrValueForm
+                    pointer
                 };
                 Some(CallArg {
                     label: None,
                     value: Expr::Call(
-                        Box::new(Expr::Name(self.lang_item_name(pointer_kind).to_owned())),
+                        Box::new(pointer),
                         vec![CallArg {
                             label: None,
                             value: Expr::Borrow {

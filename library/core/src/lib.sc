@@ -18,6 +18,5 @@ pub let Option = core.option.Option
 pub let Result = core.result.Result
 pub let Array = core.memory.Array
 pub let Ptr = core.memory.Ptr
-pub let MutPtr = core.memory.MutPtr
 pub let size_of = core.memory.size_of
 pub let align_of = core.memory.align_of

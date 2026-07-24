@@ -7,7 +7,7 @@ let IntoIterator = std.iter.IntoIterator
 let Counter = struct {
   current: i32,
   end: i32,
-  drops: MutPtr(i32),
+  drops: Ptr(mut)(i32),
 }
 
 extend Counter: Drop {

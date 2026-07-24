@@ -1,5 +1,5 @@
 let main(): i32 = {
-  let pointer: MutPtr(Array(i32)(2)) = unsafe {
+  let pointer: Ptr(mut)(Array(i32)(2)) = unsafe {
     raw_alloc(size: 8, align: 64)
   }
   unsafe {

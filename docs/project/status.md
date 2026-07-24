@@ -42,8 +42,8 @@ bodyless intrinsic signature for `loop`; `core.effect.handler` owns the handler 
 `Chain` and `Coalesce` protocol declarations for `?.` and `??`. These exports remain outside the prelude. `await` is
 intentionally absent until the async/Future lowering slice is implemented, at which point its
 executable standard-library contract must land with the implementation.
-`core.memory` owns the validated curried `Array(T)(L)` type form, type and value forms for
-`Ptr(T)` and `MutPtr(T)`, plus
+`core.memory` owns the validated curried `Array(T)(L)` type form, the unified
+`Ptr(A: access = shared)(T)` type and value forms, plus
 `size_of(T): u64` and `align_of(T): u64`; their prelude aliases lower by canonical lang-item
 identity rather than hard-coded declaration names. `L: usize` compile-time parameters accept
 non-negative `u64` literals, explicit forwarding, and array-driven inference; selected values are
@@ -165,7 +165,9 @@ constructor equation solving.
 
 Access domain generics are implemented for functions and generic inherent members: `A: access` accepts `shared` or `mut`,
 defaults to shared when omitted, participates in monomorphization, and can drive parameter modes,
-borrow types, borrow expressions, and raw pointer borrows. The alloc free functions and methods use
+borrow types, borrow expressions, raw pointer types, constructors, and raw pointer borrows.
+`Ptr(T)` selects shared access and `Ptr(mut)(T)` selects mutable access under one type family.
+The alloc free functions and methods use
 this path internally, while the public container surface uses inherent methods. Mutable borrowing
 has one source spelling, `borrow(mut)`; separately named mutable alloc aliases and the former prefix
 spelling are intentionally absent before 1.0.
@@ -197,7 +199,7 @@ Derived handlers support typed one-shot resumption, abandonment, `done:` answer 
 propagation, direct recursion, and resumable loop backedges. Cross-function abandonment and
 computation after `resume` use explicit CPS continuation closures. Direct and mutually recursive
 frames share an erased call/drop-entry plus environment ABI with a runtime one-shot flag. Borrowed
-roots crossing recursive calls are represented by internal `Ptr`/`MutPtr` channels; call-graph
+roots crossing recursive calls are represented by internal `Ptr`/`Ptr(mut)` channels; call-graph
 cycle detection covers both direct and mutual recursion without transferring or duplicating root
 ownership.
 Reusable handler functions may accept an algebraic-effect callable parameter. Calls with a known

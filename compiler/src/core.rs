@@ -180,9 +180,7 @@ pub enum LangItemKind {
     BorrowValueForm,
     ArrayTypeForm,
     PtrTypeForm,
-    MutPtrTypeForm,
     PtrValueForm,
-    MutPtrValueForm,
     SizeOf,
     AlignOf,
     Continuation,
@@ -203,7 +201,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 79] = [
+    const ALL: [Self; 77] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -263,9 +261,7 @@ impl LangItemKind {
         Self::BorrowValueForm,
         Self::ArrayTypeForm,
         Self::PtrTypeForm,
-        Self::MutPtrTypeForm,
         Self::PtrValueForm,
-        Self::MutPtrValueForm,
         Self::SizeOf,
         Self::AlignOf,
         Self::Continuation,
@@ -346,7 +342,6 @@ impl LangItemKind {
             Self::BorrowValueForm => "borrow",
             Self::ArrayTypeForm => "Array",
             Self::PtrTypeForm | Self::PtrValueForm => "Ptr",
-            Self::MutPtrTypeForm | Self::MutPtrValueForm => "MutPtr",
             Self::SizeOf => "size_of",
             Self::AlignOf => "align_of",
             Self::Continuation => "Continuation",
@@ -381,7 +376,6 @@ impl LangItemKind {
             Self::BorrowTypeForm
             | Self::ArrayTypeForm
             | Self::PtrTypeForm
-            | Self::MutPtrTypeForm
             | Self::Bool
             | Self::I8
             | Self::I16
@@ -395,11 +389,7 @@ impl LangItemKind {
             | Self::U64
             | Self::U128
             | Self::USize => "type form",
-            Self::BorrowValueForm
-            | Self::PtrValueForm
-            | Self::MutPtrValueForm
-            | Self::SizeOf
-            | Self::AlignOf => "function",
+            Self::BorrowValueForm | Self::PtrValueForm | Self::SizeOf | Self::AlignOf => "function",
             Self::Do
             | Self::DoWhile
             | Self::Try
@@ -507,9 +497,7 @@ impl LangItemKind {
             | Self::BorrowValueForm
             | Self::ArrayTypeForm
             | Self::PtrTypeForm
-            | Self::MutPtrTypeForm
             | Self::PtrValueForm
-            | Self::MutPtrValueForm
             | Self::SizeOf
             | Self::AlignOf
             | Self::Continuation
@@ -646,9 +634,7 @@ pub struct LangItems {
     borrow_value_form: LangItem,
     array_type_form: LangItem,
     ptr_type_form: LangItem,
-    mut_ptr_type_form: LangItem,
     ptr_value_form: LangItem,
-    mut_ptr_value_form: LangItem,
     size_of: LangItem,
     align_of: LangItem,
     continuation: LangItem,
@@ -942,9 +928,7 @@ impl LangItems {
             LangItemKind::BorrowValueForm => &self.borrow_value_form,
             LangItemKind::ArrayTypeForm => &self.array_type_form,
             LangItemKind::PtrTypeForm => &self.ptr_type_form,
-            LangItemKind::MutPtrTypeForm => &self.mut_ptr_type_form,
             LangItemKind::PtrValueForm => &self.ptr_value_form,
-            LangItemKind::MutPtrValueForm => &self.mut_ptr_value_form,
             LangItemKind::SizeOf => &self.size_of,
             LangItemKind::AlignOf => &self.align_of,
             LangItemKind::Continuation => &self.continuation,
@@ -1172,9 +1156,7 @@ impl CoreBundle {
             &mut lang_items.borrow_value_form,
             &mut lang_items.array_type_form,
             &mut lang_items.ptr_type_form,
-            &mut lang_items.mut_ptr_type_form,
             &mut lang_items.ptr_value_form,
-            &mut lang_items.mut_ptr_value_form,
             &mut lang_items.size_of,
             &mut lang_items.align_of,
             &mut lang_items.continuation,
@@ -1500,9 +1482,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         borrow_value_form: item(LangItemKind::BorrowValueForm),
         array_type_form: item(LangItemKind::ArrayTypeForm),
         ptr_type_form: item(LangItemKind::PtrTypeForm),
-        mut_ptr_type_form: item(LangItemKind::MutPtrTypeForm),
         ptr_value_form: item(LangItemKind::PtrValueForm),
-        mut_ptr_value_form: item(LangItemKind::MutPtrValueForm),
         size_of: item(LangItemKind::SizeOf),
         align_of: item(LangItemKind::AlignOf),
         continuation: item(LangItemKind::Continuation),
@@ -1667,14 +1647,12 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         (LangItemKind::BorrowValueForm, Item::Function(function)) => {
             validate_borrow_value_form(function, diagnostics)
         }
-        (
-            kind @ (LangItemKind::PtrTypeForm | LangItemKind::MutPtrTypeForm),
-            Item::TypeForm(definition),
-        ) => validate_pointer_type_form(kind, definition, diagnostics),
-        (
-            kind @ (LangItemKind::PtrValueForm | LangItemKind::MutPtrValueForm),
-            Item::Function(function),
-        ) => validate_pointer_value_form(kind, function, diagnostics),
+        (LangItemKind::PtrTypeForm, Item::TypeForm(definition)) => {
+            validate_pointer_type_form(definition, diagnostics)
+        }
+        (LangItemKind::PtrValueForm, Item::Function(function)) => {
+            validate_pointer_value_form(function, diagnostics)
+        }
         (kind @ (LangItemKind::SizeOf | LangItemKind::AlignOf), Item::Function(function)) => {
             validate_layout_query(kind, function, diagnostics)
         }
@@ -1816,18 +1794,14 @@ fn validate_borrow_value_form(function: &Function, diagnostics: &mut Vec<String>
     }
 }
 
-fn validate_pointer_type_form(
-    kind: LangItemKind,
-    definition: &TypeFormDef,
-    diagnostics: &mut Vec<String>,
-) {
-    let valid = definition.compile_groups == vec![vec![type_parameter("T")]]
-        && definition.values.is_empty();
+fn validate_pointer_type_form(definition: &TypeFormDef, diagnostics: &mut Vec<String>) {
+    let valid =
+        definition.compile_groups == pointer_compile_groups() && definition.values.is_empty();
     if !valid {
-        let name = kind.source_name();
-        diagnostics.push(format!(
-            "lang item `{name}` type form must have shape `pub let {name}(T: type): type`"
-        ));
+        diagnostics.push(
+            "lang item `Ptr` type form must have shape `pub let Ptr(A: access = shared)(T: type): type`"
+                .to_owned(),
+        );
     }
 }
 
@@ -1843,15 +1817,13 @@ fn validate_array_type_form(definition: &TypeFormDef, diagnostics: &mut Vec<Stri
     }
 }
 
-fn validate_pointer_value_form(
-    kind: LangItemKind,
-    function: &Function,
-    diagnostics: &mut Vec<String>,
-) {
-    let mutable = kind == LangItemKind::MutPtrValueForm;
-    let name = kind.source_name();
-    let valid = function.compile_groups == vec![vec![type_parameter("T")]]
-        && function.return_type == Some(Type::Named(name.to_owned(), vec![named_type("T")]))
+fn validate_pointer_value_form(function: &Function, diagnostics: &mut Vec<String>) {
+    let valid = function.compile_groups == pointer_compile_groups()
+        && function.return_type
+            == Some(Type::Named(
+                "Ptr".to_owned(),
+                vec![named_type("A"), named_type("T")],
+            ))
         && function.effects == crate::ast::FunctionEffects::default()
         && function.where_predicates.is_empty()
         && function.body.is_none()
@@ -1861,18 +1833,14 @@ fn validate_pointer_value_form(
                 group.as_slice(),
                 [parameter] if parameter.name == "value"
                     && parameter.mode == PassMode::Inferred
-                    && parameter.ty == simple_borrow_type(mutable, named_type("T"))
+                    && parameter.ty == access_borrow_type("A", named_type("T"))
             )
         );
     if !valid {
-        diagnostics.push(format!(
-            "lang item `{name}` value form must have shape `pub let {name}(T: type)(value: {}): {name}(T)`",
-            if mutable {
-                "borrow(mut)(T)"
-            } else {
-                "borrow(T)"
-            }
-        ));
+        diagnostics.push(
+            "lang item `Ptr` value form must have shape `pub let Ptr(A: access = shared)(T: type)(value: borrow(A)(T)): Ptr(A)(T)`"
+                .to_owned(),
+        );
     }
 }
 
@@ -2698,11 +2666,27 @@ fn borrow_compile_groups() -> Vec<Vec<CompileParam>> {
     ]
 }
 
+fn pointer_compile_groups() -> Vec<Vec<CompileParam>> {
+    vec![
+        vec![access_parameter("A", Some("shared"))],
+        vec![type_parameter("T")],
+    ]
+}
+
 fn borrow_type(access: &str, region: &str, pointee: Type) -> Type {
     Type::Borrow {
         mutable: false,
         access: Some(access.to_owned()),
         region: Some(region.to_owned()),
+        pointee: Box::new(pointee),
+    }
+}
+
+fn access_borrow_type(access: &str, pointee: Type) -> Type {
+    Type::Borrow {
+        mutable: false,
+        access: Some(access.to_owned()),
+        region: None,
         pointee: Box::new(pointee),
     }
 }
@@ -3272,9 +3256,7 @@ pub let Shr(Rhs: type) = trait {
                 }
                 LangItemKind::ArrayTypeForm
                 | LangItemKind::PtrTypeForm
-                | LangItemKind::MutPtrTypeForm
                 | LangItemKind::PtrValueForm
-                | LangItemKind::MutPtrValueForm
                 | LangItemKind::SizeOf
                 | LangItemKind::AlignOf => {
                     format!("core::memory::{}", kind.source_name())
@@ -3360,9 +3342,7 @@ pub let Shr(Rhs: type) = trait {
                 LangItemKind::BorrowTypeForm | LangItemKind::BorrowValueForm => vec!["borrow"],
                 LangItemKind::ArrayTypeForm
                 | LangItemKind::PtrTypeForm
-                | LangItemKind::MutPtrTypeForm
                 | LangItemKind::PtrValueForm
-                | LangItemKind::MutPtrValueForm
                 | LangItemKind::SizeOf
                 | LangItemKind::AlignOf => vec!["memory"],
                 LangItemKind::Continuation
@@ -3435,7 +3415,7 @@ pub let Shr(Rhs: type) = trait {
     fn pointer_and_layout_lang_items_require_memory_contracts() {
         let modules = edition_2026_test_modules(&[("memory", "")]);
         let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
-        for name in ["Array", "Ptr", "MutPtr", "size_of", "align_of"] {
+        for name in ["Array", "Ptr", "size_of", "align_of"] {
             assert!(
                 error
                     .diagnostics()
@@ -3456,13 +3436,9 @@ pub let Shr(Rhs: type) = trait {
             ),
             (
                 "Ptr",
-                EDITION_2026_MEMORY.replace("(value: borrow(T)): Ptr(T)", "(value: T): Ptr(T)"),
-            ),
-            (
-                "MutPtr",
                 EDITION_2026_MEMORY.replace(
-                    "(value: borrow(mut)(T)): MutPtr(T)",
-                    "(value: borrow(T)): MutPtr(T)",
+                    "(value: borrow(A)(T)): Ptr(A)(T)",
+                    "(value: borrow(T)): Ptr(A)(T)",
                 ),
             ),
             (

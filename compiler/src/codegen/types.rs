@@ -169,17 +169,32 @@ impl Analyzer {
                 Ty::Struct(name.clone())
             }
             Type::Named(name, arguments)
-                if self.is_lang_item_name(name, LangItemKind::PtrTypeForm)
-                    || self.is_lang_item_name(name, LangItemKind::MutPtrTypeForm) =>
+                if self.is_lang_item_name(name, LangItemKind::PtrTypeForm) =>
             {
-                if arguments.len() != 1 {
-                    self.error(format!("type `{name}` expects exactly one type argument"));
-                    Ty::Error
-                } else {
-                    Ty::Pointer {
-                        pointee: Box::new(self.lower_source_type(&arguments[0])),
-                        mutable: self.is_lang_item_name(name, LangItemKind::MutPtrTypeForm),
+                let (access, pointee) = match arguments.as_slice() {
+                    [pointee] => (ACCESS_SHARED_MARKER, pointee),
+                    [Type::Named(access, access_arguments), pointee]
+                        if access_arguments.is_empty() =>
+                    {
+                        (access.as_str(), pointee)
                     }
+                    _ => {
+                        self.error(format!(
+                            "type `{name}` expects an optional access argument and a type argument"
+                        ));
+                        return Ty::Error;
+                    }
+                };
+                if !matches!(
+                    access,
+                    "shared" | "mut" | ACCESS_SHARED_MARKER | ACCESS_MUT_MARKER
+                ) {
+                    self.error("`Ptr` access must be `shared` or `mut`");
+                    return Ty::Error;
+                }
+                Ty::Pointer {
+                    pointee: Box::new(self.lower_source_type(pointee)),
+                    mutable: matches!(access, "mut" | ACCESS_MUT_MARKER),
                 }
             }
             Type::Named(name, arguments)
@@ -305,13 +320,19 @@ impl Analyzer {
                 length: USizeConst::Literal(*length),
             }),
             Ty::Pointer { pointee, mutable } => Some(Type::Named(
-                self.lang_item_name(if *mutable {
-                    LangItemKind::MutPtrTypeForm
-                } else {
-                    LangItemKind::PtrTypeForm
-                })
-                .to_owned(),
-                vec![self.source_type_for_ty(pointee)?],
+                self.lang_item_name(LangItemKind::PtrTypeForm).to_owned(),
+                vec![
+                    Type::Named(
+                        if *mutable {
+                            ACCESS_MUT_MARKER
+                        } else {
+                            ACCESS_SHARED_MARKER
+                        }
+                        .to_owned(),
+                        Vec::new(),
+                    ),
+                    self.source_type_for_ty(pointee)?,
+                ],
             )),
             Ty::Reference {
                 pointee,
@@ -425,7 +446,7 @@ impl Analyzer {
             }
             Ty::Pointer { pointee, mutable } => format!(
                 "{}({})",
-                if *mutable { "MutPtr" } else { "Ptr" },
+                if *mutable { "Ptr(mut)" } else { "Ptr" },
                 self.diagnostic_type_name(pointee)
             ),
             Ty::Reference {
@@ -1180,15 +1201,26 @@ impl Analyzer {
                 Some(Ty::Struct(name.clone()))
             }
             Type::Named(name, arguments)
-                if self.is_lang_item_name(name, LangItemKind::PtrTypeForm)
-                    || self.is_lang_item_name(name, LangItemKind::MutPtrTypeForm) =>
+                if self.is_lang_item_name(name, LangItemKind::PtrTypeForm) =>
             {
-                let [pointee] = arguments.as_slice() else {
-                    return None;
+                let (access, pointee) = match arguments.as_slice() {
+                    [pointee] => (ACCESS_SHARED_MARKER, pointee),
+                    [Type::Named(access, access_arguments), pointee]
+                        if access_arguments.is_empty() =>
+                    {
+                        (access.as_str(), pointee)
+                    }
+                    _ => return None,
                 };
+                if !matches!(
+                    access,
+                    "shared" | "mut" | ACCESS_SHARED_MARKER | ACCESS_MUT_MARKER
+                ) {
+                    return None;
+                }
                 Some(Ty::Pointer {
                     pointee: Box::new(self.probe_source_ty(pointee)?),
-                    mutable: self.is_lang_item_name(name, LangItemKind::MutPtrTypeForm),
+                    mutable: matches!(access, "mut" | ACCESS_MUT_MARKER),
                 })
             }
             Type::Named(name, arguments)

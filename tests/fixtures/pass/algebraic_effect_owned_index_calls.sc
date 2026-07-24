@@ -4,7 +4,7 @@ let Step = effect {
 
 let State = struct {
   values: Array(i32)(2),
-  drops: MutPtr(i32),
+  drops: Ptr(mut)(i32),
 }
 
 extend State: Drop {
@@ -13,12 +13,12 @@ extend State: Drop {
   } }
 }
 
-let mark(calls: MutPtr(i32))(digit: i32): i32 = { unsafe {
+let mark(calls: Ptr(mut)(i32))(digit: i32): i32 = { unsafe {
   *calls = *calls * 10 + digit
   0
 } }
 
-let next_index(calls: MutPtr(i32)): i32 = { unsafe {
+let next_index(calls: Ptr(mut)(i32)): i32 = { unsafe {
   *calls = *calls * 10 + 2
   1
 } }
@@ -28,7 +28,7 @@ let update(before: i32)(value: borrow(mut)(i32))(after: i32): () with(Step) = {
   value = value + delta + before + after
 }
 
-let program(drops: MutPtr(i32))(calls: MutPtr(i32)): i32 with(Step) = {
+let program(drops: Ptr(mut)(i32))(calls: Ptr(mut)(i32)): i32 with(Step) = {
   let mut state = State { values: [0, 40], drops: drops }
   update(mark(calls)(1))(state.values[next_index(calls)])(mark(calls)(3))
   state.values[1]

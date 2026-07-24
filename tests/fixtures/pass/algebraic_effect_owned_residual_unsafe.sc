@@ -6,7 +6,7 @@ let Step = effect {
 
 let State = struct {
   value: i32,
-  drops: MutPtr(i32),
+  drops: Ptr(mut)(i32),
 }
 
 extend State: Drop {
@@ -17,7 +17,7 @@ extend State: Drop {
 
 let update(
   state: borrow(mut)(State),
-  calls: MutPtr(i32),
+  calls: Ptr(mut)(i32),
 ): i32 with(Step, Unsafe) = {
   let delta = Step.delta()
   unsafe { *calls = *calls + 1 }
@@ -26,8 +26,8 @@ let update(
 }
 
 let unsafe_outside(
-  drops: MutPtr(i32),
-  calls: MutPtr(i32),
+  drops: Ptr(mut)(i32),
+  calls: Ptr(mut)(i32),
   abandon: bool,
 ): i32 = { unsafe {
   let mut state = State { value: 20, drops: drops }
@@ -40,8 +40,8 @@ let unsafe_outside(
 } }
 
 let unsafe_inside(
-  drops: MutPtr(i32),
-  calls: MutPtr(i32),
+  drops: Ptr(mut)(i32),
+  calls: Ptr(mut)(i32),
   abandon: bool,
 ): i32 = {
   let mut state = State { value: 20, drops: drops }

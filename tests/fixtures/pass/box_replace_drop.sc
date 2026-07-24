@@ -1,6 +1,6 @@
 let Box = std.boxed.Box
 
-let Resource = struct { counter: MutPtr(i32), value: i32 }
+let Resource = struct { counter: Ptr(mut)(i32), value: i32 }
 
 extend Resource: Drop {
   let drop(self: borrow(mut)(Self))(): () = { unsafe {

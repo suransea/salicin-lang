@@ -701,6 +701,7 @@ fn raw_pointer_read_and_write_run_with_expected_result() {
     let fixtures = [
         "raw_pointer_read.sc",
         "raw_pointer_write.sc",
+        "raw_pointer_access_family.sc",
         "raw_pointer_projected_place.sc",
         "do_forwards_unsafe_color.sc",
     ];
@@ -741,7 +742,7 @@ fn raw_pointer_intrinsic_errors_report_their_cause() {
         ("raw_offset_safe.sc", "requires an `unsafe` block"),
         (
             "raw_offset_non_pointer.sc",
-            "requires `Ptr(T)` or `MutPtr(T)`",
+            "requires `Ptr(T)` or `Ptr(mut)(T)`",
         ),
         ("raw_trap_safe.sc", "requires an `unsafe` block"),
         (
@@ -759,7 +760,7 @@ fn raw_pointer_intrinsic_errors_report_their_cause() {
         ),
         (
             "raw_borrow_mut_immutable_pointer.sc",
-            "requires a `MutPtr(T)`",
+            "requires a `Ptr(mut)(T)`",
         ),
         ("raw_borrow_anchor_conflict.sc", "borrowed"),
         (

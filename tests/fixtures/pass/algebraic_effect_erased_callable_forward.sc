@@ -4,7 +4,7 @@ let Ask = effect {
 
 let Resource = struct {
   bias: i32,
-  drops: MutPtr(i32),
+  drops: Ptr(mut)(i32),
 }
 
 extend Resource: Drop {
@@ -57,7 +57,7 @@ let outer_input(move action: (i32): i32 with(Ask)): i32 = {
   }
 }
 
-let execute(drops: MutPtr(i32), abandon: bool): i32 = {
+let execute(drops: Ptr(mut)(i32), abandon: bool): i32 = {
   let resource = Resource { bias: 21, drops: drops }
   let mut action: (): i32 with(Ask) = { () ->
     Ask.value() + consume(resource)
@@ -65,7 +65,7 @@ let execute(drops: MutPtr(i32), abandon: bool): i32 = {
   outer(action, abandon)
 }
 
-let execute_discard(drops: MutPtr(i32)): i32 = {
+let execute_discard(drops: Ptr(mut)(i32)): i32 = {
   let resource = Resource { bias: 21, drops: drops }
   let action: (): i32 with(Ask) = { () ->
     Ask.value() + consume(resource)

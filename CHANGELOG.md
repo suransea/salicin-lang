@@ -6,6 +6,11 @@ subset.
 
 ## Unreleased
 
+- Unified shared and mutable raw pointers under the access-parameterized
+  `Ptr(A: access = shared)(T: type)` family. `Ptr(T)` remains the shared spelling,
+  `Ptr(mut)(T)` selects mutable access, and the separate mutable-pointer declaration has been
+  removed. Pointer constructors, raw intrinsics, alloc containers, diagnostics, and handler-owned
+  recursive borrow channels now carry the selected access through the single validated lang item.
 - Reduced the public allocation API to the `std.boxed.Box` and `std.vec.Vec` types plus their
   inherent methods; prefixed `box_*` and `vec_*` functions are now implementation-private.
   Replaced `Box.as_mut_ptr()` with consuming `Box.into_raw()` and unsafe `Box.from_raw(pointer)`
@@ -13,8 +18,8 @@ subset.
 - Added bounded `L: usize` compile-time parameters with non-negative literal arguments, explicit
   forwarding, array-driven inference, and monomorphization identity. Fixed arrays now use the
   validated curried `core.memory.Array(T)(L)` declaration; the old `Array(T, L)` grouping is rejected.
-- Added validated `core.memory` declarations for `Ptr(T)`, `MutPtr(T)`, their explicit-borrow value
-  constructors, `size_of(T)`, and `align_of(T)`. Pointer and layout lowering now follows validated
+- Added validated `core.memory` declarations for the `Ptr(A)(T)` family, its explicit-borrow value
+  constructor, `size_of(T)`, and `align_of(T)`. Pointer and layout lowering now follows validated
   lang-item identities instead of an unvalidated reserved-name list.
 - Moved the borrow type and value lang-item declarations from the compile-time domain module into
   the dedicated `core.borrow` module.
@@ -43,12 +48,12 @@ subset.
   physical `Result(E)(T)` boundary. Native regressions cover both handler orderings, success,
   failure, resumption, abandonment, and exactly-once root cleanup; unresolved effect-row parameters
   are rejected before entering the shared-root path.
-- Added internal `Ptr`/`MutPtr` ownership channels for borrowed roots crossing direct and mutually
+- Added internal access-parameterized `Ptr` ownership channels for borrowed roots crossing direct and mutually
   recursive effectful calls. Call-graph cycle detection selects recursive frames, while base
   returns, resumption, abandonment, and each one-shot environment retain exactly-once cleanup.
 - Allowed an unsafe local raw-pointer dereference to serve as a field or constant-index place base.
   A selected Copy field can be read without copying its non-Copy root, and writes still require
-  `MutPtr(T)`.
+  `Ptr(mut)(T)`.
 - Staged shared and mutable root/field arguments at their original positions before materializing a
   direct reusable handler action. Explicit reference locals preserve source places and keep loans
   live through action capture and the one-shot call; overlapping mutable captures are rejected, and
@@ -1496,7 +1501,7 @@ subset.
 
 ## 0.60.0 - 2026-07-21
 
-- Added the unsafe `raw_offset(pointer, index)` intrinsic for both `Ptr(T)` and `MutPtr(T)`, with a
+- Added the unsafe `raw_offset(pointer, index)` intrinsic for both `Ptr(T)` and `Ptr(mut)(T)`, with a
   `u64` element index and result mutability matching the input pointer.
 - Lowered pointer offsets to LLVM `getelementptr` using the concrete pointee layout, so aggregate
   padding and target-specific element size determine the byte displacement without host guesses.
@@ -1797,7 +1802,7 @@ subset.
 - Added safe source-backed `box_into_inner` and `box_replace` operations. The former consumes the
   unique Box and transfers its pointee to the caller; the latter mutably borrows a Box, returns its
   old pointee, and installs a new owner without an intermediate drop.
-- Added unsafe `raw_take(MutPtr(T)): T` for move-initialized storage and safe `forget(value)` for
+- Added unsafe `raw_take(Ptr(mut)(T)): T` for move-initialized storage and safe `forget(value)` for
   explicitly abandoning an owner. Both participate in move analysis and cleanup verification;
   use-after-forget and safe-context raw takes are rejected.
 - Added native custom-`Drop` coverage proving into-inner destruction exactly once, replacement of
@@ -1823,7 +1828,7 @@ subset.
 
 ## 0.27.0 - 2026-07-21
 
-- Added `Ptr(T)` and `MutPtr(T)`, explicit `unsafe do`, raw load/store, and reserved allocator
+- Added `Ptr(T)` and `Ptr(mut)(T)`, explicit `unsafe do`, raw load/store, and reserved allocator
   intrinsics as the first audited unsafe boundary.
 
 ## 0.26.0 - 2026-07-21

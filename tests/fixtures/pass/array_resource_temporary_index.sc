@@ -1,4 +1,4 @@
-let Resource = struct { counter: MutPtr(i32) }
+let Resource = struct { counter: Ptr(mut)(i32) }
 
 extend Resource: Drop {
   let drop(self: borrow(mut)(Self))(): () = { unsafe {
@@ -6,7 +6,7 @@ extend Resource: Drop {
   }
   }}
 
-let make(counter: MutPtr(i32)): Array(Resource)(2) = { [Resource { counter: counter }, Resource { counter: counter }] }
+let make(counter: Ptr(mut)(i32)): Array(Resource)(2) = { [Resource { counter: counter }, Resource { counter: counter }] }
 
 let main(): i32 = {
   let counter = unsafe {

@@ -138,7 +138,11 @@ impl fmt::Display for Ty {
             Self::Bool => f.write_str("bool"),
             Self::Unit => f.write_str("()"),
             Self::Pointer { pointee, mutable } => {
-                write!(f, "{}({pointee})", if *mutable { "MutPtr" } else { "Ptr" })
+                write!(
+                    f,
+                    "{}({pointee})",
+                    if *mutable { "Ptr(mut)" } else { "Ptr" }
+                )
             }
             Self::Reference {
                 pointee,

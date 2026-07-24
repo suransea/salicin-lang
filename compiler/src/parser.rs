@@ -5944,7 +5944,7 @@ mod tests {
     #[test]
     fn parses_unsafe_raw_pointer_dereference_and_assignment() {
         let program = parse(
-            "let main(): i32 = {\n  let mut value = 41\n  let pointer = MutPtr(borrow(mut)(value))\n  unsafe {\n    *pointer = *pointer + 1\n  }\n  value\n}\n",
+            "let main(): i32 = {\n  let mut value = 41\n  let pointer = Ptr(mut)(borrow(mut)(value))\n  unsafe {\n    *pointer = *pointer + 1\n  }\n  value\n}\n",
         )
         .unwrap();
         let Item::Function(function) = &program.items[0] else {

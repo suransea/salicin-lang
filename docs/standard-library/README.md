@@ -43,7 +43,7 @@ library/
 ## Prelude policy
 
 The edition prelude must stay small. It contains the universal `Never`, `Copy`, and `Drop`
-contracts, primitive type names, and the `Array`, `Ptr`, `MutPtr`, `size_of`, and `align_of`
+contracts, primitive type names, and the `Array`, `Ptr`, `size_of`, and `align_of`
 memory contracts that compiler-generated types and low-level library code routinely need.
 `Option` and `Result` are fundamental `core` declarations, but ordinary source should name them
 through the `std` facade:

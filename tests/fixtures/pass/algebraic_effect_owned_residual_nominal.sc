@@ -8,7 +8,7 @@ let Step = effect {
 
 let State = struct {
   value: i32,
-  drops: MutPtr(i32),
+  drops: Ptr(mut)(i32),
 }
 
 extend State: Drop {
@@ -25,7 +25,7 @@ let update(state: borrow(mut)(State)): i32 with(Audit, Step) = {
 }
 
 let audit_outside(
-  drops: MutPtr(i32),
+  drops: Ptr(mut)(i32),
   abandon_audit: bool,
   abandon_step: bool,
 ): i32 = {
@@ -43,7 +43,7 @@ let audit_outside(
 }
 
 let step_outside(
-  drops: MutPtr(i32),
+  drops: Ptr(mut)(i32),
   abandon_audit: bool,
   abandon_step: bool,
 ): i32 = {

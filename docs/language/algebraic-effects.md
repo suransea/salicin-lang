@@ -233,7 +233,7 @@ then carried alongside the frame-owned root. Resume reconstructs the element add
 current root and performs the ordinary bounds check; abandonment never reevaluates the index.
 This internal projection does not enable ordinary dynamic indexed assignment. Non-`Copy` or nested
 dynamic indexed places retain the separate frame ABI. Direct and mutually recursive borrowed calls
-use compiler-internal `Ptr`/`MutPtr` channels instead: the outer continuation remains the sole owner,
+use compiler-internal `Ptr`/`Ptr(mut)` channels instead: the outer continuation remains the sole owner,
 each recursive frame receives only Copy addresses, and generated unsafe capability does not enter
 the user's declared effect row. Call-graph cycle detection establishes the same frame path for
 direct and mutual recursion.

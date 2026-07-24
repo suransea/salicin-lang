@@ -4,7 +4,7 @@ let Step = effect {
 
 let State = struct {
   value: i32,
-  drops: MutPtr(i32),
+  drops: Ptr(mut)(i32),
 }
 
 extend State: Drop {
@@ -23,7 +23,7 @@ let walk(state: borrow(mut)(State), count: i32): i32 with(Step) = {
   nested + state.value
 }
 
-let run(drops: MutPtr(i32), abandon: bool): i32 = {
+let run(drops: Ptr(mut)(i32), abandon: bool): i32 = {
   let mut state = State { value: 18, drops: drops }
   let result = Step.handle delta { (resume) ->
     if abandon { 40 } else { resume(1) }

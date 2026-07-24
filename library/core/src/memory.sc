@@ -5,19 +5,14 @@
 pub let Array(T: type)
   (L: usize): type
 
-/// Shared raw pointer type.
-pub let Ptr(T: type): type
+/// Raw pointer type with access `A` and pointee `T`.
+pub let Ptr(A: access = shared)
+  (T: type): type
 
-/// Mutable raw pointer type.
-pub let MutPtr(T: type): type
-
-/// Forms a shared raw pointer from an explicit shared borrow.
-pub let Ptr(T: type)
-  (value: borrow(T)): Ptr(T)
-
-/// Forms a mutable raw pointer from an explicit mutable borrow.
-pub let MutPtr(T: type)
-  (value: borrow(mut)(T)): MutPtr(T)
+/// Forms a raw pointer from a borrow with the same access.
+pub let Ptr(A: access = shared)
+  (T: type)
+  (value: borrow(A)(T)): Ptr(A)(T)
 
 /// Returns the target size of `T` in bytes.
 pub let size_of(T: type): u64

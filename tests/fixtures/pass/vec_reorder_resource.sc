@@ -1,6 +1,6 @@
 let Vec = std.vec.Vec
 
-let Resource = struct { counter: MutPtr(i32), value: i32 }
+let Resource = struct { counter: Ptr(mut)(i32), value: i32 }
 
 extend Resource {
   let read(self: borrow(Self))(): i32 = { self.value }

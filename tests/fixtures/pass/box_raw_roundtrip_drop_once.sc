@@ -1,6 +1,6 @@
 let Box = std.boxed.Box
 
-let Resource = struct { counter: MutPtr(i32) }
+let Resource = struct { counter: Ptr(mut)(i32) }
 
 extend Resource: Drop {
   let drop(self: borrow(mut)(Self))(): () = { unsafe {
@@ -11,7 +11,7 @@ extend Resource: Drop {
 let main(): i32 = {
   let mut count = 0
   do {
-    let counter = MutPtr(borrow(mut)(count))
+    let counter = Ptr(mut)(borrow(mut)(count))
     let boxed = Box.new(Resource { counter: counter })
     let pointer = boxed.into_raw()
     let rebuilt = unsafe {

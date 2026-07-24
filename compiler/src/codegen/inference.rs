@@ -553,31 +553,75 @@ impl Analyzer {
                 }
             }
             Type::Named(name, arguments)
-                if (self.is_lang_item_name(name, LangItemKind::PtrTypeForm)
-                    || self.is_lang_item_name(name, LangItemKind::MutPtrTypeForm))
-                    && arguments.len() == 1 =>
+                if self.is_lang_item_name(name, LangItemKind::PtrTypeForm)
+                    && matches!(arguments.len(), 1 | 2) =>
             {
                 let Ty::Pointer { pointee, mutable } = actual else {
                     return Err(mismatch());
                 };
-                if *mutable != self.is_lang_item_name(name, LangItemKind::MutPtrTypeForm) {
-                    return Err(mismatch());
-                }
-                self.unify_template_ty(
-                    &arguments[0],
-                    pointee,
-                    match actual_source {
-                        Some(Type::Named(actual_name, actual_arguments))
-                            if actual_name == name && actual_arguments.len() == 1 =>
-                        {
-                            Some(&actual_arguments[0])
+                let actual_access = Ty::Struct(
+                    if *mutable {
+                        ACCESS_MUT_MARKER
+                    } else {
+                        ACCESS_SHARED_MARKER
+                    }
+                    .to_owned(),
+                );
+                let actual_source_arguments = match actual_source {
+                    Some(Type::Named(actual_name, actual_arguments))
+                        if actual_name == name
+                            && matches!(actual_arguments.len(), 1 | 2) =>
+                    {
+                        Some(actual_arguments.as_slice())
+                    }
+                    _ => None,
+                };
+                let (access, template_pointee) = match arguments.as_slice() {
+                    [pointee] => (None, pointee),
+                    [access, pointee] => (Some(access), pointee),
+                    _ => unreachable!("pointer arity guard matched"),
+                };
+                let mut changed = match access {
+                    None if *mutable => return Err(mismatch()),
+                    None => false,
+                    Some(access) => match access {
+                    Type::Named(access, access_arguments)
+                        if access_arguments.is_empty()
+                            && matches!(
+                                access.as_str(),
+                                "shared" | "mut" | ACCESS_SHARED_MARKER | ACCESS_MUT_MARKER
+                            ) =>
+                    {
+                        let expects_mutable =
+                            matches!(access.as_str(), "mut" | ACCESS_MUT_MARKER);
+                        if expects_mutable != *mutable {
+                            return Err(mismatch());
                         }
-                        _ => None,
+                        false
+                    }
+                    access => self.unify_template_ty(
+                        access,
+                        &actual_access,
+                        actual_source_arguments.and_then(|arguments| {
+                            (arguments.len() == 2).then(|| &arguments[0])
+                        }),
+                        compile_parameters,
+                        inferred,
+                        origin,
+                    )?,
                     },
+                };
+                changed |= self.unify_template_ty(
+                    template_pointee,
+                    pointee,
+                    actual_source_arguments.map(|arguments| {
+                        &arguments[if arguments.len() == 2 { 1 } else { 0 }]
+                    }),
                     compile_parameters,
                     inferred,
                     origin,
-                )
+                )?;
+                Ok(changed)
             }
             Type::Named(name, arguments) => {
                 let (actual_kind, actual_name) = match actual {
@@ -815,6 +859,41 @@ impl Analyzer {
                 }))
             }
             Type::Named(name, arguments)
+                if self.is_lang_item_name(name, LangItemKind::PtrTypeForm) =>
+            {
+                let (access, pointee) = match arguments.as_slice() {
+                    [pointee] => (None, pointee),
+                    [access, pointee] => (Some(access), pointee),
+                    _ => return None,
+                };
+                let mutable = match access {
+                    None => false,
+                    Some(access) => {
+                        match self.resolved_template_ty(access, compile_parameters, inferred)? {
+                            Ty::Struct(name)
+                                if matches!(name.as_str(), "shared" | ACCESS_SHARED_MARKER) =>
+                            {
+                                false
+                            }
+                            Ty::Struct(name)
+                                if matches!(name.as_str(), "mut" | ACCESS_MUT_MARKER) =>
+                            {
+                                true
+                            }
+                            _ => return None,
+                        }
+                    }
+                };
+                Some(Ty::Pointer {
+                    pointee: Box::new(self.resolved_template_ty(
+                        pointee,
+                        compile_parameters,
+                        inferred,
+                    )?),
+                    mutable,
+                })
+            }
+            Type::Named(name, arguments)
                 if arguments.is_empty() && compile_parameters.contains(name) =>
             {
                 inferred.get(name).map(|argument| argument.ty.clone())
@@ -884,6 +963,7 @@ impl Analyzer {
                 matches!(
                     parameter.kind,
                     CompileParamKind::Type
+                        | CompileParamKind::Access
                         | CompileParamKind::USize
                         | CompileParamKind::TypeConstructor { .. }
                 )
@@ -1212,6 +1292,7 @@ impl Analyzer {
                 matches!(
                     parameter.kind,
                     CompileParamKind::Type
+                        | CompileParamKind::Access
                         | CompileParamKind::USize
                         | CompileParamKind::TypeConstructor { .. }
                 )

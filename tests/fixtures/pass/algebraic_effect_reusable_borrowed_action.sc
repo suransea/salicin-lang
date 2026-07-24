@@ -5,7 +5,7 @@ let Ask = effect {
 let State = struct {
   left: i32,
   right: i32,
-  drops: MutPtr(i32),
+  drops: Ptr(mut)(i32),
 }
 
 extend State: Drop {
@@ -27,7 +27,7 @@ let run(
   }
 }
 
-let execute(drops: MutPtr(i32), abandon: bool): i32 = {
+let execute(drops: Ptr(mut)(i32), abandon: bool): i32 = {
   let mut state = State { left: 10, right: 20, drops: drops }
   let mut order = 1
   let result = run(state.left, state.right, abandon) { () ->

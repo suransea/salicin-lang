@@ -168,7 +168,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
         match &program.items[0] {
             Item::Struct(definition) if valid_box(definition) => {}
             _ => diagnostics.push(
-                "alloc Box must have shape `pub let Box(T: type) = struct { pointer: MutPtr(T) }`"
+                "alloc Box must have shape `pub let Box(T: type) = struct { pointer: Ptr(mut)(T) }`"
                     .to_owned(),
             ),
         }
@@ -182,7 +182,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
         match &program.items[2] {
             Item::Function(function) if valid_box_into_raw(function) => {}
             _ => diagnostics.push(
-                "alloc box_into_raw must consume `Box(T)` and return its owned `MutPtr(T)`"
+                "alloc box_into_raw must consume `Box(T)` and return its owned `Ptr(mut)(T)`"
                     .to_owned(),
             ),
         }
@@ -369,6 +369,10 @@ fn applied(name: &str, argument: Type) -> Type {
     Type::Named(name.to_owned(), vec![argument])
 }
 
+fn mutable_ptr(pointee: Type) -> Type {
+    Type::Named("Ptr".to_owned(), vec![named("mut"), pointee])
+}
+
 fn borrow_type(mutable: bool, access: Option<&str>, region: Option<&str>, pointee: Type) -> Type {
     Type::Borrow {
         mutable,
@@ -416,7 +420,7 @@ fn valid_box(definition: &StructDef) -> bool {
             [field]
                 if field.visibility == Visibility::Private
                     && field.name == "pointer"
-                    && field.ty == applied("MutPtr", named("T"))
+                    && field.ty == mutable_ptr(named("T"))
         )
 }
 
@@ -442,7 +446,7 @@ fn valid_box_into_raw(function: &Function) -> bool {
             function.groups.as_slice(),
             [group] if has_parameter(group, "boxed", PassMode::Move, applied("Box", named("T")))
         )
-        && function.return_type == Some(applied("MutPtr", named("T")))
+        && function.return_type == Some(mutable_ptr(named("T")))
         && function.body.is_some()
 }
 
@@ -568,7 +572,7 @@ fn valid_box_extension(extension: &crate::ast::ExtendDef) -> bool {
         && matches!(&extension.members[3], crate::ast::ExtendMember::Function(function)
             if valid_box_method(function, "into_inner", PassMode::Move, &[], named("T")))
         && matches!(&extension.members[4], crate::ast::ExtendMember::Function(function)
-            if valid_box_method(function, "into_raw", PassMode::Move, &[], applied("MutPtr", named("T"))))
+            if valid_box_method(function, "into_raw", PassMode::Move, &[], mutable_ptr(named("T"))))
         && matches!(&extension.members[5], crate::ast::ExtendMember::Function(function)
         if valid_box_method(
             function,
@@ -583,7 +587,7 @@ fn valid_box_from_raw_method(function: &Function) -> bool {
     function.name == "from_raw"
         && function.compile_groups.is_empty()
         && matches!(function.groups.as_slice(), [group]
-            if has_parameter(group, "pointer", PassMode::Inferred, applied("MutPtr", named("T"))))
+            if has_parameter(group, "pointer", PassMode::Inferred, mutable_ptr(named("T"))))
         && function.return_type == Some(applied("Box", named("T")))
         && function.effects
             == crate::ast::FunctionEffects {
@@ -676,7 +680,7 @@ fn valid_vec(definition: &StructDef) -> bool {
             [pointer, length, capacity]
                 if pointer.visibility == Visibility::Private
                     && pointer.name == "pointer"
-                    && pointer.ty == applied("MutPtr", named("T"))
+                    && pointer.ty == mutable_ptr(named("T"))
                     && length.visibility == Visibility::Private
                     && length.name == "length"
                     && length.ty == Type::U64
@@ -705,7 +709,7 @@ fn valid_vec_allocate(function: &Function) -> bool {
         && generic_t(function)
         && matches!(function.groups.as_slice(), [group]
             if has_parameter(group, "capacity", PassMode::Inferred, Type::U64))
-        && function.return_type == Some(applied("MutPtr", named("T")))
+        && function.return_type == Some(mutable_ptr(named("T")))
         && function.where_predicates.is_empty()
         && function.body.is_some()
 }
@@ -717,7 +721,7 @@ fn valid_vec_deallocate(function: &Function) -> bool {
             if matches!(group.as_slice(), [pointer, capacity]
                 if pointer.name == "pointer"
                     && pointer.mode == PassMode::Inferred
-                    && pointer.ty == applied("MutPtr", named("T"))
+                    && pointer.ty == mutable_ptr(named("T"))
                     && capacity.name == "capacity"
                     && capacity.mode == PassMode::Inferred
                     && capacity.ty == Type::U64))
@@ -1172,8 +1176,8 @@ mod tests {
     #[test]
     fn rejects_box_from_raw_without_unsafe_effect() {
         let source = alloc_source().replacen(
-            "let from_raw(pointer: MutPtr(T)): Box(T) with(core.effect.Unsafe) = {",
-            "let from_raw(pointer: MutPtr(T)): Box(T) = {",
+            "let from_raw(pointer: Ptr(mut)(T)): Box(T) with(core.effect.Unsafe) = {",
+            "let from_raw(pointer: Ptr(mut)(T)): Box(T) = {",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
@@ -1184,8 +1188,8 @@ mod tests {
     #[test]
     fn rejects_box_into_raw_without_ownership_transfer() {
         let source = alloc_source().replacen(
-            "let box_into_raw(T: type)(move boxed: Box(T)): MutPtr(T)",
-            "let box_into_raw(T: type)(boxed: borrow(Box(T))): MutPtr(T)",
+            "let box_into_raw(T: type)(move boxed: Box(T)): Ptr(mut)(T)",
+            "let box_into_raw(T: type)(boxed: borrow(Box(T))): Ptr(mut)(T)",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))
