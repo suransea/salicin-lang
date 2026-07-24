@@ -363,6 +363,21 @@ fn owned_roots_cross_concrete_residual_effect_rows() {
 }
 
 #[test]
+fn owned_roots_cross_direct_and_mutual_recursive_effectful_calls() {
+    for (name, output) in native_fixture_outputs_in_parallel(&[
+        "algebraic_effect_owned_recursive_call.sc",
+        "algebraic_effect_owned_mutual_recursion.sc",
+    ]) {
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn indexed_nominal_state_crosses_effectful_calls_once() {
     let output = salic()
         .arg("run")
@@ -639,6 +654,7 @@ fn raw_pointer_read_and_write_run_with_expected_result() {
     let fixtures = [
         "raw_pointer_read.sc",
         "raw_pointer_write.sc",
+        "raw_pointer_projected_place.sc",
         "do_forwards_unsafe_color.sc",
     ];
     for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
@@ -686,6 +702,14 @@ fn raw_pointer_intrinsic_errors_report_their_cause() {
             "expects one empty runtime argument group",
         ),
         ("raw_borrow_safe.sc", "requires an `unsafe` block"),
+        (
+            "raw_pointer_projected_place_safe.sc",
+            "requires an `unsafe` block",
+        ),
+        (
+            "raw_pointer_projected_place_shared_write.sc",
+            "cannot assign through a shared borrow",
+        ),
         (
             "raw_borrow_mut_immutable_pointer.sc",
             "requires a `MutPtr(T)`",

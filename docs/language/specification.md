@@ -1937,6 +1937,10 @@ pub extern "C" let add(a: c_int, b: c_int): c_int = { a + b }
 C 函数需要 `unsafe`。`core.ffi` 提供 `c_char`、`c_int`、`c_long` 等平台 C 类型；Salicin
 `char` 是 Unicode scalar，不能代替 C `char`。
 
+在 `unsafe` 块内，局部 `Ptr(T)` 或 `MutPtr(T)` 的解引用可以作为字段或常量索引 place 的基址，
+例如 `(*pointer).field`。读取只要求最终选择的值为 `Copy`，不要求整个 `T` 为 `Copy`；
+写入仍要求 `MutPtr(T)`。直接读取非 `Copy` 的 `*pointer` 仍不受支持。
+
 数组、这些指针类型、从显式借用生成指针的构造器以及布局查询由 `core.memory` 声明，并由编译器按
 lang-item 形状和规范身份验证：
 

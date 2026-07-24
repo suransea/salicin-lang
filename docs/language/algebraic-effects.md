@@ -216,8 +216,8 @@ and remains mutable when the source binding was mutable. Assignment through a fi
 captures the complete root as mutable, including captures required by an index expression.
 Consequently direct repeated operations can retain and mutate user-defined nominal state, with the
 same exactly-once cleanup on resumption and abandonment. Resumable loop backedges carry the same
-owned state through recursive frame calls. For a known non-recursive effectful function with no
-residual effect, borrow arguments that are root locals or stable field paths trigger call-frame
+owned state through recursive frame calls. For a known non-recursive effectful function with a
+concrete effect row, borrow arguments that are root locals or stable field paths trigger call-frame
 fusion when their outer roots are distinct. Ordinary value arguments are materialized in source
 order, borrowed parameters are substituted with their caller places, and the inlined body enters
 selective CPS in the caller frame. The body and following continuation therefore share one owned
@@ -226,9 +226,12 @@ root/field array base when its element is `Copy` and its outer root is distinct 
 borrow argument. Its `i32` index is materialized once in source argument order before selective CPS,
 then carried alongside the frame-owned root. Resume reconstructs the element address from that
 current root and performs the ordinary bounds check; abandonment never reevaluates the index.
-This internal projection does not enable ordinary dynamic indexed assignment. Recursive calls,
-non-`Copy` or nested dynamic indexed places, multiple projections of one root, and residual-effect
-combinations retain the separate frame ABI.
+This internal projection does not enable ordinary dynamic indexed assignment. Non-`Copy` or nested
+dynamic indexed places retain the separate frame ABI. Direct and mutually recursive borrowed calls
+use compiler-internal `Ptr`/`MutPtr` channels instead: the outer continuation remains the sole owner,
+each recursive frame receives only Copy addresses, and generated unsafe capability does not enter
+the user's declared effect row. Call-graph cycle detection establishes the same frame path for
+direct and mutual recursion.
 
 Selective CPS removes only the handled nominal identity. Residual `Unsafe`, `Throws(Error)`, and
 other nominal requirements remain on generated resumable frames. Intercepted operations also retain
@@ -280,7 +283,10 @@ that value as an explicit hidden parameter; each direct or mutually recursive ca
 fresh node for its remaining computation, so recursive function result and handler answer types may
 differ. Invoking a node transfers its environment to the call entry and disarms the erased value;
 abandoning an armed node calls its drop entry. Thus either terminal path destroys every move-captured
-value exactly once. A named recursive frame is visible only while transforming its own callee body;
+value exactly once. Recursive borrowed roots remain owned by the outer continuation and are shared
+between these nodes through internal raw-pointer channels, so base return, resumption, and
+abandonment do not duplicate cleanup. A named recursive frame is visible only while transforming
+its own callee body;
 a later sequential call in the caller continuation creates an independent frame instead of a false
 recursive backedge. Selective CPS preserves source order through operation and ordinary-call
 arguments, arrays, indexes, members, `match` scrutinees and arm

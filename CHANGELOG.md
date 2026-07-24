@@ -43,6 +43,12 @@ subset.
   physical `Result(E)(T)` boundary. Native regressions cover both handler orderings, success,
   failure, resumption, abandonment, and exactly-once root cleanup; unresolved effect-row parameters
   are rejected before entering the shared-root path.
+- Added internal `Ptr`/`MutPtr` ownership channels for borrowed roots crossing direct and mutually
+  recursive effectful calls. Call-graph cycle detection selects recursive frames, while base
+  returns, resumption, abandonment, and each one-shot environment retain exactly-once cleanup.
+- Allowed an unsafe local raw-pointer dereference to serve as a field or constant-index place base.
+  A selected Copy field can be read without copying its non-Copy root, and writes still require
+  `MutPtr(T)`.
 - Restored `examples/ledger.sc` to effectful state processing: its `for` loop now consumes
   non-`Copy` transactions and performs overdraft operations while retaining both iterator and
   mutable ledger state.

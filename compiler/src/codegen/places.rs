@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::ast::Expr;
+use crate::ast::{Expr, UnaryOp};
 
 use super::flow::{places_overlap, InitializationStatus, Loan, LoanKind, LowerCtx, PlaceKey};
 use super::hir::{
@@ -68,6 +68,43 @@ impl Analyzer {
                     root_mutable: local.mutable,
                     loan: None,
                     indirect: false,
+                })
+            }
+            Expr::Unary(UnaryOp::Deref, operand) => {
+                let Expr::Name(name) = operand.as_ref() else {
+                    self.error("raw pointer place requires a local pointer");
+                    return None;
+                };
+                let Some(local) = context.lookup(name).cloned() else {
+                    self.error(format!("unknown local `{name}` in raw pointer place"));
+                    return None;
+                };
+                if context.unsafe_depth == 0 {
+                    self.error("raw pointer dereference requires an `unsafe` block");
+                    return None;
+                }
+                let Ty::Pointer { pointee, mutable } = local.ty else {
+                    self.error(format!(
+                        "unary `*` requires a raw pointer, found `{}`",
+                        local.ty
+                    ));
+                    return None;
+                };
+                let pointee = *pointee;
+                Some(HirPlace {
+                    local: local.id,
+                    root_ty: pointee.clone(),
+                    projections: Vec::new(),
+                    dynamic_index: None,
+                    ty: pointee,
+                    capability: if mutable {
+                        LocalCapability::MutParam
+                    } else {
+                        LocalCapability::SharedParam
+                    },
+                    root_mutable: mutable,
+                    loan: None,
+                    indirect: true,
                 })
             }
             Expr::Member(base, field_name) => {
@@ -461,6 +498,14 @@ impl Analyzer {
     ) -> Option<HirPlace> {
         match expression {
             Expr::Name(name) if context.lookup(name).is_some() => {
+                self.lower_place(expression, context)
+            }
+            Expr::Unary(UnaryOp::Deref, operand)
+                if matches!(
+                    operand.as_ref(),
+                    Expr::Name(name) if context.lookup(name).is_some()
+                ) =>
+            {
                 self.lower_place(expression, context)
             }
             Expr::Member(base, _) => {

@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use crate::ast::{
     BinaryOp, Binding, CallArg, Expr, Function, FunctionEffects, HandlerChainCall, ItemOrigin,
-    MatchArm, Param, PassMode, Pattern, Stmt, Type, Visibility,
+    MatchArm, Param, PassMode, Pattern, Stmt, Type, UnaryOp, Visibility,
 };
 use crate::core::LangItemKind;
 
@@ -90,6 +90,15 @@ pub(super) struct SourceInlineFrame {
     pub(super) recursive_name: String,
     pub(super) input: Type,
     pub(super) answer: Type,
+    pub(super) borrow_channels: Vec<SourceInlineBorrowChannel>,
+}
+
+#[derive(Clone)]
+pub(super) struct SourceInlineBorrowChannel {
+    pub(super) argument_index: usize,
+    pub(super) pointer_name: String,
+    pub(super) pointer_ty: Type,
+    pub(super) mutable: bool,
 }
 
 #[derive(Clone)]
@@ -1038,8 +1047,33 @@ fn stable_handler_borrow_place(expression: &Expr) -> Option<HandlerBorrowPlace> 
             });
             Some(place)
         }
+        Expr::Unary(UnaryOp::Deref, pointer)
+            if matches!(
+                pointer.as_ref(),
+                Expr::Name(name) if name.starts_with("$handler$borrow$pointer$")
+            ) =>
+        {
+            let Expr::Name(name) = pointer.as_ref() else {
+                unreachable!("guard requires an internal pointer name")
+            };
+            Some(HandlerBorrowPlace {
+                root: name.clone(),
+                projections: Vec::new(),
+            })
+        }
         _ => None,
     }
+}
+
+fn internal_handler_borrow_pointer(expression: &Expr) -> Option<&str> {
+    let Expr::Unary(UnaryOp::Deref, pointer) = expression else {
+        return None;
+    };
+    let Expr::Name(name) = pointer.as_ref() else {
+        return None;
+    };
+    name.starts_with("$handler$borrow$pointer$")
+        .then_some(name.as_str())
 }
 
 fn handler_borrow_places_overlap(left: &HandlerBorrowPlace, right: &HandlerBorrowPlace) -> bool {
@@ -1052,19 +1086,41 @@ fn handler_borrow_places_overlap(left: &HandlerBorrowPlace, right: &HandlerBorro
             || projection_paths_overlap(&left.projections, &right.projections))
 }
 
-fn handler_expression_calls_named_function(expression: &Expr, name: &str) -> bool {
+fn collect_handler_named_calls(expression: &Expr, calls: &mut Vec<String>) {
     let mut expression = expression.clone();
-    let mut found = false;
     visit_expr_mut(&mut expression, &mut |expression| {
         let mut groups = Vec::new();
-        if matches!(flatten_call(expression, &mut groups), Expr::Name(callee) if callee == name) {
-            found = true;
+        if let Expr::Name(callee) = flatten_call(expression, &mut groups) {
+            calls.push(callee.clone());
         }
     });
-    found
 }
 
 impl Analyzer {
+    fn handler_function_is_recursive(&self, body: &Expr, name: &str) -> bool {
+        let mut pending = Vec::new();
+        collect_handler_named_calls(body, &mut pending);
+        let mut visited = HashSet::new();
+        while let Some(callee) = pending.pop() {
+            if callee == name {
+                return true;
+            }
+            if !visited.insert(callee.clone()) {
+                continue;
+            }
+            let Some(body) = self
+                .functions
+                .get(&callee)
+                .or_else(|| self.function_templates.get(&callee))
+                .and_then(|function| function.body.as_ref())
+            else {
+                continue;
+            };
+            collect_handler_named_calls(body, &mut pending);
+        }
+        false
+    }
+
     pub(super) fn materialize_direct_handler_action(
         &mut self,
         name: &str,
@@ -1684,7 +1740,14 @@ impl Analyzer {
                     name: runtime_name.clone(),
                     annotation: Some(Type::Function {
                         groups: vec![vec![input.clone()]],
-                        effects: FunctionEffects::default(),
+                        effects: FunctionEffects {
+                            unsafe_effect: handler_for_clause
+                                .inlining
+                                .borrow()
+                                .values()
+                                .any(|frame| !frame.borrow_channels.is_empty()),
+                            ..FunctionEffects::default()
+                        },
                         result: Box::new(answer),
                     }),
                     value: Expr::Closure(
@@ -3483,6 +3546,7 @@ impl Analyzer {
         if let Some(frame) = handler.inlining.borrow().get(&name).cloned() {
             let specialization = self.next_closure;
             self.next_closure += 1;
+            let has_borrow_channels = !frame.borrow_channels.is_empty();
             let value_name = format!("$handler$recursive$continuation$value${specialization}");
             let continuation_name = format!("$handler$recursive$continuation${specialization}");
             let erased_name = format!("$handler$erased$recursive$continuation${specialization}");
@@ -3495,7 +3559,10 @@ impl Analyzer {
                 name: continuation_name.clone(),
                 annotation: Some(Type::Function {
                     groups: vec![vec![frame.input.clone()]],
-                    effects: FunctionEffects::default(),
+                    effects: FunctionEffects {
+                        unsafe_effect: has_borrow_channels,
+                        ..FunctionEffects::default()
+                    },
                     result: Box::new(frame.answer.clone()),
                 }),
                 value: Expr::Closure(
@@ -3528,9 +3595,22 @@ impl Analyzer {
             let mut recursive_arguments = groups
                 .iter()
                 .flat_map(|group| group.iter())
+                .enumerate()
                 .map(|argument| CallArg {
                     label: None,
-                    value: argument.value.clone(),
+                    value: frame
+                        .borrow_channels
+                        .iter()
+                        .find(|channel| channel.argument_index == argument.0)
+                        .map_or_else(
+                            || argument.1.value.clone(),
+                            |channel| {
+                                internal_handler_borrow_pointer(&argument.1.value).map_or_else(
+                                    || Expr::Name(channel.pointer_name.clone()),
+                                    |pointer| Expr::Name(pointer.to_owned()),
+                                )
+                            },
+                        ),
                 })
                 .collect::<Vec<_>>();
             recursive_arguments.push(CallArg {
@@ -3543,7 +3623,11 @@ impl Analyzer {
             );
             return Some(Ok(Expr::Block(
                 vec![Stmt::Let(continuation_binding), Stmt::Let(erased_binding)],
-                Some(Box::new(recursive_call)),
+                Some(Box::new(if has_borrow_channels {
+                    Expr::Unsafe(Box::new(recursive_call))
+                } else {
+                    recursive_call
+                })),
             )));
         }
         let Some(_) = function.body else {
@@ -3812,10 +3896,11 @@ impl Analyzer {
             ));
             return Some(Err(()));
         }
+        let function_is_recursive = self.handler_function_is_recursive(&body, &name);
         let can_fuse_borrow_frame = !borrow_arguments.is_empty()
             && borrow_places_are_compatible
             && has_concrete_effect_row
-            && !handler_expression_calls_named_function(&body, &name);
+            && !function_is_recursive;
         if can_fuse_borrow_frame {
             let mut parameter_bindings = Vec::new();
             let mut borrowed_places = HashMap::new();
@@ -3884,6 +3969,70 @@ impl Analyzer {
                 transformed.map(|body| Expr::Block(parameter_bindings, Some(Box::new(body)))),
             );
         }
+        let recursive_borrow_channels = if function_is_recursive
+            && !borrow_arguments.is_empty()
+            && borrow_places_are_compatible
+            && has_concrete_effect_row
+        {
+            parameters
+                .iter()
+                .flatten()
+                .enumerate()
+                .filter_map(|(index, parameter)| {
+                    let mode = source_borrow_channel_mode(parameter.mode, &parameter.ty)?;
+                    let (pointee, mutable) = match &parameter.ty {
+                        Type::Borrow {
+                            mutable, pointee, ..
+                        } => (pointee.as_ref().clone(), *mutable),
+                        ty => (ty.clone(), mode == PassMode::MutBorrow),
+                    };
+                    let pointer_kind = if mutable {
+                        LangItemKind::MutPtrTypeForm
+                    } else {
+                        LangItemKind::PtrTypeForm
+                    };
+                    Some(SourceInlineBorrowChannel {
+                        argument_index: index,
+                        pointer_name: format!("$handler$borrow$pointer${specialization}${index}"),
+                        pointer_ty: Type::Named(
+                            self.lang_item_name(pointer_kind).to_owned(),
+                            vec![pointee],
+                        ),
+                        mutable,
+                    })
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        if !recursive_borrow_channels.is_empty() {
+            let replacements = recursive_borrow_channels
+                .iter()
+                .filter_map(|channel| {
+                    parameters
+                        .iter()
+                        .flatten()
+                        .nth(channel.argument_index)
+                        .map(|parameter| {
+                            (
+                                parameter.name.clone(),
+                                Expr::Unary(
+                                    UnaryOp::Deref,
+                                    Box::new(Expr::Name(channel.pointer_name.clone())),
+                                ),
+                            )
+                        })
+                })
+                .collect::<HashMap<_, _>>();
+            visit_expr_mut(&mut body, &mut |expression| {
+                let Expr::Name(name) = expression else {
+                    return;
+                };
+                if let Some(replacement) = replacements.get(name).cloned() {
+                    *expression = replacement;
+                }
+            });
+        }
         let continuation_name = format!("$handler$call$continuation${specialization}");
         let continuation_value_name = format!("$handler$call$continuation$value${specialization}");
         let continuation_body =
@@ -3897,6 +4046,7 @@ impl Analyzer {
                 recursive_name,
                 input: input.clone(),
                 answer: answer.clone(),
+                borrow_channels: recursive_borrow_channels.clone(),
             },
         );
         let continuation_binding = Binding {
@@ -3904,7 +4054,10 @@ impl Analyzer {
             name: continuation_name.clone(),
             annotation: Some(Type::Function {
                 groups: vec![vec![input.clone()]],
-                effects: FunctionEffects::default(),
+                effects: FunctionEffects {
+                    unsafe_effect: !recursive_borrow_channels.is_empty(),
+                    ..FunctionEffects::default()
+                },
                 result: Box::new(answer.clone()),
             }),
             value: Expr::Closure(
@@ -3963,6 +4116,10 @@ impl Analyzer {
             .return_continuations
             .borrow_mut()
             .insert(return_name.clone(), tail_continuation.clone());
+        let unsafe_depth = handler.lexical_unsafe_depth.get();
+        if !recursive_borrow_channels.is_empty() {
+            handler.lexical_unsafe_depth.set(unsafe_depth + 1);
+        }
         let transformed_body = match self.transform_handler_expr(
             body,
             handler.clone(),
@@ -3971,6 +4128,7 @@ impl Analyzer {
         ) {
             Ok(body) => body,
             Err(()) => {
+                handler.lexical_unsafe_depth.set(unsafe_depth);
                 handler
                     .return_continuations
                     .borrow_mut()
@@ -3979,6 +4137,7 @@ impl Analyzer {
                 return Some(Err(()));
             }
         };
+        handler.lexical_unsafe_depth.set(unsafe_depth);
         handler
             .return_continuations
             .borrow_mut()
@@ -3990,7 +4149,22 @@ impl Analyzer {
             .cloned()
             .enumerate()
             .filter_map(|(index, parameter)| {
-                (!omitted_parameters.contains(&index)).then_some(parameter)
+                if omitted_parameters.contains(&index) {
+                    return None;
+                }
+                recursive_borrow_channels
+                    .iter()
+                    .find(|channel| channel.argument_index == index)
+                    .map_or(Some(parameter), |channel| {
+                        Some(Param {
+                            mode: PassMode::Copy,
+                            access: None,
+                            passing: None,
+                            region: None,
+                            name: channel.pointer_name.clone(),
+                            ty: channel.pointer_ty.clone(),
+                        })
+                    })
             })
             .collect::<Vec<_>>();
         flattened_parameters.push(Param {
@@ -4008,7 +4182,40 @@ impl Analyzer {
             .into_iter()
             .enumerate()
             .filter_map(|(index, argument)| {
-                (!omitted_parameters.contains(&index)).then_some(argument)
+                if omitted_parameters.contains(&index) {
+                    return None;
+                }
+                let Some(channel) = recursive_borrow_channels
+                    .iter()
+                    .find(|channel| channel.argument_index == index)
+                else {
+                    return Some(argument);
+                };
+                if let Some(pointer) = internal_handler_borrow_pointer(&argument.value) {
+                    return Some(CallArg {
+                        label: None,
+                        value: Expr::Name(pointer.to_owned()),
+                    });
+                }
+                let pointer_kind = if channel.mutable {
+                    LangItemKind::MutPtrValueForm
+                } else {
+                    LangItemKind::PtrValueForm
+                };
+                Some(CallArg {
+                    label: None,
+                    value: Expr::Call(
+                        Box::new(Expr::Name(self.lang_item_name(pointer_kind).to_owned())),
+                        vec![CallArg {
+                            label: None,
+                            value: Expr::Borrow {
+                                mutable: channel.mutable,
+                                access: None,
+                                value: Box::new(argument.value),
+                            },
+                        }],
+                    ),
+                })
             })
             .collect::<Vec<_>>();
         flattened_arguments.push(CallArg {
@@ -4033,6 +4240,9 @@ impl Analyzer {
         if handler.lexical_unsafe_depth.get() > 0 {
             self.strip_authorized_unsafe_effects(&mut frame_effects);
         }
+        if !recursive_borrow_channels.is_empty() {
+            frame_effects.unsafe_effect = true;
+        }
         let frame_result = self.effect_abi_result_source(answer, &frame_effects);
         let frame_annotation = Some(Type::Function {
             groups: vec![flattened_parameters
@@ -4049,6 +4259,11 @@ impl Analyzer {
             value: Expr::Closure(flattened_parameters, Box::new(transformed_body)),
         };
         let call = Expr::Call(Box::new(Expr::Name(frame_name)), flattened_arguments);
+        let call = if recursive_borrow_channels.is_empty() {
+            call
+        } else {
+            Expr::Unsafe(Box::new(call))
+        };
         let result = Ok(Expr::Block(
             vec![
                 Stmt::Let(continuation_binding),

@@ -17,14 +17,9 @@ Priority meanings:
 
 Current milestone: **EH1, close the algebraic-handler extension**
 
-Next task: **EFF-RECUR-1**
+Next task: **EFF-ACTION-1**
 
 ### P0 handler queue
-
-- [ ] **EFF-RECUR-1: Share owned roots through recursive effectful calls**
-  - Extend recursive frame parameters with ownership channels required by caller continuations.
-  - Cover direct recursion, mutual recursion, base returns, resume, and abandon.
-  - Prove each recursive node arms and drops its environment exactly once.
 
 - [ ] **EFF-ACTION-1: Stage borrowed arguments before reusable handler actions**
   - Preserve the original borrow point and left-to-right evaluation.
@@ -131,6 +126,7 @@ Entry gate: all ASYNC1 prerequisites in the roadmap
 - [x] **EFF-INDEX-1:** Stage indexed borrow places once and rebuild them from frame-owned roots.
 - [x] **EFF-ALIAS-1:** Fuse statically disjoint same-root projections into handler frames.
 - [x] **EFF-RESIDUAL-1:** Share owned roots through concrete residual effect rows.
+- [x] **EFF-RECUR-1:** Share owned roots through direct and mutually recursive effectful calls.
 - [x] **CORE-MEMORY-1:** Source-back raw pointer and layout-query contracts in `core.memory`.
 - [x] **TYPE-CONST-1:** Add `usize` compile-time values and source-back curried `Array(T)(L)`.
 - [x] **CORE-BORROW-1:** Move borrow contracts from `core.domains` into `core.borrow`.

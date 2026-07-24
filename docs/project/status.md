@@ -101,8 +101,10 @@ require distinct roots, a stable root/field array base, and a `Copy` element. Th
 are materialized once in source argument order, then carried through resumption while the element
 address is rebuilt from the frame-owned root with a bounds check. Value arguments remain
 materialized in source order, and each borrowed place remains available to both the inlined body
-and following continuation. Recursive calls and non-`Copy` or nested dynamic indexed places still
-use the separate frame ABI. An unresolved effect-row parameter is explicitly rejected if that path
+and following continuation. Direct and mutually recursive calls use Copy raw-pointer channels
+inside compiler-authorized frames, leaving the outer continuation as the sole owner while each
+recursive node retains its one-shot call/drop environment. Non-`Copy` or nested dynamic indexed
+places still use the separate frame ABI. An unresolved effect-row parameter is explicitly rejected if that path
 would need to share borrowed arguments with the caller continuation.
 
 Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
@@ -189,7 +191,10 @@ effect-parameterized rows remain outside shared-root fusion until they are concr
 Derived handlers support typed one-shot resumption, abandonment, `done:` answer conversion, named-call
 propagation, direct recursion, and resumable loop backedges. Cross-function abandonment and
 computation after `resume` use explicit CPS continuation closures. Direct and mutually recursive
-frames share an erased call/drop-entry plus environment ABI with a runtime one-shot flag.
+frames share an erased call/drop-entry plus environment ABI with a runtime one-shot flag. Borrowed
+roots crossing recursive calls are represented by internal `Ptr`/`MutPtr` channels; call-graph
+cycle detection covers both direct and mutual recursion without transferring or duplicating root
+ownership.
 Reusable handler functions may accept an algebraic-effect callable parameter. Calls with a known
 named function or immutable function alias create a deduplicated static specialization, erase that
 parameter from the runtime groups, and run the substituted action through the handler's ordinary CPS

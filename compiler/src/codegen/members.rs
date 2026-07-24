@@ -122,7 +122,12 @@ impl Analyzer {
             }
         }
 
-        if let Some(place) = self.lower_place_without_diagnostic(base, context) {
+        let diagnostics_before_place = self.diagnostics.len();
+        let place = self.lower_place_without_diagnostic(base, context);
+        if place.is_none() && self.diagnostics.len() != diagnostics_before_place {
+            return error_expr();
+        }
+        if let Some(place) = place {
             if let Ty::Struct(target) | Ty::Enum(target) = &place.ty {
                 if self
                     .inherent_members
