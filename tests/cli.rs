@@ -2,13 +2,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use salicin_lang::check_source;
+use salicin_lang::{check_source, compile_source};
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+static TEST_ALLOCATOR_OBJECT: OnceLock<PathBuf> = OnceLock::new();
+const TEST_ALLOCATOR_RUNTIME: &str = include_str!("../runtime/allocator.c");
 
 fn salic() -> Command {
     Command::new(env!("CARGO_BIN_EXE_salic"))
@@ -29,15 +31,62 @@ fn output_text(output: &Output) -> String {
     )
 }
 
-fn salic_outputs_in_parallel(command: &str, paths: Vec<PathBuf>) -> Vec<(PathBuf, Output)> {
-    if paths.is_empty() {
-        return Vec::new();
-    }
+fn test_allocator_object() -> &'static Path {
+    TEST_ALLOCATOR_OBJECT.get_or_init(|| {
+        let source =
+            std::env::temp_dir().join(format!("salic-test-allocator-{}.c", std::process::id()));
+        let object = source.with_extension("o");
+        fs::write(&source, TEST_ALLOCATOR_RUNTIME).expect("write test allocator runtime");
+        let output = Command::new("/usr/bin/clang")
+            .arg("-c")
+            .arg("-x")
+            .arg("c")
+            .arg("-std=c11")
+            .arg(&source)
+            .arg("-o")
+            .arg(&object)
+            .output()
+            .expect("compile test allocator runtime");
+        assert!(output.status.success(), "{}", output_text(&output));
+        let _ = fs::remove_file(source);
+        object
+    })
+}
 
-    // These exhaustive fixture sweeps used to launch hundreds of compiler
-    // processes serially. Keep each fixture as a real CLI invocation, but
-    // distribute them across a bounded number of workers. Two sweeps can run
-    // concurrently under the Rust test harness, hence the division by two.
+fn run_source_in_process(path: &Path) -> Output {
+    let source = fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("read '{}': {error}", path.display()));
+    let ir = compile_source(&source).unwrap_or_else(|diagnostics| {
+        panic!("compile '{}':\n{}", path.display(), diagnostics.join("\n"))
+    });
+    let temporary = TestDirectory::new();
+    let ir_path = temporary.write("module.ll", &ir);
+    let executable = temporary.join("program");
+    let linked = Command::new("/usr/bin/clang")
+        .arg("-Wno-override-module")
+        .arg("-x")
+        .arg("ir")
+        .arg(&ir_path)
+        .arg("-x")
+        .arg("none")
+        .arg(test_allocator_object())
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .expect("link in-process fixture");
+    assert!(
+        linked.status.success(),
+        "{}: {}",
+        path.display(),
+        output_text(&linked)
+    );
+    Command::new(executable)
+        .output()
+        .unwrap_or_else(|error| panic!("run '{}': {error}", path.display()))
+}
+
+fn native_fixture_outputs_in_parallel(names: &[&str]) -> Vec<(String, Output)> {
+    let paths: Vec<_> = names.iter().map(|name| fixture("pass", name)).collect();
     let available = thread::available_parallelism()
         .map(|parallelism| parallelism.get())
         .unwrap_or(2);
@@ -49,52 +98,40 @@ fn salic_outputs_in_parallel(command: &str, paths: Vec<PathBuf>) -> Vec<(PathBuf
         for _ in 0..worker_count {
             let jobs = Arc::clone(&jobs);
             let results = Arc::clone(&results);
-            scope.spawn(move || loop {
-                let Some((index, path)) = jobs.lock().expect("lock fixture jobs").next() else {
-                    break;
-                };
-                let output = salic()
-                    .arg(command)
-                    .arg(&path)
-                    .output()
-                    .unwrap_or_else(|error| {
-                        panic!("run salic {command} for '{}': {error}", path.display())
-                    });
-                results
-                    .lock()
-                    .expect("lock fixture results")
-                    .push((index, path, output));
-            });
+            thread::Builder::new()
+                .name("salic-native-fixture".into())
+                .stack_size(16 * 1024 * 1024)
+                .spawn_scoped(scope, move || loop {
+                    let Some((index, path)) = jobs.lock().expect("lock native jobs").next() else {
+                        break;
+                    };
+                    let output = run_source_in_process(&path);
+                    results
+                        .lock()
+                        .expect("lock native results")
+                        .push((index, path, output));
+                })
+                .expect("spawn native fixture worker");
         }
     });
 
     let mut results = Arc::try_unwrap(results)
-        .expect("fixture workers released results")
+        .expect("native workers released results")
         .into_inner()
-        .expect("unlock fixture results");
+        .expect("unlock native results");
     results.sort_by_key(|(index, _, _)| *index);
     results
         .into_iter()
-        .map(|(_, path, output)| (path, output))
+        .map(|(_, path, output)| {
+            (
+                path.file_name()
+                    .expect("fixture path has a file name")
+                    .to_string_lossy()
+                    .into_owned(),
+                output,
+            )
+        })
         .collect()
-}
-
-fn fixture_outputs_in_parallel(command: &str, kind: &str, names: &[&str]) -> Vec<(String, Output)> {
-    salic_outputs_in_parallel(
-        command,
-        names.iter().map(|name| fixture(kind, name)).collect(),
-    )
-    .into_iter()
-    .map(|(path, output)| {
-        (
-            path.file_name()
-                .expect("fixture path has a file name")
-                .to_string_lossy()
-                .into_owned(),
-            output,
-        )
-    })
-    .collect()
 }
 
 fn check_sources_in_parallel(paths: Vec<PathBuf>) -> Vec<(PathBuf, Result<(), Vec<String>>)> {
@@ -412,7 +449,7 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
         "algebraic_effect_continuation_resume_drop.sc",
         "standard_effect_operations.sc",
     ];
-    for (fixture_name, output) in fixture_outputs_in_parallel("run", "pass", &fixtures) {
+    for (fixture_name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -730,7 +767,7 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         "vec_ordered_resource.sc",
         "vec_reorder_resource.sc",
     ];
-    for (name, output) in fixture_outputs_in_parallel("run", "pass", &successful) {
+    for (name, output) in native_fixture_outputs_in_parallel(&successful) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -754,7 +791,7 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         "vec_reserve_overflow.sc",
         "vec_zst_resource_drop_trap.sc",
     ];
-    for (name, output) in fixture_outputs_in_parallel("run", "pass", &trapping) {
+    for (name, output) in native_fixture_outputs_in_parallel(&trapping) {
         assert!(
             !output.status.success(),
             "{name} did not trap: {}",
@@ -1425,7 +1462,7 @@ fn m1_ownership_programs_run_with_expected_result() {
         "returned_borrow.sc",
         "borrow_value_parameter.sc",
     ];
-    for (name, output) in fixture_outputs_in_parallel("run", "pass", &fixtures) {
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2180,7 +2217,7 @@ fn m1_loops_and_arrays_run_with_expected_result() {
         "loop_move_then_break.sc",
         "for_iterator.sc",
     ];
-    for (name, output) in fixture_outputs_in_parallel("run", "pass", &fixtures) {
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2328,7 +2365,7 @@ fn m1_inherent_members_run_with_expected_result() {
         "self_expression_members.sc",
         "self_expression_generic.sc",
     ];
-    for (name, output) in fixture_outputs_in_parallel("run", "pass", &fixtures) {
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
