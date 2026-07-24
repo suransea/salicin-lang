@@ -2790,6 +2790,11 @@ impl Resolver {
             }
             Item::TypeAlias(definition) => {
                 definition.name = canonical_name(context.module_path, &definition.name);
+                self.rewrite_compile_parameter_types(
+                    &mut definition.compile_groups,
+                    context,
+                    &HashSet::new(),
+                );
                 let type_scope =
                     compile_parameter_names(&definition.compile_groups, &HashSet::new());
                 self.rewrite_type(&mut definition.target, context, &type_scope);
@@ -2799,6 +2804,11 @@ impl Resolver {
             Item::Trait(definition) => self.rewrite_trait(definition, context),
             Item::Effect(definition) => {
                 definition.name = canonical_name(context.module_path, &definition.name);
+                self.rewrite_compile_parameter_types(
+                    &mut definition.compile_groups,
+                    context,
+                    &HashSet::new(),
+                );
                 let type_scope =
                     compile_parameter_names(&definition.compile_groups, &HashSet::new());
                 for operation in &mut definition.operations {
@@ -2817,6 +2827,11 @@ impl Resolver {
 
     fn rewrite_struct(&mut self, definition: &mut StructDef, context: ResolveContext<'_>) {
         definition.name = canonical_name(context.module_path, &definition.name);
+        self.rewrite_compile_parameter_types(
+            &mut definition.compile_groups,
+            context,
+            &HashSet::new(),
+        );
         let type_scope = compile_parameter_names(&definition.compile_groups, &HashSet::new());
         for field in &mut definition.fields {
             self.rewrite_field(field, context, &type_scope);
@@ -2825,6 +2840,11 @@ impl Resolver {
 
     fn rewrite_enum(&mut self, definition: &mut EnumDef, context: ResolveContext<'_>) {
         definition.name = canonical_name(context.module_path, &definition.name);
+        self.rewrite_compile_parameter_types(
+            &mut definition.compile_groups,
+            context,
+            &HashSet::new(),
+        );
         let type_scope = compile_parameter_names(&definition.compile_groups, &HashSet::new());
         for variant in &mut definition.variants {
             match &mut variant.fields {
@@ -2845,6 +2865,11 @@ impl Resolver {
 
     fn rewrite_trait(&mut self, definition: &mut TraitDef, context: ResolveContext<'_>) {
         definition.name = canonical_name(context.module_path, &definition.name);
+        self.rewrite_compile_parameter_types(
+            &mut definition.compile_groups,
+            context,
+            &HashSet::new(),
+        );
         let mut trait_types = compile_parameter_names(&definition.compile_groups, &HashSet::new());
         trait_types.insert("Self".to_owned());
         trait_types.extend(definition.members.iter().filter_map(|member| match member {
@@ -2878,6 +2903,11 @@ impl Resolver {
     }
 
     fn rewrite_extend(&mut self, extension: &mut ExtendDef, context: ResolveContext<'_>) {
+        self.rewrite_compile_parameter_types(
+            &mut extension.compile_groups,
+            context,
+            &HashSet::new(),
+        );
         let header_type_scope = compile_parameter_names(&extension.compile_groups, &HashSet::new());
         self.rewrite_type(&mut extension.target, context, &header_type_scope);
         if let Some(trait_ref) = &mut extension.trait_ref {
@@ -2917,6 +2947,7 @@ impl Resolver {
         context: ResolveContext<'_>,
         outer_types: &HashSet<String>,
     ) {
+        self.rewrite_compile_parameter_types(&mut function.compile_groups, context, outer_types);
         let type_scope = compile_parameter_names(&function.compile_groups, outer_types);
         let mut value_scope = type_scope.clone();
         value_scope.extend(
@@ -2950,6 +2981,32 @@ impl Resolver {
         }
         if let Some(body) = &mut function.body {
             self.rewrite_expr(body, context, &type_scope, &value_scope);
+        }
+    }
+
+    fn rewrite_compile_parameter_types(
+        &mut self,
+        groups: &mut [Vec<crate::ast::CompileParam>],
+        context: ResolveContext<'_>,
+        outer_types: &HashSet<String>,
+    ) {
+        for parameter in groups.iter_mut().flatten() {
+            let CompileParamKind::Named(name) = &mut parameter.kind else {
+                continue;
+            };
+            if matches!(
+                name.as_str(),
+                "bool" | "access" | "passing" | "type" | "region" | "effect" | "parameters"
+            ) {
+                continue;
+            }
+            let mut source = Type::Named(name.clone(), Vec::new());
+            self.rewrite_type(&mut source, context, outer_types);
+            if let Type::Named(resolved, arguments) = source {
+                if arguments.is_empty() {
+                    *name = resolved;
+                }
+            }
         }
     }
 
@@ -3653,6 +3710,39 @@ mod tests {
             source: source.to_owned(),
             is_root,
         }
+    }
+
+    #[test]
+    fn resolves_user_closed_compile_parameter_types_across_modules() {
+        let program = resolve_sources(&[
+            unit(
+                "root.sc",
+                &[],
+                "use root.config.optimization as optimization\n\
+                 let select(O: optimization)(value: i32): i32 = { value }\n\
+                 let main(): i32 = { 0 }\n",
+                true,
+            ),
+            unit(
+                "config.sc",
+                &["config"],
+                "pub let optimization = type { size, speed }\n",
+                false,
+            ),
+        ])
+        .unwrap();
+        let function = program
+            .items
+            .iter()
+            .find_map(|item| match item {
+                Item::Function(function) if function.name == "select" => Some(function),
+                _ => None,
+            })
+            .expect("resolved select function");
+        assert!(matches!(
+            &function.compile_groups[0][0].kind,
+            CompileParamKind::Named(name) if name == "config::optimization"
+        ));
     }
 
     fn package(

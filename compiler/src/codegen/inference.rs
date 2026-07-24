@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{CallArg, CompileParam, CompileParamKind, Expr, Type, USizeConst};
+use crate::ast::{
+    CallArg, CompileParam, CompileParamDefault, CompileParamKind, Expr, Type, USizeConst,
+};
 use crate::core::LangItemKind;
 
 use super::compile_time::{
@@ -1280,6 +1282,25 @@ impl Analyzer {
                         source: Some(effect_row_source(false, None, &[])),
                         origin: "default pure effect".to_owned(),
                     });
+            } else if let (
+                CompileParamKind::Named(compile_type),
+                Some(CompileParamDefault::Name(member)),
+            ) = (&parameter.kind, &parameter.default)
+            {
+                if self
+                    .closed_type_values
+                    .get(compile_type)
+                    .is_some_and(|members| members.contains(member))
+                {
+                    let marker = closed_value_marker(compile_type, member);
+                    inferred.entry(parameter.name.clone()).or_insert_with(|| {
+                        InferredTypeArgument {
+                            ty: Ty::Struct(marker.clone()),
+                            source: Some(Type::Named(marker, Vec::new())),
+                            origin: format!("default `{member}` value"),
+                        }
+                    });
+                }
             }
         }
         Some((compile_parameters, inferred, source_index))
@@ -1301,9 +1322,10 @@ impl Analyzer {
             .flatten()
             .filter(|parameter| {
                 matches!(
-                    parameter.kind,
+                    &parameter.kind,
                     CompileParamKind::Type
                         | CompileParamKind::USize
+                        | CompileParamKind::Named(_)
                         | CompileParamKind::TypeConstructor { .. }
                 )
             })
@@ -1391,6 +1413,25 @@ impl Analyzer {
                         source: Some(effect_row_source(false, None, &[])),
                         origin: "default pure effect".to_owned(),
                     });
+            } else if let (
+                CompileParamKind::Named(compile_type),
+                Some(CompileParamDefault::Name(member)),
+            ) = (&parameter.kind, &parameter.default)
+            {
+                if self
+                    .closed_type_values
+                    .get(compile_type)
+                    .is_some_and(|members| members.contains(member))
+                {
+                    let marker = closed_value_marker(compile_type, member);
+                    inferred.entry(parameter.name.clone()).or_insert_with(|| {
+                        InferredTypeArgument {
+                            ty: Ty::Struct(marker.clone()),
+                            source: Some(Type::Named(marker, Vec::new())),
+                            origin: format!("default `{member}` value"),
+                        }
+                    });
+                }
             }
         }
         Some((compile_parameters, inferred, source_index))

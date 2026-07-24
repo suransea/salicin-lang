@@ -185,6 +185,26 @@ mod tests {
     }
 
     #[test]
+    fn closed_compile_time_parameters_use_declared_defaults() {
+        let source = "let select(B: bool = false)(value: i32): i32 = { value }\n\
+                      let main(): i32 = { select(42) }\n";
+        compile_source(source).expect("closed compile-time defaults should be normalized by type");
+    }
+
+    #[test]
+    fn closed_compile_time_defaults_are_checked_against_their_type() {
+        let errors = compile_source(
+            "let optimization = type { size, speed }\n\
+             let select(O: optimization = true)(value: i32): i32 = { value }\n\
+             let main(): i32 = { select(42) }\n",
+        )
+        .unwrap_err();
+        assert!(errors.iter().any(|error| {
+            error.contains("default `true`") && error.contains("is not a member of `optimization`")
+        }));
+    }
+
+    #[test]
     fn parameter_modifiers_are_type_checked_after_instantiation() {
         let source = "let decorate(B: bool)(B value: i32): i32 = { value }\n\
                       let main(): i32 = { decorate(true)(42) }\n";

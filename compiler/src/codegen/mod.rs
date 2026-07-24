@@ -353,6 +353,24 @@ impl Analyzer {
             if let Item::Function(function) = item {
                 *function_counts.entry(function.name.clone()).or_default() += 1;
             }
+            if let Item::TypeForm(definition) = item {
+                if !definition.values.is_empty() {
+                    self.closed_type_values
+                        .insert(definition.name.clone(), definition.values.clone());
+                    if self.is_lang_item_name(&definition.name, LangItemKind::Bool) {
+                        self.closed_type_values
+                            .insert("bool".to_owned(), definition.values.clone());
+                    }
+                    if self.is_lang_item_name(&definition.name, LangItemKind::AccessType) {
+                        self.closed_type_values
+                            .insert("access".to_owned(), definition.values.clone());
+                    }
+                    if self.is_lang_item_name(&definition.name, LangItemKind::PassingType) {
+                        self.closed_type_values
+                            .insert("passing".to_owned(), definition.values.clone());
+                    }
+                }
+            }
         }
         let mut overload_shapes = HashMap::<String, HashSet<ParameterLabelShape>>::new();
         let mut overload_visibilities = HashMap::<String, Visibility>::new();
@@ -396,6 +414,28 @@ impl Analyzer {
                 Item::Function(function) => {
                     let mut function = function.clone();
                     let source_name = function.name.clone();
+                    for parameter in function.compile_groups.iter().flatten() {
+                        let CompileParamKind::Named(compile_type) = &parameter.kind else {
+                            continue;
+                        };
+                        let Some(members) = self.closed_type_values.get(compile_type) else {
+                            self.error(format!(
+                                "compile-time parameter `{}` in `{source_name}` uses unknown closed type `{compile_type}`",
+                                parameter.name
+                            ));
+                            continue;
+                        };
+                        if let Some(crate::ast::CompileParamDefault::Name(default)) =
+                            &parameter.default
+                        {
+                            if !members.contains(default) {
+                                self.error(format!(
+                                    "default `{default}` for compile-time parameter `{}` in `{source_name}` is not a member of `{compile_type}`",
+                                    parameter.name
+                                ));
+                            }
+                        }
+                    }
                     if origin.package != PackageId::CORE.0
                         && matches!(
                             source_name.rsplit("::").next(),
@@ -599,24 +639,7 @@ impl Analyzer {
                         .insert(definition.name.clone(), definition.clone());
                 }
                 Item::Domain(_) => {}
-                Item::TypeForm(definition) => {
-                    if !definition.values.is_empty() {
-                        self.closed_type_values
-                            .insert(definition.name.clone(), definition.values.clone());
-                        if self.is_lang_item_name(&definition.name, LangItemKind::Bool) {
-                            self.closed_type_values
-                                .insert("bool".to_owned(), definition.values.clone());
-                        }
-                        if self.is_lang_item_name(&definition.name, LangItemKind::AccessType) {
-                            self.closed_type_values
-                                .insert("access".to_owned(), definition.values.clone());
-                        }
-                        if self.is_lang_item_name(&definition.name, LangItemKind::PassingType) {
-                            self.closed_type_values
-                                .insert("passing".to_owned(), definition.values.clone());
-                        }
-                    }
-                }
+                Item::TypeForm(_) => {}
                 Item::TypeAlias(_) => {
                     unreachable!("type aliases are expanded before item collection")
                 }

@@ -736,6 +736,8 @@ impl Parser {
             TokenKind::Mut => "mut".to_owned(),
             TokenKind::Copy => "copy".to_owned(),
             TokenKind::Move => "move".to_owned(),
+            TokenKind::True => "true".to_owned(),
+            TokenKind::False => "false".to_owned(),
             TokenKind::Type => "type".to_owned(),
             TokenKind::Region => "region".to_owned(),
             _ => {
@@ -1488,6 +1490,8 @@ impl Parser {
             TokenKind::Mut => "mut".to_owned(),
             TokenKind::Copy => "copy".to_owned(),
             TokenKind::Move => "move".to_owned(),
+            TokenKind::True => "true".to_owned(),
+            TokenKind::False => "false".to_owned(),
             _ => {
                 return Err(self.error_at(
                     &token,
