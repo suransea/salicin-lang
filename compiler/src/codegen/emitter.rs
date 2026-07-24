@@ -1491,6 +1491,7 @@ impl<'a> FunctionEmitter<'a> {
             } => self.emit_index(expression, base, index, *length, *moves),
             HirExprKind::Read { place, kind } => {
                 if place.projections.is_empty()
+                    && place.dynamic_index.is_none()
                     && matches!(expression.ty, Ty::Callable(_))
                     && self.partial_captures.contains_key(&place.local)
                 {
@@ -1935,7 +1936,7 @@ impl<'a> FunctionEmitter<'a> {
                     }
                 }
                 self.instruction(format!("store {ty} {}, ptr {pointer}", value.value()?));
-                if self.program.needs_drop(&place.root_ty) {
+                if place.dynamic_index.is_none() && self.program.needs_drop(&place.root_ty) {
                     self.update_place_drop_flags(
                         place.local,
                         &place.projections,
@@ -3518,6 +3519,7 @@ impl<'a> FunctionEmitter<'a> {
 
     fn emit_borrow_address(&mut self, place: &HirPlace) -> Result<String, Diagnostic> {
         if place.projections.is_empty()
+            && place.dynamic_index.is_none()
             && matches!(place.ty, Ty::Callable(_))
             && self.partial_captures.contains_key(&place.local)
         {
@@ -3550,19 +3552,53 @@ impl<'a> FunctionEmitter<'a> {
             self.instruction(format!("{loaded} = load ptr, ptr {root_pointer}"));
             root_pointer = loaded;
         }
-        if place.projections.is_empty() {
-            return Ok(root_pointer);
+        if !place.projections.is_empty() {
+            let pointer = self.fresh_register();
+            let indices = place
+                .projections
+                .iter()
+                .map(|index| format!("i32 {index}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.instruction(format!(
+                "{pointer} = getelementptr inbounds {}, ptr {root_pointer}, i32 0, {indices}",
+                llvm_value_type(&place.root_ty)?
+            ));
+            root_pointer = pointer;
         }
-        let pointer = self.fresh_register();
-        let indices = place
-            .projections
-            .iter()
-            .map(|index| format!("i32 {index}"))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let Some(index) = &place.dynamic_index else {
+            return Ok(root_pointer);
+        };
+        let index_pointer = self.locals.get(&index.local).cloned().ok_or_else(|| {
+            Diagnostic::new(format!(
+                "internal error: unknown staged index local {} in function `{}`",
+                index.local, self.function.name
+            ))
+        })?;
+        let index_value = self.fresh_register();
+        self.instruction(format!("{index_value} = load i32, ptr {index_pointer}"));
+        let wide_index = self.fresh_register();
+        self.instruction(format!("{wide_index} = sext i32 {index_value} to i64"));
+        let in_bounds = self.fresh_register();
         self.instruction(format!(
-            "{pointer} = getelementptr inbounds {}, ptr {root_pointer}, i32 0, {indices}",
-            llvm_value_type(&place.root_ty)?
+            "{in_bounds} = icmp ult i64 {wide_index}, {}",
+            index.length
+        ));
+        let ok_label = self.fresh_label("index.place.ok");
+        let trap_label = self.fresh_label("index.place.trap");
+        self.terminate(format!(
+            "br i1 {in_bounds}, label %{ok_label}, label %{trap_label}"
+        ));
+
+        self.start_block(&trap_label);
+        self.instruction("call void @llvm.trap()");
+        self.terminate("unreachable");
+
+        self.start_block(&ok_label);
+        let pointer = self.fresh_register();
+        self.instruction(format!(
+            "{pointer} = getelementptr inbounds {}, ptr {root_pointer}, i32 0, i64 {wide_index}",
+            llvm_value_type(&index.array_ty)?
         ));
         Ok(pointer)
     }

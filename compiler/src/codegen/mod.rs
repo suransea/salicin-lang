@@ -6644,6 +6644,7 @@ impl Analyzer {
                             local: local.id,
                             root_ty: local.ty.clone(),
                             projections: Vec::new(),
+                            dynamic_index: None,
                             ty: local.ty.clone(),
                             capability: LocalCapability::Owned,
                             root_mutable: local.mutable,
@@ -6664,6 +6665,7 @@ impl Analyzer {
                                 local: local.id,
                                 root_ty: local.ty.clone(),
                                 projections: Vec::new(),
+                                dynamic_index: None,
                                 ty: local.ty.clone(),
                                 capability: local.capability,
                                 root_mutable: local.mutable,
@@ -7011,6 +7013,7 @@ impl Analyzer {
                 let assignment = self.mark_initialized(&place, context);
                 let mut root = place.clone();
                 root.projections.clear();
+                root.dynamic_index = None;
                 root.ty = root.root_ty.clone();
                 let root_initialized = context
                     .flow
@@ -7170,6 +7173,7 @@ impl Analyzer {
                                         local: source.id,
                                         root_ty: source.ty.clone(),
                                         projections: Vec::new(),
+                                        dynamic_index: None,
                                         ty: source.ty.clone(),
                                         capability: source.capability,
                                         root_mutable: source.mutable,
@@ -7749,6 +7753,7 @@ impl Analyzer {
                 local: local.id,
                 root_ty: local.ty.clone(),
                 projections: Vec::new(),
+                dynamic_index: None,
                 ty: local.ty.clone(),
                 capability: local.capability,
                 root_mutable: local.mutable,
@@ -7836,6 +7841,7 @@ impl Analyzer {
                 local: root.id,
                 root_ty: root.ty,
                 projections: inspection.path.clone(),
+                dynamic_index: None,
                 ty: inspection.ty.clone(),
                 capability: LocalCapability::SharedParam,
                 root_mutable: false,
@@ -8881,6 +8887,7 @@ impl Analyzer {
                         local: id,
                         root_ty: ty.clone(),
                         projections: Vec::new(),
+                        dynamic_index: None,
                         ty: ty.clone(),
                         capability: LocalCapability::Owned,
                         root_mutable: false,
@@ -9360,6 +9367,7 @@ impl Analyzer {
             local: local.id,
             root_ty: local.ty.clone(),
             projections: Vec::new(),
+            dynamic_index: None,
             ty: local.ty.clone(),
             capability: LocalCapability::Owned,
             root_mutable: local.mutable,
@@ -9552,6 +9560,7 @@ impl Analyzer {
             local: local.id,
             root_ty: local.ty.clone(),
             projections: Vec::new(),
+            dynamic_index: None,
             ty: local.ty.clone(),
             capability: local.capability,
             root_mutable: local.mutable,
@@ -10102,6 +10111,7 @@ impl Analyzer {
             local: local.id,
             root_ty: local.ty.clone(),
             projections: Vec::new(),
+            dynamic_index: None,
             ty: local.ty,
             capability: local.capability,
             root_mutable: local.mutable,
@@ -10180,6 +10190,7 @@ impl Analyzer {
             local: local.id,
             root_ty: local.ty.clone(),
             projections: Vec::new(),
+            dynamic_index: None,
             ty: local.ty.clone(),
             capability: LocalCapability::Owned,
             root_mutable: local.mutable,
@@ -10438,6 +10449,7 @@ impl Analyzer {
                             local: id,
                             root_ty: ty.clone(),
                             projections: Vec::new(),
+                            dynamic_index: None,
                             ty,
                             capability: LocalCapability::Owned,
                             root_mutable: mutable,
@@ -10601,6 +10613,7 @@ impl Analyzer {
                                 local: id,
                                 root_ty: ty.clone(),
                                 projections: Vec::new(),
+                                dynamic_index: None,
                                 ty,
                                 capability: LocalCapability::Owned,
                                 root_mutable: false,

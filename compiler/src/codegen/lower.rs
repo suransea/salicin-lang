@@ -165,6 +165,7 @@ pub(super) fn closure_info_for_callable(ty: &Ty) -> Option<ClosureInfo> {
                 local: usize::MAX,
                 root_ty: capture.ty.clone(),
                 projections: Vec::new(),
+                dynamic_index: None,
                 ty: capture.ty.clone(),
                 capability: LocalCapability::Owned,
                 root_mutable: false,

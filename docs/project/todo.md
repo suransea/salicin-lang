@@ -17,15 +17,9 @@ Priority meanings:
 
 Current milestone: **EH1, close the algebraic-handler extension**
 
-Next task: **EFF-INDEX-1**
+Next task: **EFF-ALIAS-1**
 
 ### P0 handler queue
-
-- [ ] **EFF-INDEX-1: Stage indexed borrow places exactly once**
-  - Accept calls such as `update(state.items[index])` when the place is valid.
-  - Evaluate the root and index once, left to right, before entering selective CPS.
-  - Carry the staged index and owning root through resume and abandon paths.
-  - Add mutation, side-effecting-index, bounds-trap, and Drop regressions.
 
 - [ ] **EFF-ALIAS-1: Fuse disjoint projections of one owned root**
   - Reuse place-overlap analysis instead of comparing root names only.
@@ -145,6 +139,7 @@ Entry gate: all ASYNC1 prerequisites in the roadmap
 - [x] **EFF-OWNED-1:** Replace iterator-name capture exceptions with handler-owned capture policy.
 - [x] **EFF-FRAME-1:** Fuse distinct borrowed roots into eligible non-recursive handler frames.
 - [x] **EFF-FIELD-1:** Extend frame fusion to stable nested field places.
+- [x] **EFF-INDEX-1:** Stage indexed borrow places once and rebuild them from frame-owned roots.
 - [x] **EXAMPLE-LEDGER-1:** Process non-`Copy` transactions in an effectful native ledger loop.
 
 ## Definition of done

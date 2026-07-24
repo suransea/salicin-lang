@@ -1007,7 +1007,7 @@ fn source_borrow_channel_mode(mode: PassMode, ty: &Type) -> Option<PassMode> {
 fn stable_handler_borrow_root(expression: &Expr) -> Option<&str> {
     match expression {
         Expr::Name(name) => Some(name),
-        Expr::Member(base, _) => stable_handler_borrow_root(base),
+        Expr::Member(base, _) | Expr::Index { base, .. } => stable_handler_borrow_root(base),
         _ => None,
     }
 }
@@ -3757,7 +3757,28 @@ impl Analyzer {
                     continue;
                 }
                 if source_borrow_channel_mode(parameter.mode, &parameter.ty).is_some() {
-                    borrowed_places.insert(parameter.name.clone(), argument.value.clone());
+                    if let Expr::Index {
+                        base,
+                        index: place_index,
+                    } = &argument.value
+                    {
+                        let index_name = format!("$handler$index${specialization}${index}");
+                        parameter_bindings.push(Stmt::Let(Binding {
+                            mutable: false,
+                            name: index_name.clone(),
+                            annotation: Some(Type::I32),
+                            value: place_index.as_ref().clone(),
+                        }));
+                        borrowed_places.insert(
+                            parameter.name.clone(),
+                            Expr::Index {
+                                base: base.clone(),
+                                index: Box::new(Expr::Name(index_name)),
+                            },
+                        );
+                    } else {
+                        borrowed_places.insert(parameter.name.clone(), argument.value.clone());
+                    }
                 } else {
                     parameter_bindings.push(Stmt::Let(Binding {
                         mutable: false,

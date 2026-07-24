@@ -6,6 +6,10 @@ subset.
 
 ## Unreleased
 
+- Fused eligible `Copy`-element indexed borrow arguments into non-recursive handler frames. Index
+  expressions are materialized once in source order, carried across resume and abandonment, and
+  bounds-checked when the element address is rebuilt from the frame-owned root. Native regressions
+  cover mutation, side effects, bounds traps, and exactly-once root cleanup.
 - Added a milestone-based language roadmap and a stable-ID project TODO. The roadmap bounds the
   current handler-completion work, restores M0 hardening as the next expansion gate, and defers
   async, ecosystem, and ABI work until their ownership and runtime prerequisites are met.

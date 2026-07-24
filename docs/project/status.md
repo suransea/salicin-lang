@@ -82,11 +82,15 @@ mutability. Projected assignments capture their whole mutable root, so repeated 
 can retain and update user-defined state; resumption and abandonment both preserve exactly-once
 cleanup. Resumable loop backedges carry user-owned state alongside compiler-generated iterator
 state. A known non-recursive effectful function with no residual effect is fused into the caller's
-handler frame when every borrowed argument is a root local or stable field path and their outer
-roots are distinct. Its value arguments are materialized in source order, while each borrowed place
-remains available to both the inlined body and following continuation. Recursive calls, indexed
-borrow arguments, multiple projections of the same root, and calls with residual effects still use
-the separate frame ABI and do not yet share an owned root with their caller continuation.
+handler frame when every borrowed argument is a root local, stable field path, or eligible indexed
+path and their outer roots are distinct. Indexed paths currently require a stable root/field array
+base and `Copy` element. Their `i32` indexes are materialized once in source argument order, then
+carried through resumption while the element address is rebuilt from the frame-owned root with a
+bounds check. Value arguments remain materialized in source order, and each borrowed place remains
+available to both the inlined body and following continuation. Recursive calls, non-`Copy` or
+nested dynamic indexed places, multiple projections of the same root, and calls with residual
+effects still use the separate frame ABI and do not yet share an owned root with their caller
+continuation.
 
 Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
 `continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs

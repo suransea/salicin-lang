@@ -221,9 +221,14 @@ residual effect, borrow arguments that are root locals or stable field paths tri
 fusion when their outer roots are distinct. Ordinary value arguments are materialized in source
 order, borrowed parameters are substituted with their caller places, and the inlined body enters
 selective CPS in the caller frame. The body and following continuation therefore share one owned
-root instead of creating competing borrow and move captures. Recursive calls, indexed borrow
-arguments, multiple projections of one root, and residual-effect combinations retain the separate
-frame ABI.
+root instead of creating competing borrow and move captures. An indexed borrow may use a stable
+root/field array base when its element is `Copy` and its outer root is distinct from every other
+borrow argument. Its `i32` index is materialized once in source argument order before selective CPS,
+then carried alongside the frame-owned root. Resume reconstructs the element address from that
+current root and performs the ordinary bounds check; abandonment never reevaluates the index.
+This internal projection does not enable ordinary dynamic indexed assignment. Recursive calls,
+non-`Copy` or nested dynamic indexed places, multiple projections of one root, and residual-effect
+combinations retain the separate frame ABI.
 
 Selective CPS removes only the handled nominal identity. Residual `Unsafe`, `Throws(Error)`, and
 other nominal requirements remain on generated resumable frames. Intercepted operations also retain

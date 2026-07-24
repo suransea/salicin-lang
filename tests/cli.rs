@@ -340,6 +340,30 @@ fn owned_nominal_fields_cross_repeated_effectful_calls() {
 }
 
 #[test]
+fn indexed_nominal_state_crosses_effectful_calls_once() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "algebraic_effect_owned_index_calls.sc"))
+        .output()
+        .expect("run indexed handler state fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
+fn effectful_indexed_borrow_out_of_bounds_traps() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "algebraic_effect_owned_index_oob.sc"))
+        .output()
+        .expect("run out-of-bounds indexed handler state fixture");
+    assert!(
+        !output.status.success(),
+        "out-of-bounds effectful indexed borrow unexpectedly succeeded:\n{}",
+        output_text(&output)
+    );
+}
+
+#[test]
 fn owned_nominal_state_crosses_effectful_loop_backedges() {
     let output = salic()
         .arg("run")

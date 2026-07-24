@@ -600,6 +600,7 @@ impl Analyzer {
             local: id,
             root_ty: ty.clone(),
             projections: Vec::new(),
+            dynamic_index: None,
             ty,
             capability: LocalCapability::Owned,
             root_mutable: *mutable,

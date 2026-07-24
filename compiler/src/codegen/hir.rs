@@ -398,11 +398,19 @@ pub(super) struct HirPlace {
     pub(super) local: LocalId,
     pub(super) root_ty: Ty,
     pub(super) projections: Vec<usize>,
+    pub(super) dynamic_index: Option<HirDynamicIndex>,
     pub(super) ty: Ty,
     pub(super) capability: LocalCapability,
     pub(super) root_mutable: bool,
     pub(super) loan: Option<LoanId>,
     pub(super) indirect: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(super) struct HirDynamicIndex {
+    pub(super) local: LocalId,
+    pub(super) length: u64,
+    pub(super) array_ty: Ty,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

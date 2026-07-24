@@ -77,6 +77,7 @@ impl Analyzer {
         let assignment = self.mark_initialized(&place, context);
         let mut root = place.clone();
         root.projections.clear();
+        root.dynamic_index = None;
         root.ty = root.root_ty.clone();
         let root_initialized = context
             .flow

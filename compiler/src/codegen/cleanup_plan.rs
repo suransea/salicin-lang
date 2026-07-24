@@ -560,6 +560,9 @@ impl<'a> HirCleanupPlanner<'a> {
         &mut self,
         place: &HirPlace,
     ) -> Result<Option<CleanupMovePathId>, Diagnostic> {
+        if place.dynamic_index.is_some() {
+            return Ok(None);
+        }
         if place.capability != LocalCapability::Owned {
             return Ok(None);
         }

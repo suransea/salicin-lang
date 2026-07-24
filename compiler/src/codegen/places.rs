@@ -4,11 +4,16 @@ use crate::ast::Expr;
 
 use super::flow::{places_overlap, InitializationStatus, Loan, LoanKind, LowerCtx, PlaceKey};
 use super::hir::{
-    AccessKind, AssignmentKind, HirExpr, HirExprKind, HirPlace, HirReadKind, LoanId,
-    LocalCapability, Ty,
+    AccessKind, AssignmentKind, HirDynamicIndex, HirExpr, HirExprKind, HirPlace, HirReadKind,
+    LoanId, LocalCapability, Ty,
 };
 use super::lower::integer_literal_value;
 use super::Analyzer;
+
+const DYNAMIC_PLACE_ERROR: &str = concat!(
+    "array place index must be a compile-time integer literal; ",
+    "dynamic indexes are read-only for now",
+);
 
 impl Analyzer {
     pub(super) fn lower_place(
@@ -41,6 +46,7 @@ impl Analyzer {
                         local: local.id,
                         root_ty: (**pointee).clone(),
                         projections: Vec::new(),
+                        dynamic_index: None,
                         ty: (**pointee).clone(),
                         capability: if *mutable {
                             LocalCapability::MutParam
@@ -56,6 +62,7 @@ impl Analyzer {
                     local: local.id,
                     root_ty: local.ty.clone(),
                     projections: Vec::new(),
+                    dynamic_index: None,
                     ty: local.ty,
                     capability: local.capability,
                     root_mutable: local.mutable,
@@ -87,32 +94,70 @@ impl Analyzer {
                 if !self.require_field_access(struct_name, field, &context.origin) {
                     return None;
                 }
+                if place.dynamic_index.is_some() {
+                    self.error("field projection after a dynamic indexed place is not supported");
+                    return None;
+                }
                 place.projections.push(index);
                 place.ty = field.ty.clone();
                 Some(place)
             }
             Expr::Index { base, index } => {
                 let mut place = self.lower_place(base, context)?;
-                let Ty::Array(element, length) = &place.ty else {
+                let array_ty = place.ty.clone();
+                let Ty::Array(element, length) = array_ty.clone() else {
                     self.error(format!(
                         "array index place requires an array value, found `{}`",
                         place.ty
                     ));
                     return None;
                 };
-                let Some(index) = integer_literal_value(index) else {
+                let Some(index_value) = integer_literal_value(index) else {
+                    let Expr::Name(index_name) = index.as_ref() else {
+                        self.error(DYNAMIC_PLACE_ERROR);
+                        return None;
+                    };
+                    if !index_name.starts_with("$handler$index$") {
+                        self.error(DYNAMIC_PLACE_ERROR);
+                        return None;
+                    }
+                    if place.dynamic_index.is_some() {
+                        self.error("nested dynamic indexed places are not supported");
+                        return None;
+                    }
+                    let Some(index_local) = context.lookup(index_name).cloned() else {
+                        self.error("internal staged handler index is unavailable");
+                        return None;
+                    };
+                    self.require_same_type(&index_local.ty, &Ty::I32, "array index");
+                    if !self.is_copy_type(&element) {
+                        self.error(format!(
+                            "dynamic indexed borrows require Copy elements, found `{}`",
+                            self.diagnostic_type_name(&element)
+                        ));
+                        return None;
+                    }
+                    place.dynamic_index = Some(HirDynamicIndex {
+                        local: index_local.id,
+                        length,
+                        array_ty,
+                    });
+                    place.ty = *element;
+                    return Some(place);
+                };
+                if place.dynamic_index.is_some() {
                     self.error(
-                        "array place index must be a compile-time integer literal; dynamic indexes are read-only for now",
+                        "constant projection after a dynamic indexed place is not supported",
                     );
                     return None;
-                };
-                let Ok(index) = u64::try_from(index) else {
+                }
+                let Ok(index) = u64::try_from(index_value) else {
                     self.error(format!(
-                        "array index {index} is out of bounds for length {length}"
+                        "array index {index_value} is out of bounds for length {length}"
                     ));
                     return None;
                 };
-                if index >= *length {
+                if index >= length {
                     self.error(format!(
                         "array index {index} is out of bounds for length {length}"
                     ));
@@ -123,7 +168,7 @@ impl Analyzer {
                     return None;
                 };
                 place.projections.push(projection);
-                place.ty = element.as_ref().clone();
+                place.ty = *element;
                 Some(place)
             }
             _ => {
@@ -422,7 +467,13 @@ impl Analyzer {
                 self.lower_place_without_diagnostic(base, context)?;
                 self.lower_place(expression, context)
             }
-            Expr::Index { base, index } if integer_literal_value(index).is_some() => {
+            Expr::Index { base, index }
+                if integer_literal_value(index).is_some()
+                    || matches!(
+                        index.as_ref(),
+                        Expr::Name(name) if name.starts_with("$handler$index$")
+                    ) =>
+            {
                 self.lower_place_without_diagnostic(base, context)?;
                 self.lower_place(expression, context)
             }
