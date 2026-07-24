@@ -16,8 +16,8 @@ use super::handlers::{
     SourceContinuation, SourceErasedCallable,
 };
 use super::hir::{
-    ClosureCaptureMode, ClosureEffectContext, FunctionSig, HirArgument, HirExpr, HirExprKind,
-    ParamSig, Ty,
+    ClosureCaptureMode, ClosureCapturePolicy, ClosureEffectContext, FunctionSig, HirArgument,
+    HirExpr, HirExprKind, ParamSig, Ty,
 };
 use super::lower::{error_expr, flatten_call, TypeProbe};
 use super::source_rewrite::{source_effect_expression_identity, substitute_function_types};
@@ -134,6 +134,7 @@ impl Analyzer {
                 lexical_handler_effects: context.lexical_handler_effects.clone(),
                 lexical_handler_effect_sources: context.lexical_handler_effect_sources.clone(),
             },
+            ClosureCapturePolicy::Lexical,
             context,
         );
         let HirExprKind::LocalClosure(info) = closure.kind else {

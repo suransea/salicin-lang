@@ -11,8 +11,8 @@ use super::effects::{handled_operation_call, standard_throws_error_source};
 use super::fallible::StandardFallibleKind;
 use super::flow::{LocalInfo, LowerCtx};
 use super::hir::{
-    ClosureCaptureMode, ClosureEffectContext, FunctionSig, FunctionTy, HirArgument, HirExpr,
-    HirExprKind, LocalCapability, Ty,
+    ClosureCaptureMode, ClosureCapturePolicy, ClosureEffectContext, FunctionSig, FunctionTy,
+    HirArgument, HirExpr, HirExprKind, LocalCapability, Ty,
 };
 use super::lower::{error_expr, flatten_call, TypeProbe};
 use super::source_rewrite::{
@@ -298,6 +298,7 @@ impl Analyzer {
                 lexical_handler_effects: context.lexical_handler_effects.clone(),
                 lexical_handler_effect_sources: context.lexical_handler_effect_sources.clone(),
             },
+            ClosureCapturePolicy::HandlerOwned,
             context,
         );
         let HirExprKind::LocalClosure(info) = closure.kind else {

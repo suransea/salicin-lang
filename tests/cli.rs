@@ -165,6 +165,16 @@ fn effectful_for_preserves_iterator_state_and_cleanup() {
 }
 
 #[test]
+fn owned_nominal_state_crosses_handler_resume_and_abandonment() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "algebraic_effect_owned_state.sc"))
+        .output()
+        .expect("run owned handler state fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn effect_generics_select_pure_and_unsafe_instances() {
     let output = salic()
         .arg("run")

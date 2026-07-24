@@ -27,8 +27,8 @@ target/release/salic run examples/basics.sc
 ```
 
 `examples/ledger.sc` is the complete M0 usability example: it combines nominal data, a custom
-iterator, ownership-aware methods, mutation through borrowing, and recoverable errors in one native
-batch program.
+iterator, ownership-aware methods, mutation through borrowing, and an algebraic overdraft effect in
+one native batch program.
 
 Common commands:
 

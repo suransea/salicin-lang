@@ -725,6 +725,12 @@ pub(super) enum ClosureCaptureMode {
     Move,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ClosureCapturePolicy {
+    Lexical,
+    HandlerOwned,
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct ClosureCapture {
     pub(super) place: HirPlace,

@@ -6,6 +6,14 @@ subset.
 
 ## Unreleased
 
+- Replaced the compiler-generated `for` iterator name exception with an explicit handler-owned
+  closure capture policy. Generated resumable frames now move any non-`Copy` owned nominal root
+  while retaining its mutability.
+- Allowed closures and handler frames to capture projected assignment targets by their mutable root.
+  Native regressions cover repeated operations, direct field mutation, resumption, abandonment, and
+  exactly-once cleanup of user-defined nominal state.
+- Restored `examples/ledger.sc` to effectful state processing: overdraft checks now perform a nominal
+  algebraic operation while the resumable frame retains the mutable ledger.
 - Allowed `for` bodies to perform handled algebraic operations, including standard `Throws`.
   Compiler-generated iterator state now moves through one-shot continuation and recursive loop-frame
   environments while retaining mutability; resumption and abandonment both run iterator cleanup

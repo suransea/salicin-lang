@@ -76,9 +76,13 @@ materialized automatically. Earlier `copy` and `move` arguments across the compl
 as typed locals in source order before that action, preserving side effects and ownership. Earlier
 borrowed arguments remain pending loan-aware staging; conditional values, cross-function transport,
 and fully general erased action construction remain the next implementation stages.
-Effectful frames that retain and mutate arbitrary user nominal local state across an operation are
-not yet general M0 behavior. Compiler-generated `for` iterator state is covered separately by
-owned continuation transport.
+Compiler-generated handler closures use an explicit owned-capture policy: every non-`Copy` owned
+nominal root required after an operation moves into the resumable frame and retains its source
+mutability. Projected assignments capture their whole mutable root, so repeated direct operations
+can retain and update user-defined state; resumption and abandonment both preserve exactly-once
+cleanup. Repeated effectful named calls that each borrow the same owned root, and loop backedges that
+combine user-owned state with the generated iterator frame, still require a shared frame-ownership
+lowering. Compiler-generated `for` iterator state itself is covered by owned continuation transport.
 
 Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
 `continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs

@@ -517,6 +517,12 @@ borrow/move 时机；调用点从该环境提升字段，其中共享 `Copy` 为
 顺序物化为带参数类型的内部局部值，确保副作用和所有权转移发生在闭包捕获之前。此前若有 `borrow` 或
 `borrow(mut)` 参数则暂不改写，以免把 place 借用错误地延长或转换成 owned 临时值；条件 action 值、
 跨函数传递和任意擦除 action 仍待后续 ABI。
+编译器生成的 handler closure 使用独立的 owned 捕获策略，不依赖内部局部变量的特定名称。continuation
+若需要非 `Copy` 的 owned 名义根，该根会 move 进 frame；源 binding 为 `mut` 时，frame 内仍保持可变。
+字段或索引赋值按完整根进行 mutable 捕获，并同时扫描索引表达式所需的其他捕获。因此连续的直接
+operation 可以保留和修改用户名义状态，恢复与放弃仍保证恰好一次 cleanup。多个 effectful 具名调用
+分别借用同一 owned 根，以及用户 owned 状态跨 effectful loop backedge，仍待共享 frame ownership
+lowering。
 数组元素、索引、普通与可空成员、`match` scrutinee/arm body 以及 `do`、`unsafe`、`try` 中的
 operation 按源顺序进入 selective CPS，`&&` 与 `||` 保持短路。`??` 的 scrutinee 与 fallback 都可
 挂起，且 fallback 仍只在 `None` 或 `Err` 路径求值。完整可空方法调用会先求值 owned receiver，仅在

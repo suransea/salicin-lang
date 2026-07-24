@@ -1,9 +1,7 @@
-// A complete batch-processing program over the frozen M0 core. The process
-// exits with 42 after applying four valid transactions, or 1 on overdraft.
+// A complete effectful batch-processing program over the frozen M0 core. The
+// process exits with 42 after applying four valid transactions, or 1 on overdraft.
 
 let Option = std.Option
-let Result = std.Result
-let Throws = std.effect.Throws
 let Iterator = std.iter.Iterator
 let IntoIterator = std.iter.IntoIterator
 
@@ -12,7 +10,9 @@ let Transaction = enum {
   Debit(i32),
 }
 
-let LedgerError = bool
+let Overdraft = effect {
+  let reject(): Never
+}
 
 let Ledger = struct {
   balance: i32,
@@ -38,14 +38,6 @@ extend Ledger: Account {
 
   let snapshot(self: borrow(Self))(): i32 = {
     if self.processed == 4 { self.balance } else { 0 }
-  }
-}
-
-let validate(balance: i32): i32 with(Throws(LedgerError)) = {
-  if balance == 42 {
-    balance
-  } else {
-    throw(true)
   }
 }
 
@@ -90,25 +82,33 @@ let amount(move transaction: Transaction): i32 = {
     { Debit(value) -> value }
 }
 
-let process(first_credit: i32)(first_debit: i32)(second_credit: i32)(second_debit: i32): i32 = {
+let process(first_credit: i32)(first_debit: i32)(second_credit: i32)(second_debit: i32): i32 with(Overdraft) = {
   let mut ledger = Ledger { balance: 0, processed: 0 }
   ledger.credit(first_credit)
-  ledger.debit(first_debit)
+  if first_debit > ledger.balance {
+    Overdraft.reject()
+  } else {
+    ledger.debit(first_debit)
+  }
   ledger.credit(second_credit)
-  ledger.debit(second_debit)
+  if second_debit > ledger.balance {
+    Overdraft.reject()
+  } else {
+    ledger.debit(second_debit)
+  }
   ledger.snapshot()
 }
 
 let main(): i32 = {
-  let first_credit = amount(Transaction.Credit(30))
-  let first_debit = amount(Transaction.Debit(8))
-  let second_credit = amount(Transaction.Credit(25))
-  let second_debit = amount(Transaction.Debit(5))
-  let balance = process(first_credit)(first_debit)(second_credit)(second_debit)
-  let count = count_batch(Batch { index: 0 })
-  let outcome: Result(LedgerError)(i32) = try {
-    validate(balance)
+  let first = amount(Transaction.Credit(30))
+  let second = amount(Transaction.Debit(8))
+  let third = amount(Transaction.Credit(25))
+  let fourth = amount(Transaction.Debit(5))
+  let balance = Overdraft.handle reject { () ->
+    1
+  } action {
+    process(first)(second)(third)(fourth)
   }
-  let validated = outcome ?? 0
-  if validated == 42 && count == 4 { 42 } else { 1 }
+  let count = count_batch(Batch { index: 0 })
+  if balance == 42 && count == 4 { 42 } else { 1 }
 }

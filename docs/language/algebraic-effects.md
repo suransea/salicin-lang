@@ -210,6 +210,15 @@ remain observable before the action captures its environment. An earlier `borrow
 parameter, conditional action values, and actions crossing another function boundary still require
 the remaining loan-aware or general erased value integration.
 
+Compiler-generated handler closures have a distinct owned-capture policy rather than relying on
+reserved local names. A non-`Copy` owned nominal root used by the continuation moves into its frame
+and remains mutable when the source binding was mutable. Assignment through a field or index
+captures the complete root as mutable, including captures required by an index expression.
+Consequently direct repeated operations can retain and mutate user-defined nominal state, with the
+same exactly-once cleanup on resumption and abandonment. Repeated effectful named calls that each
+borrow the same owned root, and user-owned state crossing an effectful loop backedge, remain outside
+this slice.
+
 Selective CPS removes only the handled nominal identity. Residual `Unsafe`, `Throws(Error)`, and
 other nominal requirements remain on generated resumable frames. Intercepted operations also retain
 their explicitly declared residual row through a compiler-created capability gate, so replacing an

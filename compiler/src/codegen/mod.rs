@@ -7141,7 +7141,13 @@ impl Analyzer {
                                         }
                                         None => (None, ClosureEffectContext::default()),
                                     };
-                                    if is_internal_handler_closure_binding(&binding.name) {
+                                    let capture_policy =
+                                        if is_internal_handler_closure_binding(&binding.name) {
+                                            ClosureCapturePolicy::HandlerOwned
+                                        } else {
+                                            ClosureCapturePolicy::Lexical
+                                        };
+                                    if capture_policy == ClosureCapturePolicy::HandlerOwned {
                                         effects.lexical_handler_effects =
                                             context.lexical_handler_effects.clone();
                                         effects.lexical_handler_effect_sources =
@@ -7152,6 +7158,7 @@ impl Analyzer {
                                         body,
                                         declared_result,
                                         effects,
+                                        capture_policy,
                                         context,
                                     )
                                 }
@@ -7520,6 +7527,7 @@ impl Analyzer {
         body: &Expr,
         declared_result: Option<Ty>,
         effects: ClosureEffectContext,
+        capture_policy: ClosureCapturePolicy,
         outer: &mut LowerCtx,
     ) -> HirExpr {
         let mut source_groups = vec![source_params];
@@ -7546,9 +7554,14 @@ impl Analyzer {
         if !self.scan_simple_closure_captures(body, &mut bound, outer, &mut capture_uses) {
             return error_expr();
         }
-        for capture in &mut capture_uses {
-            if capture.name.contains("$for$iterator$") {
-                capture.mode = ClosureCaptureMode::Move;
+        if capture_policy == ClosureCapturePolicy::HandlerOwned {
+            for capture in &mut capture_uses {
+                let should_move = outer.lookup(&capture.name).is_some_and(|local| {
+                    local.capability == LocalCapability::Owned && !self.is_copy_type(&local.ty)
+                });
+                if should_move {
+                    capture.mode = ClosureCaptureMode::Move;
+                }
             }
         }
         let mut reconstructed_inspections = Vec::new();
@@ -7758,8 +7771,8 @@ impl Analyzer {
                 }
                 ClosureCaptureMode::Move => {
                     let value = self.access_place(place.clone(), AccessKind::Move, outer);
-                    let keeps_mutability =
-                        deferred_handler_continuation || name.contains("$for$iterator$");
+                    let keeps_mutability = deferred_handler_continuation
+                        || capture_policy == ClosureCapturePolicy::HandlerOwned;
                     (
                         PassMode::Move,
                         LocalCapability::Owned,
@@ -8081,33 +8094,21 @@ impl Analyzer {
                     & self.scan_simple_closure_captures(index, bound, outer, captures)
             }
             Expr::Assign(place, value) => {
-                let mut valid = self.scan_simple_closure_captures(value, bound, outer, captures);
+                let mut valid = self.scan_simple_closure_captures(place, bound, outer, captures);
+                valid &= self.scan_simple_closure_captures(value, bound, outer, captures);
                 if let Some(name) = place_root_name(place) {
                     if !bound.contains(name) && outer.lookup(name).is_some() {
-                        if !matches!(place.as_ref(), Expr::Name(_)) {
-                            self.error(
-                                "FnMut closure assignment only supports a captured root local for now",
-                            );
-                            valid = false;
-                        } else {
-                            record_closure_capture(captures, name, ClosureCaptureMode::Mutable);
-                        }
+                        record_closure_capture(captures, name, ClosureCaptureMode::Mutable);
                     }
                 }
                 valid
             }
             Expr::CompoundAssign(place, _, value) => {
-                let mut valid = self.scan_simple_closure_captures(value, bound, outer, captures);
+                let mut valid = self.scan_simple_closure_captures(place, bound, outer, captures);
+                valid &= self.scan_simple_closure_captures(value, bound, outer, captures);
                 if let Some(name) = place_root_name(place) {
                     if !bound.contains(name) && outer.lookup(name).is_some() {
-                        if !matches!(place.as_ref(), Expr::Name(_)) {
-                            self.error(
-                                "FnMut closure compound assignment only supports a captured root local for now",
-                            );
-                            valid = false;
-                        } else {
-                            record_closure_capture(captures, name, ClosureCaptureMode::Mutable);
-                        }
+                        record_closure_capture(captures, name, ClosureCaptureMode::Mutable);
                     }
                 }
                 valid
@@ -10502,6 +10503,7 @@ impl Analyzer {
                 lexical_handler_effects: HashSet::new(),
                 lexical_handler_effect_sources: HashMap::new(),
             },
+            ClosureCapturePolicy::Lexical,
             context,
         );
         let HirExprKind::LocalClosure(closure) = lowered.kind else {
