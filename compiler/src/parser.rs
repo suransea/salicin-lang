@@ -1268,13 +1268,28 @@ impl Parser {
         }
 
         if let TokenKind::Ident(kind) = self.current().kind.clone() {
+            if kind == "region" {
+                if name == "static" {
+                    return Err(self.error_at(
+                        name_token,
+                        "region entity `'static` is predefined and cannot be redeclared",
+                    ));
+                }
+                if !name.chars().next().is_some_and(char::is_uppercase) {
+                    return Err(self.error_at(
+                        name_token,
+                        "region compile-time parameters must use ordinary uppercase names like `R: region`; region literals use names like `'r`",
+                    ));
+                }
+                self.advance();
+                return Ok(CompileParamKind::Region);
+            }
             let parameter_kind = match kind.as_str() {
                 "usize" => Some(CompileParamKind::USize),
                 "access" => Some(CompileParamKind::Named("access".to_owned())),
                 "passing" => Some(CompileParamKind::Named("passing".to_owned())),
                 "effect" => Some(CompileParamKind::Effect),
                 "parameters" => Some(CompileParamKind::Parameters),
-                "region" => Some(CompileParamKind::Region),
                 _ => Some(CompileParamKind::Named(kind)),
             };
             if let Some(parameter_kind) = parameter_kind {

@@ -1213,8 +1213,15 @@ impl Analyzer {
                                 .get(compile_type)
                                 .is_some_and(|members| members.contains(&member));
                             if !valid {
+                                let description = if compile_type == "passing" {
+                                    "invalid passing argument".to_owned()
+                                } else if compile_type == "access" {
+                                    "invalid access argument".to_owned()
+                                } else {
+                                    format!("invalid `{compile_type}` argument")
+                                };
                                 self.error(format!(
-                                    "invalid `{compile_type}` argument `{member}` for `{}` in `{owner}`",
+                                    "{description} `{member}` for `{}` in `{owner}`",
                                     parameter.name
                                 ));
                                 return None;
