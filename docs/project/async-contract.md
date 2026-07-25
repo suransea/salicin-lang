@@ -1,9 +1,10 @@
 # Initial Async Contract
 
-Status: accepted design for `ASYNC-CONTRACT-1`
+Status: accepted design for `ASYNC-CONTRACT-1`; implementation progress is recorded in
+[`status.md`](status.md)
 
-This document fixes the first implementable async boundary. It is a project design, not current
-language behavior. Source sketches use `sc future` until their implementation tasks complete.
+This document fixes the first implementable async boundary. Source sketches marked `sc future`
+remain design syntax until the corresponding implementation tasks complete.
 
 ## Goals
 

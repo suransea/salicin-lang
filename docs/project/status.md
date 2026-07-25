@@ -137,8 +137,11 @@ inferred residual `Unsafe` requirement. One tail-position `await` stores its chi
 resumes from Ready, and drops the child exactly once on completion or cancellation. A single
 non-tail await may bind the Ready output and run a linear continuation with state-owned captures.
 Multiple sequential awaits compose while retaining earlier outputs and dropping only the active
-segment on cancellation. Control-flow awaits, algebraic residual-effect specialization, and
-self-referential suspension rules are not implemented.
+segment on cancellation. Ordinary locals live across a sequential await are stored in generated
+state and transferred into the continuation; owned resources are dropped exactly once on Ready or
+cancellation. Borrow chains whose referent would be stored in the same future are rejected because
+the generated state could not implement `Move`, while region-checked borrows of external storage
+remain valid. Control-flow awaits and algebraic residual-effect specialization are not implemented.
 
 ## Modules, Packages, and FFI
 

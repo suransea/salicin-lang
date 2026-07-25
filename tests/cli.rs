@@ -3119,6 +3119,31 @@ fn multiple_sequential_awaits_resume_through_nested_segments() {
 }
 
 #[test]
+fn await_retains_preceding_locals_and_external_borrows() {
+    for fixture_name in [
+        "async_await_retains_local.sc",
+        "async_await_external_borrow.sc",
+    ] {
+        let output = salic()
+            .arg("run")
+            .arg(fixture("pass", fixture_name))
+            .output()
+            .expect("run async retained state fixture");
+        assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+    }
+}
+
+#[test]
+fn await_drops_a_retained_resource_after_ready() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "async_await_retained_resource_drop.sc"))
+        .output()
+        .expect("run retained async resource fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn cancelling_multiple_awaits_drops_only_the_active_segment_state() {
     let output = salic()
         .arg("run")

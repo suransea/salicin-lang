@@ -556,8 +556,12 @@ evaluated on the first parent poll, the child future is retained across `Poll.Pe
 child exactly once. One linear non-tail form, `let value = await child`, may execute ordinary
 continuation code after Ready; the continuation's captures remain owned by the parent while
 suspended. Multiple sequential bindings compose recursively and preserve earlier Ready values
-across later Pending states. Awaits nested in control flow and other residual-effect cases are not
-implemented yet.
+across later Pending states. Ordinary preceding locals used by the continuation are retained in
+generated state and follow normal Copy, Move, and drop rules. A borrow of another retained local,
+including through a borrow alias chain, is rejected because it would make the generated future
+self-referential and therefore non-`Move`. Borrows of external storage remain subject to their
+ordinary region and alias constraints. Awaits nested in control flow and other residual-effect
+cases are not implemented yet.
 
 `unsafe` is an authority effect. `unsafe { ... }` authorizes operations whose contracts cannot be
 verified by the safe type and ownership rules; it does not disable type checking or cleanup.

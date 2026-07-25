@@ -7267,6 +7267,28 @@ let child() = { async { 1 } }
     assert!(diagnostics.iter().any(|diagnostic| diagnostic
         .message
         .contains("suspension nested in control flow is not implemented yet")));
+
+    let diagnostics = compile_text(
+        r#"
+let main(): i32 = {
+  let future = async {
+    let value = 41
+    let reference: borrow(i32) = borrow(value)
+    let awaited = await child()
+    reference + awaited
+  }
+  0
+}
+let child() = { async { 1 } }
+"#,
+    )
+    .expect_err("self-referential async state must be rejected");
+    assert!(diagnostics.iter().any(|diagnostic| diagnostic
+        .message
+        .contains("stored in the same future across `await`")));
+    assert!(diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.message.contains("cannot implement `Move`")));
 }
 
 #[test]

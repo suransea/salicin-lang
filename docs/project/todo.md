@@ -15,24 +15,24 @@ Priority meanings:
 
 ## Current
 
-- [ ] **ASYNC-BORROW-1: Reject first-version self-referential states**
+- [ ] **ASYNC-CONTROL-1: Lower suspension nested in control flow**
 
 ## Next
 
-- [ ] **ASYNC-CONTROL-1: Lower suspension nested in control flow**
 - [ ] **ASYNC-EFFECT-1: Specialize generated polling through residual handlers**
 - [ ] **ASYNC-EXEC-1: Provide one explicit minimal executor**
 
-`MOVE-TRAIT-1`, `ASYNC-STATE-1`, `ASYNC-POLL-1`, and `ASYNC-CANCEL-1` are complete. Cold async
-blocks materialize compiler-owned nominal state, preserve owned captures across relocation, and
-drop initialized cold or suspended state exactly once. Typed polling returns `Poll.Ready(T)` once,
-retains a child across `Pending`, resumes linear sequential awaits, and traps on completed-state
-repoll. An unhandled `Unsafe` requirement is inferred onto `poll`.
+`MOVE-TRAIT-1`, `ASYNC-STATE-1`, `ASYNC-POLL-1`, `ASYNC-CANCEL-1`, and `ASYNC-BORROW-1` are
+complete. Cold async blocks materialize compiler-owned nominal state, preserve owned captures and
+live sequential locals across relocation, and drop initialized cold or suspended state exactly
+once. Typed polling returns `Poll.Ready(T)` once, retains a child across `Pending`, resumes linear
+sequential awaits, and traps on completed-state repoll. State-internal borrow chains live across an
+await are rejected as non-`Move`; region-checked borrows of external storage remain supported. An
+unhandled `Unsafe` requirement is inferred onto `poll`.
 
-The current task must reject borrows that would make generated state self-referential while
-continuing to permit region-checked borrows of external storage. Control-flow suspension and
-residual algebraic-effect specialization are separate follow-up lowering tasks; their current
-rejection boundaries remain source-level and tested.
+The current task must lower suspension points nested in `if`, `match`, and loop control flow while
+preserving branch-local liveness and deterministic cancellation. Residual algebraic-effect
+specialization remains a separate follow-up task.
 
 ## Later
 

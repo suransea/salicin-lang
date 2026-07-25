@@ -6387,6 +6387,15 @@ impl Analyzer {
                                                     (*mode == PassMode::Move).then_some(*field)
                                                 }),
                                         )
+                                        .chain(
+                                            awaited
+                                                .retained_modes
+                                                .iter()
+                                                .zip(&awaited.retained_fields)
+                                                .filter_map(|(mode, field)| {
+                                                    (*mode == PassMode::Move).then_some(*field)
+                                                }),
+                                        )
                                         .collect()
                                 })
                                 .unwrap_or_default(),

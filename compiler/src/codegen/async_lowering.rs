@@ -20,6 +20,23 @@ impl Analyzer {
         context: &mut super::flow::LowerCtx,
     ) -> HirExpr {
         let source_plan = split_async_source(body);
+        for retained in &source_plan.retained {
+            if retained.borrowed
+                && retained.referent.as_ref().is_some_and(|referent| {
+                    source_plan
+                        .retained
+                        .iter()
+                        .any(|candidate| &candidate.name == referent)
+                })
+            {
+                self.error(format!(
+                    "async local `{}` borrows `{}` stored in the same future across `await`; the generated state would be self-referential and cannot implement `Move`",
+                    retained.name,
+                    retained.referent.as_deref().expect("checked retained referent")
+                ));
+                return super::lower::error_expr();
+            }
+        }
         let lowered = self.lower_local_closure(
             &[],
             &source_plan.factory_body,
@@ -49,10 +66,32 @@ impl Analyzer {
             ));
             return super::lower::error_expr();
         }
-        let mut awaited = if source_plan.has_await {
-            let Some(awaited) = self.resolve_awaited_future(&closure.result) else {
+        let (awaited_ty, retained_types) = if source_plan.retained.is_empty() {
+            (closure.result.clone(), Vec::new())
+        } else {
+            let Ty::Tuple(fields) = &closure.result else {
+                self.error("internal async segment bundle did not produce a tuple");
                 return super::lower::error_expr();
             };
+            (fields[0].clone(), fields[1..].to_vec())
+        };
+        let mut awaited = if source_plan.has_await {
+            let Some(mut awaited) = self.resolve_awaited_future(&awaited_ty) else {
+                return super::lower::error_expr();
+            };
+            awaited.factory_output = closure.result.clone();
+            awaited.retained_types = retained_types;
+            awaited.retained_modes = awaited
+                .retained_types
+                .iter()
+                .map(|ty| {
+                    if self.is_copy_type(ty) {
+                        PassMode::Copy
+                    } else {
+                        PassMode::Move
+                    }
+                })
+                .collect();
             Some(awaited)
         } else {
             None
@@ -70,14 +109,37 @@ impl Analyzer {
                 ));
                 return super::lower::error_expr();
             };
-            let parameter = Param {
+            let mut parameters = Vec::new();
+            for ((retained, retained_ty), mode) in source_plan
+                .retained
+                .iter()
+                .zip(&awaited.retained_types)
+                .zip(&awaited.retained_modes)
+            {
+                let Some(source_ty) = self.source_type_for_ty(retained_ty) else {
+                    self.error(format!(
+                        "async local `{}` of type `{retained_ty}` cannot be represented in a continuation parameter",
+                        retained.name
+                    ));
+                    return super::lower::error_expr();
+                };
+                parameters.push(Param {
+                    mode: *mode,
+                    access: None,
+                    modifiers: Vec::new(),
+                    region: None,
+                    name: retained.name.clone(),
+                    ty: source_ty,
+                });
+            }
+            parameters.push(Param {
                 mode: PassMode::Inferred,
                 access: None,
                 modifiers: Vec::new(),
                 region: None,
                 name: continuation.name,
                 ty: source_ty,
-            };
+            });
             let continuation_has_await = split_async_source(&continuation.body).has_await;
             let continuation_body = if continuation_has_await {
                 Expr::Async {
@@ -87,7 +149,7 @@ impl Analyzer {
                 continuation.body
             };
             let lowered = self.lower_local_closure(
-                &[parameter],
+                &parameters,
                 &continuation_body,
                 None,
                 ClosureEffectContext {
@@ -177,6 +239,15 @@ impl Analyzer {
                 .collect();
             awaited.continuation_fields = continuation_fields;
             awaited.continuation_capture_types = continuation_capture_types;
+            for (index, ty) in awaited.retained_types.iter().enumerate() {
+                let field = fields.len();
+                fields.push(FieldLayout {
+                    name: format!("retained.{index}"),
+                    ty: ty.clone(),
+                    access: access.clone(),
+                });
+                awaited.retained_fields.push(field);
+            }
         }
         if let Some(next) = awaited.as_mut().and_then(|awaited| awaited.next.as_mut()) {
             let field = fields.len();
@@ -305,6 +376,7 @@ impl Analyzer {
             .expect("validated Future poll has a result");
         Some(AwaitedFutureInfo {
             ty: ty.clone(),
+            factory_output: ty.clone(),
             output,
             poll_ty,
             poll_function,
@@ -316,6 +388,9 @@ impl Analyzer {
             continuation_capture_modes: Vec::new(),
             continuation_fields: Vec::new(),
             continuation_capture_types: Vec::new(),
+            retained_fields: Vec::new(),
+            retained_types: Vec::new(),
+            retained_modes: Vec::new(),
             next: None,
         })
     }
@@ -441,11 +516,10 @@ impl Analyzer {
             })
             .collect::<Vec<_>>();
         let resume = HirExpr {
-            ty: future
-                .awaited
-                .as_ref()
-                .map(|awaited| awaited.ty.clone())
-                .unwrap_or_else(|| future.output.clone()),
+            ty: future.awaited.as_ref().map_or_else(
+                || future.output.clone(),
+                |awaited| awaited.factory_output.clone(),
+            ),
             kind: HirExprKind::Call {
                 function: future.resume.clone(),
                 arguments,
@@ -587,21 +661,65 @@ fn suspended_poll_body(
     resume: HirExpr,
 ) -> HirExpr {
     let child_place = async_field_place(0, self_ty.clone(), awaited.field, awaited.ty.clone());
-    let initialize_child = HirExpr {
+    let bundle_local = 1_000;
+    let bundle_binding = (!awaited.retained_fields.is_empty()).then(|| {
+        HirStmt::Let(super::hir::HirBinding {
+            id: bundle_local,
+            name: "async.segment".to_owned(),
+            ty: awaited.factory_output.clone(),
+            mutable: false,
+            value: resume.clone(),
+        })
+    });
+    let bundle_field = |index: usize, ty: &Ty| HirExpr {
+        ty: ty.clone(),
+        kind: HirExprKind::Read {
+            place: HirPlace {
+                local: bundle_local,
+                root_ty: awaited.factory_output.clone(),
+                projections: vec![index],
+                dynamic_index: None,
+                ty: ty.clone(),
+                capability: LocalCapability::Owned,
+                root_mutable: false,
+                loan: None,
+                indirect: false,
+            },
+            kind: HirReadKind::Move,
+        },
+    };
+    let initialize_field = |place: HirPlace, value: HirExpr| HirExpr {
         ty: Ty::Unit,
         kind: HirExprKind::RawInit {
             pointer: Box::new(HirExpr {
                 ty: Ty::Pointer {
-                    pointee: Box::new(awaited.ty.clone()),
+                    pointee: Box::new(place.ty.clone()),
                     mutable: true,
                 },
-                kind: HirExprKind::RawAddress {
-                    place: child_place.clone(),
-                },
+                kind: HirExprKind::RawAddress { place },
             }),
-            value: Box::new(resume),
+            value: Box::new(value),
         },
     };
+    let initialize_child = initialize_field(
+        child_place.clone(),
+        if awaited.retained_fields.is_empty() {
+            resume
+        } else {
+            bundle_field(0, &awaited.ty)
+        },
+    );
+    let initialize_retained = awaited
+        .retained_fields
+        .iter()
+        .zip(&awaited.retained_types)
+        .enumerate()
+        .map(|(index, (field, ty))| {
+            initialize_field(
+                async_field_place(0, self_ty.clone(), *field, ty.clone()),
+                bundle_field(index + 1, ty),
+            )
+        });
     let cold_poll = poll_awaited(
         self_ty,
         poll_ty,
@@ -658,10 +776,12 @@ fn suspended_poll_body(
             then_branch: Box::new(HirExpr {
                 ty: poll_ty.clone(),
                 kind: HirExprKind::Block(
-                    vec![
-                        HirStmt::Expr(initialize_child),
-                        HirStmt::Expr(set_state(self_ty, 1)),
-                    ],
+                    bundle_binding
+                        .into_iter()
+                        .chain(std::iter::once(HirStmt::Expr(initialize_child)))
+                        .chain(initialize_retained.map(HirStmt::Expr))
+                        .chain(std::iter::once(HirStmt::Expr(set_state(self_ty, 1))))
+                        .collect(),
                     Some(Box::new(cold_poll)),
                 ),
             }),
@@ -772,6 +892,36 @@ fn poll_awaited(
             }),
             PassMode::Inferred => {
                 unreachable!("async continuation capture modes are normalized")
+            }
+        });
+    }
+    for ((field, mode), ty) in awaited
+        .retained_fields
+        .iter()
+        .zip(&awaited.retained_modes)
+        .zip(&awaited.retained_types)
+    {
+        let place = async_field_place(0, self_ty.clone(), *field, ty.clone());
+        continuation_arguments.push(match mode {
+            PassMode::Copy => HirArgument::Copy(HirExpr {
+                ty: ty.clone(),
+                kind: HirExprKind::Read {
+                    place,
+                    kind: HirReadKind::Copy,
+                },
+            }),
+            PassMode::Move => HirArgument::Move(HirExpr {
+                ty: ty.clone(),
+                kind: HirExprKind::RawTake(Box::new(HirExpr {
+                    ty: Ty::Pointer {
+                        pointee: Box::new(ty.clone()),
+                        mutable: true,
+                    },
+                    kind: HirExprKind::RawAddress { place },
+                })),
+            }),
+            PassMode::Borrow | PassMode::MutBorrow | PassMode::Inferred => {
+                unreachable!("retained async locals use Copy or Move")
             }
         });
     }
@@ -967,6 +1117,7 @@ pub(super) struct AsyncFutureInfo {
 #[derive(Debug, Clone)]
 pub(super) struct AwaitedFutureInfo {
     pub(super) ty: Ty,
+    pub(super) factory_output: Ty,
     pub(super) output: Ty,
     pub(super) poll_ty: Ty,
     pub(super) poll_function: String,
@@ -978,6 +1129,9 @@ pub(super) struct AwaitedFutureInfo {
     pub(super) continuation_capture_modes: Vec<PassMode>,
     pub(super) continuation_fields: Vec<usize>,
     pub(super) continuation_capture_types: Vec<Ty>,
+    pub(super) retained_fields: Vec<usize>,
+    pub(super) retained_types: Vec<Ty>,
+    pub(super) retained_modes: Vec<PassMode>,
     pub(super) next: Option<Box<AwaitedFutureInfo>>,
 }
 
@@ -985,12 +1139,19 @@ struct AsyncSourcePlan {
     factory_body: Expr,
     has_await: bool,
     continuation: Option<AsyncContinuationSource>,
+    retained: Vec<AsyncRetainedSource>,
 }
 
 struct AsyncContinuationSource {
     name: String,
     mutable: bool,
     body: Expr,
+}
+
+struct AsyncRetainedSource {
+    name: String,
+    referent: Option<String>,
+    borrowed: bool,
 }
 
 fn split_async_source(body: &Expr) -> AsyncSourcePlan {
@@ -1001,6 +1162,7 @@ fn split_async_source(body: &Expr) -> AsyncSourcePlan {
                 factory_body: (**operand).clone(),
                 has_await: true,
                 continuation: None,
+                retained: Vec::new(),
             };
         }
         Expr::Block(_, Some(tail)) => {
@@ -1010,6 +1172,7 @@ fn split_async_source(body: &Expr) -> AsyncSourcePlan {
                     factory_body: body,
                     has_await: true,
                     continuation: None,
+                    retained: Vec::new(),
                 };
             }
         }
@@ -1020,6 +1183,7 @@ fn split_async_source(body: &Expr) -> AsyncSourcePlan {
             factory_body: body,
             has_await: false,
             continuation: None,
+            retained: Vec::new(),
         };
     };
     let Some((position, binding, operand)) =
@@ -1040,18 +1204,149 @@ fn split_async_source(body: &Expr) -> AsyncSourcePlan {
             factory_body: body,
             has_await: false,
             continuation: None,
+            retained: Vec::new(),
         };
+    };
+    let continuation_body = Expr::Block(statements[position + 1..].to_vec(), tail.clone());
+    let mut referenced = referenced_names(&continuation_body);
+    let dependencies = statements[..position]
+        .iter()
+        .filter_map(|statement| {
+            let Stmt::Let(binding) = statement else {
+                return None;
+            };
+            Some((
+                binding.name.clone(),
+                async_initializer_root(&binding.value)?,
+            ))
+        })
+        .collect::<Vec<_>>();
+    let mut borrowed_names = statements[..position]
+        .iter()
+        .filter_map(|statement| {
+            let Stmt::Let(binding) = statement else {
+                return None;
+            };
+            (matches!(binding.annotation, Some(crate::ast::Type::Borrow { .. }))
+                || matches!(binding.value.unlocated(), Expr::Borrow { .. }))
+            .then(|| binding.name.clone())
+        })
+        .collect::<std::collections::HashSet<_>>();
+    loop {
+        let mut changed = false;
+        for (binding, referent) in &dependencies {
+            if borrowed_names.contains(referent) {
+                changed |= borrowed_names.insert(binding.clone());
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    loop {
+        let mut changed = false;
+        for (binding, referent) in &dependencies {
+            if referenced.contains(binding) {
+                changed |= referenced.insert(referent.clone());
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let mut retained = Vec::<AsyncRetainedSource>::new();
+    for statement in &statements[..position] {
+        let Stmt::Let(binding) = statement else {
+            continue;
+        };
+        if !referenced.contains(&binding.name) {
+            continue;
+        }
+        let referent = async_initializer_root(&binding.value)
+            .map(|referent| resolve_async_dependency(&referent, &dependencies));
+        if let Some(existing) = retained
+            .iter_mut()
+            .find(|retained| retained.name == binding.name)
+        {
+            *existing = AsyncRetainedSource {
+                name: binding.name.clone(),
+                referent,
+                borrowed: borrowed_names.contains(&binding.name),
+            };
+        } else {
+            retained.push(AsyncRetainedSource {
+                name: binding.name.clone(),
+                referent,
+                borrowed: borrowed_names.contains(&binding.name),
+            });
+        }
+    }
+    let factory_tail = if retained.is_empty() {
+        (**operand).clone()
+    } else {
+        Expr::Tuple(
+            std::iter::once((**operand).clone())
+                .chain(
+                    retained
+                        .iter()
+                        .map(|retained| Expr::Name(retained.name.clone())),
+                )
+                .collect(),
+        )
     };
     AsyncSourcePlan {
         factory_body: Expr::Block(
             statements[..position].to_vec(),
-            Some(Box::new((**operand).clone())),
+            Some(Box::new(factory_tail)),
         ),
         has_await: true,
         continuation: Some(AsyncContinuationSource {
             name: binding.name.clone(),
             mutable: binding.mutable,
-            body: Expr::Block(statements[position + 1..].to_vec(), tail.clone()),
+            body: continuation_body,
         }),
+        retained,
     }
+}
+
+fn referenced_names(expression: &Expr) -> std::collections::HashSet<String> {
+    let mut expression = expression.clone();
+    let mut names = std::collections::HashSet::new();
+    super::source_rewrite::visit_expr_mut(&mut expression, &mut |expression| {
+        if let Expr::Name(name) = expression.unlocated() {
+            names.insert(name.clone());
+        }
+    });
+    names
+}
+
+fn async_place_root(expression: &Expr) -> Option<String> {
+    match expression.unlocated() {
+        Expr::Name(name) => Some(name.clone()),
+        Expr::Member(base, _) | Expr::Index { base, .. } => async_place_root(base),
+        _ => None,
+    }
+}
+
+fn async_initializer_root(expression: &Expr) -> Option<String> {
+    match expression.unlocated() {
+        Expr::Borrow { value, .. } => async_place_root(value),
+        expression => async_place_root(expression),
+    }
+}
+
+fn resolve_async_dependency(name: &str, dependencies: &[(String, String)]) -> String {
+    let mut resolved = name.to_owned();
+    let mut visited = std::collections::HashSet::new();
+    while visited.insert(resolved.clone()) {
+        let Some((_, referent)) = dependencies
+            .iter()
+            .rev()
+            .find(|(binding, _)| binding == &resolved)
+        else {
+            break;
+        };
+        resolved = referent.clone();
+    }
+    resolved
 }

@@ -41,6 +41,12 @@ subset.
 - Completed the typed polling and deterministic cancellation milestones for cold and linearly
   suspended futures. Control-flow suspension and residual handler specialization now remain
   explicit follow-up tasks rather than open-ended parts of the polling transition milestone.
+- Retained ordinary pre-await locals in generated state when a linear continuation uses them,
+  including Copy aliases and owned resources. Ready transfers those locals into the continuation;
+  cancellation drops initialized retained state exactly once.
+- Completed the first async borrowing boundary: a borrow chain whose local referent would occupy
+  the same generated future is rejected as self-referential and non-`Move`, while external borrows
+  remain region-checked and keep their ordinary alias restrictions.
 - Declared `Continuation(Input, Output)` and `EffectCallable(Input, Output, Answer)` as bodyless
   type forms, matching their compiler-owned representations instead of describing them as empty
   structures. Lang-item validation now requires the exact type-form declarations.
