@@ -6,6 +6,12 @@ subset.
 
 ## Unreleased
 
+- Extended suspended residual async specialization through finite sequential
+  awaits after the effectful first segment. Each later child may independently
+  return `Pending`; Ready destroys the completed child before starting the
+  next, and cancellation drops only the active child chain. Later child poll
+  rows with custom effects or `Throws` remain explicitly rejected.
+
 ## 0.192.0 - 2026-07-26
 
 - Extended suspended residual async specialization to `Copy` and move-only

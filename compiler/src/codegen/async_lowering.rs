@@ -516,8 +516,7 @@ impl Analyzer {
         }
 
         let supports_suspended_residual = awaited.as_ref().is_some_and(|awaited| {
-            awaited.next.is_none()
-                && awaited.loop_step.is_none()
+            awaited.loop_step.is_none()
                 && awaited.loop_condition.is_none()
                 && closure
                     .captures
@@ -1523,7 +1522,6 @@ impl Analyzer {
             .awaited
             .as_ref()
             .expect("suspended async template has an awaited child");
-        debug_assert!(awaited.next.is_none());
         debug_assert!(awaited.loop_step.is_none());
         debug_assert!(awaited.loop_condition.is_none());
 

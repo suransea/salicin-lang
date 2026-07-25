@@ -24,12 +24,13 @@ end-to-end capability at a time and preserve:
 Callable and continuation ownership, cold future state, cancellation, explicit
 polling, loop suspension, and the first direct-tail suspended residual path
 are implemented. The current milestone closes the remaining residual
-specialization shapes. One pure linear post-await continuation is now
-specialized without replaying the cold residual segment.
+specialization shapes. Finite pure linear post-await segments are now
+specialized without replaying the cold residual segment or retaining completed
+children.
 
 Remaining design:
 
-- nested post-await suspension under residual handlers;
+- residual effects in later post-await segments;
 - branch and loop suspension under residual handlers;
 - borrowed suspended captures that preserve region and alias constraints;
 - explicit rejection where a state shape cannot remain structural `Move`.

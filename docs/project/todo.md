@@ -18,11 +18,12 @@ Priority meanings:
 - [ ] **ASYNC-EFFECT-1: Extend residual specialization beyond direct tail await**
 
 Non-suspending futures support `Copy`, move-only, shared-borrow, and
-mutable-borrow captures. Suspended residual specialization supports one await
-followed by at most one pure linear continuation; both segments and retained
-pre-await locals accept by-value `Copy` or move-only state. Remaining work
-covers nested suspension, branches, loops, and borrowed suspended captures
-while preserving handler ownership, cold construction, and one-shot cleanup.
+mutable-borrow captures. Suspended residual specialization supports a
+residual first segment followed by finite pure linear await segments; captures
+and retained pre-await locals accept by-value `Copy` or move-only state.
+Remaining work covers residual effects in later segments, branches, loops,
+and borrowed suspended captures while preserving handler ownership, cold
+construction, and one-shot cleanup.
 
 ## P1: Tooling And Packages
 

@@ -89,9 +89,10 @@ inside the body removes it normally. Unhandled `Throws(Error)`, `Unsafe`, and cu
 requirements of `poll`.
 
 The implemented suspended residual slice accepts a first segment ending in
-one `await`, optionally followed by one pure linear continuation. Neither
-segment may suspend again, and both may capture only by-value `Copy` or
-move-only values. Pre-await locals used by the continuation may likewise be
+one `await`, optionally followed by a finite linear sequence of pure await
+segments. The first segment may retain custom effects or `Throws`; later
+child poll rows may not. Every segment may capture only by-value `Copy` or
+move-only values. Pre-await locals used by a continuation may likewise be
 retained by `Copy` or move. The enclosing handler specializes the generated
 poll source. On the cold transition, the parent marks transferred factory
 captures unavailable before evaluating the child factory; an abort therefore
@@ -99,11 +100,12 @@ cannot clean the same capture again. A distinct starting state retains
 move-only continuation captures while factory locals remain under ordinary
 scope cleanup. After the factory returns, the child and retained locals enter
 the suspended state together. A `Pending` child remains stored, and later
-polls invoke only that child rather than replaying the factory or its residual
-effects. Ready completion runs the continuation once. Completion, error, and
-cancellation each destroy every initialized child, retained local, and
-continuation capture once. Residual effects with nested suspension, branches,
-loops, or borrowed suspended captures remain outside this slice.
+polls invoke only the active child rather than replaying an earlier factory or
+its residual effects. Each Ready transition destroys its completed child
+before constructing the next. Completion, error, and cancellation each
+destroy every initialized child, retained local, and continuation capture
+once. Residual effects in later segments, branches, loops, or borrowed
+suspended captures remain outside this slice.
 
 ## State Machines
 

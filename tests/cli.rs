@@ -3359,6 +3359,7 @@ fn suspended_residual_async_effects_specialize_and_cancel() {
         "async_residual_tail_await.sc",
         "async_residual_post_await.sc",
         "async_residual_retained_await.sc",
+        "async_residual_nested_await.sc",
     ]) {
         assert_eq!(
             output.status.code(),
@@ -3368,17 +3369,17 @@ fn suspended_residual_async_effects_specialize_and_cancel() {
         );
     }
 
-    let nested = salic()
+    let recurring = salic()
         .arg("check")
-        .arg(fixture("fail", "async_residual_nested_await.sc"))
+        .arg(fixture("fail", "async_residual_loop_await.sc"))
         .output()
-        .expect("check nested residual async fixture");
-    assert!(!nested.status.success(), "{}", output_text(&nested));
+        .expect("check recurring residual async loop fixture");
+    assert!(!recurring.status.success(), "{}", output_text(&recurring));
     assert!(
-        String::from_utf8_lossy(&nested.stderr)
+        String::from_utf8_lossy(&recurring.stderr)
             .contains("requires poll/resume handler specialization for this suspension shape"),
         "{}",
-        output_text(&nested)
+        output_text(&recurring)
     );
 }
 

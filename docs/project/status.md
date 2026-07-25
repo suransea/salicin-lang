@@ -129,11 +129,11 @@ Implemented data and control features include:
   shared-borrow, or mutable-borrow captures, including exact once-only
   move/drop behavior, retained borrow exclusion, `Future(E)` where-predicate
   inference, and effectful trait-method inlining;
-- handler specialization for a suspended await with an optional pure linear
-  continuation and a custom residual effect, including standard
-  `Throws(Error)`, by-value `Copy` and move-only captures and retained locals,
-  Pending repoll without replaying the cold transition, and exact completion,
-  error, and cancellation cleanup;
+- handler specialization for a suspended await with a finite sequence of pure
+  linear continuation segments and a residual effect in the first segment,
+  including standard `Throws(Error)`, by-value `Copy` and move-only captures
+  and retained locals, Pending repoll without replaying earlier transitions,
+  and exact completion, error, and cancellation cleanup;
 - checked arithmetic, comparisons, bitwise operations, shifts, and compound assignment;
 - deterministic left-to-right evaluation;
 - optional chaining, coalescing, error propagation, and forced unwrap.
@@ -165,14 +165,15 @@ The no-suspension polling transition returns `Poll.Ready` once, traps on repoll,
 inferred residual `Unsafe` requirement. Standard residual `Throws(Error)` polling specializes
 through `try` or its underlying handler; success, error, and move-capture cleanup paths run
 natively. An await may retain custom residual effects when the cold segment
-and an optional pure linear continuation capture only by-value `Copy` or
-move-only values, retained pre-await locals are `Copy` or move-only, and that
-continuation does not suspend again. Its handler-specialized first poll
-transfers factory captures before evaluating the child factory. A distinct
-starting state retains move-only continuation captures if the factory aborts;
-factory locals still use ordinary lexical cleanup. Pending repolls only the
-stored child, Ready runs the continuation once, and Ready, error, or
-cancellation cleans each initialized field once.
+and its finite linear continuation segments capture only by-value `Copy` or
+move-only values, retained pre-await locals are `Copy` or move-only, and later
+child poll rows have no custom effect or `Throws`. Its handler-specialized
+first poll transfers factory captures before evaluating the child factory. A
+distinct starting state retains move-only continuation captures if the
+factory aborts; factory locals still use ordinary lexical cleanup. Pending
+repolls only the active stored child, each Ready transition destroys that
+child before constructing the next, and completion, error, or cancellation
+cleans each initialized field once.
 One tail-position `await` stores its child across Pending,
 resumes from Ready, and drops the child exactly once on completion or cancellation. A single
 non-tail await may bind the Ready output and run a linear continuation with state-owned captures.
@@ -201,8 +202,8 @@ the condition, and each completed backedge rechecks it before constructing the n
 Conditions are currently pure and `while` remains unit-valued. Move-only continuation captures are
 now packed into `Continue(Carry)` and restored into their parent fields before the next iteration;
 completion and cancellation consume or drop each field once. Move-only values required by the
-iteration factory or condition still require a more general carry transform. Residual effects
-with nested suspension, branches, loops, or borrowed suspended captures are not implemented.
+iteration factory or condition still require a more general carry transform. Residual effects in
+later sequential segments, branches, loops, or borrowed suspended captures are not implemented.
 Iterations with multiple top-level sequential awaits use a private iteration future; its final
 `Break(Output)` may depend on any awaited binding, and cancellation follows its nested active-child
 chain without retaining completed children. A recurring loop with no break uses the standard
