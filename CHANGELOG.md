@@ -6,6 +6,14 @@ subset.
 
 ## Unreleased
 
+## 0.187.0 - 2026-07-26
+
+- Added contextual `test("name") { ... }` registrations and `salic test`.
+  Registrations are private compile-time test metadata with pure `bool`
+  bodies; the selected package is compiled and linked once, runs in source
+  order, and reports the first failing name. Empty targets, empty names,
+  visible registrations, non-string names, non-`bool` bodies, and targets
+  above the current 254-test runner limit are rejected.
 - Allowed a trailing closure to supply an ordinary function's first runtime parameter group
   directly, so single-callback APIs can use `run { action() }` without an artificial empty group.
   Existing parenthesized, bare-argument, named, and successive trailing groups retain their

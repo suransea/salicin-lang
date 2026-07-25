@@ -38,6 +38,15 @@ Exit conditions:
 - recursive async calls require explicit indirection;
 - suspension cannot duplicate continuations or owned state.
 
+## Test Throughput Foundation
+
+The compiler provides contextual `test("name") { ... }` registrations and a
+`salic test` command that collects the selected package into one native
+runner. This removes per-case native linking from language-level regression
+suites and provides the foundation for migrating compatible execution
+fixtures into batches. Test registration is intentionally narrower than
+general compile-time execution.
+
 ## Confirmed ABI Direction
 
 The later representation and ABI milestone has three orthogonal source forms:

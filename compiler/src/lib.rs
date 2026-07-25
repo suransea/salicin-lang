@@ -52,34 +52,199 @@ fn parse_and_resolve_single_source(source: &str) -> Result<ast::Program, Vec<Str
 
 /// Compile one UTF-8 Salicin source file to textual LLVM IR.
 pub fn compile_source(source: &str) -> Result<String, Vec<String>> {
-    let program = parse_and_resolve_single_source(source)?;
+    let program = without_test_registrations(parse_and_resolve_single_source(source)?);
     codegen::compile(&program).map_err(format_codegen_diagnostics)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TestCompilation {
+    pub ir: String,
+    pub names: Vec<String>,
+}
+
+/// Compile all contextual `test("name") { ... }` registrations in one source
+/// file into a single native-runner module.
+pub fn compile_test_source(source: &str) -> Result<TestCompilation, Vec<String>> {
+    let program = parse_and_resolve_single_source(source)?;
+    compile_test_program(program, None)
 }
 
 /// Resolve and compile a Salicin binary from multiple source units to textual
 /// LLVM IR.
 pub fn compile_source_units(units: &[modules::SourceUnit]) -> Result<String, Vec<String>> {
-    let program = modules::resolve_sources(units)?;
+    let program = without_test_registrations(modules::resolve_sources(units)?);
     codegen::compile(&program).map_err(format_codegen_diagnostics)
 }
 
 /// Resolve and compile a binary from a complete package dependency graph.
 pub fn compile_source_packages(packages: &[modules::SourcePackage]) -> Result<String, Vec<String>> {
-    let program = modules::resolve_packages(packages)?;
+    let program = without_test_registrations(modules::resolve_packages(packages)?);
     codegen::compile(&program).map_err(format_codegen_diagnostics)
+}
+
+/// Resolve a package graph and compile the selected package's test
+/// declarations into one native-runner module.
+pub fn compile_test_source_packages(
+    packages: &[modules::SourcePackage],
+) -> Result<TestCompilation, Vec<String>> {
+    let primary_package = packages
+        .iter()
+        .find(|package| package.is_primary)
+        .map(|package| package.id.0);
+    let program = modules::resolve_packages(packages)?;
+    compile_test_program(program, primary_package)
+}
+
+fn compile_test_program(
+    program: ast::Program,
+    primary_package: Option<usize>,
+) -> Result<TestCompilation, Vec<String>> {
+    let (program, names) = test_runner_program(program, primary_package)?;
+    let ir = codegen::compile(&program).map_err(format_codegen_diagnostics)?;
+    Ok(TestCompilation { ir, names })
+}
+
+fn test_runner_program(
+    mut program: ast::Program,
+    primary_package: Option<usize>,
+) -> Result<(ast::Program, Vec<String>), Vec<String>> {
+    let tests = program
+        .items
+        .iter()
+        .zip(&program.item_origins)
+        .filter_map(|(item, origin)| {
+            if primary_package.is_some_and(|package| origin.package != package) {
+                return None;
+            }
+            let ast::Item::Function(function) = item else {
+                return None;
+            };
+            let encoded = function.name.rsplit("::").next()?.strip_prefix("$test$")?;
+            let name = decode_test_name(encoded)?;
+            Some((function.name.clone(), name))
+        })
+        .collect::<Vec<_>>();
+    if tests.is_empty() {
+        return Err(vec![
+            "error: test target contains no test declarations".to_owned()
+        ]);
+    }
+    if tests.len() > 254 {
+        return Err(vec![
+            "error: a test target currently supports at most 254 tests".to_owned(),
+        ]);
+    }
+    let names = tests
+        .iter()
+        .map(|(_, name)| name.clone())
+        .collect::<Vec<_>>();
+
+    let mut retained_items = Vec::with_capacity(program.items.len() + 1);
+    let mut retained_visibilities = Vec::with_capacity(program.items.len() + 1);
+    let mut retained_origins = Vec::with_capacity(program.items.len() + 1);
+    for ((item, visibility), origin) in program
+        .items
+        .into_iter()
+        .zip(program.item_visibilities)
+        .zip(program.item_origins)
+    {
+        let is_unselected_test = primary_package
+            .is_some_and(|package| origin.package != package && is_test_registration(&item));
+        if matches!(&item, ast::Item::Function(function) if function.name == "main")
+            || is_unselected_test
+        {
+            continue;
+        }
+        retained_items.push(item);
+        retained_visibilities.push(visibility);
+        retained_origins.push(origin);
+    }
+
+    let body = tests.into_iter().enumerate().rev().fold(
+        ast::Expr::Integer(0),
+        |next, (index, (test, _))| ast::Expr::If {
+            condition: Box::new(ast::Expr::Call(Box::new(ast::Expr::Name(test)), Vec::new())),
+            then_branch: Box::new(next),
+            else_branch: Some(Box::new(ast::Expr::Integer(
+                u128::try_from(index + 1).expect("test index fits in u128"),
+            ))),
+        },
+    );
+    retained_items.push(ast::Item::Function(ast::Function {
+        name: "main".to_owned(),
+        foreign: None,
+        compile_groups: Vec::new(),
+        groups: vec![Vec::new()],
+        return_type: Some(ast::Type::I32),
+        effects: ast::FunctionEffects::default(),
+        where_predicates: Vec::new(),
+        body: Some(body),
+    }));
+    retained_visibilities.push(ast::Visibility::Private);
+    retained_origins.push(ast::ItemOrigin::default());
+
+    program.items = retained_items;
+    program.item_visibilities = retained_visibilities;
+    program.item_origins = retained_origins;
+    Ok((program, names))
+}
+
+fn decode_test_name(encoded: &str) -> Option<String> {
+    if !encoded.len().is_multiple_of(2) {
+        return None;
+    }
+    let bytes = (0..encoded.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(&encoded[index..index + 2], 16).ok())
+        .collect::<Option<Vec<_>>>()?;
+    String::from_utf8(bytes).ok()
+}
+
+fn is_test_registration(item: &ast::Item) -> bool {
+    matches!(
+        item,
+        ast::Item::Function(function)
+            if function
+                .name
+                .rsplit("::")
+                .next()
+                .is_some_and(|name| name.starts_with("$test$"))
+    )
+}
+
+fn without_test_registrations(mut program: ast::Program) -> ast::Program {
+    let mut items = Vec::with_capacity(program.items.len());
+    let mut visibilities = Vec::with_capacity(program.item_visibilities.len());
+    let mut origins = Vec::with_capacity(program.item_origins.len());
+    for ((item, visibility), origin) in program
+        .items
+        .into_iter()
+        .zip(program.item_visibilities)
+        .zip(program.item_origins)
+    {
+        if !is_test_registration(&item) {
+            items.push(item);
+            visibilities.push(visibility);
+            origins.push(origin);
+        }
+    }
+    program.items = items;
+    program.item_visibilities = visibilities;
+    program.item_origins = origins;
+    program
 }
 
 /// Compile one UTF-8 Salicin library source file to textual LLVM IR without a
 /// platform `main` wrapper.
 pub fn compile_library_source(source: &str) -> Result<String, Vec<String>> {
-    let program = parse_and_resolve_single_source(source)?;
+    let program = without_test_registrations(parse_and_resolve_single_source(source)?);
     codegen::compile_library(&program).map_err(format_codegen_diagnostics)
 }
 
 /// Resolve and compile a Salicin library from multiple source units to textual
 /// LLVM IR without a platform `main` wrapper.
 pub fn compile_library_source_units(units: &[modules::SourceUnit]) -> Result<String, Vec<String>> {
-    let program = modules::resolve_sources(units)?;
+    let program = without_test_registrations(modules::resolve_sources(units)?);
     codegen::compile_library(&program).map_err(format_codegen_diagnostics)
 }
 
@@ -87,41 +252,41 @@ pub fn compile_library_source_units(units: &[modules::SourceUnit]) -> Result<Str
 pub fn compile_library_source_packages(
     packages: &[modules::SourcePackage],
 ) -> Result<String, Vec<String>> {
-    let program = modules::resolve_packages(packages)?;
+    let program = without_test_registrations(modules::resolve_packages(packages)?);
     codegen::compile_library(&program).map_err(format_codegen_diagnostics)
 }
 
 /// Parse and type-check one Salicin binary source file, including its required
 /// `main` entry point, without generating LLVM IR.
 pub fn check_source(source: &str) -> Result<(), Vec<String>> {
-    let program = parse_and_resolve_single_source(source)?;
+    let program = without_test_registrations(parse_and_resolve_single_source(source)?);
     codegen::check(&program).map_err(format_codegen_diagnostics)
 }
 
 /// Parse and type-check one Salicin library source file without requiring a
 /// `main` entry point.
 pub fn check_library_source(source: &str) -> Result<(), Vec<String>> {
-    let program = parse_and_resolve_single_source(source)?;
+    let program = without_test_registrations(parse_and_resolve_single_source(source)?);
     codegen::check_library(&program).map_err(format_codegen_diagnostics)
 }
 
 /// Resolve and type-check a Salicin binary assembled from multiple source
 /// units. A valid `main` entry point is required.
 pub fn check_source_units(units: &[modules::SourceUnit]) -> Result<(), Vec<String>> {
-    let program = modules::resolve_sources(units)?;
+    let program = without_test_registrations(modules::resolve_sources(units)?);
     codegen::check(&program).map_err(format_codegen_diagnostics)
 }
 
 /// Resolve and type-check a binary assembled from a package dependency graph.
 pub fn check_source_packages(packages: &[modules::SourcePackage]) -> Result<(), Vec<String>> {
-    let program = modules::resolve_packages(packages)?;
+    let program = without_test_registrations(modules::resolve_packages(packages)?);
     codegen::check(&program).map_err(format_codegen_diagnostics)
 }
 
 /// Resolve and type-check a Salicin library assembled from multiple source
 /// units without requiring a `main` entry point.
 pub fn check_library_source_units(units: &[modules::SourceUnit]) -> Result<(), Vec<String>> {
-    let program = modules::resolve_sources(units)?;
+    let program = without_test_registrations(modules::resolve_sources(units)?);
     codegen::check_library(&program).map_err(format_codegen_diagnostics)
 }
 
@@ -129,13 +294,46 @@ pub fn check_library_source_units(units: &[modules::SourceUnit]) -> Result<(), V
 pub fn check_library_source_packages(
     packages: &[modules::SourcePackage],
 ) -> Result<(), Vec<String>> {
-    let program = modules::resolve_packages(packages)?;
+    let program = without_test_registrations(modules::resolve_packages(packages)?);
     codegen::check_library(&program).map_err(format_codegen_diagnostics)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_compilation_preserves_registration_names_and_rejects_invalid_targets() {
+        let compilation = compile_test_source(
+            "test(\"arithmetic\") { 20 + 22 == 42 }\n\
+             test(\"UTF-8: 盐\") { true }\n",
+        )
+        .expect("test registrations should compile into one runner");
+        assert_eq!(compilation.names, ["arithmetic", "UTF-8: 盐"]);
+        assert!(compilation.ir.contains("define i32 @main()"));
+
+        let no_tests =
+            compile_test_source("let helper(): bool = { true }\n").expect_err("tests are required");
+        assert!(no_tests
+            .iter()
+            .any(|diagnostic| diagnostic.contains("contains no test declarations")));
+
+        let wrong_result =
+            compile_test_source("test(\"wrong result\") { 42 }\n").expect_err("bool is required");
+        assert!(
+            wrong_result
+                .iter()
+                .any(|diagnostic| diagnostic.contains("where `bool` is expected")),
+            "{wrong_result:?}"
+        );
+
+        let ordinary = compile_source(
+            "test(\"not part of a build\") { missing_test_only_name }\n\
+             let main(): i32 = { 42 }\n",
+        )
+        .expect("ordinary builds should discard test registrations before checking");
+        assert!(!ordinary.contains("not part of a build"));
+    }
 
     #[test]
     fn single_source_entry_points_resolve_root_imports() {

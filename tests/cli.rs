@@ -232,6 +232,65 @@ fn help_and_version_identify_salic() {
 }
 
 #[test]
+fn built_in_test_runner_links_one_binary_and_reports_the_failing_name() {
+    let passing = salic()
+        .arg("test")
+        .arg(fixture("test", "multiple_pass.sc"))
+        .output()
+        .expect("run passing built-in tests");
+    assert_eq!(passing.status.code(), Some(0), "{}", output_text(&passing));
+
+    let failing = salic()
+        .arg("test")
+        .arg(fixture("test", "second_fails.sc"))
+        .output()
+        .expect("run failing built-in tests");
+    assert_eq!(failing.status.code(), Some(1), "{}", output_text(&failing));
+    assert!(
+        String::from_utf8_lossy(&failing.stderr).contains("test \"second\" failed"),
+        "{}",
+        output_text(&failing)
+    );
+
+    let workspace = TestDirectory::new();
+    workspace.write(
+        "dep/salicin.toml",
+        "[package]\n\
+         name = \"test-dependency\"\n\
+         version = \"0.1.0\"\n\
+         edition = \"2026\"\n\
+         \n\
+         [lib]\n\
+         path = \"src/lib.sc\"\n",
+    );
+    workspace.write(
+        "dep/src/lib.sc",
+        "test(\"dependency test must not run\") { false }\n",
+    );
+    let app = workspace.create_dir("app");
+    workspace.write(
+        "app/salicin.toml",
+        "[package]\n\
+         name = \"test-app\"\n\
+         version = \"0.1.0\"\n\
+         edition = \"2026\"\n\
+         \n\
+         [dependencies]\n\
+         dep = { path = \"../dep\" }\n",
+    );
+    workspace.write(
+        "app/src/main.sc",
+        "test(\"primary package test\") { true }\n",
+    );
+    let package = salic()
+        .arg("test")
+        .arg(app)
+        .output()
+        .expect("run primary package tests");
+    assert_eq!(package.status.code(), Some(0), "{}", output_text(&package));
+}
+
+#[test]
 fn source_extension_is_sc_without_a_legacy_alias() {
     let temporary = TestDirectory::new();
     let legacy = temporary.write("legacy.sali", "let main(): i32 = { 42 }\n");

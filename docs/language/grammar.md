@@ -54,11 +54,18 @@ separators = { separator } ;
 source_file = separators, { item, separators }, EOF ;
 
 item = { attribute }, [ visibility ],
-       ( let_decl | extend_decl | extern_block ) ;
+       ( let_decl | extend_decl | extern_block | test_registration ) ;
 
 attribute  = "@", IDENT, [ "(", [ attribute_args ], ")" ] ;
 visibility = "pub", [ "(", "package", ")" ] ;
+
+test_registration =
+    contextual("test"), "(", STRING, ")", block ;
 ```
+
+A test registration cannot have an attribute or visibility. Its string must be
+non-empty, and the trailing block is the test body. `test` remains an ordinary
+identifier outside this top-level form.
 
 ### 2.1 Let Declarations
 

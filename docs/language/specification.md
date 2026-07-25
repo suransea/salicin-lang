@@ -113,7 +113,32 @@ The effective visibility of a field or implementation member cannot exceed that 
 Public signatures must not expose less-visible entities. Visibility checks recursively inspect
 generic arguments, fields, enum payloads, associated types, and inferred public result types.
 
-### 3.2 Domains
+### 3.2 Test Registrations
+
+A top-level test registration has call-like syntax with one compile-time name
+and one trailing body:
+
+```sc fragment
+test("arithmetic") {
+  20 + 22 == 42
+}
+```
+
+`test` is contextual in this position. The form registers the body with the
+test target during compilation; it is not an ordinary runtime call and does
+not introduce a source-visible declaration. The name must be a non-empty
+string literal and is used in diagnostics. Registrations are private to their
+source package and cannot have visibility or attributes.
+
+The body is evaluated as a parameterless function returning `bool`. `true`
+passes and `false` fails. Its effects must be discharged within the body under
+the ordinary effect rules. Test bodies are excluded from ordinary program and
+library builds. `salic test` collects registrations from the selected package,
+links one native runner, executes tests in source order, and reports the first
+failing name. A target with no registrations is an error. The current runner
+supports at most 254 registrations per target.
+
+### 3.3 Domains
 
 A domain classifies compile-time values. An abstract domain has no source-enumerable set of values:
 

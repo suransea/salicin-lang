@@ -14,6 +14,8 @@ current capability inventory. It does not record release history; see the
 - monomorphization of generic functions, nominals, extensions, and trait implementations;
 - deterministic HIR and LLVM IR generation;
 - native checking, IR emission, building, and running;
+- compile-time `test("name") { ... }` registrations collected into one native
+  runner by `salic test`, with source-order execution and named failures;
 - project manifests, local path dependencies, and deterministic lockfiles.
 
 The command-line surface is:
@@ -23,6 +25,7 @@ salic check SOURCE
 salic emit-ir SOURCE -o OUTPUT
 salic build SOURCE -o OUTPUT
 salic run SOURCE -- ARGUMENTS
+salic test SOURCE
 ```
 
 ## Source Model

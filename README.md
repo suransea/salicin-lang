@@ -36,6 +36,15 @@ salic check main.sc
 salic emit-ir main.sc -o main.ll
 salic build main.sc -o main
 salic run main.sc -- argument
+salic test main.sc
+```
+
+Tests use compile-time registrations and are linked into one runner:
+
+```sc fragment
+test("arithmetic") {
+  20 + 22 == 42
+}
 ```
 
 Project builds use `salicin.toml`, discover `src/lib.sc` and `src/main.sc`, and place artifacts

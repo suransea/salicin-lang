@@ -97,6 +97,23 @@ impl Parser {
                         ..crate::ast::ItemOrigin::default()
                     });
                 }
+            } else if self.at_context_ident("test") {
+                if visibility != Visibility::Private {
+                    return Err(self.error_here("test declarations cannot have visibility"));
+                }
+                let start = self.current().clone();
+                items.push(Item::Function(self.test_declaration()?));
+                item_visibilities.push(Visibility::Private);
+                item_origins.push(crate::ast::ItemOrigin {
+                    source: Some(Box::new(crate::ast::SourceLocation {
+                        path: None,
+                        line: start.line,
+                        column: start.column,
+                        end_line: start.end_line,
+                        end_column: start.end_column,
+                    })),
+                    ..crate::ast::ItemOrigin::default()
+                });
             } else {
                 if visibility != Visibility::Private && self.at(&TokenKind::Extend) {
                     return Err(self.error_here("`extend` declarations cannot have visibility"));
@@ -130,6 +147,38 @@ impl Parser {
             item_origins,
             uses,
         ))
+    }
+
+    fn test_declaration(&mut self) -> Result<Function, ParseError> {
+        self.advance();
+        self.expect(&TokenKind::LParen, "`(` after `test`")?;
+        let TokenKind::String(name) = self.current().kind.clone() else {
+            return Err(self.error_here("test name must be a string literal"));
+        };
+        if name.is_empty() {
+            return Err(self.error_here("test name cannot be empty"));
+        }
+        self.advance();
+        self.expect(&TokenKind::RParen, "`)` after test name")?;
+        if !self.at(&TokenKind::LBrace) {
+            return Err(self.error_here("expected a trailing braced test body"));
+        }
+        let body = self.block()?;
+        let encoded_name = name
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        Ok(Function {
+            name: format!("$test${encoded_name}"),
+            foreign: None,
+            compile_groups: Vec::new(),
+            groups: vec![Vec::new()],
+            return_type: Some(Type::Bool),
+            effects: FunctionEffects::default(),
+            where_predicates: Vec::new(),
+            body: Some(body),
+        })
     }
 
     fn extern_declaration(&mut self) -> Result<Vec<Function>, ParseError> {
@@ -5857,6 +5906,27 @@ fn describe(kind: &TokenKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_contextual_test_declarations_as_private_bool_functions() {
+        let program = parse("test(\"arithmetic works\") {\n  20 + 22 == 42\n}\n").unwrap();
+        let [Item::Function(test)] = program.items.as_slice() else {
+            panic!("expected one test function");
+        };
+        assert_eq!(test.name, "$test$61726974686d6574696320776f726b73");
+        assert_eq!(test.groups, vec![Vec::new()]);
+        assert_eq!(test.return_type, Some(Type::Bool));
+        assert_eq!(program.item_visibilities, [Visibility::Private]);
+
+        let visible = parse("pub test(\"arithmetic\") { true }\n")
+            .expect_err("test declarations must remain runner-private");
+        assert!(visible.message.contains("cannot have visibility"));
+        let identifier = parse("test arithmetic { true }\n")
+            .expect_err("test registration names must be string literals");
+        assert!(identifier.message.contains("`(` after `test`"));
+        let empty = parse("test(\"\") { true }\n").expect_err("test names must be useful");
+        assert!(empty.message.contains("cannot be empty"));
+    }
 
     fn function_tail(function: &Function) -> &Expr {
         let Some(Expr::Block(_, Some(tail))) = &function.body else {

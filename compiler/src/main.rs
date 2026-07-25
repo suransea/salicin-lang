@@ -17,7 +17,7 @@ use salicin_lang::modules::{is_valid_module_segment, PackageId, SourcePackage, S
 use salicin_lang::{
     check_library_source, check_library_source_packages, check_source, check_source_packages,
     compile_library_source, compile_library_source_packages, compile_source,
-    compile_source_packages,
+    compile_source_packages, compile_test_source, compile_test_source_packages,
 };
 
 const DEFAULT_ALLOCATOR_RUNTIME: &str = include_str!("../../runtime/allocator.c");
@@ -29,6 +29,7 @@ Usage:
   salic check [path] [--bin <name> | --lib]
   salic emit-ir [path] [--bin <name> | --lib] [-o <path>]
   salic run [path] [--bin <name>] [-- <args>...]
+  salic test [path] [--bin <name>]
   salic [path] [--bin <name>] [-o <path>]
 
 Commands:
@@ -36,6 +37,7 @@ Commands:
     check      Parse and type-check a source or package target
   emit-ir    Print LLVM IR, or write it to a file with -o
   run        Compile and run a program; arguments after -- go to the program
+  test       Compile all test declarations into one runner and run it
 
 Options:
   -o, --output <path>  Select the output path
@@ -73,6 +75,10 @@ enum Action {
         input: Option<PathBuf>,
         bin: Option<String>,
         args: Vec<OsString>,
+    },
+    Test {
+        input: Option<PathBuf>,
+        bin: Option<String>,
     },
 }
 
@@ -133,7 +139,10 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     }
 
     if args.len() == 2
-        && matches!(first.to_str(), Some("build" | "check" | "emit-ir" | "run"))
+        && matches!(
+            first.to_str(),
+            Some("build" | "check" | "emit-ir" | "run" | "test")
+        )
         && (is(&args[1], "-h") || is(&args[1], "--help"))
     {
         return Ok(ParsedArgs::Help);
@@ -165,6 +174,14 @@ fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             }
         }
         Some("run") => parse_run(&args[1..])?,
+        Some("test") => {
+            let parsed = parse_compile_args("test", &args[1..], false, false)?;
+            let bin = selection_bin(parsed.target, "test")?;
+            Action::Test {
+                input: parsed.input,
+                bin,
+            }
+        }
         _ if starts_with_dash(first)
             && !matches!(first.to_str(), Some("-o" | "--output" | "--bin")) =>
         {
@@ -377,6 +394,39 @@ fn execute(action: Action) -> i32 {
             };
             match compile_and_run(&ir, &args) {
                 Ok(code) => code,
+                Err(message) => {
+                    eprintln!("salic: {message}");
+                    1
+                }
+            }
+        }
+        Action::Test { input, bin } => {
+            let target = match resolve_input(
+                input.as_deref(),
+                bin.map_or(TargetSelection::Default, TargetSelection::Bin),
+                true,
+            ) {
+                Ok(target) => target,
+                Err(message) => return report_driver_error(message),
+            };
+            let compilation = match compile_test_target(&target) {
+                Ok(compilation) => compilation,
+                Err(()) => return 1,
+            };
+            match compile_and_run(&compilation.ir, &[]) {
+                Ok(0) => 0,
+                Ok(index) => {
+                    let name = usize::try_from(index)
+                        .ok()
+                        .and_then(|index| index.checked_sub(1))
+                        .and_then(|index| compilation.names.get(index));
+                    if let Some(name) = name {
+                        eprintln!("salic: test {name:?} failed");
+                    } else {
+                        eprintln!("salic: test runner returned invalid failure index {index}");
+                    }
+                    1
+                }
                 Err(message) => {
                     eprintln!("salic: {message}");
                     1
@@ -794,6 +844,16 @@ fn compile_target(target: &ResolvedTarget) -> Result<String, ()> {
         compile_source_packages(&packages)
     };
     report_project_compilation(&target.source, result)
+}
+
+fn compile_test_target(target: &ResolvedTarget) -> Result<salicin_lang::TestCompilation, ()> {
+    if target.project.is_none() {
+        let text = read_source(&target.source)?;
+        return report_compilation(&target.source, compile_test_source(&text));
+    }
+
+    let packages = read_source_packages(target)?;
+    report_project_compilation(&target.source, compile_test_source_packages(&packages))
 }
 
 fn check_file(source: &Path, library: bool) -> Result<(), ()> {
