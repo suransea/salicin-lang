@@ -42,7 +42,7 @@ by library types and APIs unless they explicitly declare an effect.
 
 ## Handler Shape
 
-Every source effect is validated against `core.effect.handler.Handle`. Its derived `handle` member
+Every source effect is validated against `core.effect.Handle`. Its derived `handle` member
 accepts:
 
 - one labeled clause for each operation;
@@ -83,12 +83,12 @@ duplicate drops, or silently skip destructors.
 
 ## Standard Effects
 
-`Throws(Error)` is the standard abortive error effect. Its `raise` operation returns `Never`.
-`throw(error)` invokes that operation, and `try { action }` handles it into
-`core.Result(Error)(Value)`.
+`core.error.Throws(Error)` is the standard abortive error effect. Its `raise` operation returns
+`Never`. `throw(error)` invokes that operation. `try { action }` is one standard interpreter that
+handles it into `core.Result(Error)(Value)`; the effect itself is independent of `Result`.
 
-`Unsafe` is an authority effect. Its handler is the lexical `unsafe { ... }` boundary. Authorization
-does not weaken type checking, ownership, region checking, or cleanup.
+`core.unsafe.Unsafe` is an authority effect. Its handler is the lexical `unsafe { ... }` boundary.
+Authorization does not weaken type checking, ownership, region checking, or cleanup.
 
 Standard effects use the same nominal row and handler machinery as user effects. Their source
 declarations are validated lang items, not name-based exceptions.

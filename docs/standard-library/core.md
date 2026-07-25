@@ -227,16 +227,21 @@ uninitialized.
 implementation without a separate `IndexMut`. Arrays implement `Index(i32)` through a validated
 core intrinsic; Slice implements `Index(u64)` in source by forwarding to `at`.
 
-`core.control` owns the edition-pinned contracts for compiler-lowered control functions. It is not
-part of the prelude. `do`, `try`, `throw`, and `unsafe` are ordinary source-backed functions over
-the standard effect declarations. The `unsafe` body removes the marker effect with
-`Unsafe.handle action { ... }`; the compiler keeps only the lexical authority check for raw operations inside
-`unsafe { ... }`. `loop` still needs primitive control-flow lowering, so its bodyless signature is
-permitted only as a validated core lang item; ordinary package functions still require
-`= { ... }` bodies.
+Capability modules are separated by semantics:
 
-`core.effect.handler` declares the protocol and erased runtime contracts used by algebraic handler
-lowering:
+- `core.effect` owns generic handler infrastructure.
+- `core.error` owns `Throws`, `throw`, and the `try` interpreter into `Result`.
+- `core.async` owns `Async`, `Poll`, `Future`, `Executor`, `async`, and `await`.
+- `core.unsafe` owns the `Unsafe` authority effect and its lexical interpreter.
+- `core.result` owns only the `Result` data type and its ordinary protocols.
+- `core.control` owns structural control flow: `break`, `continue`, `return`, `do`, `loop`,
+  `while`, `if`, `match`, and `for`.
+
+`throw` and `Throws` are not Result-specific. `Throws(Error)` is an independent effect, while
+`try` is one interpreter that chooses `Result(Error)(T)` as its output. Other handlers may
+interpret the same effect differently.
+
+`core.effect` declares the protocol and erased runtime contracts used by algebraic handler lowering:
 
 ```sc fragment
 pub let Continuation(Input: type, Output: type) = struct {}
@@ -252,7 +257,7 @@ pub let Handle = trait(Self: effect) {
 `Continuation` is a one-shot suspended computation. `EffectCallable` is an owned action awaiting a
 handler-supplied continuation from `Output` to `Answer`; `Input` is the action's packed runtime input.
 Both native values carry call and drop entries, an environment pointer, and an ownership flag. They
-are `core.effect.handler` exports rather than prelude names and cannot be replaced by same-named user
+are `core.effect` exports rather than prelude names and cannot be replaced by same-named user
 declarations.
 The compiler-internal action entry has the logical signature
 `(environment, Input, Continuation(Output, Answer)): Answer`. Erasing or invoking an action consumes
@@ -268,6 +273,13 @@ parameter groups. Consequently source calls use named trailing closures directly
 shape declared by the trait. These low-level operations and generated handler implementations are
 not ordinary source-level standard-library functions.
 
+`core.async` makes the asynchronous model explicit in source. `Future(E)` is a `Move` trait with an
+associated `Output` and a mutable-borrowing `poll` method returning `Poll`. `Executor.run` is
+explicit; constructing a cold future does not select or run an executor. `async` and `await` are
+validated compiler-provided functions whose declarations expose their effect rows and
+`Future(E, Output = T)` relationship. State-machine representation and suspension lowering remain
+compiler responsibilities.
+
 ```sc fragment
 pub let do(E: effect, T: type)
   (move action: (): T with(E)): T with(E)
@@ -282,11 +294,11 @@ pub let do(E: effect)
   }
 }
 pub let try(F: effect, T: type, E: type)
-  (move action: (): T with(core.effect.Throws(E), F)): core.Result(E)(T) with(F)
+  (move action: (): T with(core.error.Throws(E), F)): core.Result(E)(T) with(F)
 pub let throw(Error: type)
-  (move error: Error): Never with(core.effect.Throws(Error))
+  (move error: Error): Never with(core.error.Throws(Error))
 pub let unsafe(E: effect, T: type)
-  (move action: (): T with(core.effect.Unsafe, E)): T with(E)
+  (move action: (): T with(core.unsafe.Unsafe, E)): T with(E)
 pub let loop(E: effect, T: type)
   (move body: (): () with(core.control.Break(T), core.control.Continue, E)): T with(E)
 pub let while(E: effect)
@@ -323,15 +335,15 @@ pub let do(E: effect, T: type)
 }
 
 pub let try(F: effect, T: type, E: type)
-  (move action: (): T with(core.effect.Throws(E), F)): core.Result(E)(T) with(F) = {
-  core.effect.Throws(E).handle raise { (error) -> core.Result.Err(error) } done { (value) -> core.Result.Ok(value) } action {
+  (move action: (): T with(core.error.Throws(E), F)): core.Result(E)(T) with(F) = {
+  core.error.Throws(E).handle raise { (error) -> core.Result.Err(error) } done { (value) -> core.Result.Ok(value) } action {
     action()
   }
 }
 
 pub let throw(Error: type)
-  (move error: Error): Never with(core.effect.Throws(Error)) = {
-  core.effect.Throws(Error).raise(error)
+  (move error: Error): Never with(core.error.Throws(Error)) = {
+  core.error.Throws(Error).raise(error)
 }
 ```
 

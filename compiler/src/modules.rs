@@ -418,8 +418,11 @@ const CORE_OPS_EXPORTS: &[(&str, &str)] = &[
     ("Raise", "core::flow::Raise"),
 ];
 const CORE_FLOW_EXPORTS: &[&str] = &["Chain", "Coalesce", "Unwrap", "Raise"];
-const CORE_EFFECT_EXPORTS: &[&str] = &["Unsafe", "Throws", "Async"];
-const CORE_EFFECT_HANDLER_EXPORTS: &[&str] = &["Continuation", "EffectCallable", "Handle"];
+const CORE_EFFECT_EXPORTS: &[&str] = &["Continuation", "EffectCallable", "Handle"];
+const CORE_RESULT_EXPORTS: &[&str] = &["Result"];
+const CORE_ERROR_EXPORTS: &[&str] = &["Throws", "try", "throw"];
+const CORE_UNSAFE_EXPORTS: &[&str] = &["Unsafe", "unsafe"];
+const CORE_ASYNC_EXPORTS: &[&str] = &["Async", "Poll", "Future", "Executor", "async", "await"];
 const CORE_PRIMITIVE_EXPORTS: &[&str] = &[
     "bool", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
 ];
@@ -428,8 +431,8 @@ const CORE_PASSING_EXPORTS: &[&str] = &["copy", "move"];
 const CORE_BORROW_EXPORTS: &[&str] = &["access", "borrow"];
 const CORE_MEMORY_EXPORTS: &[&str] = &["Array", "Slice", "Ptr", "size_of", "align_of"];
 const CORE_CONTROL_EXPORTS: &[&str] = &[
-    "Break", "Continue", "Return", "Attempt", "break", "continue", "return", "do", "try", "throw",
-    "unsafe", "loop", "while", "if", "match", "for",
+    "Break", "Continue", "Return", "Attempt", "break", "continue", "return", "do", "loop", "while",
+    "if", "match", "for",
 ];
 const CORE_ITER_EXPORTS: &[&str] = &[
     "Iterator",
@@ -460,6 +463,9 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("marker", "Drop", "core::marker::Drop"),
     ("option", "Option", "core::option::Option"),
     ("result", "Result", "core::result::Result"),
+    ("error", "Throws", "core::error::Throws"),
+    ("error", "try", "core::error::try"),
+    ("error", "throw", "core::error::throw"),
     ("ops", "Add", "core::ops::arith::Add"),
     ("ops", "Sub", "core::ops::arith::Sub"),
     ("ops", "Mul", "core::ops::arith::Mul"),
@@ -532,20 +538,17 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("flow", "Coalesce", "core::flow::Coalesce"),
     ("flow", "Unwrap", "core::flow::Unwrap"),
     ("flow", "Raise", "core::flow::Raise"),
-    ("effect", "Unsafe", "core::effect::Unsafe"),
-    ("effect", "Throws", "core::effect::Throws"),
-    ("effect", "Async", "core::effect::Async"),
-    (
-        "effect.handler",
-        "Continuation",
-        "core::effect::handler::Continuation",
-    ),
-    (
-        "effect.handler",
-        "EffectCallable",
-        "core::effect::handler::EffectCallable",
-    ),
-    ("effect.handler", "Handle", "core::effect::handler::Handle"),
+    ("unsafe", "Unsafe", "core::unsafe::Unsafe"),
+    ("unsafe", "unsafe", "core::unsafe::unsafe"),
+    ("async", "Async", "core::async::Async"),
+    ("async", "Poll", "core::async::Poll"),
+    ("async", "Future", "core::async::Future"),
+    ("async", "Executor", "core::async::Executor"),
+    ("async", "async", "core::async::async"),
+    ("async", "await", "core::async::await"),
+    ("effect", "Continuation", "core::effect::Continuation"),
+    ("effect", "EffectCallable", "core::effect::EffectCallable"),
+    ("effect", "Handle", "core::effect::Handle"),
     ("domains", "type", "core::domains::type"),
     ("domains", "region", "core::domains::region"),
     ("domains", "effect", "core::domains::effect"),
@@ -555,9 +558,6 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("borrow", "access", "core::borrow::access"),
     ("borrow", "borrow", "core::borrow::borrow"),
     ("control", "do", "core::control::do"),
-    ("control", "try", "core::control::try"),
-    ("control", "throw", "core::control::throw"),
-    ("control", "unsafe", "core::control::unsafe"),
     ("control", "loop", "core::control::loop"),
     ("iter", "Iterator", "core::iter::Iterator"),
     ("iter", "IntoIterator", "core::iter::IntoIterator"),
@@ -1066,8 +1066,17 @@ fn install_standard_namespaces(
         for name in CORE_EFFECT_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.effect.{name}"));
         }
-        for name in CORE_EFFECT_HANDLER_EXPORTS {
-            required_imports.insert((*name).to_owned(), format!("core.effect.handler.{name}"));
+        for name in CORE_RESULT_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.result.{name}"));
+        }
+        for name in CORE_ERROR_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.error.{name}"));
+        }
+        for name in CORE_UNSAFE_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.unsafe.{name}"));
+        }
+        for name in CORE_ASYNC_EXPORTS {
+            required_imports.insert((*name).to_owned(), format!("core.async.{name}"));
         }
         for name in CORE_DOMAIN_EXPORTS {
             required_imports.insert((*name).to_owned(), format!("core.domains.{name}"));
@@ -1217,6 +1226,7 @@ fn install_core_namespace(
             "marker",
             "option",
             "result",
+            "error",
             "cmp",
             "ops",
             "ops.arith",
@@ -1224,7 +1234,8 @@ fn install_core_namespace(
             "ops.assign",
             "flow",
             "effect",
-            "effect.handler",
+            "async",
+            "unsafe",
             "domains",
             "control",
             "iter",
@@ -1277,17 +1288,34 @@ fn install_core_namespace(
                 "<core>",
             );
         }
-        for (module, name, canonical) in [
-            ("option", "Option", "core::option::Option"),
-            ("result", "Result", "core::result::Result"),
-        ] {
+        insert_standard_symbol(
+            symbols,
+            package_root,
+            &core_root,
+            "option",
+            "Option",
+            "core::option::Option",
+            "<core>",
+        );
+        for name in CORE_RESULT_EXPORTS {
             insert_standard_symbol(
                 symbols,
                 package_root,
                 &core_root,
-                module,
+                "result",
                 name,
-                canonical,
+                &format!("core::result::{name}"),
+                "<core>",
+            );
+        }
+        for name in CORE_ERROR_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "error",
+                name,
+                &format!("core::error::{name}"),
                 "<core>",
             );
         }
@@ -1379,14 +1407,25 @@ fn install_core_namespace(
                 "<core>",
             );
         }
-        for name in CORE_EFFECT_HANDLER_EXPORTS {
+        for name in CORE_UNSAFE_EXPORTS {
             insert_standard_symbol(
                 symbols,
                 package_root,
                 &core_root,
-                "effect.handler",
+                "unsafe",
                 name,
-                &format!("core::effect::handler::{name}"),
+                &format!("core::unsafe::{name}"),
+                "<core>",
+            );
+        }
+        for name in CORE_ASYNC_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "async",
+                name,
+                &format!("core::async::{name}"),
                 "<core>",
             );
         }
@@ -1611,6 +1650,7 @@ fn install_std_namespace(
         "marker",
         "option",
         "result",
+        "error",
         "ops",
         "ops.arith",
         "ops.bit",
@@ -1618,7 +1658,8 @@ fn install_std_namespace(
         "cmp",
         "flow",
         "effect",
-        "effect.handler",
+        "async",
+        "unsafe",
         "domains",
         "control",
         "iter",
@@ -5261,7 +5302,7 @@ let main(): i32 = { Option {} }
         let standard_modules = resolve_sources(&[unit(
             "standard.sc",
             &[],
-            "use std.effect.Async\n\
+            "use std.async.Async\n\
              let Semigroup = std.algebra.Semigroup
              let Monoid = std.algebra.Monoid
              let Number = struct { value: i32 }\n\
@@ -5276,7 +5317,7 @@ let main(): i32 = { Option {} }
         .unwrap();
         assert_eq!(
             function(&standard_modules, "suspended").effects.custom,
-            vec![Type::Named("core::effect::Async".into(), Vec::new())]
+            vec![Type::Named("core::async::Async".into(), Vec::new())]
         );
         let invoke = function(&standard_modules, "invoke");
         let Type::Function { effects, .. } = &invoke.groups[0][0].ty else {
@@ -5284,7 +5325,7 @@ let main(): i32 = { Option {} }
         };
         assert_eq!(
             effects.custom,
-            vec![Type::Named("core::effect::Async".into(), Vec::new())]
+            vec![Type::Named("core::async::Async".into(), Vec::new())]
         );
         assert!(standard_modules.items.iter().any(|item| {
             matches!(item, Item::Extend(extension)
@@ -5371,7 +5412,7 @@ let main(): i32 = { Option {} }
         .unwrap_err();
         assert!(bare_effect.iter().any(|diagnostic| {
             diagnostic.contains("standard-library item `Async` is not in the prelude")
-                && diagnostic.contains("let Async = std.effect.Async")
+                && diagnostic.contains("let Async = std.async.Async")
         }));
 
         let bare_algebra = resolve_sources(&[unit(
@@ -5464,7 +5505,9 @@ let main(): i32 = { Option {} }
                     .iter()
                     .map(|name| ("primitives", *name)),
             )
-            .chain([("option", "Option"), ("result", "Result")])
+            .chain([("option", "Option")])
+            .chain(CORE_RESULT_EXPORTS.iter().map(|name| ("result", *name)))
+            .chain(CORE_ERROR_EXPORTS.iter().map(|name| ("error", *name)))
             .chain(CORE_CMP_EXPORTS.iter().map(|name| ("cmp", *name)))
             .chain(CORE_FLOW_EXPORTS.iter().map(|name| ("flow", *name)))
             .chain(CORE_ARITH_EXPORTS.iter().map(|name| ("arith", *name)))
@@ -5472,11 +5515,8 @@ let main(): i32 = { Option {} }
             .chain(CORE_ASSIGN_EXPORTS.iter().map(|name| ("assign", *name)))
             .chain(CORE_INDEX_EXPORTS.iter().map(|name| ("index", *name)))
             .chain(CORE_EFFECT_EXPORTS.iter().map(|name| ("effect", *name)))
-            .chain(
-                CORE_EFFECT_HANDLER_EXPORTS
-                    .iter()
-                    .map(|name| ("handler", *name)),
-            )
+            .chain(CORE_UNSAFE_EXPORTS.iter().map(|name| ("unsafe", *name)))
+            .chain(CORE_ASYNC_EXPORTS.iter().map(|name| ("async", *name)))
             .chain(CORE_DOMAIN_EXPORTS.iter().map(|name| ("domains", *name)))
             .chain(CORE_PASSING_EXPORTS.iter().map(|name| ("passing", *name)))
             .chain(CORE_BORROW_EXPORTS.iter().map(|name| ("borrow", *name)))

@@ -4185,10 +4185,11 @@ impl Parser {
     }
 
     fn core_control_function(name: &str) -> Expr {
+        let module = if name == "throw" { "error" } else { "control" };
         Expr::Member(
             Box::new(Expr::Member(
                 Box::new(Expr::Name("core".to_owned())),
-                "control".to_owned(),
+                module.to_owned(),
             )),
             name.to_owned(),
         )
@@ -4696,13 +4697,15 @@ fn normalize_and_validate_scopes(items: &mut [Item]) -> Result<(), String> {
                     &definition.compile_groups,
                     &format!("trait `{}`", definition.name),
                 )?;
-                reject_effect_parameters(
-                    &definition.compile_groups,
-                    &format!("trait `{}`", definition.name),
-                )?;
                 let regions = declared_regions(&definition.compile_groups, &empty)?;
                 let accesses = declared_accesses(&definition.compile_groups, &empty)?;
-                let mut effects = HashSet::new();
+                let mut effects = definition
+                    .compile_groups
+                    .iter()
+                    .flatten()
+                    .filter(|parameter| parameter.kind == CompileParamKind::Effect)
+                    .map(|parameter| parameter.name.clone())
+                    .collect::<HashSet<_>>();
                 if definition.self_parameter.kind == CompileParamKind::Effect {
                     effects.insert(definition.self_parameter.name.clone());
                 }
@@ -4919,7 +4922,7 @@ fn validate_function_scopes(
         validate_type_regions(&predicate.subject, &regions)?;
         validate_type_regions(&predicate.trait_ref, &regions)?;
         validate_type_effects(&predicate.subject, &effects)?;
-        validate_type_effects(&predicate.trait_ref, &effects)?;
+        validate_trait_ref_effects(&predicate.trait_ref, &effects)?;
         for binding in &mut predicate.associated_types {
             validate_associated_binding_scopes(binding, &regions, &accesses, &effects)?;
         }
@@ -5265,6 +5268,23 @@ fn validate_type_effects(ty: &Type, effects: &HashSet<String>) -> Result<(), Str
         | Type::Unit
         | Type::CompileUSize(_) => Ok(()),
     }
+}
+
+fn validate_trait_ref_effects(trait_ref: &Type, effects: &HashSet<String>) -> Result<(), String> {
+    let arguments = match trait_ref {
+        Type::Named(_, arguments) => arguments.iter().collect::<Vec<_>>(),
+        Type::NamedArgs(_, arguments) => arguments.iter().map(|argument| &argument.ty).collect(),
+        _ => return validate_type_effects(trait_ref, effects),
+    };
+    for argument in arguments {
+        if matches!(argument, Type::Named(name, nested)
+            if nested.is_empty() && effects.contains(name))
+        {
+            continue;
+        }
+        validate_type_effects(argument, effects)?;
+    }
+    Ok(())
 }
 
 fn validate_access_name(access: &str, accesses: &HashSet<String>) -> Result<(), String> {
@@ -6933,7 +6953,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_throw_as_a_core_control_function() {
+    fn parses_throw_as_a_core_error_function() {
         let program = parse("let fail(): Result(bool)(i32) = { throw(false) }\n").unwrap();
         let Item::Function(function) = &program.items[0] else {
             panic!("expected function");
@@ -6944,7 +6964,7 @@ mod tests {
                 Box::new(Expr::Member(
                     Box::new(Expr::Member(
                         Box::new(Expr::Name("core".to_owned())),
-                        "control".to_owned(),
+                        "error".to_owned(),
                     )),
                     "throw".to_owned(),
                 )),

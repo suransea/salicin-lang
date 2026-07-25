@@ -1,5 +1,5 @@
 let Result = std.Result
-let Throws = std.effect.Throws
+let Throws = std.error.Throws
 
 let make_error(count: borrow(mut)(i32)): bool = {
   count = count + 1

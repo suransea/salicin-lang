@@ -6,6 +6,11 @@ subset.
 
 ## Unreleased
 
+- Split capability declarations by semantic ownership. `core.effect` now contains only generic
+  handler infrastructure; `Throws`, `throw`, and `try` live in `core.error`; `Unsafe` and `unsafe`
+  live in `core.unsafe`; and `Async`, `Poll`, `Future`, `Executor`, `async`, and `await` live in
+  `core.async`. `Result` remains an ordinary data module, and `core.control` now contains only
+  structural control flow.
 - Added contextual parsing for `async { ... }` and prefix `await` inside async bodies. The parser
   preserves closure boundaries and lowers both forms to reserved compiler calls; semantic analysis
   reports the pending state-machine boundary without exposing generated names.
@@ -230,9 +235,9 @@ subset.
   selection back through handler lowering, so `Raise.raise` keeps its direct
   `Output with(Throws(Error))` contract instead of exposing an intermediate `Result`.
 - Added the compile-time `parameters` domain and complete parameter-group expansion with `...`.
-  `core.effect.handler.Handle` now declares `Clauses(Value, Answer): parameters`, so every
+  `core.effect.Handle` now declares `Clauses(Value, Answer): parameters`, so every
   compiler-derived effect implementation has the same expanded `handle` shape as its source trait.
-- Made the validated `core.control.unsafe` helper an ordinary source definition over the
+- Made the validated `core.unsafe.unsafe` helper an ordinary source definition over the
   zero-operation `core.effects.Unsafe` handler; only its lexical raw-operation authority remains
   syntax-directed in the compiler.
 - Refactored the compiler backend into a `codegen/` module directory, splitting out cleanup-plan
@@ -375,15 +380,15 @@ subset.
 
 ## 0.171.0 - 2026-07-22
 
-- Routed standard `throw` lowering through the validated `core.control.throw` declaration by
+- Routed standard `throw` lowering through the validated `core.error.throw` declaration by
   substituting its `Error` parameter and reading its declared `Throws(Error)` effect before invoking
   `Throws.raise`.
-- Covered the source-backed `core.control.throw` function template in core lang-item registration
+- Covered the source-backed `core.error.throw` function template in core lang-item registration
   tests, so its declared effect row remains visible to semantic lowering.
 
 ## 0.170.0 - 2026-07-22
 
-- Added `core.control.throw` as an edition-validated compiler-provided control contract:
+- Added `core.error.throw` as an edition-validated compiler-provided control contract:
   `throw(Error)(error): Never with(core.effects.Throws(Error))`.
 - Allowed the embedded core bundle to declare `throw` with the same keyword-declaration path used by
   `do`, `try`, `unsafe`, and `loop`, and exported it from `core.control` rather than leaving
@@ -447,7 +452,7 @@ subset.
 
 - Made `Unsafe` the public standard effect spelling in `with(...)` rows and effect compile-time
   arguments; lowercase `with(unsafe)` now reports a migration diagnostic instead of being accepted.
-- Changed the validated `core.control.unsafe` contract to require `core.effects.Unsafe`, then
+- Changed the validated `core.unsafe.unsafe` contract to require `core.effects.Unsafe`, then
   normalized that standard effect identity onto the existing checked-unsafe semantic bit so raw
   pointer checks, callable rows, method signatures, and generic effect arguments continue to use one
   enforcement path.
@@ -466,7 +471,7 @@ subset.
 
 ## 0.163.0 - 2026-07-22
 
-- Changed the validated `core.control.try` contract to require ordinary `Throws(E)` in its action
+- Changed the validated `core.error.try` contract to require ordinary `Throws(E)` in its action
   row instead of the lowercase `throws(E)` carrier spelling, so the standard library now expresses
   recoverable failure with the same nominal effect declaration users write.
 - Updated the core docs, grammar notes, and implementation status to make `Throws(E)` the public

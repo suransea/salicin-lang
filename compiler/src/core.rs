@@ -26,6 +26,7 @@ const EDITION_2026_MARKER: &str = include_str!("../../library/core/src/marker.sc
 const EDITION_2026_PRIMITIVES: &str = include_str!("../../library/core/src/primitives.sc");
 const EDITION_2026_OPTION: &str = include_str!("../../library/core/src/option.sc");
 const EDITION_2026_RESULT: &str = include_str!("../../library/core/src/result.sc");
+const EDITION_2026_ERROR: &str = include_str!("../../library/core/src/error.sc");
 const EDITION_2026_CMP: &str = include_str!("../../library/core/src/cmp.sc");
 const EDITION_2026_FLOW: &str = include_str!("../../library/core/src/flow.sc");
 const EDITION_2026_OPS: &str = include_str!("../../library/core/src/ops.sc");
@@ -34,7 +35,8 @@ const EDITION_2026_OPS_BIT: &str = include_str!("../../library/core/src/ops/bit.
 const EDITION_2026_OPS_ASSIGN: &str = include_str!("../../library/core/src/ops/assign.sc");
 const EDITION_2026_OPS_INDEX: &str = include_str!("../../library/core/src/ops/index.sc");
 const EDITION_2026_EFFECT: &str = include_str!("../../library/core/src/effect.sc");
-const EDITION_2026_EFFECT_HANDLER: &str = include_str!("../../library/core/src/effect/handler.sc");
+const EDITION_2026_UNSAFE: &str = include_str!("../../library/core/src/unsafe.sc");
+const EDITION_2026_ASYNC: &str = include_str!("../../library/core/src/async.sc");
 const EDITION_2026_DOMAINS: &str = include_str!("../../library/core/src/domains.sc");
 const EDITION_2026_PASSING: &str = include_str!("../../library/core/src/passing.sc");
 const EDITION_2026_BORROW: &str = include_str!("../../library/core/src/borrow.sc");
@@ -108,24 +110,6 @@ pub let Raise = trait {
 }
 "#;
 
-#[cfg(test)]
-const TEST_EFFECT: &str = r#"
-pub let Unsafe = effect {}
-pub let Throws(Error: type) = effect { let raise(move error: Error): Never }
-"#;
-
-#[cfg(test)]
-const TEST_EFFECT_HANDLER: &str = r#"
-pub let Continuation(Input: type, Output: type) = struct {}
-pub let EffectCallable(Input: type, Output: type, Answer: type) = struct {}
-pub let Handle = trait(Self: effect) {
-  let Clauses(Value: type, Answer: type): parameters
-  let handle(Value: type, Answer: type, Rest: effect)
-    ...Clauses(Value, Answer)
-    (move action: (): Value with(Self, Rest)): Answer with(Rest)
-}
-"#;
-
 /// A stable logical role fulfilled by one declaration in the edition's
 /// `core` bundle.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -149,6 +133,11 @@ pub enum LangItemKind {
     Move,
     Copy,
     Drop,
+    Poll,
+    Future,
+    Executor,
+    AsyncFunction,
+    AwaitFunction,
     Add,
     Sub,
     Mul,
@@ -181,6 +170,7 @@ pub enum LangItemKind {
     Raise,
     UnsafeEffect,
     ThrowsEffect,
+    AsyncEffect,
     TypeDomain,
     RegionDomain,
     AccessType,
@@ -213,7 +203,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 80] = [
+    const ALL: [Self; 86] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -233,6 +223,11 @@ impl LangItemKind {
         Self::Move,
         Self::Copy,
         Self::Drop,
+        Self::Poll,
+        Self::Future,
+        Self::Executor,
+        Self::AsyncFunction,
+        Self::AwaitFunction,
         Self::Add,
         Self::Sub,
         Self::Mul,
@@ -265,6 +260,7 @@ impl LangItemKind {
         Self::Raise,
         Self::UnsafeEffect,
         Self::ThrowsEffect,
+        Self::AsyncEffect,
         Self::TypeDomain,
         Self::RegionDomain,
         Self::AccessType,
@@ -317,6 +313,11 @@ impl LangItemKind {
             Self::Move => "Move",
             Self::Copy => "Copy",
             Self::Drop => "Drop",
+            Self::Poll => "Poll",
+            Self::Future => "Future",
+            Self::Executor => "Executor",
+            Self::AsyncFunction => "async",
+            Self::AwaitFunction => "await",
             Self::Add => "Add",
             Self::Sub => "Sub",
             Self::Mul => "Mul",
@@ -349,6 +350,7 @@ impl LangItemKind {
             Self::Raise => "Raise",
             Self::UnsafeEffect => "Unsafe",
             Self::ThrowsEffect => "Throws",
+            Self::AsyncEffect => "Async",
             Self::TypeDomain => "type",
             Self::RegionDomain => "region",
             Self::AccessType => "access",
@@ -382,11 +384,14 @@ impl LangItemKind {
 
     const fn expected_kind(self) -> &'static str {
         match self {
-            Self::Option | Self::Result | Self::Never | Self::PartialOrdering | Self::Attempt => {
-                "enum"
-            }
+            Self::Option
+            | Self::Result
+            | Self::Never
+            | Self::Poll
+            | Self::PartialOrdering
+            | Self::Attempt => "enum",
             Self::Continuation | Self::EffectCallable => "struct",
-            Self::UnsafeEffect | Self::ThrowsEffect => "effect",
+            Self::UnsafeEffect | Self::ThrowsEffect | Self::AsyncEffect => "effect",
             Self::TypeDomain | Self::RegionDomain | Self::EffectDomain | Self::ParametersDomain => {
                 "domain"
             }
@@ -408,6 +413,7 @@ impl LangItemKind {
             | Self::U128
             | Self::USize => "type form",
             Self::BorrowValueForm | Self::PtrValueForm | Self::SizeOf | Self::AlignOf => "function",
+            Self::AsyncFunction | Self::AwaitFunction => "function",
             Self::Do
             | Self::DoWhile
             | Self::Try
@@ -422,6 +428,8 @@ impl LangItemKind {
             | Self::Move
             | Self::Copy
             | Self::Drop
+            | Self::Future
+            | Self::Executor
             | Self::Add
             | Self::Sub
             | Self::Mul
@@ -491,6 +499,11 @@ impl LangItemKind {
             | Self::Move
             | Self::Copy
             | Self::Drop
+            | Self::Poll
+            | Self::Future
+            | Self::Executor
+            | Self::AsyncFunction
+            | Self::AwaitFunction
             | Self::PartialOrdering
             | Self::Index
             | Self::AddAssign
@@ -509,6 +522,7 @@ impl LangItemKind {
             | Self::Raise
             | Self::UnsafeEffect
             | Self::ThrowsEffect
+            | Self::AsyncEffect
             | Self::TypeDomain
             | Self::RegionDomain
             | Self::AccessType
@@ -617,6 +631,11 @@ pub struct LangItems {
     move_trait: LangItem,
     copy: LangItem,
     drop: LangItem,
+    poll: LangItem,
+    future: LangItem,
+    executor: LangItem,
+    async_function: LangItem,
+    await_function: LangItem,
     add: LangItem,
     sub: LangItem,
     mul: LangItem,
@@ -649,6 +668,7 @@ pub struct LangItems {
     raise: LangItem,
     unsafe_effect: LangItem,
     throws_effect: LangItem,
+    async_effect: LangItem,
     type_domain: LangItem,
     region_domain: LangItem,
     access_type: LangItem,
@@ -718,6 +738,26 @@ impl LangItems {
 
     pub const fn drop(&self) -> &LangItem {
         &self.drop
+    }
+
+    pub const fn poll(&self) -> &LangItem {
+        &self.poll
+    }
+
+    pub const fn future(&self) -> &LangItem {
+        &self.future
+    }
+
+    pub const fn executor(&self) -> &LangItem {
+        &self.executor
+    }
+
+    pub const fn async_function(&self) -> &LangItem {
+        &self.async_function
+    }
+
+    pub const fn await_function(&self) -> &LangItem {
+        &self.await_function
     }
 
     pub const fn add(&self) -> &LangItem {
@@ -828,6 +868,9 @@ impl LangItems {
     pub const fn throws_effect(&self) -> &LangItem {
         &self.throws_effect
     }
+    pub const fn async_effect(&self) -> &LangItem {
+        &self.async_effect
+    }
     pub const fn type_domain(&self) -> &LangItem {
         &self.type_domain
     }
@@ -925,6 +968,11 @@ impl LangItems {
             LangItemKind::Move => &self.move_trait,
             LangItemKind::Copy => &self.copy,
             LangItemKind::Drop => &self.drop,
+            LangItemKind::Poll => &self.poll,
+            LangItemKind::Future => &self.future,
+            LangItemKind::Executor => &self.executor,
+            LangItemKind::AsyncFunction => &self.async_function,
+            LangItemKind::AwaitFunction => &self.await_function,
             LangItemKind::Add => &self.add,
             LangItemKind::Sub => &self.sub,
             LangItemKind::Mul => &self.mul,
@@ -957,6 +1005,7 @@ impl LangItems {
             LangItemKind::Raise => &self.raise,
             LangItemKind::UnsafeEffect => &self.unsafe_effect,
             LangItemKind::ThrowsEffect => &self.throws_effect,
+            LangItemKind::AsyncEffect => &self.async_effect,
             LangItemKind::TypeDomain => &self.type_domain,
             LangItemKind::RegionDomain => &self.region_domain,
             LangItemKind::AccessType => &self.access_type,
@@ -1017,6 +1066,7 @@ impl CoreBundle {
                         ("primitives", EDITION_2026_PRIMITIVES),
                         ("option", EDITION_2026_OPTION),
                         ("result", EDITION_2026_RESULT),
+                        ("error", EDITION_2026_ERROR),
                         ("cmp", EDITION_2026_CMP),
                         ("flow", EDITION_2026_FLOW),
                         ("ops", EDITION_2026_OPS),
@@ -1025,7 +1075,8 @@ impl CoreBundle {
                         ("ops/assign", EDITION_2026_OPS_ASSIGN),
                         ("ops/index", EDITION_2026_OPS_INDEX),
                         ("effect", EDITION_2026_EFFECT),
-                        ("effect/handler", EDITION_2026_EFFECT_HANDLER),
+                        ("unsafe", EDITION_2026_UNSAFE),
+                        ("async", EDITION_2026_ASYNC),
                         ("domains", EDITION_2026_DOMAINS),
                         ("passing", EDITION_2026_PASSING),
                         ("borrow", EDITION_2026_BORROW),
@@ -1058,9 +1109,9 @@ impl CoreBundle {
     #[cfg(test)]
     fn from_source(edition: Edition, source: &str) -> Result<Self, CoreBundleError> {
         // Most contract tests isolate one prelude/operator declaration. Keep
-        // the independently tested control module present in those fixtures.
+        // independently tested capability modules present in those fixtures.
         let source = format!(
-            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{TEST_EFFECT}\n{TEST_EFFECT_HANDLER}\n{EDITION_2026_PRIMITIVES}\n{EDITION_2026_DOMAINS}\n{EDITION_2026_PASSING}\n{EDITION_2026_BORROW}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}\n{EDITION_2026_MEMORY}"
+            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{EDITION_2026_EFFECT}\n{EDITION_2026_ERROR}\n{EDITION_2026_UNSAFE}\n{EDITION_2026_ASYNC}\n{EDITION_2026_PRIMITIVES}\n{EDITION_2026_DOMAINS}\n{EDITION_2026_PASSING}\n{EDITION_2026_BORROW}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}\n{EDITION_2026_MEMORY}"
         );
         let mut program = parser::parse(&source).map_err(|error| {
             CoreBundleError::new(
@@ -1158,6 +1209,11 @@ impl CoreBundle {
             &mut lang_items.move_trait,
             &mut lang_items.copy,
             &mut lang_items.drop,
+            &mut lang_items.poll,
+            &mut lang_items.future,
+            &mut lang_items.executor,
+            &mut lang_items.async_function,
+            &mut lang_items.await_function,
             &mut lang_items.add,
             &mut lang_items.sub,
             &mut lang_items.mul,
@@ -1190,6 +1246,7 @@ impl CoreBundle {
             &mut lang_items.raise,
             &mut lang_items.unsafe_effect,
             &mut lang_items.throws_effect,
+            &mut lang_items.async_effect,
             &mut lang_items.type_domain,
             &mut lang_items.region_domain,
             &mut lang_items.access_type,
@@ -1505,6 +1562,11 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         move_trait: item(LangItemKind::Move),
         copy: item(LangItemKind::Copy),
         drop: item(LangItemKind::Drop),
+        poll: item(LangItemKind::Poll),
+        future: item(LangItemKind::Future),
+        executor: item(LangItemKind::Executor),
+        async_function: item(LangItemKind::AsyncFunction),
+        await_function: item(LangItemKind::AwaitFunction),
         add: item(LangItemKind::Add),
         sub: item(LangItemKind::Sub),
         mul: item(LangItemKind::Mul),
@@ -1537,6 +1599,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         raise: item(LangItemKind::Raise),
         unsafe_effect: item(LangItemKind::UnsafeEffect),
         throws_effect: item(LangItemKind::ThrowsEffect),
+        async_effect: item(LangItemKind::AsyncEffect),
         type_domain: item(LangItemKind::TypeDomain),
         region_domain: item(LangItemKind::RegionDomain),
         access_type: item(LangItemKind::AccessType),
@@ -1672,12 +1735,21 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         (LangItemKind::PartialOrdering, Item::Enum(definition)) => {
             validate_partial_ordering(definition, diagnostics)
         }
+        (LangItemKind::Poll, Item::Enum(definition)) => validate_poll(definition, diagnostics),
         (LangItemKind::Move, Item::Trait(definition)) => validate_move(definition, diagnostics),
         (LangItemKind::Copy, Item::Trait(definition)) => validate_copy(definition, diagnostics),
         (LangItemKind::Drop, Item::Trait(definition)) => validate_drop(definition, diagnostics),
-        (LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect, Item::Effect(definition)) => {
-            validate_effect(kind, definition, diagnostics)
+        (LangItemKind::Future, Item::Trait(definition)) => validate_future(definition, diagnostics),
+        (LangItemKind::Executor, Item::Trait(definition)) => {
+            validate_executor(definition, diagnostics)
         }
+        (LangItemKind::AsyncFunction | LangItemKind::AwaitFunction, Item::Function(definition)) => {
+            validate_async_function(kind, definition, diagnostics)
+        }
+        (
+            LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect | LangItemKind::AsyncEffect,
+            Item::Effect(definition),
+        ) => validate_effect(kind, definition, diagnostics),
         (
             LangItemKind::TypeDomain
             | LangItemKind::RegionDomain
@@ -2406,6 +2478,13 @@ fn validate_effect(
                     [operation] if valid_throws_raise_operation(operation)
                 )
         }
+        LangItemKind::AsyncEffect => {
+            definition.compile_groups.is_empty()
+                && matches!(
+                    definition.operations.as_slice(),
+                    [operation] if valid_async_suspend_operation(operation)
+                )
+        }
         _ => false,
     };
     if !valid {
@@ -2414,10 +2493,21 @@ fn validate_effect(
             LangItemKind::ThrowsEffect => {
                 "pub let Throws(Error: type) = effect { let raise(move error: Error): Never }"
             }
+            LangItemKind::AsyncEffect => "pub let Async = effect { let suspend(): () }",
             _ => unreachable!(),
         };
         diagnostics.push(format!("lang item `{kind}` must have shape `{shape}`"));
     }
+}
+
+fn valid_async_suspend_operation(function: &Function) -> bool {
+    function.name == "suspend"
+        && function.compile_groups.is_empty()
+        && function.groups == vec![Vec::new()]
+        && function.return_type == Some(Type::Unit)
+        && function.effects == crate::ast::FunctionEffects::default()
+        && function.where_predicates.is_empty()
+        && function.body.is_none()
 }
 
 fn valid_throws_raise_operation(function: &Function) -> bool {
@@ -2527,7 +2617,7 @@ fn valid_try(function: &Function) -> bool {
     );
     let effects = crate::ast::FunctionEffects {
         custom: vec![Type::Named(
-            "core.effect.Throws".to_owned(),
+            "core.error.Throws".to_owned(),
             vec![named_type("E")],
         )],
         parameters: vec!["F".to_owned()],
@@ -2555,7 +2645,7 @@ fn valid_try(function: &Function) -> bool {
 fn valid_throw(function: &Function) -> bool {
     let effects = crate::ast::FunctionEffects {
         custom: vec![Type::Named(
-            "core.effect.Throws".to_owned(),
+            "core.error.Throws".to_owned(),
             vec![named_type("Error")],
         )],
         ..crate::ast::FunctionEffects::default()
@@ -2569,7 +2659,7 @@ fn valid_throw(function: &Function) -> bool {
 
 fn valid_unsafe(function: &Function) -> bool {
     let effects = crate::ast::FunctionEffects {
-        custom: vec![Type::Named("core.effect.Unsafe".to_owned(), Vec::new())],
+        custom: vec![Type::Named("core.unsafe.Unsafe".to_owned(), Vec::new())],
         parameters: vec!["E".to_owned()],
         ..crate::ast::FunctionEffects::default()
     };
@@ -2904,6 +2994,15 @@ fn simple_borrow_type(mutable: bool, pointee: Type) -> Type {
     }
 }
 
+fn region_borrow_type(mutable: bool, region: &str, pointee: Type) -> Type {
+    Type::Borrow {
+        mutable,
+        access: None,
+        region: Some(region.to_owned()),
+        pointee: Box::new(pointee),
+    }
+}
+
 fn trait_has_default_self(definition: &TraitDef) -> bool {
     definition.self_parameter.name == "Self"
         && definition.self_parameter.kind == CompileParamKind::Type
@@ -3076,6 +3175,21 @@ fn validate_partial_ordering(definition: &EnumDef, diagnostics: &mut Vec<String>
     }
 }
 
+fn validate_poll(definition: &EnumDef, diagnostics: &mut Vec<String>) {
+    if definition.compile_groups != vec![vec![type_parameter("T")]]
+        || definition.variants
+            != vec![
+                unit_variant("Pending"),
+                positional_variant("Ready", named_type("T")),
+            ]
+    {
+        diagnostics.push(
+            "lang item `Poll` must have shape `pub let Poll(T: type) = enum { Pending, Ready(T) }`"
+                .to_owned(),
+        );
+    }
+}
+
 fn validate_move(definition: &TraitDef, diagnostics: &mut Vec<String>) {
     if !move_trait_has_required_shape(definition) {
         diagnostics.push("lang item `Move` must have shape `pub let Move = trait {}`".to_owned());
@@ -3147,6 +3261,184 @@ pub(crate) fn drop_trait_has_required_shape(definition: &TraitDef) -> bool {
         && receiver.mode == PassMode::Inferred
         && receiver.ty == simple_borrow_type(true, named_type("Self"))
         && empty_group.is_empty()
+}
+
+fn validate_future(definition: &TraitDef, diagnostics: &mut Vec<String>) {
+    let valid_supertrait = matches!(
+        definition.where_predicates.as_slice(),
+        [crate::ast::WherePredicate {
+            subject: Type::Named(subject, subject_arguments),
+            trait_ref: Type::Named(trait_name, trait_arguments),
+            associated_types,
+        }] if subject == "Self"
+            && subject_arguments.is_empty()
+            && matches!(trait_name.as_str(), "Move" | "core.marker.Move" | "core::marker::Move")
+            && trait_arguments.is_empty()
+            && associated_types.is_empty()
+    );
+    let valid = trait_has_default_self(definition)
+        && definition.compile_groups == vec![vec![compile_effect_parameter("E")]]
+        && valid_supertrait
+        && matches!(
+            definition.members.as_slice(),
+            [TraitMember::AssociatedType {
+                name,
+                compile_groups,
+                kind: AssociatedKind::Type,
+                default: None,
+            }, TraitMember::Function(function)]
+                if name == "Output"
+                    && compile_groups.is_empty()
+                    && valid_future_poll(function)
+        );
+    if !valid {
+        diagnostics.push(
+            "lang item `Future` must declare `Output` and `poll(R: region)(self: borrow(mut)(R)(Self))(): Poll(Output) with(E)`, with `Self: Move`"
+                .to_owned(),
+        );
+    }
+}
+
+fn valid_future_poll(function: &Function) -> bool {
+    let [receiver_group, empty_group] = function.groups.as_slice() else {
+        return false;
+    };
+    let [receiver] = receiver_group.as_slice() else {
+        return false;
+    };
+    function.name == "poll"
+        && function.compile_groups
+            == vec![vec![CompileParam {
+                name: "R".to_owned(),
+                kind: CompileParamKind::Region,
+                default: None,
+            }]]
+        && receiver.name == "self"
+        && receiver.mode == PassMode::Inferred
+        && receiver.ty == region_borrow_type(true, "R", named_type("Self"))
+        && empty_group.is_empty()
+        && function.return_type == Some(Type::Named("Poll".to_owned(), vec![named_type("Output")]))
+        && function.effects == effect_parameter("E")
+        && function.where_predicates.is_empty()
+        && function.body.is_none()
+}
+
+fn validate_executor(definition: &TraitDef, diagnostics: &mut Vec<String>) {
+    let expected_bound = future_output_bound("F", "E", "T");
+    let valid = trait_has_default_self(definition)
+        && definition.compile_groups.is_empty()
+        && definition.where_predicates.is_empty()
+        && matches!(
+            definition.members.as_slice(),
+            [TraitMember::Function(function)]
+                if function.name == "run"
+                    && function.body.is_none()
+                    && function.compile_groups
+                        == vec![vec![
+                            compile_effect_parameter("E"),
+                            type_parameter("F"),
+                            type_parameter("T"),
+                        ]]
+                    && function.effects == effect_parameter("E")
+                    && function.return_type == Some(named_type("T"))
+                    && function.where_predicates == vec![expected_bound]
+                    && matches!(
+                        function.groups.as_slice(),
+                        [receiver_group, future_group]
+                            if matches!(
+                                receiver_group.as_slice(),
+                                [receiver]
+                                    if receiver.name == "self"
+                                        && receiver.mode == PassMode::Inferred
+                                        && receiver.ty
+                                            == simple_borrow_type(true, named_type("Self"))
+                            )
+                                && matches!(
+                                    future_group.as_slice(),
+                                    [future]
+                                        if future.name == "future"
+                                            && future.mode == PassMode::Move
+                                            && future.ty == named_type("F")
+                                )
+                    )
+        );
+    if !valid {
+        diagnostics.push(
+            "lang item `Executor` must declare `run(E: effect, F: type, T: type)` with `F: Future(E, Output = T)`"
+                .to_owned(),
+        );
+    }
+}
+
+fn validate_async_function(
+    kind: LangItemKind,
+    definition: &Function,
+    diagnostics: &mut Vec<String>,
+) {
+    let effects = async_effect_row("E");
+    let expected_bound = future_output_bound("F", "E", "T");
+    let valid = definition.name == kind.source_name()
+        && definition.body.is_none()
+        && definition.where_predicates == vec![expected_bound]
+        && match kind {
+            LangItemKind::AsyncFunction => {
+                definition.compile_groups
+                    == vec![vec![
+                        compile_effect_parameter("E"),
+                        type_parameter("F"),
+                        type_parameter("T"),
+                    ]]
+                    && single_moved_callable(
+                        definition,
+                        "action",
+                        named_type("T"),
+                        async_effect_row("E"),
+                    )
+                    && definition.return_type == Some(named_type("F"))
+                    && definition.effects == crate::ast::FunctionEffects::default()
+            }
+            LangItemKind::AwaitFunction => {
+                definition.compile_groups
+                    == vec![vec![
+                        compile_effect_parameter("E"),
+                        type_parameter("F"),
+                        type_parameter("T"),
+                    ]]
+                    && single_moved_parameter(definition, "future", named_type("F"))
+                    && definition.return_type == Some(named_type("T"))
+                    && definition.effects == effects
+            }
+            _ => false,
+        };
+    if !valid {
+        diagnostics.push(format!(
+            "lang item `{}` must match the source-backed core async contract",
+            kind.source_name()
+        ));
+    }
+}
+
+fn async_effect_row(rest: &str) -> crate::ast::FunctionEffects {
+    crate::ast::FunctionEffects {
+        custom: vec![Type::Named("core.async.Async".to_owned(), Vec::new())],
+        parameters: vec![rest.to_owned()],
+        ..crate::ast::FunctionEffects::default()
+    }
+}
+
+fn future_output_bound(future: &str, effects: &str, output: &str) -> crate::ast::WherePredicate {
+    crate::ast::WherePredicate {
+        subject: named_type(future),
+        trait_ref: Type::Named(
+            "Future".to_owned(),
+            vec![Type::Named(effects.to_owned(), Vec::new())],
+        ),
+        associated_types: vec![crate::ast::AssociatedTypeBinding {
+            name: "Output".to_owned(),
+            compile_groups: Vec::new(),
+            ty: named_type(output),
+        }],
+    }
 }
 
 fn validate_operator(kind: LangItemKind, definition: &TraitDef, diagnostics: &mut Vec<String>) {
@@ -3402,6 +3694,7 @@ pub let Index(Key: type) = trait {
             ("marker", EDITION_2026_MARKER),
             ("option", EDITION_2026_OPTION),
             ("result", EDITION_2026_RESULT),
+            ("error", EDITION_2026_ERROR),
             ("cmp", EDITION_2026_CMP),
             ("flow", EDITION_2026_FLOW),
             ("ops", EDITION_2026_OPS),
@@ -3410,7 +3703,8 @@ pub let Index(Key: type) = trait {
             ("ops/assign", EDITION_2026_OPS_ASSIGN),
             ("ops/index", EDITION_2026_OPS_INDEX),
             ("effect", EDITION_2026_EFFECT),
-            ("effect/handler", EDITION_2026_EFFECT_HANDLER),
+            ("unsafe", EDITION_2026_UNSAFE),
+            ("async", EDITION_2026_ASYNC),
             ("domains", EDITION_2026_DOMAINS),
             ("passing", EDITION_2026_PASSING),
             ("borrow", EDITION_2026_BORROW),
@@ -3437,7 +3731,7 @@ pub let Index(Key: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 328);
+        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 327);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -3462,6 +3756,13 @@ pub let Index(Key: type) = trait {
                 }
                 LangItemKind::Move | LangItemKind::Copy | LangItemKind::Drop => {
                     format!("core::marker::{}", kind.source_name())
+                }
+                LangItemKind::Poll
+                | LangItemKind::Future
+                | LangItemKind::Executor
+                | LangItemKind::AsyncFunction
+                | LangItemKind::AwaitFunction => {
+                    format!("core::async::{}", kind.source_name())
                 }
                 LangItemKind::Add
                 | LangItemKind::Sub
@@ -3497,9 +3798,9 @@ pub let Index(Key: type) = trait {
                 | LangItemKind::Raise => {
                     format!("core::flow::{}", kind.source_name())
                 }
-                LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect => {
-                    format!("core::effect::{}", kind.source_name())
-                }
+                LangItemKind::UnsafeEffect => "core::unsafe::Unsafe".to_owned(),
+                LangItemKind::ThrowsEffect => "core::error::Throws".to_owned(),
+                LangItemKind::AsyncEffect => "core::async::Async".to_owned(),
                 LangItemKind::TypeDomain
                 | LangItemKind::RegionDomain
                 | LangItemKind::EffectDomain
@@ -3523,19 +3824,20 @@ pub let Index(Key: type) = trait {
                 LangItemKind::Continuation
                 | LangItemKind::EffectCallable
                 | LangItemKind::Handle => {
-                    format!("core::effect::handler::{}", kind.source_name())
+                    format!("core::effect::{}", kind.source_name())
                 }
                 LangItemKind::Attempt
                 | LangItemKind::Do
                 | LangItemKind::DoWhile
-                | LangItemKind::Try
-                | LangItemKind::Throw
-                | LangItemKind::Unsafe
                 | LangItemKind::Loop
                 | LangItemKind::While
                 | LangItemKind::If
                 | LangItemKind::Match
                 | LangItemKind::For => format!("core::control::{}", kind.source_name()),
+                LangItemKind::Try | LangItemKind::Throw => {
+                    format!("core::error::{}", kind.source_name())
+                }
+                LangItemKind::Unsafe => "core::unsafe::unsafe".to_owned(),
                 LangItemKind::Iterator | LangItemKind::IntoIterator => {
                     format!("core::iter::{}", kind.source_name())
                 }
@@ -3563,6 +3865,11 @@ pub let Index(Key: type) = trait {
                 | LangItemKind::U128
                 | LangItemKind::USize => vec!["primitives"],
                 LangItemKind::Move | LangItemKind::Copy | LangItemKind::Drop => vec!["marker"],
+                LangItemKind::Poll
+                | LangItemKind::Future
+                | LangItemKind::Executor
+                | LangItemKind::AsyncFunction
+                | LangItemKind::AwaitFunction => vec!["async"],
                 LangItemKind::Add
                 | LangItemKind::Sub
                 | LangItemKind::Mul
@@ -3593,7 +3900,9 @@ pub let Index(Key: type) = trait {
                 | LangItemKind::Coalesce
                 | LangItemKind::Unwrap
                 | LangItemKind::Raise => vec!["flow"],
-                LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect => vec!["effect"],
+                LangItemKind::UnsafeEffect => vec!["unsafe"],
+                LangItemKind::ThrowsEffect => vec!["error"],
+                LangItemKind::AsyncEffect => vec!["async"],
                 LangItemKind::TypeDomain
                 | LangItemKind::RegionDomain
                 | LangItemKind::EffectDomain
@@ -3608,18 +3917,17 @@ pub let Index(Key: type) = trait {
                 | LangItemKind::AlignOf => vec!["memory"],
                 LangItemKind::Continuation
                 | LangItemKind::EffectCallable
-                | LangItemKind::Handle => vec!["effect", "handler"],
+                | LangItemKind::Handle => vec!["effect"],
                 LangItemKind::Attempt
                 | LangItemKind::Do
                 | LangItemKind::DoWhile
-                | LangItemKind::Try
-                | LangItemKind::Throw
-                | LangItemKind::Unsafe
                 | LangItemKind::Loop
                 | LangItemKind::While
                 | LangItemKind::If
                 | LangItemKind::Match
                 | LangItemKind::For => vec!["control"],
+                LangItemKind::Try | LangItemKind::Throw => vec!["error"],
+                LangItemKind::Unsafe => vec!["unsafe"],
                 LangItemKind::Iterator | LangItemKind::IntoIterator => vec!["iter"],
             };
             let mut expected_origin_path = vec!["@core".to_owned()];
@@ -3648,8 +3956,8 @@ pub let Index(Key: type) = trait {
             .program()
             .items
             .iter()
-            .find(|item| item_name(item) == Some("core::effect::Async"))
-            .expect("core.effect.Async must be mounted");
+            .find(|item| item_name(item) == Some("core::async::Async"))
+            .expect("core.async.Async must be mounted");
         assert!(matches!(
             async_effect,
             Item::Effect(definition)
@@ -3793,51 +4101,51 @@ pub let Index(Key: type) = trait {
             );
         }
 
-        let malformed = EDITION_2026_CONTROL.replace(
-            "pub let unsafe(E: effect, T: type)\n  (move action: (): T with(core.effect.Unsafe, E)): T with(E)",
+        let malformed = EDITION_2026_UNSAFE.replace(
+            "pub let unsafe(E: effect, T: type)\n  (move action: (): T with(core.unsafe.Unsafe, E)): T with(E)",
             "pub let unsafe(E: effect, T: type)\n  (move action: (): T with(E)): T with(E)",
         );
-        let modules = edition_2026_test_modules(&[("control", &malformed)]);
+        let modules = edition_2026_test_modules(&[("unsafe", &malformed)]);
         let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
         assert!(error
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.contains("lang item `unsafe`")));
 
-        let bodyless = EDITION_2026_CONTROL.replace(
-            " = {\n  core.effect.Unsafe.handle\n    action {\n      action()\n    }\n}",
+        let bodyless = EDITION_2026_UNSAFE.replace(
+            " = {\n  core.unsafe.Unsafe.handle\n    action {\n      action()\n    }\n}",
             "",
         );
-        let modules = edition_2026_test_modules(&[("control", &bodyless)]);
+        let modules = edition_2026_test_modules(&[("unsafe", &bodyless)]);
         let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
         assert!(error
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.contains("lang item `unsafe`")));
 
-        let malformed = EDITION_2026_EFFECT_HANDLER.replace(
+        let malformed = EDITION_2026_EFFECT.replace(
             "pub let EffectCallable(Input: type, Output: type, Answer: type) = struct {}",
             "pub let EffectCallable(Input: type, Output: type) = struct {}",
         );
-        let modules = edition_2026_test_modules(&[("effect/handler", &malformed)]);
+        let modules = edition_2026_test_modules(&[("effect", &malformed)]);
         let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
         assert!(error
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.contains("lang item `EffectCallable`")));
 
-        let malformed = EDITION_2026_EFFECT_HANDLER.replace(
+        let malformed = EDITION_2026_EFFECT.replace(
             "pub let Handle = trait(Self: effect)",
             "pub let Handle = trait",
         );
-        let modules = edition_2026_test_modules(&[("effect/handler", &malformed)]);
+        let modules = edition_2026_test_modules(&[("effect", &malformed)]);
         let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
         assert!(error
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.contains("lang item `Handle`")));
 
-        let malformed = EDITION_2026_EFFECT_HANDLER
+        let malformed = EDITION_2026_EFFECT
             .replace(
                 "let Clauses(Value: type, Answer: type): parameters",
                 "let Clauses(Value: type, Answer: type): type",
@@ -3846,23 +4154,70 @@ pub let Index(Key: type) = trait {
                 "(...move clauses: Clauses(Value, Answer))",
                 "(move clauses: Clauses(Value, Answer))",
             );
-        let modules = edition_2026_test_modules(&[("effect/handler", &malformed)]);
+        let modules = edition_2026_test_modules(&[("effect", &malformed)]);
         let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
         assert!(error
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.contains("lang item `Handle`")));
 
-        let malformed = EDITION_2026_CONTROL.replace(
-            "pub let throw(Error: type)\n  (move error: Error): Never with(core.effect.Throws(Error))",
+        let malformed = EDITION_2026_ERROR.replace(
+            "pub let throw(Error: type)\n  (move error: Error): Never with(core.error.Throws(Error))",
             "pub let throw(Error: type)\n  (move error: Error): Never",
         );
-        let modules = edition_2026_test_modules(&[("control", &malformed)]);
+        let modules = edition_2026_test_modules(&[("error", &malformed)]);
         let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
         assert!(error
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.contains("lang item `throw`")));
+    }
+
+    #[test]
+    fn rejects_malformed_async_contracts() {
+        for (name, malformed) in [
+            (
+                "Async",
+                EDITION_2026_ASYNC.replace("let suspend(): ()", "let suspend(): i32"),
+            ),
+            ("Poll", EDITION_2026_ASYNC.replace("  Pending,\n", "")),
+            (
+                "Future",
+                EDITION_2026_ASYNC.replace("where Self: Move", "where Self: Copy"),
+            ),
+            (
+                "Executor",
+                EDITION_2026_ASYNC.replace(
+                    "let run(E: effect, F: type, T: type)",
+                    "let run(F: type, T: type)",
+                ),
+            ),
+            (
+                "async",
+                EDITION_2026_ASYNC.replace(
+                    "(move action: (): T with(core.async.Async, E)): F",
+                    "(move action: (): T with(E)): F",
+                ),
+            ),
+            (
+                "await",
+                EDITION_2026_ASYNC.replace(
+                    "(move future: F): T with(core.async.Async, E)",
+                    "(move future: F): T with(E)",
+                ),
+            ),
+        ] {
+            let modules = edition_2026_test_modules(&[("async", &malformed)]);
+            let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
+            assert!(
+                error
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.contains(&format!("lang item `{name}`"))),
+                "{:?}",
+                error.diagnostics()
+            );
+        }
     }
 
     #[test]
@@ -3945,7 +4300,7 @@ pub let Index(Key: type) = trait {
             .any(|diagnostic| diagnostic.contains("lang item `Unwrap`")));
 
         let malformed = EDITION_2026_FLOW.replace(
-            "let raise(move self): Output with(core.effect.Throws(Error))",
+            "let raise(move self): Output with(core.error.Throws(Error))",
             "let raise(move self): Output",
         );
         let modules = edition_2026_test_modules(&[("flow", &malformed)]);

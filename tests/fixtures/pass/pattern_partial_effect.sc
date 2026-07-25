@@ -1,4 +1,4 @@
-let Unsafe = std.effect.Unsafe
+let Unsafe = std.unsafe.Unsafe
 
 let dangerous(): i32 with(Unsafe) = {
   42

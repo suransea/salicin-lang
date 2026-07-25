@@ -55,10 +55,10 @@ extend(E: type, T: type) Result(E)(T): core.flow.Raise {
   let Output = T
   let Error = E
 
-  let raise(move self): T with(core.effect.Throws(E)) = {
+  let raise(move self): T with(core.error.Throws(E)) = {
     match self
       { Ok(value) -> value }
-      { Err(error) -> core.effect.Throws(E).raise(error) }
+      { Err(error) -> core.error.Throws(E).raise(error) }
   }
 }
 

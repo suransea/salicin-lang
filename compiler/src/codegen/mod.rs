@@ -6368,6 +6368,8 @@ impl Analyzer {
                     LangItemKind::PtrValueForm,
                     LangItemKind::SizeOf,
                     LangItemKind::AlignOf,
+                    LangItemKind::AsyncFunction,
+                    LangItemKind::AwaitFunction,
                 ]
                 .into_iter()
                 .any(|kind| {

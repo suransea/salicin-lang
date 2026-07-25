@@ -1,6 +1,6 @@
 let Option = std.Option
 let Result = std.Result
-let Throws = std.effect.Throws
+let Throws = std.error.Throws
 let Iterator = std.iter.Iterator
 let IntoIterator = std.iter.IntoIterator
 let OwnedItem = std.iter.OwnedItem

@@ -69,32 +69,6 @@ pub let do(E: effect)
   }
 }
 
-/// Handles `Throws(E)` from `action` and returns a `Result`.
-pub let try(F: effect, T: type, E: type)
-  (move action: (): T with(core.effect.Throws(E), F)): core.Result(E)(T) with(F) = {
-  core.effect.Throws(E).handle
-    raise { (error) -> core.Result.Err(error) }
-    done { (value) -> core.Result.Ok(value) }
-    action {
-      action()
-    }
-}
-
-/// Raises a value through the standard `Throws(Error)` effect.
-pub let throw(Error: type)
-  (move error: Error): Never with(core.effect.Throws(Error)) = {
-  core.effect.Throws(Error).raise(error)
-}
-
-/// Runs an action that requires the standard unsafe authority effect.
-pub let unsafe(E: effect, T: type)
-  (move action: (): T with(core.effect.Unsafe, E)): T with(E) = {
-  core.effect.Unsafe.handle
-    action {
-      action()
-    }
-}
-
 /// Repeats `body` indefinitely until control exits through another construct.
 pub let loop(E: effect, T: type)
   (move body: (): () with(core.control.Break(T), core.control.Continue, E)): T with(E)

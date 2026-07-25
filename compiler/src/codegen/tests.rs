@@ -1014,7 +1014,7 @@ fn throw_returns_the_enclosing_throws_error_variant() {
     let ir = compile_resolved_text(
         r#"
 let Result = std.Result
-let Throws = std.effect.Throws
+let Throws = std.error.Throws
 
 let answer(fail: bool): i32 with(Throws(bool)) = {
   if fail { throw(true) }
@@ -1036,7 +1036,7 @@ fn throws_calls_propagate_automatically_and_try_handles_them() {
     let ir = compile_resolved_text(
         r#"
 let Result = std.Result
-let Throws = std.effect.Throws
+let Throws = std.error.Throws
 
 let read(fail: bool): i32 with(Throws(bool)) = {
   if fail { throw(true) }
@@ -1060,7 +1060,7 @@ Err(_) => 0
     let unhandled = compile_resolved_text(
         r#"
 let Result = std.Result
-let Throws = std.effect.Throws
+let Throws = std.error.Throws
 
 let read(): i32 with(Throws(bool)) = { throw(true) }
 let main(): i32 = { read() }
@@ -1077,7 +1077,7 @@ fn try_infers_a_unique_escaping_throws_source_without_context() {
     let ir = compile_resolved_text(
         r#"
 let Result = std.Result
-let Throws = std.effect.Throws
+let Throws = std.error.Throws
 
 let fail(flag: bool): i32 with(Throws(bool)) = { if flag { throw(true) } else { 41 } }
 let main(): i32 = {
@@ -1094,7 +1094,7 @@ let main(): i32 = {
     compile_resolved_text(
         r#"
 let Result = std.Result
-let Throws = std.effect.Throws
+let Throws = std.error.Throws
 
 let Failure = struct { code: i32 }
 extend Failure: Copy {}
@@ -1113,7 +1113,7 @@ let main(): i32 = {
     let ambiguous = compile_resolved_text(
         r#"
 let Result = std.Result
-let Throws = std.effect.Throws
+let Throws = std.error.Throws
 
 let left(): i32 with(Throws(bool)) = { throw(true) }
 let right(): i32 with(Throws(i64)) = { throw(1) }
@@ -1136,7 +1136,7 @@ let main(): i32 = {
     let handled = compile_resolved_text(
         r#"
 let Result = std.Result
-let Throws = std.effect.Throws
+let Throws = std.error.Throws
 
 let fail(): i32 with(Throws(bool)) = { throw(true) }
 let main(): i32 = {
@@ -1216,7 +1216,7 @@ let main(): i32 = {
     compile_resolved_text(
         r#"
 let Result = std.Result
-let Throws = std.effect.Throws
+let Throws = std.error.Throws
 
 let choose(fail: bool): i32 with(Throws(bool)) = { if fail { throw(true) } else { 42 } }
 let choose(value: i32): i32 = { value }
@@ -1289,7 +1289,7 @@ let main(): i32 = { Counter { value: 40 }.add(2) }
     compile_resolved_text(
         r#"
 let Result = std.Result
-let Throws = std.effect.Throws
+let Throws = std.error.Throws
 
 let Counter = struct { value: i32 }
 extend Counter: Copy {}
@@ -1453,7 +1453,7 @@ fn effect_parameters_infer_forward_and_explicitly_select_throws_rows() {
     let ir = compile_resolved_text(
         r#"
 let Result = std.Result
-let Throws = std.effect.Throws
+let Throws = std.error.Throws
 
 let invoke(E: effect)(action: (): i32 with(E))(): i32 with(E) = { action() }
 let fail(): i32 with(Throws(bool)) = { throw(true) }
@@ -1490,7 +1490,7 @@ fn throw_requires_an_exact_active_throws_boundary() {
             "handle it with `try { ... }`",
         ),
     ] {
-        let source = format!("use std.Option\nuse std.Result\nuse std.effect.Throws\n{source}");
+        let source = format!("use std.Option\nuse std.Result\nuse std.error.Throws\n{source}");
         let errors = compile_resolved_text(&source).expect_err("invalid throw(must) be rejected");
         assert!(
             errors.iter().any(|error| error.message.contains(expected)),
@@ -4453,8 +4453,8 @@ let main(): i32 = { loop {
 fn do_transparently_forwards_throws_unsafe_and_custom_effects() {
     compile_resolved_text(
         r#"
-let Throws = std.effect.Throws
-let Unsafe = std.effect.Unsafe
+let Throws = std.error.Throws
+let Unsafe = std.unsafe.Unsafe
 
 let UI = effect
 let fail(flag: bool): i32 with(Throws(bool)) = {
@@ -4476,7 +4476,7 @@ let main(): i32 = { 0 }
     let errors = compile_resolved_text(
         r#"
 let Result = std.Result
-let Throws = std.effect.Throws
+let Throws = std.error.Throws
 
 let fail(): i32 with(Throws(i64)) = { throw(1) }
 let outer(): i32 with(Throws(bool)) = { do { return(fail()) } }
@@ -4574,7 +4574,7 @@ let main(): i32 = {
     compile_resolved_text(
         r#"
 let Result = std.Result
-let Throws = std.effect.Throws
+let Throws = std.error.Throws
 
 let Supply = effect { let seed(): i32 }
 let Ask = effect { let value(): i32 with(Supply, Throws(bool)) }
@@ -4625,8 +4625,8 @@ let main(): i32 = { run() }
 
     compile_resolved_text(
         r#"
-let Throws = std.effect.Throws
-let Unsafe = std.effect.Unsafe
+let Throws = std.error.Throws
+let Unsafe = std.unsafe.Unsafe
 
 let AskUnsafe = effect { let value(): i32 with(Unsafe) }
 let unsafe_run(): i32 = { unsafe { AskUnsafe.handle value { (resume) -> resume(42) } action {
@@ -4649,7 +4649,7 @@ let main(): i32 = { 0 }
     let missing_unsafe = compile_resolved_text(
         r#"
 let Result = std.Result
-let Unsafe = std.effect.Unsafe
+let Unsafe = std.unsafe.Unsafe
 
 let Ask = effect { let value(): i32 with(Unsafe) }
 let run(): i32 = { Ask.handle value { (resume) -> resume(42) } action { Ask.value() } }
@@ -4664,7 +4664,7 @@ let main(): i32 = { run() }
     let missing_throws = compile_resolved_text(
         r#"
 let Result = std.Result
-let Throws = std.effect.Throws
+let Throws = std.error.Throws
 
 let Ask = effect { let value(): i32 with(Throws(bool)) }
 let run(): i32 = { Ask.handle value { (resume) -> resume(42) } action { Ask.value() } }
@@ -5019,7 +5019,7 @@ let main(): i32 = { 0 }
 
     compile_resolved_text(
         r#"
-let Unsafe = std.effect.Unsafe
+let Unsafe = std.unsafe.Unsafe
 
 let pure(): i32 = { 42 }
 let accept_unsafe(action: (): i32 with(Unsafe))(): i32 with(Unsafe) = { action() }
@@ -5083,7 +5083,7 @@ let main(): i32 = {
 fn unsafe_effects_are_declared_forwarded_and_handled_at_calls() {
     let ir = compile_resolved_text(
         r#"
-let Unsafe = std.effect.Unsafe
+let Unsafe = std.unsafe.Unsafe
 
 let read(pointer: Ptr(i32)): i32 with(Unsafe) = { *pointer }
 let forward(pointer: Ptr(i32)): i32 with(Unsafe) = { read(pointer) }
@@ -5098,7 +5098,7 @@ let main(): i32 = {
 
     let errors = compile_resolved_text(
         r#"
-let Unsafe = std.effect.Unsafe
+let Unsafe = std.unsafe.Unsafe
 
 let read(pointer: Ptr(i32)): i32 with(Unsafe) = { *pointer }
 let main(): i32 = {
@@ -5119,7 +5119,7 @@ let main(): i32 = {
 fn unsafe_effect_checks_survive_aliasing_and_partial_application() {
     let errors = compile_resolved_text(
         r#"
-let Unsafe = std.effect.Unsafe
+let Unsafe = std.unsafe.Unsafe
 
 let read(pointer: Ptr(i32))(offset: i32): i32 with(Unsafe) = { *pointer + offset }
 let main(): i32 = {
@@ -5137,7 +5137,7 @@ let main(): i32 = {
 
     compile_resolved_text(
         r#"
-let Unsafe = std.effect.Unsafe
+let Unsafe = std.unsafe.Unsafe
 
 let read(pointer: Ptr(i32))(offset: i32): i32 with(Unsafe) = { *pointer + offset }
 let main(): i32 = {
@@ -5154,7 +5154,7 @@ let main(): i32 = {
 fn unsafe_effects_participate_in_method_and_trait_signatures() {
     compile_resolved_text(
         r#"
-let Unsafe = std.effect.Unsafe
+let Unsafe = std.unsafe.Unsafe
 
 let Reader = struct { pointer: Ptr(i32) }
 let Read = trait {
@@ -5174,7 +5174,7 @@ let main(): i32 = {
 
     let errors = compile_resolved_text(
         r#"
-let Unsafe = std.effect.Unsafe
+let Unsafe = std.unsafe.Unsafe
 
 let Reader = struct { pointer: Ptr(i32) }
 let Read = trait {
@@ -5195,7 +5195,7 @@ let main(): i32 = { 0 }
 #[test]
 fn entry_point_cannot_export_an_unsafe_effect() {
     let errors =
-        compile_resolved_text("use std.effect.Unsafe\nlet main(): i32 with(Unsafe) = { 42 }\n")
+        compile_resolved_text("use std.unsafe.Unsafe\nlet main(): i32 with(Unsafe) = { 42 }\n")
             .unwrap_err();
     assert!(errors.iter().any(|error| {
         error
@@ -5208,7 +5208,7 @@ fn entry_point_cannot_export_an_unsafe_effect() {
 fn effect_compile_parameters_select_pure_or_unsafe_instances() {
     compile_resolved_text(
         r#"
-let Unsafe = std.effect.Unsafe
+let Unsafe = std.unsafe.Unsafe
 
 let tagged(E: effect)(value: i32): i32 with(E) = { value }
 let forward(E: effect)(value: i32): i32 with(E) = { tagged(E)(value) }
@@ -5219,7 +5219,7 @@ let main(): i32 = { forward(20) + forward(pure)(20) + unsafe { forward(E: Unsafe
 
     compile_resolved_text(
         r#"
-let Unsafe = std.effect.Unsafe
+let Unsafe = std.unsafe.Unsafe
 
 let identity(E: effect, T: type)(value: T): T with(E) = { value }
 let main(): i32 = { identity(20) + unsafe { identity(E: Unsafe, T: i32)(22) } }
@@ -5229,7 +5229,7 @@ let main(): i32 = { identity(20) + unsafe { identity(E: Unsafe, T: i32)(22) } }
 
     let errors = compile_resolved_text(
         r#"
-let Unsafe = std.effect.Unsafe
+let Unsafe = std.unsafe.Unsafe
 
 let tagged(E: effect)(value: i32): i32 with(E) = { value }
 let forward(E: effect)(value: i32): i32 with(E) = { tagged(E)(value) }
@@ -5246,7 +5246,7 @@ let main(): i32 = { forward(Unsafe)(42) }
 
     compile_resolved_text(
         r#"
-let Unsafe = std.effect.Unsafe
+let Unsafe = std.unsafe.Unsafe
 
 let read(E: effect)(pointer: Ptr(i32)): i32 with(E) = { *pointer }
 let main(): i32 = {
@@ -5259,7 +5259,7 @@ let main(): i32 = {
 
     let errors = compile_resolved_text(
         r#"
-let Unsafe = std.effect.Unsafe
+let Unsafe = std.unsafe.Unsafe
 
 let read(E: effect)(pointer: Ptr(i32)): i32 with(E) = { *pointer }
 let main(): i32 = {
@@ -5291,7 +5291,7 @@ let main(): i32 = { tagged(E: copy)(42) }
 
     let errors = compile_resolved_text(
         r#"
-let Unsafe = std.effect.Unsafe
+let Unsafe = std.unsafe.Unsafe
 
 let always(E: effect)(value: i32): i32 with(Unsafe, E) = { value }
 let main(): i32 = { always(pure)(42) }
@@ -5354,7 +5354,7 @@ let main(): i32 = { run(E: copy)() }
 fn effect_parameters_specialize_inherent_methods() {
     compile_resolved_text(
         r#"
-let Unsafe = std.effect.Unsafe
+let Unsafe = std.unsafe.Unsafe
 
 let Value = struct { value: i32 }
 extend Value {
@@ -5374,7 +5374,7 @@ fn throws_effects_lower_to_result_boundaries_and_propagate() {
     let ir = compile_resolved_text(
         r#"
 let Result = std.Result
-let Throws = std.effect.Throws
+let Throws = std.error.Throws
 
 let fail(flag: bool): i32 with(Throws(bool)) = { if flag { throw(true) } else { 41 } }
 let forward(flag: bool): i32 with(Throws(bool)) = { fail(flag) }
@@ -5392,8 +5392,8 @@ let main(): i32 = {
 fn throws_and_unsafe_share_one_effect_row() {
     compile_resolved_library_text(
         r#"
-let Throws = std.effect.Throws
-let Unsafe = std.effect.Unsafe
+let Throws = std.error.Throws
+let Unsafe = std.unsafe.Unsafe
 
 let read(pointer: Ptr(i32), fail: bool): i32 with(Throws(bool), Unsafe) = {
   if fail { throw(true) }
@@ -5407,8 +5407,8 @@ let forward(pointer: Ptr(i32), fail: bool): i32 with(Throws(bool), Unsafe) = {
 
     let errors = compile_resolved_text(
         r#"
-let Throws = std.effect.Throws
-let Unsafe = std.effect.Unsafe
+let Throws = std.error.Throws
+let Unsafe = std.unsafe.Unsafe
 
 let read(pointer: Ptr(i32)): i32 with(Throws(bool), Unsafe) = { *pointer }
 let main(): i32 = {
@@ -5428,7 +5428,7 @@ fn try_handles_throws_while_forwarding_unsafe_and_custom_effects() {
     compile_resolved_text(
         r#"
 let Result = std.Result
-let Unsafe = std.effect.Unsafe
+let Unsafe = std.unsafe.Unsafe
 
 let UI = effect
 let render(value: i32): i32 with(UI) = { value }
@@ -6981,7 +6981,7 @@ fn nominal_error_types_propagate_through_throws() {
     let ir = compile_resolved_text(
         r#"
 let Result = std.Result
-let Throws = std.effect.Throws
+let Throws = std.error.Throws
 
 let Failure = struct { code: i32 }
 let read(fail: bool): i32 with(Throws(Failure)) = {
@@ -7933,7 +7933,7 @@ fn cleanup_plan_try_and_throw_returns_exit_match_arm_scopes() {
     let plan = cleanup_plan_text(
         r#"
 let Result = std.Result
-let Throws = std.effect.Throws
+let Throws = std.error.Throws
 
 let read(fail: bool): i32 with(Throws(bool)) = { if fail { throw(true) } else { 42 } }
 let propagate(fail: bool): i32 with(Throws(bool)) = {
@@ -9330,7 +9330,7 @@ let finish(): () = { let value = Plain { value: 42 }; () }
 fn erased_effect_callable_uses_cps_entry_and_owned_environment() {
     let mut program = resolve_text(
         r#"
-let Continuation = std.effect.handler.Continuation
+let Continuation = std.effect.Continuation
 
 let main(): i32 = {
   let continuation: (i32): i32 = { (value: i32) -> value + 2 }

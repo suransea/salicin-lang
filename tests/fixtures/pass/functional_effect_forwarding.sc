@@ -1,5 +1,5 @@
 let Option = std.Option
-let Unsafe = std.effect.Unsafe
+let Unsafe = std.unsafe.Unsafe
 let Applicative = std.functional.Applicative
 let Functor = std.functional.Functor
 let Monad = std.functional.Monad

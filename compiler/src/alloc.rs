@@ -640,7 +640,7 @@ fn valid_box_from_raw_method(function: &Function) -> bool {
         && function.return_type == Some(applied("Box", named("T")))
         && function.effects
             == crate::ast::FunctionEffects {
-                custom: vec![Type::Named("core.effect.Unsafe".to_owned(), Vec::new())],
+                custom: vec![Type::Named("core.unsafe.Unsafe".to_owned(), Vec::new())],
                 ..crate::ast::FunctionEffects::default()
             }
         && function.where_predicates.is_empty()
@@ -1372,7 +1372,7 @@ mod tests {
     #[test]
     fn rejects_box_from_raw_without_unsafe_effect() {
         let source = alloc_source().replacen(
-            "let from_raw(pointer: Ptr(mut)(T)): Box(T) with(core.effect.Unsafe) = {",
+            "let from_raw(pointer: Ptr(mut)(T)): Box(T) with(core.unsafe.Unsafe) = {",
             "let from_raw(pointer: Ptr(mut)(T)): Box(T) = {",
             1,
         );

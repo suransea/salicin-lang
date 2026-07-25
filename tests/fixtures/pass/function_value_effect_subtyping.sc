@@ -1,4 +1,4 @@
-let Unsafe = std.effect.Unsafe
+let Unsafe = std.unsafe.Unsafe
 
 let pure(): i32 = { 42 }
 

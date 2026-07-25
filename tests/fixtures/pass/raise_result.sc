@@ -1,5 +1,5 @@
 let Result = std.Result
-let Throws = std.effect.Throws
+let Throws = std.error.Throws
 
 let extract(move result: Result(bool)(i32)): i32 with(Throws(bool)) = {
   result!

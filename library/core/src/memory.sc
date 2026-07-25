@@ -57,7 +57,7 @@ pub let Ptr(A: access = shared)
 /// Provides operations shared by raw pointers at either access.
 extend(A: access, T: type) Ptr(A)(T) {
   /// Returns the pointer `index` elements after this pointer.
-  let offset(self)(index: u64): Ptr(A)(T) with(core.effect.Unsafe) = {
+  let offset(self)(index: u64): Ptr(A)(T) with(core.unsafe.Unsafe) = {
     unsafe {
       raw_offset(self, index)
     }
@@ -67,14 +67,14 @@ extend(A: access, T: type) Ptr(A)(T) {
 /// Provides operations that require mutable raw-pointer access.
 extend(T: type) Ptr(mut)(T) {
   /// Initializes storage that is currently uninitialized.
-  let init(self)(value: T): () with(core.effect.Unsafe) = {
+  let init(self)(value: T): () with(core.unsafe.Unsafe) = {
     unsafe {
       raw_init(self, value)
     }
   }
 
   /// Moves a value out and leaves the storage uninitialized.
-  let take(self)(): T with(core.effect.Unsafe) = {
+  let take(self)(): T with(core.unsafe.Unsafe) = {
     unsafe {
       raw_take(self)
     }

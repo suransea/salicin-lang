@@ -4903,7 +4903,7 @@ fn prelude_never_coerces_through_diverging_calls() {
     let source = temporary.write(
         "never.sc",
         r#"use std.Result
-let Throws = std.effect.Throws
+let Throws = std.error.Throws
 let stop(): Never = { loop {} }
 let absurd(move value: Never): i32 = { value }
 let propagate(move value: Never): Result(())(i32) = { value }

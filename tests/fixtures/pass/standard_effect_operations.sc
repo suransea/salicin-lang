@@ -1,7 +1,7 @@
 let Result = std.Result
 
-let Throws = std.effect.Throws
-let Async = std.effect.Async
+let Throws = std.error.Throws
+let Async = std.async.Async
 
 let fail_with_answer(): Never with(Throws(i32)) = {
   Throws(i32).raise(42)

@@ -328,7 +328,7 @@ impl Analyzer {
             schema.valid && schema.self_parameter.kind == CompileParamKind::Effect
         }) {
             self.error(
-                "effect handler lowering requires the validated `core.effect.handler.Handle` protocol",
+                "effect handler lowering requires the validated `core.effect.Handle` protocol",
             );
             return error_expr();
         }

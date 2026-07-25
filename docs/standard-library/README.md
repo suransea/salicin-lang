@@ -18,6 +18,7 @@ library/
     marker.sc
     option.sc
     result.sc
+    error.sc
     cmp.sc
     flow.sc
     ops.sc
@@ -25,7 +26,8 @@ library/
     ops/bit.sc
     ops/assign.sc
     effect.sc
-    effect/handler.sc
+    async.sc
+    unsafe.sc
     domains.sc
     borrow.sc
     memory.sc
@@ -54,9 +56,10 @@ let Option = std.Option
 let Result = std.Result
 ```
 
-Operator traits are aliased from the `std.ops` facade, `?.`/`??` protocols from `std.flow`, effect
-identities from `std.effect`, handler contracts from `std.effect.handler`, compile-time domains from
-`std.domains`, compiler-lowered control contracts from `std.control`, algebra protocols from
+Operator traits are aliased from the `std.ops` facade, `?.`/`??` protocols from `std.flow`, generic
+handler contracts from `std.effect`, typed failure from `std.error`, asynchronous computation from
+`std.async`, unsafe authority from `std.unsafe`, compile-time domains from `std.domains`,
+compiler-lowered control contracts from `std.control`, algebra protocols from
 `std.algebra`, higher-kinded functional protocols from `std.functional`, iteration protocols from
 `std.iter`, and owning containers from `std.boxed` and `std.vec`. The underlying implementation is
 still split across `core` and `alloc`: `core.option` and `core.result` define `Option` and `Result`,
@@ -78,11 +81,11 @@ any of these standard namespaces.
 traits require ordinary aliases when
 named. Merely writing the corresponding operator token does not require importing its protocol.
 `std.flow.Chain` and `std.flow.Coalesce` require ordinary aliases when named directly.
-`Throws(E)`, `Unsafe`, and `Async` are ordinary standard effect declarations aliased from
-`std.effect`;
-source that names them binds them normally. The control spellings `do`, `try`, `throw`, `unsafe`,
-and `loop` bind directly to validated lang-item declarations in `core.control`; they do not inject
-those module exports as ordinary unqualified names.
+`Throws(E)`, `Unsafe`, and `Async` are ordinary standard effect declarations in `std.error`,
+`std.unsafe`, and `std.async`. Source that names them binds them normally. `try` and `throw` target
+`core.error`; `unsafe` targets `core.unsafe`; structural control spellings such as `do` and `loop`
+target `core.control`. These contextual spellings do not inject module exports as ordinary
+unqualified names.
 Effect identities use uppercase nominal spelling, including user-defined effects; row parameters
 such as `E: effect` remain ordinary parameter names.
 The `effect` compile-time domain, closed `access` type, and parameter modifier functions use
