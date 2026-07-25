@@ -1,10 +1,10 @@
 /// Protocol for stateful producers of sequential values.
 pub let Iterator = trait {
-  /// Element type yielded by this iterator.
-  let Item: type
+  /// Element type yielded while the iterator is borrowed for `R`.
+  let Item(R: region): type
   /// Advances the iterator and returns the next element, if any.
-  let next(self: borrow(mut)(Self))
-    (): core.Option(Item)
+  let next(R: region)(self: borrow(mut)(R)(Self))
+    (): core.Option(Item(R))
 }
 
 /// Protocol for values that can be converted into an iterator.
@@ -19,8 +19,11 @@ pub let IntoIterator = trait {
 let Array = core.memory.Array
 let Slice = core.memory.Slice
 
-let iter_copy(T: type)(value: borrow(T)): T
-where T: core.marker.Copy = { value }
+/// Constant item family for iterators that yield owned values.
+pub let OwnedItem(T: type)(R: region): type = T
+
+/// Access-preserving item family for iterators that yield element borrows.
+pub let BorrowedItem(A: access, T: type)(R: region): type = borrow(A)(R)(T)
 
 /// Owning iterator over a fixed-size array of copyable values.
 pub let ArrayIntoIter(T: type)
@@ -31,8 +34,8 @@ pub let ArrayIntoIter(T: type)
 
 extend(T: type, L: usize) ArrayIntoIter(T)(L): Iterator
 where T: core.marker.Copy {
-  let Item = T
-  let next(self: borrow(mut)(Self))(): core.Option(T) = {
+  let Item = OwnedItem(T)
+  let next(R: region)(self: borrow(mut)(R)(Self))(): core.Option(T) = {
     if self.next_index == L {
       core.Option(T).None
     } else {
@@ -51,46 +54,35 @@ where T: core.marker.Copy {
   }
 }
 
-/// Shared iterator over a borrowed slice of copyable values.
-pub let SliceIter(T: type) = struct {
-  values: borrow(Slice(T)),
+/// Access-preserving iterator over a borrowed slice.
+pub let SliceIter(A: access)(T: type) = struct {
+  values: borrow(A)(Slice(T)),
   next_index: u64,
 }
 
-extend(T: type) SliceIter(T)
-where T: core.marker.Copy {
-  /// Creates an iterator retaining the supplied slice loan.
-  let new(values: borrow(Slice(T))): SliceIter(T) = {
-    SliceIter(T) { values: values, next_index: 0 }
-  }
-}
-
-extend(T: type) SliceIter(T): Iterator
-where T: core.marker.Copy {
-  let Item = T
-  let next(self: borrow(mut)(Self))(): core.Option(T) = {
+extend(A: access, T: type) SliceIter(A)(T): Iterator {
+  let Item = BorrowedItem(A, T)
+  let next(R: region)(self: borrow(mut)(R)(Self))(): core.Option(Item(R)) = {
     if self.next_index == unsafe { raw_slice_len(self.values) } {
-      core.Option(T).None
+      None
     } else {
-      let value = unsafe {
-        raw_slice_at(shared)(self.values, self.next_index)
-      }
+      let index = self.next_index
       self.next_index = self.next_index + 1
-      core.Option(T).Some(iter_copy(value))
+      Some(unsafe {
+        raw_slice_at(A)(self.values, index)
+      })
     }
   }
 }
 
-extend(T: type) SliceIter(T): IntoIterator
-where T: core.marker.Copy {
-  let IntoIter = SliceIter(T)
-  let into_iter(move self)(): SliceIter(T) = { self }
+extend(A: access, T: type) SliceIter(A)(T): IntoIterator {
+  let IntoIter = SliceIter(A)(T)
+  let into_iter(move self)(): SliceIter(A)(T) = { self }
 }
 
-extend(T: type) Slice(T)
-where T: core.marker.Copy {
-  /// Iterates over copied values while retaining the source slice loan.
-  let iter(self: borrow(Self))(): SliceIter(T) = {
-    SliceIter(T).new(self)
+extend(T: type) Slice(T) {
+  /// Iterates over borrowed values while retaining source access.
+  let iter(A: access)(self: borrow(A)(Self))(): SliceIter(A)(T) = {
+    SliceIter(A)(T) { values: self, next_index: 0 }
   }
 }

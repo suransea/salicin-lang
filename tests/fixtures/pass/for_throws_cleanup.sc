@@ -3,6 +3,7 @@ let Result = std.Result
 let Throws = std.effect.Throws
 let Iterator = std.iter.Iterator
 let IntoIterator = std.iter.IntoIterator
+let OwnedItem = std.iter.OwnedItem
 
 let Counter = struct {
   current: i32,
@@ -17,9 +18,9 @@ extend Counter: Drop {
 }
 
 extend Counter: Iterator {
-  let Item = i32
+  let Item = OwnedItem(i32)
 
-  let next(self: borrow(mut)(Self))(): Option(i32) = {
+  let next(R: region)(self: borrow(mut)(R)(Self))(): Option(i32) = {
     if self.current < self.end {
       let value = self.current
       self.current = self.current + 1

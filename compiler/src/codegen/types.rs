@@ -1081,6 +1081,12 @@ impl Analyzer {
                         Vec::new(),
                     ))
                 }
+                Expr::Name(name)
+                    if closed_value_from_marker(name)
+                        .is_some_and(|(owner, _)| owner == compile_type) =>
+                {
+                    Some(Type::Named(name.clone(), Vec::new()))
+                }
                 Expr::Name(name) => substitutions.get(name).and_then(|value| {
                     let Type::Named(marker, arguments) = value else {
                         return None;
@@ -1196,9 +1202,17 @@ impl Analyzer {
             .iter()
             .all(|parameter| parameter.kind.is_access())
         {
-            return arguments.iter().all(|argument| {
-                matches!(&argument.value, Expr::Name(name) if name == "shared" || name == "mut")
-            });
+            return parameters
+                .iter()
+                .zip(arguments)
+                .all(|(parameter, argument)| {
+                    self.expression_is_explicit_compile_argument(
+                        parameter,
+                        &argument.value,
+                        context,
+                        unit_is_type,
+                    )
+                });
         }
         if parameters
             .iter()
@@ -1321,6 +1335,8 @@ impl Analyzer {
                     self.closed_type_values
                         .get(&compile_type)
                         .is_some_and(|members| members.contains(name))
+                        || closed_value_from_marker(name)
+                            .is_some_and(|(owner, _)| owner == compile_type)
                         || context.type_substitutions.get(name).is_some_and(|value| {
                             matches!(
                                 value,

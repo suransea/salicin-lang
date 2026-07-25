@@ -140,6 +140,22 @@ impl Analyzer {
                     context
                         .borrowed_parameter_regions
                         .insert(id, (region.clone(), *mutable));
+                } else {
+                    let requirements = self.type_reference_requirements(&runtime_ty);
+                    if let Some((region, _)) = requirements.first() {
+                        if requirements
+                            .iter()
+                            .all(|(candidate, _)| candidate == region)
+                        {
+                            context.borrowed_parameter_regions.insert(
+                                id,
+                                (
+                                    region.clone(),
+                                    requirements.iter().any(|(_, mutable)| *mutable),
+                                ),
+                            );
+                        }
+                    }
                 }
                 let (capability, mutable) = match (&param.mode, &runtime_ty) {
                     (PassMode::Borrow, _) => (LocalCapability::SharedParam, false),

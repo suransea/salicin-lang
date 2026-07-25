@@ -1,14 +1,15 @@
 let Option = std.Option
 let Iterator = std.iter.Iterator
 let IntoIterator = std.iter.IntoIterator
+let OwnedItem = std.iter.OwnedItem
 
 let Values = struct { done: bool }
 let Choice = enum { Some(i32), None }
 
 extend Values: Iterator {
-  let Item = Choice
+  let Item = OwnedItem(Choice)
 
-  let next(self: borrow(mut)(Self))(): Option(Choice) = {
+  let next(R: region)(self: borrow(mut)(R)(Self))(): Option(Choice) = {
     if self.done {
       None
     } else {

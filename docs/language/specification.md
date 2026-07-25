@@ -1647,8 +1647,10 @@ for collection {
 一次。pattern 每次迭代重新绑定，其 move/borrow 行为由迭代器的 `Item` 类型决定。
 
 两个协议位于 `core.iter`，不属于 prelude：`IntoIterator` 声明关联类型 `IntoIter` 和消费
-`self` 的 `into_iter`；`Iterator` 声明关联类型 `Item` 和可变借用 `self` 的 `next`，返回
-`Option(Item)`。实现和约束中显式命名协议需要普通实体别名，但 `for` 语法直接绑定经过工具链校验的
+`self` 的 `into_iter`；`Iterator` 声明 GAT `Item(R: region): type`，并由
+`next(R)(self: borrow(mut)(R)(Self))` 返回 `Option(Item(R))`。因此借用型迭代器可以把产出
+借用限制在本次 receiver borrow 的 `R`：产出尚存活时不能再次可变借用迭代器，也不能让产出逃过
+迭代器或源值。实现和约束中显式命名协议需要普通实体别名，但 `for` 语法直接绑定经过工具链校验的
 lang-item 身份，同名 inherent 方法或其他 trait 不能截获展开。当前实现先接受名称绑定与 `_` 这两种
 显然不可失败的 pattern；结构解构将在 irrefutability 检查覆盖名义结构后开放。
 

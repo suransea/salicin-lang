@@ -17,7 +17,7 @@ Priority meanings:
 
 Current milestone: **TYPE1 static abstraction**
 
-Next task: **LIB-ITER-BORROW-1**
+Next task: **TYPE-EQ-1**
 
 ### P0 control-source queue
 
@@ -103,7 +103,7 @@ Entry gate: **M0-QUALITY-1** and **M0-AUDIT-1**
   - Route user types, Array, Slice, and Vec reads, explicit borrows, and assignments through it.
   - Preserve single evaluation, temporary-loan shortening, bounds traps, aliasing, and cleanup.
 - [x] **LIB-ITER-1: Add array, slice, and Vec iterator implementations**
-  - Provide source-backed Copy-value iteration for Array and borrowed Slice.
+  - Provide source-backed Copy-value iteration for Array and the initial stored-loan Slice iterator.
   - Consume Vec values in source order and drop only the unyielded suffix on early exit.
   - Preserve stored slice loans and reject mutation or escape while an iterator retains them.
 - [x] **LIB-VEC-1: Complete Vec mutation and consuming-iterator cleanup**
@@ -134,7 +134,7 @@ Entry gate: concrete requirements from LIB1
   - Preserve `type`, `access`, `region`, `usize`, and closed-value parameter kinds.
   - Substitute direct and partially applied alias constructors into trait method templates.
   - Keep constructor equality predicates gated by `TYPE-EQ-1`.
-- [ ] **LIB-ITER-BORROW-1: Use GATs for borrow-yielding and mutable iteration**
+- [x] **LIB-ITER-BORROW-1: Use GATs for borrow-yielding and mutable iteration**
   - Replace the Copy-value Slice iterator boundary with shared and mutable element borrows.
   - Preserve source access, receiver-region shortening, alias exclusion, escape rejection, and
     exactly-once iterator cleanup.

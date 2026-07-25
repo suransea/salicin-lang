@@ -4,6 +4,7 @@
 let Option = std.Option
 let Iterator = std.iter.Iterator
 let IntoIterator = std.iter.IntoIterator
+let OwnedItem = std.iter.OwnedItem
 
 let Transaction = enum {
   Credit(i32),
@@ -46,9 +47,9 @@ let Batch = struct {
 }
 
 extend Batch: Iterator {
-  let Item = Transaction
+  let Item = OwnedItem(Transaction)
 
-  let next(self: borrow(mut)(Self))(): Option(Transaction) = {
+  let next(R: region)(self: borrow(mut)(R)(Self))(): Option(Transaction) = {
     let transaction: Option(Transaction) = match self.index
       { 0 -> Some(Transaction.Credit(30)) }
       { 1 -> Some(Transaction.Debit(8)) }

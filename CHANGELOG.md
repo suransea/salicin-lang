@@ -6,6 +6,14 @@ subset.
 
 ## Unreleased
 
+- Migrated `Iterator` to the region-indexed `Item(R)` GAT and added access-preserving
+  `SliceIter(A)(T)`. Shared slice iteration now yields borrows for non-`Copy` elements, mutable
+  iteration yields exclusive element borrows, and each result is shortened to the active
+  `next(R)` receiver borrow. Closed compile-time values such as `access` now parameterize ordinary
+  nominal types through abstract validation and concrete monomorphization. Region provenance is
+  retained through reference-carrying values, enum payload patterns, and reference-returning calls;
+  regression coverage rejects overlapping mutable yields, source mutation while borrowed, and
+  escaped iterator results.
 - Accepted the minimum owning string model for LIB1. `String` will privately own `Vec(u8)` storage
   with an always-valid UTF-8 invariant, byte-based length and capacity, shared-only byte views, and
   a consuming validation error that retains the original allocation. Character scalars, borrowed

@@ -1586,7 +1586,8 @@ fn is_control_support_item(name: &str) -> bool {
             | "Return"
             | "ArrayIntoIter"
             | "SliceIter"
-            | "iter_copy"
+            | "OwnedItem"
+            | "BorrowedItem"
             | "break"
             | "continue"
             | "return"
@@ -2027,20 +2028,44 @@ fn validate_iterator(definition: &TraitDef, diagnostics: &mut Vec<String>) {
                 TraitMember::AssociatedType { name, compile_groups, default: None, .. },
                 TraitMember::Function(function),
             ] if name == "Item"
-                && compile_groups.is_empty()
-                && valid_iteration_method(
-                    function,
-                    "next",
-                    PassMode::MutBorrow,
-                    Type::Named("core.Option".to_owned(), vec![named_type("Item")]),
-                )
+                && compile_groups == &vec![vec![region_parameter("R")]]
+                && valid_iterator_next_method(function)
         );
     if !valid {
         diagnostics.push(
-            "lang item `Iterator` must declare `Item` and `next(self: borrow(mut)(Self))(): Option(Item)`"
+            "lang item `Iterator` must declare `Item(R: region): type` and `next(R: region)(self: borrow(mut)(R)(Self))(): Option(Item(R))`"
                 .to_owned(),
         );
     }
+}
+
+fn valid_iterator_next_method(function: &Function) -> bool {
+    let [receiver_group, empty_group] = function.groups.as_slice() else {
+        return false;
+    };
+    let [receiver] = receiver_group.as_slice() else {
+        return false;
+    };
+    function.name == "next"
+        && function.compile_groups == vec![vec![region_parameter("R")]]
+        && function.return_type
+            == Some(Type::Named(
+                "core.Option".to_owned(),
+                vec![Type::Named("Item".to_owned(), vec![named_type("R")])],
+            ))
+        && function.effects == crate::ast::FunctionEffects::default()
+        && function.where_predicates.is_empty()
+        && function.body.is_none()
+        && receiver.name == "self"
+        && receiver.mode == PassMode::Inferred
+        && receiver.ty
+            == Type::Borrow {
+                mutable: true,
+                access: None,
+                region: Some("R".to_owned()),
+                pointee: Box::new(named_type("Self")),
+            }
+        && empty_group.is_empty()
 }
 
 fn validate_into_iterator(definition: &TraitDef, diagnostics: &mut Vec<String>) {
@@ -3798,8 +3823,8 @@ pub let Index(Key: type) = trait {
     #[test]
     fn rejects_malformed_iteration_contracts() {
         let malformed = EDITION_2026_ITER.replace(
-            "let next(self: borrow(mut)(Self))\n    (): core.Option(Item)",
-            "let next(self: borrow(Self))\n    (): core.Option(Item)",
+            "let next(R: region)(self: borrow(mut)(R)(Self))\n    (): core.Option(Item(R))",
+            "let next(R: region)(self: borrow(R)(Self))\n    (): core.Option(Item(R))",
         );
         let modules = edition_2026_test_modules(&[("iter", &malformed)]);
         let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();

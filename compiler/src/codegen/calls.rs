@@ -342,7 +342,7 @@ impl Analyzer {
                 return self.lower_raw_slice_len(&groups, context);
             }
             if name == "raw_slice_at" {
-                return self.lower_raw_slice_at(&groups, context);
+                return self.lower_raw_slice_at(&groups, expected, context);
             }
             if name == "raw_trap" {
                 return self.lower_raw_trap(&groups, context);

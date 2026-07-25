@@ -1161,6 +1161,8 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         "vec_into_iterator_break_cleanup.sc",
         "array_into_iterator.sc",
         "slice_iterator.sc",
+        "slice_iterator_mut.sc",
+        "slice_iterator_resource.sc",
     ];
     for (name, output) in native_fixture_outputs_in_parallel(&successful) {
         assert_eq!(
@@ -3155,6 +3157,7 @@ fn m2_generic_nominal_programs_run_with_expected_result() {
         "generic_enum_match.sc",
         "generic_function_constructs_nominal.sc",
         "generic_nominal_multiple_instances.sc",
+        "generic_nominal_access.sc",
     ];
     for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(

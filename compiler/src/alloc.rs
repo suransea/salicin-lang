@@ -1240,14 +1240,35 @@ fn valid_vec_iterator_extension(extension: &crate::ast::ExtendDef) -> bool {
             crate::ast::ExtendMember::Const(item),
             crate::ast::ExtendMember::Function(next),
         ] if item.name == "Item"
-            && item.value == crate::ast::Expr::Name("T".to_owned())
-            && valid_vec_receiver_method(
-                next,
-                "next",
-                PassMode::MutBorrow,
-                &[],
-                applied("Option", named("T")),
-            ))
+            && matches!(&item.value,
+                crate::ast::Expr::Call(callee, arguments)
+                    if matches!(callee.as_ref(), crate::ast::Expr::Name(name) if name == "OwnedItem")
+                        && matches!(arguments.as_slice(), [argument]
+                            if argument.label.is_none()
+                                && argument.value == crate::ast::Expr::Name("T".to_owned())))
+            && valid_vec_iterator_next(next))
+}
+
+fn valid_vec_iterator_next(function: &Function) -> bool {
+    matches!(function.compile_groups.as_slice(), [group]
+        if matches!(group.as_slice(), [parameter]
+            if parameter.name == "R" && parameter.kind == CompileParamKind::Region))
+        && matches!(function.groups.as_slice(), [receiver, runtime]
+            if matches!(receiver.as_slice(), [parameter]
+                if parameter.name == "self"
+                    && parameter.mode == PassMode::Inferred
+                    && parameter.access.is_none()
+                    && parameter.modifiers.is_empty()
+                    && parameter.region.is_none()
+                    && parameter.ty == Type::Borrow {
+                        mutable: true,
+                        access: None,
+                        region: Some("R".to_owned()),
+                        pointee: Box::new(named("Self")),
+                    })
+                && runtime.is_empty())
+        && function.return_type == Some(applied("Option", named("T")))
+        && function.body.is_some()
 }
 
 fn valid_vec_into_iterator_extension(extension: &crate::ast::ExtendDef) -> bool {

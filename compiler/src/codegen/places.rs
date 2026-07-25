@@ -35,7 +35,15 @@ impl Analyzer {
                     }
                     return None;
                 };
-                if let Some(alias) = local.alias {
+                if let Some(mut alias) = local.alias {
+                    if let Ty::Reference { mutable, .. } = local.ty {
+                        alias.capability = if mutable {
+                            LocalCapability::MutParam
+                        } else {
+                            LocalCapability::SharedParam
+                        };
+                        alias.root_mutable = mutable;
+                    }
                     return Some(alias);
                 }
                 if let Ty::Reference {

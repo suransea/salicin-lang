@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::{CallArg, CompileParamKind, Expr, ItemOrigin, Type, VariantFields, Visibility};
 use crate::core::LangItemKind;
 
+use super::compile_time::closed_value_marker;
 use super::fallible::{InferredEnumHints, StandardFallibleKind};
 use super::flow::LowerCtx;
 use super::hir::{AccessBoundary, EnumLayout, FunctionTy, StructLayout, Ty};
@@ -731,6 +732,26 @@ impl Analyzer {
                         let argument = self
                             .probe_compile_argument_ty(parameter, &source)
                             .expect("literal usize is a valid compile-time argument");
+                        source_arguments.push(source);
+                        arguments.push(argument);
+                    }
+                    CompileParamKind::Named(ref compile_type) => {
+                        let Some(member) = self
+                            .closed_type_values
+                            .get(compile_type)
+                            .and_then(|members| members.first())
+                        else {
+                            self.error(format!(
+                                "generic nominal `{template_name}` cannot validate parameter `{}` because compile-time type `{compile_type}` has no known values",
+                                parameter.name
+                            ));
+                            continue;
+                        };
+                        let source =
+                            Type::Named(closed_value_marker(compile_type, member), Vec::new());
+                        let argument = self
+                            .probe_compile_argument_ty(parameter, &source)
+                            .expect("known closed value is a valid compile-time argument");
                         source_arguments.push(source);
                         arguments.push(argument);
                     }

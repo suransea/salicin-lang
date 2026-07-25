@@ -336,9 +336,9 @@ pub let throw(Error: type)
 
 ```sc fragment
 pub let Iterator = trait {
-  let Item: type
-  let next(self: borrow(mut)(Self))
-    (): core.Option(Item)
+  let Item(R: region): type
+  let next(R: region)(self: borrow(mut)(R)(Self))
+    (): core.Option(Item(R))
 }
 
 pub let IntoIterator = trait {
@@ -350,7 +350,11 @@ pub let IntoIterator = trait {
 pub let ArrayIntoIter(T: type)
   (L: usize) = struct { ... }
 
-pub let SliceIter(T: type) = struct { ... }
+pub let OwnedItem(T: type)(R: region): type = T
+pub let BorrowedItem(A: access, T: type)(R: region): type =
+  borrow(A)(R)(T)
+
+pub let SliceIter(A: access)(T: type) = struct { ... }
 ```
 
 Implementing or naming either trait requires aliases such as
@@ -361,12 +365,13 @@ iterator for `Iterator.next`, and stops on `None`. An inherent or unrelated trai
 `into_iter` or `next` cannot intercept this lowering.
 
 `Array(T)(L)` implements consuming value iteration when `T: Copy`. A borrowed `Slice(T)` exposes
-`.iter()` under the same bound; `SliceIter(T)` stores the slice borrow, so the source remains
-borrowed until the iterator is consumed or leaves scope. `Vec(T)` implements consuming iteration
-for all element types. Its iterator transfers the allocation, moves values in source order, and on
-early exit drops exactly the unyielded suffix before releasing storage. Generic associated
-constructors are now available for borrow-yielding and mutable element iteration; the source
-protocol migration remains tracked by `LIB-ITER-BORROW-1`.
+access-polymorphic `.iter(A)`: `SliceIter(A)(T)` stores the source loan and yields
+`borrow(A)(R)(T)` for the region of each `next(R)` receiver borrow. Shared iteration therefore
+works for non-`Copy` elements without moving them, while mutable iteration yields exclusive
+element borrows. A yielded mutable borrow must end before the next call to `next`; the source
+remains borrowed until the iterator is consumed or leaves scope. `Vec(T)` implements consuming
+iteration for all element types. Its iterator transfers the allocation, moves values in source
+order, and on early exit drops exactly the unyielded suffix before releasing storage.
 
 The control spellings bind to these validated identities without aliasing ordinary names. Standard
 effect identities such as `Throws` remain normal `std.effect` exports when named in source, backed

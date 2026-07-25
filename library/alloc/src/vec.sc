@@ -3,6 +3,7 @@ let Slice = core.Slice
 let Index = core.ops.Index
 let Iterator = core.iter.Iterator
 let IntoIterator = core.iter.IntoIterator
+let OwnedItem = core.iter.OwnedItem
 
 /// Growable contiguous heap allocation for values of type `T`.
 pub let Vec(T: type) = struct {
@@ -426,8 +427,8 @@ extend(T: type) Vec(T): Index(u64) {
 
 /// Advances an owning vector iterator in source order.
 extend(T: type) VecIntoIter(T): Iterator {
-  let Item = T
-  let next(self: borrow(mut)(Self))(): Option(T) = {
+  let Item = OwnedItem(T)
+  let next(R: region)(self: borrow(mut)(R)(Self))(): Option(T) = {
     if self.next_index == self.length {
       Option(T).None
     } else {

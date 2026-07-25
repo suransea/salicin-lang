@@ -6948,14 +6948,15 @@ fn lowers_for_through_validated_iteration_lang_items() {
         "use std.Option\n\
          let Iterator = std.iter.Iterator
          let IntoIterator = std.iter.IntoIterator
+         let OwnedItem = std.iter.OwnedItem
          let Counter = struct { current: i32, end: i32 }\n\
          extend Counter {\n\
            let into_iter(self: borrow(Self))(): i32 = { self.current }\n\
            let next(self: borrow(Self))(): bool = { false }\n\
          }\n\
          extend Counter: Iterator {\n\
-           let Item = i32\n\
-           let next(self: borrow(mut)(Self))(): Option(i32) = {\n\
+           let Item = OwnedItem(i32)\n\
+           let next(R: region)(self: borrow(mut)(R)(Self))(): Option(i32) = {\n\
              if self.current < self.end {\n\
                let value = self.current\n\
                self.current = self.current + 1\n\

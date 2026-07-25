@@ -434,7 +434,8 @@ const CORE_ITER_EXPORTS: &[&str] = &[
     "IntoIterator",
     "ArrayIntoIter",
     "SliceIter",
-    "iter_copy",
+    "OwnedItem",
+    "BorrowedItem",
 ];
 const CORE_ALGEBRA_EXPORTS: &[&str] = &["Semigroup", "Monoid"];
 const CORE_FUNCTIONAL_EXPORTS: &[&str] = &["Functor", "Applicative", "Monad"];
@@ -560,6 +561,8 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("iter", "IntoIterator", "core::iter::IntoIterator"),
     ("iter", "ArrayIntoIter", "core::iter::ArrayIntoIter"),
     ("iter", "SliceIter", "core::iter::SliceIter"),
+    ("iter", "OwnedItem", "core::iter::OwnedItem"),
+    ("iter", "BorrowedItem", "core::iter::BorrowedItem"),
     ("algebra", "Semigroup", "core::algebra::Semigroup"),
     ("algebra", "Monoid", "core::algebra::Monoid"),
     ("functional", "Functor", "core::functional::Functor"),

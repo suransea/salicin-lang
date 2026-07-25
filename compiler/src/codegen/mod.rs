@@ -3336,6 +3336,7 @@ impl Analyzer {
                 continue;
             }
             if let Some(body) = &mut function.body {
+                substitute_type_expression_parameters(body, &substitutions);
                 if let Some(target_name) = nominal_name(&target) {
                     substitute_self_expression_target(body, target_name);
                 }
@@ -4718,10 +4719,31 @@ impl Analyzer {
             .collect::<HashMap<_, _>>();
         expected_substitutions.insert("Self".to_owned(), extension.target.clone());
         for parameter in extension.compile_groups.iter().flatten() {
-            if parameter.kind == CompileParamKind::USize {
-                expected_substitutions
-                    .entry(parameter.name.clone())
-                    .or_insert(Type::CompileUSize(0));
+            match &parameter.kind {
+                CompileParamKind::USize => {
+                    expected_substitutions
+                        .entry(parameter.name.clone())
+                        .or_insert(Type::CompileUSize(0));
+                }
+                CompileParamKind::Named(compile_type) => {
+                    let Some(member) = self
+                        .closed_type_values
+                        .get(compile_type)
+                        .and_then(|members| members.first())
+                    else {
+                        self.error(format!(
+                            "generic trait implementation parameter `{}` uses unknown or empty closed type `{compile_type}`",
+                            parameter.name
+                        ));
+                        return false;
+                    };
+                    expected_substitutions
+                        .entry(parameter.name.clone())
+                        .or_insert_with(|| {
+                            Type::Named(closed_value_marker(compile_type, member), Vec::new())
+                        });
+                }
+                _ => {}
             }
         }
         let mut raw_associated = HashMap::new();
@@ -4808,13 +4830,6 @@ impl Analyzer {
                 }
             }
         }
-        let mut actual_self = HashMap::new();
-        actual_self.insert("Self".to_owned(), extension.target.clone());
-        for parameter in extension.compile_groups.iter().flatten() {
-            if parameter.kind == CompileParamKind::USize {
-                actual_self.insert(parameter.name.clone(), Type::CompileUSize(0));
-            }
-        }
         for method_id in &schema.method_order {
             let Some(ExtendMember::Function(actual)) = extension.members.iter().find(|member| {
                 matches!(member, ExtendMember::Function(function)
@@ -4848,7 +4863,7 @@ impl Analyzer {
                 valid = false;
                 continue;
             }
-            substitute_function_types(&mut actual, &actual_self);
+            substitute_function_types(&mut actual, &expected_substitutions);
             if !self.expand_function_aliases_after_substitution(
                 &mut actual,
                 "generic trait implementation signature",
@@ -9317,14 +9332,18 @@ impl Analyzer {
                 .cloned()
                 .expect("inspection root capture exists");
             let id = context.fresh_local();
+            let capability = match inspection.ty {
+                Ty::Reference { mutable: true, .. } => LocalCapability::MutParam,
+                _ => LocalCapability::SharedParam,
+            };
             let place = HirPlace {
                 local: root.id,
                 root_ty: root.ty,
                 projections: inspection.path.clone(),
                 dynamic_index: None,
                 ty: inspection.ty.clone(),
-                capability: LocalCapability::SharedParam,
-                root_mutable: false,
+                capability,
+                root_mutable: capability == LocalCapability::MutParam,
                 loan: None,
                 indirect: false,
             };
@@ -9334,7 +9353,7 @@ impl Analyzer {
                     id,
                     ty: inspection.ty.clone(),
                     mutable: false,
-                    capability: LocalCapability::SharedParam,
+                    capability,
                     alias: Some(place),
                     partial: None,
                     closure: None,

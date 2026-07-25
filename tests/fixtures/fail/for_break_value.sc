@@ -2,12 +2,13 @@ let Option = std.Option
 
 let Iterator = std.iter.Iterator
 let IntoIterator = std.iter.IntoIterator
+let OwnedItem = std.iter.OwnedItem
 
 let Once = struct { done: bool }
 
 extend Once: Iterator {
-  let Item = i32
-  let next(self: borrow(mut)(Self))(): Option(i32) = {
+  let Item = OwnedItem(i32)
+  let next(R: region)(self: borrow(mut)(R)(Self))(): Option(i32) = {
     if self.done {
       None
     } else {

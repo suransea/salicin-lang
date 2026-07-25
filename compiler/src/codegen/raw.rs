@@ -641,6 +641,7 @@ impl Analyzer {
     pub(super) fn lower_raw_slice_at(
         &mut self,
         groups: &[&[CallArg]],
+        expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) -> HirExpr {
         if context.unsafe_depth == 0 {
@@ -716,11 +717,25 @@ impl Analyzer {
             ));
             return error_expr();
         }
-        let result_ty = Ty::Reference {
+        let mut result_ty = Ty::Reference {
             pointee: element.clone(),
             mutable: required_mutable,
             region: region.clone(),
         };
+        if let Some(
+            expected @ Ty::Reference {
+                pointee: expected_pointee,
+                mutable: expected_mutable,
+                ..
+            },
+        ) = expected
+        {
+            if expected_pointee.as_ref() == element.as_ref()
+                && *expected_mutable == required_mutable
+            {
+                result_ty = expected.clone();
+            }
+        }
         let index = self.lower_expr(&arguments[1].value, Some(&Ty::U64), context);
         HirExpr {
             ty: result_ty,

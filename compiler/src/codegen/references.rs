@@ -4,14 +4,14 @@ use crate::ast::{Expr, PassMode, Type};
 
 use super::flow::{LoanKind, LowerCtx};
 use super::hir::{
-    AccessKind, HirArgument, HirBinding, HirExpr, HirExprKind, HirIndex, HirPlace, HirStmt, LoanId,
-    LocalCapability, ParamSig, ReferenceCallSource, Ty,
+    AccessKind, HirArgument, HirBinding, HirExpr, HirExprKind, HirIndex, HirPlace, HirReadKind,
+    HirStmt, LoanId, LocalCapability, ParamSig, ReferenceCallSource, Ty,
 };
 use super::lower::{display_region, reference_value_types_compatible, TypeProbe};
 use super::Analyzer;
 
 impl Analyzer {
-    fn type_reference_requirements(&self, ty: &Ty) -> Vec<(Option<String>, bool)> {
+    pub(super) fn type_reference_requirements(&self, ty: &Ty) -> Vec<(Option<String>, bool)> {
         fn collect(
             analyzer: &Analyzer,
             ty: &Ty,
@@ -78,7 +78,23 @@ impl Analyzer {
         let saved_access = context.reference_value_access;
         context.reference_value_access = Some(access);
         context.reference_value_depth += 1;
-        let mut lowered = self.lower_expr(expression, Some(expected), context);
+        let mut lowered = if matches!(expected, Ty::Reference { .. }) {
+            self.lower_place_without_diagnostic(expression, context)
+                .filter(|place| reference_value_types_compatible(&place.ty, expected))
+                .map(|place| {
+                    self.ensure_available(&place, context);
+                    HirExpr {
+                        ty: expected.clone(),
+                        kind: HirExprKind::Read {
+                            place,
+                            kind: HirReadKind::Copy,
+                        },
+                    }
+                })
+                .unwrap_or_else(|| self.lower_expr(expression, Some(expected), context))
+        } else {
+            self.lower_expr(expression, Some(expected), context)
+        };
         context.reference_value_depth -= 1;
         context.reference_value_access = saved_access;
         if reference_value_types_compatible(&lowered.ty, expected) {
@@ -126,6 +142,16 @@ impl Analyzer {
                 let else_origin = self.reference_origin_for_hir_expr(else_branch, context)?;
                 (then_origin == else_origin).then_some(then_origin)
             }
+            HirExprKind::Match { arms, .. } => {
+                let mut origins = arms
+                    .iter()
+                    .filter(|arm| !self.type_reference_requirements(&arm.body.ty).is_empty())
+                    .map(|arm| self.reference_origin_for_hir_expr(&arm.body, context));
+                let first = origins.next()??;
+                origins
+                    .all(|origin| origin.as_ref() == Some(&first))
+                    .then_some(first)
+            }
             HirExprKind::Call {
                 function,
                 arguments,
@@ -166,10 +192,15 @@ impl Analyzer {
         let mut sources = Vec::new();
         for ((parameter, runtime), argument) in parameters.zip(runtime_parameters).zip(arguments) {
             let parameter_region = match (&parameter.mode, &parameter.ty) {
-                (PassMode::Borrow | PassMode::MutBorrow, _) => Some(&parameter.region),
-                (_, Type::Borrow { region, .. }) => Some(region),
+                (PassMode::Borrow | PassMode::MutBorrow, _) => Some(parameter.region.clone()),
+                (_, Type::Borrow { region, .. }) => Some(region.clone()),
                 _ if !self.type_reference_requirements(&runtime.ty).is_empty() => {
-                    return None;
+                    let requirements = self.type_reference_requirements(&runtime.ty);
+                    let (region, _) = requirements.first()?.clone();
+                    requirements
+                        .iter()
+                        .all(|(candidate, _)| *candidate == region)
+                        .then_some(region)
                 }
                 _ => None,
             };
@@ -178,7 +209,7 @@ impl Analyzer {
             };
             if result_regions
                 .iter()
-                .all(|(region, _)| region.is_some() && parameter_region != region)
+                .all(|(region, _)| region.is_some() && parameter_region != *region)
             {
                 continue;
             }
@@ -561,7 +592,15 @@ impl Analyzer {
             let parameter_region = match (&parameter.mode, &parameter.ty) {
                 (PassMode::Borrow | PassMode::MutBorrow, _) => Some(parameter.region.clone()),
                 (_, Type::Borrow { region, .. }) => Some(region.clone()),
-                _ if parameter_carries_references => Some(None),
+                _ if parameter_carries_references => {
+                    let requirements = self.type_reference_requirements(&runtime.ty);
+                    requirements.first().and_then(|(region, _)| {
+                        requirements
+                            .iter()
+                            .all(|(candidate, _)| candidate == region)
+                            .then(|| region.clone())
+                    })
+                }
                 _ => None,
             };
             let Some(parameter_region) = parameter_region else {
@@ -624,7 +663,10 @@ impl Analyzer {
                     .flatten()
             });
             let expected_mutable = expected_requirements.iter().any(|(_, mutable)| *mutable);
-            if result_region.is_some() && expected_region != result_region {
+            if expected_region.is_some()
+                && result_region.is_some()
+                && expected_region != result_region
+            {
                 self.error(format!(
                     "returned call region mismatch: expected {}, found {}",
                     display_region(expected_region.as_deref()),

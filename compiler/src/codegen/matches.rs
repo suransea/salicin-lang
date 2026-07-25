@@ -241,12 +241,25 @@ impl Analyzer {
             context.push_scope();
             let (matcher, mut bindings, literal_conditions) =
                 self.lower_enum_pattern(&arm.pattern, &layout, context);
+            if let Some(origin) = self.reference_origin_for_hir_expr(&scrutinee, context) {
+                for binding in &bindings {
+                    if !self.type_reference_requirements(&binding.ty).is_empty() {
+                        context
+                            .borrowed_parameter_regions
+                            .insert(binding.id, origin.clone());
+                    }
+                }
+            }
             if let Some(root) = &inspected_place {
                 for binding in bindings.iter().filter(|binding| binding.moves) {
                     let mut alias = root.clone();
                     alias.projections.extend(binding.path.iter().copied());
                     alias.ty = binding.ty.clone();
-                    alias.capability = LocalCapability::SharedParam;
+                    let capability = match binding.ty {
+                        Ty::Reference { mutable: true, .. } => LocalCapability::MutParam,
+                        _ => LocalCapability::SharedParam,
+                    };
+                    alias.capability = capability;
                     let local = context
                         .scopes
                         .last_mut()
@@ -254,7 +267,7 @@ impl Analyzer {
                         .names
                         .get_mut(&binding.name)
                         .expect("pattern binding local exists");
-                    local.capability = LocalCapability::SharedParam;
+                    local.capability = capability;
                     local.alias = Some(alias);
                     context.inspection_bindings.insert(
                         binding.id,

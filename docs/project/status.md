@@ -362,11 +362,12 @@ The implementation is broad but not stable. Important incomplete boundaries incl
   Unsized `Slice(T)` borrows support Array unsizing, anchored Vec conversion, length, and
   bounds-checked shared/mutable element access. Access-polymorphic `Index(Key)` routes user-defined,
   Array, Slice, and Vec reads, explicit borrows, and assignments through one source-declared
-  protocol. Copy-value Array and borrowed Slice iterators are source-backed; Slice iterator
-  storage retains its source loan. Vec consuming iteration supports resource elements and
-  early-exit suffix cleanup. Generic associated constructors now provide the type-system machinery
-  for borrow-yielding/mutable iterators, whose standard implementations remain tracked by
-  `LIB-ITER-BORROW-1`; `Future` remains to be implemented;
+  protocol. Copy-value Array iteration and access-preserving borrowed Slice iteration are
+  source-backed. `SliceIter(A)(T)` retains its source loan and uses the `Item(R)` GAT to yield
+  shared or mutable element borrows shortened to each `next` receiver borrow; non-`Copy` elements
+  remain in place, overlapping mutable yields and escaping results are rejected. Vec consuming
+  iteration supports resource elements and early-exit suffix cleanup; `Future` remains to be
+  implemented;
 - `std` host APIs have not been started;
 - registry dependencies, workspaces, stable ABI guarantees, and a package distribution format are
   not defined;
