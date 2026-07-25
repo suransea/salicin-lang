@@ -6,6 +6,10 @@ subset.
 
 ## Unreleased
 
+- Closed the M0 deterministic-output gate. Repeated clean compiler builds now produce
+  byte-identical diagnostics, LLVM symbol order, generated IR, and regenerated dependency
+  lockfiles; handler action selection, handler result probing, and recursive generic nominal
+  diagnostics no longer depend on hash-map iteration order.
 - Closed the M0 clean-build quality gate. A fresh target directory passes formatting, strict
   all-target clippy, the complete `cargo test` suite, and the native ledger acceptance program
   with exit status 42.

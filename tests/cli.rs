@@ -290,6 +290,50 @@ fn core_diagnostics_are_stable_source_level_contracts() {
 }
 
 #[test]
+fn compiler_ir_symbols_and_diagnostics_are_byte_deterministic() {
+    let ledger =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/ledger.sc"))
+            .expect("read ledger acceptance source");
+    let baseline_ir = compile_source(&ledger).expect("compile ledger acceptance source");
+    let baseline_symbols = baseline_ir
+        .lines()
+        .filter(|line| line.starts_with("define ") || line.starts_with("declare "))
+        .collect::<Vec<_>>();
+
+    for _ in 0..3 {
+        let ir = compile_source(&ledger).expect("recompile ledger acceptance source");
+        assert_eq!(
+            ir, baseline_ir,
+            "LLVM IR changed between identical compiles"
+        );
+        let symbols = ir
+            .lines()
+            .filter(|line| line.starts_with("define ") || line.starts_with("declare "))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            symbols, baseline_symbols,
+            "LLVM symbol order changed between identical compiles"
+        );
+    }
+
+    for name in [
+        "generic_nominal_recursive_layout.sc",
+        "trait_ambiguous_method.sc",
+        "standard_throw_ambiguous_throws.sc",
+    ] {
+        let source = fs::read_to_string(fixture("fail", name)).expect("read failure fixture");
+        let baseline = check_source(&source).expect_err("fixture must fail source checking");
+        for _ in 0..3 {
+            assert_eq!(
+                check_source(&source).expect_err("fixture must fail source checking"),
+                baseline,
+                "{name} diagnostics changed between identical checks"
+            );
+        }
+    }
+}
+
+#[test]
 fn unicode_identifiers_and_logical_newlines_run_natively() {
     for (name, output) in
         native_fixture_outputs_in_parallel(&["unicode_identifiers.sc", "logical_newlines.sc"])
@@ -3775,6 +3819,7 @@ path = "src/broken.sc"
     assert!(first.contains("name = \"math-library\""), "{first}");
     assert!(first.contains("path = \"../math\""), "{first}");
 
+    fs::remove_file(&lock_path).expect("remove generated lockfile before regeneration");
     let checked = salic()
         .arg("check")
         .arg(&app)

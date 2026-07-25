@@ -11222,14 +11222,20 @@ impl Analyzer {
             return None;
         }
         let mut selected = None;
-        for ((candidate, group_index, parameter_index), action) in &self.runtime_handler_actions {
-            if candidate != name {
+        let mut action_positions = self
+            .runtime_handler_actions
+            .iter()
+            .map(|(position, action)| (position.clone(), action.clone()))
+            .collect::<Vec<_>>();
+        action_positions.sort_by(|left, right| left.0.cmp(&right.0));
+        for ((candidate, group_index, parameter_index), action) in action_positions {
+            if candidate.as_str() != name {
                 continue;
             }
-            let arguments = groups.get(*group_index).cloned()?;
-            let parameter = function.groups.get(*group_index)?.get(*parameter_index)?;
+            let arguments = groups.get(group_index).cloned()?;
+            let parameter = function.groups.get(group_index)?.get(parameter_index)?;
             let argument_index = if arguments.iter().all(|argument| argument.label.is_none()) {
-                *parameter_index
+                parameter_index
             } else {
                 arguments.iter().position(|argument| {
                     argument.label.as_deref() == Some(parameter.name.as_str())
@@ -11255,10 +11261,10 @@ impl Analyzer {
                 continue;
             }
             selected = Some((
-                *group_index,
-                *parameter_index,
+                group_index,
+                parameter_index,
                 argument_index,
-                action.clone(),
+                action,
                 parameter.name.clone(),
                 local_name.clone(),
                 local,

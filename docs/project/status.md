@@ -33,6 +33,9 @@ source-closure calls. A repository-wide gate rejects generated `$...` names in f
 diagnostics.
 Stable C exports, `@repr(C)` aggregates, and package-level ABI guarantees remain deferred to
 `ABI-1`; they are not implied by the M0 import boundary.
+Repeated clean builds now preserve byte-identical diagnostics, LLVM symbol order, generated IR,
+and regenerated dependency lockfiles. User-visible handler and recursive nominal traversal no
+longer depends on hash-map iteration order.
 
 The unit type has one source spelling, `()`; the former `void` alias is removed before 1.0. The
 uninhabited prelude enum is spelled `Never`; the former lowercase `never` spelling has no

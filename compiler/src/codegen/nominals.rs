@@ -626,7 +626,8 @@ impl Analyzer {
 
         let mut states = HashMap::new();
         let mut stack = Vec::new();
-        let names: Vec<_> = nominal_names.into_iter().collect();
+        let mut names: Vec<_> = nominal_names.into_iter().collect();
+        names.sort();
         for name in names {
             self.visit_generic_nominal_cycle(
                 &name,

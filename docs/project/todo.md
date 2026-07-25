@@ -17,7 +17,7 @@ Priority meanings:
 
 Current milestone: **M0 release baseline**
 
-Next task: **M0-DETERMINISM-1**
+Next task: **COMPILER-SPLIT-1**
 
 ### P0 control-source queue
 
@@ -76,7 +76,7 @@ handler or async expansion is admitted.
   - `cargo test`
   - Run the ledger acceptance program from a clean build.
 
-- [ ] **M0-DETERMINISM-1: Verify deterministic compiler output**
+- [x] **M0-DETERMINISM-1: Verify deterministic compiler output**
   - Compare diagnostics, LLVM symbols, lockfiles, and generated IR across repeated clean builds.
   - Remove hash-map iteration order from user-visible output.
 

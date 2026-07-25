@@ -1232,11 +1232,12 @@ impl Analyzer {
         if groups.len() != function.groups.len() {
             return None;
         }
-        let action_positions = self
+        let mut action_positions = self
             .runtime_handler_actions
             .keys()
             .cloned()
             .collect::<Vec<_>>();
+        action_positions.sort();
         for (candidate, group_index, parameter_index) in action_positions {
             if candidate != name {
                 continue;
@@ -1368,8 +1369,14 @@ impl Analyzer {
         }
 
         let mut action_position = None;
-        for ((candidate, group_index, parameter_index), action) in &self.runtime_handler_actions {
-            if candidate != target
+        let mut action_positions = self
+            .runtime_handler_actions
+            .iter()
+            .map(|(position, action)| (position.clone(), action.clone()))
+            .collect::<Vec<_>>();
+        action_positions.sort_by(|left, right| left.0.cmp(&right.0));
+        for ((candidate, group_index, parameter_index), action) in action_positions {
+            if candidate.as_str() != target.as_str()
                 || !effects
                     .custom
                     .iter()
@@ -1377,10 +1384,10 @@ impl Analyzer {
             {
                 continue;
             }
-            let arguments = group_refs.get(*group_index).copied().unwrap_or_default();
-            let parameter = &function.groups[*group_index][*parameter_index];
+            let arguments = group_refs.get(group_index).copied().unwrap_or_default();
+            let parameter = &function.groups[group_index][parameter_index];
             let argument_index = if arguments.iter().all(|argument| argument.label.is_none()) {
-                *parameter_index
+                parameter_index
             } else {
                 let Some(index) = arguments.iter().position(|argument| {
                     argument.label.as_deref() == Some(parameter.name.as_str())
@@ -1392,10 +1399,10 @@ impl Analyzer {
             if matches!(arguments.get(argument_index), Some(CallArg { value: Expr::Name(name), .. }) if name == &binding.name)
             {
                 action_position = Some((
-                    *group_index,
-                    *parameter_index,
+                    group_index,
+                    parameter_index,
                     argument_index,
-                    action.clone(),
+                    action,
                     parameter.name.clone(),
                 ));
                 break;

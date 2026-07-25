@@ -497,18 +497,19 @@ impl Analyzer {
             })
             .or_else(|| expected.cloned())
             .or_else(|| {
-                let bodies = clauses
-                    .values()
-                    .map(|clause| clause.body.clone())
+                let mut bodies = clauses
+                    .iter()
+                    .map(|(name, clause)| (name, clause.body.clone()))
                     .collect::<Vec<_>>();
-                bodies
-                    .into_iter()
-                    .find_map(|body| match self.probe_expr_ty(&body, None, context) {
+                bodies.sort_by(|left, right| left.0.cmp(right.0));
+                bodies.into_iter().find_map(|(_, body)| {
+                    match self.probe_expr_ty(&body, None, context) {
                         TypeProbe::Known(ty)
                         | TypeProbe::KnownSource(ty, _)
                         | TypeProbe::Defaultable(ty) => Some(ty),
                         TypeProbe::Unsupported => None,
-                    })
+                    }
+                })
             });
         let erased_callables = context
             .function_name
