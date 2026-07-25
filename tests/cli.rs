@@ -3012,6 +3012,16 @@ fn m1_loops_and_arrays_run_with_expected_result() {
 }
 
 #[test]
+fn defer_runs_lexical_actions_lifo_on_all_control_exits() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "defer_control.sc"))
+        .output()
+        .expect("run defer control fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn named_arguments_select_function_overloads_in_resolved_sources() {
     let fixtures = [
         "function_overload_named.sc",

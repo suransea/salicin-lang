@@ -228,6 +228,7 @@ impl Analyzer {
             return Ty::Error;
         };
 
+        let body = self.lower_lexical_defers(body);
         let requires_resumable_lowering = function.effects.custom.iter().any(|effect| {
             let Type::Named(effect_name, _) = effect else {
                 return false;
@@ -250,9 +251,9 @@ impl Analyzer {
         let handler_frame_parameter_modes_before = self.handler_frame_parameter_modes.clone();
         let boundary = context.return_boundary.clone();
         let lowered_body = if let Some(boundary) = &boundary {
-            self.lower_return_value(body, boundary, &mut context)
+            self.lower_return_value(&body, boundary, &mut context)
         } else {
-            self.lower_expr(body, signature.result.as_ref(), &mut context)
+            self.lower_expr(&body, signature.result.as_ref(), &mut context)
         };
         if let Some(expected @ Ty::Reference { .. }) = signature.result.as_ref() {
             self.validate_reference_escape_value(&lowered_body, expected, &context);

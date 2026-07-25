@@ -32,6 +32,7 @@ mod coalesce;
 mod compile_time;
 mod constructors;
 mod control;
+mod defer;
 mod effects;
 mod emitter;
 mod fallible;
@@ -6383,7 +6384,7 @@ impl Analyzer {
             {
                 continue;
             }
-            if template.body.is_none() && template_name == "core.control.defer" {
+            if template.body.is_none() && template_name == "core::control::defer" {
                 // `defer` is a compiler-provided lexical cleanup contract.
                 continue;
             }

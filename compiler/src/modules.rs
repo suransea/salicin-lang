@@ -432,7 +432,7 @@ const CORE_BORROW_EXPORTS: &[&str] = &["access", "borrow"];
 const CORE_MEMORY_EXPORTS: &[&str] = &["Array", "Slice", "Ptr", "size_of", "align_of"];
 const CORE_CONTROL_EXPORTS: &[&str] = &[
     "Break", "Continue", "Return", "Attempt", "break", "continue", "return", "do", "loop", "while",
-    "if", "match", "for",
+    "if", "match", "for", "defer",
 ];
 const CORE_ITER_EXPORTS: &[&str] = &[
     "Iterator",
@@ -558,6 +558,7 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("borrow", "access", "core::borrow::access"),
     ("borrow", "borrow", "core::borrow::borrow"),
     ("control", "do", "core::control::do"),
+    ("control", "defer", "core::control::defer"),
     ("control", "loop", "core::control::loop"),
     ("iter", "Iterator", "core::iter::Iterator"),
     ("iter", "IntoIterator", "core::iter::IntoIterator"),
