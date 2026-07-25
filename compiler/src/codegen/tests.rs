@@ -1599,6 +1599,51 @@ let main(): i32 = { invoke({ 42 }) }
 }
 
 #[test]
+fn capturing_closure_arguments_specialize_static_callees() {
+    compile_text(
+        r#"
+let invoke(move action: (): i32): i32 = { action() }
+let main(): i32 = {
+  let captured = 42
+  invoke({ captured })
+}
+"#,
+    )
+    .expect("capturing closure argument must specialize a static callee");
+}
+
+#[test]
+fn capturing_callable_bridge_transfers_mutable_and_move_captures() {
+    compile_text(
+        r#"
+let invoke(move action: (): i32): i32 = { action() }
+let main(): i32 = {
+  let mut value = 40
+  invoke({ () ->
+    value = value + 2;
+    value
+  })
+  value
+}
+"#,
+    )
+    .expect("mutable captures must be borrowed for the specialized call");
+
+    compile_text(
+        r#"
+let Resource = struct { value: i32 }
+let consume(move value: Resource): i32 = { value.value }
+let invoke(move action: (): i32): i32 = { action() }
+let main(): i32 = {
+  let resource = Resource { value: 42 }
+  invoke({ consume(resource) })
+}
+"#,
+    )
+    .expect("resource captures must move into the specialized call");
+}
+
+#[test]
 fn coalesce_operator_dispatches_through_core_trait_for_user_types() {
     let program = resolve_text(
         r#"
@@ -1619,7 +1664,8 @@ self match {
 
 let main(): i32 = {
   let present = Choice.Present(10) ?? 1
-  let missing = Choice.Missing ?? 2
+  let fallback = 2
+  let missing = Choice.Missing ?? fallback
   present + missing
 }
 "#,
@@ -1749,6 +1795,10 @@ let Chain = std.flow.Chain
 let Boxed = struct { value: i32 }
 let Maybe(T: type) = enum { Some(T), None }
 
+extend Boxed {
+  let plus(self)(amount: i32): i32 = { self.value + amount }
+}
+
 extend Maybe(Boxed): Chain {
   let Item = Boxed
   let Rebind = Maybe
@@ -1762,7 +1812,8 @@ self match {
   }}
 
 let main(): i32 = {
-  let value = Maybe(Boxed).Some(Boxed { value: 42 })?.value
+  let amount = 2
+  let value = Maybe(Boxed).Some(Boxed { value: 40 })?.plus(amount)
   value match { Some(answer) => answer, None => 0 }
 }
 "#,

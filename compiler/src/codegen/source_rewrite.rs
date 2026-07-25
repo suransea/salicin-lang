@@ -2452,18 +2452,20 @@ pub(super) fn rewrite_static_function_values(
             rewrite_static_function_values(index, replacements);
         }
         Expr::Block(statements, tail) => {
+            let mut visible = replacements.clone();
             for statement in statements {
                 match statement {
                     Stmt::Let(binding) => {
-                        rewrite_static_function_values(&mut binding.value, replacements)
+                        rewrite_static_function_values(&mut binding.value, &visible);
+                        visible.remove(&binding.name);
                     }
                     Stmt::Expr(expression) => {
-                        rewrite_static_function_values(expression, replacements)
+                        rewrite_static_function_values(expression, &visible)
                     }
                 }
             }
             if let Some(tail) = tail {
-                rewrite_static_function_values(tail, replacements);
+                rewrite_static_function_values(tail, &visible);
             }
         }
         Expr::Closure(parameters, body) => {
@@ -2514,10 +2516,16 @@ pub(super) fn rewrite_static_function_values(
         Expr::Match { scrutinee, arms } => {
             rewrite_static_function_values(scrutinee, replacements);
             for arm in arms {
-                if let Some(guard) = &mut arm.guard {
-                    rewrite_static_function_values(guard, replacements);
+                let mut visible = replacements.clone();
+                let mut bindings = HashSet::new();
+                collect_pattern_binding_names(&arm.pattern, &mut bindings);
+                for binding in bindings {
+                    visible.remove(&binding);
                 }
-                rewrite_static_function_values(&mut arm.body, replacements);
+                if let Some(guard) = &mut arm.guard {
+                    rewrite_static_function_values(guard, &visible);
+                }
+                rewrite_static_function_values(&mut arm.body, &visible);
             }
         }
         Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}

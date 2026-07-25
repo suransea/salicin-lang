@@ -11059,6 +11059,28 @@ impl Analyzer {
             runtime_groups = &groups[compile_prefix..];
         }
 
+        let receiver_group = [CallArg {
+            label: None,
+            value: receiver.clone(),
+        }];
+        let mut full_runtime_groups = Vec::with_capacity(runtime_groups.len() + 1);
+        full_runtime_groups.push(receiver_group.as_slice());
+        full_runtime_groups.extend_from_slice(runtime_groups);
+        let specialized_call =
+            self.specialize_capturing_callable_call(&canonical, &full_runtime_groups, context);
+        let specialized_runtime_groups = specialized_call
+            .as_ref()
+            .map(|(_, rewritten)| rewritten[1..].to_vec())
+            .unwrap_or_default();
+        let specialized_runtime_group_refs = specialized_runtime_groups
+            .iter()
+            .map(Vec::as_slice)
+            .collect::<Vec<_>>();
+        if let Some((specialized, _)) = specialized_call {
+            canonical = specialized;
+            runtime_groups = &specialized_runtime_group_refs;
+        }
+
         let function_ty = self.function_type(&canonical);
         let Ty::Function(function_ty) = function_ty else {
             return error_expr();
@@ -11631,6 +11653,20 @@ impl Analyzer {
                 context,
             );
         }
+        if let Some((specialized, specialized_groups)) =
+            self.specialize_capturing_callable_call(name, groups, context)
+        {
+            let specialized_group_refs = specialized_groups
+                .iter()
+                .map(Vec::as_slice)
+                .collect::<Vec<_>>();
+            return self.lower_named_function_call(
+                &specialized,
+                &specialized_group_refs,
+                expected,
+                context,
+            );
+        }
         let function_ty = self.function_type(name);
         let Ty::Function(function_ty) = function_ty else {
             return error_expr();
@@ -11795,6 +11831,150 @@ impl Analyzer {
             }
         };
         self.wrap_call_argument_temporaries(call, &mut arguments, temporary_bindings, context)
+    }
+
+    fn specialize_capturing_callable_call(
+        &mut self,
+        name: &str,
+        groups: &[&[CallArg]],
+        context: &LowerCtx,
+    ) -> Option<(String, Vec<Vec<CallArg>>)> {
+        let function = self.functions.get(name)?.clone();
+        if function.body.is_none() || groups.len() > function.groups.len() {
+            return None;
+        }
+        for (group_index, (arguments, parameters)) in
+            groups.iter().zip(&function.groups).enumerate()
+        {
+            if arguments.len() != parameters.len() {
+                continue;
+            }
+            for (parameter_index, (argument, parameter)) in
+                arguments.iter().zip(parameters).enumerate()
+            {
+                let Type::Function { .. } = &parameter.ty else {
+                    continue;
+                };
+                let Expr::Closure(closure_parameters, closure_body) = &argument.value else {
+                    continue;
+                };
+                let captures =
+                    self.closure_literal_capture_uses(closure_parameters, closure_body, context)?;
+                if captures.is_empty() {
+                    continue;
+                }
+
+                let specialization = self.next_closure;
+                self.next_closure += 1;
+                let canonical = format!("{name}$callable$bridge${specialization}");
+                let mut specialized = function.clone();
+                specialized.name = canonical.clone();
+                let callable = specialized.groups[group_index].remove(parameter_index);
+                let mut replacements = HashMap::new();
+                let mut lifted_arguments = Vec::new();
+                for (offset, capture) in captures.iter().enumerate() {
+                    let local = context
+                        .lookup(&capture.name)
+                        .expect("capture scanner records visible locals");
+                    let source_ty = self.source_type_for_ty(&local.ty)?;
+                    let lifted = format!("$callable$capture${specialization}${offset}");
+                    replacements.insert(capture.name.clone(), lifted.clone());
+                    let mode = match capture.mode {
+                        ClosureCaptureMode::Shared => PassMode::Borrow,
+                        ClosureCaptureMode::Mutable => PassMode::MutBorrow,
+                        ClosureCaptureMode::Move => PassMode::Move,
+                    };
+                    specialized.groups[group_index].insert(
+                        parameter_index + offset,
+                        Param {
+                            mode,
+                            access: None,
+                            modifiers: Vec::new(),
+                            region: None,
+                            name: lifted.clone(),
+                            ty: source_ty,
+                        },
+                    );
+                    lifted_arguments.push((lifted, capture.name.clone()));
+                }
+
+                let mut closure = argument.value.clone();
+                rewrite_static_function_values(&mut closure, &replacements);
+                let body = specialized
+                    .body
+                    .take()
+                    .expect("bodyless functions are not specialized");
+                specialized.body = Some(Expr::Block(
+                    vec![Stmt::Let(Binding {
+                        value_source: None,
+                        mutable: captures
+                            .iter()
+                            .any(|capture| capture.mode == ClosureCaptureMode::Mutable),
+                        name: callable.name,
+                        annotation: Some(callable.ty),
+                        value: closure,
+                    })],
+                    Some(Box::new(body)),
+                ));
+
+                let signature = FunctionSig {
+                    groups: specialized
+                        .groups
+                        .iter()
+                        .map(|group| {
+                            group
+                                .iter()
+                                .map(|parameter| ParamSig {
+                                    name: parameter.name.clone(),
+                                    ty: self.lower_source_type(&parameter.ty),
+                                    mode: parameter.mode,
+                                })
+                                .collect()
+                        })
+                        .collect(),
+                    unsafe_effect: self.function_effects_unsafe(&specialized.effects),
+                    throws_error: specialized
+                        .effects
+                        .throws
+                        .as_deref()
+                        .map(|error| self.lower_source_type(error)),
+                    custom_effects: self.function_effects_custom_identities(&specialized.effects),
+                    result: specialized
+                        .return_type
+                        .as_ref()
+                        .map(|result| self.lower_source_type(result)),
+                };
+                self.functions.insert(canonical.clone(), specialized);
+                self.signatures.insert(canonical.clone(), signature);
+                if let Some(origin) = self.function_origins.get(name).cloned() {
+                    self.function_origins.insert(canonical.clone(), origin);
+                }
+                if let Some(access) = self.function_accesses.get(name).cloned() {
+                    self.function_accesses.insert(canonical.clone(), access);
+                }
+                self.function_order.push(canonical.clone());
+
+                let mut rewritten_groups = groups
+                    .iter()
+                    .map(|group| group.to_vec())
+                    .collect::<Vec<_>>();
+                let labeled = rewritten_groups[group_index]
+                    .iter()
+                    .all(|argument| argument.label.is_some());
+                rewritten_groups[group_index].remove(parameter_index);
+                for (offset, (label, source)) in lifted_arguments.into_iter().enumerate() {
+                    rewritten_groups[group_index].insert(
+                        parameter_index + offset,
+                        CallArg {
+                            label: labeled.then_some(label),
+                            value: Expr::Name(source),
+                        },
+                    );
+                }
+                return Some((canonical, rewritten_groups));
+            }
+        }
+        None
     }
 
     fn specialize_static_handler_call(

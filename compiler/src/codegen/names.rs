@@ -9,6 +9,9 @@ use super::{
 
 impl Analyzer {
     pub(super) fn diagnostic_function_name(&self, name: &str) -> String {
+        if let Some((source, _)) = name.split_once("$callable$bridge$") {
+            return self.diagnostic_function_name(source);
+        }
         if let Some(operation) = name.strip_prefix("$effect$operation$") {
             let operation = operation
                 .rsplit_once('$')
