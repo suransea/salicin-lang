@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.194.0 - 2026-07-26
+
 - Added shared and mutable borrowed captures to suspended residual futures.
   Stored references preserve their external regions and ordinary alias
   restrictions through cold factory evaluation, Pending, Ready continuation,
