@@ -1,8 +1,8 @@
 /// One-shot value passed to a handler clause for resuming suspended work.
-pub let Continuation(Input: type, Output: type) = struct {}
+pub let Continuation(Input: type, Output: type): type
 
 /// Owned, erased action that may perform a handled algebraic effect.
-pub let EffectCallable(Input: type, Output: type, Answer: type) = struct {}
+pub let EffectCallable(Input: type, Output: type, Answer: type): type
 
 /// Protocol anchor for compiler-derived effect handlers.
 /// Every source `effect` declaration automatically satisfies this trait; the

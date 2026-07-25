@@ -244,8 +244,8 @@ interpret the same effect differently.
 `core.effect` declares the protocol and erased runtime contracts used by algebraic handler lowering:
 
 ```sc fragment
-pub let Continuation(Input: type, Output: type) = struct {}
-pub let EffectCallable(Input: type, Output: type, Answer: type) = struct {}
+pub let Continuation(Input: type, Output: type): type
+pub let EffectCallable(Input: type, Output: type, Answer: type): type
 pub let Handle = trait(Self: effect) {
   let Clauses(Value: type, Answer: type): parameters
   let handle(Value: type, Answer: type, Rest: effect)

@@ -6,6 +6,9 @@ subset.
 
 ## Unreleased
 
+- Declared `Continuation(Input, Output)` and `EffectCallable(Input, Output, Answer)` as bodyless
+  type forms, matching their compiler-owned representations instead of describing them as empty
+  structures. Lang-item validation now requires the exact type-form declarations.
 - Split capability declarations by semantic ownership. `core.effect` now contains only generic
   handler infrastructure; `Throws`, `throw`, and `try` live in `core.error`; `Unsafe` and `unsafe`
   live in `core.unsafe`; and `Async`, `Poll`, `Future`, `Executor`, `async`, and `await` live in
@@ -679,7 +682,7 @@ subset.
 
 - Added the source-backed `core.control.EffectCallable(Input, Output, Answer)` lang-item contract for
   owned erased actions passed into algebraic handlers.
-- Validated its exact three-type-parameter empty-struct declaration alongside `Continuation` and
+- Validated its exact three-type-parameter compiler-owned type contract alongside `Continuation` and
   exposed it only through the ordinary `core.control` module.
 - Added a distinct semantic type, canonical identity, API-visibility traversal, non-`Copy` ownership
   classification, cleanup move path, and LLVM `%salicin.effect_callable` representation.

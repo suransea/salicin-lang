@@ -390,7 +390,6 @@ impl LangItemKind {
             | Self::Poll
             | Self::PartialOrdering
             | Self::Attempt => "enum",
-            Self::Continuation | Self::EffectCallable => "struct",
             Self::UnsafeEffect | Self::ThrowsEffect | Self::AsyncEffect => "effect",
             Self::TypeDomain | Self::RegionDomain | Self::EffectDomain | Self::ParametersDomain => {
                 "domain"
@@ -400,6 +399,8 @@ impl LangItemKind {
             | Self::ArrayTypeForm
             | Self::SliceTypeForm
             | Self::PtrTypeForm
+            | Self::Continuation
+            | Self::EffectCallable
             | Self::I8
             | Self::I16
             | Self::I32
@@ -1815,28 +1816,28 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         (kind @ (LangItemKind::SizeOf | LangItemKind::AlignOf), Item::Function(function)) => {
             validate_layout_query(kind, function, diagnostics)
         }
-        (LangItemKind::Continuation, Item::Struct(definition)) => {
+        (LangItemKind::Continuation, Item::TypeForm(definition)) => {
             let valid = definition.compile_groups
                 == vec![vec![type_parameter("Input"), type_parameter("Output")]]
-                && definition.fields.is_empty();
+                && definition.values.is_empty();
             if !valid {
                 diagnostics.push(
-                    "lang item `Continuation` must have shape `pub let Continuation(Input: type, Output: type) = struct {}`"
+                    "lang item `Continuation` must have shape `pub let Continuation(Input: type, Output: type): type`"
                         .to_owned(),
                 );
             }
         }
-        (LangItemKind::EffectCallable, Item::Struct(definition)) => {
+        (LangItemKind::EffectCallable, Item::TypeForm(definition)) => {
             let valid = definition.compile_groups
                 == vec![vec![
                     type_parameter("Input"),
                     type_parameter("Output"),
                     type_parameter("Answer"),
                 ]]
-                && definition.fields.is_empty();
+                && definition.values.is_empty();
             if !valid {
                 diagnostics.push(
-                    "lang item `EffectCallable` must have shape `pub let EffectCallable(Input: type, Output: type, Answer: type) = struct {}`"
+                    "lang item `EffectCallable` must have shape `pub let EffectCallable(Input: type, Output: type, Answer: type): type`"
                         .to_owned(),
                 );
             }
@@ -4125,8 +4126,8 @@ pub let Index(Key: type) = trait {
             .any(|diagnostic| diagnostic.contains("lang item `unsafe`")));
 
         let malformed = EDITION_2026_EFFECT.replace(
-            "pub let EffectCallable(Input: type, Output: type, Answer: type) = struct {}",
-            "pub let EffectCallable(Input: type, Output: type) = struct {}",
+            "pub let EffectCallable(Input: type, Output: type, Answer: type): type",
+            "pub let EffectCallable(Input: type, Output: type): type",
         );
         let modules = edition_2026_test_modules(&[("effect", &malformed)]);
         let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
@@ -4134,6 +4135,28 @@ pub let Index(Key: type) = trait {
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.contains("lang item `EffectCallable`")));
+
+        for (source_declaration, malformed_declaration, name) in [
+            (
+                "pub let Continuation(Input: type, Output: type): type",
+                "pub let Continuation(Input: type, Output: type) = struct {}",
+                "Continuation",
+            ),
+            (
+                "pub let EffectCallable(Input: type, Output: type, Answer: type): type",
+                "pub let EffectCallable(Input: type, Output: type, Answer: type) = struct {}",
+                "EffectCallable",
+            ),
+        ] {
+            let malformed = EDITION_2026_EFFECT.replace(source_declaration, malformed_declaration);
+            let modules = edition_2026_test_modules(&[("effect", &malformed)]);
+            let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
+            assert!(error.diagnostics().iter().any(|diagnostic| {
+                diagnostic.contains(&format!(
+                    "lang item `{name}` must be type form, found struct"
+                ))
+            }));
+        }
 
         let malformed = EDITION_2026_EFFECT.replace(
             "pub let Handle = trait(Self: effect)",
