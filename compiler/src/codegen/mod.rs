@@ -13032,6 +13032,11 @@ impl Analyzer {
                 }),
             };
         }
+        if let Some(argument) =
+            self.lower_internal_async_stored_borrow_argument(argument, parameter, context)
+        {
+            return argument;
+        }
         let mode = self.effective_pass_mode(parameter.mode, &parameter.ty);
         match mode {
             PassMode::Copy | PassMode::Move => {

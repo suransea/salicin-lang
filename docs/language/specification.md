@@ -574,15 +574,19 @@ no suspension point transfers its captures, executes the body once, and returns 
 polling that completed future again traps. The completed state no longer drops transferred
 captures. An unhandled `Unsafe` requirement is inferred from the body and attached to the
 generated future's `poll` contract; creating the future remains pure, while polling requires an
-unsafe handler. A body without suspension may retain a custom residual effect with by-value `Copy`
-or move-only captures. Polling it inside the corresponding handler specializes the generated poll
-and resume source before runtime lowering. Move-only capture fields transfer once and completed
-future cleanup does not drop them again. Residual effects with borrowed captures, suspension, or
-`Throws` are not yet supported. One tail-position `await` is implemented: its operand is
-evaluated on the first parent poll, the child future is retained across `Poll.Pending`, and
-`Poll.Ready(value)` completes the parent with `value`. Completion or cancellation drops the stored
-child exactly once. One linear non-tail form, `let value = await child`, may execute ordinary
-continuation code after Ready; the continuation's captures remain owned by the parent while
+unsafe handler. A body without suspension may retain a custom residual effect
+with by-value `Copy`, move-only, shared-borrow, or mutable-borrow captures.
+Borrow captures store the reference value in future state and retain their
+ordinary loan until that state is consumed or dropped. Polling inside the
+corresponding handler specializes the generated poll and resume source before
+runtime lowering. Move-only capture fields transfer once and completed future
+cleanup does not drop them again. Residual effects with suspension or `Throws`
+are not yet supported. One tail-position `await` is implemented: its operand
+is evaluated on the first parent poll, the child future is retained across
+`Poll.Pending`, and `Poll.Ready(value)` completes the parent with `value`.
+Completion or cancellation drops the stored child exactly once. One linear
+non-tail form, `let value = await child`, may execute ordinary continuation
+code after Ready; the continuation's captures remain owned by the parent while
 suspended. Multiple sequential bindings compose recursively and preserve earlier Ready values
 across later Pending states. Ordinary preceding locals used by the continuation are retained in
 generated state and follow normal Copy, Move, and drop rules. A borrow of another retained local,

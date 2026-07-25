@@ -3239,6 +3239,36 @@ fn move_capturing_async_residual_effect_specializes_under_handler() {
 }
 
 #[test]
+fn borrowed_async_residual_effect_captures_specialize_under_handler() {
+    for (name, output) in batched_native_fixture_outputs(&[
+        "async_residual_borrow_capture.sc",
+        "async_residual_mut_borrow_capture.sc",
+    ]) {
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+
+    let conflict = salic()
+        .arg("check")
+        .arg(fixture(
+            "fail",
+            "async_residual_mut_borrow_capture_conflict.sc",
+        ))
+        .output()
+        .expect("check mutable async capture conflict");
+    assert!(!conflict.status.success(), "{}", output_text(&conflict));
+    assert!(
+        String::from_utf8_lossy(&conflict.stderr).contains("borrowed"),
+        "{}",
+        output_text(&conflict)
+    );
+}
+
+#[test]
 fn tail_await_forwards_a_ready_child_future() {
     let output = salic()
         .arg("run")

@@ -109,9 +109,11 @@ Implemented data and control features include:
   `Poll.Ready` transition, inferred residual `Unsafe`, state-aware capture transfer, cancellation
   cleanup, completed-state repoll traps, and one tail-position child suspension;
 - the explicit allocation-free `core.async.Spin` executor for one owned future;
-- handler specialization for non-suspending futures with a custom residual effect and by-value
-  `Copy` or move-only captures, including exact once-only move/drop behavior, `Future(E)`
-  where-predicate inference, and effectful trait-method inlining;
+- handler specialization for non-suspending futures with a custom residual
+  effect and by-value `Copy`, move-only, shared-borrow, or mutable-borrow
+  captures, including exact once-only move/drop behavior, retained borrow
+  exclusion, `Future(E)` where-predicate inference, and effectful trait-method
+  inlining;
 - checked arithmetic, comparisons, bitwise operations, shifts, and compound assignment;
 - deterministic left-to-right evaluation;
 - optional chaining, coalescing, error propagation, and forced unwrap.

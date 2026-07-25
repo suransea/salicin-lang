@@ -6,6 +6,11 @@ subset.
 
 ## Unreleased
 
+- Specialized non-suspending custom-residual futures with shared or mutable
+  reference captures. Generated state stores the reference value rather than
+  a reference to its temporary source slot, normalizes resume parameters back
+  to ordinary borrow channels, and preserves source-loan exclusion while the
+  future is alive.
 - Migrated compatible native execution fixture groups to generated
   `test("fixture") { main() == 42 }` registrations in isolated modules. Each
   group now emits and links one runner instead of one executable per fixture;

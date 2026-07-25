@@ -19,6 +19,54 @@ use super::source_rewrite::source_type_expression;
 use super::Analyzer;
 
 impl Analyzer {
+    pub(super) fn lower_internal_async_stored_borrow_argument(
+        &mut self,
+        expression: &Expr,
+        parameter: &ParamSig,
+        context: &mut super::flow::LowerCtx,
+    ) -> Option<HirArgument> {
+        let Expr::Call(callee, arguments) = expression.unlocated() else {
+            return None;
+        };
+        if !matches!(callee.unlocated(), Expr::Name(name) if name == "$async$copy$stored$borrow") {
+            return None;
+        }
+        let [CallArg { label: None, value }] = arguments.as_slice() else {
+            self.error("internal async stored-borrow argument received an invalid shape");
+            return Some(HirArgument::Move(super::lower::error_expr()));
+        };
+        let place = self.lower_place(value, context)?;
+        let Ty::Reference {
+            pointee, mutable, ..
+        } = &place.ty
+        else {
+            self.error("internal async stored-borrow argument requires a reference field");
+            return Some(HirArgument::Move(super::lower::error_expr()));
+        };
+        if pointee.as_ref() != &parameter.ty {
+            return None;
+        }
+        let required_mutable = parameter.mode == PassMode::MutBorrow;
+        if !matches!(parameter.mode, PassMode::Borrow | PassMode::MutBorrow) {
+            self.error("internal async stored-borrow argument requires a borrow parameter");
+        }
+        if required_mutable && !mutable {
+            self.error("internal async stored shared borrow cannot satisfy a mutable borrow");
+        }
+        self.require_same_type(
+            pointee,
+            &parameter.ty,
+            format_args!("argument for parameter `{}`", parameter.name),
+        );
+        Some(HirArgument::Copy(HirExpr {
+            ty: place.ty.clone(),
+            kind: HirExprKind::Read {
+                place,
+                kind: HirReadKind::Copy,
+            },
+        }))
+    }
+
     pub(super) fn lower_async_expression(
         &mut self,
         body: &Expr,
@@ -162,12 +210,7 @@ impl Analyzer {
             .filter(|effect| effect.as_str() != async_effect)
             .cloned()
             .collect::<Vec<_>>();
-        if !unsupported_effects.is_empty()
-            && (source_plan.has_await
-                || closure.captures.iter().any(|capture| {
-                    !matches!(capture_pass_mode(capture), PassMode::Copy | PassMode::Move)
-                }))
-        {
+        if !unsupported_effects.is_empty() && source_plan.has_await {
             self.error(format!(
                 "async residual algebraic effect{} `{}` require poll/resume handler specialization, which is not implemented yet",
                 if unsupported_effects.len() == 1 { "" } else { "s" },
@@ -483,8 +526,9 @@ impl Analyzer {
             },
         )];
 
+        let direct_reference_captures = !unsupported_effects.is_empty() && !source_plan.has_await;
         for (index, capture) in closure.captures.iter().enumerate() {
-            let (ty, value) = materialize_async_capture(capture);
+            let (ty, value) = materialize_async_capture(capture, direct_reference_captures);
             fields.push(FieldLayout {
                 name: format!("capture.{index}"),
                 ty,
@@ -495,7 +539,7 @@ impl Analyzer {
         let mut continuation_fields = Vec::new();
         let mut continuation_capture_types = Vec::new();
         for (index, capture) in continuation_captures.iter().enumerate() {
-            let (ty, value) = materialize_async_capture(capture);
+            let (ty, value) = materialize_async_capture(capture, false);
             let field = fields.len();
             fields.push(FieldLayout {
                 name: format!("continuation.capture.{index}"),
@@ -509,7 +553,7 @@ impl Analyzer {
         let mut loop_condition_fields = Vec::new();
         let mut loop_condition_capture_types = Vec::new();
         for (index, capture) in loop_condition_captures.iter().enumerate() {
-            let (ty, value) = materialize_async_capture(capture);
+            let (ty, value) = materialize_async_capture(capture, false);
             let field = fields.len();
             fields.push(FieldLayout {
                 name: format!("loop.condition.capture.{index}"),
@@ -1238,7 +1282,7 @@ impl Analyzer {
         debug_assert!(future
             .capture_modes
             .iter()
-            .all(|mode| matches!(mode, PassMode::Copy | PassMode::Move)));
+            .all(|mode| *mode != PassMode::Inferred));
         let Some(output_source) = self.source_type_for_ty(&future.output) else {
             return;
         };
@@ -1251,7 +1295,16 @@ impl Analyzer {
                     modifiers: Vec::new(),
                     region: None,
                     name: name.clone(),
-                    ty: self.source_type_for_ty(ty)?,
+                    ty: self.source_type_for_ty(
+                        if matches!(mode, PassMode::Borrow | PassMode::MutBorrow) {
+                            match ty {
+                                Ty::Reference { pointee, .. } => pointee,
+                                ty => ty,
+                            }
+                        } else {
+                            ty
+                        },
+                    )?,
                 })
             })
             .collect::<Option<Vec<_>>>()
@@ -1301,12 +1354,25 @@ impl Analyzer {
             resume_captures
                 .iter()
                 .enumerate()
-                .map(|(index, _)| CallArg {
-                    label: None,
-                    value: Expr::Member(
+                .map(|(index, (_, _, mode))| {
+                    let field = Expr::Member(
                         Box::new(Expr::Name("self".to_owned())),
                         format!("capture.{index}"),
-                    ),
+                    );
+                    CallArg {
+                        label: None,
+                        value: if matches!(mode, PassMode::Borrow | PassMode::MutBorrow) {
+                            Expr::Call(
+                                Box::new(Expr::Name("$async$copy$stored$borrow".to_owned())),
+                                vec![CallArg {
+                                    label: None,
+                                    value: field,
+                                }],
+                            )
+                        } else {
+                            field
+                        },
+                    }
                 })
                 .collect(),
         );
@@ -1398,7 +1464,7 @@ impl Analyzer {
     }
 }
 
-fn materialize_async_capture(capture: &ClosureCapture) -> (Ty, HirExpr) {
+fn materialize_async_capture(capture: &ClosureCapture, direct_reference: bool) -> (Ty, HirExpr) {
     if capture.by_value {
         return (
             capture.place.ty.clone(),
@@ -1407,6 +1473,24 @@ fn materialize_async_capture(capture: &ClosureCapture) -> (Ty, HirExpr) {
                 .as_deref()
                 .cloned()
                 .expect("by-value async capture materializes its value"),
+        );
+    }
+    if direct_reference
+        && matches!(capture.place.ty, Ty::Reference { .. })
+        && matches!(
+            capture.mode,
+            ClosureCaptureMode::Shared | ClosureCaptureMode::Mutable
+        )
+    {
+        return (
+            capture.place.ty.clone(),
+            HirExpr {
+                ty: capture.place.ty.clone(),
+                kind: HirExprKind::Read {
+                    place: capture.place.clone(),
+                    kind: HirReadKind::Copy,
+                },
+            },
         );
     }
     match capture.mode {
