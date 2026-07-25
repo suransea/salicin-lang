@@ -143,6 +143,9 @@ Entry gate: concrete requirements from LIB1
   - Require exact parameter groups and kinds, compare alpha-normalized alias-expanded applications,
     and bound recursive rewriting to 32 expansions.
 - [ ] **TYPE-CALLABLE-1: Bridge capturing callables into source protocols**
+  - Implement the accepted [static specialization design](callable-bridge-design.md).
+  - Preserve capture ownership, source-order evaluation, lazy invocation, effect rows, and
+    source-level diagnostics across `Chain`, `Coalesce`, and higher-order protocols.
 - [ ] **TYPE-TRAIT-METHOD-1: Support coherent generic trait methods**
 - [x] **TYPE-CONST-NOMINAL-1: Extend compile-time scalar arguments to nominal types and type aliases**
 - [ ] **TYPE-DIAG-1: Improve kind and constructor inference diagnostics**

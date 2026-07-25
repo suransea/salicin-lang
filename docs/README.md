@@ -38,6 +38,8 @@ classification, rejects unterminated fences, and compiles every `sc check` block
 - [M0 conformance matrix](project/m0-conformance.md): positive, negative, diagnostic, and native
   evidence for every frozen M0 capability.
 - [Implementation status](project/status.md): supported surface and known structural gaps.
+- [Capturing callable bridge](project/callable-bridge-design.md): accepted static-specialization
+  design for higher-order protocol calls.
 - [Language roadmap](project/roadmap.md): milestone order, dependencies, exit conditions, and
   explicit deferrals.
 - [Project TODO](project/todo.md): prioritized executable tasks with stable IDs and acceptance
