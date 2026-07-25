@@ -8767,6 +8767,18 @@ impl Analyzer {
             Expr::CompoundAssign(place, operator, value) => {
                 self.lower_compound_assign(place, *operator, value, context)
             }
+            Expr::Call(callee, _) if matches!(callee.unlocated(), Expr::Name(name) if name == "$lang$async") =>
+            {
+                self.error(
+                    "`async { ... }` is parsed but async state-machine lowering is not available yet",
+                );
+                error_expr()
+            }
+            Expr::Call(callee, _) if matches!(callee.unlocated(), Expr::Name(name) if name == "$lang$await") =>
+            {
+                self.error("`await` is only lowered as part of an async state machine");
+                error_expr()
+            }
             Expr::Call(_, _) => self.lower_call(expression, expected, context),
             Expr::StructLiteral {
                 constructor,

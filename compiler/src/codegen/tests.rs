@@ -7174,7 +7174,6 @@ let Resource = struct { value: i32 }
 extend Resource: Drop {
   let drop(self: borrow(mut)(Self))(): () = { () }
 }
-
 let relocate(T: type)(move value: T): T
 where T: Move = {
   value
@@ -7188,6 +7187,28 @@ let main(): i32 = {
 "#,
     )
     .expect("ordinary resources must satisfy the structural Move marker");
+}
+
+#[test]
+fn async_syntax_reports_a_source_level_lowering_boundary() {
+    let diagnostics = compile_text(
+        r#"
+let main(): i32 = {
+  let future = async { await child() }
+  0
+}
+let child(): i32 = { 1 }
+"#,
+    )
+    .expect_err("async lowering is not implemented in this parser slice");
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("async state-machine lowering is not available yet")
+    }));
+    assert!(diagnostics
+        .iter()
+        .all(|diagnostic| !diagnostic.message.contains("$lang$")));
 }
 
 #[test]

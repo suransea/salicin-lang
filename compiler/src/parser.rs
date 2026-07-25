@@ -47,6 +47,7 @@ pub fn parse_tokens(tokens: Vec<Token>) -> Result<Program, ParseError> {
         index: 0,
         effect_parameters_in_scope: HashSet::new(),
         next_control_binding: 0,
+        async_depth: 0,
     }
     .program()
 }
@@ -56,6 +57,7 @@ struct Parser {
     index: usize,
     effect_parameters_in_scope: HashSet<String>,
     next_control_binding: usize,
+    async_depth: usize,
 }
 
 enum HeaderGroup {
@@ -3276,7 +3278,17 @@ impl Parser {
     }
 
     fn unary(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
-        if self.take(&TokenKind::Minus) {
+        if self.async_depth > 0 && self.at_context_ident("await") {
+            self.advance();
+            let operand = self.unary(allow_trailing_closure)?;
+            Ok(Expr::Call(
+                Box::new(Expr::Name("$lang$await".to_owned())),
+                vec![CallArg {
+                    label: None,
+                    value: operand,
+                }],
+            ))
+        } else if self.take(&TokenKind::Minus) {
             let operand = self.unary(allow_trailing_closure)?;
             Ok(Expr::Unary(UnaryOp::Neg, Box::new(operand)))
         } else if self.take(&TokenKind::Bang) {
@@ -3717,6 +3729,12 @@ impl Parser {
             {
                 self.advance();
                 self.do_expression()
+            }
+            TokenKind::Ident(ref name)
+                if name == "async" && self.at_offset(1, &TokenKind::LBrace) =>
+            {
+                self.advance();
+                self.async_expression()
             }
             TokenKind::Ident(ref name)
                 if name == "try" && self.at_offset(1, &TokenKind::LBrace) =>
@@ -4248,6 +4266,14 @@ impl Parser {
     }
 
     fn closure(&mut self) -> Result<Expr, ParseError> {
+        let async_depth = self.async_depth;
+        self.async_depth = 0;
+        let result = self.closure_inner();
+        self.async_depth = async_depth;
+        result
+    }
+
+    fn closure_inner(&mut self) -> Result<Expr, ParseError> {
         self.expect(&TokenKind::LBrace, "`{`")?;
         self.skip_separators();
         if self.take(&TokenKind::RBrace) {
@@ -4298,6 +4324,21 @@ impl Parser {
             expression = Expr::Closure(params, Box::new(expression));
         }
         Ok(expression)
+    }
+
+    fn async_expression(&mut self) -> Result<Expr, ParseError> {
+        self.async_depth += 1;
+        let body = self.block();
+        self.async_depth -= 1;
+        body.map(|body| {
+            Expr::Call(
+                Box::new(Expr::Name("$lang$async".to_owned())),
+                vec![CallArg {
+                    label: None,
+                    value: Expr::Closure(Vec::new(), Box::new(body)),
+                }],
+            )
+        })
     }
 
     fn closure_parameter_arrow_follows(&self) -> bool {
@@ -8745,5 +8786,56 @@ mod tests {
                         matches!(argument.value, Expr::Closure(_, _))
                     }))
         ));
+    }
+
+    #[test]
+    fn parses_contextual_async_and_await_to_reserved_language_calls() {
+        let program = parse("let make(): i32 = {\n  let future = async { await next() }\n  0\n}\n")
+            .expect("async expressions must parse");
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        let Some(Expr::Block(statements, _)) = &function.body else {
+            panic!("expected function block");
+        };
+        let Stmt::Let(binding) = &statements[0] else {
+            panic!("expected future binding");
+        };
+        let Expr::Call(async_root, async_arguments) = binding.value.unlocated() else {
+            panic!("expected internal async call");
+        };
+        assert!(matches!(
+            async_root.as_ref(),
+            Expr::Name(name) if name == "$lang$async"
+        ));
+        let [CallArg {
+            value: Expr::Closure(parameters, body),
+            ..
+        }] = async_arguments.as_slice()
+        else {
+            panic!("expected cold zero-parameter async body");
+        };
+        assert!(parameters.is_empty());
+        let Expr::Block(_, Some(tail)) = body.as_ref() else {
+            panic!("expected async body");
+        };
+        assert!(matches!(
+            tail.unlocated(),
+            Expr::Call(root, arguments)
+                if matches!(root.as_ref(), Expr::Name(name) if name == "$lang$await")
+                    && arguments.len() == 1
+        ));
+    }
+
+    #[test]
+    fn async_and_await_remain_contextual_identifiers() {
+        parse(
+            "let async: i32 = 1\n\
+             let await(value: i32): i32 = { value }\n\
+             let main(): i32 = { await(async) }\n",
+        )
+        .expect("contextual async spellings must remain ordinary identifiers");
+
+        assert!(parse("let main(): i32 = { async { { await value } } }\n").is_err());
     }
 }
