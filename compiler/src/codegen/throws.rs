@@ -456,10 +456,10 @@ impl Analyzer {
                 self.expression_uses_standard_throws_identity(value, identity, context)
             }
             Expr::Throw(_) => true,
-            Expr::Try(_)
-            | Expr::Closure(_, _)
-            | Expr::PatternClosure { .. }
-            | Expr::Async { .. } => false,
+            Expr::Try(_) | Expr::Closure(_, _) | Expr::PatternClosure { .. } => false,
+            Expr::Async { body } => {
+                self.expression_uses_standard_throws_identity(body, identity, context)
+            }
             Expr::Call(callee, arguments) => {
                 handled_operation_call(expression, identity).is_some()
                     || self

@@ -244,6 +244,7 @@ struct Analyzer {
     continuation_adapters: Vec<ContinuationAdapter>,
     effect_callable_adapters: Vec<EffectCallableAdapter>,
     runtime_handler_actions: HashMap<(String, usize, usize), RuntimeHandlerAction>,
+    deferred_handler_transforms: HashMap<String, handlers::DeferredHandlerTransform>,
     async_futures: HashMap<String, async_lowering::AsyncFutureInfo>,
     internal_async_loop_constructors: HashMap<String, async_lowering::InternalAsyncLoopConstructor>,
     next_async_future: usize,
@@ -337,6 +338,7 @@ impl Analyzer {
             continuation_adapters: Vec::new(),
             effect_callable_adapters: Vec::new(),
             runtime_handler_actions: HashMap::new(),
+            deferred_handler_transforms: HashMap::new(),
             async_futures: HashMap::new(),
             internal_async_loop_constructors: HashMap::new(),
             next_async_future: 0,
@@ -8901,6 +8903,12 @@ impl Analyzer {
                 self.error("`defer` is only valid as a standalone statement in a lexical block");
                 error_expr()
             }
+            Expr::Call(_, _) if !self.deferred_handler_transforms.is_empty() => self
+                .lower_deferred_handler_transform(expression, expected, context)
+                .unwrap_or_else(|| {
+                    self.lower_internal_async_loop_constructor(expression, context)
+                        .unwrap_or_else(|| self.lower_call(expression, expected, context))
+                }),
             Expr::Call(_, _) => self
                 .lower_internal_async_loop_constructor(expression, context)
                 .unwrap_or_else(|| self.lower_call(expression, expected, context)),
@@ -9513,7 +9521,7 @@ impl Analyzer {
                 let should_move = outer.lookup(&capture.name).is_some_and(|local| {
                     local.capability == LocalCapability::Owned && !self.is_copy_type(&local.ty)
                 });
-                if should_move {
+                if should_move && capture.mode != ClosureCaptureMode::Mutable {
                     capture.mode = ClosureCaptureMode::Move;
                 }
             }
@@ -10728,7 +10736,35 @@ impl Analyzer {
                     Expr::Name(name) => {
                         if let Some(local) = outer.lookup(name) {
                             let mode = self.effective_pass_mode(parameter.mode, &parameter.ty);
-                            if mode == PassMode::Move
+                            let borrow_capture = match &parameter.ty {
+                                Ty::Reference {
+                                    pointee, mutable, ..
+                                } if pointee.as_ref() == &local.ty => Some(*mutable),
+                                _ => None,
+                            };
+                            if let Some(mutable) = borrow_capture {
+                                record_closure_capture(
+                                    captures,
+                                    name,
+                                    if mutable {
+                                        ClosureCaptureMode::Mutable
+                                    } else {
+                                        ClosureCaptureMode::Shared
+                                    },
+                                );
+                            } else if matches!(mode, PassMode::Borrow | PassMode::MutBorrow)
+                                && local.ty == parameter.ty
+                            {
+                                record_closure_capture(
+                                    captures,
+                                    name,
+                                    if mode == PassMode::MutBorrow {
+                                        ClosureCaptureMode::Mutable
+                                    } else {
+                                        ClosureCaptureMode::Shared
+                                    },
+                                );
+                            } else if mode == PassMode::Move
                                 && matches!(local.ty, Ty::Struct(_) | Ty::Enum(_))
                                 && local.ty == parameter.ty
                             {

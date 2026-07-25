@@ -88,6 +88,18 @@ The type and residual effects of the body determine `Future(E).Output` and `E`. 
 inside the body removes it normally. Unhandled `Throws(Error)`, `Unsafe`, and custom effects remain
 requirements of `poll`.
 
+The implemented suspended residual slice accepts a first segment consisting
+of one direct tail `await` when that segment retains no local or continuation
+state and captures only by-value `Copy` or move-only values. The enclosing
+handler specializes the generated poll source. On the cold transition, the
+parent marks captures transferred before evaluating the child factory; an
+abort therefore cannot clean the same capture again. A `Pending` child remains
+stored, and later polls invoke only that child rather than replaying the
+factory or its residual effects. Ready completion and cancellation each
+destroy the active child and remaining initialized parent state once.
+Residual effects across post-await continuations, retained locals, branches,
+loops, and borrowed suspended captures remain outside this slice.
+
 ## State Machines
 
 The compiler lowers each async expression to a private nominal state machine containing:

@@ -35,10 +35,17 @@ and effectful trait-method calls participate in handler inlining. Ready
 `Throws` futures run success, error, and move-capture cleanup paths through
 ordinary `try`.
 
-The remaining task is to extend that source specialization across suspension
-and continuations. Generated `Future(E)` implementations must preserve
-handler ownership and one-shot continuation rules while keeping construction
-cold. `Unsafe` remains the ordinary residual-poll baseline.
+The first suspended slice is complete for one direct tail await with no
+retained local or continuation state and only by-value `Copy` or move-only
+captures. Custom effects and standard `Throws(Error)` specialize through the
+enclosing handler; a Pending repoll does not replay child construction, and
+Ready, error, and cancellation paths clean initialized state exactly once.
+
+The remaining task extends that specialization across post-await
+continuations, retained locals, branches, loops, and borrowed suspended
+captures. Generated `Future(E)` implementations must preserve handler
+ownership and one-shot continuation rules while keeping construction cold.
+`Unsafe` remains the ordinary residual-poll baseline.
 
 ## Next: ABI And Compiler Definitions
 

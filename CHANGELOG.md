@@ -6,6 +6,16 @@ subset.
 
 ## Unreleased
 
+- Specialized the first suspended residual async shape: one direct tail await
+  with no retained local or continuation state and only by-value `Copy` or
+  move-only captures. Custom effects and standard `Throws(Error)` now pass
+  through the enclosing handler; child construction runs once, Pending
+  repolls only the stored child, and completion, error, and cancellation
+  paths clean transferred state exactly once.
+- Taught `try` selection to discover residual `Throws(Error)` inside an async
+  body before the generated future and poll method have been registered,
+  allowing a future to be constructed and polled within the same handler
+  action without executing the cold body early.
 - Added parenthesis-free application for runtime groups containing one
   positional parameter. Ordinary functions and methods accept `f value`,
   repeated forms preserve curried groups, and a tail closure can follow the

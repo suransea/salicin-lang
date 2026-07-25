@@ -32,6 +32,14 @@ pub(super) type SourceContinuation = Rc<dyn Fn(&mut Analyzer, Expr) -> Result<Ex
 pub(super) type SourceArgumentsContinuation =
     Rc<dyn Fn(&mut Analyzer, Vec<CallArg>) -> Result<Expr, ()>>;
 
+pub(super) struct DeferredHandlerTransform {
+    statements: Vec<Stmt>,
+    tail: Option<Expr>,
+    handler: Rc<AlgebraicHandler>,
+    resume: Option<SourceResume>,
+    continuation: SourceContinuation,
+}
+
 #[derive(Clone)]
 pub(super) struct AlgebraicHandlerClause {
     pub(super) parameters: Vec<Param>,
@@ -4771,6 +4779,27 @@ impl Analyzer {
         let first = statements.remove(0);
         match first {
             Stmt::Let(mut binding) => {
+                if matches!(binding.value.unlocated(), Expr::Async { .. }) {
+                    let marker = format!("$handler$after$async${}", self.next_closure);
+                    self.next_closure += 1;
+                    self.deferred_handler_transforms.insert(
+                        marker.clone(),
+                        DeferredHandlerTransform {
+                            statements,
+                            tail,
+                            handler,
+                            resume,
+                            continuation,
+                        },
+                    );
+                    return Ok(Expr::Block(
+                        vec![Stmt::Let(binding)],
+                        Some(Box::new(Expr::Call(
+                            Box::new(Expr::Name(marker)),
+                            Vec::new(),
+                        ))),
+                    ));
+                }
                 if let Some(Type::Function {
                     groups: callable_groups,
                     effects,
@@ -5054,5 +5083,36 @@ impl Analyzer {
                 )
             }
         }
+    }
+
+    pub(super) fn lower_deferred_handler_transform(
+        &mut self,
+        expression: &Expr,
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> Option<super::hir::HirExpr> {
+        let Expr::Call(callee, arguments) = expression.unlocated() else {
+            return None;
+        };
+        if !arguments.is_empty() {
+            return None;
+        }
+        let Expr::Name(marker) = callee.unlocated() else {
+            return None;
+        };
+        let deferred = self.deferred_handler_transforms.remove(marker)?;
+        let mut handler = deferred.handler.as_ref().clone();
+        handler.inference_context = context.clone();
+        let transformed = match self.transform_handler_block(
+            deferred.statements,
+            deferred.tail,
+            Rc::new(handler),
+            deferred.resume,
+            deferred.continuation,
+        ) {
+            Ok(transformed) => transformed,
+            Err(()) => return Some(super::lower::error_expr()),
+        };
+        Some(self.lower_expr(&transformed, expected, context))
     }
 }

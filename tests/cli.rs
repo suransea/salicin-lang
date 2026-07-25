@@ -3305,8 +3305,11 @@ fn borrowed_async_residual_effect_captures_specialize_under_handler() {
 }
 
 #[test]
-fn ready_async_throws_specializes_and_suspended_throws_stays_diagnostic() {
-    for (name, output) in batched_native_fixture_outputs(&["async_residual_throws.sc"]) {
+fn ready_and_direct_tail_await_async_throws_specialize_under_try() {
+    for (name, output) in batched_native_fixture_outputs(&[
+        "async_residual_throws.sc",
+        "async_residual_throws_tail_await.sc",
+    ]) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -3327,6 +3330,18 @@ fn ready_async_throws_specializes_and_suspended_throws_stays_diagnostic() {
         "{}",
         output_text(&suspended)
     );
+}
+
+#[test]
+fn direct_tail_await_async_custom_effect_specializes_and_cancels() {
+    for (name, output) in batched_native_fixture_outputs(&["async_residual_tail_await.sc"]) {
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
 }
 
 #[test]

@@ -119,6 +119,10 @@ Implemented data and control features include:
   shared-borrow, or mutable-borrow captures, including exact once-only
   move/drop behavior, retained borrow exclusion, `Future(E)` where-predicate
   inference, and effectful trait-method inlining;
+- handler specialization for a suspended direct tail await with a custom
+  residual effect, including standard `Throws(Error)`, by-value `Copy` and
+  move-only captures, Pending repoll without replaying the cold transition,
+  and exact completion, error, and cancellation cleanup;
 - checked arithmetic, comparisons, bitwise operations, shifts, and compound assignment;
 - deterministic left-to-right evaluation;
 - optional chaining, coalescing, error propagation, and forced unwrap.
@@ -149,7 +153,12 @@ relocating or cancelling an unpolled future transfers or drops owned captures ex
 The no-suspension polling transition returns `Poll.Ready` once, traps on repoll, and enforces an
 inferred residual `Unsafe` requirement. Standard residual `Throws(Error)` polling specializes
 through `try` or its underlying handler; success, error, and move-capture cleanup paths run
-natively. One tail-position `await` stores its child across Pending,
+natively. A direct tail await may retain custom residual effects when the cold
+segment has no retained local or continuation state and all captures are
+by-value `Copy` or move-only. Its handler-specialized first poll transfers
+captures before evaluating the child factory; Pending repolls only the stored
+child, and Ready, error, or cancellation cleans each initialized field once.
+One tail-position `await` stores its child across Pending,
 resumes from Ready, and drops the child exactly once on completion or cancellation. A single
 non-tail await may bind the Ready output and run a linear continuation with state-owned captures.
 Multiple sequential awaits compose while retaining earlier outputs and dropping only the active
@@ -177,8 +186,9 @@ the condition, and each completed backedge rechecks it before constructing the n
 Conditions are currently pure and `while` remains unit-valued. Move-only continuation captures are
 now packed into `Continue(Carry)` and restored into their parent fields before the next iteration;
 completion and cancellation consume or drop each field once. Move-only values required by the
-iteration factory or condition still require a more general carry transform. General loop bodies
-and algebraic residual-effect specialization are not implemented.
+iteration factory or condition still require a more general carry transform. Residual effects
+across post-await continuations, retained locals, branches, loops, or borrowed suspended captures
+are not implemented.
 Iterations with multiple top-level sequential awaits use a private iteration future; its final
 `Break(Output)` may depend on any awaited binding, and cancellation follows its nested active-child
 chain without retaining completed children. A recurring loop with no break uses the standard

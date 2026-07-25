@@ -598,11 +598,17 @@ corresponding handler specializes the generated poll and resume source before
 runtime lowering. Move-only capture fields transfer once and completed future
 cleanup does not drop them again. A residual `Throws(Error)` poll may be
 handled by `try { future.poll() }`; both successful Ready and thrown paths
-preserve capture cleanup. Residual effects with suspension are not yet
-supported. One tail-position `await` is implemented: its operand
-is evaluated on the first parent poll, the child future is retained across
-`Poll.Pending`, and `Poll.Ready(value)` completes the parent with `value`.
-Completion or cancellation drops the stored child exactly once. One linear
+preserve capture cleanup. A suspended body may also retain a custom residual
+effect, including `Throws(Error)`, when its first segment is one direct tail
+`await`, has no retained local or continuation state, and captures only
+by-value `Copy` or move-only values. Polling through the enclosing handler
+specializes the cold transition before runtime lowering. That transition
+marks transferred captures unavailable before evaluating the await operand,
+so an abort cannot drop them twice. The operand and its residual effects run
+only while creating the child on the first poll; returning `Pending` and
+polling the stored child again do not replay them. `Poll.Ready(value)`
+completes the parent, while completion or cancellation drops the stored child
+exactly once. Other suspended residual shapes remain unsupported. One linear
 non-tail form, `let value = await child`, may execute ordinary continuation
 code after Ready; the continuation's captures remain owned by the parent while
 suspended. Multiple sequential bindings compose recursively and preserve earlier Ready values
@@ -614,7 +620,8 @@ ordinary region and alias constraints. An `if` or `match` may place one tail awa
 when every child future has the same Output; concrete child types may differ. The condition,
 scrutinee, and guards run once before suspension, and cancellation drops only the selected child.
 Branch-local linear statements may surround await, and a non-suspending branch completes
-immediately when selected. Loop suspension and other residual-effect cases are not implemented yet.
+immediately when selected. Residual effects across continuations, retained locals, branches, or
+loops are not implemented yet.
 
 `unsafe` is an authority effect. `unsafe { ... }` authorizes operations whose contracts cannot be
 verified by the safe type and ownership rules; it does not disable type checking or cleanup.
