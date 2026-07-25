@@ -64,7 +64,7 @@ lexer 产生 `NEWLINE`，但在以下情况忽略物理换行：
 `{...}` 不抑制换行，因为块内需要分隔语句。后缀 `!` 与 `!!` 可以结束逻辑行；前缀 `!`
 后的换行仍继续当前表达式。普通调用不能跨逻辑换行从 `(` 继续：
 
-```sc
+```sc fragment
 f
 (x) // 两个表达式，不是 f(x)
 ```
@@ -236,7 +236,7 @@ compile_parameter = IDENT, ":", ( "type" | "access" | "effect" | constructor_kin
 
 编译期参数组的语义限制与函数相同。例如：
 
-```sc
+```sc fragment
 extend(T: type) Box(T): Display
 where T: Display {
   let display(self: borrow(Self))(): String = { ... }
@@ -309,7 +309,7 @@ parameter-schema 修饰器，例如 `(M value: T)` 或 `(A M value: T)`；每个
 
 匿名签名槽在使用推断传递模式时可省略 `_:`：
 
-```sc
+```sc fragment
 (T): U                 // 推断传递模式的参数，类型 T
 (_: borrow(T)): U      // 传入或自动借用一个共享借用值
 (_: borrow(mut)(T)): U // 传入或自动借用一个可变借用值
@@ -569,7 +569,7 @@ path_head = IDENT | "root" | "self" | "super" | "Self" ;
 
 ## 10. 必须锁定的 parser 测试
 
-```sc
+```sc fragment
 let f = {}                         // 零参闭包
 let f(x: i32) = {}                 // 返回 () 的具名闭包
 let x = do {}                      // 单元值

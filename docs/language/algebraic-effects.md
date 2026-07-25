@@ -16,7 +16,7 @@ normative language specification while the compiler slice is being implemented.
 
 ## Declaration and operation calls
 
-```sc
+```sc fragment
 let State(S: type) = effect {
   let get(): S
   let put(move value: S): ()
@@ -46,7 +46,7 @@ runtime parameter names, never by parameter types. A call to an overloaded opera
 arguments in declaration order. Its handler clause uses those same names before `resume`, so two
 clauses with the same operation label remain unambiguous:
 
-```sc
+```sc fragment
 let Ask = effect {
   let value(left: i32): i32
   let value(right: i32): i32
@@ -65,7 +65,7 @@ let answer = Ask.handle
 Every effect declaration automatically satisfies the validated `std.effect.handler.Handle` protocol and
 derives a compiler-lowered associated member named `handle`:
 
-```sc
+```sc fragment
 let answer = State(i32).handle
   get { (resume) -> resume(41) }
   put { (value, resume) -> resume(()) }
@@ -96,7 +96,7 @@ directly produces the complete handler result.
 By default the action result and handler result are the same type. A `done:` clause permits an
 answer-type transformation:
 
-```sc
+```sc fragment
 let text = State(i32).handle
   done { (value) -> format(value) }
   get { (resume) -> resume(41) }

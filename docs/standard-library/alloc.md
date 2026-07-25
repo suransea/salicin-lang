@@ -7,7 +7,7 @@ helpers. The implementation package is not part of the intended prelude.
 
 Owning container names are not implicitly visible. Alias the types a module uses:
 
-```sc
+```sc fragment
 let Box = std.boxed.Box
 let Vec = std.vec.Vec
 ```

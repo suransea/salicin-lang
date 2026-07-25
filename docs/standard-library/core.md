@@ -18,7 +18,7 @@ The definitions live in focused modules. `core.never` owns `Never`, `core.marker
 `Drop`, and `core.option` and `core.result` own fundamental ordinary data types that are
 intentionally not prelude names:
 
-```sc
+```sc fragment
 pub let Option(T: type) = enum {
   Some(T),
   None,
@@ -44,7 +44,7 @@ operator-facing names for ordinary aliases. They are not in the prelude.
 Arithmetic and bitwise protocols accept their operands with automatic passing and use an associated
 `Output` type. Copy operands remain usable; resource operands move:
 
-```sc
+```sc fragment
 let Add = std.ops.Add
 
 extend Number: Add(Number) {
@@ -57,7 +57,7 @@ extend Number: Add(Number) {
 `Eq(Rhs)` borrows both operands and returns `bool`; `!=` invokes the same method exactly once and
 negates its result:
 
-```sc
+```sc fragment
 let Eq = std.ops.Eq
 
 extend Number: Eq(Number) {
@@ -70,7 +70,7 @@ extend Number: Eq(Number) {
 whose variants are `Less`, `Equal`, `Greater`, and `Unordered`. All four ordering operators invoke
 the method once; an `Unordered` result makes each operator false:
 
-```sc
+```sc fragment
 let PartialOrd = std.ops.PartialOrd
 let PartialOrdering = std.ops.PartialOrdering
 
@@ -95,7 +95,7 @@ or out-of-width shift counts trap instead of exposing backend undefined behavior
 automatic passing, and
 returns `()`:
 
-```sc
+```sc fragment
 pub let AddAssign(Rhs: type) = trait {
   let add_assign(self: borrow(mut)(Self))
     (rhs: Rhs): ()
@@ -114,7 +114,7 @@ direct member access.
 
 `core.flow` contains the standard protocols for `?.` and `??`. They are not in the prelude:
 
-```sc
+```sc fragment
 pub let Chain = trait {
   let Item: type
   let Rebind(Value: type): type
@@ -148,7 +148,7 @@ should alias the protocols from `std.flow`.
 `core.effect` owns standard effect identities. It is not part of the prelude; ordinary source
 should alias these identities through `std.effect`:
 
-```sc
+```sc fragment
 pub let Unsafe = effect {}
 
 pub let Throws(Error: type) = effect {
@@ -178,7 +178,7 @@ pretending `await` already works.
 
 `core.domains` owns standard compile-time domains, also outside the prelude:
 
-```sc
+```sc fragment
 pub let type: domain
 pub let region: domain
 pub let effect: domain
@@ -187,7 +187,7 @@ pub let parameters: domain
 
 `core.borrow` owns the closed access type:
 
-```sc
+```sc fragment
 pub let access = enum {
   shared,
   mut
@@ -196,7 +196,7 @@ pub let access = enum {
 
 `core.passing` owns the parameter modifier functions:
 
-```sc
+```sc fragment
 pub let copy(P: parameters): parameters
 pub let move(P: parameters): parameters
 ```
@@ -221,7 +221,7 @@ permitted only as a validated core lang item; ordinary package functions still r
 `core.effect.handler` declares the protocol and erased runtime contracts used by algebraic handler
 lowering:
 
-```sc
+```sc fragment
 pub let Continuation(Input: type, Output: type) = struct {}
 pub let EffectCallable(Input: type, Output: type, Answer: type) = struct {}
 pub let Handle = trait(Self: effect) {
@@ -251,7 +251,7 @@ parameter groups. Consequently source calls use named trailing closures directly
 shape declared by the trait. These low-level operations and generated handler implementations are
 not ordinary source-level standard-library functions.
 
-```sc
+```sc fragment
 pub let do(E: effect, T: type)
   (move action: (): T with(E)): T with(E)
 pub let do(E: effect)
@@ -299,7 +299,7 @@ handle their declared `Break`/`Continue` effects while forwarding `E`; `if` and 
 only the selected lazy branch or case. The source definitions that do not require intrinsic
 lowering remain intentionally simple:
 
-```sc
+```sc fragment
 pub let do(E: effect, T: type)
   (move action: (): T with(E)): T with(E) = {
   action()
@@ -320,7 +320,7 @@ pub let throw(Error: type)
 
 `core.iter` owns iteration rather than the prelude:
 
-```sc
+```sc fragment
 pub let Iterator = trait {
   let Item: type
   let next(self: borrow(mut)(Self))
@@ -351,7 +351,7 @@ magic in advance.
 
 `core.algebra` contains first-order algebra protocols rather than putting them in the prelude:
 
-```sc
+```sc fragment
 pub let Semigroup = trait {
   let combine(left: Self, right: Self): Self
 }
@@ -365,7 +365,7 @@ The compiler does not prove algebraic laws.
 `core.functional` contains higher-kinded protocols over compile-time type constructors. It is not
 part of the prelude:
 
-```sc
+```sc fragment
 pub let Functor = trait(Self: (Value: type): type) {
   let map(E: effect, A: type, B: type)
     (self: Self(A))
@@ -405,7 +405,7 @@ requires `Carrier: Applicative`.
 The standard library implements `Functor`, `Applicative`, and `Monad` for `core.Option` and for
 each partially applied `core.Result(Error)` constructor:
 
-```sc
+```sc fragment
 let Result = std.Result
 let Monad = std.functional.Monad
 

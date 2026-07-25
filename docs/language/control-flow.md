@@ -23,7 +23,7 @@ same-named declaration never acquires control authority.
 
 `if` takes an eager condition and lazy branches:
 
-```sc
+```sc fragment
 pub let if(E: effect, T: type)
   (condition: bool)
   (move then: (): T with(E))
@@ -36,7 +36,7 @@ pub let if(E: effect, T: type)
 
 The ordinary source forms are therefore:
 
-```sc
+```sc fragment
 if condition {
   then_value
 } else {
@@ -59,7 +59,7 @@ expressive power.
 
 `loop` and `while` establish the loop control handlers:
 
-```sc
+```sc fragment
 pub let loop(T: type, E: effect)
   (move body: (): () with(Break(T), Continue, E)): T with(E)
 
@@ -81,7 +81,7 @@ pub let do(E: effect)
 
 They are called as:
 
-```sc
+```sc fragment
 let answer = loop {
   if ready() {
     break(42)
@@ -109,7 +109,7 @@ tests before the body; `do { body } while { condition }` tests after it. The for
 
 The source contracts are:
 
-```sc
+```sc fragment
 pub let Break(T: type) = effect {
   let exit(move value: T): Never
 }
@@ -135,7 +135,7 @@ pub let return(): Never with(Return(()))
 
 Calls use ordinary argument groups:
 
-```sc
+```sc fragment
 break(value)
 break()
 continue()
@@ -168,7 +168,7 @@ is statically total.
 
 A case literal uses an unparenthesized pattern before `->`:
 
-```sc
+```sc fragment
 { Some(value) -> value }
 { _ -> 0 }
 { Point(x, y) -> x + y }
@@ -176,7 +176,7 @@ A case literal uses an unparenthesized pattern before `->`:
 
 This stays unambiguous with ordinary closures:
 
-```sc
+```sc fragment
 { (value: i32) -> value + 1 } // ordinary callable
 { value -> value + 1 }        // pattern closure; irrefutable, so also a total callable
 ```
@@ -193,7 +193,7 @@ matcher. Applying it directly exposes `Attempt`; only an exhaustive matcher may 
 
 Case guards use contextual `if`:
 
-```sc
+```sc fragment
 { Some(value) if value > 0 -> value }
 ```
 
@@ -205,7 +205,7 @@ Each match case is a partial-function parameter group: its leading pattern decid
 group applies, and its body computes the common result. Control matching therefore needs a
 statically known pack of such groups:
 
-```sc
+```sc fragment
 pub let match(
   Input: type,
   Output: type,
@@ -228,7 +228,7 @@ while preserving the source-level parameter groups and partial-function boundary
 
 This is deliberately different from:
 
-```sc
+```sc fragment
 (...move parameters: P)
 ```
 
@@ -242,7 +242,7 @@ have different delimiters and cannot be confused:
 
 Prefix `match` is the control call:
 
-```sc
+```sc fragment
 match option
   { Some(value) -> value }
   { None -> 0 }
@@ -258,7 +258,7 @@ adjacent to the operation that consumes it. The target language does not retain 
 
 `if let` is unnecessary:
 
-```sc
+```sc fragment
 match option
   { Some(value) -> use(value) }
   { _ -> () }
@@ -266,7 +266,7 @@ match option
 
 `while let` is the explicit composition of `loop` and `match`:
 
-```sc
+```sc fragment
 loop {
   match next()
     { Some(value) -> consume(value) }
@@ -280,7 +280,7 @@ There is no separate `if let` or `while let` grammar in the target language.
 
 `for` takes the iterable eagerly and an irrefutable pattern case lazily:
 
-```sc
+```sc fragment
 pub let for(
   E: effect,
   Iterable: type,
@@ -295,7 +295,7 @@ where Iterable: core.iter.IntoIterator(IntoIter = Iter),
 
 The surface form is:
 
-```sc
+```sc fragment
 for collection {
   item -> consume(item)
 }
@@ -308,7 +308,7 @@ for points {
 The body pattern must be irrefutable for `Item`. A refutable enum case is rejected rather than
 silently skipping elements:
 
-```sc
+```sc fragment
 // Rejected when Item is Option(T).
 for values {
   Some(value) -> consume(value)
@@ -317,7 +317,7 @@ for values {
 
 Explicit filtering uses `match` inside the body:
 
-```sc
+```sc fragment
 for values {
   item -> match item
     { Some(value) -> consume(value) }
@@ -334,7 +334,7 @@ identities, and handles `Break(())` plus `Continue` around both iterator advance
 
 ## 8. Surface summary
 
-```sc
+```sc fragment
 if condition { then } else { otherwise }
 if condition { then } else if other { second } else { otherwise }
 

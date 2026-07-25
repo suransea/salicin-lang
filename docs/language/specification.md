@@ -75,7 +75,7 @@
 
 ### 3.1 不可变和可变绑定
 
-```sc
+```sc fragment
 let answer = 42
 let answer: i32 = 42
 let mut count = 0
@@ -87,7 +87,7 @@ count = count + 1
 
 同一词法作用域不允许重复声明同名绑定；内层作用域可以遮蔽外层绑定：
 
-```sc
+```sc fragment
 let x = 1
 do {
   let x = "one" // 合法，遮蔽外层 x
@@ -101,7 +101,7 @@ do {
 名字位于不同的语义类别。类型、trait、effect、access、模块和全局值使用同一顶层声明冲突规则；
 普通具名函数有独立的函数重载集，因此可以和类型同名，用作显式 constructor/factory：
 
-```sc
+```sc fragment
 let n = 1                         // 值
 let add(x: i32)(y: i32) = { x + y } // 具名闭包声明
 let Point = struct { x: i32, y: i32 } // 类型
@@ -124,7 +124,7 @@ let Math = struct { ... }         // 模块
 
 声明默认对所在模块及其子模块可见。`pub(package)` 对当前包公开，`pub` 对所有依赖者公开：
 
-```sc
+```sc fragment
 pub let f(x: i32) = { x }
 pub let Point = struct { pub x: i32, pub y: i32 }
 ```
@@ -168,7 +168,7 @@ bool char () type
 
 `Never` 不是额外的原始类型；edition prelude 包含以下普通声明：
 
-```sc
+```sc fragment
 let Never = enum {}
 ```
 
@@ -186,7 +186,7 @@ debug 构建中检查，release 构建默认二进制补码回绕；可另行提
 
 类型应用使用普通调用外形；结构体值构造使用第 8 节的 braced literal：
 
-```sc
+```sc fragment
 Option(i32)
 Result(IoError)(i32)
 Future(i32)
@@ -199,7 +199,7 @@ A
 
 类型构造子的编译期参数名也是调用标签。类型位置可以用具名实参消歧或提高可读性：
 
-```sc
+```sc fragment
 let Pair(K: type, V: type) = struct { key: K, value: V }
 let pair: Pair(V: bool, K: i32) = Pair(K: i32, V: bool) { key: 1, value: true }
 ```
@@ -216,7 +216,7 @@ let pair: Pair(V: bool, K: i32) = Pair(K: i32, V: bool) { key: 1, value: true }
 
 首批核心复合类型为：
 
-```sc
+```sc fragment
 (i32, String)       // 元组
 Array(i32)(4)       // 固定长度数组；长度是编译期 usize
 Slice(i32)          // 连续元素的非拥有视图
@@ -226,7 +226,7 @@ String              // 拥有的 UTF-8 字符串
 
 `Array` 的规范身份和参数分组由 `core.memory` 中的 lang-item 声明提供：
 
-```sc
+```sc fragment
 pub let Array(T: type)(L: usize): type
 ```
 
@@ -237,7 +237,7 @@ pub let Array(T: type)(L: usize): type
 
 对应字面量：
 
-```sc
+```sc fragment
 let pair = (1, "one")
 let singleton = (1,)
 let values = [1, 2, 3, 4]
@@ -257,7 +257,7 @@ let text: Str = "salicin"
 
 ### 5.1 函数声明
 
-```sc
+```sc fragment
 let f(x: i32) = {}
 let fc(x: i32)(y: i32): i32 = { x + y }
 let unit(): () = { () }
@@ -265,13 +265,13 @@ let unit(): () = { () }
 
 每一对括号形成一个参数组。`fc` 的抽象类型写作：
 
-```sc
+```sc fragment
 (i32): (i32): i32
 ```
 
 函数签名允许保留参数名：
 
-```sc
+```sc fragment
 (x: i32): (y: i32): i32
 ```
 
@@ -282,7 +282,7 @@ let unit(): () = { () }
 `parameters` 是描述一个完整运行时参数组的编译期 domain。trait 可以声明关联 parameter
 schema，并用 `...` 在组内展开：
 
-```sc
+```sc fragment
 let Protocol = trait {
   let Arguments(T: type): parameters
   let apply(T: type)(...move arguments: Arguments(T)): ()
@@ -298,13 +298,13 @@ schema 本身不是运行时类型。首版关联 parameter schema 只由编译�
 随后可用裸 `...Cases` 把它展开成多个连续参数组；这不同于
 `(...move arguments: Arguments)` 在一对括号内展开单个 schema。
 
-```sc
+```sc fragment
 let f(x: i32) = {}
 ```
 
 是把参数提升到绑定名称旁边的闭包声明糖，等价于：
 
-```sc
+```sc fragment
 let f: (i32): () = { (x: i32) -> () }
 ```
 
@@ -312,7 +312,7 @@ let f: (i32): () = { (x: i32) -> () }
 实现可以为递归、泛型单态化和稳定符号保留专用 AST/ABI，但语言语义仍是闭包绑定。普通函数值
 绑定使用无名签名和显式参数闭包：
 
-```sc
+```sc fragment
 let succ: (i32): i32 = { (n: i32) -> n + 1 }
 ```
 
@@ -324,7 +324,7 @@ let succ: (i32): i32 = { (n: i32) -> n + 1 }
 
 调用一次只消费一个参数组：
 
-```sc
+```sc fragment
 let add(x: i32)(y: i32) = { x + y }
 let add_one = add(1) // 类型为 (i32): i32
 let three = add_one(2)
@@ -337,7 +337,7 @@ let also_three = add(1)(2)
 
 零参数组 `()` 不是多余语法。它表示显式延迟调用：
 
-```sc
+```sc fragment
 let make_logger(config: Config)(): Logger = { ... }
 let logger = make_logger(config)()
 ```
@@ -346,7 +346,7 @@ let logger = make_logger(config)()
 
 函数、方法、闭包和构造器都允许按位置或按名称传参；同一参数组不能混用两种形式：
 
-```sc
+```sc fragment
 make(value: 10)
 subtract(left: 44, right: 2)
 ```
@@ -357,26 +357,26 @@ subtract(left: 44, right: 2)
 
 ### 5.4 尾随闭包
 
-```sc
+```sc fragment
 let value = f(x) { (n: i32) -> n + 1 }
 ```
 
 严格脱糖为：
 
-```sc
+```sc fragment
 let value = f(x)({ (n: i32) -> n + 1 })
 ```
 
 尾随闭包总是新建一个只含该闭包的参数组，不会加入前一组。所以下面两种调用不等价：
 
-```sc
+```sc fragment
 f(x) { (n: i32) -> n + 1 }    // f(x)({ ... })
 f(x, { (n: i32) -> n + 1 })   // f(x, { ... })
 ```
 
 接收尾随闭包的函数应把闭包放在独立的最后参数组中：
 
-```sc
+```sc fragment
 let map(T: type)(U: type)
   (items: List(T))
   (transform: (T): U): List(U) = { ... }
@@ -392,7 +392,7 @@ let names = map(T: User)(U: String)(users) { (user: User) -> user.name }
 
 函数类型中的冒号右结合：
 
-```sc
+```sc fragment
 (i32): (i64): bool
 ```
 
@@ -400,7 +400,7 @@ let names = map(T: User)(U: String)(users) { (user: User) -> user.name }
 `(i32, i64): bool` 与 `(i32): (i64): bool` 不是同一类型。显式按值传递模式也属于函数类型，
 参数名则不属于；借用能力由参数类型中的 `borrow(...)` 表达：
 
-```sc
+```sc fragment
 (copy _: i32): bool
 (move _: i32): bool       // 与上一类型不同
 (value: i32): bool        // value 不参与类型相等性
@@ -408,7 +408,7 @@ let names = map(T: User)(U: String)(users) { (user: User) -> user.name }
 
 匿名槽中的显式模式必须写 `_:`；借用参数写成引用类型：
 
-```sc
+```sc fragment
 (_: borrow(T)): U      // 共享借用 T，或传入一个已有共享借用值
 (_: borrow(mut)(T)): U // 可变借用 T，或传入一个已有可变借用值
 ```
@@ -417,7 +417,7 @@ let names = map(T: User)(U: String)(users) { (user: User) -> user.name }
 并立即从左到右求值该组实参。多参数组声明是嵌套函数层的简写，其源码函数体属于最内层；外层
 只完成参数绑定并返回下一层，因此在最后一组应用前不会执行该源码函数体：
 
-```sc
+```sc fragment
 let f(x: Resource)(y: i32) = { use(x, y) }
 let pending = f(resource) // resource 此处已按参数模式移动或借用；函数体尚未执行
 let result = pending(1)   // 此处进入函数体
@@ -425,7 +425,7 @@ let result = pending(1)   // 此处进入函数体
 
 但显式返回闭包的单组函数可以在第一组调用时执行代码：
 
-```sc
+```sc fragment
 let make_adder(x: i32): (i32): i32 = {
   log("creating adder")
   { (y: i32) -> x + y }
@@ -441,7 +441,7 @@ effect row 是函数签名的编译期元数据，以返回类型后的 `with(..
 pure；effect 的顺序不影响语义，同一项不能重复。`with` 是上下文词。该子句不接收运行时实参，
 也不增加一层柯里化：
 
-```sc
+```sc fragment
 let Throws = std.effect.Throws
 let Unsafe = std.effect.Unsafe
 
@@ -487,7 +487,7 @@ operation 使用代数 effect 的普通 handler 规则；它的 clause 不带 `r
 `unsafe { ... }` 处理并移除 `Unsafe`，`do { ... }` 不处理 effect，只原样转发。调用要求可以用
 `E: effect` 参数化：
 
-```sc
+```sc fragment
 let tagged(E: effect)(value: i32): i32 with(E) = { value }
 let forward(E: effect)(value: i32): i32 with(E) = { tagged(E)(value) }
 let UI = effect
@@ -503,7 +503,7 @@ let named = unsafe { forward(E: Unsafe)(2) }
 `let UI = effect` 声明无 operation 的名义 marker；其身份遵循普通模块路径和可见性，公开 API
 不得泄露私有 effect。effect 也可以接受类型参数并声明 operation requirements：
 
-```sc
+```sc fragment
 let State(S: type) = effect {
   let get(): S
   let put(move value: S): ()
@@ -631,7 +631,7 @@ implementation 仍要求签名完全一致，而不是借子类型关系改变�
 
 ## 6. 参数传递与所有权
 
-```sc
+```sc fragment
 let f(
   copy a: i32,
   move b: Buffer,
@@ -685,7 +685,7 @@ let f(
 
 共享和排他访问是编译期能力值，可由封闭 `access` 类型参数化：
 
-```sc
+```sc fragment
 let identity(A: access, R: region, T: type)
   (value: borrow(A)(R)(T)): borrow(A)(R)(T) = {
   value
@@ -713,7 +713,7 @@ effect 行仍有 row 组合与转发规则，不能误用 access 参数表达控
 归一化成最终 parameter schema。`copy` 与 `move` 是标准的
 `(P: parameters): parameters` 编译期函数：
 
-```sc
+```sc fragment
 let identity(M: (P: parameters): parameters, T: type)(M value: T): T = { value }
 let modifier_identity(M: (P: parameters): parameters) = M
 let forward(M: (P: parameters): parameters, T: type)(M value: T): T = {
@@ -744,7 +744,7 @@ let inferred = forward_without_modifier(resource)
 引用类型参数会自动建立或传入借用；其他位置可用 `borrow(expression)` 和 `borrow(mut)(expression)` 显式建立
 借用值，其类型分别写作 `borrow(T)` 和 `borrow(mut)(T)`：
 
-```sc
+```sc fragment
 let r: borrow(i32) = borrow(value)
 let first(values: borrow(Slice(i32))): borrow(i32) = { borrow(values[0]) }
 ```
@@ -752,7 +752,7 @@ let first(values: borrow(Slice(i32))): borrow(i32) = { borrow(values[0]) }
 函数签名中只有一个输入借用可作为返回来源时，生命周期默认与该输入关联。存在多个可能来源、
 借用被保存进结构体、或公开 API 无法唯一推断时，必须显式声明 region 参数：
 
-```sc
+```sc fragment
 let choose(R: region)
   (condition: bool)
   (left: borrow(R)(T), right: borrow(R)(T)): borrow(R)(T) = {
@@ -813,7 +813,7 @@ trap 回归测试证明 scope cleanup 可观察执行，并检查同一 storage 
 `do` 是接受零参数尾闭包并立即调用它的内建函数。闭包的最后一个无分号表达式是返回值；空闭包
 返回 `()`：
 
-```sc
+```sc fragment
 let n = do {
   let x = 20
   x + 22
@@ -822,7 +822,7 @@ let n = do {
 
 ### 7.2 闭包字面量
 
-```sc
+```sc fragment
 let empty = {}
 let thunk = {
   expensive_work()
@@ -845,7 +845,7 @@ let curried = { (x: i32)(y: i32) -> x + y }
 
 因此：
 
-```sc
+```sc fragment
 let f = {}             // 类型为 (): ()
 let deferred = { 42 }  // 类型为 (): i32
 let x = do {}          // ()
@@ -855,7 +855,7 @@ let f(x: i32) = {}     // 具名零结果闭包
 
 具名闭包声明只是把闭包参数提升到绑定名称旁边：
 
-```sc
+```sc fragment
 let add(x: i32)(y: i32): i32 = {
   x + y
 }
@@ -890,7 +890,7 @@ match 分支需要立即执行多条语句时写 `do { ... }`；直接写 `{ ...
 即使外部值实现 `Copy`，普通闭包的只读捕获仍优先共享借用，避免是否逃逸反向改变捕获方式。
 可以显式指定整个闭包为移动捕获：
 
-```sc
+```sc fragment
 let task = move { consume(buffer) }
 ```
 
@@ -905,7 +905,7 @@ let task = move { consume(buffer) }
 函数签名 `(T): U` 用于声明和约束调用形状；捕获闭包的大小、析构和调用能力属于其匿名具体类型。
 高阶函数应以泛型 callable 接收闭包，避免隐式装箱：
 
-```sc
+```sc fragment
 let apply_twice(T: type)(F: type)
   (value: T)
   (function: borrow(mut)(F)): T
@@ -919,7 +919,7 @@ where F: FnMut((move _: T): T) = { function(function(value)) }
 
 ### 8.1 名义结构体
 
-```sc
+```sc fragment
 let A = struct { foo: i32, bar: u32 }
 let a = A { foo: 1, bar: 2 }
 ```
@@ -929,7 +929,7 @@ let a = A { foo: 1, bar: 2 }
 
 需要位置式或简短构造时，声明一个普通同名函数：
 
-```sc
+```sc fragment
 let Pair = struct { left: i32, right: i32 }
 let Pair(left: i32, right: i32): Pair = { Pair { left: left, right: right } }
 
@@ -940,7 +940,7 @@ let pair = Pair(40, 2)
 
 结构体声明可以带有限的编译期选项。当前实现支持：
 
-```sc
+```sc fragment
 let Pixel = struct(derive: Copy) { value: i32 }
 ```
 
@@ -949,14 +949,14 @@ let Pixel = struct(derive: Copy) { value: i32 }
 
 字段默认模块私有、不可通过不可变绑定修改。若结构体值位于可变绑定中，可修改其可见字段：
 
-```sc
+```sc fragment
 let mut a = A { foo: 1, bar: 2 }
 a.foo = 3
 ```
 
 ### 8.2 扩展和关联成员
 
-```sc
+```sc fragment
 extend A {
   let reset(self: borrow(mut)(Self))(): () = {}
   let bar = 42
@@ -973,13 +973,13 @@ A.bar
 
 方法调用：
 
-```sc
+```sc fragment
 a.reset()
 ```
 
 脱糖为先应用接收者参数组，再应用源代码中的显式参数组：
 
-```sc
+```sc fragment
 A.reset(a)()
 ```
 
@@ -989,7 +989,7 @@ A.reset(a)()
 扩展成员可以在外层扩展参数之外声明自己的编译期参数。外层参数由接收者的名义类型确定，成员
 参数紧跟成员名应用，之后才是显式运行时参数组：
 
-```sc
+```sc fragment
 extend(T: type) Box(T) {
   let view(A: access)(self: borrow(A)(Self))(): borrow(A)(T) = {
     borrow(A)(self.value)
@@ -1010,7 +1010,7 @@ let exclusive = boxed.view(mut)()
 
 ### 8.3 泛型结构体
 
-```sc
+```sc fragment
 let Box(T: type) = struct { value: T }
 let a = Box(i32) { value: 10 }
 let b: Box(i32) = Box { value: 20 }
@@ -1019,7 +1019,7 @@ let b: Box(i32) = Box { value: 20 }
 `Box(i32)` 是类型头，随后 `{ ... }` 构造该类型的值。`Box { value: 20 }` 可以从期望类型推断
 省略的编译期参数；没有期望类型时写 `Box(i32) { value: 20 }`，或提供一个显式同名函数：
 
-```sc
+```sc fragment
 let Box(T: type)(value: T): Box(T) = { Box(T) { value: value } }
 let c = Box(20)
 ```
@@ -1030,7 +1030,7 @@ let c = Box(20)
 
 类型别名是透明的编译期绑定，不产生新的 nominal identity：
 
-```sc
+```sc fragment
 let Scalar = i32
 let Family(T: type): type = Box(T)
 let Constructor: (T: type): type = Box
@@ -1042,7 +1042,7 @@ let Constructor: (T: type): type = Box
 
 编译期参数也可以声明构造子 kind：
 
-```sc
+```sc fragment
 let Use = trait(Self: (Value: type): type) {
   let map(E: effect, A: type, B: type)(
     self: Self(A),
@@ -1062,7 +1062,7 @@ Kind)` 单独声明被实现主体的 kind。省略 self kind 时等价于 `trai
 这类参数出现在 trait self kind、trait 参数和 trait 方法签名中，供 `core.functional` 等标准库
 协议表达。匹配 arity 的泛型 nominal 构造子可以实现 `Self` 为构造子 kind 的 trait：
 
-```sc
+```sc fragment
 let Functor = trait(Self: (Value: type): type) {
   let map(E: effect, A: type, B: type)(
     self: Self(A),
@@ -1085,7 +1085,7 @@ extend Carrier: Functor{let map(E: effect, A: type, B: type)(
 method implementation 会注册为 generic function template，并由普通模板验证路径检查函数体。
 receiver-style constructor trait 方法可以从具体 nominal 实例分派：
 
-```sc
+```sc fragment
 let value = Carrier(i32) { value: 41 }.map(add_one)
 ```
 
@@ -1095,7 +1095,7 @@ let value = Carrier(i32) { value: 41 }.map(add_one)
 
 trait 声明可以在 `trait` 后、`{` 前写继承约束：
 
-```sc
+```sc fragment
 let Applicative = trait(Self: (Value: type): type)
 where Self: Functor(...)
 ```
@@ -1104,7 +1104,7 @@ where Self: Functor(...)
 `Functor`；右侧只写 `Functor` 自己的 trait 参数。普通泛型函数也可以接收显式构造子参数并写
 constructor trait 约束：
 
-```sc
+```sc fragment
 let keep(M: (Value: type): type, A: type)(move value: M(A)): M(A)
 where M: Monad = {
   value
@@ -1116,7 +1116,7 @@ let kept = keep(M: Carrier)(Carrier(i32) { value: 42 })
 柯里化构造子和部分应用的透明类型别名可以作为 HKT 实现目标。例如标准库直接用根模块中的
 `Result(Error)` 作为一元构造子，并为它实现 `Functor`、`Applicative` 与 `Monad`：
 
-```sc
+```sc fragment
 extend(Error: type) Result(Error): Monad { ... }
 ```
 
@@ -1125,7 +1125,7 @@ extend(Error: type) Result(Error): Monad { ... }
 
 带名称旁参数的形式定义类型族，右侧必须产生具体的 `type`：
 
-```sc
+```sc fragment
 let Wrapped(T: type): type = Box(T)
 ```
 
@@ -1137,7 +1137,7 @@ nominal 构造子的别名也能省略编译期参数组，由普通构造实参
 
 枚举使用与其他类型一致的 `let` 声明：
 
-```sc
+```sc fragment
 let Option(T: type) = enum {
   Some(T),
   None,
@@ -1167,7 +1167,7 @@ let Shape = enum {
 
 递归枚举必须通过拥有或借用容器打断无限布局：
 
-```sc
+```sc fragment
 let List(T: type) = enum {
   Cons(T, Box(List(T))),
   Nil,
@@ -1192,7 +1192,7 @@ trait 或用 `extend` 重新打开。
 
 ## 9. 泛型函数与约束
 
-```sc
+```sc fragment
 let identity(T: type)(value: T): T = { value }
 identity(i32)(0)
 identity(20)
@@ -1218,7 +1218,7 @@ array_identity([40, 2]) // 从运行时数组实参推断 L = 2
 
 期望类型也参与推断：
 
-```sc
+```sc fragment
 let value: Box(i64) = Box(10)
 let made: Product = make(10)
 ```
@@ -1229,7 +1229,7 @@ let made: Product = make(10)
 
 使用 `where` 表达 trait 约束：
 
-```sc
+```sc fragment
 let Add = std.ops.Add
 
 let twice(T: type)(x: T): T
@@ -1238,7 +1238,7 @@ where T: Add(T, Output = T), T: Copy = { x + x }
 
 没有约束的泛型函数只能使用对所有 `T` 都成立的操作。
 
-```sc
+```sc fragment
 let duplicate(T: type)(copy value: T): T
 where T: Copy, = {
   let first = value
@@ -1248,7 +1248,7 @@ where T: Copy, = {
 
 ## 10. Trait 与实现
 
-```sc
+```sc fragment
 let Foo = trait {
   let f(self: borrow(Self))(x: i32): i32
 }
@@ -1260,7 +1260,7 @@ extend A: Foo {
 
 ### 10.1 关联类型
 
-```sc
+```sc fragment
 let Bar = trait {
   let Item: type
 }
@@ -1274,7 +1274,7 @@ extend A: Bar {
 
 关联类型本身也可以接受编译期参数，从而表达容器重新绑定：
 
-```sc
+```sc fragment
 let Chain = trait {
   let Item: type
   let Rebind(Value: type): type
@@ -1283,7 +1283,7 @@ let Chain = trait {
 
 约束中的 `Output = T` 是关联类型等式，不是运行时命名实参：
 
-```sc
+```sc fragment
 let Add = std.ops.Add
 
 where T: Add(T, Output = T)
@@ -1293,7 +1293,7 @@ where T: Add(T, Output = T)
 
 trait 自身的类型参数写在名称之后，`Self` 表示实现目标：
 
-```sc
+```sc fragment
 let Convert(To: type) = trait {
   let convert(move self)(): To
 }
@@ -1301,14 +1301,14 @@ let Convert(To: type) = trait {
 
 泛型实现先声明该实现引入的编译期参数，再写目标类型和可选 trait：
 
-```sc
+```sc fragment
 extend(T: type) Box(T): Display
 where T: Display {
   let display(self: borrow(Self))(): String = { ... }
 }
 ```
 
-```sc
+```sc fragment
 let Cell(T: type) = struct { value: T }
 
 extend(T: type) Cell(T) {
@@ -1332,7 +1332,7 @@ trait object 及动态分派留作独立设计，不让 `Foo` 默认同时表示
 
 运算符是 trait 调用的语法糖，例如：
 
-```sc
+```sc fragment
 a + b   // Add.add(a, b)
 a == b  // Eq.eq(borrow(a), borrow(b))
 a < b   // 根据 PartialOrd.partial_cmp(borrow(a), borrow(b)) 的四态结果判断
@@ -1365,7 +1365,7 @@ a < b   // 根据 PartialOrd.partial_cmp(borrow(a), borrow(b)) 的四态结果�
 
 顺序比较采用显式四态结果，避免用整数约定编码比较结果，也不会把无序错误地当成大于或小于：
 
-```sc
+```sc fragment
 let PartialOrdering = enum { Less, Equal, Greater, Unordered }
 
 let PartialOrd(Rhs: type) = trait {
@@ -1379,7 +1379,7 @@ let PartialOrd(Rhs: type) = trait {
 
 一元协议没有右操作数；它们以推断传递模式接收 `self`，并允许通过关联类型改变结果类型：
 
-```sc
+```sc fragment
 let Neg = trait {
   let Output: type
   let neg(self)(): Output
@@ -1394,7 +1394,7 @@ let Not = trait {
 按位与移位协议同样以推断传递模式接收两个操作数，并通过关联类型决定结果；五个协议分别使用
 `bit_and`、`bit_or`、`bit_xor`、`shl` 和 `shr` 方法：
 
-```sc
+```sc fragment
 let BitAnd(Rhs: type) = trait {
   let Output: type
   let bit_and(self)(rhs: Rhs): Output
@@ -1410,7 +1410,7 @@ LLVM 的 poison 行为暴露为语言语义。
 
 ## 11. 模块
 
-```sc
+```sc fragment
 let Math = struct {
   let zero = 0
   let inc(x: i32) = { x + 1 }
@@ -1425,7 +1425,7 @@ let one = Math.inc(Math.zero)
 
 模块成员默认私有。`pub(package)` 对当前包公开，`pub` 同时对依赖该包的代码公开：
 
-```sc
+```sc fragment
 pub let Client = struct { ... }
 pub(package) let parse_header(text: Str) = { ... }
 let validate_internal_state() = { ... }
@@ -1454,7 +1454,7 @@ src/net/http.sc  -> net.http
 
 模块级纯限定路径绑定建立透明实体别名，不执行文件、复制声明或改变目标身份：
 
-```sc
+```sc fragment
 let Client = net.http.Client
 let get = net.http.get
 let post = net.http.post
@@ -1507,7 +1507,7 @@ snake_case。edition 固定解析和语义规则，不由所安装编译器静�
 
 每个二进制 target 必须恰有一个非泛型、零参数组入口：
 
-```sc
+```sc check
 let main(): i32 = { 0 }
 ```
 
@@ -1521,7 +1521,7 @@ let main(): i32 = { 0 }
 
 `match` 是上下文控制标识符，输入在前缀调用位置，随后是一个或多个 pattern case：
 
-```sc
+```sc fragment
 match value
   { Some(x) -> x }
   { None -> 0 }
@@ -1545,7 +1545,7 @@ match value
 
 Salicin 固定采用前缀 `match`，每个尾块是一个部分函数 case。被检查表达式只求值一次。
 
-```sc
+```sc fragment
 match compute()
   { Ok(value) if value > 0 -> value }
   { Ok(_) -> 0 }
@@ -1561,7 +1561,7 @@ match compute()
 
 条件必须是 `bool`，不提供整数、指针或容器的隐式 truthiness：
 
-```sc
+```sc fragment
 let sign = if value < 0 {
   -1
 } else if value > 0 {
@@ -1574,7 +1574,7 @@ let sign = if value < 0 {
 有 `else` 的 `if` 是值表达式，各可达分支类型必须能统一。无 `else` 的 `if` 类型固定为 `()`，
 其 then 块也必须产生 `()`。条件解构可写：
 
-```sc
+```sc fragment
 if let Some(value) = option {
   use(value)
 }
@@ -1585,7 +1585,7 @@ if let Some(value) = option {
 在 `if`、`for` 和 `while let` 的最外层控制头中禁用尾随闭包，第一个未被括号包围的 `{`
 是控制流主体。普通 `while` 本身使用两个尾随闭包：
 
-```sc
+```sc fragment
 if (validate(input) { (error: Error) -> log(error) }) {
   continue_work()
 }
@@ -1593,7 +1593,7 @@ if (validate(input) { (error: Error) -> log(error) }) {
 
 ### 13.2 循环
 
-```sc
+```sc fragment
 loop {
   if ready() { break(result) }
 }
@@ -1642,7 +1642,7 @@ lang-item 身份，同名 inherent 方法或其他 trait 不能截获展开。�
 
 ### 14.1 可选链 `?.`
 
-```sc
+```sc fragment
 user?.address?.city
 result?.normalize()
 ```
@@ -1650,7 +1650,7 @@ result?.normalize()
 `?.` 对成功分支执行后续成员访问或调用，对空/错误分支保持原容器并跳过后续操作。其协议为
 `std.flow.Chain`，使用泛型关联类型表达“换掉成功值、保留容器形状”：
 
-```sc
+```sc fragment
 let Chain = trait {
   let Item: type
   let Rebind(Value: type): type
@@ -1675,7 +1675,7 @@ residual 只移动或析构一次；借用容器可由标准库提供单独的 `
 
 ### 14.2 合并运算符 `??`
 
-```sc
+```sc fragment
 let port = configured_port ?? 8080
 let data = read() ?? empty_data
 ```
@@ -1684,7 +1684,7 @@ let data = read() ?? empty_data
 包装为零参数闭包；闭包是否为一次性调用由普通捕获/移动规则推断，所以右侧严格按需执行。结果类型为
 `T`：
 
-```sc
+```sc fragment
 let Coalesce = trait {
   let Item: type
   let coalesce(E: effect)
@@ -1698,7 +1698,7 @@ let Coalesce = trait {
 
 若需要使用错误值恢复，调用标准库方法：
 
-```sc
+```sc fragment
 let value = result.recover { (error: Error) -> fallback(error) }
 ```
 
@@ -1710,14 +1710,14 @@ lang-item trait。标准 `Option`/`Result` 实现提供语言定义的短路行�
 
 ### 14.3 错误提升 `!` 与强制解包 `!!`
 
-```sc
+```sc fragment
 let document = parsed_result!
 let port = configured_port!!
 ```
 
 后缀 `!` 消费左侧值并通过 `std.flow.Raise` 把容器中保存的错误重新引入 `Throws`：
 
-```sc
+```sc fragment
 let Raise = trait {
   let Output: type
   let Error: type
@@ -1730,7 +1730,7 @@ let Raise = trait {
 
 后缀 `!!` 通过 `std.flow.Unwrap` 强制提取成功载荷：
 
-```sc
+```sc fragment
 let Unwrap = trait {
   let Output: type
   let unwrap(move self): Output
@@ -1744,7 +1744,7 @@ let Unwrap = trait {
 
 ## 15. 错误 effect 与 `try` handler
 
-```sc
+```sc fragment
 let Throws = std.effect.Throws
 
 let load(path: Path): Document with(Throws(IoError)) = {
@@ -1760,7 +1760,7 @@ let load(path: Path): Document with(Throws(IoError)) = {
 传播只接受完全相同的错误类型。语言不会隐式把 `E1` 转换为 `E2`；需要合并错误集合时，应由
 调用者显式映射到一个共同的 enum，或由库函数提供转换：
 
-```sc
+```sc fragment
 let load(): Document with(Throws(AppError)) = {
   read_file().map_error { (error: IoError) -> AppError.io(error) }
 }
@@ -1773,7 +1773,7 @@ let load(): Document with(Throws(AppError)) = {
 
 `try` 接受尾闭包并处理其中的 `Throws(E)`：
 
-```sc
+```sc fragment
 let Result = std.Result
 
 let result: Result(IoError)(Document) = try {
@@ -1812,7 +1812,7 @@ result match {
 > handler 能力，尚未实现这里描述的 `async` Future 状态机 lowering。参见
 > [M0 核心范围](../project/core-scope.md)。
 
-```sc
+```sc future
 let f(x: i32): i32 with(Async) = {
   let a = foo()
   a + x
@@ -1824,7 +1824,7 @@ let f(x: i32): i32 with(Async) = {
 effect，生成唯一的匿名状态机类型；该类型实现 `Future(Output = T)`。局部变量可以持有推断出的
 具体 Future；高阶 API 以泛型约束接收：
 
-```sc
+```sc future
 let run(T: type)(F: type)(move future: F): T
 where F: Future(Output = T) = { ... }
 ```
@@ -1838,7 +1838,7 @@ handler 捕获并形成冷 Future，在首次轮询前不执行函数体。多�
 
 异步闭包和立即异步 handler 分别写：
 
-```sc
+```sc future
 let task = { fetch() }                       // 零参数闭包，类型含 with(Async)
 let immediate = async { task() }             // handler 构造 Future
 ```
@@ -1854,7 +1854,7 @@ let immediate = async { task() }             // handler 构造 Future
 
 多个 handler 的次序决定嵌套 carrier。例如：
 
-```sc
+```sc future
 let future_of_result = async { try { fetch() } }
 let result_of_future = try { async { fetch() } }
 ```
@@ -1885,7 +1885,7 @@ let result_of_future = try { async { fetch() } }
 
 同一作用域中的具名函数可以重载，但候选的完整运行时参数标签组必须不同：
 
-```sc
+```sc future
 let open(path: Path): Document = { ... }
 let open(url: Url): Document = { ... }
 
@@ -1925,7 +1925,7 @@ unsizing（例如借用固定数组得到 `borrow(Slice(T))`）。整数之间�
 无损转换使用 `From`/`Into`，可能失败的转换使用 `TryFrom`，明确的位级重解释只能在 `unsafe`
 API 中进行：
 
-```sc
+```sc future
 let wide = i64.from(value)
 let narrow: Result(RangeError)(i32) = i32.try_from(wide)
 ```
@@ -1952,7 +1952,7 @@ C 可表示的签名和布局。
 `unsafe` 与 `do` 一样接受尾闭包，但它会处理闭包要求的 `Unsafe` effect；`do` 只负责透传该 effect。
 `unsafe` 允许调用者承担编译器无法证明的前置条件，但不会关闭普通类型检查、借用检查或可见性检查。
 
-```sc
+```sc future
 @repr(C)
 pub let Point = struct { x: f64, y: f64 }
 
@@ -1976,7 +1976,7 @@ C 函数需要 `unsafe`。`core.ffi` 提供 `c_char`、`c_int`、`c_long` 等平
 数组、这些指针类型、从显式借用生成指针的构造器以及布局查询由 `core.memory` 声明，并由编译器按
 lang-item 形状和规范身份验证：
 
-```sc
+```sc future
 pub let Array(T: type)(L: usize): type
 pub let Ptr(A: access = shared)(T: type): type
 pub let Ptr(A: access = shared)(T: type)
@@ -1992,7 +1992,7 @@ type family 和同一个 lang-item 身份，不存在独立的 mutable pointer �
 内建 type family 可以在定义它的 core package 中使用普通 inherent extension。通用 access
 参数由 target 决定，具体 access 可直接特化，不需要 `where A == mut`：
 
-```sc
+```sc future
 extend(A: access, T: type) Ptr(A)(T) {
   let offset(self)(index: u64): Ptr(A)(T) with(Unsafe)
 }
@@ -2010,7 +2010,7 @@ shared pointer 也不会获得 mutable 特化成员。
 edition prelude 提供这些声明的短名。用户声明的同名函数或类型不会获得指针或布局 intrinsic
 语义；只有解析到已验证 `core.memory` 项的引用才会触发对应 lowering。
 
-```sc
+```sc future
 let pointer = unsafe { raw_alloc(T)(size: bytes, align: alignment) }
 unsafe { raw_dealloc(pointer: pointer, size: bytes, align: alignment) }
 ```

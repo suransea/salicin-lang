@@ -6,6 +6,10 @@ subset.
 
 ## Unreleased
 
+- Added executable documentation fencing. Every Salicin Markdown block is now classified as a
+  checked source unit, a non-standalone normative fragment, an explicitly deferred design, or an
+  intentional failure; the CLI suite rejects unclassified/unterminated fences and compiles every
+  checked example.
 - Continued the `Analyzer` boundary split without changing data ownership: type compatibility and
   unification now live in `types.rs`, call-site effect requirements in `effects.rs`, and source-level
   diagnostic function naming in `names.rs`. Existing exact-diagnostic and deterministic-IR tests

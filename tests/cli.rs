@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use salicin_lang::{check_source, compile_source};
+use salicin_lang::{check_library_source, check_source, compile_source};
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 static TEST_ALLOCATOR_OBJECT: OnceLock<PathBuf> = OnceLock::new();
@@ -812,6 +812,85 @@ fn emit_ir_and_check_cover_the_frontend() {
         "{}",
         output_text(&checked_example)
     );
+}
+
+#[test]
+fn classified_documentation_examples_stay_valid() {
+    fn markdown_files(directory: &Path, files: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(directory).expect("read documentation directory") {
+            let path = entry.expect("read documentation entry").path();
+            if path.is_dir() {
+                markdown_files(&path, files);
+            } else if path.extension().is_some_and(|extension| extension == "md") {
+                files.push(path);
+            }
+        }
+    }
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = vec![root.join("README.md")];
+    markdown_files(&root.join("docs"), &mut files);
+    files.sort();
+
+    let mut checked = 0;
+    let mut fragments = 0;
+    let mut future = 0;
+    for path in files {
+        let markdown = fs::read_to_string(&path).expect("read documentation");
+        let lines = markdown.lines().collect::<Vec<_>>();
+        let mut line = 0;
+        while line < lines.len() {
+            let Some(classification) = lines[line].strip_prefix("```sc") else {
+                line += 1;
+                continue;
+            };
+            let classification = classification.trim();
+            assert!(
+                matches!(classification, "check" | "fragment" | "future" | "fail"),
+                "{}:{} has an unclassified Salicin fence `{}`",
+                path.display(),
+                line + 1,
+                lines[line]
+            );
+            let start = line + 1;
+            line = start;
+            while line < lines.len() && lines[line] != "```" {
+                line += 1;
+            }
+            assert!(
+                line < lines.len(),
+                "{}:{} has an unterminated Salicin fence",
+                path.display(),
+                start
+            );
+            let source = lines[start..line].join("\n") + "\n";
+            match classification {
+                "check" => {
+                    let result = if source.contains("let main") {
+                        check_source(&source)
+                    } else {
+                        check_library_source(&source)
+                    };
+                    assert!(
+                        result.is_ok(),
+                        "{}:{} documented example failed:\n{}",
+                        path.display(),
+                        start,
+                        result.unwrap_err().join("\n")
+                    );
+                    checked += 1;
+                }
+                "fragment" | "fail" => fragments += 1,
+                "future" => future += 1,
+                _ => unreachable!(),
+            }
+            line += 1;
+        }
+    }
+
+    assert!(checked > 0, "no documentation examples are compiled");
+    assert!(fragments > 0, "no non-standalone snippets are classified");
+    assert!(future > 0, "no exploratory snippets are classified");
 }
 
 #[test]

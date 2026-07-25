@@ -17,7 +17,7 @@ Priority meanings:
 
 Current milestone: **M0 release baseline**
 
-Next task: **DOC-CHECK-1**
+Next task: **LIB-SLICE-1**
 
 ### P0 control-source queue
 
@@ -85,7 +85,7 @@ handler or async expansion is admitted.
   - Keep source rewriting, HIR construction, cleanup planning, and emission phase-separated.
   - Require behavior-preserving tests before data-ownership refactors.
 
-- [ ] **DOC-CHECK-1: Compile documentation examples**
+- [x] **DOC-CHECK-1: Compile documentation examples**
   - Extract or mirror normative Salicin snippets as check fixtures.
   - Distinguish exploration snippets that are intentionally not executable.
 

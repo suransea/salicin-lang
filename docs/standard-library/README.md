@@ -48,7 +48,7 @@ memory contracts that compiler-generated types and low-level library code routin
 `Option` and `Result` are fundamental `core` declarations, but ordinary source should name them
 through the `std` facade:
 
-```sc
+```sc fragment
 let Option = std.Option
 let Result = std.Result
 ```
@@ -62,7 +62,7 @@ still split across `core` and `alloc`: `core.option` and `core.result` define `O
 while the `core` root re-exports the root public surface. Standard declarations must be named
 through their module or given transparent aliases with ordinary `let`; for example:
 
-```sc
+```sc fragment
 let Box = std.boxed.Box
 let Vec = std.vec.Vec
 ```

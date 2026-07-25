@@ -4,6 +4,16 @@ This directory is the single entry point for project documentation. Documents de
 language, the implementation, or the current project state; release history belongs only in the
 top-level [changelog](../CHANGELOG.md).
 
+Salicin code fences carry an executable-status label:
+
+- `sc check` is a complete source unit compiled by the CLI regression suite.
+- `sc fragment` is normative or explanatory source that is not independently compilable.
+- `sc future` belongs to explicitly deferred or exploratory design.
+- `sc fail` is intentionally rejected source.
+
+Bare `sc` fences are forbidden. The documentation regression test recursively checks this
+classification, rejects unterminated fences, and compiles every `sc check` block.
+
 ## Language
 
 - [Language specification](language/specification.md): syntax and semantic rules.
