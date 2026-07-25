@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.193.0 - 2026-07-26
+
 - Extended suspended residual async specialization through finite sequential
   awaits after the effectful first segment. Each later child may independently
   return `Pending`; Ready destroys the completed child before starting the
