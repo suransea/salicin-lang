@@ -501,6 +501,31 @@ fn unicode_identifiers_and_logical_newlines_run_natively() {
 }
 
 #[test]
+fn parenthesis_free_unary_calls_preserve_groups_and_precedence() {
+    for (name, output) in batched_native_fixture_outputs(&["parenthesis_free_unary_calls.sc"]) {
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+
+    let output = salic()
+        .arg("check")
+        .arg(fixture("fail", "parenthesis_free_multi_parameter_group.sc"))
+        .output()
+        .expect("reject a bare call split across a multi-parameter group");
+    assert!(!output.status.success(), "{}", output_text(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("too many parameter groups in call to `add`"),
+        "{}",
+        output_text(&output)
+    );
+}
+
+#[test]
 fn malformed_unicode_source_and_confusable_module_names_are_diagnostic() {
     let temporary = TestDirectory::new();
     let malformed = temporary.write("malformed.sc", "let ab\u{200b}cd = 1\n");

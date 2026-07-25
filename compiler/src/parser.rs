@@ -3556,29 +3556,16 @@ impl Parser {
                     }],
                 );
                 can_take_trailing_closure = true;
-            } else if allow_trailing_closure
-                && !can_take_trailing_closure
-                && self.bare_call_argument_can_start()
-            {
-                let before_argument = self.index;
-                let argument = self.expression(false)?;
-                if self.at(&TokenKind::LBrace)
-                    || self.named_trailing_closure_follows()
-                    || self.colonless_named_trailing_closure_follows()
-                    || self.named_nested_trailing_call_follows()
-                {
-                    expression = Expr::Call(
-                        Box::new(expression),
-                        vec![CallArg {
-                            label: None,
-                            value: argument,
-                        }],
-                    );
-                    can_take_trailing_closure = true;
-                } else {
-                    self.index = before_argument;
-                    break;
-                }
+            } else if allow_trailing_closure && self.bare_call_argument_can_start() {
+                let argument = self.unary(false)?;
+                expression = Expr::Call(
+                    Box::new(expression),
+                    vec![CallArg {
+                        label: None,
+                        value: argument,
+                    }],
+                );
+                can_take_trailing_closure = true;
             } else if allow_trailing_closure && self.at(&TokenKind::Newline) {
                 let before_newlines = self.index;
                 while self.take(&TokenKind::Newline) {}
@@ -3608,21 +3595,24 @@ impl Parser {
         }
     }
 
-    fn bare_call_argument_can_start(&self) -> bool {
-        match &self.current().kind {
+    fn token_can_start_bare_call_argument(kind: &TokenKind) -> bool {
+        match kind {
             TokenKind::Ident(name) => name != "match",
             TokenKind::Integer(_)
             | TokenKind::True
             | TokenKind::False
+            | TokenKind::Copy
+            | TokenKind::Move
             | TokenKind::Root
             | TokenKind::Super
             | TokenKind::LParen
-            | TokenKind::LBracket
-            | TokenKind::Minus
-            | TokenKind::Bang
-            | TokenKind::Borrow => true,
+            | TokenKind::LBracket => true,
             _ => false,
         }
+    }
+
+    fn bare_call_argument_can_start(&self) -> bool {
+        Self::token_can_start_bare_call_argument(&self.current().kind)
     }
 
     fn named_trailing_closure_follows(&self) -> bool {
@@ -3803,15 +3793,13 @@ impl Parser {
                 })))
             }
             TokenKind::Ident(ref name)
-                if name == "throw" && self.at_offset(1, &TokenKind::LParen) =>
+                if name == "throw"
+                    && (self.at_offset(1, &TokenKind::LParen)
+                        || Self::token_can_start_bare_call_argument(
+                            &self.tokens[self.index + 1].kind,
+                        )) =>
             {
                 self.advance();
-                if !self.at(&TokenKind::LParen) && !self.at_control_expression_boundary() {
-                    return Err(self.error_at(
-                        &token,
-                        "`throw` is a function; write `throw(error)`",
-                    ));
-                }
                 Ok(Self::core_control_function("throw"))
             }
             TokenKind::Ident(ref name) if name == "return" => {
@@ -4020,9 +4008,14 @@ impl Parser {
     fn return_expression(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
         self.expect(&TokenKind::Return, "`return`")?;
         if !self.take(&TokenKind::LParen) {
-            return Err(
-                self.error_here("`return` is a function; write `return(value)` or `return()`")
-            );
+            if self.at_control_expression_boundary() {
+                return Err(self.error_here(
+                    "`return` requires one value or an explicit empty group `return()`",
+                ));
+            }
+            return Ok(Expr::Return(Some(Box::new(
+                self.expression(allow_trailing_closure)?,
+            ))));
         }
         if self.take(&TokenKind::RParen) {
             return Ok(Expr::Return(None));
@@ -4207,7 +4200,14 @@ impl Parser {
     fn break_expression(&mut self, allow_trailing_closure: bool) -> Result<Expr, ParseError> {
         self.expect(&TokenKind::Break, "`break`")?;
         if !self.take(&TokenKind::LParen) {
-            return Err(self.error_here("`break` is a function; write `break(value)` or `break()`"));
+            if self.at_control_expression_boundary() {
+                return Err(self.error_here(
+                    "`break` requires one value or an explicit empty group `break()`",
+                ));
+            }
+            return Ok(Expr::Break(Some(Box::new(
+                self.expression(allow_trailing_closure)?,
+            ))));
         }
         if self.take(&TokenKind::RParen) {
             return Ok(Expr::Break(None));
@@ -6684,8 +6684,19 @@ mod tests {
                 ))
         ));
 
-        let error = parse("let main(): () = { unsafe do {} }\n").unwrap_err();
-        assert!(!error.message.is_empty());
+        let program = parse("let main(): () = { unsafe do {} }\n").unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        assert!(matches!(
+            function_tail(function),
+            Expr::Call(callee, arguments)
+                if matches!(callee.as_ref(), Expr::Name(name) if name == "unsafe")
+                    && matches!(arguments.as_slice(), [CallArg {
+                        value: Expr::DoBlock { .. },
+                        ..
+                    }])
+        ));
     }
 
     #[test]
@@ -7041,8 +7052,26 @@ mod tests {
             )
         );
 
-        let error = parse("let fail(): Result(bool)(i32) = { throw false }\n").unwrap_err();
-        assert!(!error.message.is_empty());
+        let program = parse("let fail(): Result(bool)(i32) = { throw false }\n").unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        assert_eq!(
+            function_tail(function),
+            &Expr::Call(
+                Box::new(Expr::Member(
+                    Box::new(Expr::Member(
+                        Box::new(Expr::Name("core".to_owned())),
+                        "error".to_owned(),
+                    )),
+                    "throw".to_owned(),
+                )),
+                vec![CallArg {
+                    label: None,
+                    value: Expr::Bool(false),
+                }],
+            )
+        );
     }
 
     #[test]
@@ -7072,8 +7101,82 @@ mod tests {
             Expr::Member(_, name) if name == "try"
         ));
 
-        let malformed = parse("let value: Result(bool)(i32) = try do { 42 }\n").unwrap_err();
-        assert!(!malformed.message.is_empty());
+        let program = parse("let value: Result(bool)(i32) = try do { 42 }\n").unwrap();
+        let Item::Global(binding) = &program.items[0] else {
+            panic!("expected global");
+        };
+        assert!(matches!(
+            &binding.value,
+            Expr::Call(callee, arguments)
+                if matches!(callee.as_ref(), Expr::Name(name) if name == "try")
+                    && matches!(arguments.as_slice(), [CallArg {
+                        value: Expr::DoBlock { .. },
+                        ..
+                    }])
+        ));
+    }
+
+    #[test]
+    fn parses_parenthesis_free_unary_call_groups() {
+        let program = parse(
+            "let value = transform input\n\
+             let curried = combine left right\n\
+             let mapped = map values { (value: i32) -> value + 1 }\n\
+             let method = receiver.shift amount\n",
+        )
+        .unwrap();
+        let values = program
+            .items
+            .iter()
+            .map(|item| match item {
+                Item::Global(binding) => &binding.value,
+                _ => panic!("expected global"),
+            })
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            values[0],
+            Expr::Call(callee, arguments)
+                if matches!(callee.as_ref(), Expr::Name(name) if name == "transform")
+                    && matches!(arguments.as_slice(), [CallArg {
+                        value: Expr::Name(name),
+                        ..
+                    }] if name == "input")
+        ));
+        assert!(matches!(
+            values[1],
+            Expr::Call(callee, right)
+                if matches!(right.as_slice(), [CallArg {
+                    value: Expr::Name(name),
+                    ..
+                }] if name == "right")
+                    && matches!(
+                        callee.as_ref(),
+                        Expr::Call(inner, left)
+                            if matches!(inner.as_ref(), Expr::Name(name) if name == "combine")
+                                && matches!(left.as_slice(), [CallArg {
+                                    value: Expr::Name(name),
+                                    ..
+                                }] if name == "left")
+                    )
+        ));
+        assert!(matches!(
+            values[2],
+            Expr::Call(callee, closure)
+                if matches!(closure.as_slice(), [CallArg {
+                    value: Expr::Closure(_, _),
+                    ..
+                }])
+                    && matches!(
+                        callee.as_ref(),
+                        Expr::Call(_, values) if values.len() == 1
+                    )
+        ));
+        assert!(matches!(
+            values[3],
+            Expr::Call(callee, arguments)
+                if matches!(callee.as_ref(), Expr::Member(_, member) if member == "shift")
+                    && arguments.len() == 1
+        ));
     }
 
     #[test]
@@ -8361,13 +8464,16 @@ mod tests {
         for (source, expected) in [
             (
                 "let run(): () = { loop { break } }\n",
-                "`break` is a function",
+                "`break` requires one value",
             ),
             (
                 "let run(): () = { loop { continue } }\n",
                 "`(` after `continue`",
             ),
-            ("let run(): () = { return }\n", "`return` is a function"),
+            (
+                "let run(): () = { return }\n",
+                "`return` requires one value",
+            ),
         ] {
             let error = parse(source).unwrap_err();
             assert!(error.message.contains(expected), "{}", error.message);
@@ -8951,6 +9057,7 @@ mod tests {
         )
         .expect("contextual async spellings must remain ordinary identifiers");
 
-        assert!(parse("let main(): i32 = { async { { await value } } }\n").is_err());
+        parse("let main(): i32 = { async { { await value } } }\n")
+            .expect("await accepts a parenthesis-free operand");
     }
 }

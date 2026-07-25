@@ -277,7 +277,7 @@ Supplying a group creates or invokes the next function layer. Arguments for a su
 evaluated left to right. A partial application performs the passing actions for supplied arguments
 but does not execute the final body until all runtime groups are supplied.
 
-### 5.1 Labels and Trailing Closures
+### 5.1 Unary Groups, Labels, and Trailing Closures
 
 Runtime parameters may be labeled. Positional arguments must precede labeled arguments, and each
 parameter is supplied exactly once.
@@ -286,6 +286,21 @@ parameter is supplied exactly once.
 let clamp(value: i32, min lower: i32, max upper: i32): i32 = { ... }
 let bounded = clamp(42, min: 0, max: 100)
 ```
+
+One positional argument may omit its parentheses when it supplies a runtime
+group containing exactly one parameter:
+
+```sc fragment
+let increment(value: i32): i32 = { value + 1 }
+let apply(value: i32)(move action: (i32): i32): i32 = { action(value) }
+
+let answer = apply 40 { (value: i32) -> increment value }
+```
+
+Each bare argument supplies a separate group, so `f x y` means `f(x)(y)`.
+Application binds more tightly than infix operators. Parentheses remain
+required for empty groups, groups with multiple parameters, labeled
+arguments, and a compound expression intended as one bare argument.
 
 A trailing closure supplies the next unapplied function group. It may supply the first group
 directly (`run { action() }`) without a preceding parenthesized group. Multiple trailing closures

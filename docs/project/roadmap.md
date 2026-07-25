@@ -69,10 +69,26 @@ Trait requirements remain bodyless; user opaque types are a separate design prob
 This direction replaces `rep c`, `@link_name`, and grouped `extern "C"` declarations. It does not
 introduce `@` syntax, and `foreign` is not a variant of `builtin`.
 
+## Next Milestone: ABI And Compiler Definitions
+
+This milestone starts when residual async polling is complete, before formatter,
+LSP, package, or incremental-compilation work.
+
+Exit conditions:
+
+- C-compatible data uses only `struct(c)` and has verified layout diagnostics;
+- every foreign declaration uses `foreign(c, ...)`, defaults its symbol
+  predictably, and requires `Unsafe` at call sites;
+- every compiler-owned core declaration uses the private complete
+  `builtin()` initializer, while trait requirements remain bodyless;
+- legacy `rep c`, `@link_name`, and grouped `extern "C"` forms have migration
+  diagnostics and no accepted grammar path;
+- source, contract, cross-module, LLVM, and native tests cover the three
+  boundaries independently.
+
 ## Ecosystem Milestone
 
-Tooling and package compatibility follow stabilization of source semantics and runtime
-representations:
+Tooling and package compatibility follow the ABI and compiler-definition milestone:
 
 - a formatter based on parser-preserving syntax invariants;
 - an LSP over stable parser and semantic spans;

@@ -6,6 +6,15 @@ subset.
 
 ## Unreleased
 
+- Added parenthesis-free application for runtime groups containing one
+  positional parameter. Ordinary functions and methods accept `f value`,
+  repeated forms preserve curried groups, and a tail closure can follow the
+  bare argument. Application binds above infix operators; empty,
+  multi-parameter, and labeled groups retain explicit parentheses.
+- Promoted the confirmed `struct(c)`, `foreign(c, ...)`, and core-private
+  `builtin()` work to the milestone immediately following residual async
+  polling, ahead of formatter, LSP, package, and incremental-compilation work.
+
 ## 0.188.0 - 2026-07-26
 
 - Specialized non-suspending residual `Throws(Error)` futures through the

@@ -371,6 +371,7 @@ prefix_op = "-" | "!" | contextual("move") | contextual("borrow") ;
 ```ebnf
 postfix_suffix =
     argument_group
+  | bare_argument
   | ".", IDENT
   | "?.", IDENT
   | "[", expression, "]"
@@ -381,9 +382,18 @@ argument_group =
 
 argument = [ IDENT, ":" ], expression ;
 
+bare_argument = primary, { argument_group | ".", IDENT | "?.", IDENT | "[", expression, "]" } ;
+
 trailing_closure =
     [ IDENT ], block ;
 ```
+
+`f value` supplies one positional argument as the next call group. The next
+runtime group must therefore contain exactly one parameter. Repeated bare
+arguments preserve currying: `f left right` is `f(left)(right)`, not
+`f(left, right)`. Bare application binds more tightly than infix operators, so
+`f x + y` is `(f x) + y`; use `f (x + y)` to pass the complete infix
+expression. A logical newline does not begin a bare argument.
 
 ```ebnf
 primary =

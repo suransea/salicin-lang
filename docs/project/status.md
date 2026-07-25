@@ -101,6 +101,9 @@ their container.
 
 Implemented data and control features include:
 
+- parenthesis-free application for one-parameter runtime groups, including
+  curried groups, methods, and trailing closures, with application binding
+  above infix operators and logical newlines ending the call;
 - nominal structs and closed enums;
 - tuple, struct, enum, literal, binding, and wildcard patterns;
 - exhaustive `match` with guards;
