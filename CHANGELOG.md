@@ -6,6 +6,10 @@ subset.
 
 ## Unreleased
 
+- Reorganized the documentation around single sources of truth for language semantics, grammar,
+  implementation status, roadmap direction, and unfinished work. The English specification now
+  reflects the current domain and region models, stale milestone and completed-design documents
+  were removed, and the README and documentation index expose only active references.
 - Made generic trait method binders alpha-equivalent across concrete, blanket, constructor, and
   default implementations. Method-level where predicates and associated equalities are now parsed
   and checked as part of the trait contract; implementations cannot strengthen them. Type, effect,

@@ -2,228 +2,72 @@
 
 Status: executable queue
 
-This file tracks work that can be started. It is intentionally narrower than the
-[roadmap](roadmap.md). Keep at most one language task in progress, preserve stable task IDs in
-commits and discussions, and remove completed details after recording them in the changelog.
+This file contains only unfinished or immediately preparatory work. The
+[roadmap](roadmap.md) defines milestone order, [status](status.md) records implemented behavior,
+and the [changelog](../../CHANGELOG.md) records completed work.
 
 Priority meanings:
 
-- **P0**: current milestone or regression blocker;
+- **P0**: current task or regression blocker;
 - **P1**: next milestone preparation;
-- **P2**: accepted later work whose entry gate is not yet open;
-- **Deferred**: not actionable without a new design decision.
+- **P2**: accepted later work whose entry gate is not open;
+- **Deferred**: requires a new design decision.
 
-## Current focus
+## Current
 
-Current milestone: **TYPE1 static abstraction**
+- [ ] **TYPE-CALLABLE-EFFECT-1: Materialize generic custom-effect callables**
+  - Reconcile callable annotations after a generic effect argument is instantiated.
+  - Accept direct capturing closures passed to a callable parameter with the selected custom
+    effect.
+  - Preserve callable identity, capture ownership, one-shot consumption, and source diagnostics
+    through CPS conversion.
+  - Cover concrete and generic effects, capturing and non-capturing actions, rejection paths, and
+    native cleanup.
 
-Next task: **TYPE-CALLABLE-EFFECT-1**
+- [ ] **TYPE-DIAG-1: Improve kind and constructor diagnostics**
+  - Name the source binder and expected compile-time kind.
+  - Distinguish arity, group, kind, and inference failures.
+  - Keep generated markers and specialization names out of diagnostics.
 
-### P0 control-source queue
+## Next
 
-- [x] **PARTIAL-FN-1: Make pattern partial functions first-class**
-  - Preserve the unmatched non-`Copy` input on `Miss`.
-  - Delay pattern moves until the pattern and guard both succeed.
-  - Carry captures, result type, and latent effect row through storage and calls.
-
-- [x] **MATCH-SOURCE-1: Implement `match` through partial functions**
-  - Define the minimal source-backed `Hit`/`Miss` attempt contract.
-  - Consume heterogeneous case parameter groups in source order.
-  - Keep exhaustiveness and unreachable-case checking static.
-
-- [x] **IF-SOURCE-1: Implement `if` through `match`**
-  - Give `core.control.if` an ordinary source body over boolean cases.
-  - Remove the independent compiler-only `if` selection path after parity tests pass.
-
-### EH1 stop condition
-
-EH1 is closed. The explicit control-source priority above runs before **M0-AUDIT-1**; no adjacent
-handler or async expansion is admitted.
-
-## P1 M0 release baseline
-
-- [x] **M0-AUDIT-1: Build the M0 conformance matrix**
-  - Map every bullet in `core-scope.md` to positive, negative, diagnostic, and native tests.
-  - Mark missing evidence as a task; do not silently reclassify it as an extension.
-
-- [x] **M0-FRONTEND-EVIDENCE-1: Close Unicode and logical-newline evidence**
-  - Add positive native Unicode identifier and multiline source fixtures.
-  - Add stable diagnostics for malformed or disallowed source/module spellings.
-
-- [x] **M0-TUPLE-1: Implement the frozen non-unit tuple slice**
-  - Cover tuple types, literals, projection, patterns, ownership, and cleanup.
-  - Add positive, negative, diagnostic, and native evidence.
-
-- [x] **M0-SCALAR-1: Reconcile declared primitive scalar widths**
-  - Lower the declared narrow, wide, and target-sized runtime integer types.
-  - Cover layout, arithmetic, conversion boundaries, diagnostics, and native execution.
-
-- [x] **M0-FFI-1: Implement the frozen bounded C FFI slice**
-  - Define admissible C ABI signatures and require `unsafe` at foreign call sites.
-  - Add parser, semantic, linking, diagnostic, and native round-trip tests.
-
-- [x] **M0-DIAG-1: Attach source spans to semantic errors**
-  - [x] Preserve defining source paths and declaration positions through semantic specialization.
-  - [x] Attach executable expression-statement start positions through semantic lowering.
-  - [x] Attach exact local-initializer positions and end-exclusive expression-root ranges.
-  - [x] Make source-location wrappers transparent to trailing source-closure handler lowering.
-  - [x] Prioritize ownership, borrow, handler, trait selection, and generic inference errors.
-  - [x] Enforce a repository-wide generated-name zero-leak diagnostic gate.
-
-- [x] **M0-QUALITY-1: Make the repository quality gate clean**
-  - `cargo fmt --check`
-  - `cargo clippy --all-targets -- -D warnings`
-  - `cargo test`
-  - Run the ledger acceptance program from a clean build.
-
-- [x] **M0-DETERMINISM-1: Verify deterministic compiler output**
-  - Compare diagnostics, LLVM symbols, lockfiles, and generated IR across repeated clean builds.
-  - Remove hash-map iteration order from user-visible output.
-
-- [x] **COMPILER-SPLIT-1: Continue the Analyzer boundary split**
-  - Move behavior behind existing `codegen/` module ownership boundaries.
-  - Keep source rewriting, HIR construction, cleanup planning, and emission phase-separated.
-  - Require behavior-preserving tests before data-ownership refactors.
-
-- [x] **DOC-CHECK-1: Compile documentation examples**
-  - Extract or mirror normative Salicin snippets as check fixtures.
-  - Distinguish exploration snippets that are intentionally not executable.
-
-## P1 library usability
-
-Entry gate: **M0-QUALITY-1** and **M0-AUDIT-1**
-
-- [x] **LIB-SLICE-1: Specify and implement slices**
-  - Keep `Slice(T)` unsized and expose values only through region-bound fat borrows.
-  - Support Array unsizing and anchored shared/mutable `Vec.as_slice`.
-  - Provide source-backed `len` and bounds-checked, access-preserving `at`.
-  - Reject bare Slice storage and cover aliasing, escape, mutation, native bounds, and ownership.
-- [x] **LIB-INDEX-1: Route indexing through source-backed traits**
-  - Define one access-polymorphic `Index(Key)` contract with associated `Output`.
-  - Route user types, Array, Slice, and Vec reads, explicit borrows, and assignments through it.
-  - Preserve single evaluation, temporary-loan shortening, bounds traps, aliasing, and cleanup.
-- [x] **LIB-ITER-1: Add array, slice, and Vec iterator implementations**
-  - Provide source-backed Copy-value iteration for Array and the initial stored-loan Slice iterator.
-  - Consume Vec values in source order and drop only the unyielded suffix on early exit.
-  - Preserve stored slice loans and reject mutation or escape while an iterator retains them.
-- [x] **LIB-VEC-1: Complete Vec mutation and consuming-iterator cleanup**
-  - Cover ordered and swap removal, insertion, append, reversal, truncation, and capacity changes.
-  - Preserve resource ownership across reallocation and mutation without duplicate drops.
-  - Invalidate consumed vectors and clean the unyielded iterator suffix exactly once.
-- [x] **LIB-STRING-DESIGN-1: Decide the minimum owning string model**
-  - Use a private `Vec(u8)` representation with an always-valid UTF-8 invariant.
-  - Keep lengths and capacities byte-based and mutable byte views unavailable to safe code.
-  - Preserve failed input ownership through `FromUtf8Error`.
-- [x] **LIB-STRING-1: Implement the minimum owning string model**
-  - Add validation, byte views/conversion, invariant-preserving mutation, and allocation behavior
-    specified by [the accepted design](string-design.md).
-  - Cover invalid UTF-8 boundaries, consuming ownership, reallocation, and exactly-once cleanup.
-- [x] **LIB-EXAMPLE-1: Add a nontrivial library-style native example**
-  - `examples/inventory` composes `String`, `Vec`, `Result`, user traits, and file modules.
-  - Its native acceptance path validates owning UTF-8 conversion, recoverable invalid bytes,
-    consuming collection iteration, trait dispatch, and cleanup before returning 42.
-
-Each library task requires ownership, aliasing, allocation-failure, bounds, and cleanup behavior to
-be explicit where applicable.
-
-## P2 static abstraction
-
-Entry gate: concrete requirements from LIB1
-
-- [x] **TYPE-GAT-1: Lower generic associated constructors**
-  - Preserve `type`, `access`, `region`, `usize`, and closed-value parameter kinds.
-  - Substitute direct and partially applied alias constructors into trait method templates.
-  - Keep constructor equality predicates gated by `TYPE-EQ-1`.
-- [x] **LIB-ITER-BORROW-1: Use GATs for borrow-yielding and mutable iteration**
-  - Replace the Copy-value Slice iterator boundary with shared and mutable element borrows.
-  - Preserve source access, receiver-region shortening, alias exclusion, escape rejection, and
-    exactly-once iterator cleanup.
-- [x] **TYPE-EQ-1: Add bounded constructor-equation solving**
-  - Bind GAT equation parameters explicitly on the associated name in a where predicate.
-  - Require exact parameter groups and kinds, compare alpha-normalized alias-expanded applications,
-    and bound recursive rewriting to 32 expansions.
-- [x] **TYPE-CALLABLE-1: Bridge capturing callables into source protocols**
-  - Implement the accepted [static specialization design](callable-bridge-design.md).
-  - Preserve capture ownership, source-order evaluation, lazy invocation, effect rows, and
-    source-level diagnostics across `Chain`, `Coalesce`, and higher-order protocols.
-- [x] **TYPE-TRAIT-METHOD-1: Support coherent generic trait methods**
-  - Implement the accepted [coherence design](generic-trait-method-design.md).
-  - Alpha-normalize method binders and compare complete signatures and method predicates.
-- [ ] **TYPE-CALLABLE-EFFECT-1: Unify generic custom-effect callable materialization**
-  - Reconcile instantiated custom-effect callable annotations before CPS conversion.
-  - Accept a direct capturing closure in `forward(E)(action with(E))` after selecting a concrete
-    algebraic effect, without weakening callable identity or ownership checks.
-- [x] **TYPE-CONST-NOMINAL-1: Extend compile-time scalar arguments to nominal types and type aliases**
-- [ ] **TYPE-DIAG-1: Improve kind and constructor inference diagnostics**
-
-## P2 async exploration
-
-Entry gate: all ASYNC1 prerequisites in the roadmap
-
-- [ ] **ASYNC-CONTRACT-1: Finalize Future, Pin, and executor source contracts**
-- [ ] **ASYNC-STATE-1: Lower async handlers to anonymous state machines**
-- [ ] **ASYNC-POLL-1: Implement typed poll transitions**
+- [ ] **ASYNC-CONTRACT-1: Specify Future, pinning, and executor contracts**
+- [ ] **ASYNC-STATE-1: Lower cold async blocks to state machines**
+- [ ] **ASYNC-POLL-1: Implement typed polling transitions**
 - [ ] **ASYNC-CANCEL-1: Drop initialized state on cancellation**
 - [ ] **ASYNC-BORROW-1: Reject first-version self-referential states**
 - [ ] **ASYNC-EXEC-1: Provide one explicit minimal executor**
 
-## P2 ecosystem
+Async implementation starts only after `TYPE-CALLABLE-EFFECT-1` is complete and
+`ASYNC-CONTRACT-1` is accepted.
+
+## Later
 
 - [ ] **TOOL-FMT-1: Define formatter-preserving syntax invariants**
 - [ ] **TOOL-LSP-1: Expose parser and semantic spans for an LSP**
 - [ ] **PKG-WORKSPACE-1: Design workspaces and registry dependency identities**
 - [ ] **PKG-REPRO-1: Specify reproducible dependency resolution**
-- [ ] **ABI-1: Design an external ABI only after representation review**
+- [ ] **ABI-1: Design an external ABI after representation review**
 - [ ] **INCR-1: Define stable incremental-compilation inputs**
 
-## Recently completed
-
-- [x] **PARTIAL-FN-1:** Add typed pattern closures returning `Attempt(Input)(Output)`, including
-  guarded non-`Copy` misses, capture ownership, latent effects, storage, and direct function
-  arguments.
-- [x] **CALL-PARTIAL-1:** Support multi-stage partial application of curried capturing closures.
-- [x] **EFF-DIAG-1:** Inventory handler rejection boundaries and lock source-level diagnostics.
-- [x] **SCOPE-M0-1:** Freeze the M0 core scope and change gate.
-- [x] **EFF-FOR-1:** Carry iterator ownership through effectful `for` loops.
-- [x] **EFF-OWNED-1:** Replace iterator-name capture exceptions with handler-owned capture policy.
-- [x] **EFF-FRAME-1:** Fuse distinct borrowed roots into eligible non-recursive handler frames.
-- [x] **EFF-FIELD-1:** Extend frame fusion to stable nested field places.
-- [x] **EFF-INDEX-1:** Stage indexed borrow places once and rebuild them from frame-owned roots.
-- [x] **EFF-ALIAS-1:** Fuse statically disjoint same-root projections into handler frames.
-- [x] **EFF-RESIDUAL-1:** Share owned roots through concrete residual effect rows.
-- [x] **EFF-RECUR-1:** Share owned roots through direct and mutually recursive effectful calls.
-- [x] **EFF-ACTION-1:** Stage borrowed root and field arguments before direct handler actions.
-- [x] **EFF-CALLABLE-1:** Carry open one-shot actions through the erased `EffectCallable` ABI.
-- [x] **CORE-MEMORY-1:** Source-back raw pointer and layout-query contracts in `core.memory`.
-- [x] **TYPE-CONST-1:** Add `usize` compile-time values and source-back curried `Array(T)(L)`.
-- [x] **CORE-PTR-1:** Unify raw pointers as `Ptr(A: access = shared)(T: type)`.
-- [x] **PTR-EXTEND-1:** Extend `Ptr(A)(T)` generically and specialize `Ptr(mut)(T)` directly.
-- [x] **CORE-BORROW-1:** Move borrow contracts from `core.domains` into `core.borrow`.
-- [x] **LIB-ALLOC-API-1:** Keep Box/Vec in the allocation-capable layer and expose only their inherent APIs through std.
-- [x] **LIB-BOX-1:** Replace `Box.as_mut_ptr` with consuming `into_raw` and unsafe `from_raw`.
-- [x] **EXAMPLE-LEDGER-1:** Process non-`Copy` transactions in an effectful native ledger loop.
-
-## Definition of done
+## Definition of Done
 
 A task is complete only when:
 
-1. source semantics and explicit rejection boundaries are documented;
-2. positive and negative tests cover typing and ownership;
-3. diagnostics identify source-level constructs rather than generated internals;
-4. native tests cover relevant success, trap, resume, abandon, and cleanup paths;
-5. `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test` pass, or an
-   already-tracked unrelated gate is called out explicitly;
-6. the changelog and implementation status describe the resulting behavior;
+1. its source semantics and rejection boundaries are documented;
+2. positive and negative tests cover typing, ownership, and effects;
+3. diagnostics identify source constructs rather than generated internals;
+4. native tests cover relevant execution, trap, resume, abandon, and cleanup paths;
+5. `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and the full test suite pass;
+6. status and changelog entries are updated;
 7. the commit is pushed with a clean worktree.
 
 ## Deferred
-
-Do not turn these into implementation tasks without an accepted design and roadmap gate:
 
 - multi-shot continuations;
 - implicit IO or allocation effects;
 - garbage collection;
 - runtime trait objects and open-world dispatch;
-- macros, reflection, or compile-time execution;
+- macros, reflection, or general compile-time execution;
 - a public registry service;
 - a stable ABI or 1.0 compatibility promise.

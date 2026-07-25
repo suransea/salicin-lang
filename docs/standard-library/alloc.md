@@ -59,6 +59,8 @@ and invalid consuming conversion preserves the original vector in `FromUtf8Error
 validation, byte recovery, capacity management, clearing, and append are ordinary source-backed
 methods. `from_utf8_unchecked` requires the standard `Unsafe` effect. Character scalars, a borrowed
 `Str` type, indexing, Unicode algorithms, and general string literal expressions remain deferred.
-The complete contract is recorded in the [owning string design](../project/string-design.md).
+`String` owns a private `Vec(u8)`, maintains valid UTF-8, measures length and capacity in bytes,
+and exposes no safe mutable byte view. Failed UTF-8 conversion returns ownership through
+`FromUtf8Error`.
 
 See [standard-library organization](README.md) for the prelude and alias policy.

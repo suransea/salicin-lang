@@ -1,9 +1,9 @@
 # Salicin
 
-Salicin is an experimental, statically compiled programming language with an LLVM backend. It
-explores uniform `let` declarations, curried parameter groups, ownership-aware argument passing,
-traits, pattern matching, closures, and source-backed language items. Source files use `.sc`, and
-the compiler executable is `salic`.
+Salicin is an experimental, statically compiled language with an LLVM backend. Its core model
+combines uniform `let` declarations, curried compile-time and runtime application, deterministic
+ownership, static traits, pattern matching, closures, and explicit algebraic effects. Source files
+use `.sc`; the compiler executable is `salic`.
 
 > Salicin is under active development. Its syntax, semantics, and standard library are not stable.
 
@@ -52,17 +52,15 @@ examples/   Small Salicin programs
 tests/      End-to-end compiler tests
 ```
 
-Documentation starts at [docs/README.md](docs/README.md). In particular:
+Documentation starts at [docs/README.md](docs/README.md):
 
 - [language specification](docs/language/specification.md)
 - [grammar](docs/language/grammar.md)
 - [compiler architecture](docs/compiler/architecture.md)
-- [standard-library organization](docs/standard-library/README.md)
-- [frozen M0 core scope](docs/project/core-scope.md)
+- [standard library](docs/standard-library/README.md)
 - [implementation status](docs/project/status.md)
 - [language roadmap](docs/project/roadmap.md)
 - [project TODO](docs/project/todo.md)
-- [release history](CHANGELOG.md)
 
 ## Development
 

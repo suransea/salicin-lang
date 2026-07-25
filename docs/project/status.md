@@ -58,14 +58,17 @@ Implemented type-system features include:
 - associated types and generic associated constructors;
 - bounded generic associated-constructor equality predicates;
 - static trait and operator dispatch;
-- trait inheritance predicates and first-order associated-type equality predicates.
+- trait inheritance predicates and associated-type equality predicates;
+- alpha-equivalent generic trait methods across concrete, blanket, constructor, and default
+  implementations;
+- static specialization of capturing callables passed to known higher-order callees.
 
 Generic associated constructors preserve parameter kinds and groups in trait declarations and
 implementations. Standard iterator contracts use `Item(R: region): type`, allowing an item type to
 depend on the receiver-borrow region.
 
-Captured callable bridging, fully coherent generic trait methods, and improved constructor
-diagnostics remain active TYPE1 work.
+The remaining static-abstraction work is generic custom-effect callable materialization and clearer
+kind and constructor diagnostics.
 
 ## Ownership and Borrowing
 
@@ -93,7 +96,7 @@ Implemented data and control features include:
 - nominal structs and closed enums;
 - tuple, struct, enum, literal, binding, and wildcard patterns;
 - exhaustive `match` with guards;
-- `if`, `if let`, `loop`, `while`, `while let`, post-test loops, and `for`;
+- `if`, `loop`, `while`, post-test loops, and `for`;
 - `break`, `continue`, and `return`;
 - checked arithmetic, comparisons, bitwise operations, shifts, and compound assignment;
 - deterministic left-to-right evaluation;
@@ -186,9 +189,7 @@ modules, owning strings, vectors, results, user traits, resource transfer, itera
 
 The principal incomplete areas are:
 
-- bounded generic constructor equations;
-- general captured-callable conversion for higher-order protocols;
-- remaining generic trait-method coherence;
+- callable materialization after a generic custom effect becomes concrete;
 - concise diagnostics for underconstrained constructor and effect inference;
 - host-facing `std` APIs;
 - complete asynchronous execution;

@@ -58,7 +58,9 @@ Fixed structural keywords include `let`, `struct`, `enum`, `trait`, `extend`, `p
 `parameters`, `borrow`, `copy`, `move`, `shared`, `mut`, and control-operation names are
 contextual: they retain their special meaning only in the corresponding grammatical position.
 
-A region name begins with `'`, as in `'input`. `'static` is predefined and cannot be redeclared.
+Region binders are ordinary identifiers declared by `R: region`. Diagnostics may display inferred
+regions with a leading apostrophe; that rendering is not source binder syntax. `'static` is a
+predefined region identity and cannot be redeclared.
 
 ## 3. Declarations and Names
 

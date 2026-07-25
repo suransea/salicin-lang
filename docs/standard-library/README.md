@@ -98,6 +98,6 @@ must come from the matching `core`, while user declarations with the same spelli
 declarations. `std`, `core`, and `alloc` are reserved top-level namespaces, not manifest
 dependencies.
 
-The complete [`examples/inventory`](../../examples/inventory) package demonstrates the LIB1
-surface across file modules: validated owning strings, recoverable byte conversion, a vector of
-non-`Copy` values, consuming iteration, and user trait dispatch.
+The complete [`examples/inventory`](../../examples/inventory) package exercises file modules,
+validated owning strings, recoverable byte conversion, a vector of non-`Copy` values, consuming
+iteration, and user trait dispatch.

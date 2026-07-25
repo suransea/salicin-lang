@@ -1,8 +1,13 @@
 # Salicin documentation
 
-This directory is the single entry point for project documentation. Documents describe either the
-language, the implementation, or the current project state; release history belongs only in the
-top-level [changelog](../CHANGELOG.md).
+This directory is the entry point for current Salicin documentation. Each subject has one source
+of truth:
+
+- the specification defines language meaning;
+- the grammar defines accepted source form;
+- implementation documents explain how the compiler and libraries realize those contracts;
+- status, roadmap, and TODO record facts, direction, and unfinished work respectively;
+- release history belongs only in the top-level [changelog](../CHANGELOG.md).
 
 Salicin code fences carry an executable-status label:
 
@@ -33,17 +38,7 @@ classification, rejects unterminated fences, and compiles every `sc check` block
 
 ## Project
 
-- [M0 core scope](project/core-scope.md): frozen implementation target, maturity labels, exclusions,
-  and the gate for expanding the language.
-- [M0 conformance matrix](project/m0-conformance.md): positive, negative, diagnostic, and native
-  evidence for every frozen M0 capability.
-- [Implementation status](project/status.md): supported surface and known structural gaps.
-- [Capturing callable bridge](project/callable-bridge-design.md): accepted static-specialization
-  design for higher-order protocol calls.
-- [Coherent generic trait methods](project/generic-trait-method-design.md): binder equivalence,
-  contracts, coherence, and static instantiation.
-- [Language roadmap](project/roadmap.md): milestone order, dependencies, exit conditions, and
-  explicit deferrals.
-- [Project TODO](project/todo.md): prioritized executable tasks with stable IDs and acceptance
-  criteria.
+- [Implementation status](project/status.md): supported behavior and known boundaries.
+- [Language roadmap](project/roadmap.md): milestone order, exit conditions, and deferrals.
+- [Project TODO](project/todo.md): unfinished tasks and their acceptance criteria.
 - [Changelog](../CHANGELOG.md): release-by-release history.
