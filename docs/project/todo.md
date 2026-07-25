@@ -25,7 +25,9 @@ Priority meanings:
 
 `MOVE-TRAIT-1` and `ASYNC-STATE-1` are complete. Cold async blocks now materialize compiler-owned
 nominal state, preserve owned captures across relocation, and drop unpolled captures on
-cancellation. Poll transitions remain the current task.
+cancellation. The no-suspension transition now implements `Future((), Output = T)`, returns
+`Poll.Ready(T)` once, and suppresses completed-state capture cleanup. `Poll.Pending`, `await`
+resumption, and residual-effect inference remain the current task.
 
 ## Later
 

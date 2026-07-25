@@ -350,6 +350,12 @@ pub(super) struct HirProgram {
     pub(super) tuple_types: HashSet<Ty>,
     pub(super) continuation_adapters: Vec<ContinuationAdapter>,
     pub(super) effect_callable_adapters: Vec<EffectCallableAdapter>,
+    pub(super) async_states: HashMap<String, AsyncStateLayout>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct AsyncStateLayout {
+    pub(super) owned_capture_fields: Vec<usize>,
 }
 
 #[derive(Debug, Clone)]

@@ -16,6 +16,10 @@ subset.
 - Lowered cold async blocks without suspension to private nominal state containing an explicit
   state word and captured fields. Generated future state satisfies structural `Move`, and
   cancellation drops moved captures exactly once without executing the body.
+- Registered compiler-generated cold states as real `Future((), Output = T)` implementations.
+  Their first poll transfers captures and returns the standard `Poll.Ready(T)` variant; completed
+  states suppress capture cleanup and trap on a second poll. Generic `Future` bounds and native
+  owned-capture polling are covered by regression tests.
 - Declared `Continuation(Input, Output)` and `EffectCallable(Input, Output, Answer)` as bodyless
   type forms, matching their compiler-owned representations instead of describing them as empty
   structures. Lang-item validation now requires the exact type-form declarations.

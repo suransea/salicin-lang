@@ -7233,6 +7233,31 @@ let child(): i32 = { 1 }
 }
 
 #[test]
+fn cold_async_future_polls_to_the_standard_ready_variant() {
+    compile_text(
+        r#"
+let Poll = std.async.Poll
+let Future = std.async.Future
+
+let poll_once(E: effect, F: type, T: type)
+  (future: borrow(mut)(F)): Poll(T) with(E)
+where F: Future(E, Output = T) = {
+  future.poll()
+}
+
+let main(): i32 = {
+  let mut future = async { 42 }
+  let result: Poll(i32) = poll_once(future)
+  match result
+    { Ready(value) -> value }
+    { Pending -> 0 }
+}
+"#,
+    )
+    .expect("a compiler-generated future must implement Future and poll to Poll.Ready");
+}
+
+#[test]
 fn parameter_group_expansion_requires_a_parameters_schema() {
     let errors = compile_text(
         r#"

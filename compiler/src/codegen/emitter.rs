@@ -801,6 +801,23 @@ impl<'a> Emitter<'a> {
                     Diagnostic::new(format!("internal error: missing struct layout `{name}`"))
                 })?;
                 let aggregate_ty = llvm_value_type(ty)?;
+                if let Some(async_state) = self.program.async_states.get(name) {
+                    output.push_str(&format!(
+                        "  %state.ptr = getelementptr inbounds {aggregate_ty}, ptr %value, i32 0, i32 0\n  %state = load i32, ptr %state.ptr\n  %cold = icmp eq i32 %state, 0\n  br i1 %cold, label %drop.cold, label %drop.done\ndrop.cold:\n"
+                    ));
+                    for index in &async_state.owned_capture_fields {
+                        let field = &layout.fields[*index];
+                        if !self.program.needs_drop(&field.ty) {
+                            continue;
+                        }
+                        output.push_str(&format!(
+                            "  %field.{index} = getelementptr inbounds {aggregate_ty}, ptr %value, i32 0, i32 {index}\n  call void @{}(ptr %field.{index})\n",
+                            drop_glue_symbol(&field.ty)
+                        ));
+                    }
+                    output.push_str("  br label %drop.done\ndrop.done:\n  ret void\n}\n");
+                    return Ok(output);
+                }
                 for (index, field) in layout.fields.iter().enumerate() {
                     if !self.program.needs_drop(&field.ty) {
                         continue;

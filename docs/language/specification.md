@@ -544,8 +544,12 @@ and handling rules as a closure whose concrete effect was written directly.
 An `async { ... }` expression is cold: creating it does not execute its body. The compiler
 materializes private nominal state containing a state word and captured fields. That state is
 structurally `Move`; relocation transfers its initialized captures, and cancellation drops them
-exactly once. Polling and `await` are accepted only once their typed transition lowering is
-available; an async block containing `await` is currently rejected at that source expression.
+exactly once. A compiler-generated future implements `Future((), Output = T)`. Polling a body with
+no suspension point transfers its captures, executes the body once, and returns `Poll.Ready(T)`;
+polling that completed future again traps. The completed state no longer drops transferred
+captures. `await`, `Poll.Pending`, and residual-effect inference are not implemented yet, so an
+async block containing `await` or an unhandled effect is currently rejected at that source
+expression.
 
 `unsafe` is an authority effect. `unsafe { ... }` authorizes operations whose contracts cannot be
 verified by the safe type and ownership rules; it does not disable type checking or cleanup.

@@ -277,8 +277,10 @@ not ordinary source-level standard-library functions.
 associated `Output` and a mutable-borrowing `poll` method returning `Poll`. `Executor.run` is
 explicit; constructing a cold future does not select or run an executor. `async` and `await` are
 validated compiler-provided functions whose declarations expose their effect rows and
-`Future(E, Output = T)` relationship. State-machine representation and suspension lowering remain
-compiler responsibilities.
+`Future(E, Output = T)` relationship. Compiler-generated futures without suspension already
+implement the pure `Future` instance and transition from cold state to `Poll.Ready` exactly once.
+Pending transitions, residual-effect inference, and suspension lowering remain compiler
+responsibilities.
 
 ```sc fragment
 pub let do(E: effect, T: type)

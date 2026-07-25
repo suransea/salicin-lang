@@ -3048,6 +3048,27 @@ fn cold_async_state_owns_and_drops_unpolled_captures() {
 }
 
 #[test]
+fn cold_async_future_polls_once_and_rejects_repolling() {
+    let ready = salic()
+        .arg("run")
+        .arg(fixture("pass", "async_ready_poll.sc"))
+        .output()
+        .expect("run ready async polling fixture");
+    assert_eq!(ready.status.code(), Some(42), "{}", output_text(&ready));
+
+    let repolled = salic()
+        .arg("run")
+        .arg(fixture("pass", "async_repoll_trap.sc"))
+        .output()
+        .expect("run completed future repoll fixture");
+    assert!(
+        !repolled.status.success(),
+        "completed future unexpectedly allowed a second poll: {}",
+        output_text(&repolled)
+    );
+}
+
+#[test]
 fn named_arguments_select_function_overloads_in_resolved_sources() {
     let fixtures = [
         "function_overload_named.sc",

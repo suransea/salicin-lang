@@ -6304,6 +6304,25 @@ impl Analyzer {
             tuple_types: self.tuple_types.clone(),
             continuation_adapters: self.continuation_adapters.clone(),
             effect_callable_adapters: self.effect_callable_adapters.clone(),
+            async_states: self
+                .async_futures
+                .iter()
+                .map(|(name, future)| {
+                    (
+                        name.clone(),
+                        hir::AsyncStateLayout {
+                            owned_capture_fields: future
+                                .capture_modes
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(index, mode)| {
+                                    (*mode == PassMode::Move).then_some(index + 1)
+                                })
+                                .collect(),
+                        },
+                    )
+                })
+                .collect(),
         })
     }
 
