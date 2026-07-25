@@ -882,7 +882,6 @@ fn classified_documentation_examples_stay_valid() {
 
     let mut checked = 0;
     let mut fragments = 0;
-    let mut future = 0;
     for path in files {
         let markdown = fs::read_to_string(&path).expect("read documentation");
         let lines = markdown.lines().collect::<Vec<_>>();
@@ -929,7 +928,7 @@ fn classified_documentation_examples_stay_valid() {
                     checked += 1;
                 }
                 "fragment" | "fail" => fragments += 1,
-                "future" => future += 1,
+                "future" => {}
                 _ => unreachable!(),
             }
             line += 1;
@@ -938,7 +937,6 @@ fn classified_documentation_examples_stay_valid() {
 
     assert!(checked > 0, "no documentation examples are compiled");
     assert!(fragments > 0, "no non-standalone snippets are classified");
-    assert!(future > 0, "no exploratory snippets are classified");
 }
 
 #[test]

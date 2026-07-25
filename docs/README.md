@@ -18,9 +18,9 @@ classification, rejects unterminated fences, and compiles every `sc check` block
 
 - [Language specification](language/specification.md): syntax and semantic rules.
 - [Grammar](language/grammar.md): lexer and parser grammar.
-- [Control-flow design](language/control-flow.md): target callable, effect, trailing-case, and
-  lowering model.
-- [Algebraic effects design](language/algebraic-effects.md): resumable operation and handler model.
+- [Control-flow contracts](language/control-flow.md): source identity and lowering obligations.
+- [Algebraic-effect contracts](language/algebraic-effects.md): rows, continuations, handlers, and
+  lowering obligations.
 
 ## Implementation
 

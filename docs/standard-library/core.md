@@ -141,10 +141,8 @@ must match those kinds, not merely their arity. `??` dispatches non-`Option`/`Re
 values through `Coalesce` when the fallback can be represented as a no-capture lifted function. `?.`
 dispatches non-`Option`/`Result` nominal values through `Chain` when the synthesized transform
 closure can be represented in the same way; simple field access is supported, while transforms that
-capture outer method-call arguments still require the general callable-to-function bridge. The facade
-`core.Option`/`core.Result` paths remain available as standard-library specializations. The older
-`std.ops.Chain` and `std.ops.Coalesce` paths are accepted as compatibility aliases, but new source
-should alias the protocols from `std.flow`.
+capture outer method-call arguments still require the general callable-to-function bridge. The
+facade `core.Option`/`core.Result` paths remain available as standard-library specializations.
 
 `core.effect` owns standard effect identities. It is not part of the prelude; ordinary source
 should alias these identities through `std.effect`:
@@ -171,7 +169,7 @@ Source `throw(error)` targets this ordinary operation when the current effect ro
 active `Throws(Error)`. Contextual `try { ... }` with an expected `Result(Error)(T)` handles
 ordinary `Throws(Error)` through the same algebraic handler path, using `done -> Ok` and
 `raise -> Err`. Without an explicit `Result` context, direct calls and local function-value calls
-to ordinary `Throws(Error)` functions now infer the same handler result when the success type is
+to ordinary `Throws(Error)` functions infer the same handler result when the success type is
 probeable and the escaping error type is unique. `Async` currently exposes only a minimal
 `suspend(): ()` operation; executable
 async/Future lowering will add its handler contracts in the same implementation slice rather than
@@ -449,13 +447,9 @@ let value = Result(bool)(i32).Ok(41).flat_map(next)
 ```
 
 Curried constructors may be used as constructor trait implementation targets, which is how
-`Result(Error): Monad` is expressed without making `Result` special. Associated-type lowering and
-broader constructor equation solving remain future semantic work.
-
-`ControlFlow`, the old propagation `Try`, `FromResidual`, and `FromError` were removed together with postfix `.try`. `Option` and
-`Result` are ordinary enum values and require explicit constructors. Language error propagation is
-defined by the standard `Throws(E)` effect, `throw`, and `try { ... }`; `do` has no error-specific
-semantics.
+`Result(Error): Monad` is expressed without making `Result` special. `Option` and `Result` are
+ordinary enum values and require explicit constructors. Language error propagation is defined by
+the standard `Throws(E)` effect, `throw`, and `try { ... }`; `do` has no error-specific semantics.
 
 Primitive implementations remain compiler-defined. The unit type has the single spelling `()`. A declaration only
 receives language-item behavior when its validated identity comes from this edition's embedded core;

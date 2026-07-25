@@ -2,8 +2,8 @@
 
 Salicin is an experimental, statically compiled programming language with an LLVM backend. It
 explores uniform `let` declarations, curried parameter groups, ownership-aware argument passing,
-traits, pattern matching, closures, and source-backed language items. Source files use `.sc`—a
-compact nod to “successor C” or “super C”—and the compiler executable is `salic`.
+traits, pattern matching, closures, and source-backed language items. Source files use `.sc`, and
+the compiler executable is `salic`.
 
 > Salicin is under active development. Its syntax, semantics, and standard library are not stable.
 
@@ -26,9 +26,8 @@ cargo build --release
 target/release/salic run examples/basics.sc
 ```
 
-`examples/ledger.sc` is the complete M0 usability example: it combines nominal data, a custom
-iterator, ownership-aware methods, mutation through borrowing, and an algebraic overdraft effect in
-one native batch program.
+`examples/inventory` is the main library acceptance example. It combines modules, owning UTF-8
+strings, vectors, results, user traits, resource transfer, iteration, and cleanup.
 
 Common commands:
 

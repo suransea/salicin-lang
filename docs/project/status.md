@@ -1,380 +1,197 @@
-# Implementation status
+# Implementation Status
 
-Salicin is an experimental compiler and language design. The repository currently includes a native
-compiler pipeline, project manifests and local dependencies, ownership and borrow analysis,
-source-backed core traits and containers, cleanup lowering, raw allocation primitives, and a growing
-`Box`/`Vec` allocation library.
+Salicin is experimental and has no source, library, or ABI stability guarantee. This document is a
+current capability inventory. It does not record release history; see the
+[changelog](../../CHANGELOG.md) for that. Planned work belongs in the
+[roadmap](roadmap.md) and [TODO](todo.md).
 
-This document is an implementation inventory, not a stability promise. Capability maturity is
-defined by the [frozen M0 core scope](core-scope.md): **M0 core** is the current completion target,
-**implemented extension** is tested but may still be narrowed, and **exploration** is incomplete
-design or implementation work. In particular, the algebraic-handler and higher-kinded sections
-below describe implemented extensions, while complete asynchronous lowering remains exploration.
+## Compiler Pipeline
 
-A current design goal is to keep compiler-backed language features source-shaped wherever possible:
-standard control capabilities should be declared as ordinary core effects, traits, or protocols,
-then validated as lang items and lowered by the compiler. `Throws(Error)` follows this model as a
-normal effect with `raise`, and `do`, `try`, and `throw` are now ordinary source definitions over
-those effects. The remaining compiler-only surface should stay limited to features that genuinely
-need authority or primitive control-flow lowering.
+`salic` provides:
 
-The [M0 conformance audit](m0-conformance.md) identifies current release-blocking core gaps.
-Structural non-unit tuples are implemented across types, literals, decimal projection, patterns,
-ownership, cleanup, and native LLVM emission. The bounded M0 C FFI slice accepts imported
-`extern "C"` functions over integer scalars and raw pointers, requires `unsafe` at calls, and emits
-direct LLVM declarations using validated ASCII link names. All twelve declared runtime integer
-types lower at their specified widths; `isize` and `usize` follow the native target pointer width.
-Source identifiers follow Unicode
-XID and normalize to NFC, while file-module names remain portable ASCII snake_case. Semantic
-diagnostics retain each defining file,
-top-level declaration position, local initializer position, and end-exclusive ordinary
-expression-root range through module resolution and specialization, including trailing
-source-closure calls. A repository-wide gate rejects generated `$...` names in fail-fixture
-diagnostics.
-Stable C exports, `@repr(C)` aggregates, and package-level ABI guarantees remain deferred to
-`ABI-1`; they are not implied by the M0 import boundary.
-Repeated clean builds now preserve byte-identical diagnostics, LLVM symbol order, generated IR,
-and regenerated dependency lockfiles. User-visible handler and recursive nominal traversal no
-longer depends on hash-map iteration order.
+- lexing, parsing, module resolution, and static semantic analysis;
+- ownership, borrow, visibility, effect, and trait checks;
+- monomorphization of generic functions, nominals, extensions, and trait implementations;
+- deterministic HIR and LLVM IR generation;
+- native checking, IR emission, building, and running;
+- project manifests, local path dependencies, and deterministic lockfiles.
 
-The unit type has one source spelling, `()`; the former `void` alias is removed before 1.0. The
-uninhabited prelude enum is spelled `Never`; the former lowercase `never` spelling has no
-compatibility alias.
-`Option` and `Result` are ordinary root `core` definitions rather than prelude exports, so source
-that names them binds transparent aliases from `std.Option` or `std.Result`. `Result` is curried as
-`Result(Error)(Value)`, making `Result(Error)` the standard unary constructor for HKT protocols.
+The command-line surface is:
 
-Transparent type aliases and type-constructor aliases are implemented. `let Scalar = i32`,
-`let Family(T: type): type = Box(T)`, and `let Constructor: (T: type): type = Box` all expand before
-runtime lowering, preserve the target nominal identity, support forward references and constructor
-inference, and reject alias cycles and arity mismatches. Type positions also accept labeled
-constructor arguments such as `Pair(V: bool, K: i32)`; labels are matched against the constructor's
-compile-time parameter names, normalized to declaration order, and erased before semantic lowering.
+```text
+salic check SOURCE
+salic emit-ir SOURCE -o OUTPUT
+salic build SOURCE -o OUTPUT
+salic run SOURCE -- ARGUMENTS
+```
 
-Compiler-lowered capabilities are now source-backed by validated declarations in ordinary core
-modules: `core.effect` owns `Unsafe`, `Throws(Error)` with `raise(move error: Error): Never`, and
-an ordinary `Async` effect with a minimal `suspend(): ()` operation; `core.domains` owns the
-`type`, `region`, `effect`, and `parameters` compile-time domains; `core.borrow` owns the closed
-`access` type plus the validated borrow type and value forms; `core.passing` owns the `copy`/`move`
-parameter modifiers; `core.control` owns source
-definitions for `do`, post-test `do … while`, `try`, `throw`, and `unsafe`, plus the remaining
-bodyless intrinsic signature for `loop`; `core.effect.handler` owns the handler runtime contracts; `core.flow` owns the standard
-`Chain` and `Coalesce` protocol declarations for `?.` and `??`. These exports remain outside the prelude. `await` is
-intentionally absent until the async/Future lowering slice is implemented, at which point its
-executable standard-library contract must land with the implementation.
-`core.memory` owns the validated curried `Array(T)(L)` type form, the unified
-`Ptr(A: access = shared)(T)` type and value forms, plus
-`size_of(T): u64` and `align_of(T): u64`; their prelude aliases lower by canonical lang-item
-identity rather than hard-coded declaration names. `L: usize` compile-time parameters accept
-non-negative `u64` literals, explicit forwarding, and array-driven inference; selected values are
-part of generic instance identity and are erased before runtime IR. General constant expressions,
-defaults, arithmetic, and scalar kinds other than `usize` remain unsupported.
+## Source Model
 
-`alloc.string` implements the owning `String` type as private `Vec(u8)` storage with an always-valid
-UTF-8 invariant. Safe construction validates consumed bytes and retains the original allocation in
-`FromUtf8Error` on failure; unsafe unchecked construction requires `Unsafe`. Shared byte views,
-byte-based length/capacity, reserve, clear, append, and consuming byte recovery preserve the
-invariant and ordinary deterministic cleanup. Mutable byte views, indexing, `Str`, character
-scalars, Unicode algorithms, and general string literal expressions are not implemented.
+Implemented lexical and declaration features include:
 
-The LIB1 vertical slice is exercised by the native `examples/inventory` package. Its separate
-parser, model, catalog, and binary modules transfer validated `String` names into non-`Copy`
-products, collect them in `Vec`, dispatch through user-defined valuation and summary traits,
-consume the collection in source order, and recover the original byte allocation from an invalid
-UTF-8 `Result` path. The acceptance program exits with status 42.
-The pointer family supports core-owned source extensions through a concrete non-nominal method
-owner. `extend(A: access, T: type) Ptr(A)(T)` applies to shared and mutable pointers, while
-`extend(T: type) Ptr(mut)(T)` is a direct mutable specialization. The standard declarations expose
-`offset` generally and `init`/`take` only for mutable pointers; foreign inherent extensions remain
-rejected by the package orphan boundary. General compile-time equality predicates are not needed
-for this specialization.
-`Never`-returning algebraic operations are handled as abort operations whose clauses omit `resume`,
-so `Throws(Error).raise` can now be exercised through the same handler path as user-defined effects.
-`throw(error)` reads the validated source-backed `std.control.throw` function and then calls the
-ordinary `Throws(Error).raise` operation when the active row has a unique standard `Throws(Error)`
-effect. `std.control.try` is likewise source-backed: it declares its action requirement as
-`Throws(E)` and materializes ordinary `Throws(Error)` as `core.Result(Error)(T)` through
-`Throws(Error).handle`. Context-free ordinary `Throws` inference now
-covers direct standard-effect function calls, local function values, explicitly instantiated generic
-calls such as `fail(bool)(...)`, and `do` return boundaries forwarding standard `Throws(Error)` into
-a contextual `try { ... }`, provided the success type is probeable and the escaping error type is
-unique. Mixed `Throws(Error)` plus `Unsafe` rows now run through the standard effect spelling while
-preserving `unsafe { ... }` authorization across generated CPS frames. Concrete residual-handler
-paths also compose through ordinary `Throws(Error)` rows. `Never`-only actions and fully generic
-residual-row cases remain future work.
-`core.effect.handler` also defines `Handle`, `Continuation(Input, Output)` and
-`EffectCallable(Input, Output, Answer)` as validated source contracts. `Handle` declares the
-compiler-derived `Clauses(Value, Answer): parameters` schema and matching expanded `handle` member
-shape for every source effect.
-`EffectCallable` has a
-distinct owned semantic type plus a four-pointer LLVM call/drop/environment/flag layout and guarded
-drop glue. Compiler-internal HIR can now erase an owned CPS closure into that layout and invoke it
-with an input plus `Continuation(Output, Answer)`; target-specific adapters preserve captured
-environments, and cleanup planning treats both operations as ownership transfers. Reusable handlers
-now accept directly passed, explicitly typed effectful closure bindings even when the complete
-handler call occurs later or is nested inside a larger expression. The callable environment is
-created at the original declaration, then its shared and mutable `Copy` captures are lifted
-as `borrow` and `borrow(mut)`, while consuming owned roots are lifted as `move`; the closure is then
-injected before selective CPS. Native regressions cover `FnMut` resumption plus `FnOnce` cleanup on
-both resumption and abandonment, including state/drop observations in following evaluation.
-Local callable alias moves now carry the original action metadata and relocate borrowed pointer
-slots without confusing them with owned pointee values. A direct trailing-closure action is also
-materialized automatically. Earlier `copy` and `move` arguments across the complete call are staged
-as typed locals in source order before that action, preserving side effects and ownership. Earlier
-borrowed root and field arguments are materialized as explicit reference locals at their original
-source positions before a direct action closure is created. Their lexical loans cover action
-capture and the complete handler call, reject overlapping mutable captures, and end after either
-resumption or abandonment. An unknown effectful callable parameter inside an active handler is
-rewritten to the owned `EffectCallable` ABI when it crosses a named effectful frame or another
-reusable handler. Zero- or one-input call entries preserve shared, mutable, and moved captures;
-invocation consumes the erased owner, while abandonment or an uninvoked path runs its drop entry.
-Compiler-generated handler closures use an explicit owned-capture policy: every non-`Copy` owned
-nominal root required after an operation moves into the resumable frame and retains its source
-mutability. Projected assignments capture their whole mutable root, so repeated direct operations
-can retain and update user-defined state; resumption and abandonment both preserve exactly-once
-cleanup. Resumable loop backedges carry user-owned state alongside compiler-generated iterator
-state. A known non-recursive effectful function with a concrete effect row is fused into the
-caller's handler frame when every borrowed argument is a root local, stable field path, or eligible
-indexed path and every pair involving a mutable borrow is statically disjoint. Concrete residual
-`Throws(E)`, `Unsafe`, and nominal effects remain on the fused computation while the selected
-handler identity is removed. Standard `try` stays around the complete transformed computation, so
-its physical `Result(E)(T)` boundary survives suspension. Distinct fields and distinct constant
-indexes of one owned root are accepted; identical and parent/child paths are rejected, and
-same-root dynamic indexes remain conservatively overlapping. Eligible dynamic indexed paths still
-require distinct roots, a stable root/field array base, and a `Copy` element. Their `i32` indexes
-are materialized once in source argument order, then carried through resumption while the element
-address is rebuilt from the frame-owned root with a bounds check. Value arguments remain
-materialized in source order, and each borrowed place remains available to both the inlined body
-and following continuation. Direct and mutually recursive calls use Copy raw-pointer channels
-inside compiler-authorized frames, leaving the outer continuation as the sole owner while each
-recursive node retains its one-shot call/drop environment. Non-`Copy` or nested dynamic indexed
-places still use the separate frame ABI. An unresolved effect-row parameter is explicitly rejected if that path
-would need to share borrowed arguments with the caller continuation.
+- UTF-8 source and NFC-normalized Unicode XID identifiers;
+- logical newlines, semicolons, line comments, and nested block comments;
+- uniform `let` declarations and mutable local value bindings;
+- private, package, and public visibility;
+- contextual control, passing, kind, and borrow words;
+- abstract domains written `let Name: domain`;
+- defined domains written `let Name = domain { ... }`, including empty domains;
+- ordinary closed enums usable as compile-time value types.
 
-Curried capturing closures support complete and multi-stage partial application. The resulting
-callable environment combines the closure's original captures with already applied arguments,
-preserves labels and passing modes for the remaining groups, delays latent effect checks until the
-final call, and retains `Fn`, `FnMut`, or `FnOnce` behavior. Owned captures transfer across
-successive partial values and are dropped exactly once on invocation, abandonment, or early exit.
+An abstract domain is distinct from a defined empty domain. Bare `let Name = domain` and the former
+top-level `= type` forms are rejected. Primitive integer types use declarations such as
+`pub let i32: type`; `type` is an abstract domain, not a type-construction expression.
 
-Pattern partial functions are typed callable values. A contextually typed
-`{ Pattern [if guard] -> body }` returns the validated
-`core.control.Attempt(Input)(Output)` lang item, can be stored or moved, preserves latent effects,
-and follows ordinary `Fn`/`FnMut`/`FnOnce` capture rules. Its lowering reuses the match ownership
-engine: a failed pattern or guard returns the exact non-`Copy` input through `Miss`, while payload
-moves commit only on `Hit`. Noncapturing pattern functions can also fill ordinary function-typed
-parameters. Prefix and postfix `match` syntax now form validated heterogeneous case-group calls,
-which are statically expanded to ordinary match ownership analysis before effect, throws, and
-cleanup processing. `if` forms the corresponding boolean case pair; `core.control.if` has an
-ordinary source body over `match`, and source `if` no longer enters an independent selection path.
+## Types and Static Abstraction
 
-Structured control flow includes `while`, value-producing `loop`, `break`, and `continue`.
-`continue` targets the nearest loop, participates in loop-backedge ownership validation, and runs
-all lexical cleanup required when leaving nested scopes before starting the next iteration.
-`for value { name -> ... }` and `for value { _ -> ... }` lower through validated, source-backed
-`std.iter.IntoIterator` and `std.iter.Iterator` identities. The iterable is evaluated once,
-`into_iter` consumes it, and each iteration mutably borrows the iterator for `next`; unrelated
-same-named methods cannot intercept the lowering. Break, continue, ownership flow, and cleanup reuse
-the ordinary loop machinery. Effectful bodies, including standard `Throws`, move the iterator
-through one-shot continuation and recursive loop-frame environments while retaining its mutability.
-Both resumption and abandonment run iterator cleanup exactly once.
-`if let pattern = value { ... }` supports conditional enum destructuring with optional `else` or
-`else if`. It evaluates the scrutinee once and lowers through ordinary `match`, so successful-arm
-bindings stay scoped to that arm and share the same ownership and cleanup analysis.
-`while let pattern = value { ... }` reevaluates the scrutinee each iteration and exits when the
-pattern fails. It lowers to the same `match` and unit-loop machinery, including normal `break`,
-`continue`, ownership backedges, and lexical cleanup.
-Arithmetic, bitwise, and shift compound assignment (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`,
-`^=`, `<<=`, `>>=`) resolves its left place once.
-Built-in integers retain checked trap boundaries, while nominal values dispatch through the
-source-backed `core.ops` `*Assign` traits with a mutable receiver borrow. Same-named ordinary methods
-cannot intercept operator lowering.
-`std.flow.Chain` uses a `Rebind(Value: type): type` generic associated constructor and `Coalesce`
-uses an effect-forwarding fallback closure. Generic associated constructors retain `type`,
-`access`, `region`, `usize`, and closed-value parameter kinds through trait validation and method
-template lowering. Implementations can bind direct nominal constructors or partially applied type
-aliases; constructor applications are substituted before runtime lowering. Native coverage includes
-`borrow(A)(R)(T)` view families and `Array(T)(L)` length families. Generic trait
-implementation methods can carry matching compile-time parameter groups and are registered as
-generic templates, which unblocks source-level protocol methods such as `coalesce(E)` and
-`chain(E, U)`. GAT where-predicate equalities and broader constructor equation solving remain
-future work. `??` now dispatches non-`Option`/`Result` nominal
-values through `std.flow.Coalesce` when its fallback can be represented as a no-capture lifted
-function. `?.` now dispatches non-`Option`/`Result` nominal values through `std.flow.Chain` under
-the same no-capture transform limit; simple field access is covered, while transforms that capture
-outer call arguments still require the general callable-to-function bridge. The root
-`core.Option`/`core.Result` paths remain available.
+Implemented type-system features include:
 
-`core.algebra` currently provides first-order `Semigroup` and `Monoid` protocols over the default
-`Self: type` subject outside the prelude. `core.functional` now provides higher-kinded `Functor`,
-`Applicative`, and `Monad` protocol declarations over `Self` constructor kinds such as `(Value:
-type): type`. Constructor-valued implementations register matching generic nominal constructors and
-validate method bodies as generic function templates. Receiver-style constructor trait methods
-dispatch from concrete nominal instances, so implementations such as `extend Carrier: Functor` can
-expose `Carrier(i32) { value: 41 }.map(...)` through the ordinary generic function instance pipeline. Generic
-functions can take explicit type-constructor arguments and constructor predicates such as
-`where M: Monad`. Trait-level `where` inheritance is implemented for the standard
-`Applicative where Self: Functor` and `Monad where Self: Applicative` relationships. `core.Option`
-and partially applied `core.Result(Error)` constructors implement the standard functional protocols
-from ordinary library files. Curried constructors and partially applied transparent type aliases can
-act as HKT implementation targets; the remaining HKT work is associated-type lowering and broader
-constructor equation solving.
+- unit and uninhabited enum types;
+- all fixed-width signed and unsigned integers plus pointer-width `isize` and `usize`;
+- tuples, arrays, borrows, raw pointers, function types, structs, and enums;
+- transparent type aliases and partially applied type constructors;
+- compile-time `type`, `usize`, `region`, `effect`, `access`, closed-value, constructor, and
+  parameter-schema arguments;
+- curried compile-time and runtime parameter groups;
+- labeled arguments, overload selection, and trailing closures;
+- generic nominal types, aliases, inherent extensions, and trait implementations;
+- associated types and generic associated constructors;
+- static trait and operator dispatch;
+- trait inheritance predicates and first-order associated-type equality predicates.
 
-Access domain generics are implemented for functions and generic inherent members: `A: access` accepts `shared` or `mut`,
-defaults to shared when omitted, participates in monomorphization, and can drive parameter modes,
-borrow types, borrow expressions, raw pointer types, constructors, and raw pointer borrows.
-`Ptr(T)` selects shared access and `Ptr(mut)(T)` selects mutable access under one type family.
-The alloc free functions and methods use
-this path internally, while the public container surface uses inherent methods. Mutable borrowing
-has one source spelling, `borrow(mut)`; separately named mutable alloc aliases and the former prefix
-spelling are intentionally absent before 1.0.
-Parameter modifier function generics are implemented for functions and generic inherent members:
-`M: (P: parameters): parameters` accepts `copy`, `move`, or another modifier parameter and can be
-referenced directly before a runtime parameter. Functions and trait methods place a contextual `with(...)` clause after the result type:
-`: T with(Unsafe)` adds the checked unsafe call requirement, while `: T with(Throws(E))` declares the
-standard recoverable-error effect. `try { ... }` handles that effect and produces an explicit
-`Result`. Without a contextual result type, direct ordinary `Throws(E)` calls and local function
-values can infer `Result(E)(T)` when the success type and unique error type are probeable; postfix
-`.try`, lowercase `with(throws...)`, lowercase `with(unsafe)`, and `with(try...)` are removed with
-no compatibility aliases or dedicated parser migration paths.
-Callable source types use the same shape, such as
-`(i32): i32 with(Unsafe)`; the clause is not a runtime or currying group. Complete direct, method,
-aliased, and partially applied unsafe calls require an enclosing `with(Unsafe)` function or
-`unsafe { ... }` handler. `do` forwards the implemented `Unsafe` effect into nested immediate
-calls. `let UI = effect` declares a nominal, module-visible marker effect.
-Parameterized user effects may declare typed operation requirements. Operation calls use an exact
-instantiated identity such as `State(i32)`, propagate through the existing row machinery, and are
-checked for parameter modes, result types, arity, visibility, and missing row requirements.
-Operations share the language's name-only overload rule: runtime label shapes must differ, calls
-let  = named arguments, and repeated handler labels select signatures through clause parameter names.
-Handling removes only the selected nominal identity: operation gates and generated resumable frames
-retain residual `Unsafe`, `Throws(E)`, and other nominal requirements. Concrete residual rows now
-share owned roots through nested handlers in either ordering, including physical standard
-`Result(E)(T)` boundaries and exactly-once cleanup on failure or abandonment. Fully
-effect-parameterized rows remain outside shared-root fusion until they are concretely instantiated.
-Derived handlers support typed one-shot resumption, abandonment, `done:` answer conversion, named-call
-propagation, direct recursion, and resumable loop backedges. Cross-function abandonment and
-computation after `resume` use explicit CPS continuation closures. Direct and mutually recursive
-frames share an erased call/drop-entry plus environment ABI with a runtime one-shot flag. Borrowed
-roots crossing recursive calls are represented by internal `Ptr`/`Ptr(mut)` channels; call-graph
-cycle detection covers both direct and mutual recursion without transferring or duplicating root
-ownership.
-Reusable handler functions may accept an algebraic-effect callable parameter. Calls with a known
-named function or immutable function alias create a deduplicated static specialization, erase that
-parameter from the runtime groups, and run the substituted action through the handler's ordinary CPS
-pass. A complete call may select that leading action through a nested conditional tree; the call is
-distributed into target-specific specializations after evaluating the selector and before later
-curried arguments. Truly unknown runtime action parameters use the general handler-aware
-`EffectCallable` ABI when their move-only zero- or one-input shape requires exactly the handled
-effect; broader rows and callable shapes receive a direct diagnostic.
-Inferred immutable local aliases of statically known effectful functions are resolved through the same CPS
-path, including chained aliases. Statically known function arguments also specialize higher-order
-effectful frames and are erased from those frames' runtime parameter lists. Explicitly typed
-capturing local closures use a hidden erased continuation argument while lexically enclosed by the
-handler. Their ordinary capture environments preserve `Fn`, `FnMut`, and `FnOnce` behavior,
-including repeated mutable calls and exactly-once abandonment cleanup, and they may specialize a
-higher-order frame. Finite conditional trees between named targets use a binding-site integer tag
-and call-time resumable branch dispatch, including forwarding through a higher-order frame.
-Finite selections may target lexically registered capturing resumable closures while preserving
-`FnMut` state, `FnOnce` consumption, and exactly-once cleanup. Open runtime action parameters use
-the owned `EffectCallable` call/drop/environment/flag ABI through named CPS frames instead of a
-finite target tag. The erased value is one-shot even when its source closure has `Fn` or `FnMut`
-captures; copying, repeated invocation, and borrow-capturing escape beyond the active handler are
-rejected. A finite selection tag
-may be copied through immutable handler-local aliases and forwarded into a specialized higher-order
-frame. Mutable aliases accept assignments with the same signature and finite target set, remapping
-runtime tags across different target orders; incompatible sets are rejected before ordinary value
-lowering. Nested selections may union existing dynamic values and remap their tags. Effectful nested
-selectors forward capturing branch environments through their continuation, preserving shared and
-mutable borrows, `FnMut` state, `FnOnce` transfer, and exactly-once nested cleanup.
-Compiler-generated CPS closures carry a separate lexical handler-capability set, allowing an inner
-handler's residual algebraic row to compose through an already specialized outer named frame without
-publishing that capability on the closure type. Throwing handler tails return through their physical
-`Result` boundary when wrapping prevents a direct tail call.
-Recursive-frame visibility is limited to callee-body
-transformation, so sequential calls to the same effectful named function remain independent.
-The retained source-level limits, implementation locations, stable diagnostic fragments, and
-negative fixtures are tracked in the
-[handler rejection inventory](handler-rejections.md).
-Abandonment invokes the armed environment's drop entry,
-whereas resumption transfers and disarms it; native resource regressions cover exactly-once cleanup
-on both paths. CPS traversal
-currently covers ordinary arguments, arrays, indexes, members, match bodies, immediate effect
-wrappers, lazy boolean branches, lazy `Option`/`Result` coalescing, and match guards over `Copy`
-inputs. Arguments of an effect-propagating named call are transformed before its resumable callee
-frame, including multiple left-to-right suspensions. Fully applied optional method calls preserve receiver-before-argument order and skip
-effectful arguments on residual paths for both standard fallible families. Suspended guards over
-non-Copy match inputs use a binding-erased inspection pattern before moving the owned value into the
-continuation. Payload bindings are rematched and committed only after a `true` resumption, while
-`false` resumes into the remaining ordinary match candidates. Referenced Copy bindings cross by
-value; referenced non-Copy bindings are reconstructed as read-only projections from each
-continuation's owned enum capture. Those views may be inspected or borrowed but not moved before the
-guard commits.
-Different user-defined handlers compose lexically through action, clause, and generated-frame
-closure boundaries; nested handlers of the same identity retain nearest-boundary selection.
-Function and generic inherent-member `E: effect` parameters represent complete rows, default to pure,
-participate in monomorphization, forward through ordinary compile-time calls such as
-`callee(E)(value)`, and infer pure, Unsafe, custom, or standard `Throws(Error)` rows from
-higher-order callable arguments. A selected `Throws(Error)` row preserves its error type through
-forwarding and specialization.
-Named non-capturing functions can be passed and invoked through the native function-pointer ABI.
-Concrete and generic top-level functions, concrete-nominal inherent members, and trait requirements may form label-directed
-overload sets. Their runtime parameter-label shapes must differ, and at least one explicit named
-call argument must select a unique candidate; a method's implicit receiver is not disambiguating
-evidence. Trait conformance, default and blanket implementations, where-bound assumptions, curried
-groups, module resolution, imports, type and optional-chain probing, closure lowering, effects, and
-native mangling preserve that choice. Generic templates are selected by runtime labels before their
-compile-time groups are inferred or consumed. Blanket generic inherent extensions preserve the same
-overload set across every applicable concrete nominal instance.
-Callable effect rows support requirement subtyping: a pure function value can fill an unsafe or
-custom-effect slot, while a value requiring additional effects cannot fill a narrower slot. The
-slot's widened requirements remain checked at indirect calls, and generic row inference retains the
-callable's exact source row.
-Fixed ordinary `Throws(E)` direct calls, contextual `try` handling, `do` return-boundary
-forwarding, mixed `Throws(E)`/`Unsafe` rows, and concrete residual-handler composition are
-implemented for the public direct, explicitly instantiated generic, mixed-effect, and residual
-fixtures.
-Open effect-parameter residual-handler lowering remains explicitly outside shared-root fusion.
-Ordinary
-`Option` and `Result` functions require
-explicit variant construction; the removed `Try`, `FromResidual`, `FromError`, and `ControlFlow`
-language protocols no
-longer participate in return completion or propagation. `do` transparently forwards the complete
-active row through its immediate closure boundary, including recoverable-error, `Unsafe`,
-and nominal marker effects. Capturing closure values, generic trait methods, the remaining general
-algebraic-continuation ABI, and async color lowering remain design or implementation work.
+Generic associated constructors preserve parameter kinds and groups in trait declarations and
+implementations. Standard iterator contracts use `Item(R: region): type`, allowing an item type to
+depend on the receiver-borrow region.
 
-`std` is the preferred public standard-library facade, backed by lower-level `core` and `alloc`
-namespaces in ordinary module resolution. Operator/flow traits and alloc containers are not part of
-the prelude. `std.boxed` and `std.vec` export only `Box` and `Vec`; prefixed free functions remain
-private implementation helpers, and operations are exposed as inherent methods. `Box.into_raw`
-consumes ownership, while `Box.from_raw` requires `Unsafe`; the former shared-borrow
-`as_mut_ptr` escape is removed. Container types require ordinary
-`let Name = std.boxed.Name` / `let Name = std.vec.Name` aliases (or a qualified path), while
-operator and flow traits use the same alias form when named. Their internal identities remain
-isolated from same-named user declarations; operator syntax continues to dispatch through
-validated lang items.
+Bounded constructor-equation solving, captured callable bridging, fully coherent generic trait
+methods, and improved constructor diagnostics remain active TYPE1 work.
 
-The implementation is broad but not stable. Important incomplete boundaries include:
+## Ownership and Borrowing
 
-- `core` provides the initial prelude plus arithmetic, bitwise, unary, equality, partial-ordering,
-  control, and iteration protocols. Language error propagation is the standard `Throws(E)` effect.
-  Unsized `Slice(T)` borrows support Array unsizing, anchored Vec conversion, length, and
-  bounds-checked shared/mutable element access. Access-polymorphic `Index(Key)` routes user-defined,
-  Array, Slice, and Vec reads, explicit borrows, and assignments through one source-declared
-  protocol. Copy-value Array iteration and access-preserving borrowed Slice iteration are
-  source-backed. `SliceIter(A)(T)` retains its source loan and uses the `Item(R)` GAT to yield
-  shared or mutable element borrows shortened to each `next` receiver borrow; non-`Copy` elements
-  remain in place, overlapping mutable yields and escaping results are rejected. Vec consuming
-  iteration supports resource elements and early-exit suffix cleanup; `Future` remains to be
-  implemented;
-- `std` host APIs have not been started;
-- registry dependencies, workspaces, stable ABI guarantees, and a package distribution format are
-  not defined;
-- asynchronous syntax is designed but Future lowering and an executor interface are not complete;
-- diagnostics, source locations, tooling, and incremental compilation need substantial work.
+The semantic analyzer implements:
 
-The [language specification](../language/specification.md) states intended language rules. This file
-records implementation state. Release-specific additions and fixes are recorded only in the
-[changelog](../../CHANGELOG.md). Milestone order and the executable work queue live in the
-[language roadmap](roadmap.md) and [project TODO](todo.md).
+- explicit `copy`, `move`, shared borrow, and mutable borrow parameter modes;
+- type-directed default copy or move behavior;
+- whole-value and field-sensitive move tracking;
+- shared-loan overlap and mutable-loan exclusion;
+- reborrowing with region shortening;
+- escape checks for local and temporary references;
+- mutation and move invalidation checks;
+- deterministic, exactly-once cleanup for initialized resources;
+- cleanup across returns, loop exits, handled effects, partial calls, and partial aggregate
+  construction.
+
+The implementation rejects overlapping mutable iterator yields and references that outlive their
+source. Mutable iteration can yield access-preserving element borrows without moving elements from
+their container.
+
+## Data and Control
+
+Implemented data and control features include:
+
+- nominal structs and closed enums;
+- tuple, struct, enum, literal, binding, and wildcard patterns;
+- exhaustive `match` with guards;
+- `if`, `if let`, `loop`, `while`, `while let`, post-test loops, and `for`;
+- `break`, `continue`, and `return`;
+- checked arithmetic, comparisons, bitwise operations, shifts, and compound assignment;
+- deterministic left-to-right evaluation;
+- optional chaining, coalescing, error propagation, and forced unwrap.
+
+Control forms are validated against source declarations in `core` where compiler authority is not
+intrinsically required. User declarations with matching names cannot impersonate a lang item.
+
+## Effects
+
+Implemented algebraic-effect support includes:
+
+- source-declared effects and operations;
+- effect rows and compile-time effect parameters;
+- resumable and abortive handlers;
+- single-use continuations;
+- cleanup on resumption and abandonment;
+- captured effectful closures;
+- source-backed `Throws(Error)`, `throw`, and `try`;
+- composition of standard error and unsafe effects.
+
+`Unsafe` is an authority effect used by raw memory and foreign operations. It does not disable
+typing, ownership, or cleanup checks.
+
+Complete `Future` contracts, async state-machine lowering, polling, cancellation, and
+self-reference rules are not implemented.
+
+## Modules, Packages, and FFI
+
+Implemented package features include:
+
+- file and directory modules;
+- `self`, `super`, `root`, package, and dependency paths;
+- entity aliases and explicit re-exports;
+- `salicin.toml` projects with library and binary roots;
+- local path dependencies and `salicin.lock`;
+- package ownership and trait coherence boundaries.
+
+The C import boundary supports validated ASCII link names and the documented integer and raw-pointer
+subset. Foreign calls require `unsafe`. Stable exported aggregates, a frozen Salicin ABI, registry
+dependencies, workspaces, and a distribution format are not defined.
+
+## Standard Library
+
+The source library is split into:
+
+- `core`: allocation-free language contracts and primitives;
+- `alloc`: owning heap-backed containers;
+- `std`: target and host facilities, not yet populated.
+
+Implemented `core` facilities include:
+
+- primitive declarations and compile-time domains;
+- `borrow`, `Ptr`, `Array`, `Slice`, `size_of`, and `align_of`;
+- ownership markers and operator traits;
+- `Option`, `Result`, iteration, indexing, and flow protocols;
+- functional constructor traits;
+- effects, handlers, and control contracts.
+
+Implemented `alloc` facilities include:
+
+- `Box(T)`;
+- `Vec(T)` with mutation and consuming iteration;
+- owning UTF-8 `String`;
+- recoverable UTF-8 validation errors.
+
+Safe `String` APIs preserve valid UTF-8 and do not expose mutable bytes. Text slicing, character
+iteration, Unicode algorithms, and host I/O are not yet library features.
+
+Borrowed `SliceIter(A)(T)` preserves shared or mutable source access and yields
+`borrow(A)(R)(T)`. `Vec` iteration consumes elements and drops an unyielded suffix exactly once on
+early exit.
+
+## Quality Gates
+
+Repository gates cover:
+
+- parser and semantic unit tests;
+- positive and negative CLI fixtures;
+- native execution and exit-status checks;
+- cleanup, alias, escape, and allocation behavior;
+- deterministic diagnostics, IR, symbol ordering, and lockfiles;
+- classified documentation examples;
+- formatting and warning-free Clippy.
+
+The `examples/inventory` package is the current nontrivial library acceptance program. It combines
+modules, owning strings, vectors, results, user traits, resource transfer, iteration, and cleanup.
+
+## Known Boundaries
+
+The principal incomplete areas are:
+
+- bounded generic constructor equations;
+- general captured-callable conversion for higher-order protocols;
+- remaining generic trait-method coherence;
+- concise diagnostics for underconstrained constructor and effect inference;
+- host-facing `std` APIs;
+- complete asynchronous execution;
+- stable ABI and package distribution.
+
+These boundaries are intentionally explicit. Passing tests for an implemented subset do not imply
+stability or support for adjacent syntax.

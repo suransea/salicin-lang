@@ -77,14 +77,12 @@ any of these standard namespaces.
 `PartialOrd`, `Neg`, `Not`, `BitAnd`, `BitOr`, `BitXor`, `Shl`, `Shr`, and their `*Assign` mutation
 traits require ordinary aliases when
 named. Merely writing the corresponding operator token does not require importing its protocol.
-`std.flow.Chain` and `std.flow.Coalesce` require ordinary aliases when named directly; the older
-`std.ops.Chain` and `std.ops.Coalesce` paths remain accepted as compatibility aliases.
+`std.flow.Chain` and `std.flow.Coalesce` require ordinary aliases when named directly.
 `Throws(E)`, `Unsafe`, and `Async` are ordinary standard effect declarations aliased from
 `std.effect`;
 source that names them binds them normally. The control spellings `do`, `try`, `throw`, `unsafe`,
 and `loop` bind directly to validated lang-item declarations in `core.control`; they do not inject
-those module exports as ordinary unqualified names. The former control-container protocols have
-been removed.
+those module exports as ordinary unqualified names.
 Effect identities use uppercase nominal spelling, including user-defined effects; row parameters
 such as `E: effect` remain ordinary parameter names.
 The `effect` compile-time domain, closed `access` type, and parameter modifier functions use
