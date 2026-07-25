@@ -154,8 +154,9 @@ and value-producing `break`. A `loop` with one await followed by a boolean
 The break output is inferred from the source expression and may be move-only. Its poll transition
 reinitializes one child slot and consumes consecutive immediately-ready iterations in an HIR loop.
 Completed children are destroyed before reuse, while cancellation drops only the active suspended
-child. Move-only carry, general loop bodies, and algebraic residual-effect specialization are not
-implemented.
+child. An omitted `else` and non-suspending branch bodies execute as fallthrough before creating
+the next child. Move-only carry, general loop bodies, and algebraic residual-effect specialization
+are not implemented.
 
 ## Modules, Packages, and FFI
 

@@ -3194,6 +3194,16 @@ fn async_loop_break_transfers_a_move_only_output_once() {
 }
 
 #[test]
+fn async_loop_fallthrough_reuses_the_iteration_child() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "async_await_loop_fallthrough.sc"))
+        .output()
+        .expect("run async loop fallthrough fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn cancelling_an_async_loop_drops_completed_and_active_children_once() {
     let output = salic()
         .arg("run")

@@ -1901,9 +1901,9 @@ fn simple_recurring_async_loop_source(body: &Expr, id: usize) -> Option<AsyncSou
         return None;
     };
     let (condition, then_control, else_control) = simple_loop_decision(decision)?;
-    let (break_when_true, break_value) = match (then_control, else_control) {
-        (SimpleLoopControl::Break(value), SimpleLoopControl::Continue) => (true, value),
-        (SimpleLoopControl::Continue, SimpleLoopControl::Break(value)) => (false, value),
+    let break_value = match (&then_control, &else_control) {
+        (SimpleLoopControl::Break(value), control) if control.continues() => value.clone(),
+        (control, SimpleLoopControl::Break(value)) if control.continues() => value.clone(),
         _ => return None,
     };
     let continue_constructor = format!("$async$loop$continue${id}");
@@ -1916,11 +1916,16 @@ fn simple_recurring_async_loop_source(body: &Expr, id: usize) -> Option<AsyncSou
     };
     let continue_step = construct(&continue_constructor, (**child).clone());
     let break_step = construct(&break_constructor, break_value.clone());
-    let (then_branch, else_branch) = if break_when_true {
-        (break_step, continue_step)
-    } else {
-        (continue_step, break_step)
+    let lower_control = |control: SimpleLoopControl| match control {
+        SimpleLoopControl::Break(_) => break_step.clone(),
+        SimpleLoopControl::Continue => continue_step.clone(),
+        SimpleLoopControl::Fallthrough(expression) => Expr::Block(
+            vec![Stmt::Expr(expression)],
+            Some(Box::new(continue_step.clone())),
+        ),
     };
+    let then_branch = lower_control(then_control);
+    let else_branch = lower_control(else_control);
     Some(AsyncSourcePlan {
         factory_body: (**child).clone(),
         has_await: true,
@@ -1946,6 +1951,13 @@ fn simple_recurring_async_loop_source(body: &Expr, id: usize) -> Option<AsyncSou
 enum SimpleLoopControl {
     Break(Expr),
     Continue,
+    Fallthrough(Expr),
+}
+
+impl SimpleLoopControl {
+    fn continues(&self) -> bool {
+        matches!(self, Self::Continue | Self::Fallthrough(_))
+    }
 }
 
 fn simple_loop_decision(expression: &Expr) -> Option<(Expr, SimpleLoopControl, SimpleLoopControl)> {
@@ -1953,11 +1965,13 @@ fn simple_loop_decision(expression: &Expr) -> Option<(Expr, SimpleLoopControl, S
         Expr::If {
             condition,
             then_branch,
-            else_branch: Some(else_branch),
+            else_branch,
         } => Some((
             (**condition).clone(),
             simple_loop_control(then_branch)?,
-            simple_loop_control(else_branch)?,
+            else_branch
+                .as_deref()
+                .map_or(Some(SimpleLoopControl::Continue), simple_loop_control)?,
         )),
         Expr::Match { scrutinee, arms } if arms.len() == 2 => {
             let true_arm = arms
@@ -1985,15 +1999,41 @@ fn simple_loop_control(expression: &Expr) -> Option<SimpleLoopControl> {
             value.as_deref().cloned().unwrap_or(Expr::Unit),
         )),
         Expr::Continue => Some(SimpleLoopControl::Continue),
+        Expr::Unit => Some(SimpleLoopControl::Continue),
         Expr::Block(statements, Some(tail)) if statements.is_empty() => simple_loop_control(tail),
         Expr::Block(statements, None) => {
-            let [Stmt::Expr(expression)] = statements.as_slice() else {
-                return None;
-            };
-            simple_loop_control(expression)
+            if let [Stmt::Expr(statement)] = statements.as_slice() {
+                if let Some(control) = simple_loop_control(statement) {
+                    return Some(control);
+                }
+            }
+            is_simple_loop_fallthrough(expression)
+                .then(|| SimpleLoopControl::Fallthrough(expression.clone()))
+        }
+        _ if is_simple_loop_fallthrough(expression) => {
+            Some(SimpleLoopControl::Fallthrough(expression.clone()))
         }
         _ => None,
     }
+}
+
+fn is_simple_loop_fallthrough(expression: &Expr) -> bool {
+    let mut expression = expression.clone();
+    let mut supported = true;
+    super::source_rewrite::visit_expr_mut(&mut expression, &mut |expression| {
+        if matches!(
+            expression.unlocated(),
+            Expr::Await(_)
+                | Expr::Break(_)
+                | Expr::Continue
+                | Expr::Return(_)
+                | Expr::Loop { .. }
+                | Expr::While { .. }
+        ) {
+            supported = false;
+        }
+    });
+    supported
 }
 
 fn split_async_source(body: &Expr) -> AsyncSourcePlan {
