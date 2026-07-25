@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::ast::{
-    BinaryOp, Binding, CallArg, Expr, Function, FunctionEffects, HandlerChainCall, ItemOrigin,
-    MatchArm, Param, PassMode, Pattern, Stmt, Type, UnaryOp, Visibility,
+    BinaryOp, Binding, CallArg, Expr, Function, FunctionEffects, HandlerChainCall, MatchArm, Param,
+    PassMode, Pattern, Stmt, Type, UnaryOp, Visibility,
 };
 use crate::core::LangItemKind;
 
@@ -44,6 +44,7 @@ pub(super) struct AlgebraicHandlerClause {
 pub(super) struct AlgebraicHandler {
     pub(super) identity: String,
     pub(super) source: Type,
+    pub(super) inference_context: LowerCtx,
     pub(super) clauses: HashMap<String, AlgebraicHandlerClause>,
     pub(super) operations: HashMap<String, Vec<AlgebraicHandlerOperation>>,
     pub(super) lexical_unsafe_depth: Rc<Cell<usize>>,
@@ -2043,6 +2044,14 @@ impl Analyzer {
             ) {
                 return result;
             }
+            if let Some(result) = self.transform_effectful_method_call(
+                &expression,
+                handler.clone(),
+                resume.clone(),
+                continuation.clone(),
+            ) {
+                return result;
+            }
             if let Some(result) = self.transform_effectful_chain_call(
                 &expression,
                 handler.clone(),
@@ -2655,6 +2664,59 @@ impl Analyzer {
             }
             other => continuation(self, other),
         }
+    }
+
+    fn transform_effectful_method_call(
+        &mut self,
+        expression: &Expr,
+        handler: Rc<AlgebraicHandler>,
+        resume: Option<SourceResume>,
+        continuation: SourceContinuation,
+    ) -> Option<Result<Expr, ()>> {
+        let mut groups = Vec::new();
+        let Expr::Member(receiver, member) = flatten_call(expression, &mut groups) else {
+            return None;
+        };
+        let receiver_ty = match self.probe_expr_ty(receiver, None, &handler.inference_context) {
+            super::lower::TypeProbe::Known(ty)
+            | super::lower::TypeProbe::KnownSource(ty, _)
+            | super::lower::TypeProbe::Defaultable(ty) => ty,
+            super::lower::TypeProbe::Unsupported => return None,
+        };
+        let candidates = self
+            .trait_method_function_candidates(
+                &receiver_ty,
+                member,
+                &handler.inference_context.origin,
+            )
+            .into_iter()
+            .filter_map(|(_, canonical)| {
+                self.functions
+                    .get(&canonical)
+                    .is_some_and(|function| {
+                        function
+                            .effects
+                            .custom
+                            .iter()
+                            .any(|effect| source_effect_identity(effect) == handler.identity)
+                    })
+                    .then_some(canonical)
+            })
+            .collect::<Vec<_>>();
+        let [canonical] = candidates.as_slice() else {
+            return None;
+        };
+        let mut call = Expr::Call(
+            Box::new(Expr::Name(canonical.clone())),
+            vec![CallArg {
+                label: None,
+                value: (**receiver).clone(),
+            }],
+        );
+        for group in groups {
+            call = Expr::Call(Box::new(call), group.to_vec());
+        }
+        self.transform_effectful_named_call(&call, handler, resume, continuation)
     }
 
     fn transform_erased_effect_callable_call(
@@ -3595,23 +3657,82 @@ impl Analyzer {
         name: &str,
         groups: &[&[CallArg]],
         handled_effect: &Type,
+        inference_context: &LowerCtx,
     ) -> Option<Result<(String, Function, usize), ()>> {
         let template = self.function_templates.get(name)?.clone();
         if groups.len() > template.compile_groups.len() + template.groups.len() {
             return None;
         }
-        let inference_context = LowerCtx::for_global(ItemOrigin::default());
         let (compile_parameters, mut inferred, runtime_group_start) = match self
             .seed_type_argument_inference(
                 name,
                 &template.compile_groups,
                 groups,
-                &inference_context,
+                inference_context,
                 false,
             ) {
             Some(inferred) => inferred,
             None => return Some(Err(())),
         };
+        let runtime_groups = &groups[runtime_group_start..];
+        if runtime_groups.len() > template.groups.len() {
+            return None;
+        }
+        let mut ordered_runtime_groups = Vec::new();
+        for (group_index, (arguments, parameters)) in
+            runtime_groups.iter().zip(&template.groups).enumerate()
+        {
+            let parameter_names = parameters
+                .iter()
+                .map(|parameter| parameter.name.clone())
+                .collect::<Vec<_>>();
+            let Some(ordered) =
+                self.ordered_call_arguments(name, group_index + 1, arguments, &parameter_names)
+            else {
+                return Some(Err(()));
+            };
+            ordered_runtime_groups.push(ordered);
+        }
+        let constraints = ordered_runtime_groups
+            .iter()
+            .zip(&template.groups)
+            .enumerate()
+            .flat_map(|(group_index, (arguments, parameters))| {
+                arguments
+                    .iter()
+                    .zip(parameters)
+                    .map(move |(argument, parameter)| {
+                        (
+                            parameter.ty.clone(),
+                            argument.value.clone(),
+                            format!(
+                                "argument for parameter `{}` in group {}",
+                                parameter.name,
+                                group_index + 1
+                            ),
+                        )
+                    })
+            })
+            .collect::<Vec<_>>();
+        let unsupported = match self.infer_from_expression_constraints(
+            &constraints,
+            &compile_parameters,
+            &mut inferred,
+            inference_context,
+        ) {
+            Some(unsupported) => unsupported,
+            None => return Some(Err(())),
+        };
+        if self
+            .infer_from_concrete_trait_predicates(
+                &template.where_predicates,
+                &compile_parameters,
+                &mut inferred,
+            )
+            .is_none()
+        {
+            return Some(Err(()));
+        }
         let mut matched_effect = false;
         for parameter in &template.effects.parameters {
             let Some(inferred_effect) = inferred.get(parameter) else {
@@ -3660,55 +3781,6 @@ impl Analyzer {
         if !matched_effect {
             return None;
         }
-        let runtime_groups = &groups[runtime_group_start..];
-        if runtime_groups.len() > template.groups.len() {
-            return None;
-        }
-        let mut ordered_runtime_groups = Vec::new();
-        for (group_index, (arguments, parameters)) in
-            runtime_groups.iter().zip(&template.groups).enumerate()
-        {
-            let parameter_names = parameters
-                .iter()
-                .map(|parameter| parameter.name.clone())
-                .collect::<Vec<_>>();
-            let Some(ordered) =
-                self.ordered_call_arguments(name, group_index + 1, arguments, &parameter_names)
-            else {
-                return Some(Err(()));
-            };
-            ordered_runtime_groups.push(ordered);
-        }
-        let constraints = ordered_runtime_groups
-            .iter()
-            .zip(&template.groups)
-            .enumerate()
-            .flat_map(|(group_index, (arguments, parameters))| {
-                arguments
-                    .iter()
-                    .zip(parameters)
-                    .map(move |(argument, parameter)| {
-                        (
-                            parameter.ty.clone(),
-                            argument.value.clone(),
-                            format!(
-                                "argument for parameter `{}` in group {}",
-                                parameter.name,
-                                group_index + 1
-                            ),
-                        )
-                    })
-            })
-            .collect::<Vec<_>>();
-        let unsupported = match self.infer_from_expression_constraints(
-            &constraints,
-            &compile_parameters,
-            &mut inferred,
-            &inference_context,
-        ) {
-            Some(unsupported) => unsupported,
-            None => return Some(Err(())),
-        };
         let ordered_parameters = template
             .compile_groups
             .iter()
@@ -3754,9 +3826,12 @@ impl Analyzer {
         let (name, function, runtime_group_start) =
             if let Some(function) = self.functions.get(selected_name).cloned() {
                 (selected_name.to_owned(), function, 0)
-            } else if let Some(resolved) =
-                self.explicit_generic_handler_function(selected_name, &groups, &handler.source)
-            {
+            } else if let Some(resolved) = self.explicit_generic_handler_function(
+                selected_name,
+                &groups,
+                &handler.source,
+                &handler.inference_context,
+            ) {
                 match resolved {
                     Ok(resolved) => resolved,
                     Err(()) => return Some(Err(())),

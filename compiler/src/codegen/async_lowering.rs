@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use crate::ast::{Expr, ItemOrigin, Param, PassMode, Stmt, Visibility};
+use crate::ast::{
+    CallArg, Expr, Function, FunctionEffects, ItemOrigin, Param, PassMode, Stmt, Type, Visibility,
+};
 use crate::core::LangItemKind;
 
 use super::hir::{
@@ -12,6 +14,7 @@ use super::hir::{
 use super::lower::TypeProbe;
 use super::names::trait_method_name;
 use super::registry::{NominalKind, TraitImplInfo, TraitImplKey, TraitRefKey};
+use super::source_rewrite::source_type_expression;
 use super::Analyzer;
 
 impl Analyzer {
@@ -158,7 +161,9 @@ impl Analyzer {
             .filter(|effect| effect.as_str() != async_effect)
             .cloned()
             .collect::<Vec<_>>();
-        if !unsupported_effects.is_empty() {
+        if !unsupported_effects.is_empty()
+            && (source_plan.has_await || !closure.captures.is_empty())
+        {
             self.error(format!(
                 "async residual algebraic effect{} `{}` require poll/resume handler specialization, which is not implemented yet",
                 if unsupported_effects.len() == 1 { "" } else { "s" },
@@ -590,6 +595,7 @@ impl Analyzer {
                     || awaited.continuation_unsafe_effect
                     || awaited.next.as_ref().is_some_and(|next| next.unsafe_effect)
             });
+        let resume_function = closure.function.clone();
         let metadata = AsyncFutureInfo {
             resume: closure.function,
             output,
@@ -604,6 +610,13 @@ impl Analyzer {
         };
         self.async_futures.insert(name.clone(), metadata);
         self.register_future_poll(&name);
+        if !unsupported_effects.is_empty() {
+            self.register_ready_async_handler_templates(
+                &name,
+                &source_plan.factory_body,
+                &resume_function,
+            );
+        }
 
         HirExpr {
             ty: Ty::Struct(name.clone()),
@@ -1199,6 +1212,125 @@ impl Analyzer {
             result: poll_ty,
             body,
         });
+    }
+
+    fn register_ready_async_handler_templates(
+        &mut self,
+        name: &str,
+        resume_body: &Expr,
+        resume_function: &str,
+    ) {
+        let future = self.async_futures[name].clone();
+        debug_assert!(future.awaited.is_none());
+        debug_assert!(future.capture_modes.is_empty());
+        let Some(output_source) = self.source_type_for_ty(&future.output) else {
+            return;
+        };
+        let effects = self.async_source_effects(&future);
+        let origin = self.nominal_accesses[name].origin.clone();
+        self.functions.insert(
+            resume_function.to_owned(),
+            Function {
+                name: resume_function.to_owned(),
+                foreign: None,
+                compile_groups: Vec::new(),
+                groups: vec![Vec::new()],
+                return_type: Some(output_source.clone()),
+                effects: effects.clone(),
+                where_predicates: Vec::new(),
+                body: Some(resume_body.clone()),
+            },
+        );
+        self.function_origins
+            .insert(resume_function.to_owned(), origin.clone());
+
+        let effect_row = Ty::EffectRow {
+            unsafe_effect: future.unsafe_effect,
+            throws_error: future.throws_error.clone().map(Box::new),
+            custom_effects: future
+                .custom_effects
+                .iter()
+                .filter(|effect| effect.as_str() != self.lang_item_name(LangItemKind::AsyncEffect))
+                .cloned()
+                .collect(),
+        };
+        let trait_key = TraitImplKey {
+            self_ty: Ty::Struct(name.to_owned()),
+            trait_ref: TraitRefKey {
+                name: self.lang_item_name(LangItemKind::Future).to_owned(),
+                arguments: vec![effect_row],
+            },
+        };
+        let poll_function = trait_method_name(&trait_key, "poll");
+        self.lifted_functions
+            .retain(|function| function.name != resume_function && function.name != poll_function);
+        let resume = Expr::Call(Box::new(Expr::Name(resume_function.to_owned())), Vec::new());
+        let poll_type = Expr::Call(
+            Box::new(Expr::Name(
+                self.lang_item_name(LangItemKind::Poll).to_owned(),
+            )),
+            vec![CallArg {
+                label: None,
+                value: source_type_expression(&output_source),
+            }],
+        );
+        let ready = Expr::Call(
+            Box::new(Expr::Member(Box::new(poll_type), "Ready".to_owned())),
+            vec![CallArg {
+                label: None,
+                value: resume,
+            }],
+        );
+        self.functions.insert(
+            poll_function.clone(),
+            Function {
+                name: poll_function.clone(),
+                foreign: None,
+                compile_groups: Vec::new(),
+                groups: vec![
+                    vec![Param {
+                        mode: PassMode::Inferred,
+                        access: None,
+                        modifiers: Vec::new(),
+                        region: None,
+                        name: "self".to_owned(),
+                        ty: Type::Borrow {
+                            mutable: true,
+                            access: None,
+                            region: None,
+                            pointee: Box::new(Type::Named(name.to_owned(), Vec::new())),
+                        },
+                    }],
+                    Vec::new(),
+                ],
+                return_type: Some(Type::Named(
+                    self.lang_item_name(LangItemKind::Poll).to_owned(),
+                    vec![output_source],
+                )),
+                effects,
+                where_predicates: Vec::new(),
+                body: Some(ready),
+            },
+        );
+        self.function_origins.insert(poll_function, origin);
+    }
+
+    fn async_source_effects(&self, future: &AsyncFutureInfo) -> FunctionEffects {
+        FunctionEffects {
+            unsafe_effect: future.unsafe_effect,
+            throws: future
+                .throws_error
+                .as_ref()
+                .and_then(|error| self.source_type_for_ty(error))
+                .map(Box::new),
+            custom: future
+                .custom_effects
+                .iter()
+                .filter(|effect| effect.as_str() != self.lang_item_name(LangItemKind::AsyncEffect))
+                .filter_map(|effect| super::compile_time::source_type_from_identity(effect))
+                .collect(),
+            parameters: Vec::new(),
+        }
     }
 }
 

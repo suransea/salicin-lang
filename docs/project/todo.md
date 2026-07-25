@@ -26,11 +26,15 @@ children, multiple suspension points, and allocation-free child-slot reuse.
 The ordinary zero-field `core.async.Spin` executor polls one owned `Future(E)` until `Ready`
 without implicit allocation or runtime selection.
 
-The current task must remove the source-level rejection of residual `Throws` and custom algebraic
-effects in async bodies and continuations. Generated `Future(E)` implementations must specialize
-their poll/resume boundary through the concrete residual row, preserve handler ownership and
-one-shot continuation rules, and keep construction cold. `Unsafe` already propagates as a residual
-poll requirement and remains the baseline behavior.
+Captureless async bodies without suspension now retain a custom residual row and specialize their
+generated poll/resume source through an enclosing handler. Generic bounds such as
+`F: Future(E, Output = T)` infer `E` from the concrete implementation, and effectful trait-method
+calls participate in handler inlining.
+
+The remaining task is to extend that source specialization to captured state, suspension and
+continuations, and residual `Throws`. Generated `Future(E)` implementations must preserve handler
+ownership and one-shot continuation rules while keeping construction cold. `Unsafe` remains the
+ordinary residual-poll baseline.
 
 ## Later
 

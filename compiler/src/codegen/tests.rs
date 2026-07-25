@@ -7480,8 +7480,8 @@ let main(): i32 = { unsafe {
 }
 
 #[test]
-fn cold_async_rejects_residual_algebraic_effects_before_poll_specialization() {
-    let diagnostics = compile_text(
+fn cold_async_accepts_a_captureless_residual_algebraic_effect() {
+    compile_text(
         r#"
 let Ask = effect {
   let ask(): i32
@@ -7495,10 +7495,7 @@ let main(): i32 = {
 }
 "#,
     )
-    .expect_err("residual algebraic effects require generated poll specialization");
-    assert!(diagnostics.iter().any(|diagnostic| diagnostic
-        .message
-        .contains("require poll/resume handler specialization")));
+    .expect("constructing a captureless residual future remains cold and pure");
 }
 
 #[test]

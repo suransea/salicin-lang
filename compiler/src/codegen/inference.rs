@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
     CallArg, CompileParam, CompileParamDefault, CompileParamKind, Expr, Type, USizeConst,
+    WherePredicate,
 };
 use crate::core::LangItemKind;
 
@@ -118,7 +119,11 @@ impl Analyzer {
             &mut inferred,
             context,
         )?;
-
+        self.infer_from_concrete_trait_predicates(
+            &template.where_predicates,
+            &compile_parameters,
+            &mut inferred,
+        )?;
         let ordered_parameters = template
             .compile_groups
             .iter()
@@ -133,6 +138,136 @@ impl Analyzer {
         )?;
         let canonical = self.ensure_function_instance(name, source_arguments, arguments)?;
         Some((canonical, runtime_start))
+    }
+
+    pub(super) fn infer_from_concrete_trait_predicates(
+        &mut self,
+        predicates: &[WherePredicate],
+        compile_parameters: &HashSet<String>,
+        inferred: &mut HashMap<String, InferredTypeArgument>,
+    ) -> Option<()> {
+        let default_effect_parameters = inferred
+            .iter()
+            .filter_map(|(name, argument)| {
+                (argument.origin == "default pure effect").then_some(name.clone())
+            })
+            .collect::<HashSet<_>>();
+        if default_effect_parameters.is_empty() {
+            return Some(());
+        }
+        let mut predicate_parameters = compile_parameters.clone();
+        predicate_parameters.extend(default_effect_parameters.iter().cloned());
+        for predicate in predicates {
+            let Type::Named(trait_name, trait_arguments) = &predicate.trait_ref else {
+                continue;
+            };
+            let Some(schema) = self.traits.get(trait_name) else {
+                continue;
+            };
+            if !trait_arguments.iter().zip(&schema.compile_parameters).any(
+                |(argument, parameter)| {
+                    parameter.kind == CompileParamKind::Effect
+                        && matches!(argument, Type::Named(name, arguments)
+                            if arguments.is_empty() && default_effect_parameters.contains(name))
+                },
+            ) {
+                continue;
+            }
+            let Some(subject) =
+                self.resolved_template_ty(&predicate.subject, compile_parameters, inferred)
+            else {
+                continue;
+            };
+            let candidates = self
+                .trait_impls
+                .values()
+                .filter(|implementation| {
+                    implementation.key.self_ty == subject
+                        && implementation.key.trait_ref.name == *trait_name
+                        && implementation.key.trait_ref.arguments.len() == trait_arguments.len()
+                })
+                .filter(|implementation| {
+                    trait_arguments
+                        .iter()
+                        .zip(&implementation.key.trait_ref.arguments)
+                        .all(|(template, actual)| {
+                            let Type::Named(parameter, arguments) = template else {
+                                return self
+                                    .resolved_template_ty(template, &predicate_parameters, inferred)
+                                    .is_none_or(|resolved| resolved == *actual);
+                            };
+                            if !arguments.is_empty() || !predicate_parameters.contains(parameter) {
+                                return self
+                                    .resolved_template_ty(template, &predicate_parameters, inferred)
+                                    .is_none_or(|resolved| resolved == *actual);
+                            }
+                            inferred.get(parameter).is_none_or(|selected| {
+                                selected.origin.starts_with("default ") || selected.ty == *actual
+                            })
+                        })
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let [implementation] = candidates.as_slice() else {
+                continue;
+            };
+            let mut constraints = trait_arguments
+                .iter()
+                .cloned()
+                .zip(implementation.key.trait_ref.arguments.iter().cloned())
+                .map(|(template, actual)| {
+                    (
+                        template,
+                        actual,
+                        None,
+                        format!("where predicate `{trait_name}` argument"),
+                    )
+                })
+                .collect::<Vec<_>>();
+            for binding in &predicate.associated_types {
+                let Some(actual) = implementation.associated_types.get(&binding.name) else {
+                    continue;
+                };
+                constraints.push((
+                    binding.ty.clone(),
+                    actual.clone(),
+                    implementation
+                        .associated_type_sources
+                        .get(&binding.name)
+                        .cloned(),
+                    format!(
+                        "associated type `{trait_name}.{}` in where predicate",
+                        binding.name
+                    ),
+                ));
+            }
+            let mut candidate = inferred.clone();
+            for (template, actual, actual_source, origin) in constraints {
+                if let Type::Named(parameter, arguments) = &template {
+                    if arguments.is_empty()
+                        && predicate_parameters.contains(parameter)
+                        && candidate
+                            .get(parameter)
+                            .is_some_and(|selected| selected.origin.starts_with("default "))
+                    {
+                        candidate.remove(parameter);
+                    }
+                }
+                if let Err(message) = self.unify_template_ty(
+                    &template,
+                    &actual,
+                    actual_source.as_ref(),
+                    &predicate_parameters,
+                    &mut candidate,
+                    &origin,
+                ) {
+                    self.error(message);
+                    return None;
+                }
+            }
+            *inferred = candidate;
+        }
+        Some(())
     }
 
     pub(super) fn unify_template_ty(

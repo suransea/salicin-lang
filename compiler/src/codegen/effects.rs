@@ -655,6 +655,7 @@ impl Analyzer {
         let handler = Rc::new(AlgebraicHandler {
             identity: source_effect_identity(instance),
             source: instance.clone(),
+            inference_context: context.clone(),
             clauses,
             operations: handler_operations,
             lexical_unsafe_depth: Rc::new(Cell::new(context.unsafe_depth)),

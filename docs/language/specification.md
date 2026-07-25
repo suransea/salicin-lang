@@ -549,8 +549,10 @@ no suspension point transfers its captures, executes the body once, and returns 
 polling that completed future again traps. The completed state no longer drops transferred
 captures. An unhandled `Unsafe` requirement is inferred from the body and attached to the
 generated future's `poll` contract; creating the future remains pure, while polling requires an
-unsafe handler. Residual algebraic effects are rejected until generated poll/resume functions
-participate in handler specialization. One tail-position `await` is implemented: its operand is
+unsafe handler. A captureless body without suspension may retain a custom residual effect.
+Polling it inside the corresponding handler specializes the generated poll and resume source
+before runtime lowering. Residual effects in captured or suspended bodies, and residual `Throws`,
+are not yet supported. One tail-position `await` is implemented: its operand is
 evaluated on the first parent poll, the child future is retained across `Poll.Pending`, and
 `Poll.Ready(value)` completes the parent with `value`. Completion or cancellation drops the stored
 child exactly once. One linear non-tail form, `let value = await child`, may execute ordinary

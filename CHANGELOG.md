@@ -24,11 +24,11 @@ subset.
   `Future(E)` until `Ready` without allocation or implicit runtime selection. Public trait methods
   now remain callable through generic dispatch even when the concrete implementation type is
   private to the caller's package.
-- Inferred an unhandled `Unsafe` requirement from a cold async body without suspension and
-  attached it to the generated `Future(Unsafe)` polling contract. Future construction remains
-  cold and pure, while polling requires an unsafe handler. Residual algebraic effects are rejected
-  at the async expression until generated poll/resume functions participate in handler
-  specialization.
+- Inferred residual requirements from cold async bodies without suspension. `Unsafe` remains an
+  ordinary poll requirement, while captureless custom residual effects now specialize generated
+  poll/resume source through an enclosing handler. Generic `Future(E)` bounds infer a defaulted
+  effect row from the concrete implementation, and effectful trait-method calls participate in
+  handler inlining. Captured, suspended, and `Throws` residual futures remain pending work.
 - Lowered one tail-position `await` into a real parent/child polling state machine. The first poll
   creates and stores the child future, `Pending` preserves it for the next poll, and `Ready`
   transfers the output and completes the parent. Suspended cancellation and successful completion

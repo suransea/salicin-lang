@@ -3079,6 +3079,16 @@ fn spin_executor_polls_one_future_until_ready() {
 }
 
 #[test]
+fn captureless_async_residual_effect_specializes_under_handler() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "async_residual_effect.sc"))
+        .output()
+        .expect("run residual-effect async fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn tail_await_forwards_a_ready_child_future() {
     let output = salic()
         .arg("run")
