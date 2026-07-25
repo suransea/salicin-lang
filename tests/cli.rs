@@ -3280,6 +3280,31 @@ fn borrowed_async_residual_effect_captures_specialize_under_handler() {
 }
 
 #[test]
+fn ready_async_throws_specializes_and_suspended_throws_stays_diagnostic() {
+    for (name, output) in batched_native_fixture_outputs(&["async_residual_throws.sc"]) {
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+
+    let suspended = salic()
+        .arg("check")
+        .arg(fixture("fail", "async_residual_throws_await.sc"))
+        .output()
+        .expect("check suspended Throws async fixture");
+    assert!(!suspended.status.success(), "{}", output_text(&suspended));
+    assert!(
+        String::from_utf8_lossy(&suspended.stderr)
+            .contains("async residual `Throws(bool)` requires poll/resume handler specialization"),
+        "{}",
+        output_text(&suspended)
+    );
+}
+
+#[test]
 fn tail_await_forwards_a_ready_child_future() {
     let output = salic()
         .arg("run")

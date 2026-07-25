@@ -28,15 +28,17 @@ without implicit allocation or runtime selection.
 
 Async bodies without suspension that are captureless or retain by-value
 `Copy`, move-only, shared-borrow, or mutable-borrow captures now retain a
-custom residual row and specialize their generated poll/resume source through
-an enclosing handler. Generic bounds such as `F: Future(E, Output = T)` infer
-`E` from the concrete implementation, and effectful trait-method calls
-participate in handler inlining.
+custom residual row, including standard `Throws(Error)`, and specialize their
+generated poll/resume source through an enclosing handler. Generic bounds
+such as `F: Future(E, Output = T)` infer `E` from the concrete implementation,
+and effectful trait-method calls participate in handler inlining. Ready
+`Throws` futures run success, error, and move-capture cleanup paths through
+ordinary `try`.
 
-The remaining task is to extend that source specialization to suspension and
-continuations, and residual `Throws`. Generated `Future(E)` implementations
-must preserve handler ownership and one-shot continuation rules while keeping
-construction cold. `Unsafe` remains the ordinary residual-poll baseline.
+The remaining task is to extend that source specialization across suspension
+and continuations. Generated `Future(E)` implementations must preserve
+handler ownership and one-shot continuation rules while keeping construction
+cold. `Unsafe` remains the ordinary residual-poll baseline.
 
 ## Later
 

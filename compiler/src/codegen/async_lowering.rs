@@ -6,6 +6,8 @@ use crate::ast::{
 };
 use crate::core::LangItemKind;
 
+use super::compile_time::source_type_from_identity;
+use super::effects::standard_throws_error_source;
 use super::hir::{
     AccessBoundary, AssignmentKind, ClosureCapture, ClosureCaptureMode, ClosureCapturePolicy,
     ClosureEffectContext, EnumLayout, FieldLayout, FunctionSig, HirArgument, HirExpr, HirExprKind,
@@ -210,11 +212,43 @@ impl Analyzer {
             .filter(|effect| effect.as_str() != async_effect)
             .cloned()
             .collect::<Vec<_>>();
-        if !unsupported_effects.is_empty() && source_plan.has_await {
+        let throws_name = self.lang_item_name(LangItemKind::ThrowsEffect);
+        let residual_throws = unsupported_effects
+            .iter()
+            .filter_map(|effect| source_type_from_identity(effect))
+            .filter_map(|effect| standard_throws_error_source(&effect, throws_name))
+            .filter_map(|error| self.probe_source_ty(&error))
+            .collect::<Vec<_>>();
+        let algebraic_effects = unsupported_effects
+            .iter()
+            .filter(|effect| {
+                source_type_from_identity(effect).is_none_or(|source| {
+                    standard_throws_error_source(&source, throws_name).is_none()
+                })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let has_residual_effects =
+            closure.throws_error.is_some() || !unsupported_effects.is_empty();
+        if (closure.throws_error.is_some() || !residual_throws.is_empty()) && source_plan.has_await
+        {
+            let errors = closure
+                .throws_error
+                .iter()
+                .chain(&residual_throws)
+                .map(|error| self.diagnostic_type_name(error))
+                .collect::<Vec<_>>();
+            self.error(format!(
+                "async residual `Throws({})` requires poll/resume handler specialization, which is not implemented yet",
+                errors.join(" | ")
+            ));
+            return super::lower::error_expr();
+        }
+        if !algebraic_effects.is_empty() && source_plan.has_await {
             self.error(format!(
                 "async residual algebraic effect{} `{}` require poll/resume handler specialization, which is not implemented yet",
-                if unsupported_effects.len() == 1 { "" } else { "s" },
-                unsupported_effects.join(", ")
+                if algebraic_effects.len() == 1 { "" } else { "s" },
+                algebraic_effects.join(", ")
             ));
             return super::lower::error_expr();
         }
@@ -526,7 +560,7 @@ impl Analyzer {
             },
         )];
 
-        let direct_reference_captures = !unsupported_effects.is_empty() && !source_plan.has_await;
+        let direct_reference_captures = has_residual_effects && !source_plan.has_await;
         for (index, capture) in closure.captures.iter().enumerate() {
             let (ty, value) = materialize_async_capture(capture, direct_reference_captures);
             fields.push(FieldLayout {
@@ -665,7 +699,7 @@ impl Analyzer {
         };
         self.async_futures.insert(name.clone(), metadata);
         self.register_future_poll(&name);
-        if !unsupported_effects.is_empty() {
+        if has_residual_effects {
             self.register_ready_async_handler_templates(
                 &name,
                 &source_plan.factory_body,

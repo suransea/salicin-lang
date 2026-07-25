@@ -6,6 +6,12 @@ subset.
 
 ## Unreleased
 
+## 0.188.0 - 2026-07-26
+
+- Specialized non-suspending residual `Throws(Error)` futures through the
+  ordinary standard handler path. `try { future.poll() }` now has native
+  success and error coverage, including exactly-once cleanup for a move-only
+  capture on throw; suspended Throws remains explicitly diagnostic.
 - Specialized non-suspending custom-residual futures with shared or mutable
   reference captures. Generated state stores the reference value rather than
   a reference to its temporary source slot, normalizes resume parameters back

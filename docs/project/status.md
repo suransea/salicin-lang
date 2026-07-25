@@ -112,10 +112,10 @@ Implemented data and control features include:
   cleanup, completed-state repoll traps, and one tail-position child suspension;
 - the explicit allocation-free `core.async.Spin` executor for one owned future;
 - handler specialization for non-suspending futures with a custom residual
-  effect and by-value `Copy`, move-only, shared-borrow, or mutable-borrow
-  captures, including exact once-only move/drop behavior, retained borrow
-  exclusion, `Future(E)` where-predicate inference, and effectful trait-method
-  inlining;
+  effect, including standard `Throws(Error)`, and by-value `Copy`, move-only,
+  shared-borrow, or mutable-borrow captures, including exact once-only
+  move/drop behavior, retained borrow exclusion, `Future(E)` where-predicate
+  inference, and effectful trait-method inlining;
 - checked arithmetic, comparisons, bitwise operations, shifts, and compound assignment;
 - deterministic left-to-right evaluation;
 - optional chaining, coalescing, error propagation, and forced unwrap.
@@ -144,7 +144,9 @@ Cold `async` blocks without suspension materialize compiler-generated nominal st
 explicit state word and their captured fields. The generated state satisfies structural `Move`;
 relocating or cancelling an unpolled future transfers or drops owned captures exactly once.
 The no-suspension polling transition returns `Poll.Ready` once, traps on repoll, and enforces an
-inferred residual `Unsafe` requirement. One tail-position `await` stores its child across Pending,
+inferred residual `Unsafe` requirement. Standard residual `Throws(Error)` polling specializes
+through `try` or its underlying handler; success, error, and move-capture cleanup paths run
+natively. One tail-position `await` stores its child across Pending,
 resumes from Ready, and drops the child exactly once on completion or cancellation. A single
 non-tail await may bind the Ready output and run a linear continuation with state-owned captures.
 Multiple sequential awaits compose while retaining earlier outputs and dropping only the active
