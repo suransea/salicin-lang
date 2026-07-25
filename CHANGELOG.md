@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.191.0 - 2026-07-26
+
 - Extended suspended residual async specialization from direct tail `await`
   to one await followed by an optional pure linear continuation. Custom
   effects and standard `Throws(Error)` now preserve `Pending` repoll and run
