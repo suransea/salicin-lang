@@ -38,6 +38,12 @@ active-variant future dispatches polling and cancellation. Branches may contain 
 prefixes and continuations, and branches without an await become immediate Ready futures. Loop
 suspension remains. Residual algebraic-effect specialization is a separate follow-up task.
 
+Loop completion requires an allocation-free reusable iteration state. The generated iteration
+returns an internal `Continue(Carry)` or `Break(Output)` outcome, transfers loop-carried values by
+value, polls consecutive immediately-ready iterations without recursion, and retains only the
+active iteration across `Pending`. Tests must cover `while` false exits, `continue`, fallthrough,
+value-producing `break`, loop-carried ownership, child-slot reuse, and cancellation cleanup.
+
 ## Later
 
 - [ ] **TOOL-FMT-1: Define formatter-preserving syntax invariants**

@@ -105,6 +105,45 @@ not a second execution.
 Generated state-machine names, fields, and states are not source entities and never appear in
 diagnostics.
 
+### Suspension In Loops
+
+A suspension inside `while` or `loop` is lowered as a reusable iteration state, not as recursive
+nesting of anonymous futures. Conceptually, one suspended iteration completes with one of two
+compiler-internal outcomes:
+
+```sc future
+let AsyncLoopStep(Carry: type, Output: type) = enum {
+  Continue(Carry)
+  Break(Output)
+}
+```
+
+This is a lowering model, not a public standard-library declaration. `Carry` contains exactly the
+values live across the loop backedge. Each iteration takes those values by value. A `continue` or
+fallthrough transfers them to `Continue`; a value-producing `break` transfers its value to
+`Break`. A `while` condition that becomes false is the unit-valued break path.
+
+The parent future stores one active iteration child and reuses that storage after the child
+completes:
+
+1. `Pending` leaves the active child and carried values initialized and returns `Pending`;
+2. `Ready(Continue(carry))` destroys the completed child, constructs the next iteration in the same
+   child slot from `carry`, and polls it immediately;
+3. `Ready(Break(output))` destroys the completed child, marks the parent completed, and returns
+   `Ready(output)`.
+
+Immediate iterations are consumed in an ordinary poll-local loop. They do not add observable
+suspension points or recurse in either the generated type or the host call stack. The implementation
+may impose a documented fairness budget later, but the initial allocation-free contract runs until
+a child returns `Pending` or the source loop exits.
+
+Values declared inside an iteration are owned by that iteration. On `continue`, `break`, or
+fallthrough, values not transferred into the step outcome are dropped before the control transfer.
+Dropping the parent while suspended drops only the active iteration and then the parent fields;
+completed iterations are never retained or dropped again. Loop-carried borrows remain subject to
+the same `Move` rule as every other value stored across `await`; in particular, an iteration cannot
+return a borrow into its own storage as `Carry`.
+
 ## Ownership And Cancellation
 
 An anonymous future is an owned resource unless all of its stored state is structurally `Copy` and
@@ -188,7 +227,11 @@ Implementation tasks must cover:
 - immediate `Ready` and one or more `Pending` transitions;
 - nested await and residual `Throws`, `Unsafe`, and custom effects;
 - move captures and locals live across suspension;
+- suspended `while` and `loop` iterations, including `continue`, fallthrough, false conditions, and
+  value-producing `break`;
+- loop-carried owned values, consecutive immediately-ready iterations, and reuse of one child slot;
 - cancellation before start and at every suspension point;
+- cancellation in a suspended iteration without retaining or redropping completed iterations;
 - external shared and mutable borrow retention;
 - structural `Move`, self-reference, escape, double-poll, recursion, and public-API rejection;
 - deterministic IR, source-level diagnostics, and exactly-once native cleanup.
