@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use crate::ast::{
-    CallArg, Expr, Function, FunctionEffects, ItemOrigin, Param, PassMode, Stmt, Type, Visibility,
+    BinaryOp, CallArg, Expr, Function, FunctionEffects, ItemOrigin, Param, PassMode, Stmt, Type,
+    Visibility,
 };
 use crate::core::LangItemKind;
 
@@ -162,7 +163,11 @@ impl Analyzer {
             .cloned()
             .collect::<Vec<_>>();
         if !unsupported_effects.is_empty()
-            && (source_plan.has_await || !closure.captures.is_empty())
+            && (source_plan.has_await
+                || closure
+                    .captures
+                    .iter()
+                    .any(|capture| capture_pass_mode(capture) != PassMode::Copy))
         {
             self.error(format!(
                 "async residual algebraic effect{} `{}` require poll/resume handler specialization, which is not implemented yet",
@@ -596,6 +601,13 @@ impl Analyzer {
                     || awaited.next.as_ref().is_some_and(|next| next.unsafe_effect)
             });
         let resume_function = closure.function.clone();
+        let resume_captures = closure
+            .capture_names
+            .iter()
+            .cloned()
+            .zip(&closure.captures)
+            .map(|(name, capture)| (name, capture.place.ty.clone()))
+            .collect::<Vec<_>>();
         let metadata = AsyncFutureInfo {
             resume: closure.function,
             output,
@@ -615,6 +627,7 @@ impl Analyzer {
                 &name,
                 &source_plan.factory_body,
                 &resume_function,
+                &resume_captures,
             );
         }
 
@@ -1219,11 +1232,31 @@ impl Analyzer {
         name: &str,
         resume_body: &Expr,
         resume_function: &str,
+        resume_captures: &[(String, Ty)],
     ) {
         let future = self.async_futures[name].clone();
         debug_assert!(future.awaited.is_none());
-        debug_assert!(future.capture_modes.is_empty());
+        debug_assert!(future
+            .capture_modes
+            .iter()
+            .all(|mode| *mode == PassMode::Copy));
         let Some(output_source) = self.source_type_for_ty(&future.output) else {
+            return;
+        };
+        let Some(resume_parameters) = resume_captures
+            .iter()
+            .map(|(name, ty)| {
+                Some(Param {
+                    mode: PassMode::Copy,
+                    access: None,
+                    modifiers: Vec::new(),
+                    region: None,
+                    name: name.clone(),
+                    ty: self.source_type_for_ty(ty)?,
+                })
+            })
+            .collect::<Option<Vec<_>>>()
+        else {
             return;
         };
         let effects = self.async_source_effects(&future);
@@ -1234,7 +1267,7 @@ impl Analyzer {
                 name: resume_function.to_owned(),
                 foreign: None,
                 compile_groups: Vec::new(),
-                groups: vec![Vec::new()],
+                groups: vec![resume_parameters],
                 return_type: Some(output_source.clone()),
                 effects: effects.clone(),
                 where_predicates: Vec::new(),
@@ -1264,7 +1297,20 @@ impl Analyzer {
         let poll_function = trait_method_name(&trait_key, "poll");
         self.lifted_functions
             .retain(|function| function.name != resume_function && function.name != poll_function);
-        let resume = Expr::Call(Box::new(Expr::Name(resume_function.to_owned())), Vec::new());
+        let resume = Expr::Call(
+            Box::new(Expr::Name(resume_function.to_owned())),
+            resume_captures
+                .iter()
+                .enumerate()
+                .map(|(index, _)| CallArg {
+                    label: None,
+                    value: Expr::Member(
+                        Box::new(Expr::Name("self".to_owned())),
+                        format!("capture.{index}"),
+                    ),
+                })
+                .collect(),
+        );
         let poll_type = Expr::Call(
             Box::new(Expr::Name(
                 self.lang_item_name(LangItemKind::Poll).to_owned(),
@@ -1281,6 +1327,25 @@ impl Analyzer {
                 value: resume,
             }],
         );
+        let self_value = || Expr::Name("self".to_owned());
+        let state = || Expr::Member(Box::new(self_value()), "state".to_owned());
+        let body = Expr::If {
+            condition: Box::new(Expr::Binary(
+                Box::new(state()),
+                BinaryOp::Eq,
+                Box::new(Expr::Integer(0)),
+            )),
+            then_branch: Box::new(Expr::Block(
+                vec![Stmt::Expr(Expr::Assign(
+                    Box::new(state()),
+                    Box::new(Expr::Integer(1)),
+                ))],
+                Some(Box::new(ready)),
+            )),
+            else_branch: Some(Box::new(Expr::Loop {
+                body: Box::new(Expr::Unit),
+            })),
+        };
         self.functions.insert(
             poll_function.clone(),
             Function {
@@ -1309,7 +1374,7 @@ impl Analyzer {
                 )),
                 effects,
                 where_predicates: Vec::new(),
-                body: Some(ready),
+                body: Some(body),
             },
         );
         self.function_origins.insert(poll_function, origin);

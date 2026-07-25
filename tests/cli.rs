@@ -3079,7 +3079,7 @@ fn spin_executor_polls_one_future_until_ready() {
 }
 
 #[test]
-fn captureless_async_residual_effect_specializes_under_handler() {
+fn copy_capturing_async_residual_effect_specializes_under_handler() {
     let output = salic()
         .arg("run")
         .arg(fixture("pass", "async_residual_effect.sc"))

@@ -281,9 +281,10 @@ until `Ready` without allocation. Constructing a cold future does not select or 
 validated compiler-provided functions whose declarations expose their effect rows and
 `Future(E, Output = T)` relationship. Compiler-generated futures without suspension already
 implement the inferred `Future(E)` instance and transition from cold state to `Poll.Ready` exactly
-once. `E` may be empty, `Unsafe`, or a custom residual effect. A captureless body without
-suspension can poll under the corresponding algebraic handler through generated poll/resume source
-specialization; captured, suspended, and `Throws`-residual bodies remain compiler work. Polling
+once. `E` may be empty, `Unsafe`, or a custom residual effect. A body without suspension that is
+captureless or retains only by-value `Copy` captures can poll under the corresponding algebraic
+handler through generated poll/resume source specialization; borrowed, move-capturing, suspended,
+and `Throws`-residual bodies remain compiler work. Polling
 enforces `E` while construction remains pure. A single tail-position `await` creates its child on the first parent poll,
 stores it across `Pending`, and completes the parent from `Ready`; cancellation drops a stored child
 exactly once. One non-tail `let value = await child` may continue with a linear suffix whose captures

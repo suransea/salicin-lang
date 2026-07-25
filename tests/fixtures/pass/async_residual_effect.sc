@@ -16,10 +16,11 @@ where F: Future(E, Output = T) = {
 }
 
 let main(): i32 = {
+  let offset = 2
   let mut future = async {
-    request()
+    request() + offset
   }
-  Ask.handle ask { (resume) -> resume(42) } action {
+  Ask.handle ask { (resume) -> resume(40) } action {
     let polled: Poll(i32) = poll_once(future)
     match polled
       { Ready(value) -> value }
