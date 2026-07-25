@@ -51,6 +51,10 @@ pub let do(E: effect, T: type)
   action()
 }
 
+/// Registers `action` to run when the current lexical scope exits.
+pub let defer(E: effect)
+  (move action: (): () with(E)): () with(E)
+
 /// Runs `action` once, then repeats it while the lazy condition remains true.
 pub let do(E: effect)
   (move action: (): () with(core.control.Break(()), core.control.Continue, E))

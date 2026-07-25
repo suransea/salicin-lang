@@ -6383,6 +6383,10 @@ impl Analyzer {
             {
                 continue;
             }
+            if template.body.is_none() && template_name == "core.control.defer" {
+                // `defer` is a compiler-provided lexical cleanup contract.
+                continue;
+            }
             if template.body.is_none() && template_name.starts_with("$trait$impl$") {
                 continue;
             }

@@ -1666,6 +1666,7 @@ fn is_control_support_item(name: &str) -> bool {
             | "BorrowedItem"
             | "break"
             | "continue"
+            | "defer"
             | "return"
             | "copy"
             | "move"
@@ -3731,7 +3732,7 @@ pub let Index(Key: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 327);
+        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 328);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
