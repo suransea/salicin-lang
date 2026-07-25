@@ -6,6 +6,12 @@ subset.
 
 ## Unreleased
 
+- Extended suspended residual async specialization to `Copy` and move-only
+  locals retained across the first await. A dedicated starting drop-state now
+  preserves move-only continuation captures while an effectful child factory
+  runs; success, factory error, Pending cancellation, and Ready completion
+  each clean factory locals and initialized future fields exactly once.
+
 ## 0.191.0 - 2026-07-26
 
 - Extended suspended residual async specialization from direct tail `await`

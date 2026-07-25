@@ -646,18 +646,23 @@ runtime lowering. Move-only capture fields transfer once and completed future
 cleanup does not drop them again. A residual `Throws(Error)` poll may be
 handled by `try { future.poll() }`; both successful Ready and thrown paths
 preserve capture cleanup. A suspended body may also retain a custom residual
-effect, including `Throws(Error)`, when its first segment ends in one `await`
-and has no retained local. It may either return that value directly or run one
-pure linear continuation after Ready. Both segments may capture only by-value
-`Copy` or move-only values, and the continuation may not suspend again.
+effect, including `Throws(Error)`, when its first segment ends in one `await`.
+It may either return that value directly or run one pure linear continuation
+after Ready. Both segments may capture only by-value `Copy` or move-only
+values, pre-await locals used by the continuation may be retained by `Copy` or
+move, and the continuation may not suspend again.
 Polling through the enclosing handler specializes the cold transition before
 runtime lowering. That transition marks transferred captures unavailable
-before evaluating the await operand, so an abort cannot drop them twice. The
-operand and its residual effects run only while creating the child on the
-first poll; returning `Pending` and polling the stored child again do not
-replay them. `Poll.Ready(value)` runs the continuation exactly once, while
-completion or cancellation drops the stored child exactly once. Other
-suspended residual shapes remain unsupported. Outside residual
+before evaluating the await operand, so an abort cannot drop them twice. A
+starting state continues to own move-only continuation captures until the
+factory returns; pre-await locals remain ordinary factory locals and are
+cleaned there if evaluation aborts. A successful factory transition stores
+the child and retained locals together. The operand and its residual effects
+run only while creating the child on the first poll; returning `Pending` and
+polling the stored child again do not replay them. `Poll.Ready(value)` runs the
+continuation exactly once. Completion, error, and cancellation drop every
+initialized state field exactly once. Other suspended residual shapes remain
+unsupported. Outside residual
 specialization, one linear non-tail form, `let value = await child`, may
 execute ordinary continuation code after Ready; the continuation's captures
 remain owned by the parent while suspended. Multiple sequential bindings compose recursively and preserve earlier Ready values
@@ -669,8 +674,8 @@ ordinary region and alias constraints. An `if` or `match` may place one tail awa
 when every child future has the same Output; concrete child types may differ. The condition,
 scrutinee, and guards run once before suspension, and cancellation drops only the selected child.
 Branch-local linear statements may surround await, and a non-suspending branch completes
-immediately when selected. Residual effects with retained locals, nested suspension, branches,
-loops, or borrowed suspended captures are not implemented yet.
+immediately when selected. Residual effects with nested suspension, branches, loops, or borrowed
+suspended captures are not implemented yet.
 
 `unsafe` is an authority effect. `unsafe { ... }` authorizes operations whose contracts cannot be
 verified by the safe type and ownership rules; it does not disable type checking or cleanup.

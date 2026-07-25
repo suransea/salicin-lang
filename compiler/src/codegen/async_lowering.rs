@@ -519,7 +519,6 @@ impl Analyzer {
             awaited.next.is_none()
                 && awaited.loop_step.is_none()
                 && awaited.loop_condition.is_none()
-                && source_plan.retained.is_empty()
                 && closure
                     .captures
                     .iter()
@@ -1527,7 +1526,6 @@ impl Analyzer {
         debug_assert!(awaited.next.is_none());
         debug_assert!(awaited.loop_step.is_none());
         debug_assert!(awaited.loop_condition.is_none());
-        debug_assert!(awaited.retained_fields.is_empty());
 
         let Some(output_source) = self.source_type_for_ty(&future.output) else {
             return;
@@ -1834,7 +1832,7 @@ impl Analyzer {
                 mode: PassMode::Inferred,
             }],
             result: Ty::Unit,
-            body: set_state(&self_ty, 3),
+            body: set_state(&self_ty, 4),
         });
 
         let layout = self.struct_layouts[name].clone();

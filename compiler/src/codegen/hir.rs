@@ -358,6 +358,7 @@ pub(super) struct HirProgram {
 #[derive(Debug, Clone)]
 pub(super) struct AsyncStateLayout {
     pub(super) owned_capture_fields: Vec<usize>,
+    pub(super) starting_fields: Vec<usize>,
     pub(super) suspended_fields: Vec<usize>,
     pub(super) chained_fields: Vec<usize>,
 }

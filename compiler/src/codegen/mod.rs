@@ -6413,6 +6413,19 @@ impl Analyzer {
                                         })
                                 }))
                                 .collect(),
+                            starting_fields: future
+                                .awaited
+                                .iter()
+                                .flat_map(|awaited| {
+                                    awaited
+                                        .continuation_capture_modes
+                                        .iter()
+                                        .zip(&awaited.continuation_fields)
+                                        .filter_map(|(mode, field)| {
+                                            (*mode == PassMode::Move).then_some(*field)
+                                        })
+                                })
+                                .collect(),
                             suspended_fields: future
                                 .awaited
                                 .as_ref()

@@ -19,11 +19,10 @@ Priority meanings:
 
 Non-suspending futures support `Copy`, move-only, shared-borrow, and
 mutable-borrow captures. Suspended residual specialization supports one await
-with no retained pre-await local, followed by at most one pure linear
-continuation; both segments accept by-value `Copy` or move-only captures.
-Remaining work covers retained locals, nested suspension, branches, loops,
-and borrowed suspended captures while preserving handler ownership, cold
-construction, and one-shot cleanup.
+followed by at most one pure linear continuation; both segments and retained
+pre-await locals accept by-value `Copy` or move-only state. Remaining work
+covers nested suspension, branches, loops, and borrowed suspended captures
+while preserving handler ownership, cold construction, and one-shot cleanup.
 
 ## P1: Tooling And Packages
 

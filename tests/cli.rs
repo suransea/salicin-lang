@@ -3354,10 +3354,11 @@ fn ready_tail_await_and_post_await_async_throws_specialize_under_try() {
 }
 
 #[test]
-fn tail_and_post_await_async_custom_effects_specialize_and_cancel() {
+fn suspended_residual_async_effects_specialize_and_cancel() {
     for (name, output) in batched_native_fixture_outputs(&[
         "async_residual_tail_await.sc",
         "async_residual_post_await.sc",
+        "async_residual_retained_await.sc",
     ]) {
         assert_eq!(
             output.status.code(),
@@ -3367,17 +3368,17 @@ fn tail_and_post_await_async_custom_effects_specialize_and_cancel() {
         );
     }
 
-    let retained = salic()
+    let nested = salic()
         .arg("check")
-        .arg(fixture("fail", "async_residual_retained_await.sc"))
+        .arg(fixture("fail", "async_residual_nested_await.sc"))
         .output()
-        .expect("check retained residual async fixture");
-    assert!(!retained.status.success(), "{}", output_text(&retained));
+        .expect("check nested residual async fixture");
+    assert!(!nested.status.success(), "{}", output_text(&nested));
     assert!(
-        String::from_utf8_lossy(&retained.stderr)
+        String::from_utf8_lossy(&nested.stderr)
             .contains("requires poll/resume handler specialization for this suspension shape"),
         "{}",
-        output_text(&retained)
+        output_text(&nested)
     );
 }
 

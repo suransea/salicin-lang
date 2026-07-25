@@ -25,9 +25,9 @@ let make_step(): Step with(Ask) = {
 
 let main(): i32 = {
   let future = async {
-    let offset = 2
-    let value = await make_step()
-    value + offset
+    let first = await make_step()
+    let second = await Step { value: first + 1 }
+    second + 1
   }
   0
 }

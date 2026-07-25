@@ -29,7 +29,7 @@ specialized without replaying the cold residual segment.
 
 Remaining design:
 
-- retained locals and nested post-await suspension under residual handlers;
+- nested post-await suspension under residual handlers;
 - branch and loop suspension under residual handlers;
 - borrowed suspended captures that preserve region and alias constraints;
 - explicit rejection where a state shape cannot remain structural `Move`.
