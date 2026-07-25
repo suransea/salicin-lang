@@ -13,26 +13,7 @@ Priority meanings:
 - **P2**: accepted later work whose entry gate is not open;
 - **Deferred**: requires a new design decision.
 
-## Current: ABI And Compiler Definitions
-
-- [ ] **BUILTIN-1: Mark every compiler-owned core definition with private `builtin()` initializers**
-
-`ABI-REP-1` is complete: `struct(c)` is the only C data representation
-constructor, composes with ordinary struct options, preserves target C
-alignment and padding, validates concrete generic instances, and rejects
-empty or representation-unstable fields with source-level diagnostics.
-
-`ABI-FOREIGN-1` is complete: every foreign-owned function uses a complete
-`foreign(c)` or `foreign(c, "symbol")` initializer, omitted symbols default
-to the declaration name, calls implicitly require `Unsafe`, and grouped
-`extern` plus all `@` syntax have no accepted grammar path.
-
-The remaining compiler-definition task introduces no `@` syntax.
-`builtin()` is a complete declaration marker typed by the declaration annotation and must be
-eliminated before code generation. Trait requirements remain bodyless, and user opaque types are
-outside `BUILTIN-1`.
-
-## Async Follow-Up
+## P0: Async Completion
 
 - [ ] **ASYNC-EFFECT-1: Extend residual specialization beyond direct tail await**
 
@@ -43,7 +24,7 @@ move-only captures. Remaining work covers post-await continuations, retained
 locals, branches, loops, and borrowed suspended captures while preserving
 handler ownership, cold construction, and one-shot cleanup.
 
-## Later
+## P1: Tooling And Packages
 
 - [ ] **TOOL-FMT-1: Define formatter-preserving syntax invariants**
 - [ ] **TOOL-LSP-1: Expose parser and semantic spans for an LSP**

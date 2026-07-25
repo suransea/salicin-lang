@@ -517,6 +517,19 @@ impl Analyzer {
                 Item::TypeForm(definition) => &definition.name,
                 Item::Trait(definition) => &definition.name,
                 Item::Extend(extension) => {
+                    if origin.package != PackageId::CORE.0
+                        && extension.members.iter().any(|member| {
+                            matches!(
+                                member,
+                                ExtendMember::Function(function) if function.builtin
+                            )
+                        })
+                    {
+                        self.error(
+                            "`builtin()` is private to the core package and cannot define extension methods",
+                        );
+                        continue;
+                    }
                     extensions.push((extension.clone(), origin));
                     continue;
                 }
@@ -545,6 +558,18 @@ impl Analyzer {
                 Item::Function(function) => {
                     let mut function = function.clone();
                     let source_name = function.name.clone();
+                    if function.builtin && origin.package != PackageId::CORE.0 {
+                        self.error(format!(
+                            "`builtin()` is private to the core package and cannot define `{source_name}`"
+                        ));
+                        continue;
+                    }
+                    if function.builtin
+                        && origin.package == PackageId::CORE.0
+                        && source_name.rsplit("::").next() == Some("builtin")
+                    {
+                        continue;
+                    }
                     let transparent_modifier = function.compile_groups.len() == 1
                         && function.compile_groups[0].len() == 1
                         && function.compile_groups[0][0].kind
@@ -575,6 +600,7 @@ impl Analyzer {
                         )
                         && function.effects == FunctionEffects::default()
                         && function.where_predicates.is_empty()
+                        && function.builtin
                         && function.body.is_none();
                     if parameter_modifier_intrinsic {
                         continue;
@@ -809,7 +835,14 @@ impl Analyzer {
                         .insert(definition.name.clone(), definition.clone());
                 }
                 Item::Domain(_) => {}
-                Item::TypeForm(_) => {}
+                Item::TypeForm(definition) => {
+                    if definition.builtin && origin.package != PackageId::CORE.0 {
+                        self.error(format!(
+                            "`builtin()` is private to the core package and cannot define type `{}`",
+                            definition.name
+                        ));
+                    }
+                }
                 Item::TypeAlias(_) => {
                     unreachable!("type aliases are expanded before item collection")
                 }
@@ -3442,9 +3475,9 @@ impl Analyzer {
                 .cloned()
                 .map(|function| (function, origin.clone()))
                 .unwrap_or_else(|| (declaration.clone(), schema.access.origin.clone()));
-            let primitive_intrinsic = (origin.package == PackageId::CORE.0
-                && primitive_scalar_type(&target))
-                || (function_origin.package == PackageId::CORE.0 && method_name == "index");
+            let primitive_intrinsic = function.builtin
+                && ((origin.package == PackageId::CORE.0 && primitive_scalar_type(&target))
+                    || (function_origin.package == PackageId::CORE.0 && method_name == "index"));
             if function.body.is_none() && !primitive_intrinsic {
                 self.error(format!(
                     "trait implementation method `{}.{method_name}` requires a body",
@@ -3523,7 +3556,7 @@ impl Analyzer {
 
         let mut methods = HashMap::new();
         for (method_id, canonical, function, function_origin) in registered {
-            let primitive_intrinsic = function.body.is_none()
+            let primitive_intrinsic = function.builtin
                 && (primitive_scalar_type(&target)
                     || array_intrinsic_target
                     || self.instantiating_array_trait_extension > 0
@@ -5839,8 +5872,9 @@ impl Analyzer {
         let mut validation_extension = extension.clone();
         for member in &mut validation_extension.members {
             if let ExtendMember::Function(function) = member {
-                if function.body.is_none() {
+                if function.builtin {
                     function.body = Some(Expr::Unit);
+                    function.builtin = false;
                 }
             }
         }
@@ -6472,7 +6506,7 @@ impl Analyzer {
                 // this compiler always takes their syntax-directed fast paths.
                 continue;
             }
-            if template.body.is_none()
+            if template.builtin
                 && [
                     LangItemKind::Do,
                     LangItemKind::Try,
@@ -6500,7 +6534,7 @@ impl Analyzer {
             {
                 continue;
             }
-            if template.body.is_none() && template_name == "core::control::defer" {
+            if template.builtin && template_name == "core::control::defer" {
                 // `defer` is a compiler-provided lexical cleanup contract.
                 continue;
             }

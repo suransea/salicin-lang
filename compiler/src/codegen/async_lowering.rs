@@ -1375,6 +1375,7 @@ impl Analyzer {
             Function {
                 name: resume_function.to_owned(),
                 foreign: None,
+                builtin: false,
                 compile_groups: Vec::new(),
                 groups: vec![resume_parameters],
                 return_type: Some(output_source.clone()),
@@ -1473,6 +1474,7 @@ impl Analyzer {
             Function {
                 name: poll_function.clone(),
                 foreign: None,
+                builtin: false,
                 compile_groups: Vec::new(),
                 groups: vec![
                     vec![Param {
@@ -1558,6 +1560,7 @@ impl Analyzer {
             Function {
                 name: resume_function.to_owned(),
                 foreign: None,
+                builtin: false,
                 compile_groups: Vec::new(),
                 groups: vec![resume_parameters],
                 return_type: Some(factory_output_source.clone()),
@@ -1687,6 +1690,7 @@ impl Analyzer {
             Function {
                 name: start_helper.clone(),
                 foreign: None,
+                builtin: false,
                 compile_groups: Vec::new(),
                 groups: vec![vec![
                     Param {
@@ -1720,6 +1724,7 @@ impl Analyzer {
             Function {
                 name: wait_helper.clone(),
                 foreign: None,
+                builtin: false,
                 compile_groups: Vec::new(),
                 groups: vec![vec![Param {
                     mode: PassMode::Inferred,
@@ -1793,6 +1798,7 @@ impl Analyzer {
             Function {
                 name: begin_helper.clone(),
                 foreign: None,
+                builtin: false,
                 compile_groups: Vec::new(),
                 groups: vec![vec![Param {
                     mode: PassMode::Inferred,
@@ -1848,6 +1854,7 @@ impl Analyzer {
                 Function {
                     name: helper.clone(),
                     foreign: None,
+                    builtin: false,
                     compile_groups: Vec::new(),
                     groups: vec![vec![Param {
                         mode: PassMode::Inferred,
@@ -1944,6 +1951,7 @@ impl Analyzer {
             Function {
                 name: poll_function.clone(),
                 foreign: None,
+                builtin: false,
                 compile_groups: Vec::new(),
                 groups: vec![
                     vec![Param {

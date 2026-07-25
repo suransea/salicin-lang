@@ -94,6 +94,7 @@ fn function(name: &str, groups: Vec<Vec<Param>>, result: Type, body: Expr) -> It
     Item::Function(Function {
         name: name.to_owned(),
         foreign: None,
+        builtin: false,
         compile_groups: Vec::new(),
         groups,
         return_type: Some(result),

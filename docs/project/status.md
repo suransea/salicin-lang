@@ -41,11 +41,15 @@ Implemented lexical and declaration features include:
 - contextual control, passing, kind, and borrow words;
 - abstract domains written `let Name: domain`;
 - defined domains written `let Name = domain { ... }`, including empty domains;
-- ordinary closed enums usable as compile-time value types.
+- ordinary closed enums usable as compile-time value types;
+- explicit core-private `builtin()` initializers for compiler-owned
+  functions, types, type constructors, and extension methods.
 
 An abstract domain is distinct from a defined empty domain. Bare `let Name = domain` and the former
 top-level `= type` forms are rejected. Primitive integer types use declarations such as
-`pub let i32: type`; `type` is an abstract domain, not a type-construction expression.
+`pub let i32: type = builtin()`; `type` is an abstract domain, not a
+type-construction expression. The marker is unavailable to user packages and
+is distinct from bodyless abstract interfaces.
 
 ## Types and Static Abstraction
 

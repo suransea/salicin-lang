@@ -48,9 +48,9 @@ extend Spin: Executor {
 /// Constructs a cold compiler-generated future without running `action`.
 pub let async(E: effect, F: type, T: type)
   (move action: (): T with(core.async.Async, E)): F
-where F: Future(E, Output = T)
+where F: Future(E, Output = T) = builtin()
 
 /// Suspends the enclosing async computation until `future` is ready.
 pub let await(E: effect, F: type, T: type)
   (move future: F): T with(core.async.Async, E)
-where F: Future(E, Output = T)
+where F: Future(E, Output = T) = builtin()

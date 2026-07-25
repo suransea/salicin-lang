@@ -1,3 +1,7 @@
+// Private bootstrap marker for declarations whose definitions are supplied by
+// the compiler. Semantic validation gives each use its declaration annotation.
+let builtin(): Never = builtin()
+
 pub let Never = core.never.Never
 pub let Move = core.marker.Move
 pub let Copy = core.marker.Copy

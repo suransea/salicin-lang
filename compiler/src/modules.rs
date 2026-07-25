@@ -5492,8 +5492,10 @@ let main(): i32 = { Option {} }
             .program()
             .items
             .iter()
+            .zip(&core.program().item_visibilities)
             .zip(&core.program().item_origins)
-            .filter_map(|(item, origin)| {
+            .filter(|((_, visibility), _)| **visibility == Visibility::Public)
+            .filter_map(|((item, _), origin)| {
                 Some((
                     origin.module_path.last()?.as_str(),
                     declaration_name(item)?.rsplit("::").next()?,

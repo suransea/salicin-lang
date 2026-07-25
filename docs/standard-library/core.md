@@ -4,6 +4,15 @@
 services. The compiler embeds these `.sc` files, parses them through the ordinary frontend, and
 validates declarations that have language-defined roles.
 
+Compiler-owned definitions are explicit. The private root declaration
+`let builtin(): Never = builtin()` bootstraps a declaration marker that is
+unavailable to user packages. Primitive types, compiler-defined type
+constructors, intrinsic functions, and intrinsic extension methods use
+complete `= builtin()` initializers. Edition validation rejects missing,
+unknown, malformed, or public markers. Trait requirements and effect
+operations remain bodyless because they are abstract contracts, not
+compiler-provided default implementations.
+
 ## Modules
 
 `core.lib` is the root facade. It only re-exports the public root surface: `Never`, `Move`, `Copy`,
@@ -278,7 +287,7 @@ associated `Output` and a mutable-borrowing `poll` method returning `Poll`. `Exe
 explicit, and the ordinary zero-field `Spin` implementation repeatedly polls one owned future
 until `Ready` without allocation. Constructing a cold future does not select or run an executor.
 `async` and `await` are
-validated compiler-provided functions whose declarations expose their effect rows and
+validated `= builtin()` functions whose declarations expose their effect rows and
 `Future(E, Output = T)` relationship. Compiler-generated futures without suspension already
 implement the inferred `Future(E)` instance and transition from cold state to `Poll.Ready` exactly
 once. `E` may be empty, `Unsafe`, or a custom residual effect. A body without suspension can poll

@@ -1112,7 +1112,7 @@ impl CoreBundle {
         // Most contract tests isolate one prelude/operator declaration. Keep
         // independently tested capability modules present in those fixtures.
         let source = format!(
-            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{EDITION_2026_EFFECT}\n{EDITION_2026_ERROR}\n{EDITION_2026_UNSAFE}\n{EDITION_2026_ASYNC}\n{EDITION_2026_PRIMITIVES}\n{EDITION_2026_DOMAINS}\n{EDITION_2026_PASSING}\n{EDITION_2026_BORROW}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}\n{EDITION_2026_MEMORY}"
+            "{source}\n{TEST_ASSIGNMENT_OPS}\n{TEST_CHAIN_OPS}\n{EDITION_2026_EFFECT}\n{EDITION_2026_ERROR}\n{EDITION_2026_UNSAFE}\n{EDITION_2026_ASYNC}\n{EDITION_2026_PRIMITIVES}\n{EDITION_2026_DOMAINS}\n{EDITION_2026_PASSING}\n{EDITION_2026_BORROW}\n{EDITION_2026_CONTROL}\n{EDITION_2026_ITER}\n{EDITION_2026_MEMORY}\nlet builtin(): Never = builtin()"
         );
         let mut program = parser::parse(&source).map_err(|error| {
             CoreBundleError::new(
@@ -1422,6 +1422,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
     }
 
     let mut indices: BTreeMap<LangItemKind, Vec<usize>> = BTreeMap::new();
+    let mut builtin_bootstraps = Vec::new();
     for (index, ((item, visibility), origin)) in program
         .items
         .iter()
@@ -1440,6 +1441,11 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
             ));
             continue;
         };
+        if name == "builtin" {
+            builtin_bootstraps.push(index);
+            validate_builtin_bootstrap(item, *visibility, &mut diagnostics);
+            continue;
+        }
         let candidates = LangItemKind::ALL
             .iter()
             .copied()
@@ -1514,12 +1520,25 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         }
     }
 
+    if builtin_bootstraps.is_empty() {
+        diagnostics.push(
+            "missing private compiler-definition bootstrap `let builtin(): Never = builtin()`"
+                .to_owned(),
+        );
+    } else if builtin_bootstraps.len() > 1 {
+        diagnostics.push(format!(
+            "duplicate compiler-definition bootstrap `builtin` appears {} times",
+            builtin_bootstraps.len()
+        ));
+    }
+
     let mut resolved = BTreeMap::new();
     for kind in LangItemKind::ALL {
         match indices.get(&kind).map(Vec::as_slice) {
             None | Some([]) => diagnostics.push(format!("missing lang item `{kind}`")),
             Some([index]) => {
                 validate_item_shape(kind, &program.items[*index], &mut diagnostics);
+                validate_lang_item_builtin(kind, &program.items[*index], &mut diagnostics);
                 resolved.insert(kind, *index);
             }
             Some(duplicates) => diagnostics.push(format!(
@@ -1528,6 +1547,8 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
             )),
         }
     }
+
+    validate_builtin_boundaries(program, &resolved, &builtin_bootstraps, &mut diagnostics);
 
     if !diagnostics.is_empty() {
         return Err(CoreBundleError::new(edition, diagnostics));
@@ -1631,6 +1652,165 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         iterator: item(LangItemKind::Iterator),
         into_iterator: item(LangItemKind::IntoIterator),
     })
+}
+
+fn validate_builtin_bootstrap(item: &Item, visibility: Visibility, diagnostics: &mut Vec<String>) {
+    let valid = visibility == Visibility::Private
+        && matches!(
+            item,
+            Item::Function(function)
+                if function.name == "builtin"
+                    && function.compile_groups.is_empty()
+                    && function.groups == vec![Vec::new()]
+                    && matches!(
+                        function.return_type.as_ref(),
+                        Some(Type::Named(name, arguments))
+                            if name.split(['.', ':']).rfind(|part| !part.is_empty())
+                                == Some("Never")
+                                && arguments.is_empty()
+                    )
+                    && function.effects == FunctionEffects::default()
+                    && function.where_predicates.is_empty()
+                    && function.foreign.is_none()
+                    && function.builtin
+                    && function.body.is_none()
+        );
+    if !valid {
+        diagnostics.push(
+            "compiler-definition bootstrap must have exact private shape `let builtin(): Never = builtin()`"
+                .to_owned(),
+        );
+    }
+}
+
+fn validate_lang_item_builtin(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<String>) {
+    let required = matches!(
+        kind,
+        LangItemKind::I8
+            | LangItemKind::I16
+            | LangItemKind::I32
+            | LangItemKind::I64
+            | LangItemKind::I128
+            | LangItemKind::ISize
+            | LangItemKind::U8
+            | LangItemKind::U16
+            | LangItemKind::U32
+            | LangItemKind::U64
+            | LangItemKind::U128
+            | LangItemKind::USize
+            | LangItemKind::BorrowTypeForm
+            | LangItemKind::BorrowValueForm
+            | LangItemKind::ArrayTypeForm
+            | LangItemKind::SliceTypeForm
+            | LangItemKind::PtrTypeForm
+            | LangItemKind::PtrValueForm
+            | LangItemKind::SizeOf
+            | LangItemKind::AlignOf
+            | LangItemKind::Continuation
+            | LangItemKind::EffectCallable
+            | LangItemKind::AsyncFunction
+            | LangItemKind::AwaitFunction
+            | LangItemKind::Loop
+            | LangItemKind::Match
+    );
+    let marked = match item {
+        Item::Function(function) => function.builtin,
+        Item::TypeForm(definition) => definition.builtin,
+        _ => false,
+    };
+    if required && !marked {
+        diagnostics.push(format!(
+            "compiler-owned lang item `{kind}` must use the complete `= builtin()` initializer"
+        ));
+    } else if !required && marked {
+        diagnostics.push(format!(
+            "lang item `{kind}` is source-owned or abstract and must not use `builtin()`"
+        ));
+    }
+}
+
+fn validate_builtin_boundaries(
+    program: &Program,
+    resolved: &BTreeMap<LangItemKind, usize>,
+    bootstraps: &[usize],
+    diagnostics: &mut Vec<String>,
+) {
+    let known = resolved
+        .values()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    for (index, item) in program.items.iter().enumerate() {
+        if (known.contains(&index) && !matches!(item, Item::Trait(_) | Item::Effect(_)))
+            || bootstraps.contains(&index)
+        {
+            continue;
+        }
+        match item {
+            Item::Function(function) if function.builtin => match function.name.as_str() {
+                "copy" | "move" => {}
+                "defer" => validate_defer_support(function, diagnostics),
+                _ => diagnostics.push(format!(
+                    "unknown compiler-owned core function `{}` uses `builtin()`",
+                    function.name
+                )),
+            },
+            Item::TypeForm(definition) if definition.builtin => diagnostics.push(format!(
+                "unknown compiler-owned core type `{}` uses `builtin()`",
+                definition.name
+            )),
+            Item::Trait(definition) => {
+                for member in &definition.members {
+                    if matches!(member, TraitMember::Function(function) if function.builtin) {
+                        diagnostics.push(format!(
+                            "trait requirement in `{}` must remain abstract and cannot use `builtin()`",
+                            definition.name
+                        ));
+                    }
+                }
+            }
+            Item::Effect(definition) => {
+                for operation in &definition.operations {
+                    if operation.builtin {
+                        diagnostics.push(format!(
+                            "effect operation in `{}` must remain abstract and cannot use `builtin()`",
+                            definition.name
+                        ));
+                    }
+                }
+            }
+            Item::Extend(extension) => {
+                for member in &extension.members {
+                    if let crate::ast::ExtendMember::Function(function) = member {
+                        if function.body.is_none() && !function.builtin {
+                            diagnostics.push(format!(
+                                "compiler-owned extension method `{}` must use `= builtin()`",
+                                function.name
+                            ));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn validate_defer_support(function: &Function, diagnostics: &mut Vec<String>) {
+    let effects = effect_parameter("E");
+    let valid = function.compile_groups == vec![vec![compile_effect_parameter("E")]]
+        && single_moved_callable(function, "action", Type::Unit, effects.clone())
+        && function.return_type == Some(Type::Unit)
+        && function.effects == effects
+        && function.where_predicates.is_empty()
+        && function.foreign.is_none()
+        && function.builtin
+        && function.body.is_none();
+    if !valid {
+        diagnostics.push(
+            "compiler-owned support function `defer` must have shape `pub let defer(E: effect)(move action: (): () with(E)): () with(E) = builtin()`"
+                .to_owned(),
+        );
+    }
 }
 
 fn item_name(item: &Item) -> Option<&str> {
@@ -1923,6 +2103,7 @@ fn validate_parameter_modifier(name: &str, function: &Function, diagnostics: &mu
         )
         && function.effects == FunctionEffects::default()
         && function.where_predicates.is_empty()
+        && function.builtin
         && function.body.is_none();
     if !valid {
         diagnostics.push(format!(
@@ -3734,7 +3915,7 @@ pub let Index(Key: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 330);
+        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 331);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -3972,6 +4153,67 @@ pub let Index(Key: type) = trait {
     }
 
     #[test]
+    fn builtin_markers_are_explicit_and_bounded_core_contracts() {
+        let missing_bootstrap = EDITION_2026_LIB.replace(
+            "// Private bootstrap marker for declarations whose definitions are supplied by\n// the compiler. Semantic validation gives each use its declaration annotation.\nlet builtin(): Never = builtin()\n\n",
+            "",
+        );
+        let modules = edition_2026_test_modules(&[("lib", &missing_bootstrap)]);
+        let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
+        assert!(
+            error
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic
+                    .contains("missing private compiler-definition bootstrap"))
+        );
+
+        let missing_primitive_marker =
+            EDITION_2026_PRIMITIVES.replace("pub let i32: type = builtin()", "pub let i32: type");
+        let modules = edition_2026_test_modules(&[("primitives", &missing_primitive_marker)]);
+        let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
+        assert!(error.diagnostics().iter().any(|diagnostic| {
+            diagnostic.contains("compiler-owned lang item `i32`")
+                && diagnostic.contains("= builtin()")
+        }));
+
+        let unknown = format!("{EDITION_2026_PRIMITIVES}\npub let Mystery(): i32 = builtin()\n");
+        let modules = edition_2026_test_modules(&[("primitives", &unknown)]);
+        let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
+        assert!(error.diagnostics().iter().any(|diagnostic| {
+            diagnostic.contains("unknown compiler-owned core function `Mystery`")
+        }));
+
+        let malformed_defer = EDITION_2026_CONTROL.replace(
+            "(move action: (): () with(E)): () with(E) = builtin()",
+            "(move action: (): bool with(E)): () with(E) = builtin()",
+        );
+        assert_ne!(malformed_defer, EDITION_2026_CONTROL);
+        let modules = edition_2026_test_modules(&[("control", &malformed_defer)]);
+        let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
+        assert!(error.diagnostics().iter().any(|diagnostic| {
+            diagnostic.contains("compiler-owned support function `defer`")
+                && diagnostic.contains("= builtin()")
+        }));
+
+        let abstract_builtin = EDITION_2026_MARKER.replace(
+            "let drop(self: borrow(mut)(Self))\n    (): ()",
+            "let drop(self: borrow(mut)(Self))\n    (): () = builtin()",
+        );
+        assert_ne!(abstract_builtin, EDITION_2026_MARKER);
+        let modules = edition_2026_test_modules(&[("marker", &abstract_builtin)]);
+        let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
+        assert!(
+            error.diagnostics().iter().any(|diagnostic| {
+                diagnostic.contains("trait requirements are abstract")
+                    && diagnostic.contains("cannot use `builtin()`")
+            }),
+            "{:?}",
+            error.diagnostics()
+        );
+    }
+
+    #[test]
     fn bool_lang_item_requires_its_enum_variants() {
         let malformed = EDITION_2026_PRIMITIVES.replace(
             "pub let bool = enum { false, true }",
@@ -4127,8 +4369,8 @@ pub let Index(Key: type) = trait {
             .any(|diagnostic| diagnostic.contains("lang item `unsafe`")));
 
         let malformed = EDITION_2026_EFFECT.replace(
-            "pub let EffectCallable(Input: type, Output: type, Answer: type): type",
-            "pub let EffectCallable(Input: type, Output: type): type",
+            "pub let EffectCallable(Input: type, Output: type, Answer: type): type = builtin()",
+            "pub let EffectCallable(Input: type, Output: type): type = builtin()",
         );
         let modules = edition_2026_test_modules(&[("effect", &malformed)]);
         let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
@@ -4139,12 +4381,12 @@ pub let Index(Key: type) = trait {
 
         for (source_declaration, malformed_declaration, name) in [
             (
-                "pub let Continuation(Input: type, Output: type): type",
+                "pub let Continuation(Input: type, Output: type): type = builtin()",
                 "pub let Continuation(Input: type, Output: type) = struct {}",
                 "Continuation",
             ),
             (
-                "pub let EffectCallable(Input: type, Output: type, Answer: type): type",
+                "pub let EffectCallable(Input: type, Output: type, Answer: type): type = builtin()",
                 "pub let EffectCallable(Input: type, Output: type, Answer: type) = struct {}",
                 "EffectCallable",
             ),

@@ -6,6 +6,13 @@ subset.
 
 ## Unreleased
 
+- Added the core-private complete `builtin()` initializer for every
+  compiler-owned function, type, type constructor, and intrinsic extension
+  method. The unique private `let builtin(): Never = builtin()` bootstrap is
+  validated separately; unknown or malformed core markers and every user
+  marker are rejected. Trait requirements, effect operations, and user opaque
+  types remain genuinely bodyless, and intrinsic selection no longer infers
+  compiler ownership from a missing body.
 - Replaced grouped `extern "C"` declarations and `@link_name` with complete
   per-declaration `foreign(c)` and `foreign(c, "symbol")` initializers.
   Omitted symbols default to the Salicin declaration name; explicit symbols

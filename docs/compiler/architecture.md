@@ -117,7 +117,12 @@ data ownership cleaner. Large semantic rewrites should come after the module sha
 
 The compiler embeds edition-matched sources from `library/core`, `library/alloc`, and the C allocator
 from `runtime`. Embedded Salicin declarations still pass through the normal parser and semantic
-pipeline; bootstrap validation additionally checks the exact declarations needed by the compiler.
+pipeline. Compiler-provided core definitions carry complete `= builtin()`
+initializers. Bootstrap validation checks the unique private marker, exact
+known declarations, and the abstract boundary for trait requirements and
+effect operations. The analyzer rejects marker use outside `core` and
+consumes every non-bootstrap marker through a validated intrinsic path before
+LLVM emission.
 
 The crate currently keeps the compiler in one Rust package while giving it a repository-level
 `compiler/` boundary. If independent compiler crates become useful, they can be introduced below

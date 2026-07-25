@@ -173,6 +173,7 @@ fn test_runner_program(
     retained_items.push(ast::Item::Function(ast::Function {
         name: "main".to_owned(),
         foreign: None,
+        builtin: false,
         compile_groups: Vec::new(),
         groups: vec![Vec::new()],
         return_type: Some(ast::Type::I32),
@@ -301,6 +302,33 @@ pub fn check_library_source_packages(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn builtin_definition_markers_are_private_to_core() {
+        for (source, expected) in [
+            (
+                "let fake(): i32 = builtin()\nlet main(): i32 = { 0 }\n",
+                "cannot define `fake`",
+            ),
+            (
+                "let Fake: type = builtin()\nlet main(): i32 = { 0 }\n",
+                "cannot define type `Fake`",
+            ),
+            (
+                "extend i32 { let fake(self)(): i32 = builtin() }\nlet main(): i32 = { 0 }\n",
+                "cannot define extension methods",
+            ),
+        ] {
+            let diagnostics = check_source(source).expect_err("user builtin marker must fail");
+            assert!(
+                diagnostics.iter().any(|diagnostic| {
+                    diagnostic.contains("private to the core package")
+                        && diagnostic.contains(expected)
+                }),
+                "{diagnostics:?}"
+            );
+        }
+    }
 
     #[test]
     fn test_compilation_preserves_registration_names_and_rejects_invalid_targets() {

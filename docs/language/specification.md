@@ -164,6 +164,34 @@ abstract domains use `: domain`, while defined domains use `= domain { ... }`.
 ordinary closed enums whose values can also classify compile-time parameters. Any other closed enum
 or defined domain can be used the same way.
 
+### 3.4 Compiler Definitions
+
+The embedded `core` package declares compiler-provided definitions with the
+complete initializer `builtin()`. The bootstrap declaration is private and
+has the unique exact shape:
+
+```sc fragment
+let builtin(): Never = builtin()
+```
+
+The initializer marks the containing declaration; it is not an ordinary call
+whose `Never` result is coerced to the annotation. Semantic analysis obtains
+the definition's kind or type from that annotation, validates the complete
+edition-owned signature, and resolves the marker before code generation.
+Compiler-owned types and type constructors use the same form:
+
+```sc fragment
+pub let i32: type = builtin()
+pub let Array(T: type)(L: usize): type = builtin()
+pub let size_of(T: type): u64 = builtin()
+```
+
+`builtin()` is private to `core`. User functions, types, extension methods,
+and globals cannot use it. Unknown core markers are invalid. Trait
+requirements, effect operations, and user opaque types are genuinely
+abstract and remain bodyless; they do not receive builtin default
+implementations.
+
 ## 4. Types and Compile-Time Parameters
 
 The primitive integer families are:

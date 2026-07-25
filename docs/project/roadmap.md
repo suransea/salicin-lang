@@ -19,17 +19,19 @@ end-to-end capability at a time and preserve:
 - explicit authority for unsafe operations and effects;
 - ordinary library declarations wherever compiler primitives are unnecessary.
 
-## Current Milestone: Async Foundations
+## Current Milestone: Async Completion
 
-Async work starts only after callable and continuation ownership is closed.
+Callable and continuation ownership, cold future state, cancellation, explicit
+polling, loop suspension, and the first direct-tail suspended residual path
+are implemented. The current milestone closes the remaining residual
+specialization shapes.
 
-Required design:
+Remaining design:
 
-- source contracts for `Move`, `Future`, polling, cancellation, and executor interaction;
-- cold futures lowered to explicit state machines;
-- deterministic drop of initialized state on cancellation;
-- a first-version rejection rule for self-referential borrowed state;
-- one explicit executor interface, with no implicit allocation or runtime selection.
+- post-await continuations and retained locals under residual handlers;
+- branch and loop suspension under residual handlers;
+- borrowed suspended captures that preserve region and alias constraints;
+- explicit rejection where a state shape cannot remain structural `Move`.
 
 Exit conditions:
 
@@ -51,7 +53,7 @@ than general compile-time execution.
 
 ## Confirmed ABI Direction
 
-The later representation and ABI milestone has three orthogonal source forms:
+The completed representation and ABI milestone established three orthogonal source forms:
 
 - C data representation belongs to the type constructor, written `struct(c) { ... }`; Salicin will
   not add a general `rep` modifier;
@@ -69,10 +71,10 @@ Trait requirements remain bodyless; user opaque types are a separate design prob
 This direction replaces `rep c`, `@link_name`, and grouped `extern "C"` declarations. It does not
 introduce `@` syntax, and `foreign` is not a variant of `builtin`.
 
-## Next Milestone: ABI And Compiler Definitions
+## Completed Milestone: ABI And Compiler Definitions
 
-This milestone starts after the direct-tail suspended residual async slice,
-before the remaining async shapes, formatter, LSP, package, or
+This milestone followed the direct-tail suspended residual async slice and
+completed before the remaining async shapes, formatter, LSP, package, or
 incremental-compilation work.
 
 Exit conditions:

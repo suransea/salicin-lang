@@ -139,6 +139,7 @@ pub struct TypeFormDef {
     pub name: String,
     pub compile_groups: Vec<Vec<CompileParam>>,
     pub values: Vec<String>,
+    pub builtin: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -241,6 +242,9 @@ pub struct Function {
     /// Foreign functions have no Salicin body and always require the `Unsafe`
     /// effect at call sites.
     pub foreign: Option<ForeignFunction>,
+    /// True only when the complete source initializer is the core-private
+    /// compiler definition marker `builtin()`.
+    pub builtin: bool,
     /// Compile-time groups retain their source grouping but are erased before
     /// runtime calling convention lowering.
     pub compile_groups: Vec<Vec<CompileParam>>,

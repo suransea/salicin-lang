@@ -161,6 +161,7 @@ impl Parser {
         Ok(Function {
             name: format!("$test${encoded_name}"),
             foreign: None,
+            builtin: false,
             compile_groups: Vec::new(),
             groups: vec![Vec::new()],
             return_type: Some(Type::Bool),
@@ -383,9 +384,15 @@ impl Parser {
                 self.advance();
                 self.take_newlines_if_followed_by(&[TokenKind::Equal]);
                 return if self.at(&TokenKind::Equal) {
-                    self.type_alias(name, compile_groups, mutable)
+                    if self.builtin_initializer_follows(1) {
+                        self.advance();
+                        self.consume_builtin_initializer()?;
+                        self.type_form_definition(name, compile_groups, mutable, true)
+                    } else {
+                        self.type_alias(name, compile_groups, mutable)
+                    }
                 } else {
-                    self.type_form_definition(name, compile_groups, mutable)
+                    self.type_form_definition(name, compile_groups, mutable, false)
                 };
             }
             if self.type_constructor_signature_follows() {
@@ -396,7 +403,14 @@ impl Parser {
                 }
                 self.expect(&TokenKind::Colon, "`:` before type-constructor result kind")?;
                 self.expect(&TokenKind::Type, "`type` as type-constructor result kind")?;
-                return self.type_constructor_alias(name, alias_groups, mutable);
+                self.take_newlines_if_followed_by(&[TokenKind::Equal]);
+                return if self.at(&TokenKind::Equal) && self.builtin_initializer_follows(1) {
+                    self.advance();
+                    self.consume_builtin_initializer()?;
+                    self.type_form_definition(name, alias_groups, mutable, true)
+                } else {
+                    self.type_constructor_alias(name, alias_groups, mutable)
+                };
             }
         }
 
@@ -429,6 +443,7 @@ impl Parser {
             return Ok(Item::Function(Function {
                 name,
                 foreign: None,
+                builtin: false,
                 compile_groups,
                 groups,
                 return_type: annotation,
@@ -439,6 +454,34 @@ impl Parser {
         }
 
         self.expect(&TokenKind::Equal, "`=`")?;
+
+        if self.at_context_ident("builtin") {
+            if mutable {
+                return Err(self.error_here("builtin definitions cannot be mutable"));
+            }
+            if compile_groups.is_empty() && groups.is_empty() {
+                return Err(self.error_here(
+                    "`builtin()` defines a function or type declaration, not a global value",
+                ));
+            }
+            if annotation.is_none() {
+                return Err(self.error_here(
+                    "builtin functions require an explicit result type before `= builtin()`",
+                ));
+            }
+            self.consume_builtin_initializer()?;
+            return Ok(Item::Function(Function {
+                name,
+                foreign: None,
+                builtin: true,
+                compile_groups,
+                groups,
+                return_type: annotation,
+                effects,
+                where_predicates,
+                body: None,
+            }));
+        }
 
         if self.at_context_ident("foreign") {
             if mutable {
@@ -474,6 +517,7 @@ impl Parser {
             return Ok(Item::Function(Function {
                 name,
                 foreign: Some(foreign),
+                builtin: false,
                 compile_groups: Vec::new(),
                 groups,
                 return_type: annotation,
@@ -580,6 +624,7 @@ impl Parser {
                 return Ok(Item::Function(Function {
                     name,
                     foreign: None,
+                    builtin: false,
                     compile_groups,
                     groups,
                     return_type: None,
@@ -597,6 +642,7 @@ impl Parser {
             Ok(Item::Function(Function {
                 name,
                 foreign: None,
+                builtin: false,
                 compile_groups,
                 groups,
                 return_type: annotation,
@@ -717,6 +763,7 @@ impl Parser {
             operations.push(Function {
                 name: operation,
                 foreign: None,
+                builtin: false,
                 compile_groups: operation_compile_groups,
                 groups,
                 return_type,
@@ -785,6 +832,7 @@ impl Parser {
         name: String,
         compile_groups: Vec<Vec<CompileParam>>,
         mutable: bool,
+        builtin: bool,
     ) -> Result<Item, ParseError> {
         if mutable {
             return Err(self.error_here("type forms cannot be declared with `let mut`"));
@@ -793,7 +841,34 @@ impl Parser {
             name,
             compile_groups,
             values: Vec::new(),
+            builtin,
         }))
+    }
+
+    fn builtin_initializer_follows(&self, offset: usize) -> bool {
+        matches!(
+            self.tokens.get(self.index + offset).map(|token| &token.kind),
+            Some(TokenKind::Ident(name)) if name == "builtin"
+        ) && matches!(
+            self.tokens
+                .get(self.index + offset + 1)
+                .map(|token| &token.kind),
+            Some(TokenKind::LParen)
+        ) && matches!(
+            self.tokens
+                .get(self.index + offset + 2)
+                .map(|token| &token.kind),
+            Some(TokenKind::RParen)
+        )
+    }
+
+    fn consume_builtin_initializer(&mut self) -> Result<(), ParseError> {
+        self.advance();
+        self.expect(&TokenKind::LParen, "`(` after `builtin`")?;
+        self.expect(
+            &TokenKind::RParen,
+            "`)` after compiler definition marker `builtin(`",
+        )
     }
 
     fn type_constructor_alias(
@@ -983,6 +1058,7 @@ impl Parser {
             return Ok(ExtendMember::Function(Function {
                 name,
                 foreign: None,
+                builtin: false,
                 compile_groups,
                 groups,
                 return_type: annotation,
@@ -992,6 +1068,29 @@ impl Parser {
             }));
         }
         self.expect(&TokenKind::Equal, "`=` in extend member")?;
+
+        if self.at_context_ident("builtin") {
+            if compile_groups.is_empty() && groups.is_empty() {
+                return Err(self.error_here("`builtin()` cannot define an associated constant"));
+            }
+            if annotation.is_none() {
+                return Err(self.error_here(
+                    "builtin methods require an explicit result type before `= builtin()`",
+                ));
+            }
+            self.consume_builtin_initializer()?;
+            return Ok(ExtendMember::Function(Function {
+                name,
+                foreign: None,
+                builtin: true,
+                compile_groups,
+                groups,
+                return_type: annotation,
+                effects,
+                where_predicates,
+                body: None,
+            }));
+        }
 
         if self.at(&TokenKind::Struct) || self.at(&TokenKind::Enum) || self.at(&TokenKind::Trait) {
             return Err(self.error_here("data declarations are not allowed in extend bodies"));
@@ -1018,6 +1117,7 @@ impl Parser {
             Ok(ExtendMember::Function(Function {
                 name,
                 foreign: None,
+                builtin: false,
                 compile_groups,
                 groups,
                 return_type: annotation,
@@ -2258,6 +2358,11 @@ impl Parser {
         let where_predicates = self.where_clause()?;
         self.take_newlines_if_followed_by(&[TokenKind::Equal]);
         let body = if self.take(&TokenKind::Equal) {
+            if self.at_context_ident("builtin") {
+                return Err(
+                    self.error_here("trait requirements are abstract and cannot use `builtin()`")
+                );
+            }
             if !self.at(&TokenKind::LBrace) {
                 return Err(self.error_here(
                     "trait default closure declarations require a braced body; write `= { expression }`",
@@ -2271,6 +2376,7 @@ impl Parser {
         Ok(TraitMember::Function(Function {
             name,
             foreign: None,
+            builtin: false,
             compile_groups,
             groups,
             return_type,
@@ -8139,6 +8245,63 @@ mod tests {
             &program.items[6],
             Item::Function(function) if function.name == "do" && function.body.is_none()
         ));
+    }
+
+    #[test]
+    fn parses_complete_builtin_definition_markers() {
+        let program = parse(
+            "let builtin(): Never = builtin()\n\
+             pub let Scalar: type = builtin()\n\
+             pub let Family(T: type)(L: usize): type = builtin()\n\
+             pub let intrinsic(T: type)(value: T): T = builtin()\n\
+             extend i32: Add(i32) {\n\
+               let Output = i32\n\
+               let add(self)(rhs: i32): i32 = builtin()\n\
+             }\n",
+        )
+        .expect("builtin markers should parse as complete declaration initializers");
+
+        assert!(matches!(
+            &program.items[0],
+            Item::Function(function)
+                if function.name == "builtin" && function.builtin && function.body.is_none()
+        ));
+        assert!(matches!(
+            &program.items[1],
+            Item::TypeForm(definition)
+                if definition.name == "Scalar" && definition.builtin
+        ));
+        assert!(matches!(
+            &program.items[2],
+            Item::TypeForm(definition)
+                if definition.name == "Family"
+                    && definition.builtin
+                    && definition.compile_groups.len() == 2
+        ));
+        assert!(matches!(
+            &program.items[3],
+            Item::Function(function)
+                if function.name == "intrinsic" && function.builtin && function.body.is_none()
+        ));
+        let Item::Extend(extension) = &program.items[4] else {
+            panic!("expected extension");
+        };
+        assert!(matches!(
+            &extension.members[1],
+            ExtendMember::Function(function) if function.builtin && function.body.is_none()
+        ));
+    }
+
+    #[test]
+    fn rejects_malformed_builtin_definition_markers() {
+        for source in [
+            "let value: i32 = builtin()\n",
+            "let intrinsic(value: i32) = builtin()\n",
+            "let Scalar: type = builtin(1)\n",
+            "extend i32 { let constant = builtin() }\n",
+        ] {
+            assert!(parse(source).is_err(), "{source}");
+        }
     }
 
     #[test]

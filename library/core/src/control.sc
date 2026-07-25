@@ -53,7 +53,7 @@ pub let do(E: effect, T: type)
 
 /// Registers `action` to run when the current lexical scope exits.
 pub let defer(E: effect)
-  (move action: (): () with(E)): () with(E)
+  (move action: (): () with(E)): () with(E) = builtin()
 
 /// Runs `action` once, then repeats it while the lazy condition remains true.
 pub let do(E: effect)
@@ -75,7 +75,7 @@ pub let do(E: effect)
 
 /// Repeats `body` indefinitely until control exits through another construct.
 pub let loop(E: effect, T: type)
-  (move body: (): () with(core.control.Break(T), core.control.Continue, E)): T with(E)
+  (move body: (): () with(core.control.Break(T), core.control.Continue, E)): T with(E) = builtin()
 
 /// Repeats `body` while the lazy condition remains true.
 pub let while(E: effect)
@@ -106,9 +106,9 @@ pub let match(
   Output: type,
   E: effect,
   ...Cases: parameters,
-)
+  )
   (move input: Input)
-  ...Cases: Output with(E)
+  ...Cases: Output with(E) = builtin()
 
 /// Iterates through `iterable`, passing each item to the lazy body.
 pub let for(E: effect, Iterable: type, Iter: type, Item: type)

@@ -85,13 +85,17 @@ declaration_annotation =
   | constructor_kind ;
 
 initializer =
-    expression
+    builtin_initializer
   | foreign_initializer
+  | expression
   | effect_decl
   | domain_decl
   | struct_decl
   | enum_decl
   | trait_decl ;
+
+builtin_initializer =
+    contextual("builtin"), "(", ")" ;
 
 foreign_initializer =
     contextual("foreign"), "(",
@@ -102,6 +106,11 @@ foreign_initializer =
 `let Name: type` declares an opaque nominal type. `let Name: domain` declares an abstract domain.
 `let Name = domain { ... }` declares a domain with a known member set. Bare `= domain`, `= type`,
 and `= type { ... }` are not productions.
+
+`builtin()` is a complete initializer available only to the embedded `core`
+package. It may define a compiler-owned function, type, type constructor, or
+extension method whose exact declaration is validated by the edition
+contract. It is not an expression initializer available to user packages.
 
 ### 2.2 Compile-Time Parameters
 
@@ -284,6 +293,22 @@ compile-time parameters, explicit effects, `where` clause, or body. Omitting
 the string uses the Salicin declaration name as the linker symbol. The only
 accepted ABI name is the contextual identifier `c`. Grouped `extern`
 declarations and `@` attributes are not grammar productions.
+
+### 2.7 Compiler Definitions
+
+```ebnf
+builtin_definition =
+    "let", IDENT,
+    { declaration_group },
+    ":", declaration_annotation,
+    "=", builtin_initializer ;
+```
+
+The core-private bootstrap has the exact shape
+`let builtin(): Never = builtin()`. Every other marker must match a known
+compiler-owned edition contract and is removed before code generation.
+Trait requirements, effect operations, and user opaque types remain
+bodyless declarations rather than builtin definitions.
 
 ## 3. Types
 
