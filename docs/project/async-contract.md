@@ -149,6 +149,11 @@ and eventually produces the same step outcome. Its `Break(Output)` type is infer
 each awaited `Future.Output` in source order. Cancelling the parent delegates cleanup through this
 finite child chain.
 
+For a general unit-valued iteration body, `break` and `continue` at the current loop depth become
+early returns from that iteration future. Normal exits from nested `if` and `match` branches receive
+the fallthrough `Continue(())` outcome. Rewriting does not cross a nested loop, closure, or async
+boundary.
+
 Values declared inside an iteration are owned by that iteration. On `continue`, `break`, or
 fallthrough, values not transferred into the step outcome are dropped before the control transfer.
 Dropping the parent while suspended drops only the active iteration and then the parent fields;

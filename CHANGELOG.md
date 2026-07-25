@@ -75,6 +75,8 @@ subset.
   Move-only continuation state transfers through `Continue(Carry)` and is restored before the next
   iteration, with exact completion and cancellation cleanup. Loops without a reachable break use
   uninhabited `Never` output.
+  General unit-valued iteration bodies rewrite nested `if` and `match` control exits into early
+  step returns while preserving nested loop and async boundaries.
 - Declared `Continuation(Input, Output)` and `EffectCallable(Input, Output, Answer)` as bodyless
   type forms, matching their compiler-owned representations instead of describing them as empty
   structures. Lang-item validation now requires the exact type-form declarations.

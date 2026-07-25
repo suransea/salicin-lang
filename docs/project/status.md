@@ -167,6 +167,9 @@ Iterations with multiple top-level sequential awaits use a private iteration fut
 `Break(Output)` may depend on any awaited binding, and cancellation follows its nested active-child
 chain without retaining completed children. A recurring loop with no break uses the standard
 uninhabited `Never` as its output.
+For unit-valued general iteration bodies, the compiler rewrites control exits at the current loop
+depth into early iteration-future step returns and distributes normal fallthrough across nested
+`if` and `match` exits. Nested loops and nested async blocks remain separate control boundaries.
 
 ## Modules, Packages, and FFI
 

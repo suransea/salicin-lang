@@ -3244,6 +3244,26 @@ fn recurring_async_loop_without_break_has_never_output() {
 }
 
 #[test]
+fn recurring_async_loop_selects_branch_local_children() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "async_await_loop_branches.sc"))
+        .output()
+        .expect("run branch-local async loop fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
+fn recurring_async_loop_rewrites_nested_iteration_control() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "async_await_loop_nested_control.sc"))
+        .output()
+        .expect("run nested-control async loop fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn cancelling_an_async_loop_drops_completed_and_active_children_once() {
     let output = salic()
         .arg("run")

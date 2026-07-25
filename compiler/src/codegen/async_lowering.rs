@@ -22,6 +22,7 @@ impl Analyzer {
     ) -> HirExpr {
         let mut source_plan = multiple_await_recurring_loop_source(body, self.next_async_future)
             .or_else(|| simple_recurring_async_loop_source(body, self.next_async_future))
+            .or_else(|| general_unit_recurring_loop_source(body, self.next_async_future))
             .unwrap_or_else(|| split_async_source(body));
         if !source_plan.has_await {
             if let Some(loop_source) = recurring_suspended_loop_source(body) {
@@ -2243,6 +2244,162 @@ fn iteration_body_definitely_exits(expression: &Expr) -> bool {
     }
 }
 
+fn general_unit_recurring_loop_source(body: &Expr, id: usize) -> Option<AsyncSourcePlan> {
+    let loop_expression = match body.unlocated() {
+        Expr::Loop { .. } | Expr::While { .. } => body,
+        Expr::Block(statements, Some(tail)) if statements.is_empty() => tail,
+        Expr::Block(statements, None) => {
+            let [Stmt::Expr(expression)] = statements.as_slice() else {
+                return None;
+            };
+            expression
+        }
+        _ => return None,
+    };
+    let (loop_body, loop_condition) = match loop_expression.unlocated() {
+        Expr::Loop { body } => (body.as_ref(), None),
+        Expr::While {
+            condition,
+            body,
+            post_test,
+        } => (
+            body.as_ref(),
+            Some(AsyncLoopConditionSource {
+                expression: (**condition).clone(),
+                post_test: *post_test,
+            }),
+        ),
+        _ => return None,
+    };
+    if !split_async_source(loop_body).has_await {
+        return None;
+    }
+
+    let continue_constructor = format!("$async$loop$continue${id}");
+    let break_constructor = format!("$async$loop$break${id}");
+    let recursive_name = format!("$async$loop$rewrite$continue${id}");
+    let handler_break_name = format!("$handler$loop$break$async-rewrite${id}");
+    let handler_return_name = format!("$handler$return${recursive_name}");
+    let construct = |name: &str, value: Expr| {
+        Expr::Call(
+            Box::new(Expr::Name(name.to_owned())),
+            vec![crate::ast::CallArg { label: None, value }],
+        )
+    };
+    let continue_step = construct(&continue_constructor, Expr::Unit);
+    let mut iteration = loop_body.clone();
+    super::handlers::rewrite_handler_loop_control(
+        &mut iteration,
+        &recursive_name,
+        &handler_break_name,
+        0,
+    );
+    let mut has_break = false;
+    let mut non_unit_break = false;
+    super::source_rewrite::visit_expr_mut(&mut iteration, &mut |expression| {
+        let Expr::Call(callee, arguments) = expression.unlocated() else {
+            return;
+        };
+        if !matches!(callee.unlocated(), Expr::Name(name) if name == &handler_return_name) {
+            return;
+        }
+        let [argument] = arguments.as_slice() else {
+            return;
+        };
+        let replacement = if matches!(
+            argument.value.unlocated(),
+            Expr::Call(inner, arguments)
+                if matches!(inner.unlocated(), Expr::Name(name) if name == &recursive_name)
+                    && arguments.is_empty()
+        ) {
+            Some(continue_step.clone())
+        } else if let Some((name, value)) =
+            super::handlers::internal_handler_loop_break_argument(argument.value.unlocated())
+        {
+            if name != handler_break_name {
+                None
+            } else {
+                has_break = true;
+                non_unit_break |= !matches!(value.unlocated(), Expr::Unit);
+                Some(construct(&break_constructor, value))
+            }
+        } else {
+            None
+        };
+        if let Some(replacement) = replacement {
+            *expression = Expr::Return(Some(Box::new(replacement)));
+        }
+    });
+    if non_unit_break {
+        return None;
+    }
+    append_async_iteration_fallthrough(&mut iteration, &continue_step);
+    Some(AsyncSourcePlan {
+        factory_body: Expr::Async {
+            body: Box::new(iteration),
+        },
+        has_await: true,
+        continuation: None,
+        retained: Vec::new(),
+        loop_step: Some(AsyncLoopStepSource {
+            binding: String::new(),
+            break_value: Expr::Unit,
+            output_hint: Some(if has_break || loop_condition.is_some() {
+                Ty::Unit
+            } else {
+                Ty::Never
+            }),
+            probe_awaits: Vec::new(),
+            carry_names: Vec::new(),
+            continue_constructor,
+            break_constructor,
+        }),
+        loop_condition,
+    })
+}
+
+fn append_async_iteration_fallthrough(expression: &mut Expr, continue_step: &Expr) {
+    match expression.unlocated_mut() {
+        Expr::Return(_) => {}
+        Expr::Block(_, Some(tail)) => {
+            append_async_iteration_fallthrough(tail, continue_step);
+        }
+        Expr::Block(_, tail @ None) => {
+            *tail = Some(Box::new(Expr::Return(Some(Box::new(
+                continue_step.clone(),
+            )))));
+        }
+        Expr::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            append_async_iteration_fallthrough(then_branch, continue_step);
+            if let Some(else_branch) = else_branch {
+                append_async_iteration_fallthrough(else_branch, continue_step);
+            } else {
+                *else_branch = Some(Box::new(Expr::Return(Some(Box::new(
+                    continue_step.clone(),
+                )))));
+            }
+        }
+        Expr::Match { arms, .. } => {
+            for arm in arms {
+                append_async_iteration_fallthrough(&mut arm.body, continue_step);
+            }
+        }
+        _ => {
+            let value = std::mem::replace(expression, Expr::Unit);
+            *expression = Expr::Block(
+                vec![Stmt::Expr(value)],
+                Some(Box::new(Expr::Return(Some(Box::new(
+                    continue_step.clone(),
+                ))))),
+            );
+        }
+    }
+}
+
 fn multiple_await_recurring_loop_source(body: &Expr, id: usize) -> Option<AsyncSourcePlan> {
     let loop_expression = match body.unlocated() {
         Expr::Loop { .. } | Expr::While { .. } => body,
@@ -2384,14 +2541,24 @@ fn simple_recurring_async_loop_source(body: &Expr, id: usize) -> Option<AsyncSou
     let Expr::Block(statements, tail) = loop_body.unlocated() else {
         return None;
     };
-    let (binding, decision) = match (statements.as_slice(), tail.as_deref()) {
-        ([Stmt::Let(binding)], Some(decision)) => (binding, Some(decision)),
-        ([Stmt::Let(binding), Stmt::Expr(decision)], None) => (binding, Some(decision)),
-        ([Stmt::Let(binding)], None) if loop_condition.is_some() => (binding, None),
+    let (iteration_statements, decision) = match (statements.as_slice(), tail.as_deref()) {
+        (statements, Some(decision)) => (statements, Some(decision)),
+        ([prefix @ .., Stmt::Expr(decision)], None) => (prefix, Some(decision)),
+        (statements, None) if loop_condition.is_some() => (statements, None),
         _ => return None,
     };
-    let Expr::Await(child) = binding.value.unlocated() else {
+    let (await_statement, prefix) = iteration_statements.split_last()?;
+    let Stmt::Let(binding) = await_statement else {
         return None;
+    };
+    let child = match binding.value.unlocated() {
+        Expr::Await(child) => (**child).clone(),
+        expression => hoist_control_await(expression)?,
+    };
+    let factory_body = if prefix.is_empty() {
+        child
+    } else {
+        Expr::Block(prefix.to_vec(), Some(Box::new(child)))
     };
     let (condition, then_control, else_control) = decision.map_or_else(
         || {
@@ -2436,7 +2603,7 @@ fn simple_recurring_async_loop_source(body: &Expr, id: usize) -> Option<AsyncSou
     let then_branch = lower_control(then_control);
     let else_branch = lower_control(else_control);
     Some(AsyncSourcePlan {
-        factory_body: (**child).clone(),
+        factory_body,
         has_await: true,
         continuation: Some(AsyncContinuationSource {
             name: binding.name.clone(),

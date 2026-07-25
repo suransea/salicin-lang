@@ -15,47 +15,24 @@ Priority meanings:
 
 ## Current
 
-- [ ] **ASYNC-CONTROL-1: Lower suspension nested in control flow**
+- [ ] **ASYNC-EFFECT-1: Specialize generated polling through residual handlers**
 
 ## Next
 
-- [ ] **ASYNC-EFFECT-1: Specialize generated polling through residual handlers**
 - [ ] **ASYNC-EXEC-1: Provide one explicit minimal executor**
 
-`MOVE-TRAIT-1`, `ASYNC-STATE-1`, `ASYNC-POLL-1`, `ASYNC-CANCEL-1`, and `ASYNC-BORROW-1` are
-complete. Cold async blocks materialize compiler-owned nominal state, preserve owned captures and
-live sequential locals across relocation, and drop initialized cold or suspended state exactly
-once. Typed polling returns `Poll.Ready(T)` once, retains a child across `Pending`, resumes linear
-sequential awaits, and traps on completed-state repoll. State-internal borrow chains live across an
-await are rejected as non-`Move`; region-checked borrows of external storage remain supported. An
-unhandled `Unsafe` requirement is inferred onto `poll`.
+`MOVE-TRAIT-1`, `ASYNC-STATE-1`, `ASYNC-POLL-1`, `ASYNC-CANCEL-1`, `ASYNC-BORROW-1`, and
+`ASYNC-CONTROL-1` are complete. Generated futures preserve relocation, branch-local state,
+sequential and nested suspension, reusable loop iterations, move-only carry, and exact completion
+or cancellation cleanup. Recurring `loop`, pre-test `while`, and post-test `while` cover false
+exits, explicit `continue`, fallthrough, value output, `Never` output, heterogeneous branch
+children, multiple suspension points, and allocation-free child-slot reuse.
 
-The current task must lower suspension points nested in `if`, `match`, and loop control flow while
-preserving branch-local liveness and deterministic cancellation. Homogeneous `if` and `match`
-branches whose bodies are a single tail await now hoist selection before one shared suspension.
-Branches may use different concrete child-future types when their Output agrees; a private
-active-variant future dispatches polling and cancellation. Branches may contain linear local
-prefixes and continuations, and branches without an await become immediate Ready futures. Loop
-suspension with a reachable backedge remains. Loops proven to exit on their first entered iteration
-already hoist their suspension without recursive state, including false or suspended pre-test
-`while` conditions. Recurring loops are classified by loop kind, suspension location, `continue`,
-fallthrough, and value-producing `break`. A `loop` with one await and a boolean
-break/continue decision now reuses one child slot through a private step enum and poll-local HIR
-loop. Its `Break(Output)` path now preserves inferred value outputs, including move-only values;
-an omitted `else` or a non-suspending branch body forms the fallthrough backedge. Move-only values
-used by the continuation are transferred through `Continue(Carry)` and restored into parent state.
-An iteration with multiple sequential suspension points lowers to one non-recursive iteration
-future whose final output is the step outcome. A loop without `break` has `Never` output. Recurring
-pre-test and post-test `while` loops re-evaluate a pure condition before constructing the next
-iteration; value-producing `break` remains invalid because `while` is unit-valued. Generalize
-suspension placement beyond the current top-level linear iteration forms. Residual
-algebraic-effect specialization is a separate follow-up task.
-
-Loop completion requires an allocation-free reusable iteration state. The generated iteration
-returns an internal `Continue(Carry)` or `Break(Output)` outcome, transfers loop-carried values by
-value, polls consecutive immediately-ready iterations without recursion, and retains only the
-active iteration across `Pending`. Tests must cover `while` false exits, `continue`, fallthrough,
-value-producing `break`, loop-carried ownership, child-slot reuse, and cancellation cleanup.
+The current task must remove the source-level rejection of residual `Throws` and custom algebraic
+effects in async bodies and continuations. Generated `Future(E)` implementations must specialize
+their poll/resume boundary through the concrete residual row, preserve handler ownership and
+one-shot continuation rules, and keep construction cold. `Unsafe` already propagates as a residual
+poll requirement and remains the baseline behavior.
 
 ## Later
 
