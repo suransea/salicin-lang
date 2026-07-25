@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.192.0 - 2026-07-26
+
 - Extended suspended residual async specialization to `Copy` and move-only
   locals retained across the first await. A dedicated starting drop-state now
   preserves move-only continuation captures while an effectful child factory
