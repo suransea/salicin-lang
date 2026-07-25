@@ -17,7 +17,7 @@ Priority meanings:
 
 Current milestone: **TYPE1 static abstraction**
 
-Next task: **TYPE-CALLABLE-1**
+Next task: **TYPE-TRAIT-METHOD-1**
 
 ### P0 control-source queue
 
@@ -142,11 +142,15 @@ Entry gate: concrete requirements from LIB1
   - Bind GAT equation parameters explicitly on the associated name in a where predicate.
   - Require exact parameter groups and kinds, compare alpha-normalized alias-expanded applications,
     and bound recursive rewriting to 32 expansions.
-- [ ] **TYPE-CALLABLE-1: Bridge capturing callables into source protocols**
+- [x] **TYPE-CALLABLE-1: Bridge capturing callables into source protocols**
   - Implement the accepted [static specialization design](callable-bridge-design.md).
   - Preserve capture ownership, source-order evaluation, lazy invocation, effect rows, and
     source-level diagnostics across `Chain`, `Coalesce`, and higher-order protocols.
 - [ ] **TYPE-TRAIT-METHOD-1: Support coherent generic trait methods**
+- [ ] **TYPE-CALLABLE-EFFECT-1: Unify generic custom-effect callable materialization**
+  - Reconcile instantiated custom-effect callable annotations before CPS conversion.
+  - Accept a direct capturing closure in `forward(E)(action with(E))` after selecting a concrete
+    algebraic effect, without weakening callable identity or ownership checks.
 - [x] **TYPE-CONST-NOMINAL-1: Extend compile-time scalar arguments to nominal types and type aliases**
 - [ ] **TYPE-DIAG-1: Improve kind and constructor inference diagnostics**
 

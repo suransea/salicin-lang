@@ -1,6 +1,6 @@
 # Capturing Callable Bridge Design
 
-Status: accepted implementation design for `TYPE-CALLABLE-1`
+Status: implemented by `TYPE-CALLABLE-1`
 
 ## Problem
 
@@ -134,3 +134,8 @@ generated specialization names.
 - effectful capture forwarding;
 - borrow overlap and escape rejection;
 - deterministic specialization reuse and source-level diagnostics.
+
+The acceptance fixture `tests/fixtures/pass/capturing_callable_bridge.sc` runs the shared, mutable,
+moved-resource, concrete algebraic-effect, and instantiated generic `Unsafe` cases natively.
+`capturing_callable_bridge_overlap.sc` and `capturing_callable_bridge_escape.sc` cover rejection
+and generated-name hygiene. Equivalent normalized closure bodies share one cached specialization.

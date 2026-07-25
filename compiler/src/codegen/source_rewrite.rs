@@ -2459,9 +2459,7 @@ pub(super) fn rewrite_static_function_values(
                         rewrite_static_function_values(&mut binding.value, &visible);
                         visible.remove(&binding.name);
                     }
-                    Stmt::Expr(expression) => {
-                        rewrite_static_function_values(expression, &visible)
-                    }
+                    Stmt::Expr(expression) => rewrite_static_function_values(expression, &visible),
                 }
             }
             if let Some(tail) = tail {
@@ -2529,6 +2527,128 @@ pub(super) fn rewrite_static_function_values(
             }
         }
         Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) | Expr::Continue => {}
+    }
+}
+
+pub(super) fn erase_expr_locations(expression: &mut Expr) {
+    while let Expr::Located { value, .. } = expression {
+        *expression = (**value).clone();
+    }
+    match expression {
+        Expr::Unary(_, value)
+        | Expr::Try(value)
+        | Expr::DoBlock { body: value }
+        | Expr::Throw(value)
+        | Expr::Unsafe(value)
+        | Expr::Borrow { value, .. }
+        | Expr::Member(value, _)
+        | Expr::ChainMember(value, _)
+        | Expr::Loop { body: value } => erase_expr_locations(value),
+        Expr::Binary(left, _, right)
+        | Expr::Coalesce(left, right)
+        | Expr::Assign(left, right)
+        | Expr::CompoundAssign(left, _, right) => {
+            erase_expr_locations(left);
+            erase_expr_locations(right);
+        }
+        Expr::HandlerCoalesce {
+            scrutinee,
+            success,
+            fallback,
+            ..
+        } => {
+            erase_expr_locations(scrutinee);
+            erase_expr_locations(success);
+            erase_expr_locations(fallback);
+        }
+        Expr::HandlerChainCall(chain) => {
+            erase_expr_locations(&mut chain.scrutinee);
+            for argument in chain.groups.iter_mut().flatten() {
+                erase_expr_locations(&mut argument.value);
+            }
+            erase_expr_locations(&mut chain.success);
+            erase_expr_locations(&mut chain.residual);
+        }
+        Expr::Call(callee, arguments) => {
+            erase_expr_locations(callee);
+            for argument in arguments {
+                erase_expr_locations(&mut argument.value);
+            }
+        }
+        Expr::StructLiteral {
+            constructor,
+            fields,
+        } => {
+            erase_expr_locations(constructor);
+            for field in fields {
+                erase_expr_locations(&mut field.value);
+            }
+        }
+        Expr::Array(elements) | Expr::Tuple(elements) => {
+            for element in elements {
+                erase_expr_locations(element);
+            }
+        }
+        Expr::Index { base, index } => {
+            erase_expr_locations(base);
+            erase_expr_locations(index);
+        }
+        Expr::Block(statements, tail) => {
+            for statement in statements {
+                match statement {
+                    Stmt::Let(binding) => erase_expr_locations(&mut binding.value),
+                    Stmt::Expr(expression) => erase_expr_locations(expression),
+                }
+            }
+            if let Some(tail) = tail {
+                erase_expr_locations(tail);
+            }
+        }
+        Expr::Closure(_, body) => erase_expr_locations(body),
+        Expr::PatternClosure { guard, body, .. } => {
+            if let Some(guard) = guard {
+                erase_expr_locations(guard);
+            }
+            erase_expr_locations(body);
+        }
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            erase_expr_locations(condition);
+            erase_expr_locations(then_branch);
+            if let Some(else_branch) = else_branch {
+                erase_expr_locations(else_branch);
+            }
+        }
+        Expr::Return(value) | Expr::Break(value) => {
+            if let Some(value) = value {
+                erase_expr_locations(value);
+            }
+        }
+        Expr::While {
+            condition, body, ..
+        } => {
+            erase_expr_locations(condition);
+            erase_expr_locations(body);
+        }
+        Expr::Match { scrutinee, arms } => {
+            erase_expr_locations(scrutinee);
+            for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    erase_expr_locations(guard);
+                }
+                erase_expr_locations(&mut arm.body);
+            }
+        }
+        Expr::Located { .. } => unreachable!("source locations were removed above"),
+        Expr::Type(_)
+        | Expr::Unit
+        | Expr::Integer(_)
+        | Expr::Bool(_)
+        | Expr::Name(_)
+        | Expr::Continue => {}
     }
 }
 

@@ -570,6 +570,39 @@ fn functional_protocols_forward_callback_effects() {
 }
 
 #[test]
+fn capturing_callable_bridge_preserves_runtime_ownership_and_effects() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "capturing_callable_bridge.sc"))
+        .output()
+        .expect("run capturing callable bridge fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+
+    for (name, expected) in [
+        ("capturing_callable_bridge_overlap.sc", "borrowed"),
+        ("capturing_callable_bridge_escape.sc", "escape"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check rejected capturing callable bridge");
+        assert!(!output.status.success(), "{name}: {}", output_text(&output));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected),
+            "{name}: expected `{expected}` diagnostic: {}",
+            output_text(&output)
+        );
+        assert!(
+            !stderr.contains("$callable$"),
+            "{name}: generated bridge name leaked: {}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn generic_associated_constructors_lower_compile_time_kinds() {
     for (name, output) in
         native_fixture_outputs_in_parallel(&["gat_borrow_family.sc", "gat_usize_family.sc"])

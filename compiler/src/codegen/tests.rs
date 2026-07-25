@@ -1644,6 +1644,37 @@ let main(): i32 = {
 }
 
 #[test]
+fn capturing_callable_bridge_reuses_equivalent_specializations() {
+    let program = resolve_text(
+        r#"
+let invoke(move action: (): i32): i32 = { action() }
+let main(): i32 = {
+  let first = 20
+  let left = invoke({ first })
+  let second = 22
+  left + invoke({ second })
+}
+"#,
+    );
+    let mut analyzer = Analyzer::new(&program);
+    assert!(analyzer.analyze().is_some());
+    assert!(
+        analyzer.diagnostics.is_empty(),
+        "unexpected bridge diagnostics: {:?}",
+        analyzer.diagnostics
+    );
+    assert_eq!(
+        analyzer
+            .functions
+            .keys()
+            .filter(|name| name.contains("$callable$bridge$"))
+            .count(),
+        1,
+        "equivalent closure code and capture types must share one specialization"
+    );
+}
+
+#[test]
 fn coalesce_operator_dispatches_through_core_trait_for_user_types() {
     let program = resolve_text(
         r#"

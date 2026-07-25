@@ -1237,7 +1237,30 @@ impl Analyzer {
             .keys()
             .cloned()
             .collect::<Vec<_>>();
+        for (group_index, parameters) in function.groups.iter().enumerate() {
+            for (parameter_index, parameter) in parameters.iter().enumerate() {
+                let Type::Function { effects, .. } = &parameter.ty else {
+                    continue;
+                };
+                let forwards_algebraic_effect = effects.custom.iter().any(|effect| {
+                    let identity = source_effect_identity(effect);
+                    let root = identity.split('(').next().unwrap_or(&identity);
+                    self.effect_defs
+                        .get(root)
+                        .is_some_and(|definition| !definition.operations.is_empty())
+                        && function
+                            .effects
+                            .custom
+                            .iter()
+                            .any(|candidate| source_effect_identity(candidate) == identity)
+                });
+                if forwards_algebraic_effect {
+                    action_positions.push((name.to_owned(), group_index, parameter_index));
+                }
+            }
+        }
         action_positions.sort();
+        action_positions.dedup();
         for (candidate, group_index, parameter_index) in action_positions {
             if candidate != name {
                 continue;
@@ -1991,6 +2014,19 @@ impl Analyzer {
         }
 
         if matches!(&expression, Expr::Call(_, _)) {
+            let mut direct_groups = Vec::new();
+            if let Expr::Name(name) = flatten_call(&expression, &mut direct_groups) {
+                if let Some(materialized) =
+                    self.materialize_direct_handler_action(name, &direct_groups)
+                {
+                    return self.transform_handler_expr(
+                        materialized,
+                        handler,
+                        resume,
+                        continuation,
+                    );
+                }
+            }
             if let Some(result) = self.transform_erased_effect_callable_call(
                 &expression,
                 handler.clone(),

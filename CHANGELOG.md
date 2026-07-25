@@ -6,6 +6,12 @@ subset.
 
 ## Unreleased
 
+- Bridged capturing closure arguments into statically known source callees by specializing callable
+  parameters into ordinary shared, mutable, or moved capture parameters. `Chain`, `Coalesce`, and
+  higher-order calls preserve laziness, cleanup, effect rows, source evaluation order, and
+  source-level diagnostics. Equivalent normalized closure shapes reuse deterministic
+  specializations; native tests cover repeated mutable calls, zero/one resource invocation,
+  algebraic and generic `Unsafe` effects, borrow conflicts, and escaping captures.
 - Added bounded generic associated-constructor equalities in where predicates, including explicit
   binder groups, alpha normalization, transparent-alias comparison, and terminating signature
   rewriting.

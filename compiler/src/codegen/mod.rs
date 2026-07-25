@@ -104,6 +104,48 @@ impl fmt::Display for Diagnostic {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct CallableBridgeKey {
+    callee: String,
+    group: usize,
+    parameter: usize,
+    closure_shape: String,
+    captures: Vec<(PassMode, Type)>,
+}
+
+#[derive(Debug, Clone)]
+struct CallableBridgeSpecialization {
+    canonical: String,
+    lifted_parameters: Vec<String>,
+}
+
+fn rewrite_callable_bridge_groups(
+    groups: &[&[CallArg]],
+    group_index: usize,
+    parameter_index: usize,
+    lifted_parameters: &[String],
+    captures: &[(String, PassMode, Type)],
+) -> Vec<Vec<CallArg>> {
+    let mut rewritten = groups
+        .iter()
+        .map(|group| group.to_vec())
+        .collect::<Vec<_>>();
+    let labeled = rewritten[group_index]
+        .iter()
+        .all(|argument| argument.label.is_some());
+    rewritten[group_index].remove(parameter_index);
+    for (offset, (lifted, (source, _, _))) in lifted_parameters.iter().zip(captures).enumerate() {
+        rewritten[group_index].insert(
+            parameter_index + offset,
+            CallArg {
+                label: labeled.then(|| lifted.clone()),
+                value: Expr::Name(source.clone()),
+            },
+        );
+    }
+    rewritten
+}
+
 struct Analyzer {
     lang_items: LangItems,
     functions: HashMap<String, Function>,
@@ -174,6 +216,7 @@ struct Analyzer {
     hir_functions: HashMap<String, HirFunction>,
     lifted_functions: Vec<HirFunction>,
     next_closure: usize,
+    callable_bridge_specializations: HashMap<CallableBridgeKey, CallableBridgeSpecialization>,
     partial_parameter_shapes: HashMap<(String, usize), Vec<Vec<ParamSig>>>,
     handler_frame_parameter_modes: HashMap<String, Vec<PassMode>>,
     hir_globals: HashMap<String, HirGlobal>,
@@ -262,6 +305,7 @@ impl Analyzer {
             hir_functions: HashMap::new(),
             lifted_functions: Vec::new(),
             next_closure: 0,
+            callable_bridge_specializations: HashMap::new(),
             partial_parameter_shapes: HashMap::new(),
             handler_frame_parameter_modes: HashMap::new(),
             hir_globals: HashMap::new(),
@@ -6384,6 +6428,8 @@ impl Analyzer {
             let handler_frame_parameter_modes_before = self.handler_frame_parameter_modes.clone();
             let continuation_adapters_before = self.continuation_adapters.clone();
             let effect_callable_adapters_before = self.effect_callable_adapters.clone();
+            let callable_bridge_specializations_before =
+                self.callable_bridge_specializations.clone();
             let next_closure = self.next_closure;
             let inherent_members_before = self.inherent_members.clone();
             let instantiated_pointer_extensions_before =
@@ -6479,6 +6525,7 @@ impl Analyzer {
             self.handler_frame_parameter_modes = handler_frame_parameter_modes_before;
             self.continuation_adapters = continuation_adapters_before;
             self.effect_callable_adapters = effect_callable_adapters_before;
+            self.callable_bridge_specializations = callable_bridge_specializations_before;
             self.next_closure = next_closure;
             self.inherent_members = inherent_members_before;
             self.instantiated_pointer_extensions = instantiated_pointer_extensions_before;
@@ -11864,6 +11911,48 @@ impl Analyzer {
                     continue;
                 }
 
+                let mut capture_parameters = Vec::with_capacity(captures.len());
+                let mut shape_replacements = HashMap::new();
+                for (offset, capture) in captures.iter().enumerate() {
+                    let local = context
+                        .lookup(&capture.name)
+                        .expect("capture scanner records visible locals");
+                    let source_ty = self.source_type_for_ty(&local.ty)?;
+                    let mode = match capture.mode {
+                        ClosureCaptureMode::Shared => PassMode::Borrow,
+                        ClosureCaptureMode::Mutable => PassMode::MutBorrow,
+                        ClosureCaptureMode::Move => PassMode::Move,
+                    };
+                    shape_replacements.insert(
+                        capture.name.clone(),
+                        format!("$callable$shape$capture${offset}"),
+                    );
+                    capture_parameters.push((capture.name.clone(), mode, source_ty));
+                }
+                let mut closure_shape = argument.value.clone();
+                rewrite_static_function_values(&mut closure_shape, &shape_replacements);
+                erase_expr_locations(&mut closure_shape);
+                let key = CallableBridgeKey {
+                    callee: name.to_owned(),
+                    group: group_index,
+                    parameter: parameter_index,
+                    closure_shape: format!("{closure_shape:?}"),
+                    captures: capture_parameters
+                        .iter()
+                        .map(|(_, mode, ty)| (*mode, ty.clone()))
+                        .collect(),
+                };
+                if let Some(cached) = self.callable_bridge_specializations.get(&key) {
+                    let rewritten = rewrite_callable_bridge_groups(
+                        groups,
+                        group_index,
+                        parameter_index,
+                        &cached.lifted_parameters,
+                        &capture_parameters,
+                    );
+                    return Some((cached.canonical.clone(), rewritten));
+                }
+
                 let specialization = self.next_closure;
                 self.next_closure += 1;
                 let canonical = format!("{name}$callable$bridge${specialization}");
@@ -11871,31 +11960,22 @@ impl Analyzer {
                 specialized.name = canonical.clone();
                 let callable = specialized.groups[group_index].remove(parameter_index);
                 let mut replacements = HashMap::new();
-                let mut lifted_arguments = Vec::new();
-                for (offset, capture) in captures.iter().enumerate() {
-                    let local = context
-                        .lookup(&capture.name)
-                        .expect("capture scanner records visible locals");
-                    let source_ty = self.source_type_for_ty(&local.ty)?;
+                let mut lifted_parameters = Vec::new();
+                for (offset, (source, mode, source_ty)) in capture_parameters.iter().enumerate() {
                     let lifted = format!("$callable$capture${specialization}${offset}");
-                    replacements.insert(capture.name.clone(), lifted.clone());
-                    let mode = match capture.mode {
-                        ClosureCaptureMode::Shared => PassMode::Borrow,
-                        ClosureCaptureMode::Mutable => PassMode::MutBorrow,
-                        ClosureCaptureMode::Move => PassMode::Move,
-                    };
+                    replacements.insert(source.clone(), lifted.clone());
                     specialized.groups[group_index].insert(
                         parameter_index + offset,
                         Param {
-                            mode,
+                            mode: *mode,
                             access: None,
                             modifiers: Vec::new(),
                             region: None,
                             name: lifted.clone(),
-                            ty: source_ty,
+                            ty: source_ty.clone(),
                         },
                     );
-                    lifted_arguments.push((lifted, capture.name.clone()));
+                    lifted_parameters.push(lifted);
                 }
 
                 let mut closure = argument.value.clone();
@@ -11953,24 +12033,20 @@ impl Analyzer {
                     self.function_accesses.insert(canonical.clone(), access);
                 }
                 self.function_order.push(canonical.clone());
-
-                let mut rewritten_groups = groups
-                    .iter()
-                    .map(|group| group.to_vec())
-                    .collect::<Vec<_>>();
-                let labeled = rewritten_groups[group_index]
-                    .iter()
-                    .all(|argument| argument.label.is_some());
-                rewritten_groups[group_index].remove(parameter_index);
-                for (offset, (label, source)) in lifted_arguments.into_iter().enumerate() {
-                    rewritten_groups[group_index].insert(
-                        parameter_index + offset,
-                        CallArg {
-                            label: labeled.then_some(label),
-                            value: Expr::Name(source),
-                        },
-                    );
-                }
+                self.callable_bridge_specializations.insert(
+                    key,
+                    CallableBridgeSpecialization {
+                        canonical: canonical.clone(),
+                        lifted_parameters: lifted_parameters.clone(),
+                    },
+                );
+                let rewritten_groups = rewrite_callable_bridge_groups(
+                    groups,
+                    group_index,
+                    parameter_index,
+                    &lifted_parameters,
+                    &capture_parameters,
+                );
                 return Some((canonical, rewritten_groups));
             }
         }
