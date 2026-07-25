@@ -516,12 +516,19 @@ impl Analyzer {
         }
 
         let supports_suspended_residual = awaited.as_ref().is_some_and(|awaited| {
+            let heterogeneous_branch = matches!(
+                &awaited.ty,
+                Ty::Enum(name) if name.starts_with("$async$branch$")
+            );
             awaited.loop_step.is_none()
                 && awaited.loop_condition.is_none()
-                && !matches!(
-                    &awaited.ty,
-                    Ty::Enum(name) if name.starts_with("$async$branch$")
-                )
+                && (!heterogeneous_branch
+                    || (direct_heterogeneous_if_factory(&source_plan.factory_body).is_some()
+                        && closure
+                            .captures
+                            .iter()
+                            .map(capture_pass_mode)
+                            .all(|mode| mode != PassMode::Move)))
                 && closure
                     .captures
                     .iter()
@@ -1532,9 +1539,32 @@ impl Analyzer {
         let Some(output_source) = self.source_type_for_ty(&future.output) else {
             return;
         };
-        let Some(factory_output_source) = self.source_type_for_ty(&awaited.factory_output) else {
-            return;
+        let branch_factory = match (&awaited.ty, &awaited.factory_output) {
+            (Ty::Enum(branch_name), factory_output)
+                if branch_name.starts_with("$async$branch$") && factory_output == &awaited.ty =>
+            {
+                direct_heterogeneous_if_factory(resume_body).and_then(
+                    |(condition, then_branch, else_branch)| {
+                        let variants = &self.enum_layouts.get(branch_name)?.variants;
+                        let [then_variant, else_variant] = variants.as_slice() else {
+                            return None;
+                        };
+                        Some((
+                            condition,
+                            then_branch,
+                            then_variant.fields.first()?.ty.clone(),
+                            else_branch,
+                            else_variant.fields.first()?.ty.clone(),
+                        ))
+                    },
+                )
+            }
+            _ => None,
         };
+        let factory_output_source = self.source_type_for_ty(&awaited.factory_output);
+        if branch_factory.is_none() && factory_output_source.is_none() {
+            return;
+        }
         let Some(resume_parameters) = resume_captures
             .iter()
             .map(|(name, ty, mode)| {
@@ -1562,22 +1592,28 @@ impl Analyzer {
         };
         let effects = self.async_source_effects(&future);
         let origin = self.nominal_accesses[name].origin.clone();
-        self.functions.insert(
-            resume_function.to_owned(),
-            Function {
-                name: resume_function.to_owned(),
-                foreign: None,
-                builtin: false,
-                compile_groups: Vec::new(),
-                groups: vec![resume_parameters],
-                return_type: Some(factory_output_source.clone()),
-                effects: effects.clone(),
-                where_predicates: Vec::new(),
-                body: Some(resume_body.clone()),
-            },
-        );
-        self.function_origins
-            .insert(resume_function.to_owned(), origin.clone());
+        if branch_factory.is_none() {
+            self.functions.insert(
+                resume_function.to_owned(),
+                Function {
+                    name: resume_function.to_owned(),
+                    foreign: None,
+                    builtin: false,
+                    compile_groups: Vec::new(),
+                    groups: vec![resume_parameters.clone()],
+                    return_type: Some(
+                        factory_output_source
+                            .clone()
+                            .expect("ordinary async factory output has a source type"),
+                    ),
+                    effects: effects.clone(),
+                    where_predicates: Vec::new(),
+                    body: Some(resume_body.clone()),
+                },
+            );
+            self.function_origins
+                .insert(resume_function.to_owned(), origin.clone());
+        }
 
         let effect_row = Ty::EffectRow {
             unsafe_effect: future.unsafe_effect,
@@ -1692,40 +1728,42 @@ impl Analyzer {
             custom: Vec::new(),
             parameters: Vec::new(),
         };
-        self.functions.insert(
-            start_helper.clone(),
-            Function {
-                name: start_helper.clone(),
-                foreign: None,
-                builtin: false,
-                compile_groups: Vec::new(),
-                groups: vec![vec![
-                    Param {
-                        mode: PassMode::Move,
-                        access: None,
-                        modifiers: Vec::new(),
-                        region: None,
-                        name: "segment".to_owned(),
-                        ty: factory_output_source.clone(),
-                    },
-                    Param {
-                        mode: PassMode::Inferred,
-                        access: None,
-                        modifiers: Vec::new(),
-                        region: None,
-                        name: "self".to_owned(),
-                        ty: self_source_reference.clone(),
-                    },
-                ]],
-                return_type: Some(Type::Named(
-                    self.lang_item_name(LangItemKind::Poll).to_owned(),
-                    vec![output_source.clone()],
-                )),
-                effects: pure_effects.clone(),
-                where_predicates: Vec::new(),
-                body: None,
-            },
-        );
+        if let Some(factory_output_source) = factory_output_source {
+            self.functions.insert(
+                start_helper.clone(),
+                Function {
+                    name: start_helper.clone(),
+                    foreign: None,
+                    builtin: false,
+                    compile_groups: Vec::new(),
+                    groups: vec![vec![
+                        Param {
+                            mode: PassMode::Move,
+                            access: None,
+                            modifiers: Vec::new(),
+                            region: None,
+                            name: "segment".to_owned(),
+                            ty: factory_output_source,
+                        },
+                        Param {
+                            mode: PassMode::Inferred,
+                            access: None,
+                            modifiers: Vec::new(),
+                            region: None,
+                            name: "self".to_owned(),
+                            ty: self_source_reference.clone(),
+                        },
+                    ]],
+                    return_type: Some(Type::Named(
+                        self.lang_item_name(LangItemKind::Poll).to_owned(),
+                        vec![output_source.clone()],
+                    )),
+                    effects: pure_effects.clone(),
+                    where_predicates: Vec::new(),
+                    body: None,
+                },
+            );
+        }
         self.functions.insert(
             wait_helper.clone(),
             Function {
@@ -1777,6 +1815,145 @@ impl Analyzer {
             result: poll_ty.clone(),
             body: *then_branch,
         });
+        let mut branch_start_helpers = Vec::new();
+        if let (Ty::Enum(branch_name), Some((_, _, then_ty, _, else_ty))) =
+            (&awaited.ty, branch_factory.as_ref())
+        {
+            for (variant, branch_ty) in [then_ty, else_ty].into_iter().enumerate() {
+                let helper = format!("{start_helper}$branch${variant}");
+                let local = 50_100 + variant;
+                self.signatures.insert(
+                    helper.clone(),
+                    FunctionSig {
+                        groups: vec![vec![
+                            ParamSig {
+                                name: "segment".to_owned(),
+                                ty: branch_ty.clone(),
+                                mode: PassMode::Move,
+                            },
+                            self_parameter.clone(),
+                        ]],
+                        unsafe_effect: false,
+                        throws_error: None,
+                        custom_effects: Vec::new(),
+                        result: Some(poll_ty.clone()),
+                    },
+                );
+                let branch_source = self
+                    .source_type_for_ty(branch_ty)
+                    .expect("heterogeneous async branch has a source type");
+                self.functions.insert(
+                    helper.clone(),
+                    Function {
+                        name: helper.clone(),
+                        foreign: None,
+                        builtin: false,
+                        compile_groups: Vec::new(),
+                        groups: vec![vec![
+                            Param {
+                                mode: PassMode::Move,
+                                access: None,
+                                modifiers: Vec::new(),
+                                region: None,
+                                name: "segment".to_owned(),
+                                ty: branch_source,
+                            },
+                            Param {
+                                mode: PassMode::Inferred,
+                                access: None,
+                                modifiers: Vec::new(),
+                                region: None,
+                                name: "self".to_owned(),
+                                ty: self_source_reference.clone(),
+                            },
+                        ]],
+                        return_type: Some(Type::Named(
+                            self.lang_item_name(LangItemKind::Poll).to_owned(),
+                            vec![output_source.clone()],
+                        )),
+                        effects: pure_effects.clone(),
+                        where_predicates: Vec::new(),
+                        body: None,
+                    },
+                );
+                self.function_origins.insert(helper.clone(), origin.clone());
+                self.function_accesses
+                    .insert(helper.clone(), self.nominal_accesses[name].clone());
+                let segment = HirExpr {
+                    ty: (*branch_ty).clone(),
+                    kind: HirExprKind::Read {
+                        place: HirPlace {
+                            local,
+                            root_ty: (*branch_ty).clone(),
+                            projections: Vec::new(),
+                            dynamic_index: None,
+                            ty: (*branch_ty).clone(),
+                            capability: LocalCapability::Owned,
+                            root_mutable: false,
+                            loan: None,
+                            indirect: false,
+                        },
+                        kind: HirReadKind::Move,
+                    },
+                };
+                let branch = HirExpr {
+                    ty: awaited.ty.clone(),
+                    kind: HirExprKind::ConstructEnum {
+                        name: branch_name.clone(),
+                        variant,
+                        fields: vec![(0, segment)],
+                    },
+                };
+                let self_value = HirExpr {
+                    ty: self_reference.clone(),
+                    kind: HirExprKind::Read {
+                        place: HirPlace {
+                            local: 0,
+                            root_ty: self_reference.clone(),
+                            projections: Vec::new(),
+                            dynamic_index: None,
+                            ty: self_reference.clone(),
+                            capability: LocalCapability::MutParam,
+                            root_mutable: false,
+                            loan: None,
+                            indirect: false,
+                        },
+                        kind: HirReadKind::Copy,
+                    },
+                };
+                self.lifted_functions.push(HirFunction {
+                    name: helper.clone(),
+                    params: vec![
+                        HirParam {
+                            id: local,
+                            name: "segment".to_owned(),
+                            ty: (*branch_ty).clone(),
+                            mode: PassMode::Move,
+                        },
+                        HirParam {
+                            id: 0,
+                            name: "self".to_owned(),
+                            ty: self_reference.clone(),
+                            mode: PassMode::Inferred,
+                        },
+                    ],
+                    result: poll_ty.clone(),
+                    body: HirExpr {
+                        ty: poll_ty.clone(),
+                        kind: HirExprKind::Call {
+                            function: start_helper.clone(),
+                            arguments: vec![
+                                HirArgument::Move(branch),
+                                HirArgument::Copy(self_value),
+                            ],
+                            consumed_callable: None,
+                            diverges: false,
+                        },
+                    },
+                });
+                branch_start_helpers.push(helper);
+            }
+        }
         self.lifted_functions.push(HirFunction {
             name: wait_helper.clone(),
             params: vec![HirParam {
@@ -1927,8 +2104,7 @@ impl Analyzer {
                     .collect(),
             )
         };
-        let resume = Expr::Call(
-            Box::new(Expr::Name(resume_function.to_owned())),
+        let resume_arguments = || {
             capture_helpers
                 .iter()
                 .zip(&future.capture_modes)
@@ -1947,9 +2123,101 @@ impl Analyzer {
                         call_helper(helper.clone(), vec![self_value()])
                     },
                 })
-                .collect(),
+                .collect::<Vec<_>>()
+        };
+        let resume = Expr::Call(
+            Box::new(Expr::Name(resume_function.to_owned())),
+            resume_arguments(),
+        );
+        let branch_resume = branch_factory.as_ref().map(
+            |(condition, then_branch, then_ty, else_branch, else_ty)| {
+                let condition_helper = format!("{resume_function}$branch$condition");
+                let then_helper = format!("{resume_function}$branch$0");
+                let else_helper = format!("{resume_function}$branch$1");
+                for (helper, body, result) in [
+                    (&condition_helper, condition, Ty::Bool),
+                    (&then_helper, then_branch, then_ty.clone()),
+                    (&else_helper, else_branch, else_ty.clone()),
+                ] {
+                    let result_source = self
+                        .source_type_for_ty(&result)
+                        .expect("heterogeneous async branch helper has a source result");
+                    self.signatures.insert(
+                        helper.clone(),
+                        FunctionSig {
+                            groups: vec![resume_captures
+                                .iter()
+                                .map(|(name, ty, mode)| ParamSig {
+                                    name: name.clone(),
+                                    ty: ty.clone(),
+                                    mode: *mode,
+                                })
+                                .collect()],
+                            unsafe_effect: future.unsafe_effect,
+                            throws_error: future.throws_error.clone(),
+                            custom_effects: future
+                                .custom_effects
+                                .iter()
+                                .filter(|effect| {
+                                    effect.as_str()
+                                        != self.lang_item_name(LangItemKind::AsyncEffect)
+                                })
+                                .cloned()
+                                .collect(),
+                            result: Some(result.clone()),
+                        },
+                    );
+                    self.functions.insert(
+                        helper.clone(),
+                        Function {
+                            name: helper.clone(),
+                            foreign: None,
+                            builtin: false,
+                            compile_groups: Vec::new(),
+                            groups: vec![resume_parameters.clone()],
+                            return_type: Some(result_source),
+                            effects: effects.clone(),
+                            where_predicates: Vec::new(),
+                            body: Some(body.clone()),
+                        },
+                    );
+                    self.function_origins.insert(helper.clone(), origin.clone());
+                }
+                (
+                    condition_helper,
+                    then_helper,
+                    else_helper,
+                    then_ty.clone(),
+                    else_ty.clone(),
+                )
+            },
         );
         let state = || Expr::Member(Box::new(self_value()), "state".to_owned());
+        let cold_poll = if let Some((condition_helper, then_helper, else_helper, _, _)) =
+            branch_resume
+        {
+            debug_assert_eq!(branch_start_helpers.len(), 2);
+            let condition = Expr::Call(Box::new(Expr::Name(condition_helper)), resume_arguments());
+            let start_branch = |factory: String, start: String| {
+                call_helper(
+                    start,
+                    vec![
+                        Expr::Call(Box::new(Expr::Name(factory)), resume_arguments()),
+                        self_value(),
+                    ],
+                )
+            };
+            Expr::If {
+                condition: Box::new(condition),
+                then_branch: Box::new(start_branch(then_helper, branch_start_helpers[0].clone())),
+                else_branch: Some(Box::new(start_branch(
+                    else_helper,
+                    branch_start_helpers[1].clone(),
+                ))),
+            }
+        } else {
+            call_helper(start_helper, vec![resume, self_value()])
+        };
         let body = Expr::If {
             condition: Box::new(Expr::Binary(
                 Box::new(state()),
@@ -1958,10 +2226,7 @@ impl Analyzer {
             )),
             then_branch: Box::new(Expr::Block(
                 vec![Stmt::Expr(call_helper(begin_helper, vec![self_value()]))],
-                Some(Box::new(call_helper(
-                    start_helper,
-                    vec![resume, self_value()],
-                ))),
+                Some(Box::new(cold_poll)),
             )),
             else_branch: Some(Box::new(call_helper(wait_helper, vec![self_value()]))),
         };
@@ -3903,6 +4168,40 @@ fn branch_await_future(expression: &Expr) -> Option<Expr> {
         .then(|| Expr::Async {
             body: Box::new(expression.clone()),
         })
+}
+
+fn direct_heterogeneous_if_factory(expression: &Expr) -> Option<(Expr, Expr, Expr)> {
+    match expression.unlocated() {
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch: Some(else_branch),
+        } => Some((
+            (**condition).clone(),
+            (**then_branch).clone(),
+            (**else_branch).clone(),
+        )),
+        Expr::Block(statements, Some(tail)) if statements.is_empty() => {
+            direct_heterogeneous_if_factory(tail)
+        }
+        Expr::Match { scrutinee, arms } if arms.len() == 2 => {
+            let true_arm = arms
+                .iter()
+                .find(|arm| matches!(arm.pattern, crate::ast::Pattern::Bool(true)))?;
+            let false_arm = arms
+                .iter()
+                .find(|arm| matches!(arm.pattern, crate::ast::Pattern::Bool(false)))?;
+            if true_arm.guard.is_some() || false_arm.guard.is_some() {
+                return None;
+            }
+            Some((
+                (**scrutinee).clone(),
+                true_arm.body.clone(),
+                false_arm.body.clone(),
+            ))
+        }
+        _ => None,
+    }
 }
 
 fn tail_await_operand(expression: &Expr) -> Option<Expr> {

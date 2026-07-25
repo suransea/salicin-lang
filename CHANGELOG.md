@@ -6,6 +6,12 @@ subset.
 
 ## Unreleased
 
+- Specialized direct two-way heterogeneous residual async `if` selection.
+  The condition and each concrete child factory remain source-typed through
+  handler specialization, while pure branch bridges initialize the private
+  active-variant future. Native coverage verifies both selected branches,
+  Pending/Ready repolling, cancellation, and variant-specific cleanup.
+
 ## 0.195.0 - 2026-07-26
 
 - Specialized residual one-shot `if` and `match` selection when every
