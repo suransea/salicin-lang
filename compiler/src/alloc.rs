@@ -14,6 +14,7 @@ use crate::parser;
 const EDITION_2026_BOXED: &str = include_str!("../../library/alloc/src/boxed.sc");
 const EDITION_2026_LIB: &str = include_str!("../../library/alloc/src/lib.sc");
 const EDITION_2026_RAW: &str = include_str!("../../library/alloc/src/raw.sc");
+const EDITION_2026_STRING: &str = include_str!("../../library/alloc/src/string.sc");
 const EDITION_2026_VEC: &str = include_str!("../../library/alloc/src/vec.sc");
 
 static EDITION_2026_BUNDLE: OnceLock<Result<AllocBundle, AllocBundleError>> = OnceLock::new();
@@ -41,6 +42,7 @@ impl AllocBundle {
                 ("lib", EDITION_2026_LIB),
                 ("boxed", EDITION_2026_BOXED),
                 ("vec", EDITION_2026_VEC),
+                ("string", EDITION_2026_STRING),
                 ("raw", EDITION_2026_RAW),
             ],
         };
@@ -142,9 +144,9 @@ impl Error for AllocBundleError {}
 
 fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBundleError> {
     let mut diagnostics = Vec::new();
-    if program.items.len() != 43
-        || program.item_visibilities.len() != 43
-        || program.item_origins.len() != 43
+    if program.items.len() != 48
+        || program.item_visibilities.len() != 48
+        || program.item_origins.len() != 48
     {
         diagnostics
             .push("embedded alloc must contain the fixed Box and Vec bootstrap schema".to_owned());
@@ -155,7 +157,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
                 .iter()
                 .enumerate()
                 .all(|(index, visibility)| {
-                    let expected = if matches!(index, 0 | 10 | 37) {
+                    let expected = if matches!(index, 0 | 10 | 37 | 43 | 44) {
                         Visibility::Public
                     } else {
                         Visibility::Private
@@ -368,6 +370,28 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
         match &program.items[42] {
             Item::Extend(extension) if valid_vec_drop_extension(extension) => {}
             _ => diagnostics.push("alloc Vec Drop extension has an invalid shape".to_owned()),
+        }
+        match &program.items[43] {
+            Item::Struct(definition) if definition.name == "String" => {}
+            _ => diagnostics.push("alloc String must be a nominal struct".to_owned()),
+        }
+        match &program.items[44] {
+            Item::Struct(definition) if definition.name == "FromUtf8Error" => {}
+            _ => diagnostics.push("alloc FromUtf8Error must be a nominal struct".to_owned()),
+        }
+        match &program.items[45] {
+            Item::Function(function) if function.name == "utf8_invalid_at" => {}
+            _ => diagnostics.push("alloc utf8_invalid_at validator is missing".to_owned()),
+        }
+        match &program.items[46] {
+            Item::Extend(extension)
+                if extension.target == Type::Named("String".to_owned(), Vec::new()) => {}
+            _ => diagnostics.push("alloc String extension is missing".to_owned()),
+        }
+        match &program.items[47] {
+            Item::Extend(extension)
+                if extension.target == Type::Named("FromUtf8Error".to_owned(), Vec::new()) => {}
+            _ => diagnostics.push("alloc FromUtf8Error extension is missing".to_owned()),
         }
     }
     if diagnostics.is_empty() {
@@ -1111,6 +1135,7 @@ fn valid_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
             crate::ast::ExtendMember::Function(insert),
             crate::ast::ExtendMember::Function(remove),
             crate::ast::ExtendMember::Function(append),
+            crate::ast::ExtendMember::Function(take),
             crate::ast::ExtendMember::Function(shrink_to_fit),
         ] if new.name == "new"
             && new.compile_groups.is_empty()
@@ -1140,6 +1165,7 @@ fn valid_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
             && valid_vec_receiver_method(insert, "insert", PassMode::MutBorrow, &[("index", PassMode::Inferred, Type::U64), ("value", PassMode::Inferred, named("T"))], Type::Unit)
             && valid_vec_receiver_method(remove, "remove", PassMode::MutBorrow, &[("index", PassMode::Inferred, Type::U64)], named("T"))
             && valid_vec_receiver_method(append, "append", PassMode::MutBorrow, &[("other", PassMode::MutBorrow, applied("Vec", named("T")))], Type::Unit)
+            && valid_vec_receiver_method(take, "take", PassMode::MutBorrow, &[], applied("Vec", named("T")))
             && valid_vec_receiver_method(shrink_to_fit, "shrink_to_fit", PassMode::MutBorrow, &[], Type::Unit))
 }
 
@@ -1279,13 +1305,13 @@ mod tests {
     }
 
     fn alloc_source() -> String {
-        [EDITION_2026_BOXED, EDITION_2026_VEC].join("\n")
+        [EDITION_2026_BOXED, EDITION_2026_VEC, EDITION_2026_STRING].join("\n")
     }
 
     #[test]
     fn edition_2026_alloc_bundle_parses_and_validates() {
         let bundle = AllocBundle::for_edition(Edition::Edition2026).unwrap();
-        assert_eq!(bundle.program.items.len(), 43);
+        assert_eq!(bundle.program.items.len(), 48);
         assert!(bundle
             .program
             .item_origins
@@ -1294,9 +1320,12 @@ mod tests {
         assert!(bundle.program.item_origins[..10]
             .iter()
             .all(|origin| origin.module_path == ["@alloc", "boxed"]));
-        assert!(bundle.program.item_origins[10..]
+        assert!(bundle.program.item_origins[10..43]
             .iter()
             .all(|origin| origin.module_path == ["@alloc", "vec"]));
+        assert!(bundle.program.item_origins[43..]
+            .iter()
+            .all(|origin| origin.module_path == ["@alloc", "string"]));
     }
 
     #[test]

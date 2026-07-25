@@ -69,6 +69,13 @@ identity rather than hard-coded declaration names. `L: usize` compile-time param
 non-negative `u64` literals, explicit forwarding, and array-driven inference; selected values are
 part of generic instance identity and are erased before runtime IR. General constant expressions,
 defaults, arithmetic, and scalar kinds other than `usize` remain unsupported.
+
+`alloc.string` implements the owning `String` type as private `Vec(u8)` storage with an always-valid
+UTF-8 invariant. Safe construction validates consumed bytes and retains the original allocation in
+`FromUtf8Error` on failure; unsafe unchecked construction requires `Unsafe`. Shared byte views,
+byte-based length/capacity, reserve, clear, append, and consuming byte recovery preserve the
+invariant and ordinary deterministic cleanup. Mutable byte views, indexing, `Str`, character
+scalars, Unicode algorithms, and general string literal expressions are not implemented.
 The pointer family supports core-owned source extensions through a concrete non-nominal method
 owner. `extend(A: access, T: type) Ptr(A)(T)` applies to shared and mutable pointers, while
 `extend(T: type) Ptr(mut)(T)` is a direct mutable specialization. The standard declarations expose

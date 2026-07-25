@@ -17,7 +17,7 @@ Priority meanings:
 
 Current milestone: **M0 release baseline**
 
-Next task: **LIB-STRING-1**
+Next task: **LIB-EXAMPLE-1**
 
 ### P0 control-source queue
 
@@ -114,7 +114,7 @@ Entry gate: **M0-QUALITY-1** and **M0-AUDIT-1**
   - Use a private `Vec(u8)` representation with an always-valid UTF-8 invariant.
   - Keep lengths and capacities byte-based and mutable byte views unavailable to safe code.
   - Preserve failed input ownership through `FromUtf8Error`.
-- [ ] **LIB-STRING-1: Implement the minimum owning string model**
+- [x] **LIB-STRING-1: Implement the minimum owning string model**
   - Add validation, byte views/conversion, invariant-preserving mutation, and allocation behavior
     specified by [the accepted design](string-design.md).
   - Cover invalid UTF-8 boundaries, consuming ownership, reallocation, and exactly-once cleanup.

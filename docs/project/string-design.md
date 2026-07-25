@@ -1,6 +1,6 @@
 # Minimum owning string design
 
-Status: accepted for LIB1
+Status: implemented by LIB-STRING-1
 
 ## Decision
 
@@ -60,10 +60,10 @@ owned vector and releases storage exactly once.
 - Formatting, parsing, locale behavior, Unicode tables, and C-string conversion are separate
   library or ABI designs.
 
-## Implementation gate
+## Implementation evidence
 
-`LIB-STRING-1` must implement the representation and API above in source, export it through
-`alloc.lib` and `std.string`, and test:
+`LIB-STRING-1` implements the representation and API above in source and exports it through
+`alloc.lib` and `std.string`. Its tests cover:
 
 1. empty construction, capacity, shared byte inspection, clearing, and consuming byte recovery;
 2. valid one-, two-, three-, and four-byte UTF-8 sequences plus invalid leading, continuation,

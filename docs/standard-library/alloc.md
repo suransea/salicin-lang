@@ -39,7 +39,9 @@ trap.
 `borrow(values[index])`, and `values[index] = replacement` share the same checked `at(A)`
 implementation and preserve its receiver loan.
 
-Consuming iteration transfers the allocation into `VecIntoIter(T)` and invalidates the original
+`values.take()` replaces a vector with an empty vector and returns ownership of its previous
+allocation without copying elements. Consuming iteration transfers the allocation into
+`VecIntoIter(T)` and invalidates the original
 vector. Each `next` moves one initialized element in source order. If iteration stops early, the
 iterator drops only the unyielded suffix and then releases the allocation; yielded values remain
 owned by the loop body. Capacity arithmetic, layout overflow, invalid bounds, invalid allocator
@@ -49,11 +51,14 @@ widening the caller's effect row.
 Container fields remain private so safe code cannot forge ownership metadata. Allocation operations
 ultimately use the ABI documented in [runtime.md](../runtime.md).
 
-The accepted minimum owning text model is a private `Vec(u8)` wrapper whose initialized bytes are
+## `std.string`
+
+`String` is a private `Vec(u8)` wrapper whose initialized bytes are
 always valid UTF-8. Length and capacity are byte-based; safe code receives only shared byte views,
-and invalid consuming conversion preserves the original vector in its error value. The complete
-contract and explicitly deferred text features are recorded in the
-[owning string design](../project/string-design.md). The implementation remains tracked as
-`LIB-STRING-1`.
+and invalid consuming conversion preserves the original vector in `FromUtf8Error`. Construction,
+validation, byte recovery, capacity management, clearing, and append are ordinary source-backed
+methods. `from_utf8_unchecked` requires the standard `Unsafe` effect. Character scalars, a borrowed
+`Str` type, indexing, Unicode algorithms, and general string literal expressions remain deferred.
+The complete contract is recorded in the [owning string design](../project/string-design.md).
 
 See [standard-library organization](README.md) for the prelude and alias policy.

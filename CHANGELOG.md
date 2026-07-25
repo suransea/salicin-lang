@@ -11,6 +11,11 @@ subset.
   a consuming validation error that retains the original allocation. Character scalars, borrowed
   `Str`, indexing, Unicode algorithms, and general string literal expressions remain separate
   gated designs.
+- Implemented `std.string.String` and `FromUtf8Error` in ordinary allocation-library source.
+  Consuming conversion validates all UTF-8 sequence boundaries, failed conversion retains the
+  original `Vec(u8)` allocation, shared byte views cannot mutate the representation, and append,
+  clear, reserve, and byte recovery preserve ownership and cleanup. Added `Vec.take()` to transfer
+  a complete allocation while replacing its receiver with an empty vector.
 - Added the source-backed, access-polymorphic `Index(Key)` protocol. User types, Array, Slice, and
   Vec now support bracket reads, explicit shared/mutable element borrows, and assignment through
   one `index(A)` method. Receiver and key evaluation remains single-shot, temporary loans end with

@@ -338,7 +338,13 @@ type DependencyTable = HashMap<Vec<String>, BTreeMap<String, Vec<String>>>;
 /// bootstrap bundle. The module resolver is the language boundary: source
 /// code reaches these declarations through `alloc.<module>.<name>`, while the
 /// analyzer continues to consume the flattened canonical name.
-const ALLOC_EXPORTS: &[(&str, &str)] = &[("boxed", "Box"), ("vec", "Vec"), ("vec", "VecIntoIter")];
+const ALLOC_EXPORTS: &[(&str, &str)] = &[
+    ("boxed", "Box"),
+    ("vec", "Vec"),
+    ("vec", "VecIntoIter"),
+    ("string", "String"),
+    ("string", "FromUtf8Error"),
+];
 
 const CORE_PRELUDE_EXPORTS: &[(&str, &str)] = &[
     ("Never", "core::never::Never"),
@@ -562,6 +568,8 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("boxed", "Box", "alloc::boxed::Box"),
     ("vec", "Vec", "alloc::vec::Vec"),
     ("vec", "VecIntoIter", "alloc::vec::VecIntoIter"),
+    ("string", "String", "alloc::string::String"),
+    ("string", "FromUtf8Error", "alloc::string::FromUtf8Error"),
 ];
 
 fn validate_package_layout(
@@ -1536,7 +1544,7 @@ fn install_alloc_namespace(
     }
 
     module_paths.insert(alloc_root.clone());
-    for module in ["boxed", "vec"] {
+    for module in ["boxed", "vec", "string"] {
         let mut module_path = alloc_root.clone();
         module_path.push(module.to_owned());
         module_paths.insert(module_path);
@@ -1613,6 +1621,7 @@ fn install_std_namespace(
         "functional",
         "boxed",
         "vec",
+        "string",
     ] {
         insert_standard_module_path(module_paths, &std_root, module);
     }

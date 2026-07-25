@@ -1208,6 +1208,41 @@ fn alloc_vec_owns_copy_and_resource_elements() {
 }
 
 #[test]
+fn alloc_string_preserves_utf8_and_byte_ownership() {
+    let mut outputs = native_fixture_outputs_in_parallel(&["string_utf8.sc"]);
+    let (name, output) = outputs.pop().expect("String fixture output");
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "{name}: {}",
+        output_text(&output)
+    );
+
+    for (name, expected) in [
+        ("string_private_fields.sc", "is private"),
+        (
+            "string_unchecked_requires_unsafe.sc",
+            "requires an `unsafe` handler",
+        ),
+        ("string_use_after_into_bytes.sc", "moved or uninitialized"),
+        ("string_mutable_bytes.sc", "too many parameter groups"),
+        ("string_append_self_borrow.sc", "already borrowed"),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid String fixture");
+        assert!(!output.status.success(), "{name} unexpectedly compiled");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{name} did not report `{expected}`:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn slices_preserve_array_and_vec_borrow_safety() {
     for (name, output) in native_fixture_outputs_in_parallel(&["slice_array.sc", "slice_vec.sc"]) {
         assert_eq!(

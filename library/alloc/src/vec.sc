@@ -385,6 +385,14 @@ extend(T: type) Vec(T) {
   let remove(self: borrow(mut)(Self))(index: u64): T = { vec_remove(self)(index) }
   /// Moves all elements from `other` onto the end of this vector.
   let append(self: borrow(mut)(Self))(other: borrow(mut)(Vec(T))): () = { vec_append(self)(other) }
+  /// Replaces this vector with an empty one and returns its previous allocation.
+  let take(self: borrow(mut)(Self))(): Vec(T) = {
+    let previous = Vec(T) { pointer: self.pointer, length: self.length, storage_capacity: self.storage_capacity }
+    self.pointer = vec_allocate(0)
+    self.length = 0
+    self.storage_capacity = 0
+    previous
+  }
   /// Reallocates storage so capacity matches the current length.
   let shrink_to_fit(self: borrow(mut)(Self))(): () = { vec_shrink_to_fit(self) }
 }
