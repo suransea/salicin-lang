@@ -27,7 +27,37 @@ branch-local state remain. Remaining work also covers residual effects in
 later segments and loops while preserving handler ownership, cold
 construction, and one-shot cleanup.
 
-## P1: Tooling And Packages
+## P1: ABI Review And Interoperability
+
+Begin this milestone immediately after `ASYNC-EFFECT-1`.
+
+- [ ] **ABI-REVIEW-1: Audit runtime representations and calling boundaries**
+
+Specify and verify the target-dependent representation passed across function,
+module, and foreign boundaries for primitives, pointers, aggregates, enums,
+callables, effects, and ownership modes. Keep this an experimental ABI review,
+not a stability promise.
+
+- [ ] **ABI-CALL-1: Define the native Salicin calling convention**
+
+Make runtime parameter groups, return values, ownership transfer, cleanup
+responsibility, effect rows, and error propagation explicit across separately
+compiled modules. Reject unsupported boundary types at their declarations.
+
+- [ ] **ABI-LINK-1: Define exported symbols and cross-module linkage**
+
+Specify source visibility, symbol identity, declaration/definition agreement,
+generic specialization ownership, and duplicate or incompatible export
+diagnostics without freezing symbol names for 1.0.
+
+- [ ] **ABI-C-1: Complete the verified C interoperability surface**
+
+Review `struct(c)` and `foreign(c, ...)` against supported targets, document
+which scalar, pointer, array, aggregate, and function signatures are accepted,
+and add cross-language layout and call tests. Keep compiler-owned `builtin()`
+definitions orthogonal to this boundary.
+
+## P2: Tooling And Packages
 
 - [ ] **TOOL-FMT-1: Define formatter-preserving syntax invariants**
 - [ ] **TOOL-LSP-1: Expose parser and semantic spans for an LSP**

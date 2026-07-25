@@ -91,14 +91,39 @@ Exit conditions:
 - source, contract, cross-module, LLVM, and native tests cover the three
   boundaries independently.
 
-## Ecosystem Milestone
+## Next Milestone: ABI Review And Interoperability
 
-Tooling and package compatibility follow the ABI and compiler-definition milestone:
+This milestone begins as soon as async residual specialization is complete.
+The existing `struct(c)`, `foreign(c, ...)`, and core-private `builtin()`
+source forms remain the foundation; they are not reopened as competing syntax.
+
+Work proceeds in this order:
+
+1. audit runtime representations at function, module, and foreign boundaries;
+2. define the experimental native Salicin calling convention, including
+   ownership, cleanup, effects, and error propagation;
+3. define exported symbol identity and separately compiled module agreement;
+4. verify the supported C surface with cross-language layout and call tests.
+
+Exit conditions:
+
+- every supported boundary type has one documented target-aware representation;
+- unsupported types fail at source declarations rather than during LLVM emission
+  or linking;
+- separately compiled callers and callees agree on ownership and cleanup;
+- symbol collisions and incompatible declarations have deterministic
+  diagnostics;
+- C layout and calls are tested against a C compiler on supported targets.
+
+This milestone does not promise a stable ABI or freeze symbol mangling for 1.0.
+
+## Later Ecosystem Milestone
+
+Tooling and package compatibility follow the ABI review:
 
 - a formatter based on parser-preserving syntax invariants;
 - an LSP over stable parser and semantic spans;
 - workspaces and reproducible dependency resolution;
-- an external ABI designed after representation review;
 - incremental compilation keyed by stable semantic inputs.
 
 No milestone may freeze a public ABI, package registry protocol, or compatibility promise while the
