@@ -1107,6 +1107,8 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         "vec_ordered_copy.sc",
         "vec_ordered_resource.sc",
         "vec_reorder_resource.sc",
+        "index_protocol_containers.sc",
+        "vec_index_resource_overwrite.sc",
     ];
     for (name, output) in native_fixture_outputs_in_parallel(&successful) {
         assert_eq!(
@@ -1126,6 +1128,7 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         "vec_remove_out_of_bounds.sc",
         "vec_at_out_of_bounds.sc",
         "vec_at_access_mut_out_of_bounds.sc",
+        "vec_index_out_of_bounds.sc",
         "vec_swap_left_out_of_bounds.sc",
         "vec_swap_right_out_of_bounds.sc",
         "vec_capacity_overflow.sc",
@@ -1196,16 +1199,18 @@ fn slices_preserve_array_and_vec_borrow_safety() {
         );
     }
 
-    let trapped = salic()
-        .arg("run")
-        .arg(fixture("pass", "slice_out_of_bounds.sc"))
-        .output()
-        .expect("run out-of-bounds Slice fixture");
-    assert!(
-        !trapped.status.success(),
-        "Slice out-of-bounds access did not trap: {}",
-        output_text(&trapped)
-    );
+    for name in ["slice_out_of_bounds.sc", "slice_index_out_of_bounds.sc"] {
+        let trapped = salic()
+            .arg("run")
+            .arg(fixture("pass", name))
+            .output()
+            .expect("run out-of-bounds Slice fixture");
+        assert!(
+            !trapped.status.success(),
+            "{name} did not trap: {}",
+            output_text(&trapped)
+        );
+    }
 
     for name in [
         "slice_array_mut_borrow_conflict.sc",

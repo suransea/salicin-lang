@@ -81,6 +81,21 @@ pub(super) struct SliceInherentExtension {
 }
 
 #[derive(Clone)]
+pub(super) struct SliceTraitExtension {
+    pub(super) element_parameter: String,
+    pub(super) extension: crate::ast::ExtendDef,
+    pub(super) origin: ItemOrigin,
+}
+
+#[derive(Clone)]
+pub(super) struct ArrayTraitExtension {
+    pub(super) element_parameter: String,
+    pub(super) length_parameter: String,
+    pub(super) extension: crate::ast::ExtendDef,
+    pub(super) origin: ItemOrigin,
+}
+
+#[derive(Clone)]
 pub(super) struct GenericTraitExtension {
     pub(super) target_arguments: Vec<String>,
     pub(super) trait_ref: Type,

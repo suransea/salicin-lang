@@ -247,6 +247,25 @@ pub let Slice(T: type): type
 `slice.at(mut)(index)` 从可变 Slice 返回可变元素借用；越界访问 trap。Slice 不拥有也不析构元素，
 所有派生借用继续受原 Array 或 Vec 的 loan 和 region 约束。
 
+方括号由一个 access-polymorphic `Index` trait 定义，而不是分裂为 `Index` / `IndexMut`：
+
+```sc fragment
+pub let Index(Key: type) = trait {
+  let Output: type
+  let index(A: access)
+    (self: borrow(A)(Self))
+    (key: Key): borrow(A)(Output)
+}
+```
+
+值上下文 `value[key]` 选择 `A = shared` 并要求 `Output: Copy`；需要保留元素身份时写
+`borrow(value[key])` 或 `borrow(mut)(value[key])`。赋值 `value[key] = replacement` 选择
+`A = mut`，receiver、key 和右侧各求值一次。显式借用保留 receiver 的 loan；仅用于读取或
+写入的临时借用在该表达式结束后释放。`Array(T)(L)` 实现 `Index(i32)`，`Slice(T)` 与
+`Vec(T)` 实现 `Index(u64)`，三者均执行边界检查。Array 的地址计算是编译器 bootstrap
+intrinsic；协议身份、关联输出和方法签名仍由 `core` 源声明验证。Slice 与 Vec 的实现是普通
+源代码并转发到 `at`。
+
 对应字面量：
 
 ```sc fragment
@@ -1368,7 +1387,7 @@ a < b   // 根据 PartialOrd.partial_cmp(borrow(a), borrow(b)) 的四态结果�
 | `& \| ^ << >>` | `BitAnd BitOr BitXor Shl Shr` |
 | `== !=` | `Eq` |
 | `< <= > >=` | `PartialOrd` |
-| `a[index]` | `Index` / `IndexMut` |
+| `a[index]` | access-polymorphic `Index` |
 | `+= -= *= /= %=` 等 | 对应 `*Assign` trait |
 | `?.`、`??`、后缀 `!` / `!!` | `std.flow.Chain`、`std.flow.Coalesce`、`std.flow.Raise`、`std.flow.Unwrap` |
 

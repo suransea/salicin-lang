@@ -1,5 +1,6 @@
 let Option = core.Option
 let Slice = core.Slice
+let Index = core.ops.Index
 
 /// Growable contiguous heap allocation for values of type `T`.
 pub let Vec(T: type) = struct {
@@ -393,6 +394,16 @@ where T: Copy {
   let read(self: borrow(Self))(index: u64): T = { vec_read(self)(index) }
   /// Copies `value` into the element slot at `index`.
   let write(self: borrow(mut)(Self))(index: u64)(copy value: T): () = { vec_write(self)(index)(value) }
+}
+
+/// Routes bracket access through the source-defined indexing protocol.
+extend(T: type) Vec(T): Index(u64) {
+  let Output = T
+  let index(A: access)
+    (self: borrow(A)(Self))
+    (key: u64): borrow(A)(T) = {
+    self.at(A)(key)
+  }
 }
 
 /// Drops initialized elements and releases vector storage.

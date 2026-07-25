@@ -23,5 +23,6 @@ pub let ShrAssign = core.ops.assign.ShrAssign
 pub let Eq = core.cmp.Eq
 pub let PartialOrdering = core.cmp.PartialOrdering
 pub let PartialOrd = core.cmp.PartialOrd
+pub let Index = core.ops.index.Index
 pub let Chain = core.flow.Chain
 pub let Coalesce = core.flow.Coalesce

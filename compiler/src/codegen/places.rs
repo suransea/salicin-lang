@@ -166,6 +166,7 @@ impl Analyzer {
             Expr::Index { base, index } => {
                 let mut place = self.lower_place(base, context)?;
                 let array_ty = place.ty.clone();
+                self.ensure_array_trait_extensions(&array_ty);
                 let Ty::Array(element, length) = array_ty.clone() else {
                     self.error(format!(
                         "array index place requires an array value, found `{}`",

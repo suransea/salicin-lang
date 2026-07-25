@@ -6,6 +6,10 @@ subset.
 
 ## Unreleased
 
+- Added the source-backed, access-polymorphic `Index(Key)` protocol. User types, Array, Slice, and
+  Vec now support bracket reads, explicit shared/mutable element borrows, and assignment through
+  one `index(A)` method. Receiver and key evaluation remains single-shot, temporary loans end with
+  the consuming expression, and all standard container implementations retain checked bounds.
 - Completed the unsized, non-prelude `Slice(T)` core model. Region-bound Array borrows unsize to
   fat Slice borrows, `Vec.as_slice` preserves shared or mutable access through an anchored loan,
   and source-backed `len` / bounds-checked `at` methods retain regions and element ownership.

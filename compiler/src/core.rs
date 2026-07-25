@@ -32,6 +32,7 @@ const EDITION_2026_OPS: &str = include_str!("../../library/core/src/ops.sc");
 const EDITION_2026_OPS_ARITH: &str = include_str!("../../library/core/src/ops/arith.sc");
 const EDITION_2026_OPS_BIT: &str = include_str!("../../library/core/src/ops/bit.sc");
 const EDITION_2026_OPS_ASSIGN: &str = include_str!("../../library/core/src/ops/assign.sc");
+const EDITION_2026_OPS_INDEX: &str = include_str!("../../library/core/src/ops/index.sc");
 const EDITION_2026_EFFECT: &str = include_str!("../../library/core/src/effect.sc");
 const EDITION_2026_EFFECT_HANDLER: &str = include_str!("../../library/core/src/effect/handler.sc");
 const EDITION_2026_DOMAINS: &str = include_str!("../../library/core/src/domains.sc");
@@ -164,6 +165,7 @@ pub enum LangItemKind {
     Eq,
     PartialOrdering,
     PartialOrd,
+    Index,
     Neg,
     Not,
     BitAnd,
@@ -209,7 +211,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 78] = [
+    const ALL: [Self; 79] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -246,6 +248,7 @@ impl LangItemKind {
         Self::Eq,
         Self::PartialOrdering,
         Self::PartialOrd,
+        Self::Index,
         Self::Neg,
         Self::Not,
         Self::BitAnd,
@@ -328,6 +331,7 @@ impl LangItemKind {
             Self::Eq => "Eq",
             Self::PartialOrdering => "PartialOrdering",
             Self::PartialOrd => "PartialOrd",
+            Self::Index => "Index",
             Self::Neg => "Neg",
             Self::Not => "Not",
             Self::BitAnd => "BitAnd",
@@ -430,6 +434,7 @@ impl LangItemKind {
             | Self::ShrAssign
             | Self::Eq
             | Self::PartialOrd
+            | Self::Index
             | Self::Neg
             | Self::Not
             | Self::BitAnd
@@ -481,6 +486,7 @@ impl LangItemKind {
             | Self::Copy
             | Self::Drop
             | Self::PartialOrdering
+            | Self::Index
             | Self::AddAssign
             | Self::SubAssign
             | Self::MulAssign
@@ -622,6 +628,7 @@ pub struct LangItems {
     eq: LangItem,
     partial_ordering: LangItem,
     partial_ord: LangItem,
+    index: LangItem,
     neg: LangItem,
     not: LangItem,
     bit_and: LangItem,
@@ -762,6 +769,10 @@ impl LangItems {
 
     pub const fn partial_ord(&self) -> &LangItem {
         &self.partial_ord
+    }
+
+    pub const fn index(&self) -> &LangItem {
+        &self.index
     }
 
     pub const fn neg(&self) -> &LangItem {
@@ -920,6 +931,7 @@ impl LangItems {
             LangItemKind::Eq => &self.eq,
             LangItemKind::PartialOrdering => &self.partial_ordering,
             LangItemKind::PartialOrd => &self.partial_ord,
+            LangItemKind::Index => &self.index,
             LangItemKind::Neg => &self.neg,
             LangItemKind::Not => &self.not,
             LangItemKind::BitAnd => &self.bit_and,
@@ -999,6 +1011,7 @@ impl CoreBundle {
                         ("ops/arith", EDITION_2026_OPS_ARITH),
                         ("ops/bit", EDITION_2026_OPS_BIT),
                         ("ops/assign", EDITION_2026_OPS_ASSIGN),
+                        ("ops/index", EDITION_2026_OPS_INDEX),
                         ("effect", EDITION_2026_EFFECT),
                         ("effect/handler", EDITION_2026_EFFECT_HANDLER),
                         ("domains", EDITION_2026_DOMAINS),
@@ -1150,6 +1163,7 @@ impl CoreBundle {
             &mut lang_items.eq,
             &mut lang_items.partial_ordering,
             &mut lang_items.partial_ord,
+            &mut lang_items.index,
             &mut lang_items.neg,
             &mut lang_items.not,
             &mut lang_items.bit_and,
@@ -1495,6 +1509,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         eq: item(LangItemKind::Eq),
         partial_ordering: item(LangItemKind::PartialOrdering),
         partial_ord: item(LangItemKind::PartialOrd),
+        index: item(LangItemKind::Index),
         neg: item(LangItemKind::Neg),
         not: item(LangItemKind::Not),
         bit_and: item(LangItemKind::BitAnd),
@@ -1747,6 +1762,7 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         (LangItemKind::IntoIterator, Item::Trait(definition)) => {
             validate_into_iterator(definition, diagnostics)
         }
+        (LangItemKind::Index, Item::Trait(definition)) => validate_index(definition, diagnostics),
         (LangItemKind::Chain, Item::Trait(definition)) => validate_chain(definition, diagnostics),
         (LangItemKind::Coalesce, Item::Trait(definition)) => {
             validate_coalesce(definition, diagnostics)
@@ -2039,6 +2055,56 @@ fn validate_into_iterator(definition: &TraitDef, diagnostics: &mut Vec<String>) 
                 .to_owned(),
         );
     }
+}
+
+fn validate_index(definition: &TraitDef, diagnostics: &mut Vec<String>) {
+    let valid = trait_has_default_self(definition)
+        && definition.compile_groups == vec![vec![type_parameter("Key")]]
+        && definition.where_predicates.is_empty()
+        && matches!(
+            definition.members.as_slice(),
+            [
+                TraitMember::AssociatedType {
+                    name,
+                    compile_groups,
+                    kind: AssociatedKind::Type,
+                    default: None,
+                },
+                TraitMember::Function(function),
+            ] if name == "Output"
+                && compile_groups.is_empty()
+                && valid_index_method(function)
+        );
+    if !valid {
+        diagnostics.push(
+            "lang item `Index` must have shape `pub let Index(Key: type) = trait { let Output: type; let index(A: access)(self: borrow(A)(Self))(key: Key): borrow(A)(Output) }`"
+                .to_owned(),
+        );
+    }
+}
+
+fn valid_index_method(function: &Function) -> bool {
+    let [receiver_group, key_group] = function.groups.as_slice() else {
+        return false;
+    };
+    let [receiver] = receiver_group.as_slice() else {
+        return false;
+    };
+    let [key] = key_group.as_slice() else {
+        return false;
+    };
+    function.name == "index"
+        && function.compile_groups == vec![vec![access_parameter("A", None)]]
+        && function.return_type == Some(access_borrow_type("A", named_type("Output")))
+        && function.effects == FunctionEffects::default()
+        && function.where_predicates.is_empty()
+        && function.body.is_none()
+        && receiver.name == "self"
+        && receiver.mode == PassMode::Inferred
+        && receiver.ty == access_borrow_type("A", named_type("Self"))
+        && key.name == "key"
+        && key.mode == PassMode::Inferred
+        && key.ty == named_type("Key")
 }
 
 fn valid_iteration_method(function: &Function, name: &str, mode: PassMode, result: Type) -> bool {
@@ -3235,6 +3301,10 @@ pub let Shr(Rhs: type) = trait {
   let Output: type
   let shr(self)(rhs: Rhs): Output
 }
+pub let Index(Key: type) = trait {
+  let Output: type
+  let index(A: access)(self: borrow(A)(Self))(key: Key): borrow(A)(Output)
+}
 "#,
         ]
         .concat()
@@ -3257,6 +3327,7 @@ pub let Shr(Rhs: type) = trait {
             ("ops/arith", EDITION_2026_OPS_ARITH),
             ("ops/bit", EDITION_2026_OPS_BIT),
             ("ops/assign", EDITION_2026_OPS_ASSIGN),
+            ("ops/index", EDITION_2026_OPS_INDEX),
             ("effect", EDITION_2026_EFFECT),
             ("effect/handler", EDITION_2026_EFFECT_HANDLER),
             ("domains", EDITION_2026_DOMAINS),
@@ -3285,7 +3356,7 @@ pub let Shr(Rhs: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 317);
+        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 319);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);
@@ -3338,6 +3409,7 @@ pub let Shr(Rhs: type) = trait {
                 LangItemKind::Eq | LangItemKind::PartialOrdering | LangItemKind::PartialOrd => {
                     format!("core::cmp::{}", kind.source_name())
                 }
+                LangItemKind::Index => "core::ops::index::Index".to_owned(),
                 LangItemKind::Chain
                 | LangItemKind::Coalesce
                 | LangItemKind::Unwrap
@@ -3435,6 +3507,7 @@ pub let Shr(Rhs: type) = trait {
                 LangItemKind::Eq | LangItemKind::PartialOrdering | LangItemKind::PartialOrd => {
                     vec!["cmp"]
                 }
+                LangItemKind::Index => vec!["ops", "index"],
                 LangItemKind::Chain
                 | LangItemKind::Coalesce
                 | LangItemKind::Unwrap
@@ -3740,6 +3813,26 @@ pub let Shr(Rhs: type) = trait {
     }
 
     #[test]
+    fn rejects_malformed_index_contracts() {
+        for malformed in [
+            "pub let Index = trait {}",
+            "pub let Index(Key: type) = trait { let Output: type; let index(self)(key: Key): Output }",
+            "pub let Index(Key: type) = trait { let Output: type; let index(A: access)(self: borrow(Self))(key: Key): borrow(A)(Output) }",
+        ] {
+            let modules = edition_2026_test_modules(&[("ops/index", malformed)]);
+            let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
+            assert!(
+                error
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.contains("lang item `Index` must have shape")),
+                "{malformed}: {:?}",
+                error.diagnostics()
+            );
+        }
+    }
+
+    #[test]
     fn rejects_malformed_flow_operator_contracts() {
         let malformed =
             EDITION_2026_FLOW.replace("let Rebind(Value: type): type", "let Rebind: type");
@@ -3847,6 +3940,10 @@ pub let Shr(Rhs: type) = trait {
   let Output: type
   let shr(self)(rhs: Rhs): Output
 }
+pub let Index(Key: type) = trait {
+  let Output: type
+  let index(A: access)(self: borrow(A)(Self))(key: Key): borrow(A)(Output)
+}
 "#;
         let bundle = CoreBundle::from_source(Edition::Edition2026, source).unwrap();
 
@@ -3870,6 +3967,7 @@ pub let Shr(Rhs: type) = trait {
         assert_eq!(bundle.lang_items().bit_xor().item_index(), 17);
         assert_eq!(bundle.lang_items().shl().item_index(), 18);
         assert_eq!(bundle.lang_items().shr().item_index(), 19);
+        assert_eq!(bundle.lang_items().index().item_index(), 20);
         for kind in LangItemKind::ALL {
             let item = bundle.lang_items().get(kind);
             assert_eq!(
@@ -3956,11 +4054,12 @@ pub let Drop = trait {
                 "lang item `Never` must have shape `pub let Never = enum {}`",
                 "lang item `Copy` must have shape `pub let Copy = trait {}`",
                 "lang item `Add` must have shape `pub let Add(Rhs: type) = trait { let Output: type; let add(self)(rhs: Rhs): Output }`",
+                "missing lang item `Index`",
             ]
         );
         assert_eq!(
             error.to_string(),
-            "invalid embedded core bundle for edition 2026\n- lang item `Option` must be `pub`, found private visibility\n- unexpected declaration `Extra` at item 6\n- lang item `Result` must be enum, found struct\n- lang item `Never` must have shape `pub let Never = enum {}`\n- lang item `Copy` must have shape `pub let Copy = trait {}`\n- lang item `Add` must have shape `pub let Add(Rhs: type) = trait { let Output: type; let add(self)(rhs: Rhs): Output }`"
+            "invalid embedded core bundle for edition 2026\n- lang item `Option` must be `pub`, found private visibility\n- unexpected declaration `Extra` at item 6\n- lang item `Result` must be enum, found struct\n- lang item `Never` must have shape `pub let Never = enum {}`\n- lang item `Copy` must have shape `pub let Copy = trait {}`\n- lang item `Add` must have shape `pub let Add(Rhs: type) = trait { let Output: type; let add(self)(rhs: Rhs): Output }`\n- missing lang item `Index`"
         );
     }
 
@@ -4035,6 +4134,7 @@ pub let Shr(Rhs: type) = trait {
                 "missing lang item `Result`",
                 "missing lang item `Copy`",
                 "missing lang item `Drop`",
+                "missing lang item `Index`",
             ]
         );
     }
@@ -4146,6 +4246,10 @@ pub let Shl(Rhs: type) = trait {
 pub let Shr(Rhs: type) = trait {
   let Output: type
   let shr(self)(rhs: Rhs): Output
+}
+pub let Index(Key: type) = trait {
+  let Output: type
+  let index(A: access)(self: borrow(A)(Self))(key: Key): borrow(A)(Output)
 }
 "#;
         let error = CoreBundle::from_source(Edition::Edition2026, source).unwrap_err();

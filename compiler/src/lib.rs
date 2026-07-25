@@ -616,4 +616,107 @@ mod tests {
         assert!(ir.contains("insertvalue { ptr, i64 }"), "{ir}");
         assert!(ir.contains("slice.index.trap"), "{ir}");
     }
+
+    #[test]
+    fn user_index_protocol_dispatches_bracket_reads() {
+        let ir = compile_source(
+            "let Index = std.ops.Index\n\
+             let Bag = struct { value: i32 }\n\
+             extend Bag: Index(i32) {\n\
+               let Output = i32\n\
+               let index(A: access)\n\
+                 (self: borrow(A)(Self))\n\
+                 (key: i32): borrow(A)(i32) = {\n\
+                 borrow(A)(self.value)\n\
+               }\n\
+             }\n\
+             let main(): i32 = {\n\
+               let bag = Bag { value: 42 }\n\
+               bag[0]\n\
+             }\n",
+        )
+        .expect("user Index implementation should drive bracket reads");
+        assert!(ir.contains("call ptr @"), "{ir}");
+        assert!(ir.contains("load i32, ptr"), "{ir}");
+    }
+
+    #[test]
+    fn user_index_protocol_dispatches_bracket_assignment() {
+        let ir = compile_source(
+            "let Index = std.ops.Index\n\
+             let Bag = struct { value: i32 }\n\
+             extend Bag: Index(i32) {\n\
+               let Output = i32\n\
+               let index(A: access)\n\
+                 (self: borrow(A)(Self))\n\
+                 (key: i32): borrow(A)(i32) = {\n\
+                 borrow(A)(self.value)\n\
+               }\n\
+             }\n\
+             let main(): i32 = {\n\
+               let mut bag = Bag { value: 1 }\n\
+               bag[0] = 42\n\
+               bag[0]\n\
+             }\n",
+        )
+        .expect("user Index implementation should drive bracket assignment");
+        assert!(ir.contains("store i32 42, ptr"), "{ir}");
+    }
+
+    #[test]
+    fn user_index_protocol_preserves_explicit_borrows() {
+        compile_source(
+            "let Index = std.ops.Index\n\
+             let Bag = struct { value: i32 }\n\
+             extend Bag: Index(i32) {\n\
+               let Output = i32\n\
+               let index(A: access)\n\
+                 (self: borrow(A)(Self))\n\
+                 (key: i32): borrow(A)(i32) = {\n\
+                 borrow(A)(self.value)\n\
+               }\n\
+             }\n\
+             let read(value: borrow(i32)): i32 = { value }\n\
+             let main(): i32 = {\n\
+               let mut bag = Bag { value: 42 }\n\
+               let shared = borrow(bag[0])\n\
+               read(shared)\n\
+             }\n",
+        )
+        .expect("user Index implementation should preserve explicit bracket borrows");
+    }
+
+    #[test]
+    fn vec_index_protocol_supports_read_borrow_and_assignment() {
+        compile_source(
+            "let Vec = std.vec.Vec\n\
+             let read(value: borrow(i32)): i32 = { value }\n\
+             let main(): i32 = {\n\
+               let mut values = Vec.new(i32)()\n\
+               values.push(1)\n\
+               values[0] = 42\n\
+               let value = borrow(values[0])\n\
+               read(value)\n\
+             }\n",
+        )
+        .expect("Vec brackets should use its source Index implementation");
+    }
+
+    #[test]
+    fn slice_index_protocol_supports_read_borrow_and_assignment() {
+        compile_source(
+            "let Slice = std.Slice\n\
+             let inspect(values: borrow(mut)(Slice(i32))): i32 = {\n\
+               values[1] = 42\n\
+               let value = borrow(values[1])\n\
+               value\n\
+             }\n\
+             let main(): i32 = {\n\
+               let mut values: Array(i32)(2) = [1, 2]\n\
+               let slice: borrow(mut)(Slice(i32)) = borrow(mut)(values)\n\
+               inspect(slice)\n\
+             }\n",
+        )
+        .expect("Slice brackets should use its source Index implementation");
+    }
 }

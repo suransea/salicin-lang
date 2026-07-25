@@ -35,6 +35,10 @@ in-place reversal. `values.at(index)` borrows an element with shared access and
 `values.at(mut)(index)` borrows it with exclusive access. Bounds and allocation-layout failures
 trap.
 
+`Vec(T)` also implements `core.ops.Index(u64)` in source. `values[index]`,
+`borrow(values[index])`, and `values[index] = replacement` share the same checked `at(A)`
+implementation and preserve its receiver loan.
+
 Container fields remain private so safe code cannot forge ownership metadata. Allocation operations
 ultimately use the ABI documented in [runtime.md](../runtime.md).
 

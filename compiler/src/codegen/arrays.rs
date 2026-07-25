@@ -1,8 +1,10 @@
-use crate::ast::Expr;
+use crate::ast::{CallArg, Expr};
+use crate::core::LangItemKind;
+use std::collections::HashSet;
 
 use super::flow::LowerCtx;
-use super::hir::{HirExpr, HirExprKind, HirIndex, Ty};
-use super::lower::{error_expr, integer_literal_value};
+use super::hir::{HirExpr, HirExprKind, HirIndex, LoanId, Ty};
+use super::lower::{error_expr, integer_literal_value, BoundMethodConstraint};
 use super::Analyzer;
 
 impl Analyzer {
@@ -74,13 +76,31 @@ impl Analyzer {
         index: &Expr,
         context: &mut LowerCtx,
     ) -> HirExpr {
+        if !matches!(base, Expr::Array(_))
+            && !matches!(
+                self.probe_expr_ty(base, None, context),
+                super::lower::TypeProbe::Known(Ty::Array(_, _))
+                    | super::lower::TypeProbe::KnownSource(Ty::Array(_, _), _)
+            )
+        {
+            return self.lower_protocol_index(base, index, context);
+        }
         let base = self.lower_expr(base, None, context);
-        let Ty::Array(element, length) = &base.ty else {
+        self.ensure_array_trait_extensions(&base.ty);
+        let implements_index = self.trait_impls.keys().any(|implementation| {
+            implementation.self_ty == base.ty
+                && implementation.trait_ref.name == self.lang_item_name(LangItemKind::Index)
+                && implementation.trait_ref.arguments == [Ty::I32]
+        });
+        if !implements_index {
             self.error(format!(
-                "array index requires an array value, found `{}`",
-                base.ty
+                "type `{}` does not implement `Index(i32)` required by array brackets",
+                self.diagnostic_type_name(&base.ty)
             ));
-            let _ = self.lower_expr(index, None, context);
+            let _ = self.lower_expr(index, Some(&Ty::I32), context);
+            return error_expr();
+        }
+        let Ty::Array(element, length) = &base.ty else {
             return error_expr();
         };
         let element_ty = element.as_ref().clone();
@@ -118,6 +138,102 @@ impl Analyzer {
                 length,
                 moves,
             },
+        }
+    }
+
+    fn lower_protocol_index(
+        &mut self,
+        base: &Expr,
+        index: &Expr,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let loans = Self::loan_snapshot(context);
+        let reference = self.lower_protocol_index_reference(base, index, false, context);
+        self.release_loans_since(&loans, context);
+        let Ty::Reference { pointee, .. } = &reference.ty else {
+            return error_expr();
+        };
+        let element = pointee.as_ref().clone();
+        if !self.is_copy_type(&element) {
+            self.error(format!(
+                "indexed value access requires Copy output, found `{}`; borrow the indexed place instead",
+                self.diagnostic_type_name(&element)
+            ));
+            return error_expr();
+        }
+        HirExpr {
+            ty: element,
+            kind: HirExprKind::ReferenceRead(Box::new(reference)),
+        }
+    }
+
+    pub(super) fn lower_protocol_index_reference(
+        &mut self,
+        base: &Expr,
+        index: &Expr,
+        mutable: bool,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        let access_group = [CallArg {
+            label: None,
+            value: Expr::Name(if mutable { "mut" } else { "shared" }.to_owned()),
+        }];
+        let key_group = [CallArg {
+            label: None,
+            value: index.clone(),
+        }];
+        let reference = self.lower_bound_method_call(
+            base,
+            "index",
+            &[access_group.as_slice(), key_group.as_slice()],
+            BoundMethodConstraint::LangItem(LangItemKind::Index),
+            None,
+            context,
+        );
+        let Ty::Reference {
+            mutable: actual_mutable,
+            ..
+        } = &reference.ty
+        else {
+            if reference.ty != Ty::Error {
+                self.error(format!(
+                    "`Index.index` must return a borrow, found `{}`",
+                    reference.ty
+                ));
+            }
+            return error_expr();
+        };
+        if *actual_mutable != mutable {
+            self.error(format!(
+                "`Index.index({})` must return a {} borrow, found `{}`",
+                if mutable { "mut" } else { "shared" },
+                if mutable { "mutable" } else { "shared" },
+                reference.ty
+            ));
+            return error_expr();
+        }
+        reference
+    }
+
+    pub(super) fn loan_snapshot(context: &LowerCtx) -> HashSet<LoanId> {
+        context.flow.loans.keys().copied().collect()
+    }
+
+    pub(super) fn release_loans_since(
+        &mut self,
+        snapshot: &HashSet<LoanId>,
+        context: &mut LowerCtx,
+    ) {
+        let loans = context
+            .flow
+            .loans
+            .keys()
+            .copied()
+            .filter(|loan| !snapshot.contains(loan))
+            .collect::<Vec<_>>();
+        self.release_loans(&loans, context);
+        for scope in &mut context.scopes {
+            scope.lexical_loans.retain(|loan| !loans.contains(loan));
         }
     }
 }

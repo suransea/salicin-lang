@@ -17,7 +17,7 @@ Priority meanings:
 
 Current milestone: **M0 release baseline**
 
-Next task: **LIB-INDEX-1**
+Next task: **LIB-ITER-1**
 
 ### P0 control-source queue
 
@@ -98,7 +98,10 @@ Entry gate: **M0-QUALITY-1** and **M0-AUDIT-1**
   - Support Array unsizing and anchored shared/mutable `Vec.as_slice`.
   - Provide source-backed `len` and bounds-checked, access-preserving `at`.
   - Reject bare Slice storage and cover aliasing, escape, mutation, native bounds, and ownership.
-- [ ] **LIB-INDEX-1: Route indexing through source-backed traits**
+- [x] **LIB-INDEX-1: Route indexing through source-backed traits**
+  - Define one access-polymorphic `Index(Key)` contract with associated `Output`.
+  - Route user types, Array, Slice, and Vec reads, explicit borrows, and assignments through it.
+  - Preserve single evaluation, temporary-loan shortening, bounds traps, aliasing, and cleanup.
 - [ ] **LIB-ITER-1: Add array, slice, and Vec iterator implementations**
 - [ ] **LIB-VEC-1: Complete Vec mutation and consuming-iterator cleanup**
 - [ ] **LIB-STRING-DESIGN-1: Decide the minimum owning string model**

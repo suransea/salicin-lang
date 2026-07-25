@@ -707,6 +707,11 @@ pub(super) enum HirExprKind {
         slice: Box<HirExpr>,
         index: Box<HirExpr>,
     },
+    ReferenceRead(Box<HirExpr>),
+    ReferenceAssign {
+        reference: Box<HirExpr>,
+        value: Box<HirExpr>,
+    },
     RawLoad(Box<HirExpr>),
     RawStore {
         pointer: Box<HirExpr>,

@@ -375,6 +375,7 @@ const CORE_ASSIGN_EXPORTS: &[&str] = &[
     "ShlAssign",
     "ShrAssign",
 ];
+const CORE_INDEX_EXPORTS: &[&str] = &["Index"];
 const CORE_CMP_EXPORTS: &[&str] = &["Eq", "PartialOrdering", "PartialOrd"];
 const CORE_OPS_EXPORTS: &[(&str, &str)] = &[
     ("Add", "core::ops::arith::Add"),
@@ -402,6 +403,7 @@ const CORE_OPS_EXPORTS: &[(&str, &str)] = &[
     ("Eq", "core::cmp::Eq"),
     ("PartialOrdering", "core::cmp::PartialOrdering"),
     ("PartialOrd", "core::cmp::PartialOrd"),
+    ("Index", "core::ops::index::Index"),
     ("Chain", "core::flow::Chain"),
     ("Coalesce", "core::flow::Coalesce"),
     ("Unwrap", "core::flow::Unwrap"),
@@ -468,6 +470,7 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("ops", "Eq", "core::cmp::Eq"),
     ("ops", "PartialOrdering", "core::cmp::PartialOrdering"),
     ("ops", "PartialOrd", "core::cmp::PartialOrd"),
+    ("ops", "Index", "core::ops::index::Index"),
     ("ops", "Chain", "core::flow::Chain"),
     ("ops", "Coalesce", "core::flow::Coalesce"),
     ("ops", "Unwrap", "core::flow::Unwrap"),
@@ -506,6 +509,7 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ),
     ("ops.assign", "ShlAssign", "core::ops::assign::ShlAssign"),
     ("ops.assign", "ShrAssign", "core::ops::assign::ShrAssign"),
+    ("ops.index", "Index", "core::ops::index::Index"),
     ("cmp", "Eq", "core::cmp::Eq"),
     ("cmp", "PartialOrdering", "core::cmp::PartialOrdering"),
     ("cmp", "PartialOrd", "core::cmp::PartialOrd"),
@@ -1317,6 +1321,17 @@ fn install_core_namespace(
                 "ops.assign",
                 name,
                 &format!("core::ops::assign::{name}"),
+                "<core>",
+            );
+        }
+        for name in CORE_INDEX_EXPORTS {
+            insert_standard_symbol(
+                symbols,
+                package_root,
+                &core_root,
+                "ops.index",
+                name,
+                &format!("core::ops::index::{name}"),
                 "<core>",
             );
         }
@@ -5418,6 +5433,7 @@ let main(): i32 = { Option {} }
             .chain(CORE_ARITH_EXPORTS.iter().map(|name| ("arith", *name)))
             .chain(CORE_BIT_EXPORTS.iter().map(|name| ("bit", *name)))
             .chain(CORE_ASSIGN_EXPORTS.iter().map(|name| ("assign", *name)))
+            .chain(CORE_INDEX_EXPORTS.iter().map(|name| ("index", *name)))
             .chain(CORE_EFFECT_EXPORTS.iter().map(|name| ("effect", *name)))
             .chain(
                 CORE_EFFECT_HANDLER_EXPORTS

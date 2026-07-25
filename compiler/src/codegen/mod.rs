@@ -143,7 +143,11 @@ struct Analyzer {
     pointer_inherent_extensions: Vec<PointerInherentExtension>,
     instantiated_pointer_extensions: HashSet<String>,
     slice_inherent_extensions: Vec<SliceInherentExtension>,
+    slice_trait_extensions: Vec<SliceTraitExtension>,
     instantiated_slice_extensions: HashSet<String>,
+    array_trait_extensions: Vec<ArrayTraitExtension>,
+    instantiated_array_trait_extensions: HashSet<String>,
+    instantiating_array_trait_extension: usize,
     generic_trait_extensions: HashMap<String, Vec<GenericTraitExtension>>,
     instantiating_generic_trait_extension: usize,
     generic_inherent_functions: HashMap<(String, String), String>,
@@ -227,7 +231,11 @@ impl Analyzer {
             pointer_inherent_extensions: Vec::new(),
             instantiated_pointer_extensions: HashSet::new(),
             slice_inherent_extensions: Vec::new(),
+            slice_trait_extensions: Vec::new(),
             instantiated_slice_extensions: HashSet::new(),
+            array_trait_extensions: Vec::new(),
+            instantiated_array_trait_extensions: HashSet::new(),
+            instantiating_array_trait_extension: 0,
             generic_trait_extensions: HashMap::new(),
             instantiating_generic_trait_extension: 0,
             generic_inherent_functions: HashMap::new(),
@@ -2208,6 +2216,10 @@ impl Analyzer {
         ) {
             return Some(self.lower_source_type(source));
         }
+        if matches!(source, Type::Array(_, _) | Type::ArrayApplication { .. }) {
+            let target = self.lower_source_type(source);
+            return matches!(target, Ty::Array(_, _)).then_some(target);
+        }
         let Type::Named(name, arguments) = source else {
             self.error("trait implementation target must be a nominal type");
             return None;
@@ -2229,7 +2241,7 @@ impl Analyzer {
         }
         let target = self.lower_source_type(source);
         match target {
-            Ty::Struct(_) | Ty::Enum(_) => Some(target),
+            Ty::Struct(_) | Ty::Enum(_) | Ty::Slice(_) | Ty::Array(_, _) => Some(target),
             _ if primitive_scalar_type(&target) => Some(target),
             Ty::Error => None,
             _ => {
@@ -2847,6 +2859,10 @@ impl Analyzer {
             }
         }
         let target_source = extension.target.clone();
+        let array_intrinsic_target = matches!(
+            &target_source,
+            Type::Array(_, _) | Type::ArrayApplication { .. }
+        );
         let Some(target) = self.resolve_trait_impl_target(&target_source) else {
             return;
         };
@@ -3166,8 +3182,9 @@ impl Analyzer {
                 .cloned()
                 .map(|function| (function, origin.clone()))
                 .unwrap_or_else(|| (declaration.clone(), schema.access.origin.clone()));
-            let primitive_intrinsic =
-                origin.package == PackageId::CORE.0 && primitive_scalar_type(&target);
+            let primitive_intrinsic = (origin.package == PackageId::CORE.0
+                && primitive_scalar_type(&target))
+                || (function_origin.package == PackageId::CORE.0 && method_name == "index");
             if function.body.is_none() && !primitive_intrinsic {
                 self.error(format!(
                     "trait implementation method `{}.{method_name}` requires a body",
@@ -3194,9 +3211,9 @@ impl Analyzer {
                 continue;
             }
             if let Some(body) = &mut function.body {
-                let target_name =
-                    nominal_name(&target).expect("concrete trait implementation target is nominal");
-                substitute_self_expression_target(body, target_name);
+                if let Some(target_name) = nominal_name(&target) {
+                    substitute_self_expression_target(body, target_name);
+                }
             }
             if !compile_parameter_groups_match(&expected.compile_groups, &function.compile_groups) {
                 self.error(format!(
@@ -3245,7 +3262,11 @@ impl Analyzer {
 
         let mut methods = HashMap::new();
         for (method_id, canonical, function, function_origin) in registered {
-            let primitive_intrinsic = function.body.is_none() && primitive_scalar_type(&target);
+            let primitive_intrinsic = function.body.is_none()
+                && (primitive_scalar_type(&target)
+                    || array_intrinsic_target
+                    || self.instantiating_array_trait_extension > 0
+                    || function_origin.package == PackageId::CORE.0);
             if function.compile_groups.is_empty() {
                 let groups = function
                     .groups
@@ -3968,6 +3989,27 @@ impl Analyzer {
                     "invalid or duplicate generic extend parameter `{}`",
                     parameter.name
                 ));
+                return;
+            }
+        }
+        match extension.target.clone() {
+            Type::ArrayApplication {
+                constructor,
+                element,
+                length,
+            } if self.is_lang_item_name(&constructor, LangItemKind::ArrayTypeForm) => {
+                self.collect_array_trait_extension(
+                    extension, origin, parameters, declared, *element, length,
+                );
+                return;
+            }
+            _ => {}
+        }
+        if let Type::Named(target, arguments) = extension.target.clone() {
+            if self.is_lang_item_name(&target, LangItemKind::SliceTypeForm) {
+                self.collect_slice_trait_extension(
+                    extension, origin, parameters, declared, arguments,
+                );
                 return;
             }
         }
@@ -5393,6 +5435,173 @@ impl Analyzer {
         });
     }
 
+    fn collect_slice_trait_extension(
+        &mut self,
+        extension: ExtendDef,
+        origin: ItemOrigin,
+        parameters: Vec<CompileParam>,
+        declared: HashSet<String>,
+        target_sources: Vec<Type>,
+    ) {
+        if origin.package != PackageId::CORE.0 {
+            self.error(
+                "trait extension for `Slice` must be declared in the package that defines the type or trait",
+            );
+            return;
+        }
+        let [Type::Named(element, arguments)] = target_sources.as_slice() else {
+            self.error("generic `Slice` trait target must be `Slice(T)`");
+            return;
+        };
+        if !arguments.is_empty()
+            || declared != HashSet::from([element.clone()])
+            || !parameters.iter().any(|parameter| {
+                parameter.name == *element && parameter.kind == CompileParamKind::Type
+            })
+        {
+            self.error("`Slice` trait element must be determined by one `type` parameter");
+            return;
+        }
+        let Some(Type::Named(trait_name, trait_arguments)) = extension.trait_ref.as_ref() else {
+            self.error("generic `Slice` extension must reference a named trait");
+            return;
+        };
+        let Some(schema) = self.traits.get(trait_name).cloned() else {
+            self.error(format!("unknown trait `{trait_name}`"));
+            return;
+        };
+        if !schema.valid
+            || trait_arguments.len() != schema.compile_parameters.len()
+            || !self.validate_generic_trait_members(trait_name, &schema, &extension.members)
+            || !self.validate_generic_trait_method_shapes(
+                trait_name,
+                &schema,
+                trait_arguments,
+                &extension,
+            )
+        {
+            return;
+        }
+        self.slice_trait_extensions.push(SliceTraitExtension {
+            element_parameter: element.clone(),
+            extension,
+            origin,
+        });
+    }
+
+    fn collect_array_trait_extension(
+        &mut self,
+        extension: ExtendDef,
+        origin: ItemOrigin,
+        parameters: Vec<CompileParam>,
+        declared: HashSet<String>,
+        element: Type,
+        length: crate::ast::USizeConst,
+    ) {
+        if origin.package != PackageId::CORE.0 {
+            self.error("trait extension for `Array` must be declared in core");
+            return;
+        }
+        let Type::Named(element_parameter, element_arguments) = element else {
+            self.error("generic `Array` trait target element must be a type parameter");
+            return;
+        };
+        let crate::ast::USizeConst::Parameter(length_parameter) = length else {
+            self.error("generic `Array` trait target length must be a usize parameter");
+            return;
+        };
+        if !element_arguments.is_empty()
+            || declared != HashSet::from([element_parameter.clone(), length_parameter.clone()])
+            || !parameters.iter().any(|parameter| {
+                parameter.name == element_parameter && parameter.kind == CompileParamKind::Type
+            })
+            || !parameters.iter().any(|parameter| {
+                parameter.name == length_parameter && parameter.kind == CompileParamKind::USize
+            })
+        {
+            self.error("`Array(T)(L)` trait parameters must be `T: type` and `L: usize`");
+            return;
+        }
+        let Some(Type::Named(trait_name, trait_arguments)) = extension.trait_ref.as_ref() else {
+            self.error("generic `Array` extension must reference a named trait");
+            return;
+        };
+        let Some(schema) = self.traits.get(trait_name).cloned() else {
+            self.error(format!("unknown trait `{trait_name}`"));
+            return;
+        };
+        let mut validation_extension = extension.clone();
+        for member in &mut validation_extension.members {
+            if let ExtendMember::Function(function) = member {
+                if function.body.is_none() {
+                    function.body = Some(Expr::Unit);
+                }
+            }
+        }
+        if !schema.valid
+            || trait_arguments.len() != schema.compile_parameters.len()
+            || !self.validate_generic_trait_members(
+                trait_name,
+                &schema,
+                &validation_extension.members,
+            )
+            || !self.validate_generic_trait_method_shapes(
+                trait_name,
+                &schema,
+                trait_arguments,
+                &validation_extension,
+            )
+        {
+            return;
+        }
+        self.array_trait_extensions.push(ArrayTraitExtension {
+            element_parameter,
+            length_parameter,
+            extension,
+            origin,
+        });
+    }
+
+    fn ensure_array_trait_extensions(&mut self, array: &Ty) {
+        let Ty::Array(element, length) = array else {
+            return;
+        };
+        let key = array.to_string();
+        if !self.instantiated_array_trait_extensions.insert(key) {
+            return;
+        }
+        let Some(element_source) = self.source_type_for_ty(element) else {
+            self.error(format!(
+                "cannot preserve element type `{element}` while instantiating `Array` traits"
+            ));
+            return;
+        };
+        for template in self.array_trait_extensions.clone() {
+            let mut substitutions = HashMap::new();
+            substitutions.insert(template.element_parameter, element_source.clone());
+            substitutions.insert(template.length_parameter, Type::CompileUSize(*length));
+            let mut extension = template.extension;
+            substitute_type_parameters(&mut extension.target, &substitutions);
+            if let Some(trait_ref) = &mut extension.trait_ref {
+                substitute_type_parameters(trait_ref, &substitutions);
+            }
+            for member in &mut extension.members {
+                match member {
+                    ExtendMember::Const(binding) => {
+                        substitute_type_expression_parameters(&mut binding.value, &substitutions);
+                    }
+                    ExtendMember::Function(function) => {
+                        substitute_function_types(function, &substitutions);
+                    }
+                }
+            }
+            extension.compile_groups.clear();
+            self.instantiating_array_trait_extension += 1;
+            self.collect_trait_extension(extension, template.origin);
+            self.instantiating_array_trait_extension -= 1;
+        }
+    }
+
     fn pointer_inherent_owner(pointer: &Ty) -> String {
         format!("$pointer${}", hex_name(&pointer.to_string()))
     }
@@ -5530,6 +5739,40 @@ impl Analyzer {
                 &extension.access,
                 &extension.origin,
             );
+        }
+        for template in self.slice_trait_extensions.clone() {
+            let mut extension = template.extension;
+            let mut substitutions = HashMap::new();
+            substitutions.insert(template.element_parameter, element_source.clone());
+            substitute_type_parameters(&mut extension.target, &substitutions);
+            if let Some(trait_ref) = &mut extension.trait_ref {
+                substitute_type_parameters(trait_ref, &substitutions);
+            }
+            for predicate in &mut extension.where_predicates {
+                substitute_type_parameters(&mut predicate.subject, &substitutions);
+                substitute_type_parameters(&mut predicate.trait_ref, &substitutions);
+                for binding in &mut predicate.associated_types {
+                    substitute_type_parameters(&mut binding.ty, &substitutions);
+                }
+            }
+            for member in &mut extension.members {
+                match member {
+                    ExtendMember::Const(binding) => {
+                        if let Some(annotation) = &mut binding.annotation {
+                            substitute_type_parameters(annotation, &substitutions);
+                        }
+                        substitute_type_expression_parameters(&mut binding.value, &substitutions);
+                    }
+                    ExtendMember::Function(function) => {
+                        substitute_function_types(function, &substitutions);
+                        let mut self_substitution = HashMap::new();
+                        self_substitution.insert("Self".to_owned(), slice_source.clone());
+                        substitute_function_types(function, &self_substitution);
+                    }
+                }
+            }
+            extension.compile_groups.clear();
+            self.collect_trait_extension(extension, template.origin);
         }
         Some(owner)
     }
@@ -7735,6 +7978,15 @@ impl Analyzer {
                 }
             }
             Expr::Borrow { mutable, value, .. } => {
+                if let Expr::Index { base, index } = value.as_ref() {
+                    if !matches!(
+                        self.probe_expr_ty(base, None, context),
+                        TypeProbe::Known(Ty::Array(_, _))
+                            | TypeProbe::KnownSource(Ty::Array(_, _), _)
+                    ) {
+                        return self.lower_protocol_index_reference(base, index, *mutable, context);
+                    }
+                }
                 let Some(mut place) = self.lower_place(value, context) else {
                     return error_expr();
                 };
@@ -8007,6 +8259,35 @@ impl Analyzer {
                         },
                     };
                 }
+                if let Expr::Index { base, index } = place.as_ref() {
+                    if !matches!(
+                        self.probe_expr_ty(base, None, context),
+                        TypeProbe::Known(Ty::Array(_, _))
+                            | TypeProbe::KnownSource(Ty::Array(_, _), _)
+                    ) {
+                        let loans = Self::loan_snapshot(context);
+                        let reference =
+                            self.lower_protocol_index_reference(base, index, true, context);
+                        let Ty::Reference {
+                            pointee,
+                            mutable: true,
+                            ..
+                        } = &reference.ty
+                        else {
+                            self.release_loans_since(&loans, context);
+                            return error_expr();
+                        };
+                        let value = self.lower_expr(value, Some(pointee), context);
+                        self.release_loans_since(&loans, context);
+                        return HirExpr {
+                            ty: Ty::Unit,
+                            kind: HirExprKind::ReferenceAssign {
+                                reference: Box::new(reference),
+                                value: Box::new(value),
+                            },
+                        };
+                    }
+                }
                 let Some(place) = self.lower_place(place, context) else {
                     return error_expr();
                 };
@@ -8054,7 +8335,10 @@ impl Analyzer {
                 self.lower_chain(base, field, None, expected, context)
             }
             Expr::Index { base, index } => {
-                if integer_literal_value(index).is_some()
+                if matches!(
+                    self.probe_expr_ty(base, None, context),
+                    TypeProbe::Known(Ty::Array(_, _)) | TypeProbe::KnownSource(Ty::Array(_, _), _)
+                ) && integer_literal_value(index).is_some()
                     && self.lower_place_without_diagnostic(base, context).is_some()
                 {
                     let Some(place) = self.lower_place(expression, context) else {

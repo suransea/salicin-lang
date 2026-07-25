@@ -238,6 +238,8 @@ impl ConstantEvaluator<'_> {
             | HirExprKind::RawSlice { .. }
             | HirExprKind::RawSliceLen(_)
             | HirExprKind::RawSliceAt { .. }
+            | HirExprKind::ReferenceRead(_)
+            | HirExprKind::ReferenceAssign { .. }
             | HirExprKind::RawLoad(_)
             | HirExprKind::RawStore { .. }
             | HirExprKind::RawInit { .. }
@@ -1720,6 +1722,49 @@ impl<'a> FunctionEmitter<'a> {
                     ty: expression.ty.clone(),
                     value: Some(element_pointer),
                 })
+            }
+            HirExprKind::ReferenceRead(reference) => {
+                let reference = self.emit_expr(reference)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                if expression.ty == Ty::Unit {
+                    return Ok(Operand::unit());
+                }
+                let value = self.fresh_register();
+                let ty = llvm_value_type(&expression.ty)?;
+                self.instruction(format!("{value} = load {ty}, ptr {}", reference.value()?));
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: Some(value),
+                })
+            }
+            HirExprKind::ReferenceAssign { reference, value } => {
+                let reference = self.emit_expr(reference)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                let value = self.emit_expr(value)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                if value.ty == Ty::Unit {
+                    return Ok(Operand::unit());
+                }
+                if self.program.needs_drop(&value.ty) {
+                    self.instruction(format!(
+                        "call void @{}(ptr {})",
+                        drop_glue_symbol(&value.ty),
+                        reference.value()?
+                    ));
+                }
+                let ty = llvm_value_type(&value.ty)?;
+                self.instruction(format!(
+                    "store {ty} {}, ptr {}",
+                    value.value()?,
+                    reference.value()?
+                ));
+                Ok(Operand::unit())
             }
             HirExprKind::RawAddress { place } => Ok(Operand {
                 ty: expression.ty.clone(),

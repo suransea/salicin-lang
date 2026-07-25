@@ -327,6 +327,14 @@ impl Analyzer {
                     match inferred.get(access) {
                         Some(previous)
                             if previous.origin != "default shared access"
+                                && previous.ty == Ty::Struct(ACCESS_SHARED_MARKER.to_owned())
+                                && selected.ty == Ty::Struct(ACCESS_MUT_MARKER.to_owned()) =>
+                        {
+                            // A mutable reference can be reborrowed as shared when an
+                            // explicit access argument has already selected `shared`.
+                        }
+                        Some(previous)
+                            if previous.origin != "default shared access"
                                 && previous.ty != selected.ty =>
                         {
                             return Err(format!(

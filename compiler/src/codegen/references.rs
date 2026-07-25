@@ -254,6 +254,7 @@ impl Analyzer {
             }
             HirExprKind::Unary(_, value)
             | HirExprKind::Field { base: value, .. }
+            | HirExprKind::ReferenceRead(value)
             | HirExprKind::RawSliceLen(value)
             | HirExprKind::RawLoad(value)
             | HirExprKind::RawTake(value)
@@ -297,6 +298,10 @@ impl Analyzer {
                 self.validate_explicit_reference_returns(continuation, expected, context);
             }
             HirExprKind::Assign { value, .. } => {
+                self.validate_explicit_reference_returns(value, expected, context);
+            }
+            HirExprKind::ReferenceAssign { reference, value } => {
+                self.validate_explicit_reference_returns(reference, expected, context);
                 self.validate_explicit_reference_returns(value, expected, context);
             }
             HirExprKind::Call { arguments, .. }

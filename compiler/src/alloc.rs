@@ -142,9 +142,9 @@ impl Error for AllocBundleError {}
 
 fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBundleError> {
     let mut diagnostics = Vec::new();
-    if program.items.len() != 38
-        || program.item_visibilities.len() != 38
-        || program.item_origins.len() != 38
+    if program.items.len() != 39
+        || program.item_visibilities.len() != 39
+        || program.item_origins.len() != 39
     {
         diagnostics
             .push("embedded alloc must contain the fixed Box and Vec bootstrap schema".to_owned());
@@ -341,6 +341,10 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
             _ => diagnostics.push("alloc Copy Vec extension has an invalid shape".to_owned()),
         }
         match &program.items[37] {
+            Item::Extend(extension) if valid_vec_index_extension(extension) => {}
+            _ => diagnostics.push("alloc Vec Index extension has an invalid shape".to_owned()),
+        }
+        match &program.items[38] {
             Item::Extend(extension) if valid_vec_drop_extension(extension) => {}
             _ => diagnostics.push("alloc Vec Drop extension has an invalid shape".to_owned()),
         }
@@ -1143,6 +1147,21 @@ fn valid_vec_drop_extension(extension: &crate::ast::ExtendDef) -> bool {
             if valid_vec_receiver_method(drop, "drop", PassMode::MutBorrow, &[], Type::Unit))
 }
 
+fn valid_vec_index_extension(extension: &crate::ast::ExtendDef) -> bool {
+    matches!(extension.compile_groups.as_slice(), [group]
+        if matches!(group.as_slice(), [parameter]
+            if parameter.name == "T" && parameter.kind == CompileParamKind::Type))
+        && extension.target == applied("Vec", named("T"))
+        && extension.trait_ref == Some(applied("Index", Type::U64))
+        && extension.where_predicates.is_empty()
+        && matches!(extension.members.as_slice(), [
+            crate::ast::ExtendMember::Const(output),
+            crate::ast::ExtendMember::Function(index),
+        ] if output.name == "Output"
+            && output.value == crate::ast::Expr::Name("T".to_owned())
+            && index.name == "index")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1166,7 +1185,7 @@ mod tests {
     #[test]
     fn edition_2026_alloc_bundle_parses_and_validates() {
         let bundle = AllocBundle::for_edition(Edition::Edition2026).unwrap();
-        assert_eq!(bundle.program.items.len(), 38);
+        assert_eq!(bundle.program.items.len(), 39);
         assert!(bundle
             .program
             .item_origins

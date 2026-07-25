@@ -346,8 +346,10 @@ The implementation is broad but not stable. Important incomplete boundaries incl
 - `core` provides the initial prelude plus arithmetic, bitwise, unary, equality, partial-ordering,
   control, and iteration protocols. Language error propagation is the standard `Throws(E)` effect.
   Unsized `Slice(T)` borrows support Array unsizing, anchored Vec conversion, length, and
-  bounds-checked shared/mutable element access. Trait-based indexing, standard array/container
-  iterator implementations, and `Future` remain to be implemented;
+  bounds-checked shared/mutable element access. Access-polymorphic `Index(Key)` routes user-defined,
+  Array, Slice, and Vec reads, explicit borrows, and assignments through one source-declared
+  protocol. Standard array/container iterator implementations and `Future` remain to be
+  implemented;
 - `std` host APIs have not been started;
 - registry dependencies, workspaces, stable ABI guarantees, and a package distribution format are
   not defined;

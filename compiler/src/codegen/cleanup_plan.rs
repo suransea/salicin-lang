@@ -899,6 +899,27 @@ impl<'a> HirCleanupPlanner<'a> {
                 self.initialize_result(cursor, &result_use)?;
                 Some(cursor)
             }
+            HirExprKind::ReferenceRead(reference) => {
+                let Some(cursor) = self.walk_expr(reference, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                self.initialize_result(cursor, &result_use)?;
+                Some(cursor)
+            }
+            HirExprKind::ReferenceAssign { reference, value } => {
+                let Some(cursor) = self.walk_expr(reference, cursor, ResultUse::Discard)? else {
+                    return Ok(None);
+                };
+                let (_, stage) = self.prepare_temporary_destination(cursor, &value.ty)?;
+                let Some(cursor) =
+                    self.walk_expr(value, cursor, ResultUse::Store(stage.clone()))?
+                else {
+                    return Ok(None);
+                };
+                self.move_out(cursor, stage.path)?;
+                self.initialize_result(cursor, &result_use)?;
+                Some(cursor)
+            }
             HirExprKind::RawSliceAt { slice, index } => {
                 let Some(cursor) = self.walk_expr(slice, cursor, ResultUse::Discard)? else {
                     return Ok(None);

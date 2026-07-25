@@ -1,12 +1,22 @@
 // Primitive pointer and layout contracts. The source declarations define the
 // public identities and signatures; the compiler supplies representation,
 // authority checks, and target-specific lowering after validating this module.
+let Index = core.ops.Index
+
 /// Fixed-size array type with compile-time element type and length.
 pub let Array(T: type)
   (L: usize): type
 
 /// Dynamically sized contiguous sequence viewed through a borrow.
 pub let Slice(T: type): type
+
+/// Routes fixed-size array brackets through the source-defined indexing protocol.
+extend(T: type, L: usize) Array(T)(L): Index(i32) {
+  let Output = T
+  let index(A: access)
+    (self: borrow(A)(Self))
+    (key: i32): borrow(A)(T)
+}
 
 /// Provides operations on a borrowed contiguous sequence.
 extend(T: type) Slice(T) {
@@ -22,6 +32,16 @@ extend(T: type) Slice(T) {
     unsafe {
       raw_slice_at(A)(self, index)
     }
+  }
+}
+
+/// Routes bracket access through the source-defined indexing protocol.
+extend(T: type) Slice(T): Index(u64) {
+  let Output = T
+  let index(A: access)
+    (self: borrow(A)(Self))
+    (key: u64): borrow(A)(T) = {
+    self.at(A)(key)
   }
 }
 

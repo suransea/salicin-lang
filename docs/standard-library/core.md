@@ -218,6 +218,11 @@ Out-of-bounds access traps. The pointer extension provides `offset(index)` for e
 their underlying raw intrinsics; `init` expects uninitialized storage and `take` leaves storage
 uninitialized.
 
+`core.ops.index.Index(Key)` is the single bracket protocol. Its `index(A: access)` method returns
+`borrow(A)(Output)`, so shared reads, explicit element borrows, and mutable assignment use one
+implementation without a separate `IndexMut`. Arrays implement `Index(i32)` through a validated
+core intrinsic; Slice implements `Index(u64)` in source by forwarding to `at`.
+
 `core.control` owns the edition-pinned contracts for compiler-lowered control functions. It is not
 part of the prelude. `do`, `try`, `throw`, and `unsafe` are ordinary source-backed functions over
 the standard effect declarations. The `unsafe` body removes the marker effect with
