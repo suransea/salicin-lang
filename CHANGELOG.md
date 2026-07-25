@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.198.0 - 2026-07-26
+
 - Allowed heterogeneous residual `if` and `match` selection to retain
   continuation locals across the selected await. Each pure branch bridge now
   reconstructs the complete private `(selected child, retained...)` bundle;
