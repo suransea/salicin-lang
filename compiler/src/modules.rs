@@ -3304,7 +3304,7 @@ impl Resolver {
             | Expr::Borrow { value: operand, .. } => {
                 self.rewrite_expr(operand, context, type_scope, value_scope);
             }
-            Expr::DoBlock { body } => {
+            Expr::DoBlock { body } | Expr::Async { body } | Expr::Await(body) => {
                 self.rewrite_expr(body, context, type_scope, value_scope);
             }
             Expr::Binary(left, _, right)
@@ -5594,7 +5594,9 @@ let main(): i32 = { Option {} }
                 | Expr::Borrow { value, .. }
                 | Expr::ChainMember(value, _)
                 | Expr::Loop { body: value } => visit(value, names),
-                Expr::DoBlock { body } => visit(body, names),
+                Expr::DoBlock { body } | Expr::Async { body } | Expr::Await(body) => {
+                    visit(body, names)
+                }
                 Expr::Binary(left, _, right)
                 | Expr::Coalesce(left, right)
                 | Expr::Assign(left, right)

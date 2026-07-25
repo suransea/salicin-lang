@@ -7564,6 +7564,8 @@ impl Analyzer {
             }
             Expr::Assign(_, _)
             | Expr::CompoundAssign(_, _, _)
+            | Expr::Async { .. }
+            | Expr::Await(_)
             | Expr::Closure(_, _)
             | Expr::PatternClosure { .. }
             | Expr::If { .. }
@@ -8667,6 +8669,16 @@ impl Analyzer {
             ),
             Expr::Try(value) => self.lower_try(value, expected, context),
             Expr::DoBlock { body } => self.lower_do_block(body, expected, context),
+            Expr::Async { .. } => {
+                self.error(
+                    "`async { ... }` is parsed but async state-machine lowering is not available yet",
+                );
+                error_expr()
+            }
+            Expr::Await(_) => {
+                self.error("`await` is only lowered as part of an async state machine");
+                error_expr()
+            }
             Expr::Throw(value) => self.lower_throw(value, context),
             Expr::Assign(place, value) => {
                 if let Expr::Unary(UnaryOp::Deref, pointer) = place.as_ref() {
@@ -8768,18 +8780,6 @@ impl Analyzer {
             }
             Expr::CompoundAssign(place, operator, value) => {
                 self.lower_compound_assign(place, *operator, value, context)
-            }
-            Expr::Call(callee, _) if matches!(callee.unlocated(), Expr::Name(name) if name == "$lang$async") =>
-            {
-                self.error(
-                    "`async { ... }` is parsed but async state-machine lowering is not available yet",
-                );
-                error_expr()
-            }
-            Expr::Call(callee, _) if matches!(callee.unlocated(), Expr::Name(name) if name == "$lang$await") =>
-            {
-                self.error("`await` is only lowered as part of an async state machine");
-                error_expr()
             }
             Expr::Call(_, _) => self.lower_call(expression, expected, context),
             Expr::StructLiteral {
@@ -9959,6 +9959,8 @@ impl Analyzer {
             Expr::Unary(_, operand)
             | Expr::Try(operand)
             | Expr::Throw(operand)
+            | Expr::Async { body: operand }
+            | Expr::Await(operand)
             | Expr::Unsafe(operand)
             | Expr::DoBlock { body: operand }
             | Expr::Borrow { value: operand, .. } => {

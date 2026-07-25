@@ -3281,13 +3281,7 @@ impl Parser {
         if self.async_depth > 0 && self.at_context_ident("await") {
             self.advance();
             let operand = self.unary(allow_trailing_closure)?;
-            Ok(Expr::Call(
-                Box::new(Expr::Name("$lang$await".to_owned())),
-                vec![CallArg {
-                    label: None,
-                    value: operand,
-                }],
-            ))
+            Ok(Expr::Await(Box::new(operand)))
         } else if self.take(&TokenKind::Minus) {
             let operand = self.unary(allow_trailing_closure)?;
             Ok(Expr::Unary(UnaryOp::Neg, Box::new(operand)))
@@ -4331,14 +4325,8 @@ impl Parser {
         self.async_depth += 1;
         let body = self.block();
         self.async_depth -= 1;
-        body.map(|body| {
-            Expr::Call(
-                Box::new(Expr::Name("$lang$async".to_owned())),
-                vec![CallArg {
-                    label: None,
-                    value: Expr::Closure(Vec::new(), Box::new(body)),
-                }],
-            )
+        body.map(|body| Expr::Async {
+            body: Box::new(body),
         })
     }
 
@@ -5077,7 +5065,9 @@ fn normalize_expr_region_qualifiers(
         Expr::Unary(_, value) | Expr::Try(value) | Expr::Throw(value) | Expr::Unsafe(value) => {
             normalize_expr_region_qualifiers(value, regions, accesses)
         }
-        Expr::DoBlock { body } => normalize_expr_region_qualifiers(body, regions, accesses),
+        Expr::DoBlock { body } | Expr::Async { body } | Expr::Await(body) => {
+            normalize_expr_region_qualifiers(body, regions, accesses)
+        }
         Expr::Binary(left, _, right)
         | Expr::Coalesce(left, right)
         | Expr::Assign(left, right)
@@ -5371,7 +5361,9 @@ fn validate_expr_accesses(expression: &Expr, accesses: &HashSet<String>) -> Resu
         Expr::Unary(_, value) | Expr::Try(value) | Expr::Throw(value) | Expr::Unsafe(value) => {
             validate_expr_accesses(value, accesses)
         }
-        Expr::DoBlock { body } => validate_expr_accesses(body, accesses),
+        Expr::DoBlock { body } | Expr::Async { body } | Expr::Await(body) => {
+            validate_expr_accesses(body, accesses)
+        }
         Expr::Binary(left, _, right)
         | Expr::Coalesce(left, right)
         | Expr::Assign(left, right)
@@ -5613,7 +5605,9 @@ fn validate_expr_regions(expression: &Expr, regions: &HashSet<String>) -> Result
         | Expr::Throw(value)
         | Expr::Unsafe(value)
         | Expr::Borrow { value, .. } => validate_expr_regions(value, regions),
-        Expr::DoBlock { body } => validate_expr_regions(body, regions),
+        Expr::DoBlock { body } | Expr::Async { body } | Expr::Await(body) => {
+            validate_expr_regions(body, regions)
+        }
         Expr::Binary(left, _, right)
         | Expr::Coalesce(left, right)
         | Expr::Assign(left, right)
@@ -8809,7 +8803,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_contextual_async_and_await_to_reserved_language_calls() {
+    fn parses_contextual_async_and_await_as_language_expressions() {
         let program = parse("let make(): i32 = {\n  let future = async { await next() }\n  0\n}\n")
             .expect("async expressions must parse");
         let Item::Function(function) = &program.items[0] else {
@@ -8821,30 +8815,13 @@ mod tests {
         let Stmt::Let(binding) = &statements[0] else {
             panic!("expected future binding");
         };
-        let Expr::Call(async_root, async_arguments) = binding.value.unlocated() else {
-            panic!("expected internal async call");
+        let Expr::Async { body } = binding.value.unlocated() else {
+            panic!("expected async expression");
         };
-        assert!(matches!(
-            async_root.as_ref(),
-            Expr::Name(name) if name == "$lang$async"
-        ));
-        let [CallArg {
-            value: Expr::Closure(parameters, body),
-            ..
-        }] = async_arguments.as_slice()
-        else {
-            panic!("expected cold zero-parameter async body");
-        };
-        assert!(parameters.is_empty());
         let Expr::Block(_, Some(tail)) = body.as_ref() else {
             panic!("expected async body");
         };
-        assert!(matches!(
-            tail.unlocated(),
-            Expr::Call(root, arguments)
-                if matches!(root.as_ref(), Expr::Name(name) if name == "$lang$await")
-                    && arguments.len() == 1
-        ));
+        assert!(matches!(tail.unlocated(), Expr::Await(_)));
     }
 
     #[test]

@@ -232,10 +232,12 @@ pub(super) fn rewrite_handler_loop_control(
         Expr::While { .. }
         | Expr::Loop { .. }
         | Expr::Closure(_, _)
-        | Expr::PatternClosure { .. } => {}
+        | Expr::PatternClosure { .. }
+        | Expr::Async { .. } => {}
         Expr::Unary(_, value)
         | Expr::Try(value)
         | Expr::DoBlock { body: value }
+        | Expr::Await(value)
         | Expr::Throw(value)
         | Expr::Unsafe(value)
         | Expr::Borrow { value, .. } => {
@@ -399,6 +401,8 @@ pub(super) fn collect_internal_recursion_tokens(expression: &Expr, tokens: &mut 
         Expr::Unary(_, value)
         | Expr::Try(value)
         | Expr::DoBlock { body: value }
+        | Expr::Async { body: value }
+        | Expr::Await(value)
         | Expr::Throw(value)
         | Expr::Unsafe(value) => collect_internal_recursion_tokens(value, tokens),
         Expr::Borrow { value, .. } => collect_internal_recursion_tokens(value, tokens),
@@ -710,6 +714,8 @@ pub(super) fn handler_expression_children(expression: &Expr) -> Vec<&Expr> {
         Expr::Unary(_, value)
         | Expr::Try(value)
         | Expr::DoBlock { body: value }
+        | Expr::Async { body: value }
+        | Expr::Await(value)
         | Expr::Throw(value)
         | Expr::Unsafe(value)
         | Expr::Borrow { value, .. }
@@ -857,7 +863,7 @@ pub(super) fn inject_handler_action_binding(
             tail.as_mut()
                 .is_some_and(|tail| inject_handler_action_binding(tail, identity, action_binding))
         }
-        Expr::Unsafe(body) | Expr::DoBlock { body } => {
+        Expr::Unsafe(body) | Expr::DoBlock { body } | Expr::Async { body } | Expr::Await(body) => {
             inject_handler_action_binding(body, identity, action_binding)
         }
         _ => false,
@@ -910,6 +916,8 @@ pub(super) fn rewrite_handler_chain_wrappers(
         Expr::Unary(_, value)
         | Expr::Try(value)
         | Expr::DoBlock { body: value }
+        | Expr::Async { body: value }
+        | Expr::Await(value)
         | Expr::Throw(value)
         | Expr::Unsafe(value)
         | Expr::Borrow { value, .. }
@@ -2521,6 +2529,16 @@ impl Analyzer {
                             },
                         )
                     }),
+                )
+            }
+            Expr::Async { body } => continuation(self, Expr::Async { body }),
+            Expr::Await(value) => {
+                let next = continuation.clone();
+                self.transform_handler_expr(
+                    *value,
+                    handler,
+                    resume,
+                    Rc::new(move |analyzer, value| next(analyzer, Expr::Await(Box::new(value)))),
                 )
             }
             Expr::Match { scrutinee, arms } => {

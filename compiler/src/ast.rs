@@ -518,6 +518,10 @@ pub enum Expr {
     DoBlock {
         body: Box<Expr>,
     },
+    Async {
+        body: Box<Expr>,
+    },
+    Await(Box<Expr>),
     Throw(Box<Expr>),
     Assign(Box<Expr>, Box<Expr>),
     CompoundAssign(Box<Expr>, BinaryOp, Box<Expr>),

@@ -423,7 +423,7 @@ fn normalize_expr_labeled_type_arguments(
         | Expr::Unsafe(operand) => {
             normalize_expr_labeled_type_arguments(operand, constructor_parameters, diagnostics)
         }
-        Expr::DoBlock { body } => {
+        Expr::DoBlock { body } | Expr::Async { body } | Expr::Await(body) => {
             normalize_expr_labeled_type_arguments(body, constructor_parameters, diagnostics)
         }
         Expr::Borrow { value, .. } => {
@@ -1082,7 +1082,9 @@ fn expand_expr_aliases(
         | Expr::Try(operand)
         | Expr::Throw(operand)
         | Expr::Unsafe(operand) => expand_expr_aliases(operand, aliases, diagnostics),
-        Expr::DoBlock { body } => expand_expr_aliases(body, aliases, diagnostics),
+        Expr::DoBlock { body } | Expr::Async { body } | Expr::Await(body) => {
+            expand_expr_aliases(body, aliases, diagnostics)
+        }
         Expr::Borrow { value, .. } => expand_expr_aliases(value, aliases, diagnostics),
         Expr::Binary(left, _, right)
         | Expr::Coalesce(left, right)
@@ -1745,7 +1747,9 @@ pub(super) fn substitute_self_expression_target(expression: &mut Expr, target: &
         | Expr::Try(operand)
         | Expr::Throw(operand)
         | Expr::Unsafe(operand) => substitute_self_expression_target(operand, target),
-        Expr::DoBlock { body } => substitute_self_expression_target(body, target),
+        Expr::DoBlock { body } | Expr::Async { body } | Expr::Await(body) => {
+            substitute_self_expression_target(body, target)
+        }
         Expr::Borrow { value, .. } => substitute_self_expression_target(value, target),
         Expr::Binary(left, _, right)
         | Expr::Coalesce(left, right)
@@ -1913,7 +1917,9 @@ pub(super) fn rewrite_abstract_self_qualified_methods(expression: &mut Expr) {
         | Expr::Try(operand)
         | Expr::Throw(operand)
         | Expr::Unsafe(operand) => rewrite_abstract_self_qualified_methods(operand),
-        Expr::DoBlock { body } => rewrite_abstract_self_qualified_methods(body),
+        Expr::DoBlock { body } | Expr::Async { body } | Expr::Await(body) => {
+            rewrite_abstract_self_qualified_methods(body)
+        }
         Expr::Borrow { value, .. } => rewrite_abstract_self_qualified_methods(value),
         Expr::Binary(left, _, right)
         | Expr::Coalesce(left, right)
@@ -2049,7 +2055,9 @@ pub(super) fn substitute_expr_types(expression: &mut Expr, substitutions: &HashM
         | Expr::Try(operand)
         | Expr::Throw(operand)
         | Expr::Unsafe(operand) => substitute_expr_types(operand, substitutions),
-        Expr::DoBlock { body } => substitute_expr_types(body, substitutions),
+        Expr::DoBlock { body } | Expr::Async { body } | Expr::Await(body) => {
+            substitute_expr_types(body, substitutions)
+        }
         Expr::Borrow {
             mutable,
             access,
@@ -2520,6 +2528,8 @@ pub(super) fn rewrite_handler_returns(expression: &mut Expr, return_name: &str) 
         Expr::Unary(_, value)
         | Expr::Try(value)
         | Expr::DoBlock { body: value }
+        | Expr::Async { body: value }
+        | Expr::Await(value)
         | Expr::Throw(value)
         | Expr::Unsafe(value) => rewrite_handler_returns(value, return_name),
         Expr::Borrow { value, .. } => rewrite_handler_returns(value, return_name),
@@ -2637,6 +2647,8 @@ pub(super) fn rewrite_static_function_values(
         Expr::Unary(_, value)
         | Expr::Try(value)
         | Expr::DoBlock { body: value }
+        | Expr::Async { body: value }
+        | Expr::Await(value)
         | Expr::Throw(value)
         | Expr::Unsafe(value)
         | Expr::Borrow { value, .. }
@@ -2775,6 +2787,8 @@ pub(super) fn erase_expr_locations(expression: &mut Expr) {
         Expr::Unary(_, value)
         | Expr::Try(value)
         | Expr::DoBlock { body: value }
+        | Expr::Async { body: value }
+        | Expr::Await(value)
         | Expr::Throw(value)
         | Expr::Unsafe(value)
         | Expr::Borrow { value, .. }
@@ -2907,6 +2921,8 @@ fn visit_expr_mut_ordered(
         Expr::Unary(_, value)
         | Expr::Try(value)
         | Expr::DoBlock { body: value }
+        | Expr::Async { body: value }
+        | Expr::Await(value)
         | Expr::Throw(value)
         | Expr::Unsafe(value)
         | Expr::Borrow { value, .. }
@@ -3236,6 +3252,8 @@ fn hygienic_rename_expr(
         Expr::Unary(_, value)
         | Expr::Try(value)
         | Expr::DoBlock { body: value }
+        | Expr::Async { body: value }
+        | Expr::Await(value)
         | Expr::Throw(value)
         | Expr::Unsafe(value) => hygienic_rename_expr(value, prefix, next, scopes),
         Expr::Borrow { value, .. } => hygienic_rename_expr(value, prefix, next, scopes),
@@ -3556,6 +3574,8 @@ fn expression_mentions_any_name(expression: &Expr, names: &HashSet<String>) -> b
         Expr::Unary(_, value)
         | Expr::Try(value)
         | Expr::DoBlock { body: value }
+        | Expr::Async { body: value }
+        | Expr::Await(value)
         | Expr::Throw(value)
         | Expr::Unsafe(value) => expression_mentions_any_name(value, names),
         Expr::Borrow { value, .. } => expression_mentions_any_name(value, names),

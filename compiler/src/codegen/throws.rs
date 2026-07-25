@@ -455,7 +455,10 @@ impl Analyzer {
                 self.expression_uses_standard_throws_identity(value, identity, context)
             }
             Expr::Throw(_) => true,
-            Expr::Try(_) | Expr::Closure(_, _) | Expr::PatternClosure { .. } => false,
+            Expr::Try(_)
+            | Expr::Closure(_, _)
+            | Expr::PatternClosure { .. }
+            | Expr::Async { .. } => false,
             Expr::Call(callee, arguments) => {
                 handled_operation_call(expression, identity).is_some()
                     || self
@@ -476,6 +479,7 @@ impl Analyzer {
             Expr::Unary(_, value)
             | Expr::Borrow { value, .. }
             | Expr::DoBlock { body: value }
+            | Expr::Await(value)
             | Expr::Unsafe(value)
             | Expr::Return(Some(value))
             | Expr::Break(Some(value)) => {
@@ -628,7 +632,10 @@ impl Analyzer {
     fn try_body_uses_dedicated_throws_call(&self, expression: &Expr, context: &LowerCtx) -> bool {
         match expression {
             Expr::Located { value, .. } => self.try_body_uses_dedicated_throws_call(value, context),
-            Expr::Try(_) | Expr::Closure(_, _) | Expr::PatternClosure { .. } => false,
+            Expr::Try(_)
+            | Expr::Closure(_, _)
+            | Expr::PatternClosure { .. }
+            | Expr::Async { .. } => false,
             Expr::Call(callee, arguments) => {
                 self.call_throws_info(expression, context).is_some()
                     || self.try_body_uses_dedicated_throws_call(callee, context)
@@ -639,6 +646,7 @@ impl Analyzer {
             Expr::Unary(_, value)
             | Expr::Borrow { value, .. }
             | Expr::DoBlock { body: value }
+            | Expr::Await(value)
             | Expr::Throw(value)
             | Expr::Unsafe(value)
             | Expr::Return(Some(value))
@@ -1220,7 +1228,8 @@ impl Analyzer {
             | Expr::Bool(_)
             | Expr::Name(_)
             | Expr::Closure(_, _)
-            | Expr::PatternClosure { .. } => {}
+            | Expr::PatternClosure { .. }
+            | Expr::Async { .. } => {}
             Expr::Try(_) => {}
             Expr::Throw(value) => {
                 match self.probe_expr_ty(value, None, context) {
@@ -1236,6 +1245,7 @@ impl Analyzer {
             Expr::Unary(_, value)
             | Expr::Borrow { value, .. }
             | Expr::DoBlock { body: value }
+            | Expr::Await(value)
             | Expr::Unsafe(value)
             | Expr::Return(Some(value))
             | Expr::Break(Some(value)) => self.collect_escaping_throws(value, context, errors),
