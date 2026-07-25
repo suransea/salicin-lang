@@ -3338,10 +3338,26 @@ fn borrowed_async_residual_effect_captures_specialize_under_handler() {
 }
 
 #[test]
-fn ready_and_direct_tail_await_async_throws_specialize_under_try() {
+fn ready_tail_await_and_post_await_async_throws_specialize_under_try() {
     for (name, output) in batched_native_fixture_outputs(&[
         "async_residual_throws.sc",
         "async_residual_throws_tail_await.sc",
+        "async_residual_throws_await.sc",
+    ]) {
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn tail_and_post_await_async_custom_effects_specialize_and_cancel() {
+    for (name, output) in batched_native_fixture_outputs(&[
+        "async_residual_tail_await.sc",
+        "async_residual_post_await.sc",
     ]) {
         assert_eq!(
             output.status.code(),
@@ -3351,30 +3367,18 @@ fn ready_and_direct_tail_await_async_throws_specialize_under_try() {
         );
     }
 
-    let suspended = salic()
+    let retained = salic()
         .arg("check")
-        .arg(fixture("fail", "async_residual_throws_await.sc"))
+        .arg(fixture("fail", "async_residual_retained_await.sc"))
         .output()
-        .expect("check suspended Throws async fixture");
-    assert!(!suspended.status.success(), "{}", output_text(&suspended));
+        .expect("check retained residual async fixture");
+    assert!(!retained.status.success(), "{}", output_text(&retained));
     assert!(
-        String::from_utf8_lossy(&suspended.stderr)
-            .contains("async residual `Throws(bool)` requires poll/resume handler specialization"),
+        String::from_utf8_lossy(&retained.stderr)
+            .contains("requires poll/resume handler specialization for this suspension shape"),
         "{}",
-        output_text(&suspended)
+        output_text(&retained)
     );
-}
-
-#[test]
-fn direct_tail_await_async_custom_effect_specializes_and_cancels() {
-    for (name, output) in batched_native_fixture_outputs(&["async_residual_tail_await.sc"]) {
-        assert_eq!(
-            output.status.code(),
-            Some(42),
-            "{name}: {}",
-            output_text(&output)
-        );
-    }
 }
 
 #[test]

@@ -516,13 +516,16 @@ impl Analyzer {
         }
 
         let supports_suspended_residual = awaited.as_ref().is_some_and(|awaited| {
-            awaited.continuation.is_none()
-                && awaited.next.is_none()
+            awaited.next.is_none()
                 && awaited.loop_step.is_none()
                 && awaited.loop_condition.is_none()
                 && source_plan.retained.is_empty()
                 && closure
                     .captures
+                    .iter()
+                    .map(capture_pass_mode)
+                    .all(|mode| matches!(mode, PassMode::Copy | PassMode::Move))
+                && continuation_captures
                     .iter()
                     .map(capture_pass_mode)
                     .all(|mode| matches!(mode, PassMode::Copy | PassMode::Move))
@@ -542,9 +545,14 @@ impl Analyzer {
             }
             if !algebraic_effects.is_empty() {
                 self.error(format!(
-                    "async residual algebraic effect{} `{}` require poll/resume handler specialization for this suspension shape, which is not implemented yet",
+                    "async residual algebraic effect{} `{}` {} poll/resume handler specialization for this suspension shape, which is not implemented yet",
                     if algebraic_effects.len() == 1 { "" } else { "s" },
-                    algebraic_effects.join(", ")
+                    algebraic_effects.join(", "),
+                    if algebraic_effects.len() == 1 {
+                        "requires"
+                    } else {
+                        "require"
+                    }
                 ));
             }
             return super::lower::error_expr();
@@ -1516,7 +1524,6 @@ impl Analyzer {
             .awaited
             .as_ref()
             .expect("suspended async template has an awaited child");
-        debug_assert!(awaited.continuation.is_none());
         debug_assert!(awaited.next.is_none());
         debug_assert!(awaited.loop_step.is_none());
         debug_assert!(awaited.loop_condition.is_none());

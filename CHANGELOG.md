@@ -6,6 +6,13 @@ subset.
 
 ## Unreleased
 
+- Extended suspended residual async specialization from direct tail `await`
+  to one await followed by an optional pure linear continuation. Custom
+  effects and standard `Throws(Error)` now preserve `Pending` repoll and run
+  the Ready continuation once when neither segment retains a pre-await local,
+  suspends again, or captures by borrow. Retained-local and other unsupported
+  shapes continue to receive source-level specialization diagnostics.
+
 ## 0.190.0 - 2026-07-26
 
 - Added the core-private complete `builtin()` initializer for every
