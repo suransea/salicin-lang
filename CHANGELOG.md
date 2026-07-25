@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.199.0 - 2026-07-26
+
 - Specialized a final non-suspending async continuation that retains a custom
   effect or `Throws` after a pure child becomes Ready. The pure transition
   destroys the completed child and packages its output with continuation
