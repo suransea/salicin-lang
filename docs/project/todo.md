@@ -15,10 +15,11 @@ Priority meanings:
 
 ## Current
 
-- [ ] **ASYNC-CONTRACT-1: Specify Future, pinning, and executor contracts**
-  - Define ownership and effect boundaries before adding syntax or lowering.
-  - Specify polling, cancellation, stored state, and first-version borrow restrictions.
-  - Keep allocation and executor selection explicit library choices.
+- [ ] **MOVE-TRAIT-1: Add the source-backed structural Move marker**
+  - Validate `core.marker.Move` and make `Copy` inherit it.
+  - Require `Move` for relocation through parameters, returns, assignment, and storage growth.
+  - Preserve direct in-place initialization as the future boundary for non-`Move` values.
+  - Cover structural derivation, generic bounds, diagnostics, and existing resource behavior.
 
 ## Next
 
@@ -28,7 +29,7 @@ Priority meanings:
 - [ ] **ASYNC-BORROW-1: Reject first-version self-referential states**
 - [ ] **ASYNC-EXEC-1: Provide one explicit minimal executor**
 
-Async implementation starts only after `ASYNC-CONTRACT-1` is accepted.
+Async state-machine lowering starts only after `MOVE-TRAIT-1` is complete.
 
 ## Later
 

@@ -1,0 +1,193 @@
+# Initial Async Contract
+
+Status: accepted design for `ASYNC-CONTRACT-1`
+
+This document fixes the first implementable async boundary. It is a project design, not current
+language behavior. Source sketches use `sc future` until their implementation tasks complete.
+
+## Goals
+
+The first async slice provides:
+
+- cold anonymous futures;
+- explicit polling with deterministic cancellation;
+- `await` inside an async computation;
+- residual effect forwarding;
+- one allocation-free spin executor;
+- no implicit allocation, thread, timer, reactor, or executor choice.
+
+It does not introduce a general runtime trait-object model.
+
+## Source Contracts
+
+`core.marker` owns the mobility marker:
+
+```sc future
+pub let Move = trait {}
+```
+
+`core.async` owns the allocation-free async contracts:
+
+```sc future
+pub let Poll(T: type) = enum {
+  Pending
+  Ready(T)
+}
+
+pub let Future(E: effect) = trait
+where Self: Move {
+  let Output: type
+  let poll(R: region)
+    (self: borrow(mut)(R)(Self))(): Poll(Output) with(E)
+}
+
+pub let Executor = trait {
+  let run(E: effect, F: type)
+    (self: borrow(mut)(Self))
+    (move future: F): F.Output with(E)
+  where F: Future(E)
+}
+```
+
+The compiler validates these declarations as language items before privileged async lowering.
+Names alone have no authority.
+
+`Move` is a source-backed auto marker for types whose values may be relocated without invalidating
+their internal state. `Copy` requires `Move`. Scalars, borrows, raw pointers, and nominal values
+whose fields are all `Move` satisfy it structurally. A compiler-generated value with an internal
+self-reference does not.
+
+`Future(E)` is parameterized by the residual effect row of `poll`. The internal suspension effect
+is discharged by the generated state machine and is not part of `E`.
+
+## Async Expressions
+
+```sc future
+let future = async {
+  let first = compute()
+  let second = await next(first)
+  first + second
+}
+```
+
+Evaluating `async { body }`:
+
+1. evaluates and transfers its captures from left to right;
+2. creates a cold anonymous value implementing `Future(E)`;
+3. does not execute `body`.
+
+The body starts on the first `poll`. Each `await operand` evaluates `operand` once, stores the
+resulting future, and polls it. `Ready(value)` resumes the body with `value`; `Pending` stores the
+current state and returns `Pending` from the outer future.
+
+`await` is contextual and valid only within an async body. It cannot cross a named function,
+closure, handler clause, or nested async boundary.
+
+The type and residual effects of the body determine `Future(E).Output` and `E`. Handling an effect
+inside the body removes it normally. Unhandled `Throws(Error)`, `Unsafe`, and custom effects remain
+requirements of `poll`.
+
+## State Machines
+
+The compiler lowers each async expression to a private nominal state machine containing:
+
+- a discriminant for not-started, suspended, and completed states;
+- transferred captures;
+- locals live across each suspension;
+- the currently awaited child future;
+- initialization flags required for partial construction and cleanup.
+
+Only values live across a suspension become fields. Evaluation before a suspension remains ordinary
+straight-line code. A completed future cannot be polled again; repeated polling is a contract trap,
+not a second execution.
+
+Generated state-machine names, fields, and states are not source entities and never appear in
+diagnostics.
+
+## Ownership And Cancellation
+
+An anonymous future is an owned resource unless all of its stored state is structurally `Copy` and
+the compiler can prove that copying cannot duplicate an active computation. The initial
+implementation does not make active futures `Copy`.
+
+Dropping a not-started or suspended future cancels it:
+
+- the body is not resumed;
+- each initialized field is dropped exactly once;
+- the active child future is dropped before earlier stored locals in reverse initialization order;
+- moved-out and never-initialized fields are skipped;
+- cancellation performs no implicit effect handling or unwind.
+
+After `Ready(output)`, ownership of `output` leaves the state machine and remaining state is cleaned
+exactly once.
+
+## Move And Borrowing
+
+The first version rejects a borrow whose referent is stored in the same generated state machine
+when that borrow is live across `await`. This includes references to captured fields, earlier local
+fields, and projections of either. Such a state machine cannot implement `Move`, which is required
+by the initial `Future(E)` contract. Diagnostics identify the source borrow, suspension point, and
+failed `Move` requirement.
+
+A future may retain a borrow of an external source when the future's lifetime is proven not to
+outlive that source. The loan remains active for the lifetime of the future and ordinary shared or
+mutable alias rules continue to apply.
+
+Explicit `move` parameter passing, returning an owned value, relocation assignment, and moving a
+value into reallocating storage require `Move`. Initializing a value directly in its final storage
+does not. Polling requires an exclusive borrow, so a future cannot move while a poll is active.
+
+No public `Pin` type is introduced. If Salicin later admits non-`Move` futures, they must be
+constructed and polled in stable storage through explicit in-place APIs. That change requires a
+separate design for construction, projection, drop, and unsafe escape.
+
+## Executor
+
+The initial executor is an ordinary library value implementing `Executor`. Its `run` method polls
+one future repeatedly until `Ready` and returns the output.
+
+`Pending` grants permission to poll again but does not imply a wake notification. This bounded spin
+executor is sufficient to validate state transitions, nested awaits, cancellation, and effects. A
+later host executor may add an explicit wake contract without changing `Future(E)` only if polling
+without a context remains sound; otherwise that addition is a new contract revision.
+
+Creating or polling a future never selects an executor. Heap erasure, when needed for recursive or
+heterogeneous storage, uses a dedicated allocation-layer `BoxFuture(E)(T)` adapter and is always an
+explicit operation.
+
+## Recursion And Erasure
+
+Non-recursive private functions may infer an anonymous future result. Public APIs must expose a
+named concrete future or an explicit `BoxFuture(E)(T)`.
+
+Direct async recursion is rejected because it creates an infinitely sized state machine. Recursion
+requires an explicit allocation and erasure boundary such as `BoxFuture`. This adapter is a
+dedicated linear future representation, not general dynamic trait dispatch.
+
+## Rejection Boundaries
+
+The compiler rejects:
+
+- `await` outside an async body;
+- a generated future that cannot satisfy its `Move` requirement, including a self-reference live
+  across suspension;
+- a future escaping an external borrow region;
+- moving or polling a future while it is borrowed;
+- polling a completed future when statically evident;
+- recursive anonymous future layouts without explicit indirection;
+- effect rows that cannot be determined for the generated `Future(E)` implementation;
+- public anonymous future results;
+- generated state whose size or cleanup plan exceeds compiler limits.
+
+## Acceptance Evidence
+
+Implementation tasks must cover:
+
+- cold creation and first poll;
+- immediate `Ready` and one or more `Pending` transitions;
+- nested await and residual `Throws`, `Unsafe`, and custom effects;
+- move captures and locals live across suspension;
+- cancellation before start and at every suspension point;
+- external shared and mutable borrow retention;
+- structural `Move`, self-reference, escape, double-poll, recursion, and public-API rejection;
+- deterministic IR, source-level diagnostics, and exactly-once native cleanup.

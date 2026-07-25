@@ -25,7 +25,7 @@ Async work starts only after callable and continuation ownership is closed.
 
 Required design:
 
-- source contracts for `Future`, pinning, polling, cancellation, and executor interaction;
+- source contracts for `Move`, `Future`, polling, cancellation, and executor interaction;
 - cold futures lowered to explicit state machines;
 - deterministic drop of initialized state on cancellation;
 - a first-version rejection rule for self-referential borrowed state;

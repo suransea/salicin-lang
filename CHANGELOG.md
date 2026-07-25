@@ -6,6 +6,10 @@ subset.
 
 ## Unreleased
 
+- Accepted the initial async contract: source-backed structural `Move`, cold anonymous
+  `Future(E)` state machines, explicit polling and spin execution, deterministic cancellation,
+  residual effect forwarding, and explicit future erasure. The first slice rejects self-referential
+  suspended state through the `Move` requirement and introduces no `Pin` placeholder.
 - Standardized compile-time argument diagnostics around source binders and kinds. Argument-group
   arity errors now print the expected binder schema, unresolved arguments include their kind and
   owner, unknown labels list valid binders, and type-constructor and effect mismatches distinguish
