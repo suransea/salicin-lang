@@ -37,8 +37,15 @@ remaining residual-effect cases remain the current task.
 - [ ] **TOOL-LSP-1: Expose parser and semantic spans for an LSP**
 - [ ] **PKG-WORKSPACE-1: Design workspaces and registry dependency identities**
 - [ ] **PKG-REPRO-1: Specify reproducible dependency resolution**
-- [ ] **ABI-1: Design an external ABI after representation review**
+- [ ] **ABI-REP-1: Replace legacy C representation syntax with `struct(c)`**
+- [ ] **ABI-FOREIGN-1: Replace grouped extern declarations with per-declaration `foreign(c, ...)`**
+- [ ] **BUILTIN-1: Mark every compiler-owned core definition with private `builtin()` initializers**
 - [ ] **INCR-1: Define stable incremental-compilation inputs**
+
+The ABI tasks must remove `rep c`, `@link_name`, and `extern "C"` without introducing `@` syntax.
+`foreign` calls implicitly require `Unsafe`; `builtin()` is a complete declaration marker typed by
+the declaration annotation and must be eliminated before code generation. Trait requirements
+remain bodyless, and user opaque types are outside `BUILTIN-1`.
 
 ## Definition of Done
 

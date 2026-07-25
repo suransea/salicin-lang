@@ -38,6 +38,26 @@ Exit conditions:
 - recursive async calls require explicit indirection;
 - suspension cannot duplicate continuations or owned state.
 
+## Confirmed ABI Direction
+
+The later representation and ABI milestone has three orthogonal source forms:
+
+- C data representation belongs to the type constructor, written `struct(c) { ... }`; Salicin will
+  not add a general `rep` modifier;
+- each foreign-owned declaration uses a complete `foreign(c)` or
+  `foreign(c, "external_symbol")` initializer, with an omitted symbol defaulting to the Salicin
+  declaration name and calls requiring `Unsafe`;
+- each compiler-owned core declaration uses a complete core-private `builtin()` initializer,
+  including compiler-defined types and type constructors.
+
+The bootstrap declaration is `let builtin(): Never = builtin()`. Semantic analysis treats its use
+as a declaration-definition marker typed by the declaration annotation, not as ordinary runtime
+`Never` coercion. Every marker except that bootstrap must be resolved before code generation.
+Trait requirements remain bodyless; user opaque types are a separate design problem.
+
+This direction replaces `rep c`, `@link_name`, and grouped `extern "C"` declarations. It does not
+introduce `@` syntax, and `foreign` is not a variant of `builtin`.
+
 ## Ecosystem Milestone
 
 Tooling and package compatibility follow stabilization of source semantics and runtime
