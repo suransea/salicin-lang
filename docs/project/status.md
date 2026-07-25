@@ -190,14 +190,15 @@ Built-in integers retain checked trap boundaries, while nominal values dispatch 
 source-backed `core.ops` `*Assign` traits with a mutable receiver borrow. Same-named ordinary methods
 cannot intercept operator lowering.
 `std.flow.Chain` uses a `Rebind(Value: type): type` generic associated constructor and `Coalesce`
-uses an effect-forwarding fallback closure. The compiler accepts such GAT declarations and
-method-signature references. Concrete and generic nominal trait implementations can bind a direct
-generic nominal constructor such as `let Rebind = Maybe`; the constructor source is substituted into
-method templates as `Maybe(U)` without pretending that `Maybe` is a runtime type. Generic trait
+uses an effect-forwarding fallback closure. Generic associated constructors retain `type`,
+`access`, `region`, `usize`, and closed-value parameter kinds through trait validation and method
+template lowering. Implementations can bind direct nominal constructors or partially applied type
+aliases; constructor applications are substituted before runtime lowering. Native coverage includes
+`borrow(A)(R)(T)` view families and `Array(T)(L)` length families. Generic trait
 implementation methods can carry matching compile-time parameter groups and are registered as
 generic templates, which unblocks source-level protocol methods such as `coalesce(E)` and
-`chain(E, U)`. GAT where-predicate equalities, partial constructor applications, and broader
-constructor equation solving remain future work. `??` now dispatches non-`Option`/`Result` nominal
+`chain(E, U)`. GAT where-predicate equalities and broader constructor equation solving remain
+future work. `??` now dispatches non-`Option`/`Result` nominal
 values through `std.flow.Coalesce` when its fallback can be represented as a no-capture lifted
 function. `?.` now dispatches non-`Option`/`Result` nominal values through `std.flow.Chain` under
 the same no-capture transform limit; simple field access is covered, while transforms that capture
@@ -363,8 +364,9 @@ The implementation is broad but not stable. Important incomplete boundaries incl
   Array, Slice, and Vec reads, explicit borrows, and assignments through one source-declared
   protocol. Copy-value Array and borrowed Slice iterators are source-backed; Slice iterator
   storage retains its source loan. Vec consuming iteration supports resource elements and
-  early-exit suffix cleanup. Borrow-yielding/mutable iterators still require generic associated
-  constructors, and `Future` remains to be implemented;
+  early-exit suffix cleanup. Generic associated constructors now provide the type-system machinery
+  for borrow-yielding/mutable iterators, whose standard implementations remain tracked by
+  `LIB-ITER-BORROW-1`; `Future` remains to be implemented;
 - `std` host APIs have not been started;
 - registry dependencies, workspaces, stable ABI guarantees, and a package distribution format are
   not defined;

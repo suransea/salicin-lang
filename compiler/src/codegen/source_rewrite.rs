@@ -1205,7 +1205,9 @@ pub(super) fn erase_region_parameters(program: &mut Program) {
         match item {
             Item::Function(function) => erase_function(function),
             Item::Global(_) => {}
-            Item::TypeAlias(definition) => erase_groups(&mut definition.compile_groups),
+            // Alias and GAT region parameters remain part of their
+            // compile-time constructor kind.
+            Item::TypeAlias(_) => {}
             Item::TypeForm(definition) => erase_groups(&mut definition.compile_groups),
             Item::Effect(definition) => {
                 erase_groups(&mut definition.compile_groups);
@@ -1221,9 +1223,7 @@ pub(super) fn erase_region_parameters(program: &mut Program) {
                 for member in &mut definition.members {
                     match member {
                         TraitMember::Function(function) => erase_function(function),
-                        TraitMember::AssociatedType { compile_groups, .. } => {
-                            erase_groups(compile_groups)
-                        }
+                        TraitMember::AssociatedType { .. } => {}
                     }
                 }
             }
@@ -1944,13 +1944,20 @@ pub(super) fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<
         Type::Borrow {
             mutable,
             access,
+            region,
             pointee,
-            ..
         } => {
             if let Some(name) = access.as_deref() {
                 if let Some(selected) = substituted_access_mutability(name, substitutions) {
                     *mutable = selected;
                     *access = None;
+                }
+            }
+            if let Some(name) = region.as_deref() {
+                if let Some(Type::Named(selected, arguments)) = substitutions.get(name) {
+                    if arguments.is_empty() {
+                        *region = Some(selected.clone());
+                    }
                 }
             }
             substitute_type_parameters(pointee, substitutions)

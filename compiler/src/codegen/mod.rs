@@ -1306,6 +1306,7 @@ impl Analyzer {
         let mut member_names = HashSet::new();
         let mut associated_types = Vec::new();
         let mut associated_type_kinds = HashMap::new();
+        let mut associated_type_parameters = HashMap::new();
         let mut associated_parameter_schemas = HashSet::new();
         let mut associated_parameter_counts = HashMap::new();
         let mut methods = HashMap::new();
@@ -1341,23 +1342,29 @@ impl Analyzer {
                         CompileParamKind::Type
                     } else {
                         let mut parameter_count = 0usize;
-                        let mut groups_valid = true;
                         for parameter in compile_groups.iter().flatten() {
                             parameter_count += 1;
-                            if parameter.kind != CompileParamKind::Type {
+                            if matches!(
+                                parameter.kind,
+                                CompileParamKind::Effect
+                                    | CompileParamKind::Parameters
+                                    | CompileParamKind::ParameterPack
+                                    | CompileParamKind::ParameterModifier
+                                    | CompileParamKind::TypeConstructor { .. }
+                                    | CompileParamKind::EffectConstructor { .. }
+                            ) {
                                 self.error(format!(
-                                    "generic associated type `{}.{name}` parameters currently must have kind `type`",
-                                    definition.name
+                                    "generic associated type `{}.{name}` parameter `{}` has unsupported kind",
+                                    definition.name, parameter.name
                                 ));
-                                groups_valid = false;
+                                valid = false;
                             }
                         }
-                        if groups_valid {
-                            CompileParamKind::TypeConstructor { parameter_count }
-                        } else {
-                            valid = false;
-                            CompileParamKind::Type
-                        }
+                        associated_type_parameters.insert(
+                            name.clone(),
+                            compile_groups.iter().flatten().cloned().collect(),
+                        );
+                        CompileParamKind::TypeConstructor { parameter_count }
                     };
                     if associated_kind == AssociatedKind::Parameters {
                         associated_parameter_schemas.insert(name.clone());
@@ -1429,6 +1436,7 @@ impl Analyzer {
                 where_predicates: definition.where_predicates,
                 associated_types,
                 associated_type_kinds,
+                associated_type_parameters,
                 associated_parameter_schemas,
                 associated_parameter_counts,
                 methods,
@@ -1816,13 +1824,31 @@ impl Analyzer {
                             ));
                             valid = false;
                         }
-                        for argument in arguments {
-                            valid &= self.validate_trait_source_type(
-                                trait_name,
-                                member_name,
-                                argument,
-                                compile_parameters,
-                            );
+                        let associated_parameters = self
+                            .traits
+                            .get(trait_name)
+                            .and_then(|schema| schema.associated_type_parameters.get(name))
+                            .cloned();
+                        if let Some(parameters) = associated_parameters {
+                            for (argument, parameter) in arguments.iter().zip(parameters) {
+                                valid &= self.validate_associated_constructor_argument(
+                                    trait_name,
+                                    member_name,
+                                    name,
+                                    argument,
+                                    &parameter,
+                                    compile_parameters,
+                                );
+                            }
+                        } else {
+                            for argument in arguments {
+                                valid &= self.validate_trait_source_type(
+                                    trait_name,
+                                    member_name,
+                                    argument,
+                                    compile_parameters,
+                                );
+                            }
                         }
                         valid
                     }
@@ -1935,6 +1961,58 @@ impl Analyzer {
                 false
             }
         }
+    }
+
+    fn validate_associated_constructor_argument(
+        &mut self,
+        trait_name: &str,
+        member_name: &str,
+        associated: &str,
+        argument: &Type,
+        parameter: &CompileParam,
+        compile_parameters: &HashMap<String, CompileParamKind>,
+    ) -> bool {
+        let parameter_reference_has_kind = |expected: &CompileParamKind| {
+            matches!(argument, Type::Named(name, values)
+                if values.is_empty() && compile_parameters.get(name) == Some(expected))
+        };
+        let valid = match &parameter.kind {
+            CompileParamKind::Type => {
+                return self.validate_trait_source_type(
+                    trait_name,
+                    member_name,
+                    argument,
+                    compile_parameters,
+                );
+            }
+            CompileParamKind::Region => {
+                parameter_reference_has_kind(&CompileParamKind::Region)
+                    || matches!(argument, Type::Named(_, values) if values.is_empty())
+            }
+            CompileParamKind::USize => {
+                matches!(argument, Type::CompileUSize(_))
+                    || parameter_reference_has_kind(&CompileParamKind::USize)
+            }
+            CompileParamKind::Named(kind) => {
+                parameter_reference_has_kind(&CompileParamKind::Named(kind.clone()))
+                    || matches!(argument, Type::Named(name, values)
+                    if values.is_empty()
+                        && self.closed_type_values.get(kind).is_some_and(|members| {
+                            members.contains(name)
+                                || closed_value_from_marker(name)
+                                    .is_some_and(|(owner, value)| owner == kind && members.contains(&value.to_owned()))
+                        }))
+            }
+            _ => false,
+        };
+        if !valid {
+            self.error(format!(
+                "generic associated type `{trait_name}.{associated}` argument for parameter `{}` in `{trait_name}.{member_name}` must have kind `{}`",
+                parameter.name,
+                compile_parameter_kind_label(&parameter.kind)
+            ));
+        }
+        valid
     }
 
     fn validate_trait_source_effects(
@@ -2474,7 +2552,7 @@ impl Analyzer {
         trait_name: &str,
         associated: &str,
         source: &Type,
-        expected_count: usize,
+        expected_parameters: &[CompileParam],
     ) -> bool {
         let Type::Named(name, arguments) = source else {
             self.error(format!(
@@ -2483,55 +2561,102 @@ impl Analyzer {
             return false;
         };
 
-        let actual_count = if arguments.is_empty() {
-            self.type_constructor_impl_target(source)
-                .map(|target| target.parameter_count)
-        } else {
-            self.remaining_nominal_constructor_parameter_count(source)
-                .or_else(|| self.remaining_type_alias_constructor_parameter_count(source))
-        };
-        let Some(actual_count) = actual_count else {
+        let actual_parameters = self
+            .remaining_nominal_constructor_parameters(source)
+            .or_else(|| self.remaining_type_alias_constructor_parameters(source))
+            .or_else(|| {
+                arguments
+                    .is_empty()
+                    .then(|| {
+                        self.type_constructor_impl_target(source).map(|target| {
+                            (0..target.parameter_count)
+                                .map(|index| CompileParam {
+                                    name: format!("T{index}"),
+                                    kind: CompileParamKind::Type,
+                                    default: None,
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                    })
+                    .flatten()
+            });
+        let Some(actual_parameters) = actual_parameters else {
             self.error(format!(
                 "associated type constructor `{trait_name}.{associated}` must name a generic type constructor"
             ));
             return false;
         };
-        if actual_count != expected_count {
+        if actual_parameters.len() != expected_parameters.len() {
             self.error(format!(
-                "associated type constructor `{trait_name}.{associated}` expects {expected_count} type parameter{}, but `{name}` has {}",
-                if expected_count == 1 { "" } else { "s" },
-                actual_count
+                "associated type constructor `{trait_name}.{associated}` expects {} compile-time parameter{}, but `{name}` has {}",
+                expected_parameters.len(),
+                if expected_parameters.len() == 1 { "" } else { "s" },
+                actual_parameters.len()
             ));
             return false;
+        }
+        for (index, (expected, actual)) in expected_parameters
+            .iter()
+            .zip(&actual_parameters)
+            .enumerate()
+        {
+            if expected.kind != actual.kind {
+                self.error(format!(
+                    "associated type constructor `{trait_name}.{associated}` parameter {} expects kind `{}`, but `{name}` uses kind `{}`",
+                    index + 1,
+                    compile_parameter_kind_label(&expected.kind),
+                    compile_parameter_kind_label(&actual.kind)
+                ));
+                return false;
+            }
         }
         true
     }
 
-    fn remaining_type_alias_constructor_parameter_count(&self, source: &Type) -> Option<usize> {
+    fn remaining_type_alias_constructor_parameters(
+        &self,
+        source: &Type,
+    ) -> Option<Vec<CompileParam>> {
         let Type::Named(name, arguments) = source else {
             return None;
         };
         let alias = self.type_aliases.get(name)?;
         let parameters = alias.compile_groups.iter().flatten().collect::<Vec<_>>();
-        if parameters
-            .iter()
-            .any(|parameter| parameter.kind != CompileParamKind::Type)
-            || arguments.len() >= parameters.len()
-        {
+        if arguments.len() >= parameters.len() {
             return None;
         }
-        Some(parameters.len() - arguments.len())
+        Some(
+            parameters[arguments.len()..]
+                .iter()
+                .cloned()
+                .cloned()
+                .collect(),
+        )
     }
 
-    fn remaining_nominal_constructor_parameter_count(&self, source: &Type) -> Option<usize> {
+    fn remaining_nominal_constructor_parameters(&self, source: &Type) -> Option<Vec<CompileParam>> {
         let Type::Named(name, arguments) = source else {
             return None;
         };
-        let total = self.type_constructor_impl_target(&Type::Named(name.clone(), Vec::new()))?;
-        if arguments.is_empty() || arguments.len() >= total.parameter_count {
+        let parameters = self
+            .struct_templates
+            .get(name)
+            .map(|template| template.compile_groups.iter().flatten().collect::<Vec<_>>())
+            .or_else(|| {
+                self.enum_templates
+                    .get(name)
+                    .map(|template| template.compile_groups.iter().flatten().collect::<Vec<_>>())
+            })?;
+        if arguments.len() >= parameters.len() {
             return None;
         }
-        Some(total.parameter_count - arguments.len())
+        Some(
+            parameters[arguments.len()..]
+                .iter()
+                .cloned()
+                .cloned()
+                .collect(),
+        )
     }
 
     fn trait_ref_has_constructor_subject(&self, source: &Type) -> bool {
@@ -3088,7 +3213,7 @@ impl Analyzer {
             }
         }
         for associated in &schema.associated_types {
-            let CompileParamKind::TypeConstructor { parameter_count } =
+            let CompileParamKind::TypeConstructor { .. } =
                 schema.associated_type_kinds[associated].clone()
             else {
                 continue;
@@ -3100,7 +3225,7 @@ impl Analyzer {
                 &key.trait_ref.name,
                 associated,
                 source,
-                parameter_count,
+                &schema.associated_type_parameters[associated],
             ) {
                 valid = false;
                 continue;
@@ -4641,7 +4766,7 @@ impl Analyzer {
                         valid = false;
                     }
                 }
-                CompileParamKind::TypeConstructor { parameter_count } => {
+                CompileParamKind::TypeConstructor { .. } => {
                     let Some(source) = raw_associated.get(associated) else {
                         valid = false;
                         continue;
@@ -4650,7 +4775,7 @@ impl Analyzer {
                         trait_name,
                         associated,
                         source,
-                        parameter_count,
+                        &schema.associated_type_parameters[associated],
                     ) {
                         expected_substitutions.insert(associated.clone(), source.clone());
                     } else {
@@ -12531,6 +12656,25 @@ impl Analyzer {
             message,
             self.current_origin.as_deref().cloned(),
         ));
+    }
+}
+
+fn compile_parameter_kind_label(kind: &CompileParamKind) -> String {
+    match kind {
+        CompileParamKind::Type => "type".to_owned(),
+        CompileParamKind::Region => "region".to_owned(),
+        CompileParamKind::USize => "usize".to_owned(),
+        CompileParamKind::Effect => "effect".to_owned(),
+        CompileParamKind::Parameters => "parameters".to_owned(),
+        CompileParamKind::ParameterPack => "parameter pack".to_owned(),
+        CompileParamKind::ParameterModifier => "parameter modifier".to_owned(),
+        CompileParamKind::TypeConstructor { parameter_count } => {
+            format!("type constructor/{parameter_count}")
+        }
+        CompileParamKind::EffectConstructor { parameter_count } => {
+            format!("effect constructor/{parameter_count}")
+        }
+        CompileParamKind::Named(name) => name.clone(),
     }
 }
 

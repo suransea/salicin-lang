@@ -736,13 +736,18 @@ impl Parser {
         if mutable {
             return Err(self.error_here("type aliases cannot be declared with `let mut`"));
         }
-        if compile_groups
-            .iter()
-            .flatten()
-            .any(|parameter| parameter.kind != CompileParamKind::Type)
-        {
-            return Err(self
-                .error_here("type aliases currently accept only `type` compile-time parameters"));
+        if compile_groups.iter().flatten().any(|parameter| {
+            !matches!(
+                parameter.kind,
+                CompileParamKind::Type
+                    | CompileParamKind::Region
+                    | CompileParamKind::USize
+                    | CompileParamKind::Named(_)
+            )
+        }) {
+            return Err(self.error_here(
+                "type aliases accept only `type`, `region`, `usize`, or closed-value compile-time parameters",
+            ));
         }
         self.take_newlines_if_followed_by(&[TokenKind::Equal]);
         self.expect(&TokenKind::Equal, "`=` in type alias")?;
@@ -6452,6 +6457,29 @@ mod tests {
                 ],
             ))
         );
+    }
+
+    #[test]
+    fn preserves_region_and_access_generic_associated_type_groups() {
+        let program = parse(
+            "let Lend = trait {\n\
+               let Item(A: access)(R: region): type\n\
+               let view(A: access, R: region)(self: borrow(A)(R)(Self))(): Item(A)(R)\n\
+             }\n",
+        )
+        .unwrap();
+        let Item::Trait(definition) = &program.items[0] else {
+            panic!("expected trait");
+        };
+        let TraitMember::AssociatedType { compile_groups, .. } = &definition.members[0] else {
+            panic!("expected generic associated type");
+        };
+        assert_eq!(compile_groups.len(), 2);
+        assert_eq!(
+            compile_groups[0][0].kind,
+            CompileParamKind::Named("access".into())
+        );
+        assert_eq!(compile_groups[1][0].kind, CompileParamKind::Region);
     }
 
     #[test]

@@ -134,9 +134,10 @@ pub let Coalesce = trait {
 ```
 
 The protocols use the same trait and generic-associated-constructor syntax as user declarations.
-The current compiler validates these standard contracts, accepts GAT references in trait method
-signatures, and supports direct constructor implementations such as `let Rebind = Maybe` in both
-concrete and generic nominal trait implementations. `??` dispatches non-`Option`/`Result` nominal
+The compiler lowers GAT references in trait method signatures and supports direct constructor
+implementations such as `let Rebind = Maybe` plus partially applied type aliases. GAT parameters
+may carry `type`, `access`, `region`, `usize`, and closed-value kinds; implementation constructors
+must match those kinds, not merely their arity. `??` dispatches non-`Option`/`Result` nominal
 values through `Coalesce` when the fallback can be represented as a no-capture lifted function. `?.`
 dispatches non-`Option`/`Result` nominal values through `Chain` when the synthesized transform
 closure can be represented in the same way; simple field access is supported, while transforms that
@@ -363,8 +364,9 @@ iterator for `Iterator.next`, and stops on `None`. An inherent or unrelated trai
 `.iter()` under the same bound; `SliceIter(T)` stores the slice borrow, so the source remains
 borrowed until the iterator is consumed or leaves scope. `Vec(T)` implements consuming iteration
 for all element types. Its iterator transfers the allocation, moves values in source order, and on
-early exit drops exactly the unyielded suffix before releasing storage. Borrow-yielding and mutable
-element iteration require generic associated constructors and remain part of `TYPE-GAT-1`.
+early exit drops exactly the unyielded suffix before releasing storage. Generic associated
+constructors are now available for borrow-yielding and mutable element iteration; the source
+protocol migration remains tracked by `LIB-ITER-BORROW-1`.
 
 The control spellings bind to these validated identities without aliasing ordinary names. Standard
 effect identities such as `Throws` remain normal `std.effect` exports when named in source, backed

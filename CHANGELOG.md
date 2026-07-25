@@ -19,6 +19,11 @@ subset.
 - Added the multi-module native `examples/inventory` LIB1 acceptance package. It composes owning
   UTF-8 strings, recoverable invalid-byte errors, a vector of non-`Copy` products, consuming
   iteration, and user-defined valuation/summary traits, and exits with status 42.
+- Lowered generic associated constructors across `type`, `access`, `region`, `usize`, and closed
+  compile-time value kinds. Trait implementations may bind direct nominal constructors or partially
+  applied type aliases, with exact kind checking and substitution into method templates before
+  runtime lowering. Native tests cover shared/mutable borrow families and compile-time array-length
+  families; constructor equality predicates remain a separate solver task.
 - Added the source-backed, access-polymorphic `Index(Key)` protocol. User types, Array, Slice, and
   Vec now support bracket reads, explicit shared/mutable element borrows, and assignment through
   one `index(A)` method. Receiver and key evaluation remains single-shot, temporary loans end with

@@ -17,7 +17,7 @@ Priority meanings:
 
 Current milestone: **TYPE1 static abstraction**
 
-Next task: **TYPE-GAT-1**
+Next task: **LIB-ITER-BORROW-1**
 
 ### P0 control-source queue
 
@@ -130,11 +130,18 @@ be explicit where applicable.
 
 Entry gate: concrete requirements from LIB1
 
-- [ ] **TYPE-GAT-1: Lower generic associated constructors**
+- [x] **TYPE-GAT-1: Lower generic associated constructors**
+  - Preserve `type`, `access`, `region`, `usize`, and closed-value parameter kinds.
+  - Substitute direct and partially applied alias constructors into trait method templates.
+  - Keep constructor equality predicates gated by `TYPE-EQ-1`.
+- [ ] **LIB-ITER-BORROW-1: Use GATs for borrow-yielding and mutable iteration**
+  - Replace the Copy-value Slice iterator boundary with shared and mutable element borrows.
+  - Preserve source access, receiver-region shortening, alias exclusion, escape rejection, and
+    exactly-once iterator cleanup.
 - [ ] **TYPE-EQ-1: Add bounded constructor-equation solving**
 - [ ] **TYPE-CALLABLE-1: Bridge capturing callables into source protocols**
 - [ ] **TYPE-TRAIT-METHOD-1: Support coherent generic trait methods**
-- [ ] **TYPE-CONST-NOMINAL-1: Extend compile-time scalar arguments to nominal types and type aliases**
+- [x] **TYPE-CONST-NOMINAL-1: Extend compile-time scalar arguments to nominal types and type aliases**
 - [ ] **TYPE-DIAG-1: Improve kind and constructor inference diagnostics**
 
 ## P2 async exploration

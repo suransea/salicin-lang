@@ -570,6 +570,35 @@ fn functional_protocols_forward_callback_effects() {
 }
 
 #[test]
+fn generic_associated_constructors_lower_compile_time_kinds() {
+    for (name, output) in
+        native_fixture_outputs_in_parallel(&["gat_borrow_family.sc", "gat_usize_family.sc"])
+    {
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+
+    let output = salic()
+        .arg("check")
+        .arg(fixture("fail", "gat_constructor_kind_mismatch.sc"))
+        .output()
+        .expect("check mismatched GAT constructor kind");
+    assert!(
+        !output.status.success(),
+        "GAT kind mismatch unexpectedly passed"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("expects kind `access`"),
+        "{}",
+        output_text(&output)
+    );
+}
+
+#[test]
 fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
     let fixtures = [
         "algebraic_effect_handler.sc",

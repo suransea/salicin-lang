@@ -1718,6 +1718,29 @@ let main(): i32 = {
 }
 
 #[test]
+fn generic_associated_type_constructor_preserves_compile_parameter_kinds() {
+    let program = resolve_text(
+        r#"
+let Lend = trait {
+  let Item(A: access)(R: region): type
+  let view(A: access, R: region)(self: borrow(A)(R)(Self))(): Item(A)(R)
+}
+let main(): i32 = { 0 }
+"#,
+    );
+    let analyzer = Analyzer::new(&program);
+    let parameters = &analyzer.traits["Lend"].associated_type_parameters["Item"];
+    assert_eq!(parameters.len(), 2);
+    assert_eq!(parameters[0].kind, CompileParamKind::Named("access".into()));
+    assert_eq!(parameters[1].kind, CompileParamKind::Region);
+    assert!(
+        analyzer.diagnostics.is_empty(),
+        "unexpected GAT kind diagnostics: {:?}",
+        analyzer.diagnostics
+    );
+}
+
+#[test]
 fn chain_operator_dispatches_through_core_trait_for_user_types() {
     let program = resolve_text(
         r#"
