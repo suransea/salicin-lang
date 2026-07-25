@@ -6,6 +6,12 @@ subset.
 
 ## Unreleased
 
+- Migrated compatible native execution fixture groups to generated
+  `test("fixture") { main() == 42 }` registrations in isolated modules. Each
+  group now emits and links one runner instead of one executable per fixture;
+  trap fixtures remain independent so every expected process failure still
+  executes.
+
 ## 0.187.0 - 2026-07-26
 
 - Added contextual `test("name") { ... }` registrations and `salic test`.

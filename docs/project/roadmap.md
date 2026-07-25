@@ -43,9 +43,10 @@ Exit conditions:
 The compiler provides contextual `test("name") { ... }` registrations and a
 `salic test` command that collects the selected package into one native
 runner. This removes per-case native linking from language-level regression
-suites and provides the foundation for migrating compatible execution
-fixtures into batches. Test registration is intentionally narrower than
-general compile-time execution.
+suites. Compatible repository execution fixtures are isolated as modules and
+registered into one runner per semantic group; fixtures that must terminate
+the process remain independent. Test registration is intentionally narrower
+than general compile-time execution.
 
 ## Confirmed ABI Direction
 

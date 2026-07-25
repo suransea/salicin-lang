@@ -1,4 +1,6 @@
+use std::collections::BTreeMap;
 use std::fs;
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -6,7 +8,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use salicin_lang::{check_library_source, check_source, compile_source};
+use salicin_lang::modules::{PackageId, SourcePackage, SourceUnit};
+use salicin_lang::{
+    check_library_source, check_source, compile_source, compile_test_source_packages,
+};
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 static TEST_ALLOCATOR_OBJECT: OnceLock<PathBuf> = OnceLock::new();
@@ -53,14 +58,9 @@ fn test_allocator_object() -> &'static Path {
     })
 }
 
-fn run_source_in_process(path: &Path) -> Output {
-    let source = fs::read_to_string(path)
-        .unwrap_or_else(|error| panic!("read '{}': {error}", path.display()));
-    let ir = compile_source(&source).unwrap_or_else(|diagnostics| {
-        panic!("compile '{}':\n{}", path.display(), diagnostics.join("\n"))
-    });
+fn link_and_run_ir(ir: &str, description: &str) -> Output {
     let temporary = TestDirectory::new();
-    let ir_path = temporary.write("module.ll", &ir);
+    let ir_path = temporary.write("module.ll", ir);
     let executable = temporary.join("program");
     let linked = Command::new("/usr/bin/clang")
         .arg("-Wno-override-module")
@@ -73,28 +73,38 @@ fn run_source_in_process(path: &Path) -> Output {
         .arg("-o")
         .arg(&executable)
         .output()
-        .expect("link in-process fixture");
+        .unwrap_or_else(|error| panic!("link {description}: {error}"));
     assert!(
         linked.status.success(),
-        "{}: {}",
-        path.display(),
+        "{description}: {}",
         output_text(&linked)
     );
     Command::new(executable)
         .output()
-        .unwrap_or_else(|error| panic!("run '{}': {error}", path.display()))
+        .unwrap_or_else(|error| panic!("run {description}: {error}"))
 }
 
-fn native_fixture_outputs_in_parallel(names: &[&str]) -> Vec<(String, Output)> {
-    let paths: Vec<_> = names.iter().map(|name| fixture("pass", name)).collect();
+fn run_source_in_process(path: &Path) -> Output {
+    let source = fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("read '{}': {error}", path.display()));
+    let ir = compile_source(&source).unwrap_or_else(|diagnostics| {
+        panic!("compile '{}':\n{}", path.display(), diagnostics.join("\n"))
+    });
+    link_and_run_ir(&ir, &format!("fixture '{}'", path.display()))
+}
+
+fn trapping_fixture_outputs_in_parallel(names: &[&str]) -> Vec<(String, Output)> {
+    let paths = names
+        .iter()
+        .map(|name| fixture("pass", name))
+        .collect::<Vec<_>>();
     let jobs = Arc::new(Mutex::new(paths.into_iter().enumerate()));
     let results = Arc::new(Mutex::new(Vec::new()));
-
     thread::scope(|scope| {
         let jobs = Arc::clone(&jobs);
         let results = Arc::clone(&results);
         thread::Builder::new()
-            .name("salic-native-fixture".into())
+            .name("salic-trapping-fixture".into())
             .stack_size(16 * 1024 * 1024)
             .spawn_scoped(scope, move || loop {
                 let Some((index, path)) = jobs.lock().expect("lock native jobs").next() else {
@@ -106,9 +116,8 @@ fn native_fixture_outputs_in_parallel(names: &[&str]) -> Vec<(String, Output)> {
                     .expect("lock native results")
                     .push((index, path, output));
             })
-            .expect("spawn native fixture worker");
+            .expect("spawn trapping-fixture worker");
     });
-
     let mut results = Arc::try_unwrap(results)
         .expect("native workers released results")
         .into_inner()
@@ -124,6 +133,80 @@ fn native_fixture_outputs_in_parallel(names: &[&str]) -> Vec<(String, Output)> {
                     .into_owned(),
                 output,
             )
+        })
+        .collect()
+}
+
+fn batched_native_fixture_outputs(names: &[&str]) -> Vec<(String, Output)> {
+    const MODULE_INCOMPATIBLE: &[&str] = &["match_literal_payload.sc"];
+    let batch_names = names
+        .iter()
+        .copied()
+        .filter(|name| !MODULE_INCOMPATIBLE.contains(name))
+        .collect::<Vec<_>>();
+    let mut sources = vec![SourceUnit {
+        path: "<native-fixture-root>".into(),
+        module_path: Vec::new(),
+        source: String::new(),
+        is_root: true,
+    }];
+    for name in &batch_names {
+        let path = fixture("pass", name);
+        let module = path
+            .file_stem()
+            .expect("fixture path has a stem")
+            .to_string_lossy()
+            .into_owned();
+        let mut source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read '{}': {error}", path.display()));
+        source.push_str(&format!("\ntest({name:?}) {{ main() == 42 }}\n"));
+        sources.push(SourceUnit {
+            path: path.display().to_string(),
+            module_path: vec![module],
+            source,
+            is_root: false,
+        });
+    }
+    let batch = if batch_names.is_empty() {
+        None
+    } else {
+        let compilation = compile_test_source_packages(&[SourcePackage {
+            id: PackageId(0),
+            is_primary: true,
+            dependencies: BTreeMap::new(),
+            sources,
+        }])
+        .unwrap_or_else(|diagnostics| {
+            panic!(
+                "compile batched native fixtures:\n{}",
+                diagnostics.join("\n")
+            )
+        });
+        let mut output = link_and_run_ir(&compilation.ir, "batched native fixtures");
+        if output.status.success() {
+            output.status = std::process::ExitStatus::from_raw(42 << 8);
+        } else if let Some(index) = output.status.code().and_then(|index| index.checked_sub(1)) {
+            if let Some(name) = compilation.names.get(index as usize) {
+                output.stderr.extend_from_slice(
+                    format!("batched native fixture {name:?} returned a value other than 42\n")
+                        .as_bytes(),
+                );
+            }
+        }
+        Some(output)
+    };
+    names
+        .iter()
+        .map(|name| {
+            let output = if MODULE_INCOMPATIBLE.contains(name) {
+                run_source_in_process(&fixture("pass", name))
+            } else {
+                batch
+                    .as_ref()
+                    .expect("a compatible fixture has a batch output")
+                    .clone()
+            };
+            ((*name).to_owned(), output)
         })
         .collect()
 }
@@ -395,7 +478,7 @@ fn compiler_ir_symbols_and_diagnostics_are_byte_deterministic() {
 #[test]
 fn unicode_identifiers_and_logical_newlines_run_natively() {
     for (name, output) in
-        native_fixture_outputs_in_parallel(&["unicode_identifiers.sc", "logical_newlines.sc"])
+        batched_native_fixture_outputs(&["unicode_identifiers.sc", "logical_newlines.sc"])
     {
         assert_eq!(
             output.status.code(),
@@ -489,7 +572,7 @@ fn inventory_example_exercises_lib1_across_modules() {
 #[test]
 fn effectful_for_preserves_iterator_state_and_cleanup() {
     let fixtures = ["for_throws.sc", "for_throws_cleanup.sc"];
-    for (_fixture_name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (_fixture_name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
     }
 }
@@ -516,7 +599,7 @@ fn owned_nominal_state_crosses_repeated_effectful_calls() {
 
 #[test]
 fn disjoint_owned_projections_cross_repeated_effectful_calls() {
-    for (name, output) in native_fixture_outputs_in_parallel(&[
+    for (name, output) in batched_native_fixture_outputs(&[
         "algebraic_effect_owned_field_calls.sc",
         "algebraic_effect_disjoint_field_calls.sc",
         "algebraic_effect_disjoint_index_calls.sc",
@@ -532,7 +615,7 @@ fn disjoint_owned_projections_cross_repeated_effectful_calls() {
 
 #[test]
 fn owned_roots_cross_concrete_residual_effect_rows() {
-    for (name, output) in native_fixture_outputs_in_parallel(&[
+    for (name, output) in batched_native_fixture_outputs(&[
         "algebraic_effect_owned_residual_throws_outer.sc",
         "algebraic_effect_owned_residual_throws_inner.sc",
         "algebraic_effect_owned_residual_nominal.sc",
@@ -549,7 +632,7 @@ fn owned_roots_cross_concrete_residual_effect_rows() {
 
 #[test]
 fn owned_roots_cross_direct_and_mutual_recursive_effectful_calls() {
-    for (name, output) in native_fixture_outputs_in_parallel(&[
+    for (name, output) in batched_native_fixture_outputs(&[
         "algebraic_effect_owned_recursive_call.sc",
         "algebraic_effect_owned_mutual_recursion.sc",
     ]) {
@@ -664,7 +747,7 @@ fn capturing_callable_bridge_preserves_runtime_ownership_and_effects() {
 #[test]
 fn generic_associated_constructors_lower_compile_time_kinds() {
     for (name, output) in
-        native_fixture_outputs_in_parallel(&["gat_borrow_family.sc", "gat_usize_family.sc"])
+        batched_native_fixture_outputs(&["gat_borrow_family.sc", "gat_usize_family.sc"])
     {
         assert_eq!(
             output.status.code(),
@@ -750,7 +833,7 @@ fn algebraic_effect_handlers_resume_or_abort_one_shot_continuations() {
         "algebraic_effect_continuation_resume_drop.sc",
         "standard_effect_operations.sc",
     ];
-    for (fixture_name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (fixture_name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -1081,7 +1164,7 @@ fn raw_pointer_read_and_write_run_with_expected_result() {
         "raw_pointer_projected_place.sc",
         "do_forwards_unsafe_color.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -1103,7 +1186,7 @@ fn raw_allocator_abi_allocates_aligned_storage_and_deallocates_it() {
         "raw_pointer_borrow.sc",
         "raw_pointer_methods.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -1170,7 +1253,7 @@ fn raw_pointer_intrinsic_errors_report_their_cause() {
 #[test]
 fn target_layout_intrinsics_cover_globals_aggregates_and_generic_instances() {
     let fixtures = ["layout_intrinsics.sc", "layout_intrinsics_generic.sc"];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -1196,7 +1279,7 @@ fn alloc_box_owns_copy_and_resource_payloads() {
         "forget_resource.sc",
         "forget_temporary_resource.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -1254,7 +1337,7 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         "slice_iterator_mut.sc",
         "slice_iterator_resource.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&successful) {
+    for (name, output) in batched_native_fixture_outputs(&successful) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -1279,7 +1362,7 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         "vec_reserve_overflow.sc",
         "vec_zst_resource_drop_trap.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&trapping) {
+    for (name, output) in trapping_fixture_outputs_in_parallel(&trapping) {
         assert!(
             !output.status.success(),
             "{name} did not trap: {}",
@@ -1349,7 +1432,7 @@ fn alloc_vec_owns_copy_and_resource_elements() {
 
 #[test]
 fn alloc_string_preserves_utf8_and_byte_ownership() {
-    let mut outputs = native_fixture_outputs_in_parallel(&["string_utf8.sc"]);
+    let mut outputs = batched_native_fixture_outputs(&["string_utf8.sc"]);
     let (name, output) = outputs.pop().expect("String fixture output");
     assert_eq!(
         output.status.code(),
@@ -1384,7 +1467,7 @@ fn alloc_string_preserves_utf8_and_byte_ownership() {
 
 #[test]
 fn slices_preserve_array_and_vec_borrow_safety() {
-    for (name, output) in native_fixture_outputs_in_parallel(&["slice_array.sc", "slice_vec.sc"]) {
+    for (name, output) in batched_native_fixture_outputs(&["slice_array.sc", "slice_vec.sc"]) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -1442,7 +1525,7 @@ fn generic_inherent_extensions_infer_and_dispatch_concrete_instances() {
         "box_method_context_inference.sc",
         "access_generic.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -1538,7 +1621,7 @@ fn where_copy_bounds_validate_generic_bodies_and_concrete_calls() {
 #[test]
 fn where_trait_bounds_enable_abstract_method_dispatch() {
     let fixtures = ["where_method_dispatch.sc", "where_generic_trait_method.sc"];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -1567,7 +1650,7 @@ fn where_associated_equalities_enable_operator_dispatch() {
         "where_associated_method.sc",
         "where_gat_equality.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -1885,7 +1968,7 @@ fn m1_struct_programs_run_with_expected_result() {
         "struct_mutation.sc",
         "positional_constructor.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -1901,7 +1984,7 @@ fn type_constructor_aliases_run_and_report_kind_errors() {
         "type_constructor_alias.sc",
         "type_constructor_labeled_arguments.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2030,7 +2113,7 @@ fn m1_match_and_partial_programs_run_with_expected_result() {
         "if_let.sc",
         "partial_application.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2094,7 +2177,7 @@ fn m1_ownership_programs_run_with_expected_result() {
         "returned_borrow.sc",
         "borrow_value_parameter.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2295,7 +2378,7 @@ fn v09_reinitialization_programs_run_with_expected_result() {
         "reinit_after_explicit_copy_move.sc",
         "match_guard_copy_binding.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2356,7 +2439,7 @@ fn source_backed_copy_programs_run_with_expected_result() {
         "copy_nominal_enum_array.sc",
         "copy_generic_blanket.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2742,7 +2825,7 @@ fn m1_local_closure_programs_run_with_expected_result() {
         "closure_mut_capture.sc",
         "closure_move_once.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2858,7 +2941,7 @@ fn every_pass_fixture_checks_successfully() {
 #[test]
 fn tuple_types_literals_projection_patterns_and_cleanup_run_natively() {
     let fixtures = ["tuple_basics.sc", "tuple_resource_drop.sc"];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2905,7 +2988,7 @@ fn tuple_diagnostics_are_source_level_and_specific() {
 
 #[test]
 fn primitive_scalar_widths_and_boundaries_run_natively() {
-    for (name, output) in native_fixture_outputs_in_parallel(&["primitive_scalar_widths.sc"]) {
+    for (name, output) in batched_native_fixture_outputs(&["primitive_scalar_widths.sc"]) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -2959,7 +3042,7 @@ fn primitive_scalar_overflows_and_conversions_are_diagnosed() {
 #[test]
 fn c_ffi_scalars_and_raw_pointers_link_and_run_natively() {
     let fixtures = ["ffi_c_abs.sc", "ffi_c_memset.sc"];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -3024,7 +3107,7 @@ fn raise_and_unwrap_operators_run_through_standard_and_custom_protocols() {
         "unwrap_option_result.sc",
         "unwrap_custom.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -3060,7 +3143,7 @@ fn m1_loops_and_arrays_run_with_expected_result() {
         "loop_move_then_break.sc",
         "for_iterator.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -3072,9 +3155,7 @@ fn m1_loops_and_arrays_run_with_expected_result() {
 
 #[test]
 fn defer_runs_lexical_actions_lifo_on_all_control_exits() {
-    for (name, output) in
-        native_fixture_outputs_in_parallel(&["defer_control.sc", "defer_throw.sc"])
-    {
+    for (name, output) in batched_native_fixture_outputs(&["defer_control.sc", "defer_throw.sc"]) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -3390,7 +3471,7 @@ fn named_arguments_select_function_overloads_in_resolved_sources() {
         "inherent_overload_named.sc",
         "trait_overload_named.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -3480,7 +3561,7 @@ fn invalid_builtin_division_and_remainder_trap() {
         "runtime_division_by_zero.sc",
         "runtime_remainder_overflow.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in trapping_fixture_outputs_in_parallel(&fixtures) {
         assert!(
             !output.status.success(),
             "{name} unexpectedly avoided its arithmetic trap:\n{}",
@@ -3512,7 +3593,7 @@ fn m1_inherent_members_run_with_expected_result() {
         "self_expression_members.sc",
         "self_expression_generic.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -3584,7 +3665,7 @@ fn m2_generic_function_programs_run_with_expected_result() {
         "generic_call_inside_closure.sc",
         "generic_validation_rollback.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -3628,7 +3709,7 @@ fn m2_generic_nominal_programs_run_with_expected_result() {
         "generic_nominal_multiple_instances.sc",
         "generic_nominal_access.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -3678,7 +3759,7 @@ fn m2_inferred_type_arguments_run_with_expected_result() {
         "infer_nonempty_block.sc",
         "infer_borrow_temporary.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -3728,7 +3809,7 @@ fn m2_concrete_trait_programs_run_with_expected_result() {
         "trait_inherent_precedence.sc",
         "trait_declaration_order.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -3785,7 +3866,7 @@ fn m2_add_trait_programs_run_with_expected_result() {
         "add_trait_operands_once.sc",
         "add_trait_expected_output.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -3831,7 +3912,7 @@ fn arithmetic_trait_programs_run_with_expected_result() {
         "compound_assign_builtin.sc",
         "compound_assign_trait.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -3877,7 +3958,7 @@ fn m2_core_option_and_result_programs_run_with_expected_result() {
         "core_multiple_instances.sc",
         "core_inferred_variants.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -3933,7 +4014,7 @@ fn m2_coalesce_programs_run_with_expected_result() {
         "coalesce_infer_right_associative_none.sc",
         "coalesce_infer_local_without_annotation.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -3980,7 +4061,7 @@ fn explicit_result_values_and_throws_handlers_run_with_expected_result() {
         "do_function_boundary.sc",
         "do_forwards_throws.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -4059,7 +4140,7 @@ fn bitwise_protocols_run_and_invalid_shifts_trap() {
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 
     let invalid_shifts = ["shift_out_of_range.sc", "shift_negative.sc"];
-    for (name, invalid) in native_fixture_outputs_in_parallel(&invalid_shifts) {
+    for (name, invalid) in trapping_fixture_outputs_in_parallel(&invalid_shifts) {
         assert!(
             !invalid.status.success(),
             "invalid shift in {name} unexpectedly succeeded"
@@ -4139,7 +4220,7 @@ fn m2_optional_chain_programs_run_with_expected_result() {
         "chain_method_result_is_nested.sc",
         "chain_then_coalesce.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),
@@ -4185,7 +4266,7 @@ fn throws_programs_run_with_expected_result() {
         "throw_generic_error.sc",
         "throw_unit_error.sc",
     ];
-    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+    for (name, output) in batched_native_fixture_outputs(&fixtures) {
         assert_eq!(
             output.status.code(),
             Some(42),

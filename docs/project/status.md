@@ -232,7 +232,8 @@ Repository gates cover:
 
 - parser and semantic unit tests;
 - positive and negative CLI fixtures;
-- native execution and exit-status checks;
+- batched native execution fixtures that use one generated test runner and
+  link per compatible group, with independent processes for expected traps;
 - cleanup, alias, escape, and allocation behavior;
 - deterministic diagnostics, IR, symbol ordering, and lockfiles;
 - classified documentation examples;
