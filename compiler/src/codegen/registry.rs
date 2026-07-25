@@ -72,6 +72,15 @@ pub(super) struct PointerInherentExtension {
 }
 
 #[derive(Clone)]
+pub(super) struct SliceInherentExtension {
+    pub(super) element_parameter: String,
+    pub(super) where_predicates: Vec<crate::ast::WherePredicate>,
+    pub(super) members: Vec<ExtendMember>,
+    pub(super) access: AccessBoundary,
+    pub(super) origin: ItemOrigin,
+}
+
+#[derive(Clone)]
 pub(super) struct GenericTraitExtension {
     pub(super) target_arguments: Vec<String>,
     pub(super) trait_ref: Type,

@@ -25,7 +25,7 @@ impl Analyzer {
         let Some(queried) = self.explicit_raw_pointee(name, group, context) else {
             return error_expr();
         };
-        if matches!(queried, Ty::Function(_) | Ty::Error) {
+        if matches!(queried, Ty::Function(_) | Ty::Error) || !queried.is_sized_value() {
             self.error(format!("`{name}` cannot query layout of `{queried}`"));
             return error_expr();
         }
@@ -448,6 +448,285 @@ impl Analyzer {
             kind: HirExprKind::RawBorrow {
                 pointer: Box::new(pointer),
                 anchor,
+            },
+        }
+    }
+
+    pub(super) fn lower_raw_slice(
+        &mut self,
+        groups: &[&[CallArg]],
+        expected: Option<&Ty>,
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        if context.unsafe_depth == 0 {
+            self.error("`raw_slice` requires an `unsafe` block");
+            return error_expr();
+        }
+        let (required_mutable, runtime) = match groups {
+            [runtime] => (false, *runtime),
+            [access, runtime] => {
+                let [argument] = *access else {
+                    self.error("`raw_slice` access group expects exactly one argument");
+                    return error_expr();
+                };
+                let mutable = match &argument.value {
+                    Expr::Name(value) if value == "shared" => false,
+                    Expr::Name(value) if value == "mut" => true,
+                    _ => {
+                        self.error("`raw_slice` access argument must be `shared` or `mut`");
+                        return error_expr();
+                    }
+                };
+                (mutable, *runtime)
+            }
+            _ => {
+                self.error("`raw_slice` expects one runtime group and at most one access group");
+                return error_expr();
+            }
+        };
+        let names = [
+            "pointer".to_owned(),
+            "length".to_owned(),
+            "anchor".to_owned(),
+        ];
+        let Some(arguments) = self.ordered_call_arguments("raw_slice", 1, runtime, &names) else {
+            return error_expr();
+        };
+        let pointer = self.lower_expr(&arguments[0].value, None, context);
+        let Ty::Pointer { pointee, mutable } = &pointer.ty else {
+            self.error(format!(
+                "`raw_slice` requires `Ptr(T)` or `Ptr(mut)(T)`, found `{}`",
+                pointer.ty
+            ));
+            return error_expr();
+        };
+        if required_mutable && !mutable {
+            self.error("mutable `raw_slice` requires a `Ptr(mut)(T)`");
+            return error_expr();
+        }
+        if matches!(
+            pointee.as_ref(),
+            Ty::Slice(_) | Ty::Never | Ty::Function(_) | Ty::Error
+        ) {
+            self.error(format!(
+                "`raw_slice` cannot view elements without a concrete sized representation: `{}`",
+                self.diagnostic_type_name(pointee)
+            ));
+            return error_expr();
+        }
+        let length = self.lower_expr(&arguments[1].value, Some(&Ty::U64), context);
+        let Expr::Borrow {
+            mutable: anchor_mutable,
+            value: anchor_value,
+            ..
+        } = &arguments[2].value
+        else {
+            self.error(format!(
+                "`raw_slice` requires an explicit `{}borrow` anchor",
+                if required_mutable { "mut " } else { "" }
+            ));
+            return error_expr();
+        };
+        if *anchor_mutable != required_mutable {
+            self.error(format!(
+                "`raw_slice` requires a {}borrow anchor",
+                if required_mutable {
+                    "mutable "
+                } else {
+                    "shared "
+                }
+            ));
+            return error_expr();
+        }
+        let Some(mut anchor) = self.lower_place(anchor_value, context) else {
+            return error_expr();
+        };
+        if required_mutable {
+            self.ensure_writable(&anchor);
+        }
+        let loan = self.acquire_loan(
+            &anchor,
+            if required_mutable {
+                LoanKind::Mutable
+            } else {
+                LoanKind::Shared
+            },
+            true,
+            context,
+        );
+        anchor.capability = if required_mutable {
+            LocalCapability::MutParam
+        } else {
+            LocalCapability::SharedParam
+        };
+        anchor.loan = loan;
+        let source_region = context
+            .borrowed_parameter_regions
+            .get(&anchor.local)
+            .and_then(|(region, _)| region.clone());
+        let expected_region = expected.and_then(|expected| match expected {
+            Ty::Reference {
+                pointee: expected_pointee,
+                mutable: expected_mutable,
+                region,
+            } if matches!(
+                expected_pointee.as_ref(),
+                Ty::Slice(expected_element) if expected_element.as_ref() == pointee.as_ref()
+            ) && *expected_mutable == required_mutable =>
+            {
+                region.clone()
+            }
+            _ => None,
+        });
+        HirExpr {
+            ty: Ty::Reference {
+                pointee: Box::new(Ty::Slice(pointee.clone())),
+                mutable: required_mutable,
+                region: expected_region.or(source_region),
+            },
+            kind: HirExprKind::RawSlice {
+                pointer: Box::new(pointer),
+                length: Box::new(length),
+                anchor,
+            },
+        }
+    }
+
+    pub(super) fn lower_raw_slice_len(
+        &mut self,
+        groups: &[&[CallArg]],
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        if context.unsafe_depth == 0 {
+            self.error("`raw_slice_len` requires an `unsafe` block");
+            return error_expr();
+        }
+        let [runtime] = groups else {
+            self.error("`raw_slice_len` expects exactly one runtime argument group");
+            return error_expr();
+        };
+        let names = ["slice".to_owned()];
+        let Some(arguments) = self.ordered_call_arguments("raw_slice_len", 1, runtime, &names)
+        else {
+            return error_expr();
+        };
+        let slice = match self.probe_expr_ty(&arguments[0].value, None, context) {
+            super::lower::TypeProbe::Known(expected)
+            | super::lower::TypeProbe::KnownSource(expected, _)
+                if matches!(
+                    &expected,
+                    Ty::Reference { pointee, .. } if matches!(pointee.as_ref(), Ty::Slice(_))
+                ) =>
+            {
+                self.lower_reference_value_expr(&arguments[0].value, &expected, context)
+            }
+            _ => self.lower_expr(&arguments[0].value, None, context),
+        };
+        if !matches!(
+            &slice.ty,
+            Ty::Reference { pointee, .. } if matches!(pointee.as_ref(), Ty::Slice(_))
+        ) {
+            self.error(format!(
+                "`raw_slice_len` requires a borrowed Slice, found `{}`",
+                slice.ty
+            ));
+            return error_expr();
+        }
+        HirExpr {
+            ty: Ty::U64,
+            kind: HirExprKind::RawSliceLen(Box::new(slice)),
+        }
+    }
+
+    pub(super) fn lower_raw_slice_at(
+        &mut self,
+        groups: &[&[CallArg]],
+        context: &mut LowerCtx,
+    ) -> HirExpr {
+        if context.unsafe_depth == 0 {
+            self.error("`raw_slice_at` requires an `unsafe` block");
+            return error_expr();
+        }
+        let (required_mutable, runtime) = match groups {
+            [runtime] => (false, *runtime),
+            [access, runtime] => {
+                let [argument] = *access else {
+                    self.error("`raw_slice_at` access group expects exactly one argument");
+                    return error_expr();
+                };
+                let mutable = match &argument.value {
+                    Expr::Name(value) if value == "shared" => false,
+                    Expr::Name(value) if value == "mut" => true,
+                    _ => {
+                        self.error("`raw_slice_at` access argument must be `shared` or `mut`");
+                        return error_expr();
+                    }
+                };
+                (mutable, *runtime)
+            }
+            _ => {
+                self.error("`raw_slice_at` expects one runtime group and at most one access group");
+                return error_expr();
+            }
+        };
+        let names = ["slice".to_owned(), "index".to_owned()];
+        let Some(arguments) = self.ordered_call_arguments("raw_slice_at", 1, runtime, &names)
+        else {
+            return error_expr();
+        };
+        let slice = match self.probe_expr_ty(&arguments[0].value, None, context) {
+            super::lower::TypeProbe::Known(expected)
+            | super::lower::TypeProbe::KnownSource(expected, _)
+                if matches!(
+                    &expected,
+                    Ty::Reference { pointee, .. } if matches!(pointee.as_ref(), Ty::Slice(_))
+                ) =>
+            {
+                self.lower_reference_value_expr(&arguments[0].value, &expected, context)
+            }
+            _ => self.lower_expr(&arguments[0].value, None, context),
+        };
+        let Ty::Reference {
+            pointee,
+            mutable,
+            region,
+        } = &slice.ty
+        else {
+            self.error(format!(
+                "`raw_slice_at` requires a borrowed Slice, found `{}`",
+                slice.ty
+            ));
+            return error_expr();
+        };
+        let Ty::Slice(element) = pointee.as_ref() else {
+            self.error(format!(
+                "`raw_slice_at` requires a borrowed Slice, found `{}`",
+                slice.ty
+            ));
+            return error_expr();
+        };
+        if *mutable != required_mutable {
+            self.error(format!(
+                "`raw_slice_at` requires a {}Slice borrow",
+                if required_mutable {
+                    "mutable "
+                } else {
+                    "shared "
+                }
+            ));
+            return error_expr();
+        }
+        let result_ty = Ty::Reference {
+            pointee: element.clone(),
+            mutable: required_mutable,
+            region: region.clone(),
+        };
+        let index = self.lower_expr(&arguments[1].value, Some(&Ty::U64), context);
+        HirExpr {
+            ty: result_ty,
+            kind: HirExprKind::RawSliceAt {
+                slice: Box::new(slice),
+                index: Box::new(index),
             },
         }
     }

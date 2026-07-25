@@ -142,6 +142,8 @@ struct Analyzer {
     generic_inherent_extensions: HashMap<String, Vec<GenericInherentExtension>>,
     pointer_inherent_extensions: Vec<PointerInherentExtension>,
     instantiated_pointer_extensions: HashSet<String>,
+    slice_inherent_extensions: Vec<SliceInherentExtension>,
+    instantiated_slice_extensions: HashSet<String>,
     generic_trait_extensions: HashMap<String, Vec<GenericTraitExtension>>,
     instantiating_generic_trait_extension: usize,
     generic_inherent_functions: HashMap<(String, String), String>,
@@ -224,6 +226,8 @@ impl Analyzer {
             generic_inherent_extensions: HashMap::new(),
             pointer_inherent_extensions: Vec::new(),
             instantiated_pointer_extensions: HashSet::new(),
+            slice_inherent_extensions: Vec::new(),
+            instantiated_slice_extensions: HashSet::new(),
             generic_trait_extensions: HashMap::new(),
             instantiating_generic_trait_extension: 0,
             generic_inherent_functions: HashMap::new(),
@@ -337,6 +341,9 @@ impl Analyzer {
             "raw_take",
             "raw_offset",
             "raw_borrow",
+            "raw_slice",
+            "raw_slice_len",
+            "raw_slice_at",
             "raw_trap",
             "forget",
         ] {
@@ -4925,6 +4932,16 @@ impl Analyzer {
             );
             return;
         }
+        if self.is_lang_item_name(target_template, LangItemKind::SliceTypeForm) {
+            self.collect_slice_inherent_extension(
+                extension,
+                origin,
+                parameters,
+                declared,
+                target_sources.clone(),
+            );
+            return;
+        }
         let expected = self
             .struct_templates
             .get(target_template)
@@ -5304,6 +5321,78 @@ impl Analyzer {
             });
     }
 
+    fn collect_slice_inherent_extension(
+        &mut self,
+        extension: ExtendDef,
+        origin: ItemOrigin,
+        parameters: Vec<CompileParam>,
+        declared: HashSet<String>,
+        target_sources: Vec<Type>,
+    ) {
+        if origin.package != PackageId::CORE.0 {
+            self.error(
+                "inherent extension for `Slice` must be declared in the package that defines the type",
+            );
+            return;
+        }
+        let [Type::Named(element, arguments)] = target_sources.as_slice() else {
+            self.error("generic `Slice` extend target must be `Slice(T)`");
+            return;
+        };
+        if !arguments.is_empty()
+            || !declared.contains(element)
+            || !parameters.iter().any(|parameter| {
+                parameter.name == *element && parameter.kind == CompileParamKind::Type
+            })
+        {
+            self.error("`Slice` extension element must be determined by a `type` parameter");
+            return;
+        }
+        if declared != HashSet::from([element.clone()]) {
+            self.error(
+                "every generic `Slice` extend parameter must be determined by the target type",
+            );
+            return;
+        }
+        for member in &extension.members {
+            let ExtendMember::Function(function) = member else {
+                self.error("generic `Slice` associated constants are not supported");
+                return;
+            };
+            if !function
+                .groups
+                .first()
+                .is_some_and(|group| group.len() == 1 && group[0].name == "self")
+            {
+                self.error("generic `Slice` extensions currently support methods only");
+                return;
+            }
+            if let Some(parameter) = function
+                .compile_groups
+                .iter()
+                .flatten()
+                .find(|parameter| declared.contains(&parameter.name))
+            {
+                self.error(format!(
+                    "generic `Slice` method `{}` redeclares outer compile-time parameter `{}`",
+                    function.name, parameter.name
+                ));
+                return;
+            }
+        }
+        let member_access = AccessBoundary {
+            visibility: Visibility::Public,
+            origin: origin.clone(),
+        };
+        self.slice_inherent_extensions.push(SliceInherentExtension {
+            element_parameter: element.clone(),
+            where_predicates: extension.where_predicates,
+            members: extension.members,
+            access: member_access,
+            origin,
+        });
+    }
+
     fn pointer_inherent_owner(pointer: &Ty) -> String {
         format!("$pointer${}", hex_name(&pointer.to_string()))
     }
@@ -5374,7 +5463,7 @@ impl Analyzer {
                 self_substitution.insert("Self".to_owned(), pointer_source.clone());
                 substitute_function_types(function, &self_substitution);
             }
-            self.register_pointer_extension_methods(
+            self.register_builtin_extension_methods(
                 &owner,
                 pointer,
                 members,
@@ -5385,10 +5474,70 @@ impl Analyzer {
         Some(owner)
     }
 
-    fn register_pointer_extension_methods(
+    fn slice_inherent_owner(slice: &Ty) -> String {
+        format!("$slice${}", hex_name(&slice.to_string()))
+    }
+
+    fn ensure_slice_inherent_extensions(&mut self, slice: &Ty) -> Option<String> {
+        let Ty::Slice(element) = slice else {
+            return None;
+        };
+        let owner = Self::slice_inherent_owner(slice);
+        if !self.instantiated_slice_extensions.insert(owner.clone()) {
+            return Some(owner);
+        }
+        let Some(element_source) = self.source_type_for_ty(element) else {
+            self.error(format!(
+                "cannot preserve element type `{element}` while instantiating `Slice` extensions"
+            ));
+            return Some(owner);
+        };
+        let slice_source = Type::Named(
+            self.lang_item_name(LangItemKind::SliceTypeForm).to_owned(),
+            vec![element_source.clone()],
+        );
+        for extension in self.slice_inherent_extensions.clone() {
+            let mut substitutions = HashMap::new();
+            substitutions.insert(extension.element_parameter.clone(), element_source.clone());
+            let mut predicates = extension.where_predicates.clone();
+            for predicate in &mut predicates {
+                substitute_type_parameters(&mut predicate.subject, &substitutions);
+                substitute_type_parameters(&mut predicate.trait_ref, &substitutions);
+                for binding in &mut predicate.associated_types {
+                    substitute_type_parameters(&mut binding.ty, &substitutions);
+                }
+            }
+            if predicates
+                .iter()
+                .any(|predicate| !self.concrete_where_predicate_holds(predicate))
+            {
+                continue;
+            }
+            let mut members = extension.members.clone();
+            for member in &mut members {
+                let ExtendMember::Function(function) = member else {
+                    unreachable!("slice associated constants were rejected")
+                };
+                substitute_function_types(function, &substitutions);
+                let mut self_substitution = HashMap::new();
+                self_substitution.insert("Self".to_owned(), slice_source.clone());
+                substitute_function_types(function, &self_substitution);
+            }
+            self.register_builtin_extension_methods(
+                &owner,
+                slice,
+                members,
+                &extension.access,
+                &extension.origin,
+            );
+        }
+        Some(owner)
+    }
+
+    fn register_builtin_extension_methods(
         &mut self,
         owner: &str,
-        pointer: &Ty,
+        receiver: &Ty,
         members: Vec<ExtendMember>,
         member_access: &AccessBoundary,
         origin: &ItemOrigin,
@@ -5407,7 +5556,7 @@ impl Analyzer {
             {
                 self.error(format!(
                     "overlapping inherent method `{short_name}` for `{}`",
-                    self.diagnostic_type_name(pointer)
+                    self.diagnostic_type_name(receiver)
                 ));
                 continue;
             }
@@ -5855,6 +6004,7 @@ impl Analyzer {
             let inherent_members_before = self.inherent_members.clone();
             let instantiated_pointer_extensions_before =
                 self.instantiated_pointer_extensions.clone();
+            let instantiated_slice_extensions_before = self.instantiated_slice_extensions.clone();
             let copy_nominals_before = self.copy_nominals.clone();
             let trait_impl_headers_before = self.trait_impl_headers.clone();
             let trait_impls_before = self.trait_impls.clone();
@@ -5946,6 +6096,7 @@ impl Analyzer {
             self.next_closure = next_closure;
             self.inherent_members = inherent_members_before;
             self.instantiated_pointer_extensions = instantiated_pointer_extensions_before;
+            self.instantiated_slice_extensions = instantiated_slice_extensions_before;
             self.copy_nominals = copy_nominals_before;
             self.trait_impl_headers = trait_impl_headers_before;
             self.trait_impls = trait_impls_before;
@@ -10122,6 +10273,9 @@ impl Analyzer {
             Ty::Pointer { .. } => self
                 .ensure_pointer_inherent_extensions(&receiver_ty)
                 .expect("pointer extension owner exists for pointer receiver"),
+            Ty::Slice(_) => self
+                .ensure_slice_inherent_extensions(&receiver_ty)
+                .expect("slice extension owner exists for slice receiver"),
             ty => {
                 self.error(format!(
                     "method call requires an extendable receiver, found `{ty}`"

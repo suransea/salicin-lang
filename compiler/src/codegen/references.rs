@@ -52,10 +52,13 @@ impl Analyzer {
                 .borrowed_parameter_regions
                 .get(&place.local)
                 .cloned(),
-            HirExprKind::RawBorrow { anchor, .. } => context
+            HirExprKind::RawBorrow { anchor, .. } | HirExprKind::RawSlice { anchor, .. } => context
                 .borrowed_parameter_regions
                 .get(&anchor.local)
                 .cloned(),
+            HirExprKind::RawSliceAt { slice, .. } => {
+                self.reference_origin_for_hir_expr(slice, context)
+            }
             HirExprKind::Block(_, Some(tail)) => self.reference_origin_for_hir_expr(tail, context),
             HirExprKind::If {
                 then_branch,
@@ -136,7 +139,12 @@ impl Analyzer {
         }
         let mut loans = match &expression.kind {
             HirExprKind::Borrow { place, .. } => place.loan.into_iter().collect(),
-            HirExprKind::RawBorrow { anchor, .. } => anchor.loan.into_iter().collect(),
+            HirExprKind::RawBorrow { anchor, .. } | HirExprKind::RawSlice { anchor, .. } => {
+                anchor.loan.into_iter().collect()
+            }
+            HirExprKind::RawSliceAt { slice, .. } => {
+                self.reference_loans_for_hir_expr(slice, context)
+            }
             HirExprKind::Read { place, .. } => context
                 .reference_loans
                 .get(&place.local)
@@ -246,6 +254,7 @@ impl Analyzer {
             }
             HirExprKind::Unary(_, value)
             | HirExprKind::Field { base: value, .. }
+            | HirExprKind::RawSliceLen(value)
             | HirExprKind::RawLoad(value)
             | HirExprKind::RawTake(value)
             | HirExprKind::Forget(value)
@@ -255,6 +264,16 @@ impl Analyzer {
             HirExprKind::Binary(left, _, right) => {
                 self.validate_explicit_reference_returns(left, expected, context);
                 self.validate_explicit_reference_returns(right, expected, context);
+            }
+            HirExprKind::RawSlice {
+                pointer, length, ..
+            } => {
+                self.validate_explicit_reference_returns(pointer, expected, context);
+                self.validate_explicit_reference_returns(length, expected, context);
+            }
+            HirExprKind::RawSliceAt { slice, index } => {
+                self.validate_explicit_reference_returns(slice, expected, context);
+                self.validate_explicit_reference_returns(index, expected, context);
             }
             HirExprKind::InvokeContinuation {
                 continuation,
@@ -550,13 +569,17 @@ impl Analyzer {
         temporary_loans: &mut Vec<LoanId>,
         temporary_bindings: &mut Vec<HirBinding>,
     ) -> HirArgument {
-        let argument_is_reference_value = match self.probe_expr_ty(argument, None, context) {
-            TypeProbe::Known(actual) | TypeProbe::KnownSource(actual, _) => {
-                reference_value_types_compatible(&actual, &parameter.ty)
-            }
-            TypeProbe::Defaultable(_) | TypeProbe::Unsupported => false,
-        };
-        if argument_is_reference_value && parameter.mode != PassMode::Inferred {
+        let (argument_is_reference_value, argument_is_shared_reference) =
+            match self.probe_expr_ty(argument, None, context) {
+                TypeProbe::Known(actual) | TypeProbe::KnownSource(actual, _) => (
+                    reference_value_types_compatible(&actual, &parameter.ty),
+                    matches!(actual, Ty::Reference { mutable: false, .. }),
+                ),
+                TypeProbe::Defaultable(_) | TypeProbe::Unsupported => (false, false),
+            };
+        if argument_is_reference_value
+            && (parameter.mode != PassMode::Inferred || argument_is_shared_reference)
+        {
             return self.lower_reference_value_call_argument(argument, parameter, context);
         }
 
@@ -574,7 +597,6 @@ impl Analyzer {
         if argument_is_reference_value {
             return self.lower_reference_value_call_argument(argument, parameter, context);
         }
-
         let Ty::Reference {
             pointee, mutable, ..
         } = &parameter.ty

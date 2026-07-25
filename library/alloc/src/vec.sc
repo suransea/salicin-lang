@@ -1,4 +1,5 @@
 let Option = core.Option
+let Slice = core.Slice
 
 /// Growable contiguous heap allocation for values of type `T`.
 pub let Vec(T: type) = struct {
@@ -336,6 +337,12 @@ extend(T: type) Vec(T) {
   let with_capacity(capacity: u64): Vec(T) = { vec_with_capacity(capacity) }
   /// Returns the number of initialized elements.
   let len(self: borrow(Self))(): u64 = { vec_len(self) }
+  /// Borrows all initialized elements as a slice.
+  let as_slice(A: access)(self: borrow(A)(Self))(): borrow(A)(Slice(T)) = {
+    unsafe {
+      raw_slice(A)(self.pointer, self.length, borrow(A)(self))
+    }
+  }
   /// Returns the number of elements that fit without reallocating.
   let capacity(self: borrow(Self))(): u64 = { vec_capacity(self) }
   /// Borrows the element at `index`, trapping if it is out of bounds.

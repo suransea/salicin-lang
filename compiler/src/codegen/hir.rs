@@ -270,6 +270,18 @@ impl fmt::Display for Ty {
     }
 }
 
+impl Ty {
+    pub(super) fn is_sized_value(&self) -> bool {
+        match self {
+            Self::Slice(_) => false,
+            Self::Array(element, _) => element.is_sized_value(),
+            Self::Tuple(fields) => fields.iter().all(Self::is_sized_value),
+            Self::Pointer { .. } | Self::Reference { .. } => true,
+            _ => true,
+        }
+    }
+}
+
 fn display_region_argument(region: &str) -> String {
     if region.chars().next().is_some_and(char::is_uppercase) {
         region.to_owned()
@@ -684,6 +696,16 @@ pub(super) enum HirExprKind {
     RawBorrow {
         pointer: Box<HirExpr>,
         anchor: HirPlace,
+    },
+    RawSlice {
+        pointer: Box<HirExpr>,
+        length: Box<HirExpr>,
+        anchor: HirPlace,
+    },
+    RawSliceLen(Box<HirExpr>),
+    RawSliceAt {
+        slice: Box<HirExpr>,
+        index: Box<HirExpr>,
     },
     RawLoad(Box<HirExpr>),
     RawStore {

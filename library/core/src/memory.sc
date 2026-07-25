@@ -8,6 +8,23 @@ pub let Array(T: type)
 /// Dynamically sized contiguous sequence viewed through a borrow.
 pub let Slice(T: type): type
 
+/// Provides operations on a borrowed contiguous sequence.
+extend(T: type) Slice(T) {
+  /// Returns the number of elements in this slice.
+  let len(A: access = shared)(self: borrow(A)(Self))(): u64 = {
+    unsafe {
+      raw_slice_len(self)
+    }
+  }
+
+  /// Borrows the element at `index`, trapping if `index` is out of bounds.
+  let at(A: access = shared)(self: borrow(A)(Self))(index: u64): borrow(A)(T) = {
+    unsafe {
+      raw_slice_at(A)(self, index)
+    }
+  }
+}
+
 /// Raw pointer type with access `A` and pointee `T`.
 pub let Ptr(A: access = shared)
   (T: type): type

@@ -1017,6 +1017,31 @@ fn valid_vec_access_method(function: &Function) -> bool {
         && function.body.is_some()
 }
 
+fn valid_vec_as_slice_method(function: &Function) -> bool {
+    function.name == "as_slice"
+        && matches!(function.compile_groups.as_slice(), [group]
+            if matches!(group.as_slice(), [access]
+                if access.name == "A" && access.kind.is_access()))
+        && matches!(function.groups.as_slice(), [receiver, runtime]
+            if matches!(receiver.as_slice(), [parameter]
+                if parameter.name == "self"
+                    && parameter.mode == PassMode::Inferred
+                    && parameter.access.is_none()
+                    && parameter.modifiers.is_empty()
+                    && parameter.region.is_none()
+                    && parameter.ty == borrow_type(false, Some("A"), None, named("Self")))
+                && runtime.is_empty())
+        && function.return_type
+            == Some(Type::Borrow {
+                mutable: false,
+                access: Some("A".to_owned()),
+                region: None,
+                pointee: Box::new(applied("Slice", named("T"))),
+            })
+        && function.where_predicates.is_empty()
+        && function.body.is_some()
+}
+
 fn valid_vec_swap_method(function: &Function) -> bool {
     function.name == "swap"
         && function.compile_groups.is_empty()
@@ -1045,6 +1070,7 @@ fn valid_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
             crate::ast::ExtendMember::Function(new),
             crate::ast::ExtendMember::Function(with_capacity),
             crate::ast::ExtendMember::Function(len),
+            crate::ast::ExtendMember::Function(as_slice),
             crate::ast::ExtendMember::Function(capacity),
             crate::ast::ExtendMember::Function(at),
             crate::ast::ExtendMember::Function(reserve),
@@ -1073,6 +1099,7 @@ fn valid_vec_extension(extension: &crate::ast::ExtendDef) -> bool {
             && with_capacity.return_type == Some(applied("Vec", named("T")))
             && with_capacity.body.is_some()
             && valid_vec_receiver_method(len, "len", PassMode::Borrow, &[], Type::U64)
+            && valid_vec_as_slice_method(as_slice)
             && valid_vec_receiver_method(capacity, "capacity", PassMode::Borrow, &[], Type::U64)
             && valid_vec_access_method(at)
             && valid_vec_receiver_method(reserve, "reserve", PassMode::MutBorrow, &[("additional", PassMode::Inferred, Type::U64)], Type::Unit)

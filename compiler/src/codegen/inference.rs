@@ -349,7 +349,7 @@ impl Analyzer {
                 } else if mutable != actual_mutable {
                     return Err(mismatch());
                 }
-                if region != actual_region {
+                if region.is_some() && region != actual_region {
                     return Err(mismatch());
                 }
                 self.unify_template_ty(
@@ -660,6 +660,30 @@ impl Analyzer {
                     origin,
                 )?;
                 Ok(changed)
+            }
+            Type::Named(name, arguments)
+                if self.is_lang_item_name(name, LangItemKind::SliceTypeForm)
+                    && arguments.len() == 1 =>
+            {
+                let Ty::Slice(actual_element) = actual else {
+                    return Err(mismatch());
+                };
+                let actual_source_element = match actual_source {
+                    Some(Type::Named(actual_name, actual_arguments))
+                        if actual_name == name && actual_arguments.len() == 1 =>
+                    {
+                        actual_arguments.first()
+                    }
+                    _ => None,
+                };
+                self.unify_template_ty(
+                    &arguments[0],
+                    actual_element,
+                    actual_source_element,
+                    compile_parameters,
+                    inferred,
+                    origin,
+                )
             }
             Type::Named(name, arguments) => {
                 let (actual_kind, actual_name) = match actual {

@@ -71,10 +71,82 @@ fn analyze(
     if !analyzer.diagnostics.is_empty() {
         return Err(analyzer.diagnostics);
     }
+    let hir = hir.expect("analysis without diagnostics must produce HIR");
+    validate_sized_value_positions(&hir)?;
 
-    Ok(AnalyzedProgram {
-        hir: hir.expect("analysis without diagnostics must produce HIR"),
-    })
+    Ok(AnalyzedProgram { hir })
+}
+
+fn validate_sized_value_positions(program: &HirProgram) -> Result<(), Vec<Diagnostic>> {
+    let mut diagnostics = Vec::new();
+    for layout in &program.structs {
+        for field in &layout.fields {
+            if !field.ty.is_sized_value() {
+                diagnostics.push(Diagnostic::new(format!(
+                    "field `{}.{}` has unsized type `{}`; store a borrow or pointer instead",
+                    layout.name, field.name, field.ty
+                )));
+            }
+        }
+    }
+    for layout in &program.enums {
+        for variant in &layout.variants {
+            for field in &variant.fields {
+                if !field.ty.is_sized_value() {
+                    diagnostics.push(Diagnostic::new(format!(
+                        "field `{}.{}.{}` has unsized type `{}`; store a borrow or pointer instead",
+                        layout.name, variant.name, field.name, field.ty
+                    )));
+                }
+            }
+        }
+    }
+    for global in &program.globals {
+        if !global.ty.is_sized_value() {
+            diagnostics.push(Diagnostic::new(format!(
+                "global `{}` has unsized type `{}`; store a borrow or pointer instead",
+                global.name, global.ty
+            )));
+        }
+    }
+    for function in &program.functions {
+        for parameter in &function.params {
+            if !parameter.ty.is_sized_value() {
+                diagnostics.push(Diagnostic::new(format!(
+                    "parameter `{}` of `{}` has unsized type `{}`; pass a borrow or pointer instead",
+                    parameter.name, function.name, parameter.ty
+                )));
+            }
+        }
+        if !function.result.is_sized_value() {
+            diagnostics.push(Diagnostic::new(format!(
+                "function `{}` returns unsized type `{}`; return a borrow or pointer instead",
+                function.name, function.result
+            )));
+        }
+    }
+    for function in &program.foreign_functions {
+        for (index, parameter) in function.params.iter().enumerate() {
+            if !parameter.is_sized_value() {
+                diagnostics.push(Diagnostic::new(format!(
+                    "foreign parameter {} of `{}` has unsized type `{parameter}`",
+                    index + 1,
+                    function.name
+                )));
+            }
+        }
+        if !function.result.is_sized_value() {
+            diagnostics.push(Diagnostic::new(format!(
+                "foreign function `{}` returns unsized type `{}`",
+                function.name, function.result
+            )));
+        }
+    }
+    if diagnostics.is_empty() {
+        Ok(())
+    } else {
+        Err(diagnostics)
+    }
 }
 
 fn prepare(analyzed: AnalyzedProgram) -> Result<PreparedProgram, Vec<Diagnostic>> {

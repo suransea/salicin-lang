@@ -17,7 +17,7 @@ Priority meanings:
 
 Current milestone: **M0 release baseline**
 
-Next task: **LIB-SLICE-1**
+Next task: **LIB-INDEX-1**
 
 ### P0 control-source queue
 
@@ -93,7 +93,11 @@ handler or async expansion is admitted.
 
 Entry gate: **M0-QUALITY-1** and **M0-AUDIT-1**
 
-- [ ] **LIB-SLICE-1: Specify and implement slices**
+- [x] **LIB-SLICE-1: Specify and implement slices**
+  - Keep `Slice(T)` unsized and expose values only through region-bound fat borrows.
+  - Support Array unsizing and anchored shared/mutable `Vec.as_slice`.
+  - Provide source-backed `len` and bounds-checked, access-preserving `at`.
+  - Reject bare Slice storage and cover aliasing, escape, mutation, native bounds, and ownership.
 - [ ] **LIB-INDEX-1: Route indexing through source-backed traits**
 - [ ] **LIB-ITER-1: Add array, slice, and Vec iterator implementations**
 - [ ] **LIB-VEC-1: Complete Vec mutation and consuming-iterator cleanup**

@@ -575,4 +575,45 @@ mod tests {
         assert!(ir.contains("{ ptr, i64 }"), "{ir}");
         assert!(ir.contains("insertvalue { ptr, i64 }"), "{ir}");
     }
+
+    #[test]
+    fn slice_methods_preserve_length_and_element_borrow_access() {
+        let ir = compile_source(
+            "let Slice = std.Slice\n\
+             let inspect(R: region)\n\
+               (values: borrow(R)(Slice(i32))): i32 = {\n\
+               let item = values.at(1)\n\
+               if values.len() == 3 { item } else { 0 }\n\
+             }\n\
+             let main(): i32 = {\n\
+               let values = [1, 42, 3]\n\
+               let slice: borrow(Slice(i32)) = borrow(values)\n\
+               inspect(slice)\n\
+             }\n",
+        )
+        .expect("Slice len and shared element access should compile");
+        assert!(ir.contains("extractvalue { ptr, i64 }"), "{ir}");
+        assert!(ir.contains("slice.index.trap"), "{ir}");
+    }
+
+    #[test]
+    fn vec_slice_borrows_preserve_mutable_element_access() {
+        let ir = compile_source(
+            "let Vec = std.vec.Vec\n\
+             let main(): i32 = {\n\
+               let mut values = Vec.new(i32)()\n\
+               values.push(1)\n\
+               values.push(2)\n\
+               do {\n\
+                 let slice = values.as_slice(mut)()\n\
+                 let item = slice.at(mut)(1)\n\
+                 item = 42\n\
+               }\n\
+               values.read(1)\n\
+             }\n",
+        )
+        .expect("Vec mutable Slice access should compile");
+        assert!(ir.contains("insertvalue { ptr, i64 }"), "{ir}");
+        assert!(ir.contains("slice.index.trap"), "{ir}");
+    }
 }

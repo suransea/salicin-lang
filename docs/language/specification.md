@@ -235,6 +235,18 @@ pub let Array(T: type)(L: usize): type
 整数字面量、显式转发已有 `usize` 参数，以及从数组实参/期望数组类型推断；任意常量表达式、
 默认值和编译期算术尚未定义。
 
+`Slice` 同样由 `core.memory` 声明，但它是无尺寸、非拥有的连续视图：
+
+```sc fragment
+pub let Slice(T: type): type
+```
+
+裸 `Slice(T)` 不能作为参数、返回值、字段、全局值或数组元素；值必须写成
+`borrow(A)(R)(Slice(T))` 或相应指针。借用数组可按期望类型 unsize 为 Slice，`Vec(T).as_slice()`
+借用其已初始化前缀。`slice.len()` 返回元素数，`slice.at(index)` 返回共享元素借用，
+`slice.at(mut)(index)` 从可变 Slice 返回可变元素借用；越界访问 trap。Slice 不拥有也不析构元素，
+所有派生借用继续受原 Array 或 Vec 的 loan 和 region 约束。
+
 对应字面量：
 
 ```sc fragment
@@ -746,7 +758,7 @@ let inferred = forward_without_modifier(resource)
 
 ```sc fragment
 let r: borrow(i32) = borrow(value)
-let first(values: borrow(Slice(i32))): borrow(i32) = { borrow(values[0]) }
+let first(values: borrow(Slice(i32))): borrow(i32) = { values.at(0) }
 ```
 
 函数签名中只有一个输入借用可作为返回来源时，生命周期默认与该输入关联。存在多个可能来源、

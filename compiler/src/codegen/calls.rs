@@ -335,6 +335,15 @@ impl Analyzer {
             if name == "raw_borrow" {
                 return self.lower_raw_borrow(name, &groups, expected, context);
             }
+            if name == "raw_slice" {
+                return self.lower_raw_slice(&groups, expected, context);
+            }
+            if name == "raw_slice_len" {
+                return self.lower_raw_slice_len(&groups, context);
+            }
+            if name == "raw_slice_at" {
+                return self.lower_raw_slice_at(&groups, context);
+            }
             if name == "raw_trap" {
                 return self.lower_raw_trap(&groups, context);
             }

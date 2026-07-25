@@ -1186,6 +1186,49 @@ fn alloc_vec_owns_copy_and_resource_elements() {
 }
 
 #[test]
+fn slices_preserve_array_and_vec_borrow_safety() {
+    for (name, output) in native_fixture_outputs_in_parallel(&["slice_array.sc", "slice_vec.sc"]) {
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+
+    let trapped = salic()
+        .arg("run")
+        .arg(fixture("pass", "slice_out_of_bounds.sc"))
+        .output()
+        .expect("run out-of-bounds Slice fixture");
+    assert!(
+        !trapped.status.success(),
+        "Slice out-of-bounds access did not trap: {}",
+        output_text(&trapped)
+    );
+
+    for name in [
+        "slice_array_mut_borrow_conflict.sc",
+        "vec_slice_then_push.sc",
+        "slice_local_escape.sc",
+        "slice_bare_parameter.sc",
+        "slice_struct_field.sc",
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check invalid Slice borrow fixture");
+        assert!(!output.status.success(), "{name} unexpectedly compiled");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("borrow"),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
 fn generic_inherent_extensions_infer_and_dispatch_concrete_instances() {
     let fixtures = [
         "generic_inherent_extend.sc",

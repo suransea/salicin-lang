@@ -205,10 +205,18 @@ Borrow types and values are written with the declared `borrow` form: `borrow(T)`
 `borrow(mut)(T)`, and `borrow(A)(R)(T)`. `borrow(A)` refers to the closed access type; generic
 passing modifiers use the `(P: parameters): parameters` function kind.
 
-`core.memory` declares `Ptr(A: access = shared)(T)` as one raw-pointer family. Its source
-extensions provide `offset(index)` for either access and `init(value)` / `take()` only for
-`Ptr(mut)(T)`. These methods retain the `Unsafe` requirement of their underlying raw intrinsics;
-`init` expects uninitialized storage and `take` leaves storage uninitialized.
+`core.memory` declares the fixed-size `Array(T)(L)`, unsized `Slice(T)`, and
+`Ptr(A: access = shared)(T)` raw-pointer family. `Slice(T)` is never a first-class stored value:
+programs use `borrow(A)(R)(Slice(T))`, represented as a pointer and length while retaining the
+source loan and region. Array borrows unsize contextually, and `Vec(T).as_slice(A)()` borrows its
+initialized prefix without transferring ownership.
+
+The source-backed Slice extension provides `len()` and bounds-checked `at(index)`. Shared access is
+the default; `at(mut)(index)` returns a mutable element borrow when the Slice borrow is mutable.
+Out-of-bounds access traps. The pointer extension provides `offset(index)` for either access and
+`init(value)` / `take()` only for `Ptr(mut)(T)`. Pointer methods retain the `Unsafe` requirement of
+their underlying raw intrinsics; `init` expects uninitialized storage and `take` leaves storage
+uninitialized.
 
 `core.control` owns the edition-pinned contracts for compiler-lowered control functions. It is not
 part of the prelude. `do`, `try`, `throw`, and `unsafe` are ordinary source-backed functions over

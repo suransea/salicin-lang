@@ -235,6 +235,9 @@ impl ConstantEvaluator<'_> {
             | HirExprKind::RawAddress { .. }
             | HirExprKind::RawOffset { .. }
             | HirExprKind::RawBorrow { .. }
+            | HirExprKind::RawSlice { .. }
+            | HirExprKind::RawSliceLen(_)
+            | HirExprKind::RawSliceAt { .. }
             | HirExprKind::RawLoad(_)
             | HirExprKind::RawStore { .. }
             | HirExprKind::RawInit { .. }
@@ -1628,6 +1631,96 @@ impl<'a> FunctionEmitter<'a> {
                     value: pointer.value,
                 })
             }
+            HirExprKind::RawSlice {
+                pointer, length, ..
+            } => {
+                let pointer = self.emit_expr(pointer)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                let length = self.emit_expr(length)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                let pointer_value = self.fresh_register();
+                self.instruction(format!(
+                    "{pointer_value} = insertvalue {{ ptr, i64 }} poison, ptr {}, 0",
+                    pointer.value()?
+                ));
+                let slice = self.fresh_register();
+                self.instruction(format!(
+                    "{slice} = insertvalue {{ ptr, i64 }} {pointer_value}, i64 {}, 1",
+                    length.value()?
+                ));
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: Some(slice),
+                })
+            }
+            HirExprKind::RawSliceLen(slice) => {
+                let slice = self.emit_expr(slice)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                let length = self.fresh_register();
+                self.instruction(format!(
+                    "{length} = extractvalue {{ ptr, i64 }} {}, 1",
+                    slice.value()?
+                ));
+                Ok(Operand {
+                    ty: Ty::U64,
+                    value: Some(length),
+                })
+            }
+            HirExprKind::RawSliceAt { slice, index } => {
+                let slice = self.emit_expr(slice)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                let index = self.emit_expr(index)?;
+                if self.terminated {
+                    return Ok(Operand::never());
+                }
+                let pointer = self.fresh_register();
+                self.instruction(format!(
+                    "{pointer} = extractvalue {{ ptr, i64 }} {}, 0",
+                    slice.value()?
+                ));
+                let length = self.fresh_register();
+                self.instruction(format!(
+                    "{length} = extractvalue {{ ptr, i64 }} {}, 1",
+                    slice.value()?
+                ));
+                let in_bounds = self.fresh_register();
+                self.instruction(format!(
+                    "{in_bounds} = icmp ult i64 {}, {length}",
+                    index.value()?
+                ));
+                let ok_label = self.fresh_label("slice.index.ok");
+                let trap_label = self.fresh_label("slice.index.trap");
+                self.terminate(format!(
+                    "br i1 {in_bounds}, label %{ok_label}, label %{trap_label}"
+                ));
+                self.start_block(&trap_label);
+                self.instruction("call void @llvm.trap()");
+                self.terminate("unreachable");
+                self.start_block(&ok_label);
+                let Ty::Reference { pointee, .. } = &expression.ty else {
+                    return Err(Diagnostic::new(
+                        "internal error: raw slice element result is not a reference",
+                    ));
+                };
+                let element_pointer = self.fresh_register();
+                self.instruction(format!(
+                    "{element_pointer} = getelementptr {}, ptr {pointer}, i64 {}",
+                    llvm_value_type(pointee)?,
+                    index.value()?
+                ));
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: Some(element_pointer),
+                })
+            }
             HirExprKind::RawAddress { place } => Ok(Operand {
                 ty: expression.ty.clone(),
                 value: Some(self.emit_place_address(place)?),
@@ -2086,8 +2179,8 @@ impl<'a> FunctionEmitter<'a> {
                             if place.ty == Ty::Unit {
                                 continue;
                             }
-                            let pointer = self.emit_borrow_address(place)?;
-                            emitted_arguments.push(format!("ptr {pointer}"));
+                            let (ty, value) = self.emit_borrow_call_argument(place)?;
+                            emitted_arguments.push(format!("{ty} {value}"));
                         }
                         HirArgument::CallableCaptureBorrow {
                             binding,
@@ -2160,8 +2253,8 @@ impl<'a> FunctionEmitter<'a> {
                         }
                         HirArgument::SharedBorrow(place) | HirArgument::MutBorrow(place) => {
                             if place.ty != Ty::Unit {
-                                emitted_arguments
-                                    .push(format!("ptr {}", self.emit_borrow_address(place)?));
+                                let (ty, value) = self.emit_borrow_call_argument(place)?;
+                                emitted_arguments.push(format!("{ty} {value}"));
                             }
                         }
                         HirArgument::CallableCaptureBorrow {
@@ -2301,8 +2394,8 @@ impl<'a> FunctionEmitter<'a> {
                             if place.ty == Ty::Unit {
                                 continue;
                             }
-                            let pointer = self.emit_borrow_address(place)?;
-                            emitted_arguments.push(format!("ptr {pointer}"));
+                            let (ty, value) = self.emit_borrow_call_argument(place)?;
+                            emitted_arguments.push(format!("{ty} {value}"));
                         }
                         HirArgument::CallableCaptureBorrow {
                             binding,
@@ -2605,7 +2698,7 @@ impl<'a> FunctionEmitter<'a> {
             {
                 let Ty::Array(_, length) = &place.ty else {
                     return Err(Diagnostic::new(
-                        "slice borrow requires an array place in the first slice implementation",
+                        "array-to-Slice unsizing requires an array place",
                     ));
                 };
                 let pointer = self.emit_place_address(place)?;
@@ -3865,6 +3958,27 @@ impl<'a> FunctionEmitter<'a> {
             return Ok(environment);
         }
         self.emit_place_address(place)
+    }
+
+    fn emit_borrow_call_argument(
+        &mut self,
+        place: &HirPlace,
+    ) -> Result<(String, String), Diagnostic> {
+        if matches!(place.ty, Ty::Slice(_))
+            && place.projections.is_empty()
+            && place.dynamic_index.is_none()
+        {
+            let storage = self.locals.get(&place.local).cloned().ok_or_else(|| {
+                Diagnostic::new(format!(
+                    "internal error: unknown Slice borrow local id {} in function `{}`",
+                    place.local, self.function.name
+                ))
+            })?;
+            let value = self.fresh_register();
+            self.instruction(format!("{value} = load {{ ptr, i64 }}, ptr {storage}"));
+            return Ok(("{ ptr, i64 }".to_owned(), value));
+        }
+        Ok(("ptr".to_owned(), self.emit_borrow_address(place)?))
     }
 
     fn emit_place_address(&mut self, place: &HirPlace) -> Result<String, Diagnostic> {
