@@ -291,7 +291,8 @@ and cleanup. A borrow cannot cross suspension together with a local referent sto
 future because `Future` requires `Move`; external region-checked borrows remain permitted.
 `if` and `match` branches consisting of one tail await select their child before using this same
 polling contract. Different concrete child types use a private active-variant future when their
-Output agrees. General control-flow suspension remains compiler work.
+Output agrees. Each branch retains its own linear locals across suspension; a branch without await
+is an immediate Ready future. Loop suspension remains compiler work.
 
 ```sc fragment
 pub let do(E: effect, T: type)

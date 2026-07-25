@@ -1385,8 +1385,28 @@ fn split_async_source(body: &Expr) -> AsyncSourcePlan {
                 retained: Vec::new(),
             };
         }
-        Expr::Block(_, Some(tail)) => {
+        Expr::Block(statements, Some(tail)) => {
             if let Expr::Await(operand) = tail.unlocated() {
+                if !statements.is_empty() {
+                    let result = "$async$tail$result".to_owned();
+                    let mut rewritten = statements.clone();
+                    rewritten.push(Stmt::Let(crate::ast::Binding {
+                        mutable: false,
+                        name: result.clone(),
+                        annotation: None,
+                        value: Expr::Await(Box::new((**operand).clone())),
+                        value_source: None,
+                    }));
+                    rewritten.extend(
+                        non_borrow_binding_names(statements)
+                            .into_iter()
+                            .map(|name| Stmt::Expr(Expr::Name(name))),
+                    );
+                    return split_async_source(&Expr::Block(
+                        rewritten,
+                        Some(Box::new(Expr::Name(result))),
+                    ));
+                }
                 **tail = (**operand).clone();
                 return AsyncSourcePlan {
                     factory_body: body,
@@ -1451,28 +1471,7 @@ fn split_async_source(body: &Expr) -> AsyncSourcePlan {
             ))
         })
         .collect::<Vec<_>>();
-    let mut borrowed_names = statements[..position]
-        .iter()
-        .filter_map(|statement| {
-            let Stmt::Let(binding) = statement else {
-                return None;
-            };
-            (matches!(binding.annotation, Some(crate::ast::Type::Borrow { .. }))
-                || matches!(binding.value.unlocated(), Expr::Borrow { .. }))
-            .then(|| binding.name.clone())
-        })
-        .collect::<std::collections::HashSet<_>>();
-    loop {
-        let mut changed = false;
-        for (binding, referent) in &dependencies {
-            if borrowed_names.contains(referent) {
-                changed |= borrowed_names.insert(binding.clone());
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
+    let borrowed_names = borrowed_binding_names(&statements[..position]);
     loop {
         let mut changed = false;
         for (binding, referent) in &dependencies {
@@ -1546,19 +1545,35 @@ fn hoist_control_await(expression: &Expr) -> Option<Expr> {
             then_branch,
             else_branch: Some(else_branch),
         } => {
-            let then_future = tail_await_operand(then_branch)?;
-            let else_future = tail_await_operand(else_branch)?;
+            let then_future = branch_await_future(then_branch);
+            let else_future = branch_await_future(else_branch);
+            if then_future.is_none() && else_future.is_none() {
+                return None;
+            }
             Some(Expr::If {
                 condition: condition.clone(),
-                then_branch: Box::new(then_future),
-                else_branch: Some(Box::new(else_future)),
+                then_branch: Box::new(then_future.unwrap_or_else(|| Expr::Async {
+                    body: then_branch.clone(),
+                })),
+                else_branch: Some(Box::new(else_future.unwrap_or_else(|| Expr::Async {
+                    body: else_branch.clone(),
+                }))),
             })
         }
         Expr::Match { scrutinee, arms } if !arms.is_empty() => {
+            let futures = arms
+                .iter()
+                .map(|arm| branch_await_future(&arm.body))
+                .collect::<Vec<_>>();
+            if futures.iter().all(Option::is_none) {
+                return None;
+            }
             let mut hoisted_arms = Vec::with_capacity(arms.len());
-            for arm in arms {
+            for (arm, future) in arms.iter().zip(futures) {
                 let mut arm = arm.clone();
-                arm.body = tail_await_operand(&arm.body)?;
+                arm.body = future.unwrap_or_else(|| Expr::Async {
+                    body: Box::new(arm.body.clone()),
+                });
                 hoisted_arms.push(arm);
             }
             Some(Expr::Match {
@@ -1570,16 +1585,93 @@ fn hoist_control_await(expression: &Expr) -> Option<Expr> {
     }
 }
 
+fn branch_await_future(expression: &Expr) -> Option<Expr> {
+    if let Some(future) = tail_await_operand(expression) {
+        return Some(future);
+    }
+    let Expr::Block(statements, _) = expression.unlocated() else {
+        return None;
+    };
+    statements
+        .iter()
+        .any(|statement| {
+            let Stmt::Let(binding) = statement else {
+                return false;
+            };
+            matches!(binding.value.unlocated(), Expr::Await(_))
+                || hoist_control_await(&binding.value).is_some()
+        })
+        .then(|| Expr::Async {
+            body: Box::new(expression.clone()),
+        })
+}
+
 fn tail_await_operand(expression: &Expr) -> Option<Expr> {
     match expression.unlocated() {
         Expr::Await(future) => Some((**future).clone()),
-        Expr::Block(statements, Some(tail)) if statements.is_empty() => {
+        Expr::Block(statements, Some(tail)) => {
             let Expr::Await(future) = tail.unlocated() else {
                 return None;
             };
-            Some((**future).clone())
+            if statements.is_empty() {
+                Some((**future).clone())
+            } else {
+                Some(Expr::Async {
+                    body: Box::new(expression.clone()),
+                })
+            }
         }
         _ => None,
+    }
+}
+
+fn non_borrow_binding_names(statements: &[Stmt]) -> Vec<String> {
+    let borrowed = borrowed_binding_names(statements);
+    statements
+        .iter()
+        .filter_map(|statement| {
+            let Stmt::Let(binding) = statement else {
+                return None;
+            };
+            (!borrowed.contains(&binding.name)).then(|| binding.name.clone())
+        })
+        .collect()
+}
+
+fn borrowed_binding_names(statements: &[Stmt]) -> std::collections::HashSet<String> {
+    let dependencies = statements
+        .iter()
+        .filter_map(|statement| {
+            let Stmt::Let(binding) = statement else {
+                return None;
+            };
+            Some((
+                binding.name.clone(),
+                async_initializer_root(&binding.value)?,
+            ))
+        })
+        .collect::<Vec<_>>();
+    let mut borrowed = statements
+        .iter()
+        .filter_map(|statement| {
+            let Stmt::Let(binding) = statement else {
+                return None;
+            };
+            (matches!(binding.annotation, Some(crate::ast::Type::Borrow { .. }))
+                || matches!(binding.value.unlocated(), Expr::Borrow { .. }))
+            .then(|| binding.name.clone())
+        })
+        .collect::<std::collections::HashSet<_>>();
+    loop {
+        let mut changed = false;
+        for (binding, referent) in &dependencies {
+            if borrowed.contains(referent) {
+                changed |= borrowed.insert(binding.clone());
+            }
+        }
+        if !changed {
+            return borrowed;
+        }
     }
 }
 

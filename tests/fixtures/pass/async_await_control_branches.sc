@@ -41,6 +41,14 @@ extend OtherStep: Future(()) {
   }
 }
 
+let step(value: i32): Step = {
+  Step { polled: false, value: value }
+}
+
+let other_step(value: i32): OtherStep = {
+  OtherStep { polled: false, value: value }
+}
+
 let Choice = enum {
   Left,
   Right
@@ -49,9 +57,11 @@ let Choice = enum {
 let main(): i32 = {
   let mut conditional = async {
     let value = if true {
-      await Step { polled: false, value: 20 }
+      let prefix = 19
+      let child = await step(1)
+      prefix + child
     } else {
-      await OtherStep { polled: false, value: 0 }
+      0
     }
     value
   }
@@ -64,8 +74,8 @@ let main(): i32 = {
 
   let mut matched = async {
     let value = match Choice.Left
-      { Left -> await Step { polled: false, value: 22 } }
-      { Right -> await OtherStep { polled: false, value: 0 } }
+      { Left -> await step(22) }
+      { Right -> await other_step(0) }
     value
   }
   match matched.poll()

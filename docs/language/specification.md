@@ -563,8 +563,8 @@ self-referential and therefore non-`Move`. Borrows of external storage remain su
 ordinary region and alias constraints. An `if` or `match` may place one tail await in every branch
 when every child future has the same Output; concrete child types may differ. The condition,
 scrutinee, and guards run once before suspension, and cancellation drops only the selected child.
-Branch-local statements before await, loop suspension, and other residual-effect cases are not
-implemented yet.
+Branch-local linear statements may surround await, and a non-suspending branch completes
+immediately when selected. Loop suspension and other residual-effect cases are not implemented yet.
 
 `unsafe` is an authority effect. `unsafe { ... }` authorizes operations whose contracts cannot be
 verified by the safe type and ownership rules; it does not disable type checking or cleanup.

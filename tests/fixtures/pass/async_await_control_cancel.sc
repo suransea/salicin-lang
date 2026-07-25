@@ -10,6 +10,17 @@ let Second = struct {
   counter: Ptr(mut)(i32)
 }
 
+let Marker = struct {
+  counter: Ptr(mut)(i32),
+  amount: i32
+}
+
+extend Marker: Drop {
+  let drop(self: borrow(mut)(Self))(): () = { unsafe {
+    *self.counter = *self.counter + self.amount
+  } }
+}
+
 extend First: Drop {
   let drop(self: borrow(mut)(Self))(): () = { unsafe {
     *self.counter = *self.counter + 10
@@ -56,8 +67,10 @@ let main(): i32 = { unsafe {
   do {
     let mut future = async {
       if false {
+        let marker = Marker { counter: counter, amount: 1000 }
         await First { counter: counter }
       } else {
+        let marker = Marker { counter: counter, amount: 100 }
         await Second { counter: counter }
       }
     }
@@ -67,5 +80,5 @@ let main(): i32 = { unsafe {
   }
   let drops = *counter
   release(counter)
-  41 + drops
+  drops - 59
 } }

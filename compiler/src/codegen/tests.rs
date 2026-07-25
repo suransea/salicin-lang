@@ -7252,7 +7252,7 @@ let main(): i32 = {
         .iter()
         .all(|diagnostic| !diagnostic.message.contains("$lang$")));
 
-    let diagnostics = compile_text(
+    compile_text(
         r#"
 let main(): i32 = {
   let future = async {
@@ -7263,10 +7263,7 @@ let main(): i32 = {
 let child() = { async { 1 } }
 "#,
     )
-    .expect_err("await nested in control flow must remain an explicit lowering boundary");
-    assert!(diagnostics.iter().any(|diagnostic| diagnostic
-        .message
-        .contains("suspension nested in control flow is not implemented yet")));
+    .expect("an if branch may suspend while another branch completes immediately");
 
     let diagnostics = compile_text(
         r#"

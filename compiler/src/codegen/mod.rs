@@ -8789,7 +8789,7 @@ impl Analyzer {
             Expr::Async { body } => self.lower_async_expression(body, context),
             Expr::Await(_) => {
                 self.error(
-                    "`await` currently requires tail position or a direct `let` initializer in an async block; suspension nested in control flow is not implemented yet",
+                    "`await` in this position is not lowered yet; linear suspension and `if` or `match` branch suspension are supported, but loop suspension remains compiler work",
                 );
                 error_expr()
             }

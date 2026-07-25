@@ -34,8 +34,9 @@ The current task must lower suspension points nested in `if`, `match`, and loop 
 preserving branch-local liveness and deterministic cancellation. Homogeneous `if` and `match`
 branches whose bodies are a single tail await now hoist selection before one shared suspension.
 Branches may use different concrete child-future types when their Output agrees; a private
-active-variant future dispatches polling and cancellation. Branch-local prefixes and loop
-suspension remain. Residual algebraic-effect specialization is a separate follow-up task.
+active-variant future dispatches polling and cancellation. Branches may contain linear local
+prefixes and continuations, and branches without an await become immediate Ready futures. Loop
+suspension remains. Residual algebraic-effect specialization is a separate follow-up task.
 
 ## Later
 
