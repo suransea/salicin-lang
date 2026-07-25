@@ -235,7 +235,7 @@ Capability modules are separated by semantics:
 - `core.unsafe` owns the `Unsafe` authority effect and its lexical interpreter.
 - `core.result` owns only the `Result` data type and its ordinary protocols.
 - `core.control` owns structural control flow: `break`, `continue`, `return`, `do`, `loop`,
-  `while`, `if`, `match`, and `for`.
+  `while`, `if`, `match`, `for`, and lexical `defer`.
 
 `throw` and `Throws` are not Result-specific. `Throws(Error)` is an independent effect, while
 `try` is one interpreter that chooses `Result(Error)(T)` as its output. Other handlers may

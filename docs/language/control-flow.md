@@ -60,6 +60,21 @@ each iteration. `loop` has the type selected by its reachable `break` values.
 Each exit has type `Never`. Lowering must run cleanup for every initialized value whose scope is
 left, without dropping transferred values or running cleanup twice.
 
+## Deferred Actions
+
+`defer({ action })` registers `action` in the current lexical block. The action is captured at the
+registration point and invoked only when that block exits. Multiple actions run last-in,
+first-out.
+
+The block result, return value, break value, or thrown error is evaluated before deferred actions
+begin. Deferred actions therefore cannot change the selected exit value. A `continue` runs actions
+registered in the iteration body before starting the next iteration; a break or continue belonging
+to a nested loop does not exit an enclosing block outside that loop.
+
+`defer` is valid only as a standalone statement. Its action has type `(): () with(E)`, so ordinary
+effect checking and handler selection apply to the invocation. Lowering must preserve the action's
+capture ownership and must not expose compiler-generated binding names in diagnostics.
+
 ## Partial Functions and Cases
 
 A case is a partial function from a scrutinee type to an arm result. It consists of:

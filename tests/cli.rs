@@ -3013,12 +3013,28 @@ fn m1_loops_and_arrays_run_with_expected_result() {
 
 #[test]
 fn defer_runs_lexical_actions_lifo_on_all_control_exits() {
+    for (name, output) in
+        native_fixture_outputs_in_parallel(&["defer_control.sc", "defer_throw.sc"])
+    {
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name}: {}",
+            output_text(&output)
+        );
+    }
+
     let output = salic()
-        .arg("run")
-        .arg(fixture("pass", "defer_control.sc"))
+        .arg("check")
+        .arg(fixture("fail", "defer_expression_position.sc"))
         .output()
-        .expect("run defer control fixture");
-    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+        .expect("check rejected defer expression");
+    assert!(!output.status.success(), "{}", output_text(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("only valid as a standalone statement"),
+        "{}",
+        output_text(&output)
+    );
 }
 
 #[test]

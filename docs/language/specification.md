@@ -493,6 +493,12 @@ the validated source traits `core.iter.IntoIterator` and `core.iter.Iterator`, t
 `return(value)` exits the nearest named function or closure. `break(value)` exits the nearest
 loop. `continue()` starts its next iteration. These exits have type `Never`.
 
+`defer({ action })` registers a zero-argument action for the current lexical block. Registration
+evaluates and captures the action immediately. Registered actions run in reverse registration
+order after the block result or exit value is evaluated and before control leaves the block.
+They run on normal completion, `return`, `break`, `continue`, and `throw`. `defer` is a statement,
+not a value-producing expression.
+
 Assignment evaluates the target place once, then evaluates the new value. Compound assignment also
 resolves the target only once.
 

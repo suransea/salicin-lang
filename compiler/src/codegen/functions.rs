@@ -229,6 +229,10 @@ impl Analyzer {
         };
 
         let body = self.lower_lexical_defers(body);
+        self.functions
+            .get_mut(name)
+            .expect("lowered function exists")
+            .body = Some(body.clone());
         let requires_resumable_lowering = function.effects.custom.iter().any(|effect| {
             let Type::Named(effect_name, _) = effect else {
                 return false;

@@ -101,6 +101,7 @@ Implemented data and control features include:
 - exhaustive `match` with guards;
 - `if`, `loop`, `while`, post-test loops, and `for`;
 - `break`, `continue`, and `return`;
+- lexical `defer` with LIFO execution on normal, loop, return, and error exits;
 - checked arithmetic, comparisons, bitwise operations, shifts, and compound assignment;
 - deterministic left-to-right evaluation;
 - optional chaining, coalescing, error propagation, and forced unwrap.

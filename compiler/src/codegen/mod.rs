@@ -8786,6 +8786,10 @@ impl Analyzer {
             Expr::CompoundAssign(place, operator, value) => {
                 self.lower_compound_assign(place, *operator, value, context)
             }
+            Expr::Call(_, _) if defer::is_defer_call(expression) => {
+                self.error("`defer` is only valid as a standalone statement in a lexical block");
+                error_expr()
+            }
             Expr::Call(_, _) => self.lower_call(expression, expected, context),
             Expr::StructLiteral {
                 constructor,

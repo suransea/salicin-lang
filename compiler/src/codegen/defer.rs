@@ -173,7 +173,7 @@ impl Analyzer {
                     if let Some(action) = take_defer_action(&expression) {
                         let name = self.fresh_defer_name("action");
                         rewritten.push(Stmt::Let(Binding {
-                            mutable: false,
+                            mutable: true,
                             name: name.clone(),
                             annotation: None,
                             value: action,
@@ -214,6 +214,9 @@ impl Analyzer {
     ) -> Expr {
         if actions.is_empty() {
             return expression;
+        }
+        if let Some(value) = take_standard_throw_value(&expression) {
+            return self.defer_before_exit(Some(value), actions, ExitKind::Throw);
         }
         match expression {
             Expr::Located {
@@ -350,10 +353,31 @@ enum ExitKind {
 }
 
 fn take_defer_action(expression: &Expr) -> Option<Expr> {
+    if !is_defer_call(expression) {
+        return None;
+    }
+    let Expr::Call(_, arguments) = expression.unlocated() else {
+        return None;
+    };
+    let [argument] = arguments.as_slice() else {
+        return None;
+    };
+    Some(argument.value.clone())
+}
+
+pub(super) fn is_defer_call(expression: &Expr) -> bool {
+    matches!(
+        expression.unlocated(),
+        Expr::Call(callee, _)
+            if matches!(callee.unlocated(), Expr::Name(name) if name == "core::control::defer")
+    )
+}
+
+fn take_standard_throw_value(expression: &Expr) -> Option<Expr> {
     let Expr::Call(callee, arguments) = expression.unlocated() else {
         return None;
     };
-    if !matches!(callee.unlocated(), Expr::Name(name) if name == "core::control::defer") {
+    if !matches!(callee.unlocated(), Expr::Name(name) if name == "core::error::throw") {
         return None;
     }
     let [argument] = arguments.as_slice() else {

@@ -6,6 +6,9 @@ subset.
 
 ## Unreleased
 
+- Added source-backed lexical `defer`, with compiler lowering that captures actions at registration
+  and runs them in LIFO order after exit-value evaluation on normal completion, `return`, `break`,
+  `continue`, and standard `throw` paths.
 - Declared `Continuation(Input, Output)` and `EffectCallable(Input, Output, Answer)` as bodyless
   type forms, matching their compiler-owned representations instead of describing them as empty
   structures. Lang-item validation now requires the exact type-form declarations.
