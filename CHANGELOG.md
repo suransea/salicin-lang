@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.190.0 - 2026-07-26
+
 - Added the core-private complete `builtin()` initializer for every
   compiler-owned function, type, type constructor, and intrinsic extension
   method. The unique private `let builtin(): Never = builtin()` bootstrap is
