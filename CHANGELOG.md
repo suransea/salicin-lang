@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.197.0 - 2026-07-26
+
 - Extended heterogeneous residual async branch specialization from direct
   two-way `if` to general direct `match`. The source selection helper
   preserves pattern payload scope and move-only selector ownership, stages
