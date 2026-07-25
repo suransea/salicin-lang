@@ -8,3 +8,7 @@ let main(): i32 = {
     *same
   }
 }
+
+test("raw_pointer_offset_shared.sc") {
+  main() == 42
+}

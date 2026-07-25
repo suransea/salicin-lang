@@ -11,11 +11,10 @@ subset.
   a reference to its temporary source slot, normalizes resume parameters back
   to ordinary borrow channels, and preserves source-loan exclusion while the
   future is alive.
-- Migrated compatible native execution fixture groups to generated
-  `test("fixture") { main() == 42 }` registrations in isolated modules. Each
-  group now emits and links one runner instead of one executable per fixture;
-  trap fixtures remain independent so every expected process failure still
-  executes.
+- Migrated pass fixtures to source-declared
+  `test("fixture") { main() == 42 }` registrations. Compatible groups now emit
+  and link one runner directly from those registrations; trap fixtures remain
+  independent so every expected process failure still executes.
 
 ## 0.187.0 - 2026-07-26
 

@@ -10,3 +10,7 @@ let main(): i32 = {
       { _ -> 0 }
   }
 }
+
+test("algebraic_effect_expression_traversal.sc") {
+  main() == 42
+}

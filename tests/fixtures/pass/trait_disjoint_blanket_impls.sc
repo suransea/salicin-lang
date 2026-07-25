@@ -16,3 +16,7 @@ let main(): i32 = {
   let cell = Cell { value: true }
   42
 }
+
+test("trait_disjoint_blanket_impls.sc") {
+  main() == 42
+}

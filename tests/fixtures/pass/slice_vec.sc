@@ -20,3 +20,7 @@ let main(): i32 = {
     0
   }
 }
+
+test("slice_vec.sc") {
+  main() == 42
+}

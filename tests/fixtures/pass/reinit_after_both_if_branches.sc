@@ -14,3 +14,7 @@ let restore(select_first: bool): i32 = {
 }
 
 let main(): i32 = { restore(true) + restore(false) }
+
+test("reinit_after_both_if_branches.sc") {
+  main() == 42
+}

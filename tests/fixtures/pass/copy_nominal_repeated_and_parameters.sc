@@ -12,3 +12,7 @@ let main(): i32 = {
   let second = pair
   first.left + second.right + read_left(pair) + read_right(pair)
 }
+
+test("copy_nominal_repeated_and_parameters.sc") {
+  main() == 42
+}

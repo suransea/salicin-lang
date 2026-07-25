@@ -21,3 +21,7 @@ let main(): i32 = {
     { Err(_) -> 0 }
   from_some + from_none + from_ok + from_err
 }
+
+test("core_inferred_variants.sc") {
+  main() == 42
+}

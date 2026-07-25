@@ -3,3 +3,7 @@ let main(): i32 = {
   value = value + 2
   value
 }
+
+test("block_mutation.sc") {
+  main() == 42
+}

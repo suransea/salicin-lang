@@ -10,3 +10,7 @@ let main(): i32 = {
   increment_both(pair.left, pair.right)
   pair.left + pair.right
 }
+
+test("disjoint_mut_field_borrows.sc") {
+  main() == 42
+}

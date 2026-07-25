@@ -7,3 +7,7 @@ let Outer = struct { middle: Middle }
 let main(): i32 = {
   Option(Outer).Some(Outer { middle: Middle { inner: Inner { answer: 42 } } })?.middle?.inner?.answer ?? 0
 }
+
+test("chain_consecutive_fields.sc") {
+  main() == 42
+}

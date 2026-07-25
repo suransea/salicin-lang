@@ -14,3 +14,7 @@ let main(): i32 = {
   let choice = Choice.Answer( answer: 42 )
   choice.unwrap()
 }
+
+test("inherent_enum_method.sc") {
+  main() == 42
+}

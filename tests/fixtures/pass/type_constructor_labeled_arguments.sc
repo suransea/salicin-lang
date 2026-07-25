@@ -24,3 +24,7 @@ let main(): i32 = {
   let pair: Pair(V: bool, K: i32) = make()
   if pair.value { read(Pair(i32, bool))(pair) + 1 } else { 0 }
 }
+
+test("type_constructor_labeled_arguments.sc") {
+  main() == 42
+}

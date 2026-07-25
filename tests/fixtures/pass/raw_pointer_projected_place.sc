@@ -22,3 +22,7 @@ let main(): i32 = {
   }
   pair.left + pair.right + values[0] + values[1] - 22
 }
+
+test("raw_pointer_projected_place.sc") {
+  main() == 42
+}

@@ -40,3 +40,7 @@ let main(): i32 = { unsafe {
   release(counter)
   41 + drops
 } }
+
+test("async_cold_cancel.sc") {
+  main() == 42
+}

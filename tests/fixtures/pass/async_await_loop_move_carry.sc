@@ -94,3 +94,7 @@ let main(): i32 = {
 
   output + unsafe { *drops_ptr }
 }
+
+test("async_await_loop_move_carry.sc") {
+  main() == 42
+}

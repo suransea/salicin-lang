@@ -24,3 +24,7 @@ let main(): i32 = {
     program()
   }
 }
+
+test("algebraic_effect_owned_state_loop.sc") {
+  main() == 42
+}

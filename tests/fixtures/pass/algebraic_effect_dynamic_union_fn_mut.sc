@@ -28,3 +28,7 @@ let main(): i32 = {
     first_result + second_result - 22
   }
 }
+
+test("algebraic_effect_dynamic_union_fn_mut.sc") {
+  main() == 42
+}

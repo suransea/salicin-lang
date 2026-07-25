@@ -4,3 +4,7 @@ let main(): i32 = {
   let cell: Cell(i64) = Cell { value: 42 }
   if cell.value == 42 { 42 } else { 0 }
 }
+
+test("infer_nominal_from_expected.sc") {
+  main() == 42
+}

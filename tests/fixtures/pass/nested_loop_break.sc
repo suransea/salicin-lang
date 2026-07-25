@@ -8,3 +8,7 @@ let main(): i32 = {
     break(answer)
   }
 }
+
+test("nested_loop_break.sc") {
+  main() == 42
+}

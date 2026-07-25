@@ -5,3 +5,7 @@ let main(): i32 = {
   let answer = Cell(i32) { value: 42 }
   if flag.value { answer.value } else { 0 }
 }
+
+test("generic_nominal_multiple_instances.sc") {
+  main() == 42
+}

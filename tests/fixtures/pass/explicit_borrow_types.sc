@@ -17,3 +17,7 @@ let main(): i32 = {
   mutable.left = before + 20
   mutable.left + mutable.right + read(cell: Cell { value: 1 }) - 1
 }
+
+test("explicit_borrow_types.sc") {
+  main() == 42
+}

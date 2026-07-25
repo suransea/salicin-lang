@@ -6,3 +6,7 @@ let main(): i32 = { if identity(bool)(true) {
   0
 }
 }
+
+test("generic_multiple_instances.sc") {
+  main() == 42
+}

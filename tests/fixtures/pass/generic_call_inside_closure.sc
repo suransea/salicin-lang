@@ -6,3 +6,7 @@ let through_closure(T: type)(move value: T): T = {
 }
 
 let main(): i32 = { through_closure(i32)(42) }
+
+test("generic_call_inside_closure.sc") {
+  main() == 42
+}

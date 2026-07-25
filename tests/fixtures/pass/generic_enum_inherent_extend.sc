@@ -14,3 +14,7 @@ let main(): i32 = {
   let value = Maybe.Some(42)
   value.unwrap_or(0)
 }
+
+test("generic_enum_inherent_extend.sc") {
+  main() == 42
+}

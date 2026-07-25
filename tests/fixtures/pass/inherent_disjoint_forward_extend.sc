@@ -12,3 +12,7 @@ let main(): i32 = {
   let number = Number { value: 40 }
   number.read() + Number.bonus
 }
+
+test("inherent_disjoint_forward_extend.sc") {
+  main() == 42
+}

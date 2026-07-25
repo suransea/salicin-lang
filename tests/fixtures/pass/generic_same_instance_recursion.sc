@@ -6,3 +6,7 @@ let bounce(T: type)(move value: T)(again: bool): T = { if again {
 }
 
 let main(): i32 = { bounce(i32)(42)(true) }
+
+test("generic_same_instance_recursion.sc") {
+  main() == 42
+}

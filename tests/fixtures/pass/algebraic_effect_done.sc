@@ -7,3 +7,7 @@ let main(): i32 = {
     Probe.read()
   }
 }
+
+test("algebraic_effect_done.sc") {
+  main() == 42
+}

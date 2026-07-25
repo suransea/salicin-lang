@@ -31,3 +31,7 @@ let main(): i32 = {
   }
   read_option(mapped) + read_option(applied) + read_option(chained) - 43
 }
+
+test("functional_effect_forwarding.sc") {
+  main() == 42
+}

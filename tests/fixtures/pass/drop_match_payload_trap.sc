@@ -15,3 +15,7 @@ let main(): i32 = { match Choice.Pair(Resource { value: 1 }, Resource { value: 0
   } }
   { None -> 0 }
 }
+
+test("drop_match_payload_trap.sc") {
+  main() == 42
+}

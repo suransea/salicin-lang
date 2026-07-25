@@ -38,3 +38,7 @@ let main(): i32 = {
   }
   total + drop_count - 3
 }
+
+test("slice_iterator_resource.sc") {
+  main() == 42
+}

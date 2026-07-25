@@ -33,3 +33,7 @@ let main(): i32 = {
   let final_value = cell.view(shared)()
   read(final_value)
 }
+
+test("gat_borrow_family.sc") {
+  main() == 42
+}

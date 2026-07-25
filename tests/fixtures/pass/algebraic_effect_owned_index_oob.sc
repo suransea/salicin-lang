@@ -20,3 +20,7 @@ let main(): i32 = {
     program(1)
   }
 }
+
+test("algebraic_effect_owned_index_oob.sc") {
+  main() == 42
+}

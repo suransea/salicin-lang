@@ -12,3 +12,7 @@ let main(): i32 = {
   let different = Token { value: 8 }
   if left == same && left != different { 42 } else { 0 }
 }
+
+test("eq_operator_trait.sc") {
+  main() == 42
+}

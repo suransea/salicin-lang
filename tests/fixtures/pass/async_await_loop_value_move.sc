@@ -53,3 +53,7 @@ let main(): i32 = {
     { Ready(marker) -> () }
   40 + unsafe { *drops_ptr }
 }
+
+test("async_await_loop_value_move.sc") {
+  main() == 42
+}

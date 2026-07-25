@@ -29,3 +29,7 @@ let main(): i32 = {
     }
   total
 }
+
+test("while_let.sc") {
+  main() == 42
+}

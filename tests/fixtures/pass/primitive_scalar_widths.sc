@@ -52,3 +52,7 @@ let main(): i32 = {
     0
   }
 }
+
+test("primitive_scalar_widths.sc") {
+  main() == 42
+}

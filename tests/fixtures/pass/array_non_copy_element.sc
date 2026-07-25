@@ -8,3 +8,7 @@ let main(): i32 = {
   values[0] = Boxed { value: 40 }
   first + unwrap(values[0]) - unwrap(values[1]) - 16
 }
+
+test("array_non_copy_element.sc") {
+  main() == 42
+}

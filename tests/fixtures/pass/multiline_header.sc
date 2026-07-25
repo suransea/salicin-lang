@@ -4,3 +4,7 @@ let add(x: i32)
   = { x + y }
 
 let main(): i32 = { add(20)(22) }
+
+test("multiline_header.sc") {
+  main() == 42
+}

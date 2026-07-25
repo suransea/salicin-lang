@@ -18,3 +18,7 @@ let main(): i32 = {
   let answer = tick(left_count)(19) + tick(right_count)(23)
   if left_count == 1 && right_count == 1 { answer.value } else { 0 }
 }
+
+test("add_trait_operands_once.sc") {
+  main() == 42
+}

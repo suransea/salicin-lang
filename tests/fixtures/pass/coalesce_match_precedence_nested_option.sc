@@ -7,3 +7,7 @@ let main(): i32 = {
     { Some(value) -> value }
     { None -> 0 }
 }
+
+test("coalesce_match_precedence_nested_option.sc") {
+  main() == 42
+}

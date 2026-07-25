@@ -79,3 +79,7 @@ let main(): i32 = {
   outer_success + outer_abandon + inner_success + inner_abandon +
     drop_count + call_count - 128
 }
+
+test("algebraic_effect_owned_residual_unsafe.sc") {
+  main() == 42
+}

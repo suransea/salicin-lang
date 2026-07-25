@@ -20,3 +20,7 @@ let main(): i32 = {
     Ask.value() + order
   }
 }
+
+test("algebraic_effect_reusable_ordered_direct_action.sc") {
+  main() == 42
+}

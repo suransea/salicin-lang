@@ -5,3 +5,7 @@ let main(): i32 = {
   values.insert(1)(42)
   42
 }
+
+test("vec_insert_out_of_bounds.sc") {
+  main() == 42
+}

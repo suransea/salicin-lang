@@ -57,3 +57,7 @@ let main(): i32 = {
   }
   if result == 42 && drop_count == 1 { 42 } else { 0 }
 }
+
+test("async_residual_move_capture.sc") {
+  main() == 42
+}

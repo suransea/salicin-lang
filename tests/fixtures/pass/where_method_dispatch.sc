@@ -18,3 +18,7 @@ let main(): i32 = {
   let value = Value { value: 42 }
   forward(value)
 }
+
+test("where_method_dispatch.sc") {
+  main() == 42
+}

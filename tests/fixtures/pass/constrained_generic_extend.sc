@@ -16,3 +16,7 @@ let main(): i32 = {
   let cell = Cell.new(42)
   read_twice(cell)
 }
+
+test("constrained_generic_extend.sc") {
+  main() == 42
+}

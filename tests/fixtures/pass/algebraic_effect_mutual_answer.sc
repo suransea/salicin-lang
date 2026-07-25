@@ -17,3 +17,7 @@ let main(): i32 = {
     if odd(3) { 42 } else { 0 }
   }
 }
+
+test("algebraic_effect_mutual_answer.sc") {
+  main() == 42
+}

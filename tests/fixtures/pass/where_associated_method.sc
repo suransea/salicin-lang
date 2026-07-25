@@ -20,3 +20,7 @@ let main(): i32 = {
   let value = Value { value: 42 }
   forward(value)
 }
+
+test("where_associated_method.sc") {
+  main() == 42
+}

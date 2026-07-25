@@ -12,3 +12,7 @@ let main(): i32 = {
   let result: Result(bool)(i32) = try { unsafe { read(false) } }
   result ?? 0
 }
+
+test("return_type_effects.sc") {
+  main() == 42
+}

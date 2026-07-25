@@ -14,3 +14,7 @@ let main(): i32 = {
   let number = Number { value: 42 }
   number.descend(3)
 }
+
+test("inherent_recursive_method.sc") {
+  main() == 42
+}

@@ -8,3 +8,7 @@ let main(): i32 = {
   let snapshot = read(boxed)
   snapshot + consume(boxed) - 42
 }
+
+test("borrow_released_after_complete_call.sc") {
+  main() == 42
+}

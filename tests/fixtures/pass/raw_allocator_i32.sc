@@ -13,3 +13,7 @@ let main(): i32 = {
   }
   value
 }
+
+test("raw_allocator_i32.sc") {
+  main() == 42
+}

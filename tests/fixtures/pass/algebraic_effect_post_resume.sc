@@ -11,3 +11,7 @@ let main(): i32 = {
     program() + 1
   }
 }
+
+test("algebraic_effect_post_resume.sc") {
+  main() == 42
+}

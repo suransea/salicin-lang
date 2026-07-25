@@ -5,3 +5,7 @@ extend Number {
 }
 
 let main(): i32 = { Number { value: 20 }.add(Number { value: 22 }) }
+
+test("temporary_borrow_method_argument.sc") {
+  main() == 42
+}

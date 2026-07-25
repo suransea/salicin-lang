@@ -63,3 +63,7 @@ let main(): i32 = {
   }
   if drops == 4 { score + drops } else { 0 }
 }
+
+test("vec_reorder_resource.sc") {
+  main() == 42
+}

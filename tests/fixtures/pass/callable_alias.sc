@@ -27,3 +27,7 @@ let main(): i32 = {
 
   moved_closure(moved_partial(moved_resource_partial(1)))
 }
+
+test("callable_alias.sc") {
+  main() == 42
+}

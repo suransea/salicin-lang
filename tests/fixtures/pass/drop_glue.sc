@@ -14,3 +14,7 @@ let main(): i32 = {
   let value = Choice.Some(Wrapper { resource: Resource { value: 42 } })
   42
 }
+
+test("drop_glue.sc") {
+  main() == 42
+}

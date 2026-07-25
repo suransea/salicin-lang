@@ -6,3 +6,7 @@ let main(): i32 = {
   let wrapped = wrap(i32)(42)
   wrapped.value
 }
+
+test("generic_function_constructs_nominal.sc") {
+  main() == 42
+}

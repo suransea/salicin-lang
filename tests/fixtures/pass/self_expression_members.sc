@@ -39,3 +39,7 @@ let main(): i32 = {
   let origin = Point.origin.raw
   point + choice + wrapper + default + origin - 166
 }
+
+test("self_expression_members.sc") {
+  main() == 42
+}

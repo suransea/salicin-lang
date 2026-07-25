@@ -16,3 +16,7 @@ let main(): i32 = {
   let answer = Result(bool)(Adder).Err(true)?.add(side_effect(count)) ?? 42
   if count == 0 { answer } else { 0 }
 }
+
+test("chain_result_method_arguments_are_lazy.sc") {
+  main() == 42
+}

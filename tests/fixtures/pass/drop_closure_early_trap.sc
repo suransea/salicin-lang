@@ -15,3 +15,7 @@ let main(): i32 = {
   }}
   once(return(0))
 }
+
+test("drop_closure_early_trap.sc") {
+  main() == 42
+}

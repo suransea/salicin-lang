@@ -30,3 +30,7 @@ let main(): i32 = {
   }
   total
 }
+
+test("for_iterator.sc") {
+  main() == 42
+}

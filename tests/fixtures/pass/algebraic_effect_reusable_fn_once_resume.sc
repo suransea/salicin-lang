@@ -40,3 +40,7 @@ let main(): i32 = {
   }
   result
 }
+
+test("algebraic_effect_reusable_fn_once_resume.sc") {
+  main() == 42
+}

@@ -19,3 +19,7 @@ let main(): i32 = {
   let result = 1 + run(alias)(1) - 1
   result + total + padding
 }
+
+test("algebraic_effect_reusable_fn_mut_action.sc") {
+  main() == 42
+}

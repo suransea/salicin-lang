@@ -32,3 +32,7 @@ let main(): i32 = {
   }
   if second == 21 { first + third } else { 0 }
 }
+
+test("vec_borrow.sc") {
+  main() == 42
+}

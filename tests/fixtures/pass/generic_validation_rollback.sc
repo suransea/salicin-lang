@@ -8,3 +8,7 @@ let preserve(T: type)(move value: T): T = {
 }
 
 let main(): i32 = { preserve(i32)(42) }
+
+test("generic_validation_rollback.sc") {
+  main() == 42
+}

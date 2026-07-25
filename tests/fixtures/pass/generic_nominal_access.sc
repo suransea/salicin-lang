@@ -19,3 +19,7 @@ let main(): i32 = {
   let cell = with_access(shared, i32)(borrow(value))
   read(cell.value)
 }
+
+test("generic_nominal_access.sc") {
+  main() == 42
+}

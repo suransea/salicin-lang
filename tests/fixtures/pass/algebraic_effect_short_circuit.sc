@@ -8,3 +8,7 @@ let main(): i32 = {
     if skipped { 0 } else { 42 }
   }
 }
+
+test("algebraic_effect_short_circuit.sc") {
+  main() == 42
+}

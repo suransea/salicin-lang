@@ -25,3 +25,7 @@ let main(): i32 = {
   choose(Choice.Pair(Resource { value: 1 }, 0)) +
     choose(Choice.Pair(Resource { value: 1 }, 42))
 }
+
+test("match_literal_resource_guard.sc") {
+  main() == 42
+}

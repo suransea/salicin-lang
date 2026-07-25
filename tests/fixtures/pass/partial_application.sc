@@ -4,3 +4,7 @@ let main(): i32 = {
   let add_two = add(2)
   add_two(40)
 }
+
+test("partial_application.sc") {
+  main() == 42
+}

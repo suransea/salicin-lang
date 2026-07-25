@@ -11,3 +11,7 @@ let main(): i32 = {
   }
   result + reached
 }
+
+test("algebraic_effect_abort.sc") {
+  main() == 42
+}

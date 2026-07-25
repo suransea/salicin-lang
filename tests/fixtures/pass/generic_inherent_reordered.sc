@@ -9,3 +9,7 @@ let main(): i32 = {
   let pair = Pair.new(42, true)
   pair.take_first()
 }
+
+test("generic_inherent_reordered.sc") {
+  main() == 42
+}

@@ -14,3 +14,7 @@ let main(): i32 = {
     { None -> 0 }
   from_some + from_none
 }
+
+test("infer_generic_enum_variant.sc") {
+  main() == 42
+}

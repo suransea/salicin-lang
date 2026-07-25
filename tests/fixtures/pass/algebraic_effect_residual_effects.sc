@@ -29,3 +29,7 @@ let main(): i32 = {
   }
   result ?? 0
 }
+
+test("algebraic_effect_residual_effects.sc") {
+  main() == 42
+}

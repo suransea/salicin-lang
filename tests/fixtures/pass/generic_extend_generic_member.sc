@@ -8,3 +8,7 @@ let main(): i32 = {
   let cell = Cell { value: 0 }
   cell.identity(i32)(42)
 }
+
+test("generic_extend_generic_member.sc") {
+  main() == 42
+}

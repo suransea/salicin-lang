@@ -37,3 +37,7 @@ let main(): i32 = { unsafe {
   release(counter)
   40 + ready + drops
 } }
+
+test("async_ready_poll.sc") {
+  main() == 42
+}

@@ -68,3 +68,7 @@ let main(): i32 = {
   }
   before + pair.left
 }
+
+test("returned_borrow.sc") {
+  main() == 42
+}

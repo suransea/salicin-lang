@@ -21,3 +21,7 @@ let main(): i32 = {
   let from_method = Holder { value: 0 }.into(move)()
   copied + moved_number + moved.value + explicit.value + from_method
 }
+
+test("passing_generic.sc") {
+  main() == 42
+}

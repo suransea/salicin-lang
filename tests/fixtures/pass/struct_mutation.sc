@@ -5,3 +5,7 @@ let main(): i32 = {
   counter.value = counter.value + 2
   counter.value
 }
+
+test("struct_mutation.sc") {
+  main() == 42
+}

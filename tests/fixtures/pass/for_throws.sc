@@ -49,3 +49,7 @@ let main(): i32 = {
   }
   (success ?? 0) + (failure ?? 0)
 }
+
+test("for_throws.sc") {
+  main() == 42
+}

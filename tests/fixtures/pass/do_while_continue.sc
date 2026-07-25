@@ -12,3 +12,7 @@ let main(): i32 = {
   }
   total
 }
+
+test("do_while_continue.sc") {
+  main() == 42
+}

@@ -12,3 +12,7 @@ let main(): i32 = {
     *shared + *mutable
   }
 }
+
+test("raw_pointer_access_family.sc") {
+  main() == 42
+}

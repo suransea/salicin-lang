@@ -15,3 +15,7 @@ let main(): i32 = {
     invoke(action)(20)
   }
 }
+
+test("algebraic_effect_capturing_closure.sc") {
+  main() == 42
+}

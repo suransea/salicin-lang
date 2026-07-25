@@ -30,3 +30,7 @@ let main(): i32 = {
   }
   first - 10 + second + third
 }
+
+test("box_borrow.sc") {
+  main() == 42
+}

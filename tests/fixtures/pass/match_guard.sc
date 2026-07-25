@@ -10,3 +10,7 @@ let classify(value: Number): i32 = { match value
 }
 
 let main(): i32 = { classify(Number.Value( value: 42 )) }
+
+test("match_guard.sc") {
+  main() == 42
+}

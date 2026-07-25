@@ -9,3 +9,7 @@ let main(): i32 = {
   increment(counter)(2)
   counter.value
 }
+
+test("mut_borrow_field_update.sc") {
+  main() == 42
+}

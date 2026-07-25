@@ -14,3 +14,7 @@ let main(): i32 = {
   let failure: Result(bool)(i32) = try { choose(true) }
   (success ?? 0) + (failure ?? 0)
 }
+
+test("do_forwards_throws.sc") {
+  main() == 42
+}

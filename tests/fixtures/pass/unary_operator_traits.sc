@@ -22,3 +22,7 @@ let main(): i32 = { if invert(false) {
   0
 }
 }
+
+test("unary_operator_traits.sc") {
+  main() == 42
+}

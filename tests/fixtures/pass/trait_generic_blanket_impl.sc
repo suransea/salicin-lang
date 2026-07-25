@@ -35,3 +35,7 @@ let main(): i32 = {
   let wrapped = Cell { value: leaf }
   wrapped.read() + read - 42
 }
+
+test("trait_generic_blanket_impl.sc") {
+  main() == 42
+}

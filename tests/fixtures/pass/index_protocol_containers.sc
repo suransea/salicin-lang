@@ -13,3 +13,7 @@ let main(): i32 = {
   slice[0] = 2
   from_vec + slice[0]
 }
+
+test("index_protocol_containers.sc") {
+  main() == 42
+}

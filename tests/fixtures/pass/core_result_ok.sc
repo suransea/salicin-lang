@@ -6,3 +6,7 @@ let main(): i32 = {
     { Ok(item) -> item }
     { Err(_) -> 0 }
 }
+
+test("core_result_ok.sc") {
+  main() == 42
+}

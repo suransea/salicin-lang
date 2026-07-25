@@ -38,3 +38,7 @@ let main(): i32 = {
     (9 << 1) == 18 && (-8 >> 2) == -2 && unsigned_shift(8) == 2
   if value == 9 && builtins { 42 } else { 0 }
 }
+
+test("bitwise_operator_traits.sc") {
+  main() == 42
+}

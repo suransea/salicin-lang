@@ -40,3 +40,7 @@ let main(): i32 = {
   } ?? 0
   success + failure
 }
+
+test("raise_custom.sc") {
+  main() == 42
+}

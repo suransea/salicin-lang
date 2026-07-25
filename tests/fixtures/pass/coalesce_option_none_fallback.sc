@@ -10,3 +10,7 @@ let main(): i32 = {
   let answer = Option(i32).None ?? fallback(count)
   if count == 1 { answer } else { 0 }
 }
+
+test("coalesce_option_none_fallback.sc") {
+  main() == 42
+}

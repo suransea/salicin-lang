@@ -25,3 +25,7 @@ let main(): i32 = {
   }
   40 + drops
 }
+
+test("array_resource_nested_drop.sc") {
+  main() == 42
+}

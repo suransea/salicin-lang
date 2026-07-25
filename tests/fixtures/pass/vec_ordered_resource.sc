@@ -75,3 +75,7 @@ let main(): i32 = {
     0
   }
 }
+
+test("vec_ordered_resource.sc") {
+  main() == 42
+}

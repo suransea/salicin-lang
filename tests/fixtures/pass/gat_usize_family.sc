@@ -20,3 +20,7 @@ let main(): i32 = {
   let values = Marker.keep(2)([20, 22])
   values[0] + values[1]
 }
+
+test("gat_usize_family.sc") {
+  main() == 42
+}

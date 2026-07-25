@@ -21,3 +21,7 @@ let main(): i32 = {
     first + second + 18
   }
 }
+
+test("algebraic_effect_dynamic_callable_alias.sc") {
+  main() == 42
+}

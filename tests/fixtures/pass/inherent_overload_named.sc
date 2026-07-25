@@ -12,3 +12,7 @@ let main(): i32 = {
   let counter = Counter.make(right: 19)
   counter.add(right: 21)
 }
+
+test("inherent_overload_named.sc") {
+  main() == 42
+}

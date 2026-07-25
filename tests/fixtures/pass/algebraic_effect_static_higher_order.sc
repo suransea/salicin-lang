@@ -16,3 +16,7 @@ let main(): i32 = {
     invoke(selected)
   }
 }
+
+test("algebraic_effect_static_higher_order.sc") {
+  main() == 42
+}

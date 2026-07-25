@@ -25,3 +25,7 @@ let main(): i32 = {
     classify(Input.Flag( value: true )) +
     classify(Input.Pair(Pair { left: 10, flag: true }))
 }
+
+test("match_literal_payload.sc") {
+  main() == 42
+}

@@ -11,3 +11,7 @@ let main(): i32 = { apply(increment)(20) + unsafe {
   apply(dangerous)(20)
 }
 }
+
+test("function_value_effect_generic.sc") {
+  main() == 42
+}

@@ -6,3 +6,7 @@ let main(): i32 = {
   let add_number = add(20)
   add_number(Number { value: 22 })
 }
+
+test("temporary_borrow_partial_call.sc") {
+  main() == 42
+}

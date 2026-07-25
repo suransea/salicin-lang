@@ -11,3 +11,7 @@ let main(): i32 = {
     combine(Step.next(19), Step.next(23))
   }
 }
+
+test("algebraic_effect_call_arguments.sc") {
+  main() == 42
+}

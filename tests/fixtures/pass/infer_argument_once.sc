@@ -10,3 +10,7 @@ let main(): i32 = {
   let value = identity(tick(count))
   if count == 1 { value } else { 0 }
 }
+
+test("infer_argument_once.sc") {
+  main() == 42
+}

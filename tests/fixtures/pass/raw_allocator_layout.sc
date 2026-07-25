@@ -17,3 +17,7 @@ let main(): i32 = {
   }
   payload.left + payload.right
 }
+
+test("raw_allocator_layout.sc") {
+  main() == 42
+}

@@ -10,3 +10,7 @@ let main(): i32 = {
   let first = number.read()
   first + number.take()
 }
+
+test("inherent_receiver_loan_released.sc") {
+  main() == 42
+}

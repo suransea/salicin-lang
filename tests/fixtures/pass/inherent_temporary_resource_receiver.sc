@@ -11,3 +11,7 @@ extend Resource: Drop {
   }}
 
 let main(): i32 = { Resource { value: 42 }.read() }
+
+test("inherent_temporary_resource_receiver.sc") {
+  main() == 42
+}

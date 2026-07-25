@@ -13,3 +13,7 @@ let main(): i32 = {
   let number = Number { value: 42 }
   number.convert()
 }
+
+test("trait_associated_output.sc") {
+  main() == 42
+}

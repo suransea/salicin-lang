@@ -15,3 +15,7 @@ let main(): i32 = {
     sum_reads(3)
   }
 }
+
+test("algebraic_effect_recursion.sc") {
+  main() == 42
+}

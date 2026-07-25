@@ -119,3 +119,7 @@ let main(): i32 = {
     0
   }
 }
+
+test("string_utf8.sc") {
+  main() == 42
+}

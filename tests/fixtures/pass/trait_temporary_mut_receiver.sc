@@ -12,3 +12,7 @@ extend Counter: Reset {
 }
 
 let main(): i32 = { Counter { value: 0 }.reset() }
+
+test("trait_temporary_mut_receiver.sc") {
+  main() == 42
+}

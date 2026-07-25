@@ -69,3 +69,7 @@ let main(): i32 = {
   }
   (success ?? 0) + (failure ?? 0) + drop_count - 2
 }
+
+test("for_throws_cleanup.sc") {
+  main() == 42
+}

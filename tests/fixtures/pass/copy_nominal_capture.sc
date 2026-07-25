@@ -24,3 +24,7 @@ let main(): i32 = {
     0
   }
 }
+
+test("copy_nominal_capture.sc") {
+  main() == 42
+}

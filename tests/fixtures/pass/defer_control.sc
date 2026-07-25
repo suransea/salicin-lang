@@ -78,3 +78,7 @@ let main(): i32 = { unsafe {
     0
   }
 } }
+
+test("defer_control.sc") {
+  main() == 42
+}

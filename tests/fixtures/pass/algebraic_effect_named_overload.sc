@@ -12,3 +12,7 @@ let main(): i32 = {
     choose()
   }
 }
+
+test("algebraic_effect_named_overload.sc") {
+  main() == 42
+}

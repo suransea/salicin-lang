@@ -45,3 +45,7 @@ let main(): i32 = {
   replaced = Resource { value: 1 }
   early() + looped() + inspect(Choice.Some(Resource { value: 1 })) + 39
 }
+
+test("drop_scope.sc") {
+  main() == 42
+}

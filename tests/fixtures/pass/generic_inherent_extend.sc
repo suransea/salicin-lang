@@ -15,3 +15,7 @@ let main(): i32 = {
   explicit.replace(2)
   left + explicit.take()
 }
+
+test("generic_inherent_extend.sc") {
+  main() == 42
+}

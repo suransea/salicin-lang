@@ -16,3 +16,7 @@ let main(): i32 = {
   let answer = Option(Adder).None?.add(side_effect(count)) ?? 42
   if count == 0 { answer } else { 0 }
 }
+
+test("chain_option_method_arguments_are_lazy.sc") {
+  main() == 42
+}

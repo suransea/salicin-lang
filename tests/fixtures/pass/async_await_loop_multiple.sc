@@ -101,3 +101,7 @@ let main(): i32 = {
   first + second + third + fourth + fifth + unsafe { *drops_ptr } +
     unsafe { *cancel_drops_ptr } - 2
 }
+
+test("async_await_loop_multiple.sc") {
+  main() == 42
+}

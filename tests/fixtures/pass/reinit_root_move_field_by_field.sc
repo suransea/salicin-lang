@@ -12,3 +12,7 @@ let main(): i32 = {
   pair.right = Payload { value: 11 }
   recovered_left + inspect(pair) + consume_pair(pair)
 }
+
+test("reinit_root_move_field_by_field.sc") {
+  main() == 42
+}

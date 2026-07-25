@@ -16,3 +16,7 @@ let classify(event: Event): i32 = { match event
 }
 
 let main(): i32 = { classify(Event.Value( value: Payload { value: 42 } )) }
+
+test("match_guard_copy_binding.sc") {
+  main() == 42
+}

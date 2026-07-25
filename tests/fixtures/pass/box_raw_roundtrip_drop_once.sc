@@ -20,3 +20,7 @@ let main(): i32 = {
   }
   41 + count
 }
+
+test("box_raw_roundtrip_drop_once.sc") {
+  main() == 42
+}

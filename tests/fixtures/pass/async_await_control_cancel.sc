@@ -82,3 +82,7 @@ let main(): i32 = { unsafe {
   release(counter)
   drops - 59
 } }
+
+test("async_await_control_cancel.sc") {
+  main() == 42
+}

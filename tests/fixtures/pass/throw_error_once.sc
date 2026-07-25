@@ -17,3 +17,7 @@ let main(): i32 = {
     { Ok(_) -> 0 }
     { Err(error) -> if error { 42 } else { 0 } }
 }
+
+test("throw_error_once.sc") {
+  main() == 42
+}

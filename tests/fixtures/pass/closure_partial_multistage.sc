@@ -5,3 +5,7 @@ let main(): i32 = {
   let add_two = add_one(1)
   add_two(1)
 }
+
+test("closure_partial_multistage.sc") {
+  main() == 42
+}

@@ -5,3 +5,7 @@ extend Number {
 }
 
 let main(): i32 = { Number.make(42).value }
+
+test("inherent_associated_function.sc") {
+  main() == 42
+}

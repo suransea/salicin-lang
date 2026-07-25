@@ -18,3 +18,7 @@ let main(): i32 = {
   let closure = make()
   closure(41)
 }
+
+test("closure_resource_return.sc") {
+  main() == 42
+}

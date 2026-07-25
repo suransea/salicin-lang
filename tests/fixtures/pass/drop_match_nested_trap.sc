@@ -19,3 +19,7 @@ let main(): i32 = { match Choice.Some(
   } }
   { None -> 0 }
 }
+
+test("drop_match_nested_trap.sc") {
+  main() == 42
+}

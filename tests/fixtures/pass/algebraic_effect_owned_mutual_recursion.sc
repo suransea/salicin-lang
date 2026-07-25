@@ -58,3 +58,7 @@ let main(): i32 = {
   }
   resumed + abandoned + drop_count - 58
 }
+
+test("algebraic_effect_owned_mutual_recursion.sc") {
+  main() == 42
+}

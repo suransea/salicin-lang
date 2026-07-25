@@ -41,3 +41,7 @@ let main(): i32 = {
     { Pending -> 0 }
     { Ready(value) -> value }
 }
+
+test("async_await_loop_value.sc") {
+  main() == 42
+}

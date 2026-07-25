@@ -12,3 +12,7 @@ let main(): i32 = {
   let cell = Cell(i32) { value: 42 }
   cell.read()
 }
+
+test("trait_generic_nominal_impl.sc") {
+  main() == 42
+}

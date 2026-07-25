@@ -20,3 +20,7 @@ let main(): i32 = {
   let fourth = result_return() ?? 0
   first + second + third + fourth
 }
+
+test("try_full_container_unchanged.sc") {
+  main() == 42
+}

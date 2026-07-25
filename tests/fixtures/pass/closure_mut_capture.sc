@@ -7,3 +7,7 @@ let main(): i32 = {
   bump()
   bump()
 }
+
+test("closure_mut_capture.sc") {
+  main() == 42
+}

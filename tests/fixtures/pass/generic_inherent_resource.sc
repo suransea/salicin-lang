@@ -32,3 +32,7 @@ let main(): i32 = {
   }
   41 + drops
 }
+
+test("generic_inherent_resource.sc") {
+  main() == 42
+}

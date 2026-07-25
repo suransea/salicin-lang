@@ -87,3 +87,7 @@ let main(): i32 = {
 
   first + second
 }
+
+test("async_await_control_branches.sc") {
+  main() == 42
+}

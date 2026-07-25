@@ -6,3 +6,7 @@ let main(): i32 = {
   let item = slice.at(2)
   item
 }
+
+test("slice_out_of_bounds.sc") {
+  main() == 42
+}

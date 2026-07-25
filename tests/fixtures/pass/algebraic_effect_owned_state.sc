@@ -52,3 +52,7 @@ let main(): i32 = {
   }
   resumed + abandoned + drop_count - 45
 }
+
+test("algebraic_effect_owned_state.sc") {
+  main() == 42
+}

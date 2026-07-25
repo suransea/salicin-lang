@@ -6,3 +6,7 @@ let main(): i32 = {
     { Some(item) -> item }
     { None -> 0 }
 }
+
+test("core_option_some.sc") {
+  main() == 42
+}

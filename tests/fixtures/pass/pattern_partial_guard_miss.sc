@@ -17,3 +17,7 @@ let main(): i32 = {
       { None -> 0 }
     }
 }
+
+test("pattern_partial_guard_miss.sc") {
+  main() == 42
+}

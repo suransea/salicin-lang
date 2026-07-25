@@ -20,3 +20,7 @@ extend(T: type) Cell(T) {
 let main(): i32 = {
   choose(left: 10) + Cell.choose(right: 10) + Cell(i32) { value: 0 }.add(left: 22)
 }
+
+test("generic_overload_named.sc") {
+  main() == 42
+}

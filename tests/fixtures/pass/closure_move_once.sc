@@ -7,3 +7,7 @@ let main(): i32 = {
   let once = { take(payload) }
   once()
 }
+
+test("closure_move_once.sc") {
+  main() == 42
+}

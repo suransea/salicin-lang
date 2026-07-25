@@ -11,3 +11,7 @@ let main(): i32 = {
     0
   }
 }
+
+test("box_method_context_inference.sc") {
+  main() == 42
+}

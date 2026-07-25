@@ -17,3 +17,7 @@ let main(): i32 = {
   let pending = make()
   42
 }
+
+test("callable_resource_return_abandon_trap.sc") {
+  main() == 42
+}

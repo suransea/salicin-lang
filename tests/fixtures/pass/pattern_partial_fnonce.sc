@@ -16,3 +16,7 @@ let main(): i32 = {
     { Hit(value) -> value }
     { Miss(_) -> 0 }
 }
+
+test("pattern_partial_fnonce.sc") {
+  main() == 42
+}

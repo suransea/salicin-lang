@@ -11,3 +11,7 @@ let main(): i32 = {
   let answer = Number { value: 40 } + 2
   answer.value
 }
+
+test("add_trait_nominal_i32_nominal_output.sc") {
+  main() == 42
+}

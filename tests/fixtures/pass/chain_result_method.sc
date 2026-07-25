@@ -7,3 +7,7 @@ extend Number {
 }
 
 let main(): i32 = { Result(bool)(Number).Ok(Number { value: 42 })?.take() ?? 0 }
+
+test("chain_result_method.sc") {
+  main() == 42
+}

@@ -52,3 +52,7 @@ let main(): i32 = {
   let third = early()
   first + second + third - 84
 }
+
+test("drop_partial_application.sc") {
+  main() == 42
+}

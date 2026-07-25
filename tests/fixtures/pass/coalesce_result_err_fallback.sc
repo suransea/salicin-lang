@@ -10,3 +10,7 @@ let main(): i32 = {
   let answer = Result(bool)(i32).Err(false) ?? fallback(count)
   if count == 1 { answer } else { 0 }
 }
+
+test("coalesce_result_err_fallback.sc") {
+  main() == 42
+}

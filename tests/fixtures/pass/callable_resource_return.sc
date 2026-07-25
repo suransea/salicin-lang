@@ -23,3 +23,7 @@ let main(): i32 = {
   let pending = original
   pending(42)
 }
+
+test("callable_resource_return.sc") {
+  main() == 42
+}

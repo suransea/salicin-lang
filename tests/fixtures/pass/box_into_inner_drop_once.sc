@@ -27,3 +27,7 @@ let main(): i32 = {
   }
   41 + drops
 }
+
+test("box_into_inner_drop_once.sc") {
+  main() == 42
+}

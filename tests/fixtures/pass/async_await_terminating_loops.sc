@@ -100,3 +100,7 @@ let main(): i32 = {
   loop_value + loop_pending + while_pending + while_ready + false_ready + condition_pending +
     condition_ready - 4
 }
+
+test("async_await_terminating_loops.sc") {
+  main() == 42
+}

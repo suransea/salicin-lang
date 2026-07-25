@@ -60,3 +60,7 @@ let main(): i32 = {
 
   implicit_value + explicit_value + unsafe { *fallthroughs_ptr } - 2
 }
+
+test("async_await_loop_fallthrough.sc") {
+  main() == 42
+}

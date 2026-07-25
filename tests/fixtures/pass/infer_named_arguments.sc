@@ -5,3 +5,7 @@ let main(): i32 = {
   let inferred = make(value: subtract(left: 44, right: 2))
   make(T: i32)(value: inferred)
 }
+
+test("infer_named_arguments.sc") {
+  main() == 42
+}

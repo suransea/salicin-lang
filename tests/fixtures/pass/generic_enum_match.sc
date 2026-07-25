@@ -9,3 +9,7 @@ let unwrap(move value: Maybe(i32)): i32 = { match value
 }
 
 let main(): i32 = { unwrap(Maybe(i32).Some(42)) }
+
+test("generic_enum_match.sc") {
+  main() == 42
+}

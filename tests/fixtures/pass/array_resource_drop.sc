@@ -28,3 +28,7 @@ let main(): i32 = {
   }
   39 + drops
 }
+
+test("array_resource_drop.sc") {
+  main() == 42
+}

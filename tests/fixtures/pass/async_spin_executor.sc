@@ -30,3 +30,7 @@ let main(): i32 = {
   let second: i32 = executor.run(ready)
   first + second
 }
+
+test("async_spin_executor.sc") {
+  main() == 42
+}

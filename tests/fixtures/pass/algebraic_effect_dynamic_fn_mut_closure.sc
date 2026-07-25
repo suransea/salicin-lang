@@ -20,3 +20,7 @@ let main(): i32 = {
     first + second + 18
   }
 }
+
+test("algebraic_effect_dynamic_fn_mut_closure.sc") {
+  main() == 42
+}

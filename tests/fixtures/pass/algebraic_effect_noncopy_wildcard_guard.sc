@@ -32,3 +32,7 @@ let main(): i32 = {
   }
   result + drops
 }
+
+test("algebraic_effect_noncopy_wildcard_guard.sc") {
+  main() == 42
+}

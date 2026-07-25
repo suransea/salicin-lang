@@ -9,3 +9,7 @@ let main(): i32 = {
   let holder = Holder { cell: Cell { value: 42 } }
   holder.cell.take()
 }
+
+test("generic_inherent_existing_instance.sc") {
+  main() == 42
+}

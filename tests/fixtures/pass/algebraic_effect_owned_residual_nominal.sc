@@ -80,3 +80,7 @@ let main(): i32 = {
   audit_success + audit_abandon + step_abandon + reverse_success +
     reverse_audit_abandon + reverse_step_abandon + drop_count - 212
 }
+
+test("algebraic_effect_owned_residual_nominal.sc") {
+  main() == 42
+}

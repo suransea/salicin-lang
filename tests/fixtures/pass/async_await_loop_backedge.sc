@@ -96,3 +96,7 @@ let main(): i32 = {
 
   first + second + third + fourth + immediate_ready - 1
 }
+
+test("async_await_loop_backedge.sc") {
+  main() == 42
+}

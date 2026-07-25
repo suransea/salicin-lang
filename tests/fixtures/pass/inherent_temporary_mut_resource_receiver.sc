@@ -14,3 +14,7 @@ extend Resource: Drop {
   }}
 
 let main(): i32 = { Resource { value: 41 }.increment() }
+
+test("inherent_temporary_mut_resource_receiver.sc") {
+  main() == 42
+}

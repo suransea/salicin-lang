@@ -18,3 +18,7 @@ let main(): i32 = {
   let answer = left + right
   left.value + right.value + answer.value
 }
+
+test("add_trait_copy_operands_reusable.sc") {
+  main() == 42
+}

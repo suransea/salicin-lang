@@ -12,3 +12,7 @@ let main(): i32 = {
   let once = { consume(resource) }
   0
 }
+
+test("drop_closure_abandon_trap.sc") {
+  main() == 42
+}

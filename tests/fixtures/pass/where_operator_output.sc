@@ -9,3 +9,7 @@ where T: Add(T, Output = T),
 }
 
 let main(): i32 = { twice(21) }
+
+test("where_operator_output.sc") {
+  main() == 42
+}

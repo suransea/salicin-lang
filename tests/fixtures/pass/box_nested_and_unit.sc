@@ -6,3 +6,7 @@ let main(): i32 = {
   let outer = Box.new(T: Box(i32))(inner)
   42
 }
+
+test("box_nested_and_unit.sc") {
+  main() == 42
+}

@@ -10,3 +10,7 @@ let main(): i32 = {
   let answer = make(count) ?? 0
   if count == 1 { answer } else { 0 }
 }
+
+test("coalesce_lhs_once.sc") {
+  main() == 42
+}

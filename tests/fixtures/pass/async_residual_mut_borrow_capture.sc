@@ -33,3 +33,7 @@ let main(): i32 = {
   let mut value = 2
   program(value)
 }
+
+test("async_residual_mut_borrow_capture.sc") {
+  main() == 42
+}

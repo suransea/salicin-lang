@@ -7,3 +7,7 @@ extend Number {
 }
 
 let main(): i32 = { Option(Number).Some(Number { value: 42 })?.read() ?? 0 }
+
+test("chain_borrowed_method.sc") {
+  main() == 42
+}

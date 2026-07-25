@@ -16,6 +16,8 @@ current capability inventory. It does not record release history; see the
 - native checking, IR emission, building, and running;
 - compile-time `test("name") { ... }` registrations collected into one native
   runner by `salic test`, with source-order execution and named failures;
+- source-declared pass-fixture tests batched into native runners by semantic
+  group, while process-terminating fixtures remain isolated;
 - project manifests, local path dependencies, and deterministic lockfiles.
 
 The command-line surface is:

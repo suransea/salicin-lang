@@ -14,3 +14,7 @@ extend Present: Unwrap {
 }
 
 let main(): i32 = { Present.Value(42)!! }
+
+test("unwrap_custom.sc") {
+  main() == 42
+}

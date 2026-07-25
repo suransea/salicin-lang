@@ -9,3 +9,7 @@ extend Resource: Drop {
 let inspect(resource: borrow(Resource)): i32 = { resource.value }
 
 let main(): i32 = { inspect(Resource { value: 42 }) }
+
+test("temporary_borrow_argument_drop.sc") {
+  main() == 42
+}

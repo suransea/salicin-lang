@@ -48,3 +48,7 @@ let main(): i32 = {
   }
   resumed + abandoned + drop_count - 42
 }
+
+test("algebraic_effect_disjoint_index_calls.sc") {
+  main() == 42
+}

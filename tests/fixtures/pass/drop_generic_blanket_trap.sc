@@ -9,3 +9,7 @@ let main(): i32 = {
   let bomb = Bomb { marker: 42, divisor: 0 }
   0
 }
+
+test("drop_generic_blanket_trap.sc") {
+  main() == 42
+}

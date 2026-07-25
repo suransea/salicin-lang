@@ -31,3 +31,7 @@ let main(): i32 = {
   }
   result + arguments
 }
+
+test("algebraic_effect_optional_call.sc") {
+  main() == 42
+}

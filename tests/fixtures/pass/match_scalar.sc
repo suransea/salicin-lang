@@ -12,3 +12,7 @@ let select(value: bool): i32 = { match value
 let main(): i32 = {
   classify(-1) + classify(41) + select(false) - 22
 }
+
+test("match_scalar.sc") {
+  main() == 42
+}

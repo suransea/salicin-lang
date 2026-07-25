@@ -13,3 +13,7 @@ let main(): i32 = {
   consume(pair.left)
   0
 }
+
+test("drop_partial_field_trap.sc") {
+  main() == 42
+}

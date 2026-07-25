@@ -11,3 +11,7 @@ let main(): i32 = {
   let answer = Number { value: 19 } + Number { value: 23 }
   answer.value
 }
+
+test("add_trait_nominal_pair.sc") {
+  main() == 42
+}

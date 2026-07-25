@@ -9,3 +9,7 @@ let main(): i32 = {
   let pending = make()
   pending(2)
 }
+
+test("callable_return.sc") {
+  main() == 42
+}

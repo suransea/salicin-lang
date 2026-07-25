@@ -17,3 +17,7 @@ let main(): i32 = {
     }
   left + right
 }
+
+test("pattern_partial_attempt.sc") {
+  main() == 42
+}

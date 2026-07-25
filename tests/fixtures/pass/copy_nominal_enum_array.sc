@@ -19,3 +19,7 @@ let main(): i32 = {
   let pixels: Array(Pixel)(2) = [Pixel { value: 20 }, Pixel { value: 2 }]
   score(mark) + score(mark) + pixels[0].value + pixels[1].value
 }
+
+test("copy_nominal_enum_array.sc") {
+  main() == 42
+}

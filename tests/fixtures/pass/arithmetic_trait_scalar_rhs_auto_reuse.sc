@@ -12,3 +12,7 @@ let main(): i32 = {
   let answer = Number { value: 21 } * right
   answer + right - 2
 }
+
+test("arithmetic_trait_scalar_rhs_auto_reuse.sc") {
+  main() == 42
+}

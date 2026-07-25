@@ -23,3 +23,7 @@ let main(): i32 = {
     0
   }
 }
+
+test("vec_copy.sc") {
+  main() == 42
+}

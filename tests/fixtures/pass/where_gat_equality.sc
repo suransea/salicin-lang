@@ -23,3 +23,7 @@ let main(): i32 = {
   let cell = Cell {}
   make_i32(cell)
 }
+
+test("where_gat_equality.sc") {
+  main() == 42
+}

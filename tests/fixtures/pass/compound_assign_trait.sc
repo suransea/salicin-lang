@@ -25,3 +25,7 @@ let main(): i32 = {
   counter ^= 0
   counter.value
 }
+
+test("compound_assign_trait.sc") {
+  main() == 42
+}

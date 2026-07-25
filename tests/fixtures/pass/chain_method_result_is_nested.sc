@@ -12,3 +12,7 @@ let main(): i32 = {
     { Some(inner) -> inner ?? 0 }
     { None -> 0 }
 }
+
+test("chain_method_result_is_nested.sc") {
+  main() == 42
+}

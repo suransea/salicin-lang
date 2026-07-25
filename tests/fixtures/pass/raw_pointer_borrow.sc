@@ -34,3 +34,7 @@ let main(): i32 = {
   }
   first + second
 }
+
+test("raw_pointer_borrow.sc") {
+  main() == 42
+}

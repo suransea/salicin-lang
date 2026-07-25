@@ -6,3 +6,7 @@ let main(): i32 = {
   let second = future.poll()
   0
 }
+
+test("async_repoll_trap.sc") {
+  main() == 42
+}

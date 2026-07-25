@@ -11,3 +11,7 @@ let main(): i32 = { if absolute(-42) == 42 {
   1
 }
 }
+
+test("condition.sc") {
+  main() == 42
+}

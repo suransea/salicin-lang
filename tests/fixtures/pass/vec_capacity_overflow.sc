@@ -5,3 +5,7 @@ let main(): i32 = {
   values.len()
   0
 }
+
+test("vec_capacity_overflow.sc") {
+  main() == 42
+}

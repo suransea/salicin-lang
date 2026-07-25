@@ -6,3 +6,7 @@ let main(): i32 = {
   values.swap(1, 0)
   42
 }
+
+test("vec_swap_left_out_of_bounds.sc") {
+  main() == 42
+}

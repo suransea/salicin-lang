@@ -14,3 +14,7 @@ let main(): i32 = {
     selected() + 1
   }
 }
+
+test("algebraic_effect_dynamic_callable_assignment.sc") {
+  main() == 42
+}

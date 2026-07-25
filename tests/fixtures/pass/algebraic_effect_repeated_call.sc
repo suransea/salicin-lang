@@ -11,3 +11,7 @@ let main(): i32 = {
     once(19) + once(23)
   }
 }
+
+test("algebraic_effect_repeated_call.sc") {
+  main() == 42
+}

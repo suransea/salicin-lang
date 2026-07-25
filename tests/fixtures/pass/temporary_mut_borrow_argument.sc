@@ -6,3 +6,7 @@ let reset(counter: borrow(mut)(Counter)): i32 = {
 }
 
 let main(): i32 = { reset(Counter { value: 0 }) }
+
+test("temporary_mut_borrow_argument.sc") {
+  main() == 42
+}

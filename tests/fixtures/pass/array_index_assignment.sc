@@ -3,3 +3,7 @@ let main(): i32 = {
   values[0] = 42
   values[0]
 }
+
+test("array_index_assignment.sc") {
+  main() == 42
+}

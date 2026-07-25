@@ -30,3 +30,7 @@ let main(): i32 = {
   let second = escape(Choice.Pair(Resource { value: 1 }, Resource { value: 1 }))
   first + second - 42
 }
+
+test("drop_match_payload.sc") {
+  main() == 42
+}

@@ -5,3 +5,7 @@ let main(): i32 = {
   observe(unit)
   42
 }
+
+test("borrowed_unit_is_abi_erased.sc") {
+  main() == 42
+}

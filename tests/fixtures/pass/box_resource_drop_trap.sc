@@ -11,3 +11,7 @@ let main(): i32 = {
   let boxed = Box.new(Resource { value: 0 })
   0
 }
+
+test("box_resource_drop_trap.sc") {
+  main() == 42
+}

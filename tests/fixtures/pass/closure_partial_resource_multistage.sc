@@ -18,3 +18,7 @@ let main(): i32 = {
   let second = first(1)
   second(1)
 }
+
+test("closure_partial_resource_multistage.sc") {
+  main() == 42
+}

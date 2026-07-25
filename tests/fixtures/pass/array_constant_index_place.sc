@@ -12,3 +12,7 @@ let main(): i32 = {
   values[1] = 22
   first + alias + values[1] - 20
 }
+
+test("array_constant_index_place.sc") {
+  main() == 42
+}

@@ -18,3 +18,7 @@ let main(): i32 = {
   let taken = Cell(i32).take(cell)()
   read + taken - 42
 }
+
+test("qualified_trait_generic_method.sc") {
+  main() == 42
+}

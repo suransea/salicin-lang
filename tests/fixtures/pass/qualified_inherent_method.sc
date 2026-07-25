@@ -18,3 +18,7 @@ let main(): i32 = {
   let associated = Number.value()
   sum + method + temporary + associated - 84
 }
+
+test("qualified_inherent_method.sc") {
+  main() == 42
+}

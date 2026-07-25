@@ -16,3 +16,7 @@ let main(): i32 = {
   let current = rebuilt.into_inner()
   current - previous + 41
 }
+
+test("box_methods.sc") {
+  main() == 42
+}

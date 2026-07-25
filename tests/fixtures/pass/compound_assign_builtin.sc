@@ -36,3 +36,7 @@ let main(): i32 = {
 
   (add.value + sub + mul + div + rem + array[0] + bit_and + bit_or + bit_xor + shl + shr) / 11
 }
+
+test("compound_assign_builtin.sc") {
+  main() == 42
+}

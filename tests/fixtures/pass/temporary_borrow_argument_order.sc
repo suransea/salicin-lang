@@ -17,3 +17,7 @@ let main(): i32 = {
   let result = combine(first(order), second(order))
   if order == 12 { result } else { 0 }
 }
+
+test("temporary_borrow_argument_order.sc") {
+  main() == 42
+}

@@ -10,3 +10,7 @@ let main(): i32 = {
   let second = consume(boxed)
   first + read + second
 }
+
+test("reinit_after_root_move.sc") {
+  main() == 42
+}

@@ -7,3 +7,7 @@ let main(): i32 = {
   let snapshot = read(boxed)
   snapshot + boxed.value - 42
 }
+
+test("shared_borrow_call.sc") {
+  main() == 42
+}

@@ -9,3 +9,7 @@ extend Number: Read {
 }
 
 let main(): i32 = { Number { value: 42 }.read() }
+
+test("trait_temporary_receiver.sc") {
+  main() == 42
+}

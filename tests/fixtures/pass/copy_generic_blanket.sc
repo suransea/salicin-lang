@@ -14,3 +14,7 @@ let main(): i32 = {
   let duplicate = outer
   read_twice(outer) + duplicate.value.value - 42
 }
+
+test("copy_generic_blanket.sc") {
+  main() == 42
+}

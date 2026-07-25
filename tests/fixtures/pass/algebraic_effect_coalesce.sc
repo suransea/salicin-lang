@@ -29,3 +29,7 @@ let main(): i32 = {
   }
   result + fallbacks
 }
+
+test("algebraic_effect_coalesce.sc") {
+  main() == 42
+}

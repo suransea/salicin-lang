@@ -44,7 +44,8 @@ The compiler provides contextual `test("name") { ... }` registrations and a
 `salic test` command that collects the selected package into one native
 runner. This removes per-case native linking from language-level regression
 suites. Compatible repository execution fixtures are isolated as modules and
-registered into one runner per semantic group; fixtures that must terminate
+declare their own registrations for collection into one runner per semantic
+group; the Rust harness does not synthesize tests. Fixtures that must terminate
 the process remain independent. Test registration is intentionally narrower
 than general compile-time execution.
 

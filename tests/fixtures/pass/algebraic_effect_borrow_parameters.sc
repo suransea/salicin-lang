@@ -18,3 +18,7 @@ let main(): i32 = {
     first + base
   }
 }
+
+test("algebraic_effect_borrow_parameters.sc") {
+  main() == 42
+}

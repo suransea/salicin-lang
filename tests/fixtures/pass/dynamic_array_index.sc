@@ -3,3 +3,7 @@ let main(): i32 = {
   let index = 1
   values[0] + values[index]
 }
+
+test("dynamic_array_index.sc") {
+  main() == 42
+}

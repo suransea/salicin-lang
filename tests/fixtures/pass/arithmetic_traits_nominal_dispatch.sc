@@ -36,3 +36,7 @@ let main(): i32 = {
     0
   }
 }
+
+test("arithmetic_traits_nominal_dispatch.sc") {
+  main() == 42
+}

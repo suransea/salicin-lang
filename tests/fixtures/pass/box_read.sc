@@ -16,3 +16,7 @@ let main(): i32 = {
   unit.read()
   first + second + read_box(zero)
 }
+
+test("box_read.sc") {
+  main() == 42
+}

@@ -50,3 +50,7 @@ let main(): i32 = {
     { Pending -> 0 }
     { Ready(_) -> 42 }
 }
+
+test("async_await_loop_nested_control.sc") {
+  main() == 42
+}

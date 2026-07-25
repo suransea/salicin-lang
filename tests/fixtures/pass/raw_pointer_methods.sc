@@ -15,3 +15,7 @@ let main(): i32 = {
     result + shared_result
   }
 }
+
+test("raw_pointer_methods.sc") {
+  main() == 42
+}

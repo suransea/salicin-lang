@@ -11,3 +11,7 @@ let main(): i32 = {
   pair.left = Payload { value: 21 }
   first + sibling + consume_pair(pair)
 }
+
+test("reinit_partial_field.sc") {
+  main() == 42
+}

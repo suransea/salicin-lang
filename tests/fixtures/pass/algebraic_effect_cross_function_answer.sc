@@ -11,3 +11,7 @@ let main(): i32 = {
     if choose_value() { 42 } else { 0 }
   }
 }
+
+test("algebraic_effect_cross_function_answer.sc") {
+  main() == 42
+}

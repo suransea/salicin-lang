@@ -8,3 +8,7 @@ let main(): i32 = {
   let payload = Payload { value: 42 }
   payload.into_value()
 }
+
+test("inherent_move_receiver.sc") {
+  main() == 42
+}

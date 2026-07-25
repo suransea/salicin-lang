@@ -5,3 +5,7 @@ extend Number {
 }
 
 let main(): i32 = { Number { raw: 42 }.value() }
+
+test("inherent_temporary_borrow_receiver.sc") {
+  main() == 42
+}

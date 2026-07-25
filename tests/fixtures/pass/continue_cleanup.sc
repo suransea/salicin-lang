@@ -31,3 +31,7 @@ let main(): i32 = {
   }
   40 + drops
 }
+
+test("continue_cleanup.sc") {
+  main() == 42
+}

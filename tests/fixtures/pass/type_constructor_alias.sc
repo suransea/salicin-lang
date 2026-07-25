@@ -9,3 +9,7 @@ let main(): Scalar = {
   let right = Constructor(i32) { value: 1 }
   left.value + right.value
 }
+
+test("type_constructor_alias.sc") {
+  main() == 42
+}

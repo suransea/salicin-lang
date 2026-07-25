@@ -7,3 +7,7 @@ let main(): i32 = {
   let arithmetic = accept(0 + wide)
   ordered + arithmetic
 }
+
+test("infer_constraint_order.sc") {
+  main() == 42
+}

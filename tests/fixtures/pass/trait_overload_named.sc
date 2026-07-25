@@ -17,3 +17,7 @@ extend Counter: Select {
 let main(): i32 = {
   Counter { value: 0 }.pick(right: 20) + Counter.make(right: 20)
 }
+
+test("trait_overload_named.sc") {
+  main() == 42
+}

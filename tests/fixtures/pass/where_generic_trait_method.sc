@@ -15,3 +15,7 @@ let main(): i32 = {
   let value = Value { value: 42 }
   convert(value)
 }
+
+test("where_generic_trait_method.sc") {
+  main() == 42
+}

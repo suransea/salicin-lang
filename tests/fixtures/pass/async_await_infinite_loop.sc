@@ -15,3 +15,7 @@ let main(): i32 = {
 let child() = {
   async { 1 }
 }
+
+test("async_await_infinite_loop.sc") {
+  main() == 42
+}

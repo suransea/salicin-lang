@@ -6,3 +6,7 @@ let main(): i32 = {
   let result = Result(E: bool).Ok(22)
   option!! + result!!
 }
+
+test("unwrap_option_result.sc") {
+  main() == 42
+}

@@ -10,3 +10,7 @@ let main(): i32 = {
   }
   total
 }
+
+test("continue.sc") {
+  main() == 42
+}

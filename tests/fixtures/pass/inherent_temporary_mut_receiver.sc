@@ -8,3 +8,7 @@ extend Counter {
 }
 
 let main(): i32 = { Counter { value: 0 }.reset() }
+
+test("inherent_temporary_mut_receiver.sc") {
+  main() == 42
+}

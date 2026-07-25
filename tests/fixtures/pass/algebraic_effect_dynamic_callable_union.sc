@@ -15,3 +15,7 @@ let main(): i32 = {
     combined()
   }
 }
+
+test("algebraic_effect_dynamic_callable_union.sc") {
+  main() == 42
+}

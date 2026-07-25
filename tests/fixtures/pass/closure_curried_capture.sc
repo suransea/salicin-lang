@@ -3,3 +3,7 @@ let main(): i32 = {
   let add = { (x: i32)(y: i32) -> base + x + y }
   add(1)(1)
 }
+
+test("closure_curried_capture.sc") {
+  main() == 42
+}

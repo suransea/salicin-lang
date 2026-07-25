@@ -55,3 +55,7 @@ let main(): i32 = {
 
   39 + pending + unsafe { *drops_ptr }
 }
+
+test("async_await_loop_cancel.sc") {
+  main() == 42
+}

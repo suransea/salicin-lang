@@ -5,3 +5,7 @@ let main(): i32 = {
   let inner = outer ?? Result(bool)(i32).Ok(42)
   inner ?? 0
 }
+
+test("coalesce_nested_result_payload.sc") {
+  main() == 42
+}

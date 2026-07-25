@@ -8,3 +8,7 @@ let main(): i32 = {
   let café = café
   加法(café)(2)
 }
+
+test("unicode_identifiers.sc") {
+  main() == 42
+}

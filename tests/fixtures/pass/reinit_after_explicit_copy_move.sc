@@ -10,3 +10,7 @@ let main(): i32 = {
   number = Number { value: 22 }
   first + consume(number)
 }
+
+test("reinit_after_explicit_copy_move.sc") {
+  main() == 42
+}

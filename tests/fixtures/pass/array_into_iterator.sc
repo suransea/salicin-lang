@@ -6,3 +6,7 @@ let main(): i32 = {
   }
   total
 }
+
+test("array_into_iterator.sc") {
+  main() == 42
+}

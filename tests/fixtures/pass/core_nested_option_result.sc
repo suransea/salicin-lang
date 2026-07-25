@@ -10,3 +10,7 @@ let main(): i32 = {
       { Err(_) -> 0 } }
     { None -> 0 }
 }
+
+test("core_nested_option_result.sc") {
+  main() == 42
+}

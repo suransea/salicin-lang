@@ -9,3 +9,7 @@ let main(): i32 = {
   let value = Resource { value: 0 }
   0
 }
+
+test("drop_trap.sc") {
+  main() == 42
+}

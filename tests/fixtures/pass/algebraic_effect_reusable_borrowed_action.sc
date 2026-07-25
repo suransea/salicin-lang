@@ -52,3 +52,7 @@ let main(): i32 = {
   }
   resumed + abandoned + drop_count - 102
 }
+
+test("algebraic_effect_reusable_borrowed_action.sc") {
+  main() == 42
+}

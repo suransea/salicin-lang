@@ -13,3 +13,7 @@ let main(): i32 = {
   let value = ((0, 1), 1)
   sum(pair) + singleton((1,)) + nested(value)
 }
+
+test("tuple_basics.sc") {
+  main() == 42
+}

@@ -5,3 +5,7 @@ let main(): i32 = {
   }
   value
 }
+
+test("while_mutation.sc") {
+  main() == 42
+}

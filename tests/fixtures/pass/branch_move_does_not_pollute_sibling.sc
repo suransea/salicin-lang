@@ -11,3 +11,7 @@ let main(): i32 = {
   }
   42
 }
+
+test("branch_move_does_not_pollute_sibling.sc") {
+  main() == 42
+}

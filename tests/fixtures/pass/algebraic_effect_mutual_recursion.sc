@@ -18,3 +18,7 @@ let main(): i32 = {
     even(3)
   }
 }
+
+test("algebraic_effect_mutual_recursion.sc") {
+  main() == 42
+}

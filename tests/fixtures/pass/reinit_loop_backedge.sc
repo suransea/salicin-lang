@@ -12,3 +12,7 @@ let main(): i32 = {
   }
   consume(boxed)
 }
+
+test("reinit_loop_backedge.sc") {
+  main() == 42
+}

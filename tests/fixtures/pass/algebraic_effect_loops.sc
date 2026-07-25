@@ -16,3 +16,7 @@ let main(): i32 = {
     36 + count + stopped
   }
 }
+
+test("algebraic_effect_loops.sc") {
+  main() == 42
+}

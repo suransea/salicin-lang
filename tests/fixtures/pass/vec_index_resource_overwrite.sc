@@ -35,3 +35,7 @@ let main(): i32 = {
   }
   score + drops
 }
+
+test("vec_index_resource_overwrite.sc") {
+  main() == 42
+}

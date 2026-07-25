@@ -6,3 +6,7 @@ let main(): i32 = {
   values.write(1)(0)
   0
 }
+
+test("vec_write_out_of_bounds.sc") {
+  main() == 42
+}

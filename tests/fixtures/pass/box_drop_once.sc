@@ -17,3 +17,7 @@ let main(): i32 = {
   }
   41 + count
 }
+
+test("box_drop_once.sc") {
+  main() == 42
+}

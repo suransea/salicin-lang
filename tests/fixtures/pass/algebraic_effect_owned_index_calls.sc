@@ -65,3 +65,7 @@ let main(): i32 = {
   }
   resumed + abandoned + drop_count + argument_order - 123164
 }
+
+test("algebraic_effect_owned_index_calls.sc") {
+  main() == 42
+}

@@ -19,3 +19,7 @@ let main(): i32 = {
   let second = cell.replace(22).rewrap().value
   first + second
 }
+
+test("self_expression_generic.sc") {
+  main() == 42
+}

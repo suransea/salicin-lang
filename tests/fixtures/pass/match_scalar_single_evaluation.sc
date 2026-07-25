@@ -23,3 +23,7 @@ let main(): i32 = {
   }
   selected + evaluations
 }
+
+test("match_scalar_single_evaluation.sc") {
+  main() == 42
+}

@@ -29,3 +29,7 @@ let main(): i32 = {
   let answer = left_runner(1) + selected + run(action: abort)(0) - 31
   if order == 12 { answer } else { 0 }
 }
+
+test("algebraic_effect_reusable_handler.sc") {
+  main() == 42
+}

@@ -15,3 +15,7 @@ let main(): i32 = {
   let value = 20
   read(value) + generic_read(cell: Cell { value: 22 })
 }
+
+test("region_scoped_borrow.sc") {
+  main() == 42
+}

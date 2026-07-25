@@ -4,3 +4,7 @@ let main(): i32 = {
   let value = 42
   consume(value)
 }
+
+test("explicit_move_i32_once.sc") {
+  main() == 42
+}

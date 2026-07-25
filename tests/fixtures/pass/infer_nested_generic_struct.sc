@@ -5,3 +5,7 @@ let main(): i32 = {
   let outer = Cell { value: inner }
   outer.value.value
 }
+
+test("infer_nested_generic_struct.sc") {
+  main() == 42
+}

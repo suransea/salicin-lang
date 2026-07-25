@@ -43,3 +43,7 @@ let main(): i32 = {
     { Ready(value) -> value }
   first_poll + second_poll + third_poll + fourth_poll - 3
 }
+
+test("async_await_multiple.sc") {
+  main() == 42
+}

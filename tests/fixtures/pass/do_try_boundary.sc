@@ -24,3 +24,7 @@ let main(): i32 = {
     { Err(_) -> 0 }
   if propagation_ok && throw_ok && value == 42 { 42 } else { 0 }
 }
+
+test("do_try_boundary.sc") {
+  main() == 42
+}

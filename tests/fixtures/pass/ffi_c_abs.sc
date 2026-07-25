@@ -8,3 +8,7 @@ let main(): i32 = {
     c_abs(-42)
   }
 }
+
+test("ffi_c_abs.sc") {
+  main() == 42
+}

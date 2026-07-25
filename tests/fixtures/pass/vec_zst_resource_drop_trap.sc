@@ -13,3 +13,7 @@ let main(): i32 = {
   values.push(Bomb {})
   0
 }
+
+test("vec_zst_resource_drop_trap.sc") {
+  main() == 42
+}

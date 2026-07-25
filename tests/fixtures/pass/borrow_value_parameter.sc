@@ -33,3 +33,7 @@ let main(): i32 = {
   }
   before + after
 }
+
+test("borrow_value_parameter.sc") {
+  main() == 42
+}

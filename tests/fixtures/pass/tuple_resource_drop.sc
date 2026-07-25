@@ -39,3 +39,7 @@ let main(): i32 = {
   }
   35 + drops
 }
+
+test("tuple_resource_drop.sc") {
+  main() == 42
+}

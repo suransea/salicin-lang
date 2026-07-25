@@ -29,3 +29,7 @@ let main(): i32 = {
   }
   result + drops
 }
+
+test("algebraic_effect_explicit_return.sc") {
+  main() == 42
+}

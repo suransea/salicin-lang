@@ -10,3 +10,7 @@ let main(): i32 = {
   forget(resource)
   42
 }
+
+test("forget_resource.sc") {
+  main() == 42
+}

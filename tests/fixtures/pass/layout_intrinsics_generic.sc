@@ -8,3 +8,7 @@ let main(): i32 = { if layout_sum(Pair(i64))() == 24 {
   0
 }
 }
+
+test("layout_intrinsics_generic.sc") {
+  main() == 42
+}

@@ -43,3 +43,7 @@ let main(): i32 = {
   let boxed = Boxed { value: 42 }
   cell.doubled() + overridden.doubled() + boxed.forward() - 84
 }
+
+test("trait_default_method.sc") {
+  main() == 42
+}

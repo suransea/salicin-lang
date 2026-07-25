@@ -8,3 +8,7 @@ extend Number: Add(Number) {
 }
 
 let main(): i32 = { 40 + 2 }
+
+test("add_trait_builtin_integer_precedence.sc") {
+  main() == 42
+}

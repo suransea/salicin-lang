@@ -16,3 +16,7 @@ let main(): i32 = {
   let number = Number { value: 42 }
   number.answer()
 }
+
+test("trait_inherent_precedence.sc") {
+  main() == 42
+}

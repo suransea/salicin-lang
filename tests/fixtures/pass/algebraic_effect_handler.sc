@@ -18,3 +18,7 @@ let main(): i32 = {
     State(i32).get()
   }
 }
+
+test("algebraic_effect_handler.sc") {
+  main() == 42
+}

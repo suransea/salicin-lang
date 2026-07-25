@@ -11,3 +11,7 @@ let main(): i32 = {
   let boxed = Box.new(Resource { value: 1 })
   42
 }
+
+test("box_resource.sc") {
+  main() == 42
+}

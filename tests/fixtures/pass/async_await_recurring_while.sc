@@ -109,3 +109,7 @@ let main(): i32 = {
   31 + pre_ready + false_ready + post_ready + unsafe { *polls_ptr } +
     was_pending + became_ready + unsafe { *checks_ptr }
 }
+
+test("async_await_recurring_while.sc") {
+  main() == 42
+}

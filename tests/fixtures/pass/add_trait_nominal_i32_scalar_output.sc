@@ -8,3 +8,7 @@ extend Number: Add(i32) {
 }
 
 let main(): i32 = { Number { value: 40 } + 2 }
+
+test("add_trait_nominal_i32_scalar_output.sc") {
+  main() == 42
+}

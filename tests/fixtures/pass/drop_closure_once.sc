@@ -51,3 +51,7 @@ let main(): i32 = {
   conditional(false)
   answer + early() - 42
 }
+
+test("drop_closure_once.sc") {
+  main() == 42
+}

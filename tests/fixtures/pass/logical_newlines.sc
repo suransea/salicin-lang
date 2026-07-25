@@ -20,3 +20,7 @@ let main(): i32 = {
     ],
   )
 }
+
+test("logical_newlines.sc") {
+  main() == 42
+}

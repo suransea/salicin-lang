@@ -41,3 +41,7 @@ let main(): i32 = {
   nested()
   42
 }
+
+test("drop_partial_field.sc") {
+  main() == 42
+}

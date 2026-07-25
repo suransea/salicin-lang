@@ -111,3 +111,7 @@ let main(): i32 = {
   }
   resumed + abandoned + discarded + mutated + mutated_abandoned + with_input + drop_count - 196
 }
+
+test("algebraic_effect_erased_callable_forward.sc") {
+  main() == 42
+}

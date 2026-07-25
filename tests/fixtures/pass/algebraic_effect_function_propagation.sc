@@ -13,3 +13,7 @@ let main(): i32 = {
     program() + 1
   }
 }
+
+test("algebraic_effect_function_propagation.sc") {
+  main() == 42
+}

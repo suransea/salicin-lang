@@ -14,3 +14,7 @@ let main(): i32 = {
     0
   }
 }
+
+test("vec_unit.sc") {
+  main() == 42
+}

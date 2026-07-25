@@ -11,3 +11,7 @@ where T: Copy,
 }
 
 let main(): i32 = { duplicate(Value { value: 42 }).value }
+
+test("where_copy_bound.sc") {
+  main() == 42
+}

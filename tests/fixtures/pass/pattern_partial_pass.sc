@@ -12,3 +12,7 @@ let main(): i32 = {
     { Hit(value) -> value }
     { Miss(_) -> 0 }
 }
+
+test("pattern_partial_pass.sc") {
+  main() == 42
+}

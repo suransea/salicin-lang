@@ -29,3 +29,7 @@ let main(): i32 = {
     classify_direct(Event.Value( value: 20 )) + classify_named(Event.Value( value: 21 ))
   }
 }
+
+test("algebraic_effect_match_guard.sc") {
+  main() == 42
+}

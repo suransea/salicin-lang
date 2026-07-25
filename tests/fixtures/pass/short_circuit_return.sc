@@ -9,3 +9,7 @@ let with_or(flag: bool): i32 = {
 }
 
 let main(): i32 = { with_and(true) + with_or(false) }
+
+test("short_circuit_return.sc") {
+  main() == 42
+}

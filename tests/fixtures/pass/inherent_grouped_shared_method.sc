@@ -8,3 +8,7 @@ let main(): i32 = {
   let number = Number { value: 40 }
   number.plus(1)(1)
 }
+
+test("inherent_grouped_shared_method.sc") {
+  main() == 42
+}

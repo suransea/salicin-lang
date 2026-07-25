@@ -12,3 +12,7 @@ let main(): i32 = {
   }
   42
 }
+
+test("raw_pointer_offset_unit.sc") {
+  main() == 42
+}

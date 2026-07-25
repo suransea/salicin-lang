@@ -13,3 +13,7 @@ let main(): i32 = {
   counter.reset()
   counter.value + Counter.answer
 }
+
+test("inherent_reset_and_constant.sc") {
+  main() == 42
+}

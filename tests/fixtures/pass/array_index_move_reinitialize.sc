@@ -6,3 +6,7 @@ let main(): i32 = {
   values[0] = 40
   values[0] + values[1]
 }
+
+test("array_index_move_reinitialize.sc") {
+  main() == 42
+}

@@ -12,3 +12,7 @@ let main(): i32 = {
   let pending = finish(Payload { value: 40 })
   pending(1)
 }
+
+test("closure_partial_move_argument.sc") {
+  main() == 42
+}

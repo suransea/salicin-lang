@@ -24,3 +24,7 @@ let main(): i32 = {
   }
   values[0] + values[1] + values[2]
 }
+
+test("slice_iterator_mut.sc") {
+  main() == 42
+}

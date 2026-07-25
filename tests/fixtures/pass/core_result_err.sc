@@ -6,3 +6,7 @@ let main(): i32 = {
     { Ok(_) -> 0 }
     { Err(failed) -> if failed { 42 } else { 0 } }
 }
+
+test("core_result_err.sc") {
+  main() == 42
+}

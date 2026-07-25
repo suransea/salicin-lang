@@ -22,3 +22,7 @@ let main(): i32 = { inspect(
   Choice.Some(Bundle { left: Resource { value: 1 }, right: Resource { value: 1 } }, Resource { value: 1 })
 )
 }
+
+test("drop_match_nested.sc") {
+  main() == 42
+}

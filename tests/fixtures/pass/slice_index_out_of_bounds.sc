@@ -5,3 +5,7 @@ let main(): i32 = {
   let slice: borrow(Slice(i32)) = borrow(values)
   slice[2]
 }
+
+test("slice_index_out_of_bounds.sc") {
+  main() == 42
+}

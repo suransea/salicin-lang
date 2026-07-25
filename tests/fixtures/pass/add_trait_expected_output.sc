@@ -16,3 +16,7 @@ let main(): i32 = {
   let answer: i64 = Number { value: 40 } + 2
   if answer == 42 { 42 } else { 0 }
 }
+
+test("add_trait_expected_output.sc") {
+  main() == 42
+}

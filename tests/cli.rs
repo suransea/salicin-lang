@@ -157,9 +157,8 @@ fn batched_native_fixture_outputs(names: &[&str]) -> Vec<(String, Output)> {
             .expect("fixture path has a stem")
             .to_string_lossy()
             .into_owned();
-        let mut source = fs::read_to_string(&path)
+        let source = fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("read '{}': {error}", path.display()));
-        source.push_str(&format!("\ntest({name:?}) {{ main() == 42 }}\n"));
         sources.push(SourceUnit {
             path: path.display().to_string(),
             module_path: vec![module],
@@ -170,18 +169,30 @@ fn batched_native_fixture_outputs(names: &[&str]) -> Vec<(String, Output)> {
     let batch = if batch_names.is_empty() {
         None
     } else {
-        let compilation = compile_test_source_packages(&[SourcePackage {
-            id: PackageId(0),
-            is_primary: true,
-            dependencies: BTreeMap::new(),
-            sources,
-        }])
-        .unwrap_or_else(|diagnostics| {
-            panic!(
-                "compile batched native fixtures:\n{}",
-                diagnostics.join("\n")
-            )
-        });
+        let compilation = thread::Builder::new()
+            .name("salic-native-fixture-compile".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(move || {
+                compile_test_source_packages(&[SourcePackage {
+                    id: PackageId(0),
+                    is_primary: true,
+                    dependencies: BTreeMap::new(),
+                    sources,
+                }])
+            })
+            .expect("spawn native fixture compiler")
+            .join()
+            .expect("native fixture compiler panicked")
+            .unwrap_or_else(|diagnostics| {
+                panic!(
+                    "compile batched native fixtures:\n{}",
+                    diagnostics.join("\n")
+                )
+            });
+        assert_eq!(
+            compilation.names, batch_names,
+            "native fixtures must declare exactly one matching test each"
+        );
         let mut output = link_and_run_ir(&compilation.ir, "batched native fixtures");
         if output.status.success() {
             output.status = std::process::ExitStatus::from_raw(42 << 8);

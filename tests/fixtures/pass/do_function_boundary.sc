@@ -6,3 +6,7 @@ let main(): i32 = {
   }
   local + 2
 }
+
+test("do_function_boundary.sc") {
+  main() == 42
+}

@@ -20,3 +20,7 @@ let main(): i32 = {
   }
   after + inspect(right) + inspect(mut)(left) - 1
 }
+
+test("access_generic.sc") {
+  main() == 42
+}

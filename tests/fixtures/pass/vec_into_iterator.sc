@@ -11,3 +11,7 @@ let main(): i32 = {
   }
   total
 }
+
+test("vec_into_iterator.sc") {
+  main() == 42
+}

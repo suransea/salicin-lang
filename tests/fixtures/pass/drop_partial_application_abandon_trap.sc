@@ -11,3 +11,7 @@ let main(): i32 = {
   let pending = finish(Resource { value: 0 })
   0
 }
+
+test("drop_partial_application_abandon_trap.sc") {
+  main() == 42
+}

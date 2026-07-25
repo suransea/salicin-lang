@@ -38,3 +38,7 @@ let main(): i32 = {
   }
   result + drops
 }
+
+test("algebraic_effect_copy_binding_guard.sc") {
+  main() == 42
+}

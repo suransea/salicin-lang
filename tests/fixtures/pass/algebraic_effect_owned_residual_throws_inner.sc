@@ -53,3 +53,7 @@ let main(): i32 = {
   }
   success + failure + abandoned + drop_count - 27
 }
+
+test("algebraic_effect_owned_residual_throws_inner.sc") {
+  main() == 42
+}

@@ -14,3 +14,7 @@ let main(): i32 = {
     { Ready(result) -> result }
     { Pending -> 0 }
 }
+
+test("async_await_external_borrow.sc") {
+  main() == 42
+}

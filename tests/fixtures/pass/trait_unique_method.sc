@@ -12,3 +12,7 @@ let main(): i32 = {
   let number = Number { value: 40 }
   number.add(2)
 }
+
+test("trait_unique_method.sc") {
+  main() == 42
+}

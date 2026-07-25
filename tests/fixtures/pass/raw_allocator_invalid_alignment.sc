@@ -7,3 +7,7 @@ let main(): i32 = {
   }
   0
 }
+
+test("raw_allocator_invalid_alignment.sc") {
+  main() == 42
+}

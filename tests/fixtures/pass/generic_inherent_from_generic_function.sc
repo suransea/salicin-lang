@@ -7,3 +7,7 @@ extend(T: type) Cell(T) {
 let consume(T: type)(move cell: Cell(T)): T = { cell.take() }
 
 let main(): i32 = { consume(cell: Cell { value: 42 }) }
+
+test("generic_inherent_from_generic_function.sc") {
+  main() == 42
+}

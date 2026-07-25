@@ -31,3 +31,7 @@ let main(): i32 = {
   let offset = 2
   program(offset)
 }
+
+test("async_residual_borrow_capture.sc") {
+  main() == 42
+}

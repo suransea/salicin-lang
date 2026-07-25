@@ -8,3 +8,7 @@ let main(): i32 = {
     break(consume(boxed))
   }
 }
+
+test("loop_move_then_break.sc") {
+  main() == 42
+}

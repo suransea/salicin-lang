@@ -48,3 +48,7 @@ let main(): i32 = {
   }
   resumed + abandoned + drop_count - 98
 }
+
+test("algebraic_effect_owned_recursive_call.sc") {
+  main() == 42
+}

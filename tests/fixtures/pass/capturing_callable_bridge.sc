@@ -64,3 +64,7 @@ let main(): i32 = {
   }
   ignored + invoked + calls + effectful + unsafe_effect + drops
 }
+
+test("capturing_callable_bridge.sc") {
+  main() == 42
+}

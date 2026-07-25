@@ -11,3 +11,7 @@ let main(): i32 = {
     pending(1)
   }
 }
+
+test("closure_partial_effect.sc") {
+  main() == 42
+}

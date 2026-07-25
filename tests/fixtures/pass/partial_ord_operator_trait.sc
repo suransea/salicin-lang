@@ -23,3 +23,7 @@ let main(): i32 = {
     0
   }
 }
+
+test("partial_ord_operator_trait.sc") {
+  main() == 42
+}

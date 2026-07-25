@@ -31,3 +31,7 @@ let main(): i32 = {
   }
   result + drops
 }
+
+test("algebraic_effect_continuation_drop.sc") {
+  main() == 42
+}

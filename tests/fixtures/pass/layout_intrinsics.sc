@@ -12,3 +12,7 @@ let main(): i32 = { if I32_SIZE == 4 &&
   0
 }
 }
+
+test("layout_intrinsics.sc") {
+  main() == 42
+}

@@ -13,3 +13,7 @@ let main(): i32 = {
     0
   }
 }
+
+test("slice_array.sc") {
+  main() == 42
+}

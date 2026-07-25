@@ -36,3 +36,7 @@ let main(): i32 = {
   }
   result + drops
 }
+
+test("algebraic_effect_dynamic_fn_once_drop.sc") {
+  main() == 42
+}

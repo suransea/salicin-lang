@@ -4,3 +4,7 @@ let main(): i32 = {
   let add_one = add(1)
   add_one(1)
 }
+
+test("closure_partial_application.sc") {
+  main() == 42
+}

@@ -9,3 +9,7 @@ let main(): i32 = {
   let head = Box.new(tail)
   42
 }
+
+test("box_recursive_layout.sc") {
+  main() == 42
+}

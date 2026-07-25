@@ -9,3 +9,7 @@ let read(value: Answer): i32 = { match value
 }
 
 let main(): i32 = { read(Answer.Value( value: 42 )) }
+
+test("enum_match.sc") {
+  main() == 42
+}

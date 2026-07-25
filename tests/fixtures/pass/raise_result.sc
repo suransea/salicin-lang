@@ -14,3 +14,7 @@ let main(): i32 = {
   } ?? 0
   success + failure
 }
+
+test("raise_result.sc") {
+  main() == 42
+}

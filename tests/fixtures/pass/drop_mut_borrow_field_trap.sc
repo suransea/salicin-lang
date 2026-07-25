@@ -15,3 +15,7 @@ let main(): i32 = {
   replace(holder)(Resource { value: 1 })
   0
 }
+
+test("drop_mut_borrow_field_trap.sc") {
+  main() == 42
+}

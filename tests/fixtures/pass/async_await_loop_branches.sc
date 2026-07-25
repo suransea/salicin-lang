@@ -121,3 +121,7 @@ let main(): i32 = {
 
   conditional + matched_first + matched_second + matched_third
 }
+
+test("async_await_loop_branches.sc") {
+  main() == 42
+}

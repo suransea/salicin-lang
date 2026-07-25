@@ -11,3 +11,7 @@ let main(): i32 = {
     fail()
   }
 }
+
+test("algebraic_effect_never_abort.sc") {
+  main() == 42
+}

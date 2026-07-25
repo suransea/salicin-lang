@@ -21,3 +21,7 @@ let main(): i32 = {
     { Err(value) -> value }
   first + second + third + fourth
 }
+
+test("core_multiple_instances.sc") {
+  main() == 42
+}

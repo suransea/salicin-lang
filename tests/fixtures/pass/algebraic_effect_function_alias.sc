@@ -13,3 +13,7 @@ let main(): i32 = {
     forwarded()
   }
 }
+
+test("algebraic_effect_function_alias.sc") {
+  main() == 42
+}

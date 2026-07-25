@@ -48,3 +48,7 @@ let main(): i32 = {
   let third = guard_return(Choice.Pair(Resource { value: 1 }, Resource { value: 1 }))
   first + second + third - 42
 }
+
+test("drop_match_guarded.sc") {
+  main() == 42
+}

@@ -14,3 +14,7 @@ let main(): i32 = {
   let second: Result(bool)(i32) = try { choose(true) }
   (first ?? 0) + (second ?? 0)
 }
+
+test("throw_if_flow.sc") {
+  main() == 42
+}

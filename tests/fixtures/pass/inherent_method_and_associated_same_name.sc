@@ -9,3 +9,7 @@ let main(): i32 = {
   let number = Number { raw: 40 }
   number.value() + Number.value
 }
+
+test("inherent_method_and_associated_same_name.sc") {
+  main() == 42
+}

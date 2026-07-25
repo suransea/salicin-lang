@@ -22,3 +22,7 @@ let main(): i32 = {
   replace_field(holder)(Resource { value: 1 })
   42
 }
+
+test("drop_mut_borrow_overwrite.sc") {
+  main() == 42
+}

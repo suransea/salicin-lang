@@ -9,3 +9,7 @@ let main(): i32 = {
   let second = add_one(1)
   first + second - 42
 }
+
+test("closure_partial_fnmut.sc") {
+  main() == 42
+}

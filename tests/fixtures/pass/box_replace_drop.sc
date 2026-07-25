@@ -29,3 +29,7 @@ let main(): i32 = {
   }
   40 + drops
 }
+
+test("box_replace_drop.sc") {
+  main() == 42
+}

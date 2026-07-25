@@ -6,3 +6,7 @@ let main(): i32 = {
   values.reserve(18446744073709551615)
   42
 }
+
+test("vec_reserve_overflow.sc") {
+  main() == 42
+}

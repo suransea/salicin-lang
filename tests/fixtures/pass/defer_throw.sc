@@ -18,3 +18,7 @@ let main(): i32 = {
     { Ok(_) -> 0 }
     { Err(error) -> if error && counter == 1 { 42 } else { 0 } }
 }
+
+test("defer_throw.sc") {
+  main() == 42
+}

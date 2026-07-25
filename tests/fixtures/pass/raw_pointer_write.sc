@@ -8,3 +8,7 @@ let main(): i32 = {
   }
   value
 }
+
+test("raw_pointer_write.sc") {
+  main() == 42
+}

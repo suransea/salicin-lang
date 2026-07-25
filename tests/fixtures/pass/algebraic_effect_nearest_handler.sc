@@ -10,3 +10,7 @@ let main(): i32 = {
     inner + Read.read()
   }
 }
+
+test("algebraic_effect_nearest_handler.sc") {
+  main() == 42
+}

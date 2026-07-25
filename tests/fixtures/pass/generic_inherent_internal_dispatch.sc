@@ -9,3 +9,7 @@ extend(T: type) Cell(T) {
 }
 
 let main(): i32 = { Cell.round_trip(42) }
+
+test("generic_inherent_internal_dispatch.sc") {
+  main() == 42
+}

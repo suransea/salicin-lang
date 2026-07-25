@@ -12,3 +12,7 @@ let main(): i32 = {
   let number = Number { value: 42 }
   number.read()
 }
+
+test("trait_declaration_order.sc") {
+  main() == 42
+}

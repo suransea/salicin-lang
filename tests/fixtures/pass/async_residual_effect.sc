@@ -27,3 +27,7 @@ let main(): i32 = {
       { Pending -> 0 }
   }
 }
+
+test("async_residual_effect.sc") {
+  main() == 42
+}

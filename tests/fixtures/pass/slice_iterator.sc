@@ -11,3 +11,7 @@ let main(): i32 = {
   }
   total
 }
+
+test("slice_iterator.sc") {
+  main() == 42
+}

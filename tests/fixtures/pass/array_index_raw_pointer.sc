@@ -6,3 +6,7 @@ let main(): i32 = {
   }
   values[0] + second
 }
+
+test("array_index_raw_pointer.sc") {
+  main() == 42
+}

@@ -9,3 +9,7 @@ let choose(value: Option(i32)): i32 = {
 let main(): i32 = {
   choose(Some(40)) + choose(None)
 }
+
+test("if_let.sc") {
+  main() == 42
+}
