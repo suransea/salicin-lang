@@ -262,8 +262,9 @@ let clamp(value: i32, min lower: i32, max upper: i32): i32 = { ... }
 let bounded = clamp(42, min: 0, max: 100)
 ```
 
-A trailing closure supplies the next unapplied function group. Multiple trailing closures supply
-successive groups. A label may precede a trailing closure.
+A trailing closure supplies the next unapplied function group. It may supply the first group
+directly (`run { action() }`) without a preceding parenthesized group. Multiple trailing closures
+supply successive groups. A label may precede a trailing closure.
 
 ```sc fragment
 if condition then {
@@ -493,7 +494,7 @@ the validated source traits `core.iter.IntoIterator` and `core.iter.Iterator`, t
 `return(value)` exits the nearest named function or closure. `break(value)` exits the nearest
 loop. `continue()` starts its next iteration. These exits have type `Never`.
 
-`defer({ action })` registers a zero-argument action for the current lexical block. Registration
+`defer { action }` registers a zero-argument trailing closure for the current lexical block. Registration
 evaluates and captures the action immediately. Registered actions run in reverse registration
 order after the block result or exit value is evaluated and before control leaves the block.
 They run on normal completion, `return`, `break`, `continue`, and `throw`. `defer` is a statement,
@@ -539,6 +540,12 @@ Effects compose in one row. Handling one effect preserves all unhandled effects.
 are compile-time row variables and are instantiated before runtime lowering. Once instantiated, a
 capturing closure passed to a parameter with that row follows the same ownership, materialization,
 and handling rules as a closure whose concrete effect was written directly.
+
+An `async { ... }` expression is cold: creating it does not execute its body. The compiler
+materializes private nominal state containing a state word and captured fields. That state is
+structurally `Move`; relocation transfers its initialized captures, and cancellation drops them
+exactly once. Polling and `await` are accepted only once their typed transition lowering is
+available; an async block containing `await` is currently rejected at that source expression.
 
 `unsafe` is an authority effect. `unsafe { ... }` authorizes operations whose contracts cannot be
 verified by the safe type and ownership rules; it does not disable type checking or cleanup.

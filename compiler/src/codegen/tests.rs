@@ -5738,6 +5738,17 @@ let main(): i32 = {
 }
 
 #[test]
+fn trailing_closure_can_supply_an_ordinary_functions_first_group() {
+    compile_text(
+        r#"
+let run(move action: (): i32): i32 = { action() }
+let main(): i32 = { run { 42 } }
+"#,
+    )
+    .expect("a trailing closure must supply an ordinary function's first runtime group");
+}
+
+#[test]
 fn multiple_and_named_trailing_closures_lower_as_successive_calls() {
     for call in [
         "choose(0) { true } { 42 }",
@@ -7190,7 +7201,17 @@ let main(): i32 = {
 }
 
 #[test]
-fn async_syntax_reports_a_source_level_lowering_boundary() {
+fn async_blocks_materialize_cold_state_but_await_remains_a_polling_boundary() {
+    compile_text(
+        r#"
+let main(): i32 = {
+  let future = async { 42 }
+  42
+}
+"#,
+    )
+    .expect("an async block without suspension must materialize cold state");
+
     let diagnostics = compile_text(
         r#"
 let main(): i32 = {
@@ -7200,11 +7221,11 @@ let main(): i32 = {
 let child(): i32 = { 1 }
 "#,
     )
-    .expect_err("async lowering is not implemented in this parser slice");
+    .expect_err("await polling transitions are not implemented yet");
     assert!(diagnostics.iter().any(|diagnostic| {
         diagnostic
             .message
-            .contains("async state-machine lowering is not available yet")
+            .contains("`await` is only lowered as part of an async state machine")
     }));
     assert!(diagnostics
         .iter()

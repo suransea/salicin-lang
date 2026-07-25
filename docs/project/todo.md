@@ -15,19 +15,17 @@ Priority meanings:
 
 ## Current
 
-- [ ] **ASYNC-STATE-1: Lower cold async blocks to state machines**
-  - Introduce compiler-generated future state without exposing a `Pin` placeholder.
-  - Require generated state to satisfy `Move`; reject first-version self-referential suspension.
-  - Preserve initialized-field state for later polling and cancellation cleanup.
+- [ ] **ASYNC-POLL-1: Implement typed polling transitions**
 
 ## Next
 
-- [ ] **ASYNC-POLL-1: Implement typed polling transitions**
 - [ ] **ASYNC-CANCEL-1: Drop initialized state on cancellation**
 - [ ] **ASYNC-BORROW-1: Reject first-version self-referential states**
 - [ ] **ASYNC-EXEC-1: Provide one explicit minimal executor**
 
-`MOVE-TRAIT-1` is complete. Async lowering now uses its relocation boundary.
+`MOVE-TRAIT-1` and `ASYNC-STATE-1` are complete. Cold async blocks now materialize compiler-owned
+nominal state, preserve owned captures across relocation, and drop unpolled captures on
+cancellation. Poll transitions remain the current task.
 
 ## Later
 

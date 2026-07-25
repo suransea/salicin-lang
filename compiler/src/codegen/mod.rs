@@ -25,6 +25,7 @@ use crate::modules::PackageId;
 mod access;
 mod arrays;
 mod assignment;
+mod async_lowering;
 mod calls;
 mod chain;
 mod cleanup_plan;
@@ -243,6 +244,8 @@ struct Analyzer {
     continuation_adapters: Vec<ContinuationAdapter>,
     effect_callable_adapters: Vec<EffectCallableAdapter>,
     runtime_handler_actions: HashMap<(String, usize, usize), RuntimeHandlerAction>,
+    async_futures: HashMap<String, async_lowering::AsyncFutureInfo>,
+    next_async_future: usize,
     diagnostics: Vec<Diagnostic>,
     current_origin: Option<Box<ItemOrigin>>,
 }
@@ -332,6 +335,8 @@ impl Analyzer {
             continuation_adapters: Vec::new(),
             effect_callable_adapters: Vec::new(),
             runtime_handler_actions: HashMap::new(),
+            async_futures: HashMap::new(),
+            next_async_future: 0,
             diagnostics: Vec::new(),
             current_origin: None,
         };
@@ -8674,12 +8679,7 @@ impl Analyzer {
             ),
             Expr::Try(value) => self.lower_try(value, expected, context),
             Expr::DoBlock { body } => self.lower_do_block(body, expected, context),
-            Expr::Async { .. } => {
-                self.error(
-                    "`async { ... }` is parsed but async state-machine lowering is not available yet",
-                );
-                error_expr()
-            }
+            Expr::Async { body } => self.lower_async_expression(body, context),
             Expr::Await(_) => {
                 self.error("`await` is only lowered as part of an async state machine");
                 error_expr()

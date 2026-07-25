@@ -6,9 +6,16 @@ subset.
 
 ## Unreleased
 
+- Allowed a trailing closure to supply an ordinary function's first runtime parameter group
+  directly, so single-callback APIs can use `run { action() }` without an artificial empty group.
+  Existing parenthesized, bare-argument, named, and successive trailing groups retain their
+  established grouping.
 - Added source-backed lexical `defer`, with compiler lowering that captures actions at registration
   and runs them in LIFO order after exit-value evaluation on normal completion, `return`, `break`,
   `continue`, and standard `throw` paths.
+- Lowered cold async blocks without suspension to private nominal state containing an explicit
+  state word and captured fields. Generated future state satisfies structural `Move`, and
+  cancellation drops moved captures exactly once without executing the body.
 - Declared `Continuation(Input, Output)` and `EffectCallable(Input, Output, Answer)` as bodyless
   type forms, matching their compiler-owned representations instead of describing them as empty
   structures. Lang-item validation now requires the exact type-form declarations.
@@ -17,9 +24,8 @@ subset.
   live in `core.unsafe`; and `Async`, `Poll`, `Future`, `Executor`, `async`, and `await` live in
   `core.async`. `Result` remains an ordinary data module, and `core.control` now contains only
   structural control flow.
-- Added contextual parsing for `async { ... }` and prefix `await` inside async bodies. The parser
-  preserves closure boundaries and lowers both forms to reserved compiler calls; semantic analysis
-  reports the pending state-machine boundary without exposing generated names.
+- Added contextual parsing for `async { ... }` and prefix `await` inside async bodies. Dedicated AST
+  nodes preserve their closure and suspension boundaries without reserved-call spellings.
 - Added the source-backed structural `core.marker.Move` auto marker, made `Copy` inherit `Move`,
   and enforce relocation capability at owned place moves while leaving direct in-place
   initialization unconstrained. Generic `where T: Move` bounds and ordinary resource relocation

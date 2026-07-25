@@ -3439,10 +3439,7 @@ impl Parser {
                     constructor: Box::new(expression),
                     fields,
                 };
-            } else if allow_trailing_closure
-                && can_take_trailing_closure
-                && self.at(&TokenKind::LBrace)
-            {
+            } else if allow_trailing_closure && self.at(&TokenKind::LBrace) {
                 if Self::starts_implicit_handler_groups(&expression) {
                     return Err(self.error_here(
                         "a handler action must use the named trailing group `action { ... }`",
@@ -3456,6 +3453,7 @@ impl Parser {
                         value: closure,
                     }],
                 );
+                can_take_trailing_closure = true;
             } else if allow_trailing_closure
                 && (can_take_trailing_closure || Self::starts_implicit_handler_groups(&expression))
                 && self.named_trailing_closure_follows()
@@ -7015,6 +7013,22 @@ mod tests {
         };
         assert_eq!(trailing_group.len(), 1);
         assert!(matches!(first_call.as_ref(), Expr::Call(_, _)));
+    }
+
+    #[test]
+    fn trailing_closure_can_supply_the_first_call_group() {
+        let program = parse("let invoke(): () = { run { cleanup() } }\n").unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        let Expr::Call(callee, arguments) = function_tail(function) else {
+            panic!("expected trailing closure call");
+        };
+        assert!(matches!(callee.as_ref(), Expr::Name(name) if name == "run"));
+        let [argument] = arguments.as_slice() else {
+            panic!("expected one closure argument");
+        };
+        assert!(matches!(argument.value.unlocated(), Expr::Closure(_, _)));
     }
 
     #[test]

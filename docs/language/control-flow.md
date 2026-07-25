@@ -62,7 +62,7 @@ left, without dropping transferred values or running cleanup twice.
 
 ## Deferred Actions
 
-`defer({ action })` registers `action` in the current lexical block. The action is captured at the
+`defer { action }` registers `action` in the current lexical block. The trailing closure is captured at the
 registration point and invoked only when that block exits. Multiple actions run last-in,
 first-out.
 

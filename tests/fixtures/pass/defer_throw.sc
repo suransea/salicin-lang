@@ -3,9 +3,9 @@ let Throws = std.error.Throws
 let defer = std.control.defer
 
 let fail(counter: borrow(mut)(i32)): i32 with(Throws(bool)) = {
-  defer({
+  defer {
     counter = counter + 1
-  })
+  }
   throw(true)
 }
 

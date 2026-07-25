@@ -320,7 +320,7 @@ impl Analyzer {
                 Ty::Struct(name.clone())
             }
             Type::Named(name, arguments) if arguments.is_empty() => {
-                if self.struct_defs.contains_key(name) {
+                if self.struct_defs.contains_key(name) || self.async_futures.contains_key(name) {
                     Ty::Struct(name.clone())
                 } else if self.enum_defs.contains_key(name) {
                     Ty::Enum(name.clone())
@@ -483,7 +483,8 @@ impl Analyzer {
                         .map(|argument| self.source_type_for_ty(argument))
                         .collect::<Option<Vec<_>>>()?;
                     Some(Type::Named(instance.key.template.clone(), arguments))
-                } else if self.abstract_type_parameters.contains_key(name)
+                } else if self.async_futures.contains_key(name)
+                    || self.abstract_type_parameters.contains_key(name)
                     || self.struct_defs.contains_key(name)
                     || self.enum_defs.contains_key(name)
                 {

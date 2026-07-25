@@ -126,8 +126,11 @@ Implemented algebraic-effect support includes:
 `Unsafe` is an authority effect used by raw memory and foreign operations. It does not disable
 typing, ownership, or cleanup checks.
 
-Complete `Future` contracts, async state-machine lowering, polling, cancellation, and
-self-reference rules are not implemented.
+Cold `async` blocks without suspension materialize compiler-generated nominal state containing an
+explicit state word and their captured fields. The generated state satisfies structural `Move`;
+relocating or cancelling an unpolled future transfers or drops owned captures exactly once.
+Typed polling transitions, `await`, completed-state behavior, and self-referential suspension rules
+are not implemented.
 
 ## Modules, Packages, and FFI
 

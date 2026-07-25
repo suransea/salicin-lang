@@ -26,11 +26,11 @@ let increment(counter: Ptr(mut)(i32)): () with(Unsafe) = {
 }
 
 let return_with_defer(counter: Ptr(mut)(i32)): i32 with(Unsafe) = {
-  defer({
+  defer {
     unsafe {
       increment(counter)
     }
-  })
+  }
   let value = unsafe {
     *counter
   }
@@ -42,27 +42,27 @@ let main(): i32 = { unsafe {
   *counter = 0
 
   do {
-    defer({
+    defer {
       unsafe {
         set(counter)(4, 40)
       }
-    })
-    defer({
+    }
+    defer {
       unsafe {
         set(counter)(0, 4)
       }
-    })
+    }
     ()
   }
 
   let mut iteration = 0
   loop {
     iteration = iteration + 1
-    defer({
+    defer {
       unsafe {
         increment(counter)
       }
-    })
+    }
     if iteration < 2 {
       continue()
     }

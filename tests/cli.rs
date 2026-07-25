@@ -3038,6 +3038,16 @@ fn defer_runs_lexical_actions_lifo_on_all_control_exits() {
 }
 
 #[test]
+fn cold_async_state_owns_and_drops_unpolled_captures() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "async_cold_cancel.sc"))
+        .output()
+        .expect("run cold async cancellation fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn named_arguments_select_function_overloads_in_resolved_sources() {
     let fixtures = [
         "function_overload_named.sc",
