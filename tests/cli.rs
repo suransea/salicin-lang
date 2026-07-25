@@ -3164,6 +3164,16 @@ fn await_hoists_out_of_loops_that_exit_on_the_first_iteration() {
 }
 
 #[test]
+fn await_reuses_one_child_slot_across_loop_backedges() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "async_await_loop_backedge.sc"))
+        .output()
+        .expect("run async loop backedge fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn cancelling_a_control_flow_await_drops_only_the_selected_child() {
     let output = salic()
         .arg("run")

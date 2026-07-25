@@ -245,6 +245,7 @@ struct Analyzer {
     effect_callable_adapters: Vec<EffectCallableAdapter>,
     runtime_handler_actions: HashMap<(String, usize, usize), RuntimeHandlerAction>,
     async_futures: HashMap<String, async_lowering::AsyncFutureInfo>,
+    internal_async_loop_constructors: HashMap<String, async_lowering::InternalAsyncLoopConstructor>,
     next_async_future: usize,
     async_factory_depth: usize,
     diagnostics: Vec<Diagnostic>,
@@ -337,6 +338,7 @@ impl Analyzer {
             effect_callable_adapters: Vec::new(),
             runtime_handler_actions: HashMap::new(),
             async_futures: HashMap::new(),
+            internal_async_loop_constructors: HashMap::new(),
             next_async_future: 0,
             async_factory_depth: 0,
             diagnostics: Vec::new(),
@@ -8899,7 +8901,9 @@ impl Analyzer {
                 self.error("`defer` is only valid as a standalone statement in a lexical block");
                 error_expr()
             }
-            Expr::Call(_, _) => self.lower_call(expression, expected, context),
+            Expr::Call(_, _) => self
+                .lower_internal_async_loop_constructor(expression, context)
+                .unwrap_or_else(|| self.lower_call(expression, expected, context)),
             Expr::StructLiteral {
                 constructor,
                 fields,
@@ -10226,6 +10230,20 @@ impl Analyzer {
             Expr::Call(_, _) => {
                 let mut groups = Vec::new();
                 let root = flatten_call(expression, &mut groups);
+                if matches!(root, Expr::Name(name) if self.internal_async_loop_constructors.contains_key(name))
+                {
+                    return groups.iter().flat_map(|group| group.iter()).fold(
+                        true,
+                        |valid, argument| {
+                            self.scan_simple_closure_captures(
+                                &argument.value,
+                                bound,
+                                outer,
+                                captures,
+                            ) & valid
+                        },
+                    );
+                }
                 if matches!(root, Expr::Name(name) if name.starts_with("$handler$tail$")) {
                     return groups.iter().flat_map(|group| group.iter()).fold(
                         true,

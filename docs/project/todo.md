@@ -39,8 +39,10 @@ prefixes and continuations, and branches without an await become immediate Ready
 suspension with a reachable backedge remains. Loops proven to exit on their first entered iteration
 already hoist their suspension without recursive state, including false or suspended pre-test
 `while` conditions. Recurring loops are classified by loop kind, suspension location, `continue`,
-fallthrough, and value-producing `break`; this source plan must now drive generated iteration
-state. Residual algebraic-effect specialization is a separate follow-up task.
+fallthrough, and value-producing `break`. A unit-output `loop` with one await and a boolean
+break/continue decision now reuses one child slot through a private step enum and poll-local HIR
+loop. Generalize that path to fallthrough, value output, `while`, multiple suspension points, and
+explicit move-only `Carry`. Residual algebraic-effect specialization is a separate follow-up task.
 
 Loop completion requires an allocation-free reusable iteration state. The generated iteration
 returns an internal `Continue(Carry)` or `Break(Output)` outcome, transfers loop-carried values by

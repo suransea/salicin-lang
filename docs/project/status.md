@@ -149,7 +149,10 @@ immediate Ready future. A `loop` or `while` proven to exit on its first entered 
 its suspension into the same state machine; false pre-test conditions complete immediately, and a
 pre-test condition may itself suspend. A child Output may differ from the enclosing future Output.
 Recurring suspension is classified by loop kind, condition/body location, `continue`, fallthrough,
-and value-producing `break`, but reusable backedge state and algebraic residual-effect
+and value-producing `break`. A unit-output `loop` with one await followed by a boolean
+`break()`/`continue()` decision now uses a private `Continue(next_child) | Break(())` step enum.
+Its poll transition reinitializes one child slot and consumes consecutive immediately-ready
+iterations in an HIR loop; move-only carry, general loop bodies, and algebraic residual-effect
 specialization are not implemented.
 
 ## Modules, Packages, and FFI

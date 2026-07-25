@@ -61,6 +61,10 @@ subset.
   suspended pre-test conditions complete without a backedge, and child and enclosing future
   outputs may differ. Recurring loops receive a source-level iteration-state diagnostic that
   identifies their suspension and backedge forms.
+- Added the first reusable async loop backedge. A unit-output loop with one await and a boolean
+  break/continue decision lowers to a private `Continue(next_child) | Break(())` step enum; polling
+  reinitializes one child field across Pending and consumes consecutive immediately-ready
+  iterations in an HIR loop without recursive future layout or host-stack recursion.
 - Declared `Continuation(Input, Output)` and `EffectCallable(Input, Output, Answer)` as bodyless
   type forms, matching their compiler-owned representations instead of describing them as empty
   structures. Lang-item validation now requires the exact type-form declarations.

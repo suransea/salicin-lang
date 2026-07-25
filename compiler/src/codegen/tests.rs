@@ -7348,6 +7348,37 @@ let main(): i32 = {
 }
 
 #[test]
+fn async_loop_steps_are_private_compiler_owned_nominals() {
+    let program = resolve_text("let main(): i32 = { 0 }\n");
+    let mut analyzer = Analyzer::new(&program);
+    let step = analyzer.register_async_loop_step(
+        Ty::Tuple(vec![Ty::I32, Ty::Bool]),
+        Ty::Struct("Output".to_owned()),
+        "$test$continue".to_owned(),
+        "$test$break".to_owned(),
+    );
+
+    let Ty::Enum(step_name) = &step.ty else {
+        panic!("loop step must be an enum");
+    };
+    assert_eq!(step.carry, Ty::Tuple(vec![Ty::I32, Ty::Bool]));
+    assert_eq!(step.output, Ty::Struct("Output".to_owned()));
+    assert_eq!(analyzer.enum_order.last(), Some(step_name));
+    assert_eq!(
+        analyzer.nominal_accesses[step_name].visibility,
+        Visibility::Private
+    );
+    let layout = &analyzer.enum_layouts[step_name];
+    assert_eq!(layout.variants.len(), 2);
+    assert_eq!(layout.variants[0].name, "Continue");
+    assert_eq!(layout.variants[0].payload_offset, 0);
+    assert_eq!(layout.variants[0].fields[0].ty, step.carry);
+    assert_eq!(layout.variants[1].name, "Break");
+    assert_eq!(layout.variants[1].payload_offset, 1);
+    assert_eq!(layout.variants[1].fields[0].ty, step.output);
+}
+
+#[test]
 fn cold_async_future_polls_to_the_standard_ready_variant() {
     compile_text(
         r#"
