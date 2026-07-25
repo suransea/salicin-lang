@@ -135,6 +135,10 @@ Implemented data and control features include:
   shared-borrow, and mutable-borrow captures and retained locals, Pending
   repoll without replaying earlier transitions, and exact completion, error,
   and cancellation cleanup;
+- handler specialization for a final non-suspending continuation that retains
+  a custom effect or `Throws` after a pure child becomes Ready, including
+  atomic transfer of move-only retained state, no execution on Pending or
+  cancellation, and exact cleanup on resume, error, or abandonment;
 - checked arithmetic, comparisons, bitwise operations, shifts, and compound assignment;
 - deterministic left-to-right evaluation;
 - optional chaining, coalescing, error propagation, and forced unwrap.
@@ -185,6 +189,12 @@ state. Those bridges also assemble retained continuation locals with the
 selected child before the existing atomic start transition. Selection runs
 once; Ready and cancellation drop only the selected child and each
 initialized retained value once.
+When a pure child becomes Ready, a final continuation may itself retain a
+custom effect or `Throws` if it does not suspend again. A pure transition
+destroys the child and packages its output with continuation captures and
+retained locals; the source poll wrapper consumes that package under the
+handler. This prevents replay on Pending and preserves exactly-once cleanup
+when the continuation resumes, throws, or is abandoned.
 One tail-position `await` stores its child across Pending,
 resumes from Ready, and drops the child exactly once on completion or cancellation. A single
 non-tail await may bind the Ready output and run a linear continuation with state-owned captures.
@@ -213,8 +223,9 @@ the condition, and each completed backedge rechecks it before constructing the n
 Conditions are currently pure and `while` remains unit-valued. Move-only continuation captures are
 now packed into `Continue(Carry)` and restored into their parent fields before the next iteration;
 completion and cancellation consume or drop each field once. Move-only values required by the
-iteration factory or condition still require a more general carry transform. Residual effects in
-later sequential segments and loops are not implemented.
+iteration factory or condition still require a more general carry transform.
+Residual child construction or polling in later sequential segments, and
+residual effects in recurring loops, are not implemented.
 Iterations with multiple top-level sequential awaits use a private iteration future; its final
 `Break(Output)` may depend on any awaited binding, and cancellation follows its nested active-child
 chain without retaining completed children. A recurring loop with no break uses the standard

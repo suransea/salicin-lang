@@ -24,13 +24,13 @@ end-to-end capability at a time and preserve:
 Callable and continuation ownership, cold future state, cancellation, explicit
 polling, loop suspension, and the first direct-tail suspended residual path
 are implemented. The current milestone closes the remaining residual
-specialization shapes. Finite pure linear post-await segments are now
-specialized without replaying the cold residual segment or retaining completed
-children.
+specialization shapes. Finite pure linear post-await segments and a final
+non-suspending residual continuation are now specialized without replaying
+earlier segments or retaining completed children.
 
 Remaining design:
 
-- residual effects in later post-await segments;
+- residual child construction and polling in later sequential segments;
 - recurring loop suspension under residual handlers;
 - explicit rejection where a state shape cannot remain structural `Move`.
 
@@ -95,6 +95,8 @@ Exit conditions:
 This milestone begins as soon as async residual specialization is complete.
 The existing `struct(c)`, `foreign(c, ...)`, and core-private `builtin()`
 source forms remain the foundation; they are not reopened as competing syntax.
+It takes priority over formatter, LSP, package, and incremental-compilation
+work; no other milestone is scheduled between async completion and this review.
 
 Work proceeds in this order:
 

@@ -9,9 +9,13 @@ and the [changelog](../../CHANGELOG.md) records completed work.
 Priority meanings:
 
 - **P0**: current task or regression blocker;
-- **P1**: next milestone preparation;
+- **P1**: immediate next work; begins when P0 is complete;
 - **P2**: accepted later work whose entry gate is not open;
 - **Deferred**: requires a new design decision.
+
+Execution order is strict: finish `ASYNC-EFFECT-1`, then perform the four ABI
+tasks in listed order. Tooling and package work does not begin before the ABI
+review is complete.
 
 ## P0: Async Completion
 
@@ -26,13 +30,16 @@ same-type direct-tail child factories. Direct `if` and `match` selection also
 support heterogeneous concrete children, pattern payload bindings, and a
 move-only selector by selecting before the private branch enum is initialized.
 The branch bridge can atomically initialize that selected child together with
-move-only or `Copy` locals retained by the continuation. Remaining work covers
-residual effects in later segments and loops while preserving handler
-ownership, cold construction, and one-shot cleanup.
+move-only or `Copy` locals retained by the continuation. A final continuation
+after a pure child becomes Ready may retain a custom effect or `Throws` when it
+does not suspend again. Remaining work covers residual child construction and
+polling in later sequential segments plus recurring loops while preserving
+handler ownership, cold construction, and one-shot cleanup.
 
-## P1: ABI Review And Interoperability
+## P1: Immediate Next - ABI Review And Interoperability
 
-Begin this milestone immediately after `ASYNC-EFFECT-1`.
+Begin this milestone immediately after `ASYNC-EFFECT-1`; no tooling or package
+task may be inserted between them.
 
 - [ ] **ABI-REVIEW-1: Audit runtime representations and calling boundaries**
 
@@ -61,6 +68,8 @@ and add cross-language layout and call tests. Keep compiler-owned `builtin()`
 definitions orthogonal to this boundary.
 
 ## P2: Tooling And Packages
+
+Entry gate: all four P1 ABI tasks are complete.
 
 - [ ] **TOOL-FMT-1: Define formatter-preserving syntax invariants**
 - [ ] **TOOL-LSP-1: Expose parser and semantic spans for an LSP**

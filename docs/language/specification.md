@@ -682,10 +682,14 @@ immediately when selected. Under residual specialization, a one-shot `if` or
 `match` may select direct-tail children of the same concrete future type. The
 selected child factory may use the first segment's residual row; selection and
 factory evaluation occur once, and Pending, Ready, or cancellation retains
-only the selected child. A residual branch whose child types differ, or whose
-linear prefix or suffix requires a wrapped branch-local future, is rejected
-before code generation. Residual effects in later sequential segments and
-loops are not implemented yet.
+only the selected child. Direct `if` and `match` selection may also choose
+heterogeneous concrete child types through a private active-variant future,
+including pattern payload bindings, a move-only selector, and retained
+continuation locals. After a pure child becomes Ready, a final continuation
+that does not suspend again may retain a custom effect or `Throws`; it executes
+once under the poll caller's handler after the completed child and its output
+have been transferred. Residual construction or polling of a later child and
+residual recurring loops are not implemented yet.
 
 `unsafe` is an authority effect. `unsafe { ... }` authorizes operations whose contracts cannot be
 verified by the safe type and ownership rules; it does not disable type checking or cleanup.

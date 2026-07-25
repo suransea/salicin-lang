@@ -6,6 +6,13 @@ subset.
 
 ## Unreleased
 
+- Specialized a final non-suspending async continuation that retains a custom
+  effect or `Throws` after a pure child becomes Ready. The pure transition
+  destroys the completed child and packages its output with continuation
+  captures and retained locals before the source poll wrapper enters the
+  handler. Native coverage verifies resume, error, abandonment, Pending
+  cancellation, no replay, and exactly-once child and retained-state cleanup.
+
 ## 0.198.0 - 2026-07-26
 
 - Allowed heterogeneous residual `if` and `match` selection to retain

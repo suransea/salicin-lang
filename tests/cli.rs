@@ -3343,6 +3343,7 @@ fn ready_tail_await_and_post_await_async_throws_specialize_under_try() {
         "async_residual_throws.sc",
         "async_residual_throws_tail_await.sc",
         "async_residual_throws_await.sc",
+        "async_residual_later_throws.sc",
     ]) {
         assert_eq!(
             output.status.code(),
@@ -3363,6 +3364,7 @@ fn suspended_residual_async_effects_specialize_and_cancel() {
         "async_residual_borrow_await.sc",
         "async_residual_branch_await.sc",
         "async_residual_heterogeneous_branch.sc",
+        "async_residual_later_effect.sc",
     ]) {
         assert_eq!(
             output.status.code(),

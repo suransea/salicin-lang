@@ -118,7 +118,15 @@ constructs the complete `(selected child, retained...)` bundle so the child
 and retained fields enter the suspended state atomically. Selection and the
 chosen factory execute once; Pending, Ready, and cancellation touch only the
 selected child, while every initialized retained value is cleaned exactly
-once. Residual effects in later segments and loops remain outside this slice.
+once. After a pure child becomes Ready, a final continuation that does not
+suspend again may retain custom effects or `Throws`. The pure state-machine
+transition first destroys the completed child and transfers the await output,
+continuation captures, and retained locals into one private tuple. The source
+poll wrapper then executes that continuation under the enclosing handler.
+Pending and cancellation never execute it; success, error, and handler
+abandonment clean every transferred value once. A later continuation that
+constructs or polls another residual child, and residual recurring loops,
+remain outside this slice.
 
 ## State Machines
 

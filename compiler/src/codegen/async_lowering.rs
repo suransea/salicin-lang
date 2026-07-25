@@ -202,34 +202,10 @@ impl Analyzer {
             context,
         );
         self.async_factory_depth -= 1;
-        let HirExprKind::LocalClosure(closure) = lowered.kind else {
+        let HirExprKind::LocalClosure(mut closure) = lowered.kind else {
             return lowered;
         };
-        let async_effect = self.lang_item_name(LangItemKind::AsyncEffect);
-        let unsupported_effects = closure
-            .custom_effects
-            .iter()
-            .filter(|effect| effect.as_str() != async_effect)
-            .cloned()
-            .collect::<Vec<_>>();
-        let throws_name = self.lang_item_name(LangItemKind::ThrowsEffect);
-        let residual_throws = unsupported_effects
-            .iter()
-            .filter_map(|effect| source_type_from_identity(effect))
-            .filter_map(|effect| standard_throws_error_source(&effect, throws_name))
-            .filter_map(|error| self.probe_source_ty(&error))
-            .collect::<Vec<_>>();
-        let algebraic_effects = unsupported_effects
-            .iter()
-            .filter(|effect| {
-                source_type_from_identity(effect).is_none_or(|source| {
-                    standard_throws_error_source(&source, throws_name).is_none()
-                })
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        let has_residual_effects =
-            closure.throws_error.is_some() || !unsupported_effects.is_empty();
+        let async_effect = self.lang_item_name(LangItemKind::AsyncEffect).to_owned();
         let (awaited_ty, retained_types) = if source_plan.retained.is_empty() {
             (closure.result.clone(), Vec::new())
         } else {
@@ -401,6 +377,8 @@ impl Analyzer {
         }
         let mut continuation_captures = Vec::new();
         let mut loop_carry_capture_indices = Vec::new();
+        let mut continuation_residual_throws = None;
+        let mut continuation_residual_custom = Vec::new();
         if let (Some(awaited), Some(continuation)) = (awaited.as_mut(), source_plan.continuation) {
             if continuation.mutable {
                 self.error("an await result used after suspension cannot be mutable yet");
@@ -445,6 +423,7 @@ impl Analyzer {
                 ty: source_ty,
             });
             let continuation_has_await = split_async_source(&continuation.body).has_await;
+            let continuation_source_body = continuation.body.clone();
             let continuation_body = if continuation_has_await {
                 Expr::Async {
                     body: Box::new(continuation.body),
@@ -492,16 +471,86 @@ impl Analyzer {
                 }
             }
             let async_effect = self.lang_item_name(LangItemKind::AsyncEffect);
-            if closure.throws_error.is_some()
+            let has_residual_continuation = closure.throws_error.is_some()
                 || closure
                     .custom_effects
                     .iter()
-                    .any(|effect| effect.as_str() != async_effect)
-            {
+                    .any(|effect| effect != async_effect);
+            if has_residual_continuation && continuation_has_await {
                 self.error(
-                    "async continuation residual Throws and algebraic effects require poll/resume handler specialization, which is not implemented yet",
+                    "an async continuation that both suspends and retains residual Throws or algebraic effects requires later-child poll specialization, which is not implemented yet",
                 );
                 return super::lower::error_expr();
+            }
+            if has_residual_continuation {
+                continuation_residual_throws = closure.throws_error.clone();
+                continuation_residual_custom.extend(
+                    closure
+                        .custom_effects
+                        .iter()
+                        .filter(|effect| effect.as_str() != async_effect)
+                        .cloned(),
+                );
+                let mut source_parameters = closure
+                    .capture_names
+                    .iter()
+                    .zip(&closure.captures)
+                    .map(|(name, capture)| {
+                        let mode = capture_pass_mode(capture);
+                        let ty = &capture.place.ty;
+                        Some(Param {
+                            mode,
+                            access: None,
+                            modifiers: Vec::new(),
+                            region: None,
+                            name: name.clone(),
+                            ty: self.source_type_for_ty(
+                                if matches!(mode, PassMode::Borrow | PassMode::MutBorrow) {
+                                    match ty {
+                                        Ty::Reference { pointee, .. } => pointee,
+                                        ty => ty,
+                                    }
+                                } else {
+                                    ty
+                                },
+                            )?,
+                        })
+                    })
+                    .collect::<Option<Vec<_>>>();
+                let Some(mut source_parameters) = source_parameters.take() else {
+                    self.error(
+                        "async continuation captures cannot be represented in a residual source helper",
+                    );
+                    return super::lower::error_expr();
+                };
+                source_parameters.extend(parameters.clone());
+                let Some(result) = self.source_type_for_ty(&closure.result) else {
+                    self.error(
+                        "async continuation output cannot be represented in a residual source helper",
+                    );
+                    return super::lower::error_expr();
+                };
+                awaited.residual_continuation = Some(AsyncResidualContinuationInfo {
+                    function: closure.function.clone(),
+                    body: continuation_source_body,
+                    parameters: source_parameters,
+                    result,
+                    effects: FunctionEffects {
+                        unsafe_effect: closure.unsafe_effect,
+                        throws: closure
+                            .throws_error
+                            .as_ref()
+                            .and_then(|error| self.source_type_for_ty(error))
+                            .map(Box::new),
+                        custom: closure
+                            .custom_effects
+                            .iter()
+                            .filter(|effect| effect.as_str() != async_effect)
+                            .filter_map(|effect| source_type_from_identity(effect))
+                            .collect(),
+                        parameters: Vec::new(),
+                    },
+                });
             }
             awaited.continuation = Some(closure.function);
             awaited.continuation_output = Some(closure.result.clone());
@@ -514,6 +563,46 @@ impl Analyzer {
             }
             continuation_captures = closure.captures;
         }
+        if let Some(error) = continuation_residual_throws {
+            if closure
+                .throws_error
+                .as_ref()
+                .is_some_and(|existing| existing != &error)
+            {
+                self.error("async segments retain incompatible `Throws` error types in one future");
+                return super::lower::error_expr();
+            }
+            closure.throws_error = Some(error);
+        }
+        for effect in continuation_residual_custom {
+            if !closure.custom_effects.contains(&effect) {
+                closure.custom_effects.push(effect);
+            }
+        }
+        let unsupported_effects = closure
+            .custom_effects
+            .iter()
+            .filter(|effect| *effect != &async_effect)
+            .cloned()
+            .collect::<Vec<_>>();
+        let throws_name = self.lang_item_name(LangItemKind::ThrowsEffect);
+        let residual_throws = unsupported_effects
+            .iter()
+            .filter_map(|effect| source_type_from_identity(effect))
+            .filter_map(|effect| standard_throws_error_source(&effect, throws_name))
+            .filter_map(|error| self.probe_source_ty(&error))
+            .collect::<Vec<_>>();
+        let algebraic_effects = unsupported_effects
+            .iter()
+            .filter(|effect| {
+                source_type_from_identity(effect).is_none_or(|source| {
+                    standard_throws_error_source(&source, throws_name).is_none()
+                })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let has_residual_effects =
+            closure.throws_error.is_some() || !unsupported_effects.is_empty();
 
         let supports_suspended_residual = awaited.as_ref().is_some_and(|awaited| {
             let heterogeneous_branch = matches!(
@@ -836,6 +925,7 @@ impl Analyzer {
             loop_condition: None,
             loop_carry_fields: Vec::new(),
             loop_carry_types: Vec::new(),
+            residual_continuation: None,
         })
     }
 
@@ -1654,6 +1744,115 @@ impl Analyzer {
             unreachable!("generated poll output is a Poll enum");
         };
         let self_ty = Ty::Struct(name.to_owned());
+        let mut machine_awaited = awaited.clone();
+        let mut machine_poll_ty = poll_ty.clone();
+        let mut machine_poll_name = poll_name.clone();
+        let mut residual_transition = None;
+        if let Some(residual) = &awaited.residual_continuation {
+            let mut input_types = awaited.continuation_capture_types.clone();
+            input_types.extend(awaited.retained_types.clone());
+            input_types.push(awaited.output.clone());
+            let input_ty = Ty::Tuple(input_types.clone());
+            let Some(input_source) = self.source_type_for_ty(&input_ty) else {
+                self.error(
+                    "async residual continuation inputs cannot be represented in the source type system",
+                );
+                return;
+            };
+            let poll_template = self.lang_item_name(LangItemKind::Poll).to_owned();
+            let Some(transition_poll_name) = self.ensure_nominal_instance(
+                NominalKind::Enum,
+                &poll_template,
+                vec![input_source.clone()],
+                vec![input_ty.clone()],
+            ) else {
+                return;
+            };
+            machine_poll_name = transition_poll_name.clone();
+            machine_poll_ty = Ty::Enum(transition_poll_name);
+
+            let pack_function = format!("{poll_function}$ready$pack");
+            let mut input_modes = awaited.continuation_capture_modes.clone();
+            input_modes.extend(awaited.retained_modes.clone());
+            input_modes.push(PassMode::Move);
+            let parameters = input_types
+                .iter()
+                .zip(&input_modes)
+                .enumerate()
+                .map(|(index, (ty, mode))| ParamSig {
+                    name: format!("input.{index}"),
+                    ty: ty.clone(),
+                    mode: *mode,
+                })
+                .collect::<Vec<_>>();
+            self.signatures.insert(
+                pack_function.clone(),
+                FunctionSig {
+                    groups: vec![parameters],
+                    unsafe_effect: false,
+                    throws_error: None,
+                    custom_effects: Vec::new(),
+                    result: Some(input_ty.clone()),
+                },
+            );
+            let pack_params = input_types
+                .iter()
+                .zip(&input_modes)
+                .enumerate()
+                .map(|(index, (ty, mode))| HirParam {
+                    id: 60_000 + index,
+                    name: format!("input.{index}"),
+                    ty: ty.clone(),
+                    mode: *mode,
+                })
+                .collect::<Vec<_>>();
+            let pack_values = input_types
+                .iter()
+                .zip(&input_modes)
+                .enumerate()
+                .map(|(index, (ty, mode))| HirExpr {
+                    ty: ty.clone(),
+                    kind: HirExprKind::Read {
+                        place: HirPlace {
+                            local: 60_000 + index,
+                            root_ty: ty.clone(),
+                            projections: Vec::new(),
+                            dynamic_index: None,
+                            ty: ty.clone(),
+                            capability: LocalCapability::Owned,
+                            root_mutable: false,
+                            loan: None,
+                            indirect: false,
+                        },
+                        kind: if matches!(
+                            mode,
+                            PassMode::Borrow | PassMode::MutBorrow | PassMode::Copy
+                        ) {
+                            HirReadKind::Copy
+                        } else {
+                            HirReadKind::Move
+                        },
+                    },
+                })
+                .collect();
+            self.lifted_functions.push(HirFunction {
+                name: pack_function.clone(),
+                params: pack_params,
+                result: input_ty.clone(),
+                body: HirExpr {
+                    ty: input_ty.clone(),
+                    kind: HirExprKind::Tuple(pack_values),
+                },
+            });
+            machine_awaited.continuation = Some(pack_function);
+            machine_awaited.continuation_output = Some(input_ty.clone());
+            machine_awaited.next = None;
+            machine_awaited.residual_continuation = None;
+            residual_transition = Some((residual.clone(), input_ty, input_source, input_modes));
+        }
+        let machine_output_source = residual_transition
+            .as_ref()
+            .map_or_else(|| output_source.clone(), |(_, _, source, _)| source.clone());
         let bundle_value = HirExpr {
             ty: awaited.factory_output.clone(),
             kind: HirExprKind::Read {
@@ -1673,10 +1872,12 @@ impl Analyzer {
         };
         let full_body = suspended_poll_body(
             &self_ty,
-            &poll_ty,
-            poll_name,
-            &future.output,
-            awaited,
+            &machine_poll_ty,
+            &machine_poll_name,
+            residual_transition
+                .as_ref()
+                .map_or(&future.output, |(_, input, _, _)| input),
+            &machine_awaited,
             bundle_value,
             None,
         );
@@ -1715,7 +1916,7 @@ impl Analyzer {
                 unsafe_effect: false,
                 throws_error: None,
                 custom_effects: Vec::new(),
-                result: Some(poll_ty.clone()),
+                result: Some(machine_poll_ty.clone()),
             },
         );
         self.signatures.insert(
@@ -1725,7 +1926,7 @@ impl Analyzer {
                 unsafe_effect: false,
                 throws_error: None,
                 custom_effects: Vec::new(),
-                result: Some(poll_ty.clone()),
+                result: Some(machine_poll_ty.clone()),
             },
         );
         let self_source = Type::Named(name.to_owned(), Vec::new());
@@ -1769,7 +1970,7 @@ impl Analyzer {
                     ]],
                     return_type: Some(Type::Named(
                         self.lang_item_name(LangItemKind::Poll).to_owned(),
-                        vec![output_source.clone()],
+                        vec![machine_output_source.clone()],
                     )),
                     effects: pure_effects.clone(),
                     where_predicates: Vec::new(),
@@ -1794,7 +1995,7 @@ impl Analyzer {
                 }]],
                 return_type: Some(Type::Named(
                     self.lang_item_name(LangItemKind::Poll).to_owned(),
-                    vec![output_source.clone()],
+                    vec![machine_output_source.clone()],
                 )),
                 effects: pure_effects.clone(),
                 where_predicates: Vec::new(),
@@ -1825,7 +2026,7 @@ impl Analyzer {
                     mode: PassMode::Inferred,
                 },
             ],
-            result: poll_ty.clone(),
+            result: machine_poll_ty.clone(),
             body: *then_branch,
         });
         let mut branch_start_helpers = Vec::new();
@@ -1866,7 +2067,7 @@ impl Analyzer {
                         unsafe_effect: false,
                         throws_error: None,
                         custom_effects: Vec::new(),
-                        result: Some(poll_ty.clone()),
+                        result: Some(machine_poll_ty.clone()),
                     },
                 );
                 let branch_source = self
@@ -1915,7 +2116,7 @@ impl Analyzer {
                         groups: vec![source_parameters],
                         return_type: Some(Type::Named(
                             self.lang_item_name(LangItemKind::Poll).to_owned(),
-                            vec![output_source.clone()],
+                            vec![machine_output_source.clone()],
                         )),
                         effects: pure_effects.clone(),
                         where_predicates: Vec::new(),
@@ -2033,9 +2234,9 @@ impl Analyzer {
                 self.lifted_functions.push(HirFunction {
                     name: helper.clone(),
                     params,
-                    result: poll_ty.clone(),
+                    result: machine_poll_ty.clone(),
                     body: HirExpr {
-                        ty: poll_ty.clone(),
+                        ty: machine_poll_ty.clone(),
                         kind: HirExprKind::Call {
                             function: start_helper.clone(),
                             arguments,
@@ -2055,7 +2256,7 @@ impl Analyzer {
                 ty: self_reference.clone(),
                 mode: PassMode::Inferred,
             }],
-            result: poll_ty.clone(),
+            result: machine_poll_ty.clone(),
             body: *waiting_branch,
         });
 
@@ -2258,7 +2459,7 @@ impl Analyzer {
                             })
                             .cloned()
                             .collect(),
-                        result: Some(poll_ty.clone()),
+                        result: Some(machine_poll_ty.clone()),
                     },
                 );
                 self.functions.insert(
@@ -2271,7 +2472,7 @@ impl Analyzer {
                         groups: vec![parameters],
                         return_type: Some(Type::Named(
                             self.lang_item_name(LangItemKind::Poll).to_owned(),
-                            vec![output_source.clone()],
+                            vec![machine_output_source.clone()],
                         )),
                         effects: effects.clone(),
                         where_predicates: Vec::new(),
@@ -2297,7 +2498,7 @@ impl Analyzer {
         } else {
             call_helper(start_helper, vec![resume, self_value()])
         };
-        let body = Expr::If {
+        let machine_body = Expr::If {
             condition: Box::new(Expr::Binary(
                 Box::new(state()),
                 BinaryOp::Eq,
@@ -2308,6 +2509,103 @@ impl Analyzer {
                 Some(Box::new(cold_poll)),
             )),
             else_branch: Some(Box::new(call_helper(wait_helper, vec![self_value()]))),
+        };
+        let body = if let Some((residual, input_ty, input_source, input_modes)) =
+            residual_transition
+        {
+            self.functions.insert(
+                residual.function.clone(),
+                Function {
+                    name: residual.function.clone(),
+                    foreign: None,
+                    builtin: false,
+                    compile_groups: Vec::new(),
+                    groups: vec![residual.parameters.clone()],
+                    return_type: Some(residual.result.clone()),
+                    effects: residual.effects.clone(),
+                    where_predicates: Vec::new(),
+                    body: Some(residual.body.clone()),
+                },
+            );
+            self.function_origins
+                .insert(residual.function.clone(), origin.clone());
+
+            let Ty::Tuple(input_types) = input_ty else {
+                unreachable!("residual continuation transition input is a tuple");
+            };
+            let bindings = input_types
+                .iter()
+                .enumerate()
+                .map(|(index, _)| format!("$async$ready$input${index}"))
+                .collect::<Vec<_>>();
+            let continuation_arguments = bindings
+                .iter()
+                .zip(&input_modes)
+                .map(|(name, mode)| CallArg {
+                    label: None,
+                    value: if matches!(mode, PassMode::Borrow | PassMode::MutBorrow) {
+                        call_helper(
+                            "$async$copy$stored$borrow".to_owned(),
+                            vec![Expr::Name(name.clone())],
+                        )
+                    } else {
+                        Expr::Name(name.clone())
+                    },
+                })
+                .collect();
+            let continuation = Expr::Call(
+                Box::new(Expr::Name(residual.function.clone())),
+                continuation_arguments,
+            );
+            let parent_poll_type = Expr::Call(
+                Box::new(Expr::Name(
+                    self.lang_item_name(LangItemKind::Poll).to_owned(),
+                )),
+                vec![CallArg {
+                    label: None,
+                    value: source_type_expression(&output_source),
+                }],
+            );
+            let pending = Expr::Member(Box::new(parent_poll_type.clone()), "Pending".to_owned());
+            let ready = Expr::Call(
+                Box::new(Expr::Member(Box::new(parent_poll_type), "Ready".to_owned())),
+                vec![CallArg {
+                    label: None,
+                    value: continuation,
+                }],
+            );
+            let _ = input_source;
+            Expr::Match {
+                scrutinee: Box::new(machine_body),
+                arms: vec![
+                    crate::ast::MatchArm {
+                        pattern: crate::ast::Pattern::Constructor {
+                            path: vec!["Pending".to_owned()],
+                            fields: crate::ast::PatternFields::Unit,
+                        },
+                        guard: None,
+                        body: pending,
+                    },
+                    crate::ast::MatchArm {
+                        pattern: crate::ast::Pattern::Constructor {
+                            path: vec!["Ready".to_owned()],
+                            fields: crate::ast::PatternFields::Positional(vec![
+                                crate::ast::Pattern::Tuple(
+                                    bindings
+                                        .iter()
+                                        .cloned()
+                                        .map(crate::ast::Pattern::Binding)
+                                        .collect(),
+                                ),
+                            ]),
+                        },
+                        guard: None,
+                        body: ready,
+                    },
+                ],
+            }
+        } else {
+            machine_body
         };
         self.functions.insert(
             poll_function.clone(),
@@ -2342,8 +2640,14 @@ impl Analyzer {
             },
         );
         self.function_origins.insert(poll_function.clone(), origin);
-        self.lifted_functions
-            .retain(|function| function.name != resume_function && function.name != poll_function);
+        self.lifted_functions.retain(|function| {
+            function.name != resume_function
+                && function.name != poll_function
+                && awaited
+                    .residual_continuation
+                    .as_ref()
+                    .is_none_or(|residual| function.name != residual.function)
+        });
     }
 
     fn async_source_effects(&self, future: &AsyncFutureInfo) -> FunctionEffects {
@@ -3239,6 +3543,16 @@ pub(super) struct AwaitedFutureInfo {
     pub(super) loop_condition: Option<AsyncLoopConditionInfo>,
     pub(super) loop_carry_fields: Vec<usize>,
     pub(super) loop_carry_types: Vec<Ty>,
+    pub(super) residual_continuation: Option<AsyncResidualContinuationInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct AsyncResidualContinuationInfo {
+    pub(super) function: String,
+    pub(super) body: Expr,
+    pub(super) parameters: Vec<Param>,
+    pub(super) result: Type,
+    pub(super) effects: FunctionEffects,
 }
 
 #[derive(Debug, Clone)]
