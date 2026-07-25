@@ -9,6 +9,7 @@ use super::hir::{
     HirFunction, HirMatchArm, HirMatcher, HirParam, HirPatternBinding, HirPlace, HirReadKind,
     HirStmt, LocalCapability, ParamSig, StructLayout, Ty, VariantLayout,
 };
+use super::lower::TypeProbe;
 use super::names::trait_method_name;
 use super::registry::{NominalKind, TraitImplInfo, TraitImplKey, TraitRefKey};
 use super::Analyzer;
@@ -130,12 +131,39 @@ impl Analyzer {
             None
         };
         let loop_step = match (&source_plan.loop_step, awaited.as_ref()) {
-            (Some(source), Some(awaited)) => Some(self.register_async_loop_step(
-                awaited.ty.clone(),
-                Ty::Unit,
-                source.continue_constructor.clone(),
-                source.break_constructor.clone(),
-            )),
+            (Some(source), Some(awaited)) => {
+                let mut probe_context = context.clone();
+                let id = probe_context.fresh_local();
+                probe_context.insert_local(
+                    source.binding.clone(),
+                    super::flow::LocalInfo {
+                        id,
+                        ty: awaited.output.clone(),
+                        mutable: false,
+                        capability: LocalCapability::Owned,
+                        alias: None,
+                        partial: None,
+                        closure: None,
+                    },
+                );
+                let output = match self.probe_expr_ty(&source.break_value, None, &probe_context) {
+                    TypeProbe::Known(ty)
+                    | TypeProbe::KnownSource(ty, _)
+                    | TypeProbe::Defaultable(ty) => ty,
+                    TypeProbe::Unsupported => {
+                        self.error(
+                            "value-producing `break` in a recurring async loop has an output type that cannot be inferred",
+                        );
+                        return super::lower::error_expr();
+                    }
+                };
+                Some(self.register_async_loop_step(
+                    awaited.ty.clone(),
+                    output,
+                    source.continue_constructor.clone(),
+                    source.break_constructor.clone(),
+                ))
+            }
             _ => None,
         };
         if let (Some(awaited), Some(loop_step)) = (awaited.as_mut(), loop_step.as_ref()) {
@@ -1716,6 +1744,8 @@ struct AsyncRetainedSource {
 }
 
 struct AsyncLoopStepSource {
+    binding: String,
+    break_value: Expr,
     continue_constructor: String,
     break_constructor: String,
 }
@@ -1871,9 +1901,9 @@ fn simple_recurring_async_loop_source(body: &Expr, id: usize) -> Option<AsyncSou
         return None;
     };
     let (condition, then_control, else_control) = simple_loop_decision(decision)?;
-    let break_when_true = match (then_control, else_control) {
-        (SimpleLoopControl::Break, SimpleLoopControl::Continue) => true,
-        (SimpleLoopControl::Continue, SimpleLoopControl::Break) => false,
+    let (break_when_true, break_value) = match (then_control, else_control) {
+        (SimpleLoopControl::Break(value), SimpleLoopControl::Continue) => (true, value),
+        (SimpleLoopControl::Continue, SimpleLoopControl::Break(value)) => (false, value),
         _ => return None,
     };
     let continue_constructor = format!("$async$loop$continue${id}");
@@ -1885,7 +1915,7 @@ fn simple_recurring_async_loop_source(body: &Expr, id: usize) -> Option<AsyncSou
         )
     };
     let continue_step = construct(&continue_constructor, (**child).clone());
-    let break_step = construct(&break_constructor, Expr::Unit);
+    let break_step = construct(&break_constructor, break_value.clone());
     let (then_branch, else_branch) = if break_when_true {
         (break_step, continue_step)
     } else {
@@ -1905,15 +1935,16 @@ fn simple_recurring_async_loop_source(body: &Expr, id: usize) -> Option<AsyncSou
         }),
         retained: Vec::new(),
         loop_step: Some(AsyncLoopStepSource {
+            binding: binding.name.clone(),
+            break_value,
             continue_constructor,
             break_constructor,
         }),
     })
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
 enum SimpleLoopControl {
-    Break,
+    Break(Expr),
     Continue,
 }
 
@@ -1950,7 +1981,9 @@ fn simple_loop_decision(expression: &Expr) -> Option<(Expr, SimpleLoopControl, S
 
 fn simple_loop_control(expression: &Expr) -> Option<SimpleLoopControl> {
     match expression.unlocated() {
-        Expr::Break(None) => Some(SimpleLoopControl::Break),
+        Expr::Break(value) => Some(SimpleLoopControl::Break(
+            value.as_deref().cloned().unwrap_or(Expr::Unit),
+        )),
         Expr::Continue => Some(SimpleLoopControl::Continue),
         Expr::Block(statements, Some(tail)) if statements.is_empty() => simple_loop_control(tail),
         Expr::Block(statements, None) => {

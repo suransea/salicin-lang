@@ -3174,6 +3174,26 @@ fn await_reuses_one_child_slot_across_loop_backedges() {
 }
 
 #[test]
+fn async_loop_backedges_preserve_value_producing_breaks() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "async_await_loop_value.sc"))
+        .output()
+        .expect("run value-producing async loop fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
+fn async_loop_break_transfers_a_move_only_output_once() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "async_await_loop_value_move.sc"))
+        .output()
+        .expect("run move-only async loop output fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn cancelling_an_async_loop_drops_completed_and_active_children_once() {
     let output = salic()
         .arg("run")
