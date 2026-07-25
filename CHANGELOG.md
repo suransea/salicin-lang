@@ -6,6 +6,12 @@ subset.
 
 ## Unreleased
 
+- Added shared and mutable borrowed captures to suspended residual futures.
+  Stored references preserve their external regions and ordinary alias
+  restrictions through cold factory evaluation, Pending, Ready continuation,
+  and cancellation; destroying the future ends its loans, while access to a
+  still-borrowed referent remains diagnostic.
+
 ## 0.193.0 - 2026-07-26
 
 - Extended suspended residual async specialization through finite sequential

@@ -3360,6 +3360,7 @@ fn suspended_residual_async_effects_specialize_and_cancel() {
         "async_residual_post_await.sc",
         "async_residual_retained_await.sc",
         "async_residual_nested_await.sc",
+        "async_residual_borrow_await.sc",
     ]) {
         assert_eq!(
             output.status.code(),
@@ -3368,6 +3369,18 @@ fn suspended_residual_async_effects_specialize_and_cancel() {
             output_text(&output)
         );
     }
+
+    let conflict = salic()
+        .arg("check")
+        .arg(fixture("fail", "async_residual_borrow_await_conflict.sc"))
+        .output()
+        .expect("check suspended residual borrow conflict");
+    assert!(!conflict.status.success(), "{}", output_text(&conflict));
+    assert!(
+        String::from_utf8_lossy(&conflict.stderr).contains("borrowed"),
+        "{}",
+        output_text(&conflict)
+    );
 
     let recurring = salic()
         .arg("check")

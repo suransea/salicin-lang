@@ -32,7 +32,6 @@ Remaining design:
 
 - residual effects in later post-await segments;
 - branch and loop suspension under residual handlers;
-- borrowed suspended captures that preserve region and alias constraints;
 - explicit rejection where a state shape cannot remain structural `Move`.
 
 Exit conditions:

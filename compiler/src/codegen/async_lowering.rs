@@ -522,11 +522,11 @@ impl Analyzer {
                     .captures
                     .iter()
                     .map(capture_pass_mode)
-                    .all(|mode| matches!(mode, PassMode::Copy | PassMode::Move))
+                    .all(|mode| mode != PassMode::Inferred)
                 && continuation_captures
                     .iter()
                     .map(capture_pass_mode)
-                    .all(|mode| matches!(mode, PassMode::Copy | PassMode::Move))
+                    .all(|mode| mode != PassMode::Inferred)
         });
         if has_residual_effects && source_plan.has_await && !supports_suspended_residual {
             if closure.throws_error.is_some() || !residual_throws.is_empty() {
@@ -1878,7 +1878,7 @@ impl Analyzer {
                 .insert(helper.clone(), self.nominal_accesses[name].clone());
             let place = async_field_place(0, self_ty.clone(), field, ty.clone());
             let body = match mode {
-                PassMode::Copy => HirExpr {
+                PassMode::Borrow | PassMode::MutBorrow | PassMode::Copy => HirExpr {
                     ty: ty.clone(),
                     kind: HirExprKind::Read {
                         place,
@@ -1895,8 +1895,8 @@ impl Analyzer {
                         kind: HirExprKind::RawAddress { place },
                     })),
                 },
-                PassMode::Borrow | PassMode::MutBorrow | PassMode::Inferred => {
-                    unreachable!("suspended residual templates accept Copy or Move captures")
+                PassMode::Inferred => {
+                    unreachable!("suspended residual capture modes are normalized")
                 }
             };
             self.lifted_functions.push(HirFunction {
@@ -1927,9 +1927,21 @@ impl Analyzer {
             Box::new(Expr::Name(resume_function.to_owned())),
             capture_helpers
                 .iter()
-                .map(|helper| CallArg {
+                .zip(&future.capture_modes)
+                .enumerate()
+                .map(|(index, (helper, mode))| CallArg {
                     label: None,
-                    value: call_helper(helper.clone(), vec![self_value()]),
+                    value: if matches!(mode, PassMode::Borrow | PassMode::MutBorrow) {
+                        call_helper(
+                            "$async$copy$stored$borrow".to_owned(),
+                            vec![Expr::Member(
+                                Box::new(self_value()),
+                                format!("capture.{index}"),
+                            )],
+                        )
+                    } else {
+                        call_helper(helper.clone(), vec![self_value()])
+                    },
                 })
                 .collect(),
         );

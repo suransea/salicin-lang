@@ -10299,6 +10299,19 @@ impl Analyzer {
                         },
                     );
                 }
+                if matches!(root, Expr::Name(name) if name == "$async$copy$stored$borrow") {
+                    return groups.iter().flat_map(|group| group.iter()).fold(
+                        true,
+                        |valid, argument| {
+                            self.scan_simple_closure_captures(
+                                &argument.value,
+                                bound,
+                                outer,
+                                captures,
+                            ) & valid
+                        },
+                    );
+                }
                 if matches!(root, Expr::Name(name) if name.starts_with("$handler$tail$")) {
                     return groups.iter().flat_map(|group| group.iter()).fold(
                         true,

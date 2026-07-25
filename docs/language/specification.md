@@ -648,10 +648,12 @@ handled by `try { future.poll() }`; both successful Ready and thrown paths
 preserve capture cleanup. A suspended body may also retain a custom residual
 effect, including `Throws(Error)`, when its first segment ends in one `await`.
 It may either return that value directly or run a finite linear sequence of
-continuations and awaits after Ready. Every segment may capture only by-value
-`Copy` or move-only values, and pre-await locals used by a continuation may be
-retained by `Copy` or move. Only the first segment may retain a custom effect
-or `Throws`; each later child poll row must be pure apart from `Unsafe`.
+continuations and awaits after Ready. Every segment may capture by-value
+`Copy` or move-only values, or retain a region-checked shared or mutable
+reference to external storage. Pre-await locals used by a continuation may be
+retained when the resulting state remains structural `Move`. Only the first
+segment may retain a custom effect or `Throws`; each later child poll row must
+be pure apart from `Unsafe`.
 Polling through the enclosing handler specializes the cold transition before
 runtime lowering. That transition marks transferred captures unavailable
 before evaluating the await operand, so an abort cannot drop them twice. A
@@ -676,8 +678,8 @@ ordinary region and alias constraints. An `if` or `match` may place one tail awa
 when every child future has the same Output; concrete child types may differ. The condition,
 scrutinee, and guards run once before suspension, and cancellation drops only the selected child.
 Branch-local linear statements may surround await, and a non-suspending branch completes
-immediately when selected. Residual effects in later sequential segments, branches, loops, or
-borrowed suspended captures are not implemented yet.
+immediately when selected. Residual effects in later sequential segments, branches, or loops are
+not implemented yet.
 
 `unsafe` is an authority effect. `unsafe { ... }` authorizes operations whose contracts cannot be
 verified by the safe type and ownership rules; it does not disable type checking or cleanup.

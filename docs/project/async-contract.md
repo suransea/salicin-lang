@@ -91,9 +91,10 @@ requirements of `poll`.
 The implemented suspended residual slice accepts a first segment ending in
 one `await`, optionally followed by a finite linear sequence of pure await
 segments. The first segment may retain custom effects or `Throws`; later
-child poll rows may not. Every segment may capture only by-value `Copy` or
-move-only values. Pre-await locals used by a continuation may likewise be
-retained by `Copy` or move. The enclosing handler specializes the generated
+child poll rows may not. Every segment may capture by-value `Copy` or
+move-only values, or retain a region-checked shared or mutable reference to
+external storage. Pre-await locals used by a continuation may likewise be
+retained when the resulting state remains structural `Move`. The enclosing handler specializes the generated
 poll source. On the cold transition, the parent marks transferred factory
 captures unavailable before evaluating the child factory; an abort therefore
 cannot clean the same capture again. A distinct starting state retains
@@ -104,8 +105,9 @@ polls invoke only the active child rather than replaying an earlier factory or
 its residual effects. Each Ready transition destroys its completed child
 before constructing the next. Completion, error, and cancellation each
 destroy every initialized child, retained local, and continuation capture
-once. Residual effects in later segments, branches, loops, or borrowed
-suspended captures remain outside this slice.
+once. A borrow of storage retained in the same future remains rejected as
+self-referential. Residual effects in later segments, branches, and loops
+remain outside this slice.
 
 ## State Machines
 
