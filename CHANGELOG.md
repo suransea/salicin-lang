@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.196.0 - 2026-07-26
+
 - Specialized direct two-way heterogeneous residual async `if` selection.
   The condition and each concrete child factory remain source-typed through
   handler specialization, while pure branch bridges initialize the private
