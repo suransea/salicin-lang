@@ -6,6 +6,12 @@ subset.
 
 ## Unreleased
 
+- Extended heterogeneous residual async branch specialization from direct
+  two-way `if` to general direct `match`. The source selection helper
+  preserves pattern payload scope and move-only selector ownership, stages
+  the selected concrete child once, and enters the existing pure
+  active-variant polling state.
+
 ## 0.196.0 - 2026-07-26
 
 - Specialized direct two-way heterogeneous residual async `if` selection.

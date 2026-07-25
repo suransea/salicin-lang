@@ -108,14 +108,14 @@ destroy every initialized child, retained local, and continuation capture
 once. A borrow of storage retained in the same future remains rejected as
 self-referential. A one-shot `if` or `match` may select between direct-tail
 children of the same concrete future type while the selected child factory
-retains the first-segment residual row. A direct `if` may also select between
-two concrete child future types. Its condition and concrete child factories
-are specialized separately through the residual handler; the private
-active-variant enum is constructed only in the pure polling state machine.
-Selection and the chosen factory execute once; Pending, Ready, and
-cancellation touch only the selected child. General heterogeneous `match`,
-wrapped branch-local state, residual effects in later segments, and loops
-remain outside this slice.
+retains the first-segment residual row. Direct `if` and `match` selection may
+also produce heterogeneous concrete child types. The complete selection
+expression remains source-typed through the residual handler, including
+pattern payload bindings and a moved selector; each selected concrete child
+is then transferred through a pure bridge into the private active-variant
+state. Selection and the chosen factory execute once; Pending, Ready, and
+cancellation touch only the selected child. Wrapped branch-local state,
+residual effects in later segments, and loops remain outside this slice.
 
 ## State Machines
 

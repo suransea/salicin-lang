@@ -31,8 +31,7 @@ children.
 Remaining design:
 
 - residual effects in later post-await segments;
-- general heterogeneous `match` and wrapped-state branch suspension under
-  residual handlers;
+- wrapped-state branch suspension under residual handlers;
 - recurring loop suspension under residual handlers;
 - explicit rejection where a state shape cannot remain structural `Move`.
 
