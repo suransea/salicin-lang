@@ -31,8 +31,10 @@ await are rejected as non-`Move`; region-checked borrows of external storage rem
 unhandled `Unsafe` requirement is inferred onto `poll`.
 
 The current task must lower suspension points nested in `if`, `match`, and loop control flow while
-preserving branch-local liveness and deterministic cancellation. Residual algebraic-effect
-specialization remains a separate follow-up task.
+preserving branch-local liveness and deterministic cancellation. Homogeneous `if` and `match`
+branches whose bodies are a single tail await now hoist selection before one shared suspension.
+Heterogeneous child futures, branch-local prefixes, and loop suspension remain. Residual
+algebraic-effect specialization is a separate follow-up task.
 
 ## Later
 

@@ -3144,6 +3144,16 @@ fn await_drops_a_retained_resource_after_ready() {
 }
 
 #[test]
+fn await_hoists_over_homogeneous_if_and_match_branches() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "async_await_control_branches.sc"))
+        .output()
+        .expect("run async control-flow await fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn cancelling_multiple_awaits_drops_only_the_active_segment_state() {
     let output = salic()
         .arg("run")

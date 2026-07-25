@@ -289,6 +289,8 @@ preserve earlier results across later Pending states. Suspension nested in contr
 compiler work. Locals live across a sequential suspension are state fields with ordinary ownership
 and cleanup. A borrow cannot cross suspension together with a local referent stored in that same
 future because `Future` requires `Move`; external region-checked borrows remain permitted.
+Homogeneous `if` and `match` branches consisting of one tail await select their child before using
+this same polling contract. General control-flow suspension remains compiler work.
 
 ```sc fragment
 pub let do(E: effect, T: type)

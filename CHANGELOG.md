@@ -47,6 +47,8 @@ subset.
 - Completed the first async borrowing boundary: a borrow chain whose local referent would occupy
   the same generated future is rejected as self-referential and non-`Move`, while external borrows
   remain region-checked and keep their ordinary alias restrictions.
+- Hoisted a tail await over homogeneous `if` and `match` branches, evaluating branch selection once
+  before the selected child enters the existing Pending, Ready, and cancellation state machine.
 - Declared `Continuation(Input, Output)` and `EffectCallable(Input, Output, Answer)` as bodyless
   type forms, matching their compiler-owned representations instead of describing them as empty
   structures. Lang-item validation now requires the exact type-form declarations.

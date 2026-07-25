@@ -141,7 +141,10 @@ segment on cancellation. Ordinary locals live across a sequential await are stor
 state and transferred into the continuation; owned resources are dropped exactly once on Ready or
 cancellation. Borrow chains whose referent would be stored in the same future are rejected because
 the generated state could not implement `Move`, while region-checked borrows of external storage
-remain valid. Control-flow awaits and algebraic residual-effect specialization are not implemented.
+remain valid. An `if` or `match` whose every branch is a single tail await can suspend when all
+branches produce the same concrete child-future type; selection is evaluated once before the child
+is stored. Heterogeneous branches, branch-local prefixes, loop suspension, and algebraic
+residual-effect specialization are not implemented.
 
 ## Modules, Packages, and FFI
 

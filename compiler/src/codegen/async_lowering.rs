@@ -1165,9 +1165,27 @@ fn split_async_source(body: &Expr) -> AsyncSourcePlan {
                 retained: Vec::new(),
             };
         }
+        expression if hoist_control_await(expression).is_some() => {
+            return AsyncSourcePlan {
+                factory_body: hoist_control_await(expression)
+                    .expect("checked control-flow await hoisting"),
+                has_await: true,
+                continuation: None,
+                retained: Vec::new(),
+            };
+        }
         Expr::Block(_, Some(tail)) => {
             if let Expr::Await(operand) = tail.unlocated() {
                 **tail = (**operand).clone();
+                return AsyncSourcePlan {
+                    factory_body: body,
+                    has_await: true,
+                    continuation: None,
+                    retained: Vec::new(),
+                };
+            }
+            if let Some(hoisted) = hoist_control_await(tail) {
+                **tail = hoisted;
                 return AsyncSourcePlan {
                     factory_body: body,
                     has_await: true,
@@ -1194,8 +1212,9 @@ fn split_async_source(body: &Expr) -> AsyncSourcePlan {
                 let Stmt::Let(binding) = statement else {
                     return None;
                 };
-                let Expr::Await(operand) = binding.value.unlocated() else {
-                    return None;
+                let operand = match binding.value.unlocated() {
+                    Expr::Await(operand) => (**operand).clone(),
+                    expression => hoist_control_await(expression)?,
                 };
                 Some((position, binding, operand))
             })
@@ -1282,10 +1301,10 @@ fn split_async_source(body: &Expr) -> AsyncSourcePlan {
         }
     }
     let factory_tail = if retained.is_empty() {
-        (**operand).clone()
+        operand.clone()
     } else {
         Expr::Tuple(
-            std::iter::once((**operand).clone())
+            std::iter::once(operand.clone())
                 .chain(
                     retained
                         .iter()
@@ -1306,6 +1325,50 @@ fn split_async_source(body: &Expr) -> AsyncSourcePlan {
             body: continuation_body,
         }),
         retained,
+    }
+}
+
+fn hoist_control_await(expression: &Expr) -> Option<Expr> {
+    match expression.unlocated() {
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch: Some(else_branch),
+        } => {
+            let then_future = tail_await_operand(then_branch)?;
+            let else_future = tail_await_operand(else_branch)?;
+            Some(Expr::If {
+                condition: condition.clone(),
+                then_branch: Box::new(then_future),
+                else_branch: Some(Box::new(else_future)),
+            })
+        }
+        Expr::Match { scrutinee, arms } if !arms.is_empty() => {
+            let mut hoisted_arms = Vec::with_capacity(arms.len());
+            for arm in arms {
+                let mut arm = arm.clone();
+                arm.body = tail_await_operand(&arm.body)?;
+                hoisted_arms.push(arm);
+            }
+            Some(Expr::Match {
+                scrutinee: scrutinee.clone(),
+                arms: hoisted_arms,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn tail_await_operand(expression: &Expr) -> Option<Expr> {
+    match expression.unlocated() {
+        Expr::Await(future) => Some((**future).clone()),
+        Expr::Block(statements, Some(tail)) if statements.is_empty() => {
+            let Expr::Await(future) = tail.unlocated() else {
+                return None;
+            };
+            Some((**future).clone())
+        }
+        _ => None,
     }
 }
 
