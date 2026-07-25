@@ -3154,6 +3154,16 @@ fn await_hoists_over_if_and_match_branches() {
 }
 
 #[test]
+fn await_hoists_out_of_loops_that_exit_on_the_first_iteration() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "async_await_terminating_loops.sc"))
+        .output()
+        .expect("run terminating async loop await fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn cancelling_a_control_flow_await_drops_only_the_selected_child() {
     let output = salic()
         .arg("run")

@@ -739,13 +739,6 @@ impl Analyzer {
             },
         };
         let body = if let Some(awaited) = &future.awaited {
-            if awaited.poll_ty != poll_ty {
-                self.error(format!(
-                    "awaited `Future.poll` returned `{}`, expected `{poll_ty}`",
-                    awaited.poll_ty
-                ));
-                return;
-            }
             suspended_poll_body(
                 &self_ty,
                 &poll_ty,
@@ -1580,6 +1573,67 @@ fn hoist_control_await(expression: &Expr) -> Option<Expr> {
                 scrutinee: scrutinee.clone(),
                 arms: hoisted_arms,
             })
+        }
+        Expr::Loop { body } => {
+            let (iteration, _) = terminating_loop_iteration(body)?;
+            branch_await_future(&iteration)
+        }
+        Expr::While {
+            condition,
+            body,
+            post_test,
+        } => {
+            let (iteration, break_value) = terminating_loop_iteration(body)?;
+            if break_value.is_some() {
+                return None;
+            }
+            let iteration = branch_await_future(&iteration)?;
+            if *post_test {
+                Some(iteration)
+            } else {
+                Some(Expr::If {
+                    condition: condition.clone(),
+                    then_branch: Box::new(iteration),
+                    else_branch: Some(Box::new(Expr::Async {
+                        body: Box::new(Expr::Unit),
+                    })),
+                })
+            }
+        }
+        _ => None,
+    }
+}
+
+fn terminating_loop_iteration(body: &Expr) -> Option<(Expr, Option<Expr>)> {
+    match body.unlocated() {
+        Expr::Break(value) => Some((
+            value.as_deref().cloned().unwrap_or(Expr::Unit),
+            value.as_deref().cloned(),
+        )),
+        Expr::Block(statements, tail) => {
+            if let Some(Expr::Break(value)) = tail.as_deref().map(Expr::unlocated) {
+                return Some((
+                    Expr::Block(
+                        statements.clone(),
+                        Some(Box::new(value.as_deref().cloned().unwrap_or(Expr::Unit))),
+                    ),
+                    value.as_deref().cloned(),
+                ));
+            }
+            let (last, prefix) = statements.split_last()?;
+            let Stmt::Expr(last) = last else {
+                return None;
+            };
+            let Expr::Break(value) = last.unlocated() else {
+                return None;
+            };
+            Some((
+                Expr::Block(
+                    prefix.to_vec(),
+                    Some(Box::new(value.as_deref().cloned().unwrap_or(Expr::Unit))),
+                ),
+                value.as_deref().cloned(),
+            ))
         }
         _ => None,
     }

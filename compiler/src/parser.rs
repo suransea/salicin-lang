@@ -4054,7 +4054,11 @@ impl Parser {
     }
 
     fn zero_parameter_trailing_closure(&mut self, context: &str) -> Result<Expr, ParseError> {
-        let closure = self.closure()?;
+        // `while` and `do ... while` use trailing-closure surface syntax, but
+        // their blocks are control-flow scopes rather than closure boundaries.
+        // Preserve an enclosing async context so contextual `await` remains
+        // available in the condition and body.
+        let closure = self.closure_inner()?;
         let Expr::Closure(parameters, body) = closure else {
             unreachable!("a closure parser always returns an outer closure")
         };
@@ -8836,6 +8840,36 @@ mod tests {
             panic!("expected async body");
         };
         assert!(matches!(tail.unlocated(), Expr::Await(_)));
+
+        let program = parse(
+            "let make(): i32 = {\n  let future = async {\n    while { true } {\n      let value = await next();\n      break()\n    }\n  }\n  0\n}\n",
+        )
+        .expect("control-flow blocks must preserve their enclosing async context");
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected function");
+        };
+        let Some(Expr::Block(statements, _)) = &function.body else {
+            panic!("expected function block");
+        };
+        let Stmt::Let(binding) = &statements[0] else {
+            panic!("expected future binding");
+        };
+        let Expr::Async { body } = binding.value.unlocated() else {
+            panic!("expected async expression");
+        };
+        let Expr::Block(_, Some(tail)) = body.as_ref() else {
+            panic!("expected async body");
+        };
+        let Expr::While { body, .. } = tail.unlocated() else {
+            panic!("expected while expression");
+        };
+        let Expr::Block(statements, _) = body.as_ref() else {
+            panic!("expected while body");
+        };
+        let Stmt::Let(binding) = &statements[0] else {
+            panic!("expected awaited binding");
+        };
+        assert!(matches!(binding.value.unlocated(), Expr::Await(_)));
     }
 
     #[test]

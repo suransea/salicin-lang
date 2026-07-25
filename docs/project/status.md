@@ -145,8 +145,10 @@ remain valid. An `if` or `match` whose every branch is a single tail await can s
 branch futures have the same Output; child types may differ. Selection is evaluated once and a
 private active-variant future polls or cancels only the selected child. Branch-local linear
 prefixes and continuations retain their own suspension state; a branch without await becomes an
-immediate Ready future. Loop suspension and algebraic residual-effect specialization are not
-implemented.
+immediate Ready future. A `loop` or `while` proven to exit on its first entered iteration hoists
+its suspension into the same state machine; false pre-test conditions complete immediately, and a
+child Output may differ from the enclosing future Output. Loop backedge suspension and algebraic
+residual-effect specialization are not implemented.
 
 ## Modules, Packages, and FFI
 
