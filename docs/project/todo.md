@@ -147,6 +147,8 @@ Entry gate: concrete requirements from LIB1
   - Preserve capture ownership, source-order evaluation, lazy invocation, effect rows, and
     source-level diagnostics across `Chain`, `Coalesce`, and higher-order protocols.
 - [ ] **TYPE-TRAIT-METHOD-1: Support coherent generic trait methods**
+  - Implement the accepted [coherence design](generic-trait-method-design.md).
+  - Alpha-normalize method binders and compare complete signatures and method predicates.
 - [ ] **TYPE-CALLABLE-EFFECT-1: Unify generic custom-effect callable materialization**
   - Reconcile instantiated custom-effect callable annotations before CPS conversion.
   - Accept a direct capturing closure in `forward(E)(action with(E))` after selecting a concrete

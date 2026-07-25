@@ -40,6 +40,8 @@ classification, rejects unterminated fences, and compiles every `sc check` block
 - [Implementation status](project/status.md): supported surface and known structural gaps.
 - [Capturing callable bridge](project/callable-bridge-design.md): accepted static-specialization
   design for higher-order protocol calls.
+- [Coherent generic trait methods](project/generic-trait-method-design.md): binder equivalence,
+  contracts, coherence, and static instantiation.
 - [Language roadmap](project/roadmap.md): milestone order, dependencies, exit conditions, and
   explicit deferrals.
 - [Project TODO](project/todo.md): prioritized executable tasks with stable IDs and acceptance
