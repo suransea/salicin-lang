@@ -15,7 +15,6 @@ Priority meanings:
 
 ## Current: ABI And Compiler Definitions
 
-- [ ] **ABI-FOREIGN-1: Replace grouped extern declarations with per-declaration `foreign(c, ...)`**
 - [ ] **BUILTIN-1: Mark every compiler-owned core definition with private `builtin()` initializers**
 
 `ABI-REP-1` is complete: `struct(c)` is the only C data representation
@@ -23,8 +22,12 @@ constructor, composes with ordinary struct options, preserves target C
 alignment and padding, validates concrete generic instances, and rejects
 empty or representation-unstable fields with source-level diagnostics.
 
-The remaining ABI tasks remove `@link_name` and `extern "C"` without
-introducing `@` syntax. `foreign` calls implicitly require `Unsafe`;
+`ABI-FOREIGN-1` is complete: every foreign-owned function uses a complete
+`foreign(c)` or `foreign(c, "symbol")` initializer, omitted symbols default
+to the declaration name, calls implicitly require `Unsafe`, and grouped
+`extern` plus all `@` syntax have no accepted grammar path.
+
+The remaining compiler-definition task introduces no `@` syntax.
 `builtin()` is a complete declaration marker typed by the declaration annotation and must be
 eliminated before code generation. Trait requirements remain bodyless, and user opaque types are
 outside `BUILTIN-1`.

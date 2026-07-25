@@ -6,6 +6,13 @@ subset.
 
 ## Unreleased
 
+- Replaced grouped `extern "C"` declarations and `@link_name` with complete
+  per-declaration `foreign(c)` and `foreign(c, "symbol")` initializers.
+  Omitted symbols default to the Salicin declaration name; explicit symbols
+  retain bounded ASCII validation; calls still require implicit `Unsafe`.
+  Foreign definitions require one runtime group and an explicit result, and
+  reject compile-time parameters, explicit effects, `where` clauses, and
+  bodies. Legacy `extern` and all `@` syntax now report migration diagnostics.
 - Added `struct(c)` as the dedicated C data representation constructor.
   Concrete layouts accept integers, raw pointers, non-zero fixed arrays, and
   nested C structs; reject empty or representation-unstable fields with

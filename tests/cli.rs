@@ -3145,6 +3145,8 @@ fn c_ffi_rejects_unsafe_calls_and_private_abi_types() {
             "C ABI functions require exactly one runtime parameter group",
         ),
         ("ffi_unsupported_abi.sc", "unsupported foreign ABI `system`"),
+        ("ffi_legacy_extern.sc", "grouped `extern` declarations"),
+        ("ffi_legacy_attribute.sc", "`@` syntax is not supported"),
         (
             "ffi_duplicate_link_name.sc",
             "use the same link symbol `abs`",

@@ -53,10 +53,9 @@ separators = { separator } ;
 ```ebnf
 source_file = separators, { item, separators }, EOF ;
 
-item = { attribute }, [ visibility ],
-       ( let_decl | extend_decl | extern_block | test_registration ) ;
+item = [ visibility ], ( let_decl | extend_decl )
+     | test_registration ;
 
-attribute  = "@", IDENT, [ "(", [ attribute_args ], ")" ] ;
 visibility = "pub", [ "(", "package", ")" ] ;
 
 test_registration =
@@ -87,11 +86,17 @@ declaration_annotation =
 
 initializer =
     expression
+  | foreign_initializer
   | effect_decl
   | domain_decl
   | struct_decl
   | enum_decl
   | trait_decl ;
+
+foreign_initializer =
+    contextual("foreign"), "(",
+    contextual("c"), [ ",", STRING ],
+    ")" ;
 ```
 
 `let Name: type` declares an opaque nominal type. `let Name: domain` declares an abstract domain.
@@ -267,22 +272,18 @@ declares its local binders on the left, for example
 ### 2.6 Foreign Declarations
 
 ```ebnf
-extern_block =
-    contextual("extern"), STRING,
-    "{", separators,
-    { foreign_function, separators },
-    "}" ;
-
 foreign_function =
-    { attribute },
     "let", IDENT,
     runtime_parameter_group,
-    { runtime_parameter_group },
-    ":", type_expr ;
+    ":", type_expr,
+    "=", foreign_initializer ;
 ```
 
-The grammar has no import declaration. A qualified path may be used directly, or an ordinary
-`let` declaration may give a declaration or module path a local alias.
+A foreign declaration has exactly one runtime parameter group, no
+compile-time parameters, explicit effects, `where` clause, or body. Omitting
+the string uses the Salicin declaration name as the linker symbol. The only
+accepted ABI name is the contextual identifier `c`. Grouped `extern`
+declarations and `@` attributes are not grammar productions.
 
 ## 3. Types
 

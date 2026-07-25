@@ -733,15 +733,33 @@ recoverable unwind mechanism.
 
 ## 14. Unsafe and Foreign Calls
 
-`extern "C"` declares a foreign function with a validated link name. Calling it requires `unsafe`.
-The stable foreign subset consists of explicitly supported scalar and raw-pointer signatures.
+`foreign(c)` is a complete declaration initializer for a C-owned function.
+Calling the declaration implicitly requires `Unsafe`; the declaration does
+not spell an explicit effect row. The optional second argument is a validated
+ASCII linker symbol. When omitted, it defaults to the Salicin declaration
+name. The stable foreign subset consists of explicitly supported scalar and
+raw-pointer signatures.
 
 ```sc fragment
-extern "C" {
-  @link_name("read")
-  let read(fd: i32, buffer: Ptr(mut)(u8), count: usize): isize
-}
+let read(
+  fd: i32,
+  buffer: Ptr(mut)(u8),
+  count: usize,
+): isize = foreign(c)
+
+let c_read(
+  fd: i32,
+  buffer: Ptr(mut)(u8),
+  count: usize,
+): isize = foreign(c, "read")
 ```
+
+Each foreign declaration has exactly one runtime parameter group, an
+explicit result type, no compile-time parameters, `where` clause, explicit
+effects, or Salicin body. `foreign` is separate from compiler-owned
+`builtin()` definitions and from the `struct(c)` data representation.
+Grouped `extern` declarations, `@link_name`, and all other `@` syntax are
+rejected with migration diagnostics.
 
 Foreign code must uphold every ownership, initialization, lifetime, alignment, and aliasing
 precondition expressed by the Salicin declaration. `unsafe` makes that obligation explicit; it

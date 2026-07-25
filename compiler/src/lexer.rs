@@ -88,7 +88,6 @@ pub enum TokenKind {
     ShrEqual,
     QuestionDot,
     QuestionQuestion,
-    At,
     Eof,
 }
 
@@ -270,7 +269,13 @@ impl Lexer {
                     '^' => TokenKind::Caret,
                     '?' if self.take('.') => TokenKind::QuestionDot,
                     '?' if self.take('?') => TokenKind::QuestionQuestion,
-                    '@' => TokenKind::At,
+                    '@' => {
+                        return Err(self.error(
+                            "`@` syntax is not supported; use declaration initializers such as `foreign(c, \"symbol\")`".to_owned(),
+                            line,
+                            column,
+                        ));
+                    }
                     '/' if self.take('=') => TokenKind::SlashEqual,
                     '/' => TokenKind::Slash,
                     _ => {

@@ -108,6 +108,9 @@ Implemented data and control features include:
 - target-layout `struct(c)` data with recursive field validation for integers,
   raw pointers, non-zero fixed arrays, nested C structs, and concrete generic
   instances;
+- per-declaration `foreign(c)` and `foreign(c, "symbol")` definitions with
+  default linker names, bounded scalar/raw-pointer C signatures, and implicit
+  `Unsafe` call requirements;
 - tuple, struct, enum, literal, binding, and wildcard patterns;
 - exhaustive `match` with guards;
 - `if`, `loop`, `while`, post-test loops, and `for`;

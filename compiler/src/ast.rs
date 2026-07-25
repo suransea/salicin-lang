@@ -237,8 +237,9 @@ pub struct Field {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     pub name: String,
-    /// Present only for a source `extern` declaration. Foreign functions have
-    /// no Salicin body and always require the `Unsafe` effect at call sites.
+    /// Present only when the complete initializer is `foreign(c, ...)`.
+    /// Foreign functions have no Salicin body and always require the `Unsafe`
+    /// effect at call sites.
     pub foreign: Option<ForeignFunction>,
     /// Compile-time groups retain their source grouping but are erased before
     /// runtime calling convention lowering.

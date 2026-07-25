@@ -83,21 +83,9 @@ impl Parser {
             } else if self.at_context_ident("use") {
                 uses.extend(self.use_declaration(visibility)?);
             } else if self.at_context_ident("extern") {
-                let start = self.current().clone();
-                for function in self.extern_declaration()? {
-                    items.push(Item::Function(function));
-                    item_visibilities.push(visibility);
-                    item_origins.push(crate::ast::ItemOrigin {
-                        source: Some(Box::new(crate::ast::SourceLocation {
-                            path: None,
-                            line: start.line,
-                            column: start.column,
-                            end_line: start.end_line,
-                            end_column: start.end_column,
-                        })),
-                        ..crate::ast::ItemOrigin::default()
-                    });
-                }
+                return Err(self.error_here(
+                    "grouped `extern` declarations have been removed; use `let name(...): Result = foreign(c, \"symbol\")`",
+                ));
             } else if self.at_context_ident("test") {
                 if visibility != Visibility::Private {
                     return Err(self.error_here("test declarations cannot have visibility"));
@@ -180,106 +168,6 @@ impl Parser {
             where_predicates: Vec::new(),
             body: Some(body),
         })
-    }
-
-    fn extern_declaration(&mut self) -> Result<Vec<Function>, ParseError> {
-        self.advance();
-        let TokenKind::String(abi) = self.current().kind.clone() else {
-            return Err(self.error_here("expected ABI string after `extern`"));
-        };
-        self.advance();
-        if abi != "C" {
-            return Err(self.error_here(format!(
-                "unsupported foreign ABI `{abi}`; only `extern \"C\"` is available"
-            )));
-        }
-        self.expect(&TokenKind::LBrace, "`{` after foreign ABI")?;
-        self.skip_separators();
-
-        let mut functions = Vec::new();
-        while !self.take(&TokenKind::RBrace) {
-            let mut link_name = None;
-            if self.take(&TokenKind::At) {
-                let attribute = self.expect_ident("foreign function attribute")?;
-                if attribute != "link_name" {
-                    return Err(self.error_here(format!(
-                        "unsupported foreign function attribute `@{attribute}`"
-                    )));
-                }
-                self.expect(&TokenKind::LParen, "`(` after `@link_name`")?;
-                let TokenKind::String(value) = self.current().kind.clone() else {
-                    return Err(self.error_here("`@link_name` requires a string argument"));
-                };
-                self.advance();
-                self.expect(&TokenKind::RParen, "`)` after `@link_name`")?;
-                link_name = Some(value);
-                self.skip_separators();
-            }
-
-            self.expect(&TokenKind::Let, "`let` in foreign declaration")?;
-            let name = self.declaration_name()?;
-            let (compile_groups, groups) = self.declaration_groups(false, &[])?;
-            if !compile_groups.is_empty() {
-                return Err(self.error_here("foreign functions cannot be generic"));
-            }
-            if groups.len() != 1 {
-                return Err(
-                    self.error_here("C ABI functions require exactly one runtime parameter group")
-                );
-            }
-            self.expect(&TokenKind::Colon, "`:` before foreign function result type")?;
-            let result = self.function_result_type()?;
-            if self.at_context_ident("with") {
-                return Err(self.error_here(
-                    "foreign declarations acquire `Unsafe` implicitly and cannot declare effects",
-                ));
-            }
-            if self.at(&TokenKind::Equal) {
-                return Err(self.error_here("foreign function declarations cannot have a body"));
-            }
-            let link_name = link_name.unwrap_or_else(|| name.clone());
-            let mut bytes = link_name.bytes();
-            let valid_start = bytes.next().is_some_and(|byte| {
-                byte.is_ascii_alphabetic() || matches!(byte, b'_' | b'.' | b'$')
-            });
-            if !link_name.is_ascii()
-                || !valid_start
-                || bytes.any(|byte| {
-                    !(byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'$'))
-                })
-            {
-                return Err(self.error_here(format!(
-                    "foreign link name `{link_name}` must be a non-empty ASCII linker symbol"
-                )));
-            }
-            functions.push(Function {
-                name,
-                foreign: Some(ForeignFunction {
-                    abi: ForeignAbi::C,
-                    link_name,
-                }),
-                compile_groups: Vec::new(),
-                groups,
-                return_type: Some(result),
-                effects: FunctionEffects {
-                    unsafe_effect: true,
-                    ..FunctionEffects::default()
-                },
-                where_predicates: Vec::new(),
-                body: None,
-            });
-
-            if !self.at(&TokenKind::RBrace) && !self.at_separator() {
-                return Err(
-                    self.error_here("expected a newline or `;` after foreign function declaration")
-                );
-            }
-            self.skip_separators();
-        }
-        if functions.is_empty() {
-            return Err(self.error_here("foreign declaration block cannot be empty"));
-        }
-        Ok(functions)
     }
 
     fn qualified_alias_declaration_follows(&self) -> bool {
@@ -552,6 +440,52 @@ impl Parser {
 
         self.expect(&TokenKind::Equal, "`=`")?;
 
+        if self.at_context_ident("foreign") {
+            if mutable {
+                return Err(self.error_here("foreign declarations cannot be mutable"));
+            }
+            if compile_groups.is_empty() && groups.is_empty() {
+                return Err(self.error_here(
+                    "`foreign(...)` defines a function declaration and requires one runtime parameter group",
+                ));
+            }
+            if !compile_groups.is_empty() {
+                return Err(self.error_here("foreign functions cannot be generic"));
+            }
+            if groups.len() != 1 {
+                return Err(
+                    self.error_here("C ABI functions require exactly one runtime parameter group")
+                );
+            }
+            if annotation.is_none() {
+                return Err(self.error_here(
+                    "foreign functions require an explicit result type before `= foreign(...)`",
+                ));
+            }
+            if has_effect_group {
+                return Err(self.error_here(
+                    "foreign declarations acquire `Unsafe` implicitly and cannot declare effects",
+                ));
+            }
+            if !where_predicates.is_empty() {
+                return Err(self.error_here("foreign functions cannot use `where` clauses"));
+            }
+            let foreign = self.foreign_initializer(&name)?;
+            return Ok(Item::Function(Function {
+                name,
+                foreign: Some(foreign),
+                compile_groups: Vec::new(),
+                groups,
+                return_type: annotation,
+                effects: FunctionEffects {
+                    unsafe_effect: true,
+                    ..FunctionEffects::default()
+                },
+                where_predicates: Vec::new(),
+                body: None,
+            }));
+        }
+
         if self.at_context_ident("type") {
             return Err(self.error_here(
                 "`type` is an abstract domain and cannot appear as a declaration value; write `let Name: type`",
@@ -671,6 +605,41 @@ impl Parser {
                 body: Some(body),
             }))
         }
+    }
+
+    fn foreign_initializer(
+        &mut self,
+        declaration_name: &str,
+    ) -> Result<ForeignFunction, ParseError> {
+        self.advance();
+        self.expect(&TokenKind::LParen, "`(` after `foreign`")?;
+        let abi = self.expect_ident("a foreign ABI name")?;
+        if abi != "c" {
+            return Err(self.error_here(format!(
+                "unsupported foreign ABI `{abi}`; only `foreign(c)` is available"
+            )));
+        }
+        let link_name = if self.take(&TokenKind::Comma) {
+            let TokenKind::String(link_name) = self.current().kind.clone() else {
+                return Err(self.error_here(
+                    "the optional second `foreign` argument must be a linker symbol string",
+                ));
+            };
+            self.advance();
+            link_name
+        } else {
+            declaration_name.to_owned()
+        };
+        self.expect(&TokenKind::RParen, "`)` after `foreign` initializer")?;
+        if !foreign_link_name_is_valid(&link_name) {
+            return Err(self.error_here(format!(
+                "foreign link name `{link_name}` must be a non-empty ASCII linker symbol"
+            )));
+        }
+        Ok(ForeignFunction {
+            abi: ForeignAbi::C,
+            link_name,
+        })
     }
 
     fn effect_definition(
@@ -5824,6 +5793,16 @@ fn token_kind_matches(actual: &TokenKind, expected: &TokenKind) -> bool {
     }
 }
 
+fn foreign_link_name_is_valid(link_name: &str) -> bool {
+    let mut bytes = link_name.bytes();
+    let valid_start = bytes
+        .next()
+        .is_some_and(|byte| byte.is_ascii_alphabetic() || matches!(byte, b'_' | b'.' | b'$'));
+    link_name.is_ascii()
+        && valid_start
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'$'))
+}
+
 fn describe(kind: &TokenKind) -> &'static str {
     match kind {
         TokenKind::Let => "`let`",
@@ -5908,7 +5887,6 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::ShrEqual => "`>>=`",
         TokenKind::QuestionQuestion => "`??`",
         TokenKind::QuestionDot => "`?.`",
-        TokenKind::At => "`@`",
         TokenKind::Eof => "end of file",
     }
 }
@@ -6859,10 +6837,8 @@ mod tests {
     #[test]
     fn parses_bounded_c_foreign_declarations() {
         let program = parse(
-            "pub extern \"C\" {\n\
-               @link_name(\"abs\")\n\
-               let c_abs(value: i32): i32\n\
-             }\n",
+            "pub let c_abs(value: i32): i32 = foreign(c, \"abs\")\n\
+             let strlen(value: Ptr(u8)): usize = foreign(c)\n",
         )
         .unwrap();
         let Item::Function(function) = &program.items[0] else {
@@ -6875,6 +6851,51 @@ mod tests {
         assert!(function.body.is_none());
         assert_eq!(function.groups.len(), 1);
         assert_eq!(program.item_visibilities[0], Visibility::Public);
+
+        let Item::Function(default_symbol) = &program.items[1] else {
+            panic!("expected foreign function with default symbol");
+        };
+        assert_eq!(
+            default_symbol
+                .foreign
+                .as_ref()
+                .expect("foreign metadata")
+                .link_name,
+            "strlen"
+        );
+
+        let legacy = parse("extern \"C\" { let abs(value: i32): i32 }\n").unwrap_err();
+        assert!(legacy.message.contains("grouped `extern`"));
+
+        for (source, expected) in [
+            (
+                "let value = foreign(c)\n",
+                "requires one runtime parameter group",
+            ),
+            (
+                "let identity(T: type)(value: T): T = foreign(c)\n",
+                "cannot be generic",
+            ),
+            (
+                "let abs(value: i32) = foreign(c)\n",
+                "require an explicit result type",
+            ),
+            (
+                "let abs(value: i32): i32 with(Unsafe) = foreign(c)\n",
+                "cannot declare effects",
+            ),
+            (
+                "let abs(value: i32): i32 = foreign(c, \"\")\n",
+                "non-empty ASCII linker symbol",
+            ),
+        ] {
+            let error = parse(source).unwrap_err();
+            assert!(
+                error.message.contains(expected),
+                "`{source}` did not report `{expected}`: {}",
+                error.message
+            );
+        }
     }
 
     #[test]
