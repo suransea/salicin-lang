@@ -1164,6 +1164,21 @@ fn alloc_vec_owns_copy_and_resource_elements() {
 
     let output = salic()
         .arg("check")
+        .arg(fixture("fail", "vec_use_after_into_iterator.sc"))
+        .output()
+        .expect("check use after consuming Vec iteration");
+    assert!(
+        !output.status.success(),
+        "consumed Vec unexpectedly remained usable"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("moved"),
+        "{}",
+        output_text(&output)
+    );
+
+    let output = salic()
+        .arg("check")
         .arg(fixture("fail", "vec_append_self_borrow.sc"))
         .output()
         .expect("check self append borrow conflict");

@@ -39,6 +39,13 @@ trap.
 `borrow(values[index])`, and `values[index] = replacement` share the same checked `at(A)`
 implementation and preserve its receiver loan.
 
+Consuming iteration transfers the allocation into `VecIntoIter(T)` and invalidates the original
+vector. Each `next` moves one initialized element in source order. If iteration stops early, the
+iterator drops only the unyielded suffix and then releases the allocation; yielded values remain
+owned by the loop body. Capacity arithmetic, layout overflow, invalid bounds, invalid allocator
+layouts, and allocation failure terminate the process rather than returning a recoverable error or
+widening the caller's effect row.
+
 Container fields remain private so safe code cannot forge ownership metadata. Allocation operations
 ultimately use the ABI documented in [runtime.md](../runtime.md).
 
