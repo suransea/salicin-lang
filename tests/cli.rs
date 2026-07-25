@@ -1856,7 +1856,7 @@ fn type_constructor_aliases_run_and_report_kind_errors() {
         ("type_alias_arity.sc", "argument count mismatch"),
         (
             "type_constructor_unknown_label.sc",
-            "unknown type argument `Element`",
+            "unknown compile-time argument label `Element`",
         ),
     ] {
         let output = salic()
@@ -3692,6 +3692,59 @@ fn bitwise_protocols_run_and_invalid_shifts_trap() {
         assert!(
             !invalid.status.success(),
             "invalid shift in {name} unexpectedly succeeded"
+        );
+    }
+}
+
+#[test]
+fn compile_time_argument_diagnostics_name_binders_kinds_and_groups() {
+    for (name, expected) in [
+        (
+            "infer_unconstrained.sc",
+            vec!["argument `T`", "kind `type`", "for `make`"],
+        ),
+        (
+            "infer_unconstrained_constructor.sc",
+            vec![
+                "argument `F`",
+                "kind `(1 type parameter): type`",
+                "for `make`",
+            ],
+        ),
+        (
+            "generic_nominal_argument_count.sc",
+            vec![
+                "argument count mismatch in group 1",
+                "`T` of kind `type`",
+                "found 2",
+            ],
+        ),
+        (
+            "type_constructor_unknown_label.sc",
+            vec![
+                "argument label `Element`",
+                "expected one of `T` of kind `type`",
+            ],
+        ),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", name))
+            .output()
+            .expect("check compile-time argument diagnostic fixture");
+        assert!(!output.status.success(), "{name} unexpectedly passed");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        for expected in expected {
+            assert!(
+                stderr.contains(expected),
+                "{name}: expected `{expected}`:\n{}",
+                output_text(&output)
+            );
+        }
+        assert!(
+            !stderr.contains('$'),
+            "{name} leaked an internal compile-time name:\n{}",
+            output_text(&output)
         );
     }
 }

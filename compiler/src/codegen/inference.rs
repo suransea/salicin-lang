@@ -6,9 +6,9 @@ use crate::ast::{
 use crate::core::LangItemKind;
 
 use super::compile_time::{
-    closed_value_from_marker, closed_value_marker, effect_row_from_marker, effect_row_source,
-    source_effect_identity, type_constructor_marker, usize_value_marker, ACCESS_MUT_MARKER,
-    ACCESS_SHARED_MARKER,
+    closed_value_from_marker, closed_value_marker, describe_compile_param_kind,
+    effect_row_from_marker, effect_row_source, source_effect_identity, type_constructor_marker,
+    usize_value_marker, ACCESS_MUT_MARKER, ACCESS_SHARED_MARKER,
 };
 use super::effects::source_type_is_never;
 use super::flow::LowerCtx;
@@ -1089,8 +1089,19 @@ impl Analyzer {
             };
             let parameters = &compile_groups[target];
             if !labeled && arguments.len() != parameters.len() {
+                let schema = parameters
+                    .iter()
+                    .map(|parameter| {
+                        format!(
+                            "`{}` of kind {}",
+                            parameter.name,
+                            describe_compile_param_kind(parameter.kind.clone())
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 self.error(format!(
-                    "type argument count mismatch in group {} of `{owner}`: expected {}, found {}",
+                    "compile-time argument count mismatch in group {} of `{owner}`: expected {} ({schema}), found {}",
                     target + 1,
                     parameters.len(),
                     arguments.len()
@@ -1220,8 +1231,8 @@ impl Analyzer {
                         }
                         _ => {
                             self.error(format!(
-                                "invalid effect argument for `{}` in `{owner}`; expected `pure`, `Unsafe`, `Throws(Error)`, or a declared custom effect",
-                                parameter.name
+                                "compile-time argument `{}` in `{owner}` expects kind `effect`; write `pure`, `Unsafe`, `Throws(Error)`, or a declared custom effect",
+                                parameter.name,
                             ));
                             return None;
                         }
@@ -1531,28 +1542,30 @@ impl Analyzer {
         let unresolved: Vec<_> = ordered_parameters
             .iter()
             .filter(|parameter| !inferred.contains_key(&parameter.name))
-            .map(|parameter| parameter.name.clone())
+            .cloned()
             .collect();
         if !unresolved.is_empty() {
+            let unresolved_count = unresolved.len();
+            let unresolved = unresolved
+                .iter()
+                .map(|parameter| {
+                    format!(
+                        "`{}` of kind {}",
+                        parameter.name,
+                        describe_compile_param_kind(parameter.kind.clone())
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
             if unsupported_argument {
                 self.error(format!(
-                    "cannot infer type argument{} {} for `{owner}` from this argument expression; write explicit type arguments",
-                    if unresolved.len() == 1 { "" } else { "s" },
-                    unresolved
-                        .iter()
-                        .map(|name| format!("`{name}`"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    "cannot infer compile-time argument{} {unresolved} for `{owner}` from this argument expression; write the required compile-time argument group explicitly",
+                    if unresolved_count == 1 { "" } else { "s" },
                 ));
             } else {
                 self.error(format!(
-                    "cannot infer type argument{} {} for `{owner}`; write explicit type arguments",
-                    if unresolved.len() == 1 { "" } else { "s" },
-                    unresolved
-                        .iter()
-                        .map(|name| format!("`{name}`"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    "cannot infer compile-time argument{} {unresolved} for `{owner}`; write the required compile-time argument group explicitly",
+                    if unresolved_count == 1 { "" } else { "s" },
                 ));
             }
             return None;

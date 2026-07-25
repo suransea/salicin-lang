@@ -823,7 +823,8 @@ impl Analyzer {
     ) -> Option<String> {
         let Expr::Name(name) = expression else {
             self.error(format!(
-                "invalid type-constructor argument for `{parameter}` in `{owner}`; expected a generic type constructor"
+                "compile-time argument `{parameter}` in `{owner}` expects kind {}, found a non-constructor expression",
+                describe_compile_param_kind(CompileParamKind::TypeConstructor { parameter_count })
             ));
             return None;
         };
@@ -831,13 +832,15 @@ impl Analyzer {
             self.type_constructor_impl_target(&Type::Named(name.clone(), Vec::new()))
         else {
             self.error(format!(
-                "invalid type-constructor argument `{name}` for `{parameter}` in `{owner}`; expected a generic type constructor"
+                "compile-time argument `{parameter}` in `{owner}` expects kind {}, but `{name}` is not a generic type constructor",
+                describe_compile_param_kind(CompileParamKind::TypeConstructor { parameter_count })
             ));
             return None;
         };
         if target.parameter_count != parameter_count {
             self.error(format!(
-                "type-constructor argument `{name}` for `{parameter}` in `{owner}` has {} parameter{}, expected {parameter_count}",
+                "compile-time argument `{parameter}` in `{owner}` expects kind {}, but constructor `{name}` has {} type parameter{}",
+                describe_compile_param_kind(CompileParamKind::TypeConstructor { parameter_count }),
                 target.parameter_count,
                 if target.parameter_count == 1 { "" } else { "s" }
             ));

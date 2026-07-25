@@ -166,7 +166,9 @@ Supported compile-time parameter kinds include:
 - bounded type and effect constructor kinds.
 
 Compile-time arguments participate in overload selection and monomorphization, then are erased
-from runtime calling conventions.
+from runtime calling conventions. A rejected explicit or inferred argument is diagnosed against
+its source binder and compile-time kind. Group arity, unknown labels, kind mismatches, and
+underconstrained inference are distinct errors.
 
 ### 4.1 Type Constructors and Aliases
 

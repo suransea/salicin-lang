@@ -7,9 +7,9 @@ use crate::ast::{
 };
 
 use super::compile_time::{
-    effect_identity_sources, effect_row_from_source, ACCESS_MUT_MARKER, ACCESS_SHARED_MARKER,
-    EFFECT_PURE_MARKER, EFFECT_UNSAFE_MARKER, PARAMETER_MODIFIER_COPY_MARKER,
-    PARAMETER_MODIFIER_MOVE_MARKER,
+    describe_compile_param_kind, effect_identity_sources, effect_row_from_source,
+    ACCESS_MUT_MARKER, ACCESS_SHARED_MARKER, EFFECT_PURE_MARKER, EFFECT_UNSAFE_MARKER,
+    PARAMETER_MODIFIER_COPY_MARKER, PARAMETER_MODIFIER_MOVE_MARKER,
 };
 
 pub(super) fn normalize_labeled_type_arguments<const N: usize>(
@@ -349,8 +349,9 @@ fn normalize_type_labeled_arguments(
                     }
                     (None, _) => {
                         diagnostics.push(format!(
-                            "missing type argument `{}` for `{name}`",
-                            parameter.name
+                            "missing compile-time argument `{}` of kind {} for `{name}`",
+                            parameter.name,
+                            describe_compile_param_kind(parameter.kind.clone())
                         ));
                         valid = false;
                     }
@@ -359,7 +360,20 @@ fn normalize_type_labeled_arguments(
             for argument in &written {
                 if let Some(label) = &argument.label {
                     if !seen.contains(label) {
-                        diagnostics.push(format!("unknown type argument `{label}` for `{name}`"));
+                        let expected = parameters
+                            .iter()
+                            .map(|parameter| {
+                                format!(
+                                    "`{}` of kind {}",
+                                    parameter.name,
+                                    describe_compile_param_kind(parameter.kind.clone())
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        diagnostics.push(format!(
+                            "unknown compile-time argument label `{label}` for `{name}`; expected one of {expected}"
+                        ));
                         valid = false;
                     }
                 }

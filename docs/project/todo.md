@@ -15,14 +15,13 @@ Priority meanings:
 
 ## Current
 
-- [ ] **TYPE-DIAG-1: Improve kind and constructor diagnostics**
-  - Name the source binder and expected compile-time kind.
-  - Distinguish arity, group, kind, and inference failures.
-  - Keep generated markers and specialization names out of diagnostics.
+- [ ] **ASYNC-CONTRACT-1: Specify Future, pinning, and executor contracts**
+  - Define ownership and effect boundaries before adding syntax or lowering.
+  - Specify polling, cancellation, stored state, and first-version borrow restrictions.
+  - Keep allocation and executor selection explicit library choices.
 
 ## Next
 
-- [ ] **ASYNC-CONTRACT-1: Specify Future, pinning, and executor contracts**
 - [ ] **ASYNC-STATE-1: Lower cold async blocks to state machines**
 - [ ] **ASYNC-POLL-1: Implement typed polling transitions**
 - [ ] **ASYNC-CANCEL-1: Drop initialized state on cancellation**

@@ -2242,8 +2242,11 @@ fn coalesce_does_not_guess_an_unconstrained_result_error_type() {
         compile_resolved_text("use std.Result\nlet main(): i32 = { Result.Ok(40) ?? 2 }\n")
             .unwrap_err();
     assert!(errors.iter().any(|diagnostic| {
-        diagnostic.message.contains("cannot infer type argument")
+        diagnostic
+            .message
+            .contains("cannot infer compile-time argument")
             && diagnostic.message.contains("`E`")
+            && diagnostic.message.contains("kind `type`")
             && diagnostic.message.contains("`core::result::Result`")
     }));
 }
@@ -5282,7 +5285,9 @@ let main(): i32 = { tagged(E: copy)(42) }
     .unwrap_err();
     assert!(errors
         .iter()
-        .any(|error| error.message.contains("invalid effect argument")));
+        .any(|error| error.message.contains("argument `E`")
+            && error.message.contains("kind `effect`")
+            && error.message.contains("`tagged`")));
 
     let errors = compile_resolved_text(
         r#"
@@ -5296,6 +5301,53 @@ let main(): i32 = { always(pure)(42) }
     assert!(errors
         .iter()
         .any(|error| error.message.contains("requires an `unsafe` handler")));
+}
+
+#[test]
+fn compile_time_argument_diagnostics_name_binders_kinds_and_owners() {
+    let unconstrained = compile_text(
+        r#"
+let make(F: (T: type): type)(): i32 = { 42 }
+let main(): i32 = { make() }
+"#,
+    )
+    .expect_err("an unconstrained constructor argument must be rejected");
+    assert!(unconstrained.iter().any(|error| {
+        error
+            .message
+            .contains("cannot infer compile-time argument `F`")
+            && error.message.contains("kind `(1 type parameter): type`")
+            && error.message.contains("for `make`")
+    }));
+
+    let wrong_arity = compile_text(
+        r#"
+let Pair(A: type, B: type) = struct { left: A, right: B }
+let use(F: (T: type): type)(): i32 = { 42 }
+let main(): i32 = { use(F: Pair)() }
+"#,
+    )
+    .expect_err("a constructor with the wrong kind must be rejected");
+    assert!(wrong_arity.iter().any(|error| {
+        error.message.contains("argument `F`")
+            && error.message.contains("kind `(1 type parameter): type`")
+            && error
+                .message
+                .contains("constructor `Pair` has 2 type parameters")
+    }));
+
+    let wrong_effect = compile_text(
+        r#"
+let run(E: effect)(): i32 with(E) = { 42 }
+let main(): i32 = { run(E: copy)() }
+"#,
+    )
+    .expect_err("a non-effect compile-time argument must be rejected");
+    assert!(wrong_effect.iter().any(|error| {
+        error.message.contains("argument `E`")
+            && error.message.contains("kind `effect`")
+            && error.message.contains("in `run`")
+    }));
 }
 
 #[test]

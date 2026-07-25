@@ -52,6 +52,7 @@ Implemented type-system features include:
 - transparent type aliases and partially applied type constructors;
 - compile-time `type`, `usize`, `region`, `effect`, `access`, closed-value, constructor, and
   parameter-schema arguments;
+- source-level compile-time diagnostics that identify binder, kind, owner, and parameter group;
 - curried compile-time and runtime parameter groups;
 - labeled arguments, overload selection, and trailing closures;
 - generic nominal types, aliases, inherent extensions, and trait implementations;
@@ -67,8 +68,8 @@ Generic associated constructors preserve parameter kinds and groups in trait dec
 implementations. Standard iterator contracts use `Item(R: region): type`, allowing an item type to
 depend on the receiver-borrow region.
 
-The remaining static-abstraction work is generic custom-effect callable materialization and clearer
-kind and constructor diagnostics.
+The current static-abstraction surface is complete for the standard-library requirements tracked by
+the project roadmap.
 
 ## Ownership and Borrowing
 
@@ -190,7 +191,6 @@ modules, owning strings, vectors, results, user traits, resource transfer, itera
 
 The principal incomplete areas are:
 
-- concise diagnostics for underconstrained constructor and effect inference;
 - host-facing `std` APIs;
 - complete asynchronous execution;
 - stable ABI and package distribution.

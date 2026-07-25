@@ -19,18 +19,7 @@ end-to-end capability at a time and preserve:
 - explicit authority for unsafe operations and effects;
 - ordinary library declarations wherever compiler primitives are unnecessary.
 
-## Current Milestone: Static Abstraction
-
-The current milestone improves diagnostics at kind and constructor boundaries now that generic
-effect rows and capturing callables share one materialization path.
-
-Exit conditions:
-
-- constructor and compile-time argument errors identify the source binder, expected kind, and
-  conflicting argument;
-- generic associated constructors and generic trait methods require no runtime dictionaries.
-
-## Next Milestone: Async Foundations
+## Current Milestone: Async Foundations
 
 Async work starts only after callable and continuation ownership is closed.
 

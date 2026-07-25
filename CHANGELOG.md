@@ -6,6 +6,10 @@ subset.
 
 ## Unreleased
 
+- Standardized compile-time argument diagnostics around source binders and kinds. Argument-group
+  arity errors now print the expected binder schema, unresolved arguments include their kind and
+  owner, unknown labels list valid binders, and type-constructor and effect mismatches distinguish
+  expected kind from the supplied expression or constructor arity.
 - Materialized direct capturing callable arguments after generic custom-effect parameters resolve
   to a concrete row. Handler lowering now recognizes instantiated effect parameters, reuses the
   concrete action-specialization path before CPS conversion, preserves moved captures and
