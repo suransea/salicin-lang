@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.189.0 - 2026-07-26
+
 - Specialized the first suspended residual async shape: one direct tail await
   with no retained local or continuation state and only by-value `Copy` or
   move-only captures. Custom effects and standard `Throws(Error)` now pass
