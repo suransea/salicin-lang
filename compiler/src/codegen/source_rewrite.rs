@@ -1657,6 +1657,10 @@ pub(super) fn substitute_expr_types(expression: &mut Expr, substitutions: &HashM
         Expr::Located { value, .. } => substitute_expr_types(value, substitutions),
         Expr::Name(name) => {
             if let Some(replacement) = substitutions.get(name) {
+                if let Type::CompileUSize(value) = replacement {
+                    *expression = Expr::Integer(u128::from(*value));
+                    return;
+                }
                 if effect_row_from_source(replacement).is_some() {
                     *expression = source_type_expression(replacement);
                     return;

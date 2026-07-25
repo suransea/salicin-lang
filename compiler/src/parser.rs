@@ -883,11 +883,6 @@ impl Parser {
                 "extend headers accept only compile-time parameters before the target type",
             ));
         }
-        if compile_groups.len() > 1 {
-            return Err(
-                self.error_here("extend headers support exactly one compile-time parameter group")
-            );
-        }
         let target = self.type_expr()?;
         let trait_ref = if self.take(&TokenKind::Colon) {
             Some(self.type_expr()?)

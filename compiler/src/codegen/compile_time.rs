@@ -44,6 +44,10 @@ pub(super) fn usize_value_marker(value: u64) -> String {
     format!("{USIZE_VALUE_PREFIX}{value}")
 }
 
+pub(super) fn usize_value_from_marker(marker: &str) -> Option<u64> {
+    marker.strip_prefix(USIZE_VALUE_PREFIX)?.parse().ok()
+}
+
 fn effect_row_marker(unsafe_effect: bool, custom: &[String]) -> String {
     let mut custom = custom.to_vec();
     custom.sort();
@@ -101,7 +105,8 @@ pub(super) fn effect_row_from_source(source: &Type) -> Option<(bool, Option<Type
 }
 
 pub(super) fn is_compile_value_marker(name: &str) -> bool {
-    name.starts_with(EFFECT_ROW_MARKER_PREFIX)
+    name.starts_with(USIZE_VALUE_PREFIX)
+        || name.starts_with(EFFECT_ROW_MARKER_PREFIX)
         || name.starts_with(TYPE_CONSTRUCTOR_MARKER_PREFIX)
         || name.starts_with(CLOSED_VALUE_MARKER_PREFIX)
         || matches!(

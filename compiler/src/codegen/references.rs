@@ -11,6 +11,54 @@ use super::lower::{display_region, reference_value_types_compatible, TypeProbe};
 use super::Analyzer;
 
 impl Analyzer {
+    fn type_reference_requirements(&self, ty: &Ty) -> Vec<(Option<String>, bool)> {
+        fn collect(
+            analyzer: &Analyzer,
+            ty: &Ty,
+            visiting: &mut HashSet<Ty>,
+            output: &mut Vec<(Option<String>, bool)>,
+        ) {
+            if !visiting.insert(ty.clone()) {
+                return;
+            }
+            match ty {
+                Ty::Reference {
+                    mutable, region, ..
+                } => output.push((region.clone(), *mutable)),
+                Ty::Tuple(fields) => {
+                    for field in fields {
+                        collect(analyzer, field, visiting, output);
+                    }
+                }
+                Ty::Array(element, _) => collect(analyzer, element, visiting, output),
+                Ty::Struct(name) => {
+                    if let Some(layout) = analyzer.struct_layouts.get(name) {
+                        for field in &layout.fields {
+                            collect(analyzer, &field.ty, visiting, output);
+                        }
+                    }
+                }
+                Ty::Enum(name) => {
+                    if let Some(layout) = analyzer.enum_layouts.get(name) {
+                        for variant in &layout.variants {
+                            for field in &variant.fields {
+                                collect(analyzer, &field.ty, visiting, output);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+            visiting.remove(ty);
+        }
+
+        let mut output = Vec::new();
+        collect(self, ty, &mut HashSet::new(), &mut output);
+        output.sort();
+        output.dedup();
+        output
+    }
+
     pub(super) fn lower_reference_value_expr(
         &mut self,
         expression: &Expr,
@@ -44,7 +92,7 @@ impl Analyzer {
         expression: &HirExpr,
         context: &LowerCtx,
     ) -> Option<(Option<String>, bool)> {
-        if !matches!(expression.ty, Ty::Reference { .. }) {
+        if self.type_reference_requirements(&expression.ty).is_empty() {
             return None;
         }
         match &expression.kind {
@@ -60,6 +108,15 @@ impl Analyzer {
                 self.reference_origin_for_hir_expr(slice, context)
             }
             HirExprKind::Block(_, Some(tail)) => self.reference_origin_for_hir_expr(tail, context),
+            HirExprKind::Field { base, .. } => self.reference_origin_for_hir_expr(base, context),
+            HirExprKind::ConstructStruct { fields, .. }
+            | HirExprKind::ConstructEnum { fields, .. } => {
+                let mut origins = fields
+                    .iter()
+                    .filter_map(|(_, value)| self.reference_origin_for_hir_expr(value, context));
+                let first = origins.next()?;
+                origins.all(|origin| origin == first).then_some(first)
+            }
             HirExprKind::If {
                 then_branch,
                 else_branch: Some(else_branch),
@@ -98,22 +155,31 @@ impl Analyzer {
         function: &str,
         arguments: &'a [HirArgument],
     ) -> Option<Vec<ReferenceCallSource<'a>>> {
-        let result_region = match self.signatures.get(function)?.result.as_ref()? {
-            Ty::Reference { region, .. } => region,
-            _ => return None,
-        };
-        let parameters = self.functions.get(function)?.groups.iter().flatten();
+        let result = self.signatures.get(function)?.result.as_ref()?;
+        let result_regions = self.type_reference_requirements(result);
+        if result_regions.is_empty() {
+            return None;
+        }
+        let source = self.functions.get(function)?;
+        let parameters = source.groups.iter().flatten();
+        let runtime_parameters = self.signatures.get(function)?.groups.iter().flatten();
         let mut sources = Vec::new();
-        for (parameter, argument) in parameters.zip(arguments) {
+        for ((parameter, runtime), argument) in parameters.zip(runtime_parameters).zip(arguments) {
             let parameter_region = match (&parameter.mode, &parameter.ty) {
                 (PassMode::Borrow | PassMode::MutBorrow, _) => Some(&parameter.region),
                 (_, Type::Borrow { region, .. }) => Some(region),
+                _ if !self.type_reference_requirements(&runtime.ty).is_empty() => {
+                    return None;
+                }
                 _ => None,
             };
             let Some(parameter_region) = parameter_region else {
                 continue;
             };
-            if result_region.is_some() && parameter_region != result_region {
+            if result_regions
+                .iter()
+                .all(|(region, _)| region.is_some() && parameter_region != region)
+            {
                 continue;
             }
             sources.push(match argument {
@@ -134,7 +200,7 @@ impl Analyzer {
         expression: &HirExpr,
         context: &LowerCtx,
     ) -> Vec<LoanId> {
-        if !matches!(expression.ty, Ty::Reference { .. }) {
+        if self.type_reference_requirements(&expression.ty).is_empty() {
             return Vec::new();
         }
         let mut loans = match &expression.kind {
@@ -151,6 +217,12 @@ impl Analyzer {
                 .cloned()
                 .unwrap_or_default(),
             HirExprKind::Block(_, Some(tail)) => self.reference_loans_for_hir_expr(tail, context),
+            HirExprKind::Field { base, .. } => self.reference_loans_for_hir_expr(base, context),
+            HirExprKind::ConstructStruct { fields, .. }
+            | HirExprKind::ConstructEnum { fields, .. } => fields
+                .iter()
+                .flat_map(|(_, value)| self.reference_loans_for_hir_expr(value, context))
+                .collect(),
             HirExprKind::If {
                 then_branch,
                 else_branch: Some(else_branch),
@@ -443,14 +515,18 @@ impl Analyzer {
         expected: Option<&Ty>,
         context: &mut LowerCtx,
     ) {
-        let Ty::Reference {
-            mutable: result_mutable,
-            region: result_region,
-            ..
-        } = result
-        else {
+        let result_requirements = self.type_reference_requirements(result);
+        if result_requirements.is_empty() {
             return;
-        };
+        }
+        let result_region = result_requirements.first().and_then(|(region, _)| {
+            result_requirements
+                .iter()
+                .all(|(candidate, _)| candidate == region)
+                .then(|| region.clone())
+                .flatten()
+        });
+        let result_mutable = result_requirements.iter().any(|(_, mutable)| *mutable);
         let Some(source) = self.functions.get(function) else {
             self.error(format!(
                 "internal error: reference-returning function `{function}` has no source signature"
@@ -458,6 +534,12 @@ impl Analyzer {
             return;
         };
         let source_parameters = source.groups.iter().flatten().cloned().collect::<Vec<_>>();
+        let runtime_parameters = self.signatures[function]
+            .groups
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
         if source_parameters.len() != arguments.len() {
             self.error(format!(
                 "internal error: reference-returning call `{function}` lost parameter alignment"
@@ -469,10 +551,17 @@ impl Analyzer {
             .map(|binding| binding.id)
             .collect::<HashSet<_>>();
         let mut sources = Vec::new();
-        for (parameter, argument) in source_parameters.into_iter().zip(arguments) {
+        for ((parameter, runtime), argument) in source_parameters
+            .into_iter()
+            .zip(runtime_parameters)
+            .zip(arguments)
+        {
+            let parameter_carries_references = !matches!(runtime.ty, Ty::Reference { .. })
+                && !self.type_reference_requirements(&runtime.ty).is_empty();
             let parameter_region = match (&parameter.mode, &parameter.ty) {
-                (PassMode::Borrow | PassMode::MutBorrow, _) => Some(&parameter.region),
-                (_, Type::Borrow { region, .. }) => Some(region),
+                (PassMode::Borrow | PassMode::MutBorrow, _) => Some(parameter.region.clone()),
+                (_, Type::Borrow { region, .. }) => Some(region.clone()),
+                _ if parameter_carries_references => Some(None),
                 _ => None,
             };
             let Some(parameter_region) = parameter_region else {
@@ -501,7 +590,7 @@ impl Analyzer {
                 HirArgument::CallableCaptureBorrow { .. } => (None, None),
             };
             if let Some(place) = place {
-                if temporary_ids.contains(&place.local) {
+                if temporary_ids.contains(&place.local) && !parameter_carries_references {
                     self.error("a returned borrow cannot originate from a temporary call argument");
                 }
                 if let Some(loan) = place.loan {
@@ -525,12 +614,16 @@ impl Analyzer {
             ));
         }
 
-        if let Some(Ty::Reference {
-            mutable: expected_mutable,
-            region: expected_region,
-            ..
-        }) = expected
-        {
+        if let Some(expected) = expected {
+            let expected_requirements = self.type_reference_requirements(expected);
+            let expected_region = expected_requirements.first().and_then(|(region, _)| {
+                expected_requirements
+                    .iter()
+                    .all(|(candidate, _)| candidate == region)
+                    .then(|| region.clone())
+                    .flatten()
+            });
+            let expected_mutable = expected_requirements.iter().any(|(_, mutable)| *mutable);
             if result_region.is_some() && expected_region != result_region {
                 self.error(format!(
                     "returned call region mismatch: expected {}, found {}",
@@ -538,20 +631,20 @@ impl Analyzer {
                     display_region(result_region.as_deref())
                 ));
             }
-            if *expected_mutable && !result_mutable {
+            if expected_mutable && !result_mutable {
                 self.error("cannot return a shared call result as a mutable borrow");
             }
             for source in sources {
                 match source {
                     Some((source_region, source_mutable)) => {
-                        if expected_region.is_some() && source_region != *expected_region {
+                        if expected_region.is_some() && source_region != expected_region {
                             self.error(format!(
                                 "returned call argument region mismatch: expected {}, found {}",
                                 display_region(expected_region.as_deref()),
                                 display_region(source_region.as_deref())
                             ));
                         }
-                        if *expected_mutable && !source_mutable {
+                        if expected_mutable && !source_mutable {
                             self.error(
                                 "cannot return a mutable call result through a shared borrow parameter",
                             );

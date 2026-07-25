@@ -7,9 +7,10 @@ use crate::ast::{
 use crate::core::LangItemKind;
 
 use super::compile_time::{
-    closed_value_from_marker, closed_value_marker, effect_identity_sources, effect_row_from_marker,
-    effect_row_from_source, effect_row_source, is_compile_value_marker, source_effect_identity,
-    type_constructor_from_marker, type_constructor_marker, usize_value_marker, ACCESS_MUT_MARKER,
+    closed_value_from_marker, closed_value_marker, describe_compile_param_kind,
+    effect_identity_sources, effect_row_from_marker, effect_row_from_source, effect_row_source,
+    is_compile_value_marker, source_effect_identity, type_constructor_from_marker,
+    type_constructor_marker, usize_value_from_marker, usize_value_marker, ACCESS_MUT_MARKER,
     ACCESS_SHARED_MARKER, PARAMETER_MODIFIER_COPY_MARKER, PARAMETER_MODIFIER_MOVE_MARKER,
 };
 use super::flow::LowerCtx;
@@ -349,18 +350,21 @@ impl Analyzer {
                     self.error(format!("unknown generic type `{name}`"));
                     return Ty::Error;
                 };
-                let expected = match kind {
+                let parameters = match kind {
                     NominalKind::Struct => self.struct_templates[name]
                         .compile_groups
                         .iter()
                         .flatten()
-                        .count(),
+                        .cloned()
+                        .collect::<Vec<_>>(),
                     NominalKind::Enum => self.enum_templates[name]
                         .compile_groups
                         .iter()
                         .flatten()
-                        .count(),
+                        .cloned()
+                        .collect::<Vec<_>>(),
                 };
+                let expected = parameters.len();
                 if source_arguments.len() != expected {
                     self.error(format!(
                         "type argument count mismatch for `{name}`: expected {expected}, found {}",
@@ -369,9 +373,19 @@ impl Analyzer {
                     return Ty::Error;
                 }
                 let mut arguments = Vec::new();
-                for argument in source_arguments {
-                    let argument = self.lower_source_type(argument);
+                for (parameter, source) in parameters.iter().zip(source_arguments) {
+                    let argument = match parameter.kind {
+                        CompileParamKind::Type => self.lower_source_type(source),
+                        _ => self
+                            .probe_compile_argument_ty(parameter, source)
+                            .unwrap_or(Ty::Error),
+                    };
                     if argument == Ty::Error {
+                        self.error(format!(
+                            "invalid {} argument `{}` for generic type `{name}`",
+                            describe_compile_param_kind(parameter.kind.clone()),
+                            parameter.name
+                        ));
                         return Ty::Error;
                     }
                     arguments.push(argument);
@@ -452,6 +466,9 @@ impl Analyzer {
                 vec![self.source_type_for_ty(element)?],
             )),
             Ty::Struct(name) | Ty::Enum(name) => {
+                if let Some(value) = usize_value_from_marker(name) {
+                    return Some(Type::CompileUSize(value));
+                }
                 if is_compile_value_marker(name) {
                     if let Some(constructor) = type_constructor_from_marker(name) {
                         return Some(Type::Named(constructor, Vec::new()));
@@ -588,6 +605,9 @@ impl Analyzer {
                 format!("{mode}{region} {}", self.diagnostic_type_name(pointee))
             }
             Ty::Struct(name) | Ty::Enum(name) => {
+                if let Some(value) = usize_value_from_marker(name) {
+                    return value.to_string();
+                }
                 if let Some(parameter) = self.abstract_type_parameters.get(name) {
                     return parameter.clone();
                 }
@@ -737,9 +757,50 @@ impl Analyzer {
                     })
                 } else {
                     let mut arguments = Vec::new();
-                    for argument in groups.iter().flat_map(|group| group.iter()) {
-                        arguments
-                            .push(self.type_argument_from_expr(&argument.value, substitutions)?);
+                    let compile_groups = self
+                        .struct_templates
+                        .get(name)
+                        .map(|template| template.compile_groups.clone())
+                        .or_else(|| {
+                            self.enum_templates
+                                .get(name)
+                                .map(|template| template.compile_groups.clone())
+                        });
+                    if let Some(compile_groups) = compile_groups {
+                        let parameters = compile_groups.iter().flatten().collect::<Vec<_>>();
+                        let supplied = groups
+                            .iter()
+                            .flat_map(|group| group.iter())
+                            .collect::<Vec<_>>();
+                        if parameters.len() == supplied.len() {
+                            for (parameter, argument) in parameters.into_iter().zip(supplied) {
+                                let Some(source) = self.probe_compile_argument_source(
+                                    parameter,
+                                    &argument.value,
+                                    substitutions,
+                                ) else {
+                                    self.error(format!(
+                                        "invalid {} argument `{}` for generic type `{name}`",
+                                        describe_compile_param_kind(parameter.kind.clone()),
+                                        parameter.name
+                                    ));
+                                    return None;
+                                };
+                                arguments.push(source);
+                            }
+                        } else {
+                            for argument in groups.iter().flat_map(|group| group.iter()) {
+                                arguments.push(
+                                    self.type_argument_from_expr(&argument.value, substitutions)?,
+                                );
+                            }
+                        }
+                    } else {
+                        for argument in groups.iter().flat_map(|group| group.iter()) {
+                            arguments.push(
+                                self.type_argument_from_expr(&argument.value, substitutions)?,
+                            );
+                        }
                     }
                     Some(Type::Named(name.clone(), arguments))
                 }
@@ -843,13 +904,49 @@ impl Analyzer {
                         length,
                     })
                 } else {
-                    let arguments = groups
-                        .iter()
-                        .flat_map(|group| group.iter())
-                        .map(|argument| {
-                            self.probe_type_argument_source(&argument.value, substitutions)
-                        })
-                        .collect::<Option<Vec<_>>>()?;
+                    let compile_groups = self
+                        .struct_templates
+                        .get(name)
+                        .map(|template| &template.compile_groups)
+                        .or_else(|| {
+                            self.enum_templates
+                                .get(name)
+                                .map(|template| &template.compile_groups)
+                        });
+                    let arguments = if let Some(compile_groups) = compile_groups {
+                        let parameters = compile_groups.iter().flatten().collect::<Vec<_>>();
+                        let supplied = groups
+                            .iter()
+                            .flat_map(|group| group.iter())
+                            .collect::<Vec<_>>();
+                        if parameters.len() == supplied.len() {
+                            let mut arguments = Vec::new();
+                            for (parameter, argument) in parameters.into_iter().zip(supplied) {
+                                arguments.push(self.probe_compile_argument_source(
+                                    parameter,
+                                    &argument.value,
+                                    substitutions,
+                                )?);
+                            }
+                            arguments
+                        } else {
+                            groups
+                                .iter()
+                                .flat_map(|group| group.iter())
+                                .map(|argument| {
+                                    self.probe_type_argument_source(&argument.value, substitutions)
+                                })
+                                .collect::<Option<Vec<_>>>()?
+                        }
+                    } else {
+                        groups
+                            .iter()
+                            .flat_map(|group| group.iter())
+                            .map(|argument| {
+                                self.probe_type_argument_source(&argument.value, substitutions)
+                            })
+                            .collect::<Option<Vec<_>>>()?
+                    };
                     Some(Type::Named(name.clone(), arguments))
                 }
             }

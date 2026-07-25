@@ -142,9 +142,9 @@ impl Error for AllocBundleError {}
 
 fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBundleError> {
     let mut diagnostics = Vec::new();
-    if program.items.len() != 39
-        || program.item_visibilities.len() != 39
-        || program.item_origins.len() != 39
+    if program.items.len() != 43
+        || program.item_visibilities.len() != 43
+        || program.item_origins.len() != 43
     {
         diagnostics
             .push("embedded alloc must contain the fixed Box and Vec bootstrap schema".to_owned());
@@ -155,7 +155,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
                 .iter()
                 .enumerate()
                 .all(|(index, visibility)| {
-                    let expected = if matches!(index, 0 | 10) {
+                    let expected = if matches!(index, 0 | 10 | 37) {
                         Visibility::Public
                     } else {
                         Visibility::Private
@@ -341,10 +341,31 @@ fn validate_program(edition: Edition, program: &Program) -> Result<(), AllocBund
             _ => diagnostics.push("alloc Copy Vec extension has an invalid shape".to_owned()),
         }
         match &program.items[37] {
+            Item::Struct(definition) if valid_vec_into_iter(definition) => {}
+            _ => diagnostics.push("alloc VecIntoIter has an invalid shape".to_owned()),
+        }
+        match &program.items[38] {
             Item::Extend(extension) if valid_vec_index_extension(extension) => {}
             _ => diagnostics.push("alloc Vec Index extension has an invalid shape".to_owned()),
         }
-        match &program.items[38] {
+        match &program.items[39] {
+            Item::Extend(extension) if valid_vec_iterator_extension(extension) => {}
+            _ => diagnostics
+                .push("alloc VecIntoIter Iterator extension has an invalid shape".to_owned()),
+        }
+        match &program.items[40] {
+            Item::Extend(extension) if valid_vec_into_iterator_extension(extension) => {}
+            _ => {
+                diagnostics.push("alloc Vec IntoIterator extension has an invalid shape".to_owned())
+            }
+        }
+        match &program.items[41] {
+            Item::Extend(extension) if valid_vec_into_iter_drop_extension(extension) => {}
+            _ => {
+                diagnostics.push("alloc VecIntoIter Drop extension has an invalid shape".to_owned())
+            }
+        }
+        match &program.items[42] {
             Item::Extend(extension) if valid_vec_drop_extension(extension) => {}
             _ => diagnostics.push("alloc Vec Drop extension has an invalid shape".to_owned()),
         }
@@ -1162,6 +1183,85 @@ fn valid_vec_index_extension(extension: &crate::ast::ExtendDef) -> bool {
             && index.name == "index")
 }
 
+fn valid_vec_into_iter(definition: &StructDef) -> bool {
+    definition.name == "VecIntoIter"
+        && matches!(definition.compile_groups.as_slice(), [group]
+            if matches!(group.as_slice(), [parameter]
+                if parameter.name == "T" && parameter.kind == CompileParamKind::Type))
+        && matches!(definition.fields.as_slice(), [pointer, next_index, length, capacity]
+            if pointer.visibility == Visibility::Private
+                && pointer.name == "pointer"
+                && pointer.ty == mutable_ptr(named("T"))
+                && next_index.visibility == Visibility::Private
+                && next_index.name == "next_index"
+                && next_index.ty == Type::U64
+                && length.visibility == Visibility::Private
+                && length.name == "length"
+                && length.ty == Type::U64
+                && capacity.visibility == Visibility::Private
+                && capacity.name == "storage_capacity"
+                && capacity.ty == Type::U64)
+}
+
+fn valid_vec_iterator_extension(extension: &crate::ast::ExtendDef) -> bool {
+    matches!(extension.compile_groups.as_slice(), [group]
+        if matches!(group.as_slice(), [parameter]
+            if parameter.name == "T" && parameter.kind == CompileParamKind::Type))
+        && extension.target == applied("VecIntoIter", named("T"))
+        && extension.trait_ref == Some(named("Iterator"))
+        && extension.where_predicates.is_empty()
+        && matches!(extension.members.as_slice(), [
+            crate::ast::ExtendMember::Const(item),
+            crate::ast::ExtendMember::Function(next),
+        ] if item.name == "Item"
+            && item.value == crate::ast::Expr::Name("T".to_owned())
+            && valid_vec_receiver_method(
+                next,
+                "next",
+                PassMode::MutBorrow,
+                &[],
+                applied("Option", named("T")),
+            ))
+}
+
+fn valid_vec_into_iterator_extension(extension: &crate::ast::ExtendDef) -> bool {
+    matches!(extension.compile_groups.as_slice(), [group]
+        if matches!(group.as_slice(), [parameter]
+            if parameter.name == "T" && parameter.kind == CompileParamKind::Type))
+        && extension.target == applied("Vec", named("T"))
+        && extension.trait_ref == Some(named("IntoIterator"))
+        && extension.where_predicates.is_empty()
+        && matches!(extension.members.as_slice(), [
+            crate::ast::ExtendMember::Const(into_iter),
+            crate::ast::ExtendMember::Function(method),
+        ] if into_iter.name == "IntoIter"
+            && into_iter.value == crate::ast::Expr::Call(
+                Box::new(crate::ast::Expr::Name("VecIntoIter".to_owned())),
+                vec![crate::ast::CallArg {
+                    label: None,
+                    value: crate::ast::Expr::Name("T".to_owned()),
+                }],
+            )
+            && valid_vec_receiver_method(
+                method,
+                "into_iter",
+                PassMode::Move,
+                &[],
+                applied("VecIntoIter", named("T")),
+            ))
+}
+
+fn valid_vec_into_iter_drop_extension(extension: &crate::ast::ExtendDef) -> bool {
+    matches!(extension.compile_groups.as_slice(), [group]
+        if matches!(group.as_slice(), [parameter]
+            if parameter.name == "T" && parameter.kind == CompileParamKind::Type))
+        && extension.target == applied("VecIntoIter", named("T"))
+        && extension.trait_ref == Some(named("Drop"))
+        && extension.where_predicates.is_empty()
+        && matches!(extension.members.as_slice(), [crate::ast::ExtendMember::Function(drop)]
+            if valid_vec_receiver_method(drop, "drop", PassMode::MutBorrow, &[], Type::Unit))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1185,7 +1285,7 @@ mod tests {
     #[test]
     fn edition_2026_alloc_bundle_parses_and_validates() {
         let bundle = AllocBundle::for_edition(Edition::Edition2026).unwrap();
-        assert_eq!(bundle.program.items.len(), 39);
+        assert_eq!(bundle.program.items.len(), 43);
         assert!(bundle
             .program
             .item_origins
@@ -1267,8 +1367,8 @@ mod tests {
     #[test]
     fn rejects_a_malformed_vec_drop_extension() {
         let source = alloc_source().replacen(
-            "let drop(self: borrow(mut)(Self))(): () = {",
-            "let release(self: borrow(mut)(Self))(): () = {",
+            "extend(T: type) Vec(T): Drop {\n  /// Drops all initialized elements and deallocates storage.\n  let drop(self: borrow(mut)(Self))(): () = {",
+            "extend(T: type) Vec(T): Drop {\n  /// Drops all initialized elements and deallocates storage.\n  let release(self: borrow(mut)(Self))(): () = {",
             1,
         );
         let error = validate_program(Edition::Edition2026, &parse_alloc(&source))

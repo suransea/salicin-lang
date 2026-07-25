@@ -1109,6 +1109,10 @@ fn alloc_vec_owns_copy_and_resource_elements() {
         "vec_reorder_resource.sc",
         "index_protocol_containers.sc",
         "vec_index_resource_overwrite.sc",
+        "vec_into_iterator.sc",
+        "vec_into_iterator_break_cleanup.sc",
+        "array_into_iterator.sc",
+        "slice_iterator.sc",
     ];
     for (name, output) in native_fixture_outputs_in_parallel(&successful) {
         assert_eq!(
@@ -1975,7 +1979,6 @@ fn returned_borrow_errors_report_their_cause() {
             "returned_borrow_missing_region.sc",
             "cannot infer the returned borrow region",
         ),
-        ("returned_borrow_field.sc", "borrow-typed field"),
         (
             "returned_borrow_method.sc",
             "cannot originate from a temporary",

@@ -17,7 +17,7 @@ Priority meanings:
 
 Current milestone: **M0 release baseline**
 
-Next task: **LIB-ITER-1**
+Next task: **LIB-VEC-1**
 
 ### P0 control-source queue
 
@@ -102,7 +102,10 @@ Entry gate: **M0-QUALITY-1** and **M0-AUDIT-1**
   - Define one access-polymorphic `Index(Key)` contract with associated `Output`.
   - Route user types, Array, Slice, and Vec reads, explicit borrows, and assignments through it.
   - Preserve single evaluation, temporary-loan shortening, bounds traps, aliasing, and cleanup.
-- [ ] **LIB-ITER-1: Add array, slice, and Vec iterator implementations**
+- [x] **LIB-ITER-1: Add array, slice, and Vec iterator implementations**
+  - Provide source-backed Copy-value iteration for Array and borrowed Slice.
+  - Consume Vec values in source order and drop only the unyielded suffix on early exit.
+  - Preserve stored slice loans and reject mutation or escape while an iterator retains them.
 - [ ] **LIB-VEC-1: Complete Vec mutation and consuming-iterator cleanup**
 - [ ] **LIB-STRING-DESIGN-1: Decide the minimum owning string model**
 - [ ] **LIB-EXAMPLE-1: Add a nontrivial library-style native example**

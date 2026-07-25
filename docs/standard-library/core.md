@@ -345,6 +345,11 @@ pub let IntoIterator = trait {
   let into_iter(move self)
     (): IntoIter
 }
+
+pub let ArrayIntoIter(T: type)
+  (L: usize) = struct { ... }
+
+pub let SliceIter(T: type) = struct { ... }
 ```
 
 Implementing or naming either trait requires aliases such as
@@ -353,6 +358,13 @@ syntax itself needs no alias and dispatches only through these validated identit
 the iterable once, moves it into `IntoIterator.into_iter`, repeatedly mutably borrows the resulting
 iterator for `Iterator.next`, and stops on `None`. An inherent or unrelated trait method named
 `into_iter` or `next` cannot intercept this lowering.
+
+`Array(T)(L)` implements consuming value iteration when `T: Copy`. A borrowed `Slice(T)` exposes
+`.iter()` under the same bound; `SliceIter(T)` stores the slice borrow, so the source remains
+borrowed until the iterator is consumed or leaves scope. `Vec(T)` implements consuming iteration
+for all element types. Its iterator transfers the allocation, moves values in source order, and on
+early exit drops exactly the unyielded suffix before releasing storage. Borrow-yielding and mutable
+element iteration require generic associated constructors and remain part of `TYPE-GAT-1`.
 
 The control spellings bind to these validated identities without aliasing ordinary names. Standard
 effect identities such as `Throws` remain normal `std.effect` exports when named in source, backed

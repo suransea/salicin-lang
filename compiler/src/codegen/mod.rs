@@ -3978,8 +3978,8 @@ impl Analyzer {
             .flatten()
             .cloned()
             .collect::<Vec<_>>();
-        if extension.compile_groups.len() != 1 || parameters.is_empty() {
-            self.error("generic trait extend requires exactly one non-empty type parameter group");
+        if parameters.is_empty() || extension.compile_groups.iter().any(Vec::is_empty) {
+            self.error("generic trait extend requires non-empty compile-time parameter groups");
             return;
         }
         let mut declared = HashSet::new();
@@ -4592,6 +4592,13 @@ impl Analyzer {
             .map(|(parameter, argument)| (parameter.name.clone(), argument.clone()))
             .collect::<HashMap<_, _>>();
         expected_substitutions.insert("Self".to_owned(), extension.target.clone());
+        for parameter in extension.compile_groups.iter().flatten() {
+            if parameter.kind == CompileParamKind::USize {
+                expected_substitutions
+                    .entry(parameter.name.clone())
+                    .or_insert(Type::CompileUSize(0));
+            }
+        }
         let mut raw_associated = HashMap::new();
         let mut valid = true;
         for member in &extension.members {
@@ -4678,6 +4685,11 @@ impl Analyzer {
         }
         let mut actual_self = HashMap::new();
         actual_self.insert("Self".to_owned(), extension.target.clone());
+        for parameter in extension.compile_groups.iter().flatten() {
+            if parameter.kind == CompileParamKind::USize {
+                actual_self.insert(parameter.name.clone(), Type::CompileUSize(0));
+            }
+        }
         for method_id in &schema.method_order {
             let Some(ExtendMember::Function(actual)) = extension.members.iter().find(|member| {
                 matches!(member, ExtendMember::Function(function)
@@ -4891,7 +4903,10 @@ impl Analyzer {
         for member in &mut members {
             match member {
                 ExtendMember::Function(function) => {
-                    substitute_function_types(function, &substitutions)
+                    substitute_function_types(function, &substitutions);
+                    if let Some(body) = &mut function.body {
+                        substitute_type_expression_parameters(body, &substitutions);
+                    }
                 }
                 ExtendMember::Const(binding) => {
                     if let Some(annotation) = &mut binding.annotation {
@@ -4943,10 +4958,8 @@ impl Analyzer {
             .flatten()
             .cloned()
             .collect::<Vec<_>>();
-        if extension.compile_groups.len() != 1 || parameters.is_empty() {
-            self.error(
-                "generic inherent extend requires exactly one non-empty type parameter group",
-            );
+        if parameters.is_empty() || extension.compile_groups.iter().any(Vec::is_empty) {
+            self.error("generic inherent extend requires non-empty compile-time parameter groups");
             return;
         }
         let mut declared = HashSet::new();
@@ -5592,6 +5605,9 @@ impl Analyzer {
                     }
                     ExtendMember::Function(function) => {
                         substitute_function_types(function, &substitutions);
+                        if let Some(body) = &mut function.body {
+                            substitute_type_expression_parameters(body, &substitutions);
+                        }
                     }
                 }
             }
@@ -10560,6 +10576,10 @@ impl Analyzer {
             Ty::Slice(_) => self
                 .ensure_slice_inherent_extensions(&receiver_ty)
                 .expect("slice extension owner exists for slice receiver"),
+            Ty::Array(_, _) => {
+                self.ensure_array_trait_extensions(&receiver_ty);
+                receiver_ty.to_string()
+            }
             ty => {
                 self.error(format!(
                     "method call requires an extendable receiver, found `{ty}`"

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::{EnumDef, StructDef, VariantFields};
 
-use super::hir::{EnumLayout, FieldLayout, StructLayout, Ty, VariantLayout};
+use super::hir::{EnumLayout, FieldLayout, StructLayout, VariantLayout};
 use super::lower::nominal_name;
 use super::registry::NominalInstanceState;
 use super::Analyzer;
@@ -48,14 +48,7 @@ impl Analyzer {
                 ));
                 continue;
             }
-            let mut ty = self.lower_source_type(&field.ty);
-            if matches!(ty, Ty::Reference { .. }) {
-                self.error(format!(
-                    "borrow-typed field `{}.{}` is not supported until stored-reference drop and variance rules are implemented",
-                    name, field.name
-                ));
-                ty = Ty::Error;
-            }
+            let ty = self.lower_source_type(&field.ty);
             fields.push(FieldLayout {
                 name: field.name,
                 ty,
@@ -116,14 +109,7 @@ impl Analyzer {
                     ));
                     continue;
                 }
-                let mut ty = self.lower_source_type(&source_ty);
-                if matches!(ty, Ty::Reference { .. }) {
-                    self.error(format!(
-                        "borrow-typed enum field `{name}.{}.{field_name}` is not supported until stored-reference drop and variance rules are implemented",
-                        variant.name
-                    ));
-                    ty = Ty::Error;
-                }
+                let ty = self.lower_source_type(&source_ty);
                 fields.push(FieldLayout {
                     name: field_name,
                     ty,

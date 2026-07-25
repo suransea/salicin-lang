@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{CallArg, Expr, ItemOrigin, Type, VariantFields, Visibility};
+use crate::ast::{CallArg, CompileParamKind, Expr, ItemOrigin, Type, VariantFields, Visibility};
 use crate::core::LangItemKind;
 
 use super::fallible::{InferredEnumHints, StandardFallibleKind};
@@ -717,12 +717,36 @@ impl Analyzer {
             let mut source_arguments = Vec::new();
             let mut arguments = Vec::new();
             for (index, parameter) in parameters.iter().enumerate() {
-                let owner = format!("nominal::{template_name}");
-                let marker = generic_parameter_marker(&owner, index, &parameter.name);
-                self.abstract_type_parameters
-                    .insert(marker.clone(), parameter.name.clone());
-                source_arguments.push(Type::Named(marker.clone(), Vec::new()));
-                arguments.push(Ty::Struct(marker));
+                match parameter.kind {
+                    CompileParamKind::Type => {
+                        let owner = format!("nominal::{template_name}");
+                        let marker = generic_parameter_marker(&owner, index, &parameter.name);
+                        self.abstract_type_parameters
+                            .insert(marker.clone(), parameter.name.clone());
+                        source_arguments.push(Type::Named(marker.clone(), Vec::new()));
+                        arguments.push(Ty::Struct(marker));
+                    }
+                    CompileParamKind::USize => {
+                        let source = Type::CompileUSize(0);
+                        let argument = self
+                            .probe_compile_argument_ty(parameter, &source)
+                            .expect("literal usize is a valid compile-time argument");
+                        source_arguments.push(source);
+                        arguments.push(argument);
+                    }
+                    _ => {
+                        self.error(format!(
+                            "generic nominal `{template_name}` abstract validation does not yet support parameter `{}` of kind {}",
+                            parameter.name,
+                            super::compile_time::describe_compile_param_kind(
+                                parameter.kind.clone()
+                            )
+                        ));
+                    }
+                }
+            }
+            if source_arguments.len() != parameters.len() {
+                continue;
             }
             let snapshot = self.snapshot_nominals();
             self.suppress_generic_inherent_instantiation += 1;

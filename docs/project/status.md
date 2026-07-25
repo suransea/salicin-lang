@@ -348,8 +348,10 @@ The implementation is broad but not stable. Important incomplete boundaries incl
   Unsized `Slice(T)` borrows support Array unsizing, anchored Vec conversion, length, and
   bounds-checked shared/mutable element access. Access-polymorphic `Index(Key)` routes user-defined,
   Array, Slice, and Vec reads, explicit borrows, and assignments through one source-declared
-  protocol. Standard array/container iterator implementations and `Future` remain to be
-  implemented;
+  protocol. Copy-value Array and borrowed Slice iterators are source-backed; Slice iterator
+  storage retains its source loan. Vec consuming iteration supports resource elements and
+  early-exit suffix cleanup. Borrow-yielding/mutable iterators still require generic associated
+  constructors, and `Future` remains to be implemented;
 - `std` host APIs have not been started;
 - registry dependencies, workspaces, stable ABI guarantees, and a package distribution format are
   not defined;

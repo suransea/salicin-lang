@@ -48,6 +48,7 @@ const NON_LANG_ITEM_CORE_MODULES: &[&str] = &[
     "primitives",
     "effect",
     "control",
+    "iter",
     "passing",
     "algebra",
     "functional",
@@ -1580,7 +1581,17 @@ fn is_allowed_non_lang_item(origin: &ItemOrigin) -> bool {
 fn is_control_support_item(name: &str) -> bool {
     matches!(
         name,
-        "Break" | "Continue" | "Return" | "break" | "continue" | "return" | "copy" | "move"
+        "Break"
+            | "Continue"
+            | "Return"
+            | "ArrayIntoIter"
+            | "SliceIter"
+            | "iter_copy"
+            | "break"
+            | "continue"
+            | "return"
+            | "copy"
+            | "move"
     )
 }
 
@@ -3356,7 +3367,7 @@ pub let Index(Key: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 319);
+        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 328);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);

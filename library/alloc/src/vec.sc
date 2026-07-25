@@ -1,6 +1,8 @@
 let Option = core.Option
 let Slice = core.Slice
 let Index = core.ops.Index
+let Iterator = core.iter.Iterator
+let IntoIterator = core.iter.IntoIterator
 
 /// Growable contiguous heap allocation for values of type `T`.
 pub let Vec(T: type) = struct {
@@ -396,6 +398,14 @@ where T: Copy {
   let write(self: borrow(mut)(Self))(index: u64)(copy value: T): () = { vec_write(self)(index)(value) }
 }
 
+/// Owning iterator over a vector.
+pub let VecIntoIter(T: type) = struct {
+  pointer: Ptr(mut)(T),
+  next_index: u64,
+  length: u64,
+  storage_capacity: u64,
+}
+
 /// Routes bracket access through the source-defined indexing protocol.
 extend(T: type) Vec(T): Index(u64) {
   let Output = T
@@ -403,6 +413,45 @@ extend(T: type) Vec(T): Index(u64) {
     (self: borrow(A)(Self))
     (key: u64): borrow(A)(T) = {
     self.at(A)(key)
+  }
+}
+
+/// Advances an owning vector iterator in source order.
+extend(T: type) VecIntoIter(T): Iterator {
+  let Item = T
+  let next(self: borrow(mut)(Self))(): Option(T) = {
+    if self.next_index == self.length {
+      Option(T).None
+    } else {
+      let value = unsafe {
+        raw_take(raw_offset(self.pointer, self.next_index))
+      }
+      self.next_index = self.next_index + 1
+      Option(T).Some(value)
+    }
+  }
+}
+
+/// Consumes a vector into an owning iterator.
+extend(T: type) Vec(T): IntoIterator {
+  let IntoIter = VecIntoIter(T)
+  let into_iter(move self)(): VecIntoIter(T) = {
+    let iterator = VecIntoIter(T) { pointer: self.pointer, next_index: 0, length: self.length, storage_capacity: self.storage_capacity }
+    forget(self)
+    iterator
+  }
+}
+
+/// Drops elements not yet yielded and releases the transferred vector storage.
+extend(T: type) VecIntoIter(T): Drop {
+  let drop(self: borrow(mut)(Self))(): () = {
+    while { self.next_index < self.length } {
+      let item = unsafe {
+        raw_take(raw_offset(self.pointer, self.next_index))
+      }
+      self.next_index = self.next_index + 1
+    }
+    vec_deallocate(self.pointer, self.storage_capacity)
   }
 }
 

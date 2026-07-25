@@ -222,6 +222,84 @@ fn generic_inherent_extensions_materialize_members_per_nominal_instance() {
 }
 
 #[test]
+fn generic_nominals_accept_compile_time_usize_arguments() {
+    let source = "\
+let Buffer(T: type)(L: usize) = struct {
+  values: Array(T)(L),
+}
+extend(T: type)(L: usize) Buffer(T)(L) {
+  let second(self: borrow(Self))(): T = { self.values[1] }
+}
+let main(): i32 = {
+  let buffer = Buffer(i32)(2) { values: [40, 2] }
+  buffer.second()
+}
+";
+    compile_text(source).expect("generic nominal should accept a compile-time usize argument");
+}
+
+#[test]
+fn nominal_fields_can_store_borrows_without_losing_the_loan() {
+    let source = "\
+let Holder(T: type) = struct { value: borrow(T) }
+let hold(T: type)(value: borrow(T)): Holder(T) = {
+  Holder(T) { value: value }
+}
+let read(value: borrow(i32)): i32 = { value }
+let main(): i32 = {
+  let value = 42
+  let holder = hold(i32)(value)
+  read(holder.value)
+}
+";
+    compile_text(source).expect("a nominal borrow field should preserve its source loan");
+}
+
+#[test]
+fn nominal_borrow_fields_cannot_escape_a_local_source() {
+    let errors = compile_text(
+        "\
+let Holder(T: type) = struct { value: borrow(T) }
+let escape(): Holder(i32) = {
+  let value = 42
+  Holder(i32) { value: borrow(value) }
+}
+let main(): i32 = { 42 }
+",
+    )
+    .expect_err("a stored borrow of a local must not escape");
+    assert!(errors
+        .iter()
+        .any(|error| error.message.contains("cannot return")));
+}
+
+#[test]
+fn nominal_borrow_fields_keep_the_source_borrowed() {
+    let errors = compile_text(
+        "\
+let Holder(T: type) = struct { value: borrow(T) }
+let hold(T: type)(value: borrow(T)): Holder(T) = {
+  Holder(T) { value: value }
+}
+let read(value: borrow(i32)): i32 = { value }
+let main(): i32 = {
+  let mut value = 41
+  let holder = hold(i32)(value)
+  value = 42
+  read(holder.value)
+}
+",
+    )
+    .expect_err("a stored shared borrow must keep the source borrowed");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("already borrowed")),
+        "{errors:?}"
+    );
+}
+
+#[test]
 fn inference_reifies_and_decomposes_generic_nominal_types() {
     let program = crate::parser::parse(
         "let Cell(T: type) = struct { value: T }\n\

@@ -338,7 +338,7 @@ type DependencyTable = HashMap<Vec<String>, BTreeMap<String, Vec<String>>>;
 /// bootstrap bundle. The module resolver is the language boundary: source
 /// code reaches these declarations through `alloc.<module>.<name>`, while the
 /// analyzer continues to consume the flattened canonical name.
-const ALLOC_EXPORTS: &[(&str, &str)] = &[("boxed", "Box"), ("vec", "Vec")];
+const ALLOC_EXPORTS: &[(&str, &str)] = &[("boxed", "Box"), ("vec", "Vec"), ("vec", "VecIntoIter")];
 
 const CORE_PRELUDE_EXPORTS: &[(&str, &str)] = &[
     ("Never", "core::never::Never"),
@@ -423,7 +423,13 @@ const CORE_CONTROL_EXPORTS: &[&str] = &[
     "Break", "Continue", "Return", "Attempt", "break", "continue", "return", "do", "try", "throw",
     "unsafe", "loop", "while", "if", "match", "for",
 ];
-const CORE_ITER_EXPORTS: &[&str] = &["Iterator", "IntoIterator"];
+const CORE_ITER_EXPORTS: &[&str] = &[
+    "Iterator",
+    "IntoIterator",
+    "ArrayIntoIter",
+    "SliceIter",
+    "iter_copy",
+];
 const CORE_ALGEBRA_EXPORTS: &[&str] = &["Semigroup", "Monoid"];
 const CORE_FUNCTIONAL_EXPORTS: &[&str] = &["Functor", "Applicative", "Monad"];
 
@@ -546,6 +552,8 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("control", "loop", "core::control::loop"),
     ("iter", "Iterator", "core::iter::Iterator"),
     ("iter", "IntoIterator", "core::iter::IntoIterator"),
+    ("iter", "ArrayIntoIter", "core::iter::ArrayIntoIter"),
+    ("iter", "SliceIter", "core::iter::SliceIter"),
     ("algebra", "Semigroup", "core::algebra::Semigroup"),
     ("algebra", "Monoid", "core::algebra::Monoid"),
     ("functional", "Functor", "core::functional::Functor"),
@@ -553,6 +561,7 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("functional", "Monad", "core::functional::Monad"),
     ("boxed", "Box", "alloc::boxed::Box"),
     ("vec", "Vec", "alloc::vec::Vec"),
+    ("vec", "VecIntoIter", "alloc::vec::VecIntoIter"),
 ];
 
 fn validate_package_layout(
