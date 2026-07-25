@@ -71,7 +71,7 @@ use source_rewrite::*;
 pub use pipeline::{check, check_library, compile, compile_library};
 
 fn primitive_scalar_type(ty: &Ty) -> bool {
-    matches!(ty, Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool)
+    ty.is_integer() || *ty == Ty::Bool
 }
 
 #[cfg(test)]
@@ -1673,7 +1673,20 @@ impl Analyzer {
                     )
                 })
             }
-            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => true,
+            Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64
+            | Type::I128
+            | Type::ISize
+            | Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64
+            | Type::U128
+            | Type::USize
+            | Type::Bool
+            | Type::Unit => true,
             Type::CompileUSize(value) => {
                 self.error(format!(
                     "compile-time `usize` value `{value}` cannot be used as a runtime type in trait member `{trait_name}.{member_name}`"
@@ -2053,7 +2066,20 @@ impl Analyzer {
 
     fn source_type_is_concrete(&self, source: &Type) -> bool {
         match source {
-            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => true,
+            Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64
+            | Type::I128
+            | Type::ISize
+            | Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64
+            | Type::U128
+            | Type::USize
+            | Type::Bool
+            | Type::Unit => true,
             Type::CompileUSize(_) => false,
             Type::Borrow { pointee, .. } => self.source_type_is_concrete(pointee),
             Type::Tuple(fields) => fields
@@ -2106,7 +2132,20 @@ impl Analyzer {
 
     fn source_type_is_abstract_or_concrete(&self, source: &Type) -> bool {
         match source {
-            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => true,
+            Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64
+            | Type::I128
+            | Type::ISize
+            | Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64
+            | Type::U128
+            | Type::USize
+            | Type::Bool
+            | Type::Unit => true,
             Type::CompileUSize(_) => false,
             Type::Borrow { pointee, .. } => self.source_type_is_abstract_or_concrete(pointee),
             Type::Tuple(fields) => fields
@@ -2146,7 +2185,19 @@ impl Analyzer {
     fn resolve_trait_impl_target(&mut self, source: &Type) -> Option<Ty> {
         if matches!(
             source,
-            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool
+            Type::I8
+                | Type::I16
+                | Type::I32
+                | Type::I64
+                | Type::I128
+                | Type::ISize
+                | Type::U8
+                | Type::U16
+                | Type::U32
+                | Type::U64
+                | Type::U128
+                | Type::USize
+                | Type::Bool
         ) {
             return Some(self.lower_source_type(source));
         }
@@ -2736,10 +2787,18 @@ impl Analyzer {
                     })
                     .collect::<Option<Vec<_>>>()?,
             )),
-            Type::I32
+            Type::I8
+            | Type::I16
+            | Type::I32
             | Type::I64
+            | Type::I128
+            | Type::ISize
+            | Type::U8
+            | Type::U16
             | Type::U32
             | Type::U64
+            | Type::U128
+            | Type::USize
             | Type::Bool
             | Type::Unit
             | Type::CompileUSize(_) => Some(source.clone()),
@@ -7330,7 +7389,7 @@ impl Analyzer {
                 }
                 HirExpr {
                     ty,
-                    kind: HirExprKind::Integer(*value),
+                    kind: HirExprKind::Integer(integer_literal_bits(*value)),
                 }
             }
             Expr::Bool(value) => HirExpr {
@@ -7604,11 +7663,7 @@ impl Analyzer {
                             }
                             None => Ty::I32,
                         };
-                        if ty.is_signed()
-                            && value
-                                .checked_neg()
-                                .is_none_or(|negative| !integer_fits(negative, &ty))
-                        {
+                        if ty.is_signed() && !negative_integer_fits(*value, &ty) {
                             self.error(format!(
                                 "negative integer literal `-{value}` does not fit in `{ty}`"
                             ));
@@ -7633,7 +7688,7 @@ impl Analyzer {
                                 UnaryOp::Neg,
                                 Box::new(HirExpr {
                                     ty,
-                                    kind: HirExprKind::Integer(*value),
+                                    kind: HirExprKind::Integer(integer_literal_bits(*value)),
                                 }),
                             ),
                         };

@@ -370,10 +370,18 @@ fn normalize_type_labeled_arguments(
                 Type::Named(name.clone(), positional)
             };
         }
-        Type::I32
+        Type::I8
+        | Type::I16
+        | Type::I32
         | Type::I64
+        | Type::I128
+        | Type::ISize
+        | Type::U8
+        | Type::U16
         | Type::U32
         | Type::U64
+        | Type::U128
+        | Type::USize
         | Type::Bool
         | Type::Unit
         | Type::CompileUSize(_) => {}
@@ -665,10 +673,18 @@ pub(super) fn promote_inferred_type_aliases<const N: usize>(programs: [&mut Prog
                     continue;
                 };
                 let head = match &target {
+                    Type::I8 => "i8",
+                    Type::I16 => "i16",
                     Type::I32 => "i32",
                     Type::I64 => "i64",
+                    Type::I128 => "i128",
+                    Type::ISize => "isize",
+                    Type::U8 => "u8",
+                    Type::U16 => "u16",
                     Type::U32 => "u32",
                     Type::U64 => "u64",
+                    Type::U128 => "u128",
+                    Type::USize => "usize",
                     Type::Bool => "bool",
                     Type::Named(name, _) => name,
                     _ => continue,
@@ -940,10 +956,18 @@ pub(super) fn expand_alias_type(
                 "internal error: labeled type arguments for `{name}` were not normalized before type alias expansion"
             ));
         }
-        Type::I32
+        Type::I8
+        | Type::I16
+        | Type::I32
         | Type::I64
+        | Type::I128
+        | Type::ISize
+        | Type::U8
+        | Type::U16
         | Type::U32
         | Type::U64
+        | Type::U128
+        | Type::USize
         | Type::Bool
         | Type::Unit
         | Type::CompileUSize(_) => {}
@@ -955,10 +979,18 @@ fn expression_type_source(expression: &Expr) -> Option<Type> {
         Expr::Located { value, .. } => expression_type_source(value),
         Expr::Unit => Some(Type::Unit),
         Expr::Name(name) => Some(match name.as_str() {
+            "i8" => Type::I8,
+            "i16" => Type::I16,
             "i32" => Type::I32,
             "i64" => Type::I64,
+            "i128" => Type::I128,
+            "isize" => Type::ISize,
+            "u8" => Type::U8,
+            "u16" => Type::U16,
             "u32" => Type::U32,
             "u64" => Type::U64,
+            "u128" => Type::U128,
+            "usize" => Type::USize,
             "bool" => Type::Bool,
             _ => Type::Named(name.clone(), Vec::new()),
         }),
@@ -1816,12 +1848,20 @@ pub(super) fn substitute_type_expression_parameters(
 pub(super) fn source_type_expression(source: &Type) -> Expr {
     match source {
         Type::Unit => Expr::Unit,
+        Type::I8 => Expr::Name("i8".to_owned()),
+        Type::I16 => Expr::Name("i16".to_owned()),
         Type::I32 => Expr::Name("i32".to_owned()),
         Type::I64 => Expr::Name("i64".to_owned()),
+        Type::I128 => Expr::Name("i128".to_owned()),
+        Type::ISize => Expr::Name("isize".to_owned()),
+        Type::U8 => Expr::Name("u8".to_owned()),
+        Type::U16 => Expr::Name("u16".to_owned()),
         Type::U32 => Expr::Name("u32".to_owned()),
         Type::U64 => Expr::Name("u64".to_owned()),
+        Type::U128 => Expr::Name("u128".to_owned()),
+        Type::USize => Expr::Name("usize".to_owned()),
         Type::Bool => Expr::Name("bool".to_owned()),
-        Type::CompileUSize(value) => Expr::Integer(i128::from(*value)),
+        Type::CompileUSize(value) => Expr::Integer(u128::from(*value)),
         Type::Borrow { .. } | Type::Tuple(_) | Type::Function { .. } => Expr::Type(source.clone()),
         Type::Array(element, length) => Expr::Call(
             Box::new(Expr::Call(
@@ -1833,7 +1873,7 @@ pub(super) fn source_type_expression(source: &Type) -> Expr {
             )),
             vec![CallArg {
                 label: None,
-                value: Expr::Integer(i128::from(*length)),
+                value: Expr::Integer(u128::from(*length)),
             }],
         ),
         Type::ArrayApplication {
@@ -1851,7 +1891,7 @@ pub(super) fn source_type_expression(source: &Type) -> Expr {
             vec![CallArg {
                 label: None,
                 value: match length {
-                    crate::ast::USizeConst::Literal(value) => Expr::Integer(i128::from(*value)),
+                    crate::ast::USizeConst::Literal(value) => Expr::Integer(u128::from(*value)),
                     crate::ast::USizeConst::Parameter(name) => Expr::Name(name.clone()),
                 },
             }],
@@ -1988,10 +2028,18 @@ pub(super) fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<
                 substitute_type_parameters(&mut argument.ty, substitutions);
             }
         }
-        Type::I32
+        Type::I8
+        | Type::I16
+        | Type::I32
         | Type::I64
+        | Type::I128
+        | Type::ISize
+        | Type::U8
+        | Type::U16
         | Type::U32
         | Type::U64
+        | Type::U128
+        | Type::USize
         | Type::Bool
         | Type::Unit
         | Type::CompileUSize(_) => {}

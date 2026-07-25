@@ -89,10 +89,18 @@ pub(super) struct GenericConstructorTraitExtensionTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum ImplTypePattern {
     Variable(u8, usize),
+    I8,
+    I16,
     I32,
     I64,
+    I128,
+    ISize,
+    U8,
+    U16,
     U32,
     U64,
+    U128,
+    USize,
     Bool,
     Unit,
     Array(Box<ImplTypePattern>, u64),
@@ -536,10 +544,18 @@ pub(super) fn collect_nominal_type_dependencies(
                 collect_nominal_type_dependencies(&argument.ty, nominal_names, bound, output);
             }
         }
-        Type::I32
+        Type::I8
+        | Type::I16
+        | Type::I32
         | Type::I64
+        | Type::I128
+        | Type::ISize
+        | Type::U8
+        | Type::U16
         | Type::U32
         | Type::U64
+        | Type::U128
+        | Type::USize
         | Type::Bool
         | Type::Unit
         | Type::CompileUSize(_)
@@ -645,10 +661,18 @@ fn impl_type_pattern(
                 .map(|field| impl_type_pattern(field, variables, side))
                 .collect(),
         ),
+        Type::I8 => ImplTypePattern::I8,
+        Type::I16 => ImplTypePattern::I16,
         Type::I32 => ImplTypePattern::I32,
         Type::I64 => ImplTypePattern::I64,
+        Type::I128 => ImplTypePattern::I128,
+        Type::ISize => ImplTypePattern::ISize,
+        Type::U8 => ImplTypePattern::U8,
+        Type::U16 => ImplTypePattern::U16,
         Type::U32 => ImplTypePattern::U32,
         Type::U64 => ImplTypePattern::U64,
+        Type::U128 => ImplTypePattern::U128,
+        Type::USize => ImplTypePattern::USize,
         Type::Bool => ImplTypePattern::Bool,
         Type::Unit => ImplTypePattern::Unit,
         Type::Borrow {
@@ -800,10 +824,18 @@ fn impl_pattern_contains_variable(
         ImplTypePattern::Named(_, arguments) => arguments
             .iter()
             .any(|argument| impl_pattern_contains_variable(argument, variable, substitutions)),
-        ImplTypePattern::I32
+        ImplTypePattern::I8
+        | ImplTypePattern::I16
+        | ImplTypePattern::I32
         | ImplTypePattern::I64
+        | ImplTypePattern::I128
+        | ImplTypePattern::ISize
+        | ImplTypePattern::U8
+        | ImplTypePattern::U16
         | ImplTypePattern::U32
         | ImplTypePattern::U64
+        | ImplTypePattern::U128
+        | ImplTypePattern::USize
         | ImplTypePattern::Bool
         | ImplTypePattern::Unit => false,
     }
@@ -839,10 +871,18 @@ pub(super) fn substitute_self_type(ty: &mut Type, target: &str) {
                 substitute_self_type(&mut argument.ty, target);
             }
         }
-        Type::I32
+        Type::I8
+        | Type::I16
+        | Type::I32
         | Type::I64
+        | Type::I128
+        | Type::ISize
+        | Type::U8
+        | Type::U16
         | Type::U32
         | Type::U64
+        | Type::U128
+        | Type::USize
         | Type::Bool
         | Type::Unit
         | Type::CompileUSize(_) => {}

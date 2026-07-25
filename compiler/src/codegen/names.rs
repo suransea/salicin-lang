@@ -61,10 +61,18 @@ fn push_canonical_component(output: &mut String, component: &str) {
 
 pub(super) fn canonical_type_encoding(ty: &Ty) -> String {
     match ty {
+        Ty::I8 => "i8".to_owned(),
+        Ty::I16 => "i16".to_owned(),
         Ty::I32 => "i32".to_owned(),
         Ty::I64 => "i64".to_owned(),
+        Ty::I128 => "i128".to_owned(),
+        Ty::ISize => "isize".to_owned(),
+        Ty::U8 => "u8".to_owned(),
+        Ty::U16 => "u16".to_owned(),
         Ty::U32 => "u32".to_owned(),
         Ty::U64 => "u64".to_owned(),
+        Ty::U128 => "u128".to_owned(),
+        Ty::USize => "usize".to_owned(),
         Ty::Bool => "bool".to_owned(),
         Ty::Unit => "unit".to_owned(),
         Ty::Tuple(fields) => {

@@ -342,10 +342,18 @@ pub enum PassMode {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
+    I8,
+    I16,
     I32,
     I64,
+    I128,
+    ISize,
+    U8,
+    U16,
     U32,
     U64,
+    U128,
+    USize,
     Bool,
     Unit,
     Tuple(Vec<Type>),
@@ -420,10 +428,16 @@ pub struct HandlerChainCall {
     pub residual: Box<Expr>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IntegerPattern {
+    pub magnitude: u128,
+    pub negative: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pattern {
     Wildcard,
-    Integer(i128),
+    Integer(IntegerPattern),
     Bool(bool),
     Binding(String),
     Tuple(Vec<Pattern>),
@@ -462,7 +476,7 @@ pub enum Expr {
     /// Compiler-internal representation of a compile-time type argument after
     /// substitution. User source does not parse directly to this node.
     Type(Type),
-    Integer(i128),
+    Integer(u128),
     Bool(bool),
     Name(String),
     Unary(UnaryOp, Box<Expr>),

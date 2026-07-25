@@ -1171,7 +1171,7 @@ impl Parser {
                     if conventionally_compile_time
                         || matches!(
                             name.as_str(),
-                            "usize" | "access" | "effect" | "parameters"
+                            "access" | "effect" | "parameters"
                         )
             )
     }
@@ -1263,7 +1263,23 @@ impl Parser {
         }
 
         if self.take(&TokenKind::Type) {
-            if matches!(name, "_" | "i32" | "i64" | "u32" | "u64" | "bool" | "Never") {
+            if matches!(
+                name,
+                "_" | "i8"
+                    | "i16"
+                    | "i32"
+                    | "i64"
+                    | "i128"
+                    | "isize"
+                    | "u8"
+                    | "u16"
+                    | "u32"
+                    | "u64"
+                    | "u128"
+                    | "usize"
+                    | "bool"
+                    | "Never"
+            ) {
                 return Err(self.error_at(
                     name_token,
                     format!(
@@ -1305,7 +1321,23 @@ impl Parser {
         }
 
         if self.at(&TokenKind::LParen) {
-            if matches!(name, "_" | "i32" | "i64" | "u32" | "u64" | "bool" | "Never") {
+            if matches!(
+                name,
+                "_" | "i8"
+                    | "i16"
+                    | "i32"
+                    | "i64"
+                    | "i128"
+                    | "isize"
+                    | "u8"
+                    | "u16"
+                    | "u32"
+                    | "u64"
+                    | "u128"
+                    | "usize"
+                    | "bool"
+                    | "Never"
+            ) {
                 return Err(self.error_at(
                     name_token,
                     format!(
@@ -1375,7 +1407,20 @@ impl Parser {
             let name = self.expect_ident("a constructor kind parameter name")?;
             if matches!(
                 name.as_str(),
-                "_" | "i32" | "i64" | "u32" | "u64" | "bool" | "Never"
+                "_" | "i8"
+                    | "i16"
+                    | "i32"
+                    | "i64"
+                    | "i128"
+                    | "isize"
+                    | "u8"
+                    | "u16"
+                    | "u32"
+                    | "u64"
+                    | "u128"
+                    | "usize"
+                    | "bool"
+                    | "Never"
             ) {
                 return Err(self.error_at(
                     &name_token,
@@ -2469,10 +2514,18 @@ impl Parser {
 
         if arguments.is_empty() {
             Ok(match name.as_str() {
+                "i8" => Type::I8,
+                "i16" => Type::I16,
                 "i32" => Type::I32,
                 "i64" => Type::I64,
+                "i128" => Type::I128,
+                "isize" => Type::ISize,
+                "u8" => Type::U8,
+                "u16" => Type::U16,
                 "u32" => Type::U32,
                 "u64" => Type::U64,
+                "u128" => Type::U128,
+                "usize" => Type::USize,
                 "bool" => Type::Bool,
                 _ => Type::Named(name, Vec::new()),
             })
@@ -2813,7 +2866,10 @@ impl Parser {
         match token.kind {
             TokenKind::Integer(value) => {
                 self.advance();
-                Ok(Pattern::Integer(value))
+                Ok(Pattern::Integer(crate::ast::IntegerPattern {
+                    magnitude: value,
+                    negative: false,
+                }))
             }
             TokenKind::Minus => {
                 self.advance();
@@ -2822,10 +2878,10 @@ impl Parser {
                     return Err(self.error_at(&integer, "expected integer literal after `-`"));
                 };
                 self.advance();
-                let value = value.checked_neg().ok_or_else(|| {
-                    self.error_at(&token, "negative integer pattern is out of range")
-                })?;
-                Ok(Pattern::Integer(value))
+                Ok(Pattern::Integer(crate::ast::IntegerPattern {
+                    magnitude: value,
+                    negative: true,
+                }))
             }
             TokenKind::True => {
                 self.advance();
@@ -4777,10 +4833,18 @@ fn normalize_type_region_qualifiers(
             }
             Ok(())
         }
-        Type::I32
+        Type::I8
+        | Type::I16
+        | Type::I32
         | Type::I64
+        | Type::I128
+        | Type::ISize
+        | Type::U8
+        | Type::U16
         | Type::U32
         | Type::U64
+        | Type::U128
+        | Type::USize
         | Type::Bool
         | Type::Unit
         | Type::CompileUSize(_) => Ok(()),
@@ -4997,10 +5061,18 @@ fn validate_type_effects(ty: &Type, effects: &HashSet<String>) -> Result<(), Str
             }
             Ok(())
         }
-        Type::I32
+        Type::I8
+        | Type::I16
+        | Type::I32
         | Type::I64
+        | Type::I128
+        | Type::ISize
+        | Type::U8
+        | Type::U16
         | Type::U32
         | Type::U64
+        | Type::U128
+        | Type::USize
         | Type::Bool
         | Type::Unit
         | Type::CompileUSize(_) => Ok(()),
@@ -5061,10 +5133,18 @@ fn validate_type_accesses(ty: &Type, accesses: &HashSet<String>) -> Result<(), S
             }
             Ok(())
         }
-        Type::I32
+        Type::I8
+        | Type::I16
+        | Type::I32
         | Type::I64
+        | Type::I128
+        | Type::ISize
+        | Type::U8
+        | Type::U16
         | Type::U32
         | Type::U64
+        | Type::U128
+        | Type::USize
         | Type::Bool
         | Type::Unit
         | Type::CompileUSize(_) => Ok(()),
@@ -5274,10 +5354,18 @@ fn validate_type_regions(ty: &Type, regions: &HashSet<String>) -> Result<(), Str
             }
             Ok(())
         }
-        Type::I32
+        Type::I8
+        | Type::I16
+        | Type::I32
         | Type::I64
+        | Type::I128
+        | Type::ISize
+        | Type::U8
+        | Type::U16
         | Type::U32
         | Type::U64
+        | Type::U128
+        | Type::USize
         | Type::Bool
         | Type::Unit
         | Type::CompileUSize(_) => Ok(()),
@@ -6405,7 +6493,10 @@ mod tests {
 
     #[test]
     fn rejects_reserved_compile_parameter_names() {
-        for name in ["_", "i32", "i64", "u32", "u64", "bool", "Never"] {
+        for name in [
+            "_", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128",
+            "usize", "bool", "Never",
+        ] {
             let source = format!("let invalid({name}: type)(value: i32): i32 = {{ value }}\n");
             let error = parse(&source).unwrap_err();
             assert_eq!(

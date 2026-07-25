@@ -541,10 +541,18 @@ impl<'a> HirCleanupPlanner<'a> {
                 }
             }
             Ty::Continuation { .. } | Ty::EffectCallable { .. } => {}
-            Ty::I32
+            Ty::I8
+            | Ty::I16
+            | Ty::I32
             | Ty::I64
+            | Ty::I128
+            | Ty::ISize
+            | Ty::U8
+            | Ty::U16
             | Ty::U32
             | Ty::U64
+            | Ty::U128
+            | Ty::USize
             | Ty::Bool
             | Ty::Unit
             | Ty::Pointer { .. }

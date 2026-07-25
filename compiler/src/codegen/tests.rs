@@ -2963,8 +2963,33 @@ fn accepts_minimum_signed_integer_literals() {
         Type::I32,
         Expr::Unary(UnaryOp::Neg, Box::new(Expr::Integer(2_147_483_648))),
     );
-    let ir = compile(&Program::new(vec![minimum_i64, main])).unwrap();
+    let minimum_i128 = function(
+        "minimum_i128",
+        vec![vec![]],
+        Type::I128,
+        Expr::Unary(
+            UnaryOp::Neg,
+            Box::new(Expr::Integer(
+                170_141_183_460_469_231_731_687_303_715_884_105_728,
+            )),
+        ),
+    );
+    let maximum_u128 = function(
+        "maximum_u128",
+        vec![vec![]],
+        Type::U128,
+        Expr::Integer(340_282_366_920_938_463_463_374_607_431_768_211_455),
+    );
+    let ir = compile(&Program::new(vec![
+        minimum_i64,
+        minimum_i128,
+        maximum_u128,
+        main,
+    ]))
+    .unwrap();
     assert!(ir.contains("sub i64 0, 9223372036854775808"));
+    assert!(ir.contains("sub i128 0, -170141183460469231731687303715884105728"));
+    assert!(ir.contains("ret i128 -1"));
     assert!(ir.contains("sub i32 0, 2147483648"));
 }
 

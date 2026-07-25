@@ -2473,6 +2473,59 @@ fn tuple_diagnostics_are_source_level_and_specific() {
 }
 
 #[test]
+fn primitive_scalar_widths_and_boundaries_run_natively() {
+    for (name, output) in native_fixture_outputs_in_parallel(&["primitive_scalar_widths.sc"]) {
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn primitive_scalar_overflows_and_conversions_are_diagnosed() {
+    let cases = [
+        (
+            "primitive_i8_literal_overflow.sc",
+            "integer literal `128` does not fit in `i8`",
+        ),
+        (
+            "primitive_u8_literal_overflow.sc",
+            "integer literal `256` does not fit in `u8`",
+        ),
+        (
+            "primitive_i128_positive_overflow.sc",
+            "does not fit in `i128`",
+        ),
+        (
+            "primitive_i128_negative_overflow.sc",
+            "does not fit in `i128`",
+        ),
+        (
+            "primitive_u128_literal_overflow.sc",
+            "integer literal is too large",
+        ),
+        (
+            "primitive_no_implicit_widening.sc",
+            "type mismatch for argument for parameter `value`: expected `i16`, found `i8`",
+        ),
+    ];
+    for (name, expected) in cases {
+        let source =
+            fs::read_to_string(fixture("fail", name)).expect("read scalar failure fixture");
+        let diagnostics = check_source(&source).expect_err("scalar failure fixture passed");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains(expected)),
+            "{name} did not contain `{expected}`: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn raise_and_unwrap_operators_run_through_standard_and_custom_protocols() {
     let fixtures = [
         "raise_result.sc",

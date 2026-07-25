@@ -1,6 +1,9 @@
 use std::collections::HashSet;
 
-use crate::ast::{BinaryOp, Binding, Expr, ItemOrigin, MatchArm, Pattern, PatternFields, Stmt};
+use crate::ast::{
+    BinaryOp, Binding, Expr, IntegerPattern, ItemOrigin, MatchArm, Pattern, PatternFields, Stmt,
+    UnaryOp,
+};
 
 use super::flow::{FlowState, InspectionBinding, LocalInfo, LowerCtx};
 use super::hir::{
@@ -9,6 +12,15 @@ use super::hir::{
 };
 use super::lower::{error_expr, TypeProbe};
 use super::Analyzer;
+
+fn integer_pattern_expr(pattern: &IntegerPattern) -> Expr {
+    let magnitude = Expr::Integer(pattern.magnitude);
+    if pattern.negative {
+        Expr::Unary(UnaryOp::Neg, Box::new(magnitude))
+    } else {
+        magnitude
+    }
+}
 
 impl Analyzer {
     pub(super) fn lower_match(
@@ -100,7 +112,7 @@ impl Analyzer {
                     Expr::Binary(
                         Box::new(Expr::Name(hidden.clone())),
                         BinaryOp::Eq,
-                        Box::new(Expr::Integer(*value)),
+                        Box::new(integer_pattern_expr(value)),
                     ),
                     None,
                 ),
@@ -665,7 +677,7 @@ impl Analyzer {
                 literal_conditions.push(Expr::Binary(
                     Box::new(Expr::Name(name)),
                     BinaryOp::Eq,
-                    Box::new(Expr::Integer(*value)),
+                    Box::new(integer_pattern_expr(value)),
                 ));
             }
             Pattern::Bool(value) if *ty == Ty::Bool => {

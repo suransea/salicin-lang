@@ -283,7 +283,7 @@ impl ConstantEvaluator<'_> {
             (UnaryOp::Not, ConstValue::Bool(value)) => Some(ConstValue::Bool(!value)),
             (UnaryOp::Neg, ConstValue::Integer(value)) => value
                 .checked_neg()
-                .filter(|value| integer_fits(*value, ty))
+                .filter(|value| integer_value_fits(*value, ty))
                 .map(ConstValue::Integer)
                 .or_else(|| {
                     self.error(format!("constant arithmetic overflows `{ty}`"));
@@ -362,7 +362,7 @@ impl ConstantEvaluator<'_> {
                     And | Or => unreachable!("short-circuit operators handled separately"),
                 };
                 arithmetic
-                    .filter(|value| integer_fits(*value, operand_ty))
+                    .filter(|value| integer_value_fits(*value, operand_ty))
                     .map(ConstValue::Integer)
                     .or_else(|| {
                         self.error(format!("constant arithmetic overflows `{operand_ty}`"));
@@ -574,10 +574,18 @@ impl<'a> Emitter<'a> {
                     collect(output, types);
                     collect(answer, types);
                 }
-                Ty::I32
+                Ty::I8
+                | Ty::I16
+                | Ty::I32
                 | Ty::I64
+                | Ty::I128
+                | Ty::ISize
+                | Ty::U8
+                | Ty::U16
                 | Ty::U32
                 | Ty::U64
+                | Ty::U128
+                | Ty::USize
                 | Ty::Bool
                 | Ty::Unit
                 | Ty::Pointer { .. }
@@ -698,10 +706,18 @@ impl<'a> Emitter<'a> {
                 }
             }
             Ty::Continuation { .. } | Ty::EffectCallable { .. } => {}
-            Ty::I32
+            Ty::I8
+            | Ty::I16
+            | Ty::I32
             | Ty::I64
+            | Ty::I128
+            | Ty::ISize
+            | Ty::U8
+            | Ty::U16
             | Ty::U32
             | Ty::U64
+            | Ty::U128
+            | Ty::USize
             | Ty::Bool
             | Ty::Unit
             | Ty::Pointer { .. }
@@ -4139,8 +4155,12 @@ fn llvm_return_type(ty: &Ty) -> Result<String, Diagnostic> {
 
 fn llvm_value_type(ty: &Ty) -> Result<String, Diagnostic> {
     match ty {
+        Ty::I8 | Ty::U8 => Ok("i8".to_owned()),
+        Ty::I16 | Ty::U16 => Ok("i16".to_owned()),
         Ty::I32 | Ty::U32 => Ok("i32".to_owned()),
         Ty::I64 | Ty::U64 => Ok("i64".to_owned()),
+        Ty::ISize | Ty::USize => Ok(format!("i{}", usize::BITS)),
+        Ty::I128 | Ty::U128 => Ok("i128".to_owned()),
         Ty::Bool => Ok("i1".to_owned()),
         Ty::Tuple(fields) => Ok(format!(
             "{{ {} }}",
@@ -4191,7 +4211,18 @@ fn llvm_layout_const(ty: &Ty, kind: LayoutQueryKind) -> Result<String, Diagnosti
 
 fn zero_const(ty: &Ty, program: &HirProgram) -> Option<ConstValue> {
     match ty {
-        Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 => Some(ConstValue::Integer(0)),
+        Ty::I8
+        | Ty::I16
+        | Ty::I32
+        | Ty::I64
+        | Ty::I128
+        | Ty::ISize
+        | Ty::U8
+        | Ty::U16
+        | Ty::U32
+        | Ty::U64
+        | Ty::U128
+        | Ty::USize => Some(ConstValue::Integer(0)),
         Ty::Bool => Some(ConstValue::Bool(false)),
         Ty::Unit => Some(ConstValue::Unit),
         Ty::Tuple(fields) => Some(ConstValue::Aggregate(

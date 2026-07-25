@@ -4,7 +4,7 @@ use crate::core::LangItemKind;
 use super::flow::{FlowState, LowerCtx};
 use super::hir::{HirArgument, HirExpr, HirExprKind, HirMatchArm, HirMatcher, Ty};
 use super::lower::{
-    error_expr, integer_fits, integer_literal_value, BinaryOperatorCandidate, TypeProbe,
+    error_expr, integer_literal_value, integer_value_fits, BinaryOperatorCandidate, TypeProbe,
 };
 use super::names::canonical_type_encoding;
 use super::{primitive_scalar_type, Analyzer};
@@ -135,7 +135,8 @@ impl Analyzer {
                         &fixed_output
                     }
                 };
-                if integer_literal_value(right).is_some_and(|value| !integer_fits(value, rhs)) {
+                if integer_literal_value(right).is_some_and(|value| !integer_value_fits(value, rhs))
+                {
                     return None;
                 }
                 let right_probe = self.probe_expr_ty(right, Some(rhs), context);

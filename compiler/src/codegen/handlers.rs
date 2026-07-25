@@ -542,7 +542,7 @@ pub(super) fn remap_dynamic_callable_tag(source: &str, from: &[String], to: &[St
     let destination_tag = |target: &str| {
         to.iter()
             .position(|candidate| candidate == target)
-            .expect("compatible dynamic target sets") as i128
+            .expect("compatible dynamic target sets") as u128
     };
     let mut remapped = Expr::Integer(destination_tag(
         from.last()
@@ -553,7 +553,7 @@ pub(super) fn remap_dynamic_callable_tag(source: &str, from: &[String], to: &[St
             condition: Box::new(Expr::Binary(
                 Box::new(Expr::Name(source.to_owned())),
                 BinaryOp::Eq,
-                Box::new(Expr::Integer(source_tag as i128)),
+                Box::new(Expr::Integer(source_tag as u128)),
             )),
             then_branch: Box::new(Expr::Integer(destination_tag(target))),
             else_branch: Some(Box::new(remapped)),
@@ -578,7 +578,7 @@ pub(super) fn expand_dynamic_callable_selection(
                         .iter()
                         .position(|target| target == &source.1[0])
                         .expect("selection target belongs to its union")
-                        as i128,
+                        as u128,
                 );
             }
             remap_dynamic_callable_tag(&source.0, &source.1, targets)
@@ -647,7 +647,7 @@ pub(super) fn static_callable_selection(
         Expr::Name(name) => {
             let index = targets.len();
             targets.push(name.clone());
-            Some(Expr::Integer(index as i128))
+            Some(Expr::Integer(index as u128))
         }
         Expr::Block(statements, Some(tail)) if statements.is_empty() => {
             static_callable_selection(tail, targets)
@@ -1107,7 +1107,7 @@ fn source_borrow_channel_mode(mode: PassMode, ty: &Type) -> Option<PassMode> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum HandlerBorrowProjection {
     Field(String),
-    ConstantIndex(i128),
+    ConstantIndex(u128),
     DynamicIndex,
 }
 
@@ -3274,7 +3274,7 @@ impl Analyzer {
                 condition: Box::new(Expr::Binary(
                     Box::new(Expr::Name(name.clone())),
                     BinaryOp::Eq,
-                    Box::new(Expr::Integer(index as i128)),
+                    Box::new(Expr::Integer(index as u128)),
                 )),
                 then_branch: Box::new(branch),
                 else_branch: Some(Box::new(dispatch)),

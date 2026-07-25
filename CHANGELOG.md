@@ -6,6 +6,11 @@ subset.
 
 ## Unreleased
 
+- Lowered all twelve declared runtime integer types through source identity, inference, ownership,
+  target layout, operator dispatch, and LLVM emission. `isize` and `usize` track the native target
+  pointer width without becoming aliases, integer literals cover `i128::MIN` and all of `u128`,
+  and native/negative fixtures lock down arithmetic, layout, range diagnostics, and the absence of
+  implicit widening.
 - Implemented structural non-unit tuples across parsing, type inference, diagnostics, ownership,
   cleanup planning, and LLVM emission. Tuple types and literals use the frozen trailing-comma
   distinction, decimal projections are places, and tuple patterns delay non-`Copy` moves until

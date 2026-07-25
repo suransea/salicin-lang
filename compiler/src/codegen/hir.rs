@@ -5,10 +5,18 @@ use crate::ast::{BinaryOp, ItemOrigin, PassMode, Type, UnaryOp, Visibility};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) enum Ty {
+    I8,
+    I16,
     I32,
     I64,
+    I128,
+    ISize,
+    U8,
+    U16,
     U32,
     U64,
+    U128,
+    USize,
     Bool,
     Unit,
     Tuple(Vec<Ty>),
@@ -83,11 +91,28 @@ pub(super) enum CallableKind {
 
 impl Ty {
     pub(super) fn is_integer(&self) -> bool {
-        matches!(self, Self::I32 | Self::I64 | Self::U32 | Self::U64)
+        matches!(
+            self,
+            Self::I8
+                | Self::I16
+                | Self::I32
+                | Self::I64
+                | Self::I128
+                | Self::ISize
+                | Self::U8
+                | Self::U16
+                | Self::U32
+                | Self::U64
+                | Self::U128
+                | Self::USize
+        )
     }
 
     pub(super) fn is_signed(&self) -> bool {
-        matches!(self, Self::I32 | Self::I64)
+        matches!(
+            self,
+            Self::I8 | Self::I16 | Self::I32 | Self::I64 | Self::I128 | Self::ISize
+        )
     }
 }
 
@@ -133,10 +158,18 @@ pub(super) fn function_type_is_assignable(actual: &FunctionTy, expected: &Functi
 impl fmt::Display for Ty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::I8 => f.write_str("i8"),
+            Self::I16 => f.write_str("i16"),
             Self::I32 => f.write_str("i32"),
             Self::I64 => f.write_str("i64"),
+            Self::I128 => f.write_str("i128"),
+            Self::ISize => f.write_str("isize"),
+            Self::U8 => f.write_str("u8"),
+            Self::U16 => f.write_str("u16"),
             Self::U32 => f.write_str("u32"),
             Self::U64 => f.write_str("u64"),
+            Self::U128 => f.write_str("u128"),
+            Self::USize => f.write_str("usize"),
             Self::Bool => f.write_str("bool"),
             Self::Unit => f.write_str("()"),
             Self::Tuple(fields) => {
@@ -363,9 +396,22 @@ impl HirProgram {
                     && self.needs_drop(&capture.ty)
             }),
             Ty::Continuation { .. } | Ty::EffectCallable { .. } => true,
-            Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool | Ty::Unit | Ty::Never | Ty::Error => {
-                false
-            }
+            Ty::I8
+            | Ty::I16
+            | Ty::I32
+            | Ty::I64
+            | Ty::I128
+            | Ty::ISize
+            | Ty::U8
+            | Ty::U16
+            | Ty::U32
+            | Ty::U64
+            | Ty::U128
+            | Ty::USize
+            | Ty::Bool
+            | Ty::Unit
+            | Ty::Never
+            | Ty::Error => false,
         }
     }
 }

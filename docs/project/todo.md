@@ -17,7 +17,7 @@ Priority meanings:
 
 Current milestone: **M0 release baseline**
 
-Next task: **M0-SCALAR-1**
+Next task: **M0-FFI-1**
 
 ### P0 control-source queue
 
@@ -54,7 +54,7 @@ handler or async expansion is admitted.
   - Cover tuple types, literals, projection, patterns, ownership, and cleanup.
   - Add positive, negative, diagnostic, and native evidence.
 
-- [ ] **M0-SCALAR-1: Reconcile declared primitive scalar widths**
+- [x] **M0-SCALAR-1: Reconcile declared primitive scalar widths**
   - Lower the declared narrow, wide, and target-sized runtime integer types.
   - Cover layout, arithmetic, conversion boundaries, diagnostics, and native execution.
 

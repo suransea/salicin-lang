@@ -10,7 +10,7 @@ use super::Analyzer;
 impl Analyzer {
     pub(super) fn copy_layout_is_valid(&self, target: &Ty, valid: &HashSet<Ty>) -> bool {
         match target {
-            Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool => true,
+            ty if ty.is_integer() || *ty == Ty::Bool => true,
             Ty::Struct(name) => self.struct_layouts.get(name).is_some_and(|layout| {
                 layout
                     .fields
@@ -82,9 +82,21 @@ impl Analyzer {
                 .iter()
                 .all(|field| self.type_is_copy_with_nominals(field, valid)),
             Ty::Enum(name) if name == self.lang_item_name(LangItemKind::Never) => true,
-            Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool | Ty::Struct(_) | Ty::Enum(_) => {
-                valid.contains(ty)
-            }
+            Ty::I8
+            | Ty::I16
+            | Ty::I32
+            | Ty::I64
+            | Ty::I128
+            | Ty::ISize
+            | Ty::U8
+            | Ty::U16
+            | Ty::U32
+            | Ty::U64
+            | Ty::U128
+            | Ty::USize
+            | Ty::Bool
+            | Ty::Struct(_)
+            | Ty::Enum(_) => valid.contains(ty),
             Ty::Callable(_) | Ty::Continuation { .. } | Ty::EffectCallable { .. } => false,
         }
     }
@@ -145,10 +157,18 @@ impl Analyzer {
                         && self.type_needs_drop_inner(&capture.ty, visiting)
                 }),
                 Ty::Continuation { .. } | Ty::EffectCallable { .. } => true,
-                Ty::I32
+                Ty::I8
+                | Ty::I16
+                | Ty::I32
                 | Ty::I64
+                | Ty::I128
+                | Ty::ISize
+                | Ty::U8
+                | Ty::U16
                 | Ty::U32
                 | Ty::U64
+                | Ty::U128
+                | Ty::USize
                 | Ty::Bool
                 | Ty::Unit
                 | Ty::Never

@@ -22,10 +22,18 @@ use super::Analyzer;
 impl Analyzer {
     pub(super) fn lower_source_type(&mut self, source: &Type) -> Ty {
         match source {
+            Type::I8 => Ty::I8,
+            Type::I16 => Ty::I16,
             Type::I32 => Ty::I32,
             Type::I64 => Ty::I64,
+            Type::I128 => Ty::I128,
+            Type::ISize => Ty::ISize,
+            Type::U8 => Ty::U8,
+            Type::U16 => Ty::U16,
             Type::U32 => Ty::U32,
             Type::U64 => Ty::U64,
+            Type::U128 => Ty::U128,
+            Type::USize => Ty::USize,
             Type::Bool => Ty::Bool,
             Type::Unit => Ty::Unit,
             Type::Tuple(fields) => {
@@ -139,20 +147,36 @@ impl Analyzer {
                 if arguments.is_empty()
                     && [
                         LangItemKind::Bool,
+                        LangItemKind::I8,
+                        LangItemKind::I16,
                         LangItemKind::I32,
                         LangItemKind::I64,
+                        LangItemKind::I128,
+                        LangItemKind::ISize,
+                        LangItemKind::U8,
+                        LangItemKind::U16,
                         LangItemKind::U32,
                         LangItemKind::U64,
+                        LangItemKind::U128,
+                        LangItemKind::USize,
                     ]
                     .into_iter()
                     .any(|kind| name == self.lang_item_name(kind)) =>
             {
                 [
                     (LangItemKind::Bool, Ty::Bool),
+                    (LangItemKind::I8, Ty::I8),
+                    (LangItemKind::I16, Ty::I16),
                     (LangItemKind::I32, Ty::I32),
                     (LangItemKind::I64, Ty::I64),
+                    (LangItemKind::I128, Ty::I128),
+                    (LangItemKind::ISize, Ty::ISize),
+                    (LangItemKind::U8, Ty::U8),
+                    (LangItemKind::U16, Ty::U16),
                     (LangItemKind::U32, Ty::U32),
                     (LangItemKind::U64, Ty::U64),
+                    (LangItemKind::U128, Ty::U128),
+                    (LangItemKind::USize, Ty::USize),
                 ]
                 .into_iter()
                 .find_map(|(kind, ty)| (name == self.lang_item_name(kind)).then_some(ty))
@@ -318,10 +342,18 @@ impl Analyzer {
 
     pub(super) fn source_type_for_ty(&self, ty: &Ty) -> Option<Type> {
         match ty {
+            Ty::I8 => Some(Type::I8),
+            Ty::I16 => Some(Type::I16),
             Ty::I32 => Some(Type::I32),
             Ty::I64 => Some(Type::I64),
+            Ty::I128 => Some(Type::I128),
+            Ty::ISize => Some(Type::ISize),
+            Ty::U8 => Some(Type::U8),
+            Ty::U16 => Some(Type::U16),
             Ty::U32 => Some(Type::U32),
             Ty::U64 => Some(Type::U64),
+            Ty::U128 => Some(Type::U128),
+            Ty::USize => Some(Type::USize),
             Ty::Bool => Some(Type::Bool),
             Ty::Unit => Some(Type::Unit),
             Ty::Tuple(fields) => Some(Type::Tuple(
@@ -451,10 +483,18 @@ impl Analyzer {
     /// identity, but they are not part of Salicin's user-facing syntax.
     pub(super) fn diagnostic_type_name(&self, ty: &Ty) -> String {
         match ty {
+            Ty::I8 => "i8".to_owned(),
+            Ty::I16 => "i16".to_owned(),
             Ty::I32 => "i32".to_owned(),
             Ty::I64 => "i64".to_owned(),
+            Ty::I128 => "i128".to_owned(),
+            Ty::ISize => "isize".to_owned(),
+            Ty::U8 => "u8".to_owned(),
+            Ty::U16 => "u16".to_owned(),
             Ty::U32 => "u32".to_owned(),
             Ty::U64 => "u64".to_owned(),
+            Ty::U128 => "u128".to_owned(),
+            Ty::USize => "usize".to_owned(),
             Ty::Bool => "bool".to_owned(),
             Ty::Unit => "()".to_owned(),
             Ty::Tuple(fields) => {
@@ -573,10 +613,18 @@ impl Analyzer {
                     return Some(replacement.clone());
                 }
                 Some(match name.as_str() {
+                    "i8" => Type::I8,
+                    "i16" => Type::I16,
                     "i32" => Type::I32,
                     "i64" => Type::I64,
+                    "i128" => Type::I128,
+                    "isize" => Type::ISize,
+                    "u8" => Type::U8,
+                    "u16" => Type::U16,
                     "u32" => Type::U32,
                     "u64" => Type::U64,
+                    "u128" => Type::U128,
+                    "usize" => Type::USize,
                     "bool" => Type::Bool,
                     _ => Type::Named(name.clone(), Vec::new()),
                 })
@@ -686,10 +734,18 @@ impl Analyzer {
             Expr::Unit => Some(Type::Unit),
             Expr::Name(name) => substitutions.get(name).cloned().or_else(|| {
                 Some(match name.as_str() {
+                    "i8" => Type::I8,
+                    "i16" => Type::I16,
                     "i32" => Type::I32,
                     "i64" => Type::I64,
+                    "i128" => Type::I128,
+                    "isize" => Type::ISize,
+                    "u8" => Type::U8,
+                    "u16" => Type::U16,
                     "u32" => Type::U32,
                     "u64" => Type::U64,
+                    "u128" => Type::U128,
+                    "usize" => Type::USize,
                     "bool" => Type::Bool,
                     _ => Type::Named(name.clone(), Vec::new()),
                 })
@@ -972,7 +1028,7 @@ impl Analyzer {
             .all(|parameter| parameter.kind == CompileParamKind::USize)
         {
             return arguments.iter().all(|argument| {
-                matches!(argument.value, Expr::Integer(value) if value >= 0)
+                matches!(argument.value, Expr::Integer(_))
                     || matches!(&argument.value, Expr::Name(name)
                     if context.type_substitutions.get(name).is_some_and(
                         |value| matches!(value, Type::CompileUSize(_))
@@ -1075,7 +1131,7 @@ impl Analyzer {
                     || self.expression_is_explicit_type_argument(expression, context)
             }
             CompileParamKind::USize => {
-                matches!(expression, Expr::Integer(value) if *value >= 0)
+                matches!(expression, Expr::Integer(_))
                     || matches!(expression, Expr::Name(name)
                     if context.type_substitutions.get(name).is_some_and(
                         |value| matches!(value, Type::CompileUSize(_))
@@ -1204,7 +1260,19 @@ impl Analyzer {
                     || self.abstract_type_parameters.contains_key(name)
                     || matches!(
                         name.as_str(),
-                        "i32" | "i64" | "u32" | "u64" | "bool" | "Never"
+                        "i8" | "i16"
+                            | "i32"
+                            | "i64"
+                            | "i128"
+                            | "isize"
+                            | "u8"
+                            | "u16"
+                            | "u32"
+                            | "u64"
+                            | "u128"
+                            | "usize"
+                            | "bool"
+                            | "Never"
                     )
                     || self.struct_defs.contains_key(name)
                     || self.enum_defs.contains_key(name)
@@ -1229,7 +1297,7 @@ impl Analyzer {
                         && groups[0].len() == 1
                         && groups[1].len() == 1
                         && self.expression_is_explicit_type_argument(&groups[0][0].value, context)
-                        && matches!(groups[1][0].value, Expr::Integer(value) if value >= 0);
+                        && matches!(groups[1][0].value, Expr::Integer(_));
                 }
                 self.struct_templates.contains_key(name) || self.enum_templates.contains_key(name)
             }
@@ -1239,10 +1307,18 @@ impl Analyzer {
 
     pub(super) fn probe_source_ty(&self, source: &Type) -> Option<Ty> {
         match source {
+            Type::I8 => Some(Ty::I8),
+            Type::I16 => Some(Ty::I16),
             Type::I32 => Some(Ty::I32),
             Type::I64 => Some(Ty::I64),
+            Type::I128 => Some(Ty::I128),
+            Type::ISize => Some(Ty::ISize),
+            Type::U8 => Some(Ty::U8),
+            Type::U16 => Some(Ty::U16),
             Type::U32 => Some(Ty::U32),
             Type::U64 => Some(Ty::U64),
+            Type::U128 => Some(Ty::U128),
+            Type::USize => Some(Ty::USize),
             Type::Bool => Some(Ty::Bool),
             Type::Unit => Some(Ty::Unit),
             Type::Tuple(fields) => Some(Ty::Tuple(

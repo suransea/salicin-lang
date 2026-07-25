@@ -127,10 +127,18 @@ pub(super) fn type_constructor_from_marker(marker: &str) -> Option<String> {
 
 pub(super) fn source_effect_identity(effect: &Type) -> String {
     match effect {
+        Type::I8 => "i8".to_owned(),
+        Type::I16 => "i16".to_owned(),
         Type::I32 => "i32".to_owned(),
         Type::I64 => "i64".to_owned(),
+        Type::I128 => "i128".to_owned(),
+        Type::ISize => "isize".to_owned(),
+        Type::U8 => "u8".to_owned(),
+        Type::U16 => "u16".to_owned(),
         Type::U32 => "u32".to_owned(),
         Type::U64 => "u64".to_owned(),
+        Type::U128 => "u128".to_owned(),
+        Type::USize => "usize".to_owned(),
         Type::Bool => "bool".to_owned(),
         Type::Unit => "()".to_owned(),
         Type::Tuple(fields) => {
@@ -247,10 +255,18 @@ pub(super) fn source_type_mentions_any_name(source: &Type, names: &HashSet<Strin
                     .any(|effect| source_type_mentions_any_name(effect, names))
                 || source_type_mentions_any_name(result, names)
         }
-        Type::I32
+        Type::I8
+        | Type::I16
+        | Type::I32
         | Type::I64
+        | Type::I128
+        | Type::ISize
+        | Type::U8
+        | Type::U16
         | Type::U32
         | Type::U64
+        | Type::U128
+        | Type::USize
         | Type::Bool
         | Type::Unit
         | Type::CompileUSize(_) => false,
@@ -259,10 +275,18 @@ pub(super) fn source_type_mentions_any_name(source: &Type, names: &HashSet<Strin
 
 pub(super) fn source_type_from_identity(identity: &str) -> Option<Type> {
     match identity {
+        "i8" => return Some(Type::I8),
+        "i16" => return Some(Type::I16),
         "i32" => return Some(Type::I32),
         "i64" => return Some(Type::I64),
+        "i128" => return Some(Type::I128),
+        "isize" => return Some(Type::ISize),
+        "u8" => return Some(Type::U8),
+        "u16" => return Some(Type::U16),
         "u32" => return Some(Type::U32),
         "u64" => return Some(Type::U64),
+        "u128" => return Some(Type::U128),
+        "usize" => return Some(Type::USize),
         "bool" => return Some(Type::Bool),
         "()" => return Some(Type::Unit),
         _ => {}

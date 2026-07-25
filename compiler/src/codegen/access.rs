@@ -328,10 +328,18 @@ impl Analyzer {
                     }
                     restricted
                 }
-                Ty::I32
+                Ty::I8
+                | Ty::I16
+                | Ty::I32
                 | Ty::I64
+                | Ty::I128
+                | Ty::ISize
+                | Ty::U8
+                | Ty::U16
                 | Ty::U32
                 | Ty::U64
+                | Ty::U128
+                | Ty::USize
                 | Ty::Bool
                 | Ty::Unit
                 | Ty::Never
@@ -465,8 +473,22 @@ impl Analyzer {
                     }
                 }
             }
-            Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool | Ty::Unit | Ty::Never | Ty::Error => {
-            }
+            Ty::I8
+            | Ty::I16
+            | Ty::I32
+            | Ty::I64
+            | Ty::I128
+            | Ty::ISize
+            | Ty::U8
+            | Ty::U16
+            | Ty::U32
+            | Ty::U64
+            | Ty::U128
+            | Ty::USize
+            | Ty::Bool
+            | Ty::Unit
+            | Ty::Never
+            | Ty::Error => {}
         }
     }
 

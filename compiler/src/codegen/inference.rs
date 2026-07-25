@@ -256,10 +256,18 @@ impl Analyzer {
         }
 
         match template {
+            Type::I8 => (*actual == Ty::I8).then_some(false).ok_or_else(mismatch),
+            Type::I16 => (*actual == Ty::I16).then_some(false).ok_or_else(mismatch),
             Type::I32 => (*actual == Ty::I32).then_some(false).ok_or_else(mismatch),
             Type::I64 => (*actual == Ty::I64).then_some(false).ok_or_else(mismatch),
+            Type::I128 => (*actual == Ty::I128).then_some(false).ok_or_else(mismatch),
+            Type::ISize => (*actual == Ty::ISize).then_some(false).ok_or_else(mismatch),
+            Type::U8 => (*actual == Ty::U8).then_some(false).ok_or_else(mismatch),
+            Type::U16 => (*actual == Ty::U16).then_some(false).ok_or_else(mismatch),
             Type::U32 => (*actual == Ty::U32).then_some(false).ok_or_else(mismatch),
             Type::U64 => (*actual == Ty::U64).then_some(false).ok_or_else(mismatch),
+            Type::U128 => (*actual == Ty::U128).then_some(false).ok_or_else(mismatch),
+            Type::USize => (*actual == Ty::USize).then_some(false).ok_or_else(mismatch),
             Type::Bool => (*actual == Ty::Bool).then_some(false).ok_or_else(mismatch),
             Type::Unit => (*actual == Ty::Unit).then_some(false).ok_or_else(mismatch),
             Type::Tuple(fields) => {
@@ -767,10 +775,18 @@ impl Analyzer {
         inferred: &HashMap<String, InferredTypeArgument>,
     ) -> Option<Ty> {
         match template {
+            Type::I8 => Some(Ty::I8),
+            Type::I16 => Some(Ty::I16),
             Type::I32 => Some(Ty::I32),
             Type::I64 => Some(Ty::I64),
+            Type::I128 => Some(Ty::I128),
+            Type::ISize => Some(Ty::ISize),
+            Type::U8 => Some(Ty::U8),
+            Type::U16 => Some(Ty::U16),
             Type::U32 => Some(Ty::U32),
             Type::U64 => Some(Ty::U64),
+            Type::U128 => Some(Ty::U128),
+            Type::USize => Some(Ty::USize),
             Type::Bool => Some(Ty::Bool),
             Type::Unit => Some(Ty::Unit),
             Type::Tuple(fields) => Some(Ty::Tuple(

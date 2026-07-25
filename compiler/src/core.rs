@@ -1669,7 +1669,7 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         ) => {
             if !definition.compile_groups.is_empty() || !definition.values.is_empty() {
                 diagnostics.push(format!(
-                    "primitive lang item `{}` must have shape `pub let {} = type`",
+                    "primitive lang item `{}` must have shape `pub let {}: type`",
                     definition.name, definition.name
                 ));
             }
@@ -3260,7 +3260,7 @@ pub let Shr(Rhs: type) = trait {
         let bundle = CoreBundle::for_edition(Edition::Edition2026).unwrap();
 
         assert_eq!(bundle.edition(), Edition::Edition2026);
-        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 128);
+        assert_eq!(bundle.program().items.len(), LangItemKind::ALL.len() + 316);
         for kind in LangItemKind::ALL {
             let lang_item = bundle.lang_items().get(kind);
             assert_eq!(lang_item.kind(), kind);

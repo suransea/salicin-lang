@@ -40,7 +40,7 @@ pub enum TokenKind {
     False,
     Ident(String),
     RegionName(String),
-    Integer(i128),
+    Integer(u128),
     LParen,
     RParen,
     LBracket,
@@ -416,7 +416,7 @@ impl Lexer {
                 text.push(c);
             }
         }
-        text.parse::<i128>()
+        text.parse::<u128>()
             .map(TokenKind::Integer)
             .map_err(|_| self.error("integer literal is too large".into(), line, column))
     }

@@ -2631,10 +2631,18 @@ fn validate_exposed_type(
                 );
             }
         }
-        Type::I32
+        Type::I8
+        | Type::I16
+        | Type::I32
         | Type::I64
+        | Type::I128
+        | Type::ISize
+        | Type::U8
+        | Type::U16
         | Type::U32
         | Type::U64
+        | Type::U128
+        | Type::USize
         | Type::Bool
         | Type::Unit
         | Type::CompileUSize(_) => {}
@@ -3153,10 +3161,18 @@ impl Resolver {
                     }
                 }
             }
-            Type::I32
+            Type::I8
+            | Type::I16
+            | Type::I32
             | Type::I64
+            | Type::I128
+            | Type::ISize
+            | Type::U8
+            | Type::U16
             | Type::U32
             | Type::U64
+            | Type::U128
+            | Type::USize
             | Type::Bool
             | Type::Unit
             | Type::CompileUSize(_) => {}
@@ -3727,7 +3743,23 @@ fn compile_parameter_names(
 fn compile_argument_name_is_builtin(name: &str) -> bool {
     matches!(
         name,
-        "i32" | "i64" | "u32" | "u64" | "bool" | "shared" | "mut" | "copy" | "move" | "pure"
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "bool"
+            | "shared"
+            | "mut"
+            | "copy"
+            | "move"
+            | "pure"
     )
 }
 
