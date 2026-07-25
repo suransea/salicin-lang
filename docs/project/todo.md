@@ -17,7 +17,7 @@ Priority meanings:
 
 Current milestone: **M0 release baseline**
 
-Next task: **M0-QUALITY-1**
+Next task: **M0-DETERMINISM-1**
 
 ### P0 control-source queue
 
@@ -70,7 +70,7 @@ handler or async expansion is admitted.
   - [x] Prioritize ownership, borrow, handler, trait selection, and generic inference errors.
   - [x] Enforce a repository-wide generated-name zero-leak diagnostic gate.
 
-- [ ] **M0-QUALITY-1: Make the repository quality gate clean**
+- [x] **M0-QUALITY-1: Make the repository quality gate clean**
   - `cargo fmt --check`
   - `cargo clippy --all-targets -- -D warnings`
   - `cargo test`

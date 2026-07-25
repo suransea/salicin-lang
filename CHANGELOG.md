@@ -6,6 +6,9 @@ subset.
 
 ## Unreleased
 
+- Closed the M0 clean-build quality gate. A fresh target directory passes formatting, strict
+  all-target clippy, the complete `cargo test` suite, and the native ledger acceptance program
+  with exit status 42.
 - Added the bounded M0 C FFI import path. `extern "C"` blocks preserve validated optional
   `@link_name` symbols, admit one runtime parameter group over integer scalars and raw pointers,
   require `unsafe` at every imported call, and emit direct LLVM declarations. Native libc tests
