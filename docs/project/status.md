@@ -103,8 +103,8 @@ Implemented data and control features include:
 - `break`, `continue`, and `return`;
 - lexical `defer` with LIFO execution on normal, loop, return, and error exits;
 - cold compiler-generated futures with a typed pure `Future` implementation, one-shot
-  `Poll.Ready` transition, state-aware capture transfer, cancellation cleanup, and completed-state
-  repoll traps;
+  `Poll.Ready` transition, inferred residual `Unsafe`, state-aware capture transfer, cancellation
+  cleanup, and completed-state repoll traps;
 - checked arithmetic, comparisons, bitwise operations, shifts, and compound assignment;
 - deterministic left-to-right evaluation;
 - optional chaining, coalescing, error propagation, and forced unwrap.
@@ -132,8 +132,9 @@ typing, ownership, or cleanup checks.
 Cold `async` blocks without suspension materialize compiler-generated nominal state containing an
 explicit state word and their captured fields. The generated state satisfies structural `Move`;
 relocating or cancelling an unpolled future transfers or drops owned captures exactly once.
-Typed polling transitions, `await`, completed-state behavior, and self-referential suspension rules
-are not implemented.
+The no-suspension polling transition returns `Poll.Ready` once, traps on repoll, and enforces an
+inferred residual `Unsafe` requirement. `await`, pending/resume transitions, algebraic residual
+effect specialization, and self-referential suspension rules are not implemented.
 
 ## Modules, Packages, and FFI
 

@@ -8919,6 +8919,7 @@ impl Analyzer {
                                                     annotation_custom_effect_sources,
                                                 lexical_handler_effects: HashSet::new(),
                                                 lexical_handler_effect_sources: HashMap::new(),
+                                                infer_effects: false,
                                             },
                                         ),
                                         Some(other) => {
@@ -9353,7 +9354,7 @@ impl Analyzer {
         source_params: &[crate::ast::Param],
         body: &Expr,
         declared_result: Option<Ty>,
-        effects: ClosureEffectContext,
+        mut effects: ClosureEffectContext,
         capture_policy: ClosureCapturePolicy,
         outer: &mut LowerCtx,
     ) -> HirExpr {
@@ -9465,6 +9466,7 @@ impl Analyzer {
             .extend(effects.lexical_handler_effect_sources.clone());
         context.lexical_handler_effects = effects.lexical_handler_effects.clone();
         context.lexical_handler_effect_sources = effects.lexical_handler_effect_sources.clone();
+        context.infer_effects = effects.infer_effects;
         context.recursive_frame_calls = outer.recursive_frame_calls.clone();
         context.return_boundary = effects.throws_error.as_ref().and_then(|error| {
             declared_result
@@ -9786,6 +9788,17 @@ impl Analyzer {
         } else {
             self.lower_expr(body, declared_result.as_ref(), &mut context)
         };
+        if effects.infer_effects {
+            if context.inferred_unsafe_effect {
+                effects.unsafe_depth = 1;
+            }
+            effects
+                .custom_effects
+                .extend(context.inferred_custom_effects.iter().cloned());
+            effects
+                .custom_effect_sources
+                .extend(context.inferred_custom_effect_sources.clone());
+        }
         let mut result = if let Some(declared) = declared_result {
             Some(declared)
         } else if self.is_uninhabited_type(&lowered_body.ty) {
@@ -9956,6 +9969,7 @@ impl Analyzer {
                 custom_effect_sources,
                 lexical_handler_effects: HashSet::new(),
                 lexical_handler_effect_sources: HashMap::new(),
+                infer_effects: false,
             },
             ClosureCapturePolicy::Lexical,
             outer,
@@ -11515,23 +11529,19 @@ impl Analyzer {
         }
         let complete = groups.len() == closure.groups.len();
         if complete {
-            if closure.unsafe_effect && context.unsafe_depth == 0 {
-                self.error(format!(
-                    "call to unsafe closure `{local_name}` requires an `unsafe` handler"
-                ));
-            }
-            let missing = closure
-                .custom_effects
-                .iter()
-                .filter(|effect| !context.active_custom_effects.contains(*effect))
-                .cloned()
-                .collect::<Vec<_>>();
-            if !missing.is_empty() {
-                self.report_missing_custom_effects(
-                    format!("call to closure `{local_name}`"),
-                    missing,
-                );
-            }
+            let sources =
+                source_effect_source_map(&effect_identity_sources(&closure.custom_effects));
+            self.require_callable_effects(
+                if closure.unsafe_effect {
+                    format!("call to unsafe closure `{local_name}`")
+                } else {
+                    format!("call to closure `{local_name}`")
+                },
+                closure.unsafe_effect,
+                &closure.custom_effects,
+                &sources,
+                context,
+            );
         }
 
         let callable = HirPlace {
@@ -11733,20 +11743,19 @@ impl Analyzer {
             ));
             return error_expr();
         }
-        if function_ty.unsafe_effect && context.unsafe_depth == 0 {
-            self.error(format!(
-                "indirect call to unsafe callable `{local_name}` requires an `unsafe` handler"
-            ));
-        }
-        let missing = function_ty
-            .custom_effects
-            .iter()
-            .filter(|effect| !context.active_custom_effects.contains(*effect))
-            .cloned()
-            .collect::<Vec<_>>();
-        if !missing.is_empty() {
-            self.report_missing_custom_effects(format!("indirect call `{local_name}`"), missing);
-        }
+        let sources =
+            source_effect_source_map(&effect_identity_sources(&function_ty.custom_effects));
+        self.require_callable_effects(
+            if function_ty.unsafe_effect {
+                format!("indirect call to unsafe callable `{local_name}`")
+            } else {
+                format!("indirect call `{local_name}`")
+            },
+            function_ty.unsafe_effect,
+            &function_ty.custom_effects,
+            &sources,
+            context,
+        );
 
         let mut temporary_loans = Vec::new();
         let mut temporary_bindings = Vec::new();
@@ -12734,23 +12743,19 @@ impl Analyzer {
         let consumed_groups = partial.consumed_groups + groups.len();
         let complete = groups.len() == remaining_groups;
         if complete {
-            if function_ty.unsafe_effect && context.unsafe_depth == 0 {
-                self.error(format!(
-                    "call to unsafe partial `{local_name}` requires an `unsafe` handler"
-                ));
-            }
-            let missing = function_ty
-                .custom_effects
-                .iter()
-                .filter(|effect| !context.active_custom_effects.contains(*effect))
-                .cloned()
-                .collect::<Vec<_>>();
-            if !missing.is_empty() {
-                self.report_missing_custom_effects(
-                    format!("call to partial `{local_name}`"),
-                    missing,
-                );
-            }
+            let sources =
+                source_effect_source_map(&effect_identity_sources(&function_ty.custom_effects));
+            self.require_callable_effects(
+                if function_ty.unsafe_effect {
+                    format!("call to unsafe partial `{local_name}`")
+                } else {
+                    format!("call to partial `{local_name}`")
+                },
+                function_ty.unsafe_effect,
+                &function_ty.custom_effects,
+                &sources,
+                context,
+            );
         }
         if !complete
             && arguments[captured_argument_count..]
@@ -13013,6 +13018,7 @@ impl Analyzer {
                 custom_effect_sources,
                 lexical_handler_effects: HashSet::new(),
                 lexical_handler_effect_sources: HashMap::new(),
+                infer_effects: false,
             },
             ClosureCapturePolicy::Lexical,
             context,

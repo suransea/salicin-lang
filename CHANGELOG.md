@@ -20,6 +20,11 @@ subset.
   Their first poll transfers captures and returns the standard `Poll.Ready(T)` variant; completed
   states suppress capture cleanup and trap on a second poll. Generic `Future` bounds and native
   owned-capture polling are covered by regression tests.
+- Inferred an unhandled `Unsafe` requirement from a cold async body without suspension and
+  attached it to the generated `Future(Unsafe)` polling contract. Future construction remains
+  cold and pure, while polling requires an unsafe handler. Residual algebraic effects are rejected
+  at the async expression until generated poll/resume functions participate in handler
+  specialization.
 - Declared `Continuation(Input, Output)` and `EffectCallable(Input, Output, Answer)` as bodyless
   type forms, matching their compiler-owned representations instead of describing them as empty
   structures. Lang-item validation now requires the exact type-form declarations.

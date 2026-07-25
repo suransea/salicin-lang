@@ -7258,6 +7258,69 @@ let main(): i32 = {
 }
 
 #[test]
+fn cold_async_poll_preserves_its_residual_unsafe_effect() {
+    compile_text(
+        r#"
+let Future = std.async.Future
+let Unsafe = std.unsafe.Unsafe
+
+let dangerous(): i32 with(Unsafe) = { unsafe { 42 } }
+
+let main(): i32 = {
+  let mut future = async { dangerous() }
+  unsafe {
+    match future.poll()
+      { Ready(value) -> value }
+      { Pending -> 0 }
+  }
+}
+"#,
+    )
+    .expect("polling under the residual Unsafe effect must compile");
+
+    let diagnostics = compile_text(
+        r#"
+let Future = std.async.Future
+let Unsafe = std.unsafe.Unsafe
+
+let dangerous(): i32 with(Unsafe) = { unsafe { 42 } }
+
+let main(): i32 = {
+  let mut future = async { dangerous() }
+  let result = future.poll()
+  0
+}
+"#,
+    )
+    .expect_err("polling outside the residual Unsafe effect must fail");
+    assert!(diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.message.contains("requires an `unsafe` handler")));
+}
+
+#[test]
+fn cold_async_rejects_residual_algebraic_effects_before_poll_specialization() {
+    let diagnostics = compile_text(
+        r#"
+let Ask = effect {
+  let ask(): i32
+}
+
+let request(): i32 with(Ask) = { Ask.ask() }
+
+let main(): i32 = {
+  let future = async { request() }
+  0
+}
+"#,
+    )
+    .expect_err("residual algebraic effects require generated poll specialization");
+    assert!(diagnostics.iter().any(|diagnostic| diagnostic
+        .message
+        .contains("require poll/resume handler specialization")));
+}
+
+#[test]
 fn parameter_group_expansion_requires_a_parameters_schema() {
     let errors = compile_text(
         r#"

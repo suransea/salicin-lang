@@ -278,8 +278,10 @@ associated `Output` and a mutable-borrowing `poll` method returning `Poll`. `Exe
 explicit; constructing a cold future does not select or run an executor. `async` and `await` are
 validated compiler-provided functions whose declarations expose their effect rows and
 `Future(E, Output = T)` relationship. Compiler-generated futures without suspension already
-implement the pure `Future` instance and transition from cold state to `Poll.Ready` exactly once.
-Pending transitions, residual-effect inference, and suspension lowering remain compiler
+implement the inferred `Future(E)` instance and transition from cold state to `Poll.Ready` exactly
+once. `E` may currently be empty or `Unsafe`; polling enforces that requirement while construction
+remains pure. Residual algebraic effects are rejected until generated poll/resume functions enter
+handler specialization. Pending transitions and suspension lowering remain compiler
 responsibilities.
 
 ```sc fragment

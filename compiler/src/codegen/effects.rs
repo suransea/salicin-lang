@@ -8,8 +8,8 @@ use crate::ast::{
 use crate::core::LangItemKind;
 
 use super::compile_time::{
-    source_effect_identities, source_effect_identity, source_effect_source_map,
-    source_type_from_identity,
+    effect_identity_sources, source_effect_identities, source_effect_identity,
+    source_effect_source_map, source_type_from_identity,
 };
 use super::flow::LowerCtx;
 use super::handlers::{
@@ -25,7 +25,24 @@ use super::source_rewrite::{source_effect_expression_identity, substitute_functi
 use super::Analyzer;
 
 impl Analyzer {
-    pub(super) fn require_function_effects(&mut self, name: &str, context: &LowerCtx) {
+    pub(super) fn require_function_effects(&mut self, name: &str, context: &mut LowerCtx) {
+        let display_name = self.diagnostic_function_name(name);
+        if let Some(signature) = self.signatures.get(name).cloned() {
+            let sources =
+                source_effect_source_map(&effect_identity_sources(&signature.custom_effects));
+            self.require_callable_effects(
+                if signature.unsafe_effect {
+                    format!("call to unsafe function `{display_name}`")
+                } else {
+                    format!("call to `{display_name}`")
+                },
+                signature.unsafe_effect,
+                &signature.custom_effects,
+                &sources,
+                context,
+            );
+            return;
+        }
         let Some(effects) = self
             .functions
             .get(name)
@@ -33,20 +50,60 @@ impl Analyzer {
         else {
             return;
         };
-        let display_name = self.diagnostic_function_name(name);
-        if self.function_effects_unsafe(&effects) && context.unsafe_depth == 0 {
-            self.error(format!(
-                "call to unsafe function `{display_name}` requires an `unsafe` handler"
-            ));
-        }
+        let unsafe_effect = self.function_effects_unsafe(&effects);
         let required = self.function_effects_custom_identities(&effects);
-        let missing = required
+        let sources = self.function_effects_custom_source_map(&effects);
+        self.require_callable_effects(
+            if unsafe_effect {
+                format!("call to unsafe function `{display_name}`")
+            } else {
+                format!("call to `{display_name}`")
+            },
+            unsafe_effect,
+            &required,
+            &sources,
+            context,
+        );
+    }
+
+    pub(super) fn require_callable_effects(
+        &mut self,
+        prefix: String,
+        unsafe_effect: bool,
+        custom_effects: &[String],
+        custom_effect_sources: &HashMap<String, Type>,
+        context: &mut LowerCtx,
+    ) {
+        if unsafe_effect && context.unsafe_depth == 0 {
+            if context.infer_effects {
+                context.inferred_unsafe_effect = true;
+            } else {
+                self.error(format!("{prefix} requires an `unsafe` handler"));
+            }
+        }
+        let missing = custom_effects
             .iter()
             .filter(|effect| !context.active_custom_effects.contains(*effect))
             .cloned()
             .collect::<Vec<_>>();
-        if !missing.is_empty() {
-            self.report_missing_custom_effects(format!("call to `{display_name}`"), missing);
+        if missing.is_empty() {
+            return;
+        }
+        if context.infer_effects {
+            for effect in missing {
+                context.active_custom_effects.insert(effect.clone());
+                context.inferred_custom_effects.insert(effect.clone());
+                if let Some(source) = custom_effect_sources.get(&effect).cloned() {
+                    context
+                        .active_custom_effect_sources
+                        .insert(effect.clone(), source.clone());
+                    context
+                        .inferred_custom_effect_sources
+                        .insert(effect, source);
+                }
+            }
+        } else {
+            self.report_missing_custom_effects(prefix, missing);
         }
     }
 
@@ -190,6 +247,7 @@ impl Analyzer {
                 custom_effect_sources: context.active_custom_effect_sources.clone(),
                 lexical_handler_effects: context.lexical_handler_effects.clone(),
                 lexical_handler_effect_sources: context.lexical_handler_effect_sources.clone(),
+                infer_effects: false,
             },
             ClosureCapturePolicy::Lexical,
             context,

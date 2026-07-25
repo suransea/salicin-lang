@@ -26,8 +26,10 @@ Priority meanings:
 `MOVE-TRAIT-1` and `ASYNC-STATE-1` are complete. Cold async blocks now materialize compiler-owned
 nominal state, preserve owned captures across relocation, and drop unpolled captures on
 cancellation. The no-suspension transition now implements `Future((), Output = T)`, returns
-`Poll.Ready(T)` once, and suppresses completed-state capture cleanup. `Poll.Pending`, `await`
-resumption, and residual-effect inference remain the current task.
+`Poll.Ready(T)` once, and suppresses completed-state capture cleanup. An unhandled `Unsafe`
+requirement is inferred onto `poll`; residual algebraic effects are rejected until generated
+poll/resume functions enter handler specialization. `Poll.Pending`, `await` resumption, and the
+remaining residual-effect cases remain the current task.
 
 ## Later
 

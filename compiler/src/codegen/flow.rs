@@ -202,6 +202,10 @@ pub(super) struct LowerCtx {
     pub(super) active_custom_effect_sources: HashMap<String, Type>,
     pub(super) lexical_handler_effects: HashSet<String>,
     pub(super) lexical_handler_effect_sources: HashMap<String, Type>,
+    pub(super) infer_effects: bool,
+    pub(super) inferred_unsafe_effect: bool,
+    pub(super) inferred_custom_effects: HashSet<String>,
+    pub(super) inferred_custom_effect_sources: HashMap<String, Type>,
     pub(super) recursive_frame_calls: HashMap<String, RecursiveFrameCall>,
     pub(super) source_closures: HashMap<LocalId, Binding>,
 }
@@ -232,6 +236,10 @@ impl LowerCtx {
             active_custom_effect_sources: HashMap::new(),
             lexical_handler_effects: HashSet::new(),
             lexical_handler_effect_sources: HashMap::new(),
+            infer_effects: false,
+            inferred_unsafe_effect: false,
+            inferred_custom_effects: HashSet::new(),
+            inferred_custom_effect_sources: HashMap::new(),
             recursive_frame_calls: HashMap::new(),
             source_closures: HashMap::new(),
         }
@@ -262,6 +270,10 @@ impl LowerCtx {
             active_custom_effect_sources: HashMap::new(),
             lexical_handler_effects: HashSet::new(),
             lexical_handler_effect_sources: HashMap::new(),
+            infer_effects: false,
+            inferred_unsafe_effect: false,
+            inferred_custom_effects: HashSet::new(),
+            inferred_custom_effect_sources: HashMap::new(),
             recursive_frame_calls: HashMap::new(),
             source_closures: HashMap::new(),
         }

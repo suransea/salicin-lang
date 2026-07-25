@@ -297,6 +297,7 @@ impl Analyzer {
                 custom_effect_sources: context.active_custom_effect_sources.clone(),
                 lexical_handler_effects: context.lexical_handler_effects.clone(),
                 lexical_handler_effect_sources: context.lexical_handler_effect_sources.clone(),
+                infer_effects: false,
             },
             ClosureCapturePolicy::HandlerOwned,
             context,

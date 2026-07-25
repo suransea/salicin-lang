@@ -862,6 +862,7 @@ pub(super) struct ClosureEffectContext {
     pub(super) custom_effect_sources: HashMap<String, Type>,
     pub(super) lexical_handler_effects: HashSet<String>,
     pub(super) lexical_handler_effect_sources: HashMap<String, Type>,
+    pub(super) infer_effects: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

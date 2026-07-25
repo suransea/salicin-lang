@@ -22,13 +22,31 @@ impl Analyzer {
             &[],
             body,
             None,
-            ClosureEffectContext::default(),
+            ClosureEffectContext {
+                infer_effects: true,
+                ..ClosureEffectContext::default()
+            },
             ClosureCapturePolicy::Lexical,
             context,
         );
         let HirExprKind::LocalClosure(closure) = lowered.kind else {
             return lowered;
         };
+        let async_effect = self.lang_item_name(LangItemKind::AsyncEffect);
+        let unsupported_effects = closure
+            .custom_effects
+            .iter()
+            .filter(|effect| effect.as_str() != async_effect)
+            .cloned()
+            .collect::<Vec<_>>();
+        if !unsupported_effects.is_empty() {
+            self.error(format!(
+                "async residual algebraic effect{} `{}` require poll/resume handler specialization, which is not implemented yet",
+                if unsupported_effects.len() == 1 { "" } else { "s" },
+                unsupported_effects.join(", ")
+            ));
+            return super::lower::error_expr();
+        }
 
         let name = format!("$async$state${}", self.next_async_future);
         self.next_async_future += 1;

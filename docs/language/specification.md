@@ -547,9 +547,11 @@ structurally `Move`; relocation transfers its initialized captures, and cancella
 exactly once. A compiler-generated future implements `Future((), Output = T)`. Polling a body with
 no suspension point transfers its captures, executes the body once, and returns `Poll.Ready(T)`;
 polling that completed future again traps. The completed state no longer drops transferred
-captures. `await`, `Poll.Pending`, and residual-effect inference are not implemented yet, so an
-async block containing `await` or an unhandled effect is currently rejected at that source
-expression.
+captures. An unhandled `Unsafe` requirement is inferred from the body and attached to the
+generated future's `poll` contract; creating the future remains pure, while polling requires an
+unsafe handler. Residual algebraic effects are rejected until generated poll/resume functions
+participate in handler specialization. `await`, `Poll.Pending`, and other residual-effect cases
+are not implemented yet.
 
 `unsafe` is an authority effect. `unsafe { ... }` authorizes operations whose contracts cannot be
 verified by the safe type and ownership rules; it does not disable type checking or cleanup.
