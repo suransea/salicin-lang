@@ -43,8 +43,10 @@ fallthrough, and value-producing `break`. A `loop` with one await and a boolean
 break/continue decision now reuses one child slot through a private step enum and poll-local HIR
 loop. Its `Break(Output)` path now preserves inferred value outputs, including move-only values;
 an omitted `else` or a non-suspending branch body forms the fallthrough backedge. Generalize that
-path to `while`, multiple suspension points, and explicit move-only `Carry`. Residual
-algebraic-effect specialization is a separate follow-up task.
+path to multiple suspension points and explicit move-only `Carry`. Recurring pre-test and post-test
+`while` loops re-evaluate a pure condition before constructing the next child; value-producing
+`break` remains invalid because `while` is unit-valued. Residual algebraic-effect specialization is
+a separate follow-up task.
 
 Loop completion requires an allocation-free reusable iteration state. The generated iteration
 returns an internal `Continue(Carry)` or `Break(Output)` outcome, transfers loop-carried values by

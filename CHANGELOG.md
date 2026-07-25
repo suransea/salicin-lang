@@ -68,6 +68,8 @@ subset.
   are inferred from source expressions and transfer move-only values. Completed iteration children
   are destroyed before slot reuse, and cancelling a suspended loop drops only the active child.
   Omitted `else` branches and non-suspending branch bodies execute as ordinary loop fallthrough.
+  Recurring pre-test and post-test `while` loops recheck a pure condition before constructing each
+  child, skip rechecks while that child is Pending, and finish directly when the condition is false.
 - Declared `Continuation(Input, Output)` and `EffectCallable(Input, Output, Answer)` as bodyless
   type forms, matching their compiler-owned representations instead of describing them as empty
   structures. Lang-item validation now requires the exact type-form declarations.

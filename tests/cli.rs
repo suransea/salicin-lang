@@ -3204,6 +3204,16 @@ fn async_loop_fallthrough_reuses_the_iteration_child() {
 }
 
 #[test]
+fn recurring_async_while_rechecks_pre_and_post_test_conditions() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "async_await_recurring_while.sc"))
+        .output()
+        .expect("run recurring async while fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn cancelling_an_async_loop_drops_completed_and_active_children_once() {
     let output = salic()
         .arg("run")

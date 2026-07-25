@@ -137,6 +137,12 @@ suspension points or recurse in either the generated type or the host call stack
 may impose a documented fairness budget later, but the initial allocation-free contract runs until
 a child returns `Pending` or the source loop exits.
 
+A pre-test `while` evaluates its condition before constructing the first iteration and after each
+`Continue`; a post-test loop skips only the first condition check. A false condition is
+`Break(())`, and no condition is evaluated while an active iteration is Pending. The current
+implementation requires a recurring condition to be pure; residual handler specialization is a
+separate milestone.
+
 Values declared inside an iteration are owned by that iteration. On `continue`, `break`, or
 fallthrough, values not transferred into the step outcome are dropped before the control transfer.
 Dropping the parent while suspended drops only the active iteration and then the parent fields;

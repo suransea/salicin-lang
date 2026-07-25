@@ -155,8 +155,11 @@ The break output is inferred from the source expression and may be move-only. It
 reinitializes one child slot and consumes consecutive immediately-ready iterations in an HIR loop.
 Completed children are destroyed before reuse, while cancellation drops only the active suspended
 child. An omitted `else` and non-suspending branch bodies execute as fallthrough before creating
-the next child. Move-only carry, general loop bodies, and algebraic residual-effect specialization
-are not implemented.
+the next child. Recurring pre-test and post-test `while` loops invoke a reusable iteration factory:
+the pre-test condition can finish without constructing a child, a Pending child does not recheck
+the condition, and each completed backedge rechecks it before constructing the next child.
+Conditions are currently pure and `while` remains unit-valued. Move-only carry, general loop
+bodies, and algebraic residual-effect specialization are not implemented.
 
 ## Modules, Packages, and FFI
 

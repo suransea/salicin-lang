@@ -7277,6 +7277,28 @@ let child() = { async { 1 } }
         .iter()
         .all(|diagnostic| !diagnostic.message.contains("$async$")));
 
+    let diagnostics = compile_text(
+        r#"
+let main(): i32 = {
+  let future = async {
+    while { true } {
+      let value = await child()
+      if value == 0 { break(1) } else { continue() }
+    }
+  }
+  0
+}
+let child() = { async { 1 } }
+"#,
+    )
+    .expect_err("a recurring async while remains unit-valued");
+    assert!(diagnostics.iter().any(|diagnostic| diagnostic
+        .message
+        .contains("value-producing `break` is not allowed in a recurring async `while`")));
+    assert!(diagnostics
+        .iter()
+        .all(|diagnostic| !diagnostic.message.contains("$async$")));
+
     compile_text(
         r#"
 let main(): i32 = {

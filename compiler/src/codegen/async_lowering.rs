@@ -157,8 +157,14 @@ impl Analyzer {
                         return super::lower::error_expr();
                     }
                 };
+                if source_plan.loop_condition.is_some() && output != Ty::Unit {
+                    self.error(
+                        "value-producing `break` is not allowed in a recurring async `while`",
+                    );
+                    return super::lower::error_expr();
+                }
                 Some(self.register_async_loop_step(
-                    awaited.ty.clone(),
+                    Ty::Unit,
                     output,
                     source.continue_constructor.clone(),
                     source.break_constructor.clone(),
@@ -168,6 +174,67 @@ impl Analyzer {
         };
         if let (Some(awaited), Some(loop_step)) = (awaited.as_mut(), loop_step.as_ref()) {
             awaited.loop_step = Some(loop_step.clone());
+        }
+        if loop_step.is_some()
+            && closure
+                .captures
+                .iter()
+                .map(capture_pass_mode)
+                .any(|mode| mode == PassMode::Move)
+        {
+            self.error(
+                "a recurring async loop with move-only factory state requires generated `Continue(Carry)` transfer, which is not lowered yet",
+            );
+            return super::lower::error_expr();
+        }
+        let mut loop_condition_captures = Vec::new();
+        if let (Some(awaited), Some(condition)) = (awaited.as_mut(), source_plan.loop_condition) {
+            let lowered = self.lower_local_closure(
+                &[],
+                &condition.expression,
+                Some(Ty::Bool),
+                ClosureEffectContext {
+                    infer_effects: true,
+                    ..ClosureEffectContext::default()
+                },
+                ClosureCapturePolicy::AsyncOwned,
+                context,
+            );
+            let HirExprKind::LocalClosure(closure) = lowered.kind else {
+                return lowered;
+            };
+            if closure.result != Ty::Bool {
+                self.error("a recurring async `while` condition must produce `bool`");
+                return super::lower::error_expr();
+            }
+            if closure
+                .captures
+                .iter()
+                .map(capture_pass_mode)
+                .any(|mode| mode == PassMode::Move)
+            {
+                self.error(
+                    "a recurring async `while` with move-only condition state requires generated `Continue(Carry)` transfer, which is not lowered yet",
+                );
+                return super::lower::error_expr();
+            }
+            if closure.unsafe_effect
+                || closure.throws_error.is_some()
+                || !closure.custom_effects.is_empty()
+            {
+                self.error(
+                    "a recurring async `while` condition with residual effects requires poll/resume handler specialization, which is not implemented yet",
+                );
+                return super::lower::error_expr();
+            }
+            awaited.loop_condition = Some(AsyncLoopConditionInfo {
+                function: closure.function,
+                post_test: condition.post_test,
+                capture_modes: closure.captures.iter().map(capture_pass_mode).collect(),
+                fields: Vec::new(),
+                capture_types: Vec::new(),
+            });
+            loop_condition_captures = closure.captures;
         }
         let mut continuation_captures = Vec::new();
         if let (Some(awaited), Some(continuation)) = (awaited.as_mut(), source_plan.continuation) {
@@ -317,6 +384,20 @@ impl Analyzer {
             continuation_fields.push(field);
             continuation_capture_types.push(ty);
         }
+        let mut loop_condition_fields = Vec::new();
+        let mut loop_condition_capture_types = Vec::new();
+        for (index, capture) in loop_condition_captures.iter().enumerate() {
+            let (ty, value) = materialize_async_capture(capture);
+            let field = fields.len();
+            fields.push(FieldLayout {
+                name: format!("loop.condition.capture.{index}"),
+                ty: ty.clone(),
+                access: access.clone(),
+            });
+            values.push((field, value));
+            loop_condition_fields.push(field);
+            loop_condition_capture_types.push(ty);
+        }
         if let Some(awaited) = awaited.as_mut() {
             awaited.continuation_capture_modes = continuation_captures
                 .iter()
@@ -324,6 +405,10 @@ impl Analyzer {
                 .collect();
             awaited.continuation_fields = continuation_fields;
             awaited.continuation_capture_types = continuation_capture_types;
+            if let Some(condition) = awaited.loop_condition.as_mut() {
+                condition.fields = loop_condition_fields;
+                condition.capture_types = loop_condition_capture_types;
+            }
             for (index, ty) in awaited.retained_types.iter().enumerate() {
                 let field = fields.len();
                 fields.push(FieldLayout {
@@ -483,6 +568,7 @@ impl Analyzer {
             retained_modes: Vec::new(),
             next: None,
             loop_step: None,
+            loop_condition: None,
         })
     }
 
@@ -930,6 +1016,45 @@ impl Analyzer {
                 diverges: future.awaited.is_none() && future.output == Ty::Never,
             },
         };
+        let loop_condition = future.awaited.as_ref().and_then(|awaited| {
+            awaited.loop_condition.as_ref().map(|condition| {
+                let arguments = condition
+                    .fields
+                    .iter()
+                    .zip(&condition.capture_types)
+                    .zip(&condition.capture_modes)
+                    .map(|((&field, ty), mode)| {
+                        let place = async_field_place(0, self_ty.clone(), field, ty.clone());
+                        match mode {
+                            PassMode::Borrow | PassMode::MutBorrow | PassMode::Copy => {
+                                HirArgument::Copy(HirExpr {
+                                    ty: ty.clone(),
+                                    kind: HirExprKind::Read {
+                                        place,
+                                        kind: HirReadKind::Copy,
+                                    },
+                                })
+                            }
+                            PassMode::Move => {
+                                unreachable!("move-only async loop condition captures are rejected")
+                            }
+                            PassMode::Inferred => {
+                                unreachable!("async condition capture modes are normalized")
+                            }
+                        }
+                    })
+                    .collect();
+                HirExpr {
+                    ty: Ty::Bool,
+                    kind: HirExprKind::Call {
+                        function: condition.function.clone(),
+                        arguments,
+                        consumed_callable: None,
+                        diverges: false,
+                    },
+                }
+            })
+        });
         let body = if let Some(awaited) = &future.awaited {
             suspended_poll_body(
                 &self_ty,
@@ -938,6 +1063,7 @@ impl Analyzer {
                 &future.output,
                 awaited,
                 resume,
+                loop_condition,
             )
         } else {
             ready_poll_body(&self_ty, &poll_ty, &poll_name, &future.output, resume)
@@ -1055,6 +1181,7 @@ fn suspended_poll_body(
     output: &Ty,
     awaited: &AwaitedFutureInfo,
     resume: HirExpr,
+    loop_condition: Option<HirExpr>,
 ) -> HirExpr {
     let child_place = async_field_place(0, self_ty.clone(), awaited.field, awaited.ty.clone());
     let bundle_local = 1_000;
@@ -1100,7 +1227,7 @@ fn suspended_poll_body(
     let initialize_child = initialize_field(
         child_place.clone(),
         if awaited.retained_fields.is_empty() {
-            resume
+            resume.clone()
         } else {
             bundle_field(0, &awaited.ty)
         },
@@ -1123,6 +1250,10 @@ fn suspended_poll_body(
         output,
         awaited,
         AwaitPollState::new(1, 3, 2),
+        Some(AsyncLoopPollContext {
+            resume: &resume,
+            condition: loop_condition.as_ref(),
+        }),
     );
     let resumed_poll = poll_awaited(
         self_ty,
@@ -1131,6 +1262,10 @@ fn suspended_poll_body(
         output,
         awaited,
         AwaitPollState::new(2, 4, 2),
+        Some(AsyncLoopPollContext {
+            resume: &resume,
+            condition: loop_condition.as_ref(),
+        }),
     );
     let waiting_branch = if let Some(next) = &awaited.next {
         HirExpr {
@@ -1149,6 +1284,7 @@ fn suspended_poll_body(
                             output,
                             next,
                             AwaitPollState::new(5, 6, 3),
+                            None,
                         )),
                         else_branch: Some(Box::new(trap())),
                     },
@@ -1165,22 +1301,48 @@ fn suspended_poll_body(
             },
         }
     };
+    let cold_start = HirExpr {
+        ty: poll_ty.clone(),
+        kind: HirExprKind::Block(
+            bundle_binding
+                .into_iter()
+                .chain(std::iter::once(HirStmt::Expr(initialize_child)))
+                .chain(initialize_retained.map(HirStmt::Expr))
+                .chain(std::iter::once(HirStmt::Expr(set_state(self_ty, 1))))
+                .collect(),
+            Some(Box::new(cold_poll)),
+        ),
+    };
+    let cold_start = match (&awaited.loop_condition, loop_condition) {
+        (Some(condition), Some(condition_call)) if !condition.post_test => HirExpr {
+            ty: poll_ty.clone(),
+            kind: HirExprKind::If {
+                condition: Box::new(condition_call),
+                then_branch: Box::new(cold_start),
+                else_branch: Some(Box::new(HirExpr {
+                    ty: poll_ty.clone(),
+                    kind: HirExprKind::Block(
+                        vec![HirStmt::Expr(set_state(self_ty, 2))],
+                        Some(Box::new(poll_ready(
+                            poll_ty,
+                            poll_name,
+                            output,
+                            HirExpr {
+                                ty: Ty::Unit,
+                                kind: HirExprKind::Unit,
+                            },
+                        ))),
+                    ),
+                })),
+            },
+        },
+        _ => cold_start,
+    };
     HirExpr {
         ty: poll_ty.clone(),
         kind: HirExprKind::If {
             condition: Box::new(state_is(self_ty, 0)),
-            then_branch: Box::new(HirExpr {
-                ty: poll_ty.clone(),
-                kind: HirExprKind::Block(
-                    bundle_binding
-                        .into_iter()
-                        .chain(std::iter::once(HirStmt::Expr(initialize_child)))
-                        .chain(initialize_retained.map(HirStmt::Expr))
-                        .chain(std::iter::once(HirStmt::Expr(set_state(self_ty, 1))))
-                        .collect(),
-                    Some(Box::new(cold_poll)),
-                ),
-            }),
+            then_branch: Box::new(cold_start),
             else_branch: Some(Box::new(waiting_branch)),
         },
     }
@@ -1191,6 +1353,12 @@ struct AwaitPollState {
     output_local: usize,
     next_output_local: usize,
     completed: i128,
+}
+
+#[derive(Clone, Copy)]
+struct AsyncLoopPollContext<'a> {
+    resume: &'a HirExpr,
+    condition: Option<&'a HirExpr>,
 }
 
 impl AwaitPollState {
@@ -1210,6 +1378,7 @@ fn poll_awaited(
     parent_output: &Ty,
     awaited: &AwaitedFutureInfo,
     state: AwaitPollState,
+    loop_context: Option<AsyncLoopPollContext<'_>>,
 ) -> HirExpr {
     let child_place = async_field_place(0, self_ty.clone(), awaited.field, awaited.ty.clone());
     let child_reference = Ty::Reference {
@@ -1349,6 +1518,10 @@ fn poll_awaited(
             call,
             take_child,
             completed_value,
+            loop_context
+                .expect("async loop polling has a reusable factory")
+                .resume,
+            loop_context.and_then(|context| context.condition),
         );
     }
     let ready_body = if let Some(next) = &awaited.next {
@@ -1381,6 +1554,7 @@ fn poll_awaited(
                     parent_output,
                     next,
                     AwaitPollState::new(state.next_output_local, state.next_output_local + 100, 3),
+                    None,
                 ))),
             ),
         }
@@ -1441,26 +1615,11 @@ fn poll_async_loop_step(
     call: HirExpr,
     take_child: HirExpr,
     completed_value: HirExpr,
+    loop_resume: &HirExpr,
+    loop_condition: Option<&HirExpr>,
 ) -> HirExpr {
     let continue_local = 20_000 + state.output_local * 2;
     let break_local = continue_local + 1;
-    let continue_value = HirExpr {
-        ty: step.carry.clone(),
-        kind: HirExprKind::Read {
-            place: HirPlace {
-                local: continue_local,
-                root_ty: step.carry.clone(),
-                projections: Vec::new(),
-                dynamic_index: None,
-                ty: step.carry.clone(),
-                capability: LocalCapability::Owned,
-                root_mutable: false,
-                loan: None,
-                indirect: false,
-            },
-            kind: HirReadKind::Move,
-        },
-    };
     let child_place = async_field_place(0, self_ty.clone(), awaited.field, awaited.ty.clone());
     let initialize_child = HirExpr {
         ty: Ty::Unit,
@@ -1472,7 +1631,7 @@ fn poll_async_loop_step(
                 },
                 kind: HirExprKind::RawAddress { place: child_place },
             }),
-            value: Box::new(continue_value),
+            value: Box::new(loop_resume.clone()),
         },
     };
     let break_value = HirExpr {
@@ -1492,6 +1651,47 @@ fn poll_async_loop_step(
             kind: HirReadKind::Move,
         },
     };
+    let continue_poll = HirExpr {
+        ty: Ty::Never,
+        kind: HirExprKind::Block(
+            vec![
+                HirStmt::Expr(initialize_child),
+                HirStmt::Expr(set_state(self_ty, 1)),
+            ],
+            Some(Box::new(HirExpr {
+                ty: Ty::Never,
+                kind: HirExprKind::Continue,
+            })),
+        ),
+    };
+    let continue_poll = match loop_condition {
+        Some(condition) => HirExpr {
+            ty: Ty::Never,
+            kind: HirExprKind::If {
+                condition: Box::new(condition.clone()),
+                then_branch: Box::new(continue_poll),
+                else_branch: Some(Box::new(HirExpr {
+                    ty: Ty::Never,
+                    kind: HirExprKind::Block(
+                        vec![HirStmt::Expr(set_state(self_ty, state.completed))],
+                        Some(Box::new(HirExpr {
+                            ty: Ty::Never,
+                            kind: HirExprKind::Break(Some(Box::new(poll_ready(
+                                poll_ty,
+                                poll_name,
+                                parent_output,
+                                HirExpr {
+                                    ty: Ty::Unit,
+                                    kind: HirExprKind::Unit,
+                                },
+                            )))),
+                        })),
+                    ),
+                })),
+            },
+        },
+        None => continue_poll,
+    };
     let step_match = HirExpr {
         ty: Ty::Never,
         kind: HirExprKind::Match {
@@ -1507,19 +1707,7 @@ fn poll_async_loop_step(
                         moves: true,
                     }],
                     guard: None,
-                    body: HirExpr {
-                        ty: Ty::Never,
-                        kind: HirExprKind::Block(
-                            vec![
-                                HirStmt::Expr(initialize_child),
-                                HirStmt::Expr(set_state(self_ty, 1)),
-                            ],
-                            Some(Box::new(HirExpr {
-                                ty: Ty::Never,
-                                kind: HirExprKind::Continue,
-                            })),
-                        ),
-                    },
+                    body: continue_poll,
                 },
                 HirMatchArm {
                     matcher: HirMatcher::Variant(1),
@@ -1706,6 +1894,7 @@ pub(super) struct AwaitedFutureInfo {
     pub(super) retained_modes: Vec<PassMode>,
     pub(super) next: Option<Box<AwaitedFutureInfo>>,
     pub(super) loop_step: Option<AsyncLoopStepInfo>,
+    pub(super) loop_condition: Option<AsyncLoopConditionInfo>,
 }
 
 #[derive(Debug, Clone)]
@@ -1713,6 +1902,15 @@ pub(super) struct AsyncLoopStepInfo {
     pub(super) ty: Ty,
     pub(super) carry: Ty,
     pub(super) output: Ty,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct AsyncLoopConditionInfo {
+    pub(super) function: String,
+    pub(super) post_test: bool,
+    pub(super) capture_modes: Vec<PassMode>,
+    pub(super) fields: Vec<usize>,
+    pub(super) capture_types: Vec<Ty>,
 }
 
 #[derive(Debug, Clone)]
@@ -1729,6 +1927,7 @@ struct AsyncSourcePlan {
     continuation: Option<AsyncContinuationSource>,
     retained: Vec<AsyncRetainedSource>,
     loop_step: Option<AsyncLoopStepSource>,
+    loop_condition: Option<AsyncLoopConditionSource>,
 }
 
 struct AsyncContinuationSource {
@@ -1748,6 +1947,11 @@ struct AsyncLoopStepSource {
     break_value: Expr,
     continue_constructor: String,
     break_constructor: String,
+}
+
+struct AsyncLoopConditionSource {
+    expression: Expr,
+    post_test: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -1876,7 +2080,7 @@ fn iteration_body_definitely_exits(expression: &Expr) -> bool {
 
 fn simple_recurring_async_loop_source(body: &Expr, id: usize) -> Option<AsyncSourcePlan> {
     let loop_expression = match body.unlocated() {
-        Expr::Loop { .. } => body,
+        Expr::Loop { .. } | Expr::While { .. } => body,
         Expr::Block(statements, Some(tail)) if statements.is_empty() => tail,
         Expr::Block(statements, None) => {
             let [Stmt::Expr(expression)] = statements.as_slice() else {
@@ -1886,21 +2090,43 @@ fn simple_recurring_async_loop_source(body: &Expr, id: usize) -> Option<AsyncSou
         }
         _ => return None,
     };
-    let Expr::Loop { body: loop_body } = loop_expression.unlocated() else {
-        return None;
+    let (loop_body, loop_condition) = match loop_expression.unlocated() {
+        Expr::Loop { body } => (body.as_ref(), None),
+        Expr::While {
+            condition,
+            body,
+            post_test,
+        } => (
+            body.as_ref(),
+            Some(AsyncLoopConditionSource {
+                expression: (**condition).clone(),
+                post_test: *post_test,
+            }),
+        ),
+        _ => return None,
     };
     let Expr::Block(statements, tail) = loop_body.unlocated() else {
         return None;
     };
     let (binding, decision) = match (statements.as_slice(), tail.as_deref()) {
-        ([Stmt::Let(binding)], Some(decision)) => (binding, decision),
-        ([Stmt::Let(binding), Stmt::Expr(decision)], None) => (binding, decision),
+        ([Stmt::Let(binding)], Some(decision)) => (binding, Some(decision)),
+        ([Stmt::Let(binding), Stmt::Expr(decision)], None) => (binding, Some(decision)),
+        ([Stmt::Let(binding)], None) if loop_condition.is_some() => (binding, None),
         _ => return None,
     };
     let Expr::Await(child) = binding.value.unlocated() else {
         return None;
     };
-    let (condition, then_control, else_control) = simple_loop_decision(decision)?;
+    let (condition, then_control, else_control) = decision.map_or_else(
+        || {
+            Some((
+                Expr::Bool(false),
+                SimpleLoopControl::Break(Expr::Unit),
+                SimpleLoopControl::Continue,
+            ))
+        },
+        simple_loop_decision,
+    )?;
     let break_value = match (&then_control, &else_control) {
         (SimpleLoopControl::Break(value), control) if control.continues() => value.clone(),
         (control, SimpleLoopControl::Break(value)) if control.continues() => value.clone(),
@@ -1914,7 +2140,7 @@ fn simple_recurring_async_loop_source(body: &Expr, id: usize) -> Option<AsyncSou
             vec![crate::ast::CallArg { label: None, value }],
         )
     };
-    let continue_step = construct(&continue_constructor, (**child).clone());
+    let continue_step = construct(&continue_constructor, Expr::Unit);
     let break_step = construct(&break_constructor, break_value.clone());
     let lower_control = |control: SimpleLoopControl| match control {
         SimpleLoopControl::Break(_) => break_step.clone(),
@@ -1945,6 +2171,7 @@ fn simple_recurring_async_loop_source(body: &Expr, id: usize) -> Option<AsyncSou
             continue_constructor,
             break_constructor,
         }),
+        loop_condition,
     })
 }
 
@@ -2046,6 +2273,7 @@ fn split_async_source(body: &Expr) -> AsyncSourcePlan {
                 continuation: None,
                 retained: Vec::new(),
                 loop_step: None,
+                loop_condition: None,
             };
         }
         expression if hoist_control_await(expression).is_some() => {
@@ -2056,6 +2284,7 @@ fn split_async_source(body: &Expr) -> AsyncSourcePlan {
                 continuation: None,
                 retained: Vec::new(),
                 loop_step: None,
+                loop_condition: None,
             };
         }
         Expr::Block(statements, Some(tail)) => {
@@ -2087,6 +2316,7 @@ fn split_async_source(body: &Expr) -> AsyncSourcePlan {
                     continuation: None,
                     retained: Vec::new(),
                     loop_step: None,
+                    loop_condition: None,
                 };
             }
             if let Some(hoisted) = hoist_control_await(tail) {
@@ -2097,6 +2327,7 @@ fn split_async_source(body: &Expr) -> AsyncSourcePlan {
                     continuation: None,
                     retained: Vec::new(),
                     loop_step: None,
+                    loop_condition: None,
                 };
             }
         }
@@ -2109,6 +2340,7 @@ fn split_async_source(body: &Expr) -> AsyncSourcePlan {
             continuation: None,
             retained: Vec::new(),
             loop_step: None,
+            loop_condition: None,
         };
     };
     let Some((position, binding, operand)) =
@@ -2132,6 +2364,7 @@ fn split_async_source(body: &Expr) -> AsyncSourcePlan {
             continuation: None,
             retained: Vec::new(),
             loop_step: None,
+            loop_condition: None,
         };
     };
     let continuation_body = Expr::Block(statements[position + 1..].to_vec(), tail.clone());
@@ -2213,6 +2446,7 @@ fn split_async_source(body: &Expr) -> AsyncSourcePlan {
         }),
         retained,
         loop_step: None,
+        loop_condition: None,
     }
 }
 
