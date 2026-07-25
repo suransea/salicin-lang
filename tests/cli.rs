@@ -3089,6 +3089,16 @@ fn copy_capturing_async_residual_effect_specializes_under_handler() {
 }
 
 #[test]
+fn move_capturing_async_residual_effect_specializes_under_handler() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "async_residual_move_capture.sc"))
+        .output()
+        .expect("run move-capturing residual-effect async fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn tail_await_forwards_a_ready_child_future() {
     let output = salic()
         .arg("run")

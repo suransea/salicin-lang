@@ -25,11 +25,12 @@ subset.
   now remain callable through generic dispatch even when the concrete implementation type is
   private to the caller's package.
 - Inferred residual requirements from cold async bodies without suspension. `Unsafe` remains an
-  ordinary poll requirement, while custom residual effects in captureless bodies or bodies with
-  only by-value `Copy` captures now specialize generated poll/resume source through an enclosing
-  handler. Generic `Future(E)` bounds infer a defaulted effect row from the concrete
-  implementation, and effectful trait-method calls participate in handler inlining. Borrowed,
-  move-capturing, suspended, and `Throws` residual futures remain pending work.
+  ordinary poll requirement, while custom residual effects in non-suspending bodies with
+  by-value `Copy` or move-only captures now specialize generated poll/resume source through an
+  enclosing handler. Move-only capture fields transfer and drop exactly once. Generic `Future(E)`
+  bounds infer a defaulted effect row from the concrete implementation, and effectful trait-method
+  calls participate in handler inlining. Borrowed, suspended, and `Throws` residual futures remain
+  pending work.
 - Lowered one tail-position `await` into a real parent/child polling state machine. The first poll
   creates and stores the child future, `Pending` preserves it for the next poll, and `Ready`
   transfers the output and completes the parent. Suspended cancellation and successful completion

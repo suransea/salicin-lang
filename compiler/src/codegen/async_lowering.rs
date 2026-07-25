@@ -164,10 +164,9 @@ impl Analyzer {
             .collect::<Vec<_>>();
         if !unsupported_effects.is_empty()
             && (source_plan.has_await
-                || closure
-                    .captures
-                    .iter()
-                    .any(|capture| capture_pass_mode(capture) != PassMode::Copy))
+                || closure.captures.iter().any(|capture| {
+                    !matches!(capture_pass_mode(capture), PassMode::Copy | PassMode::Move)
+                }))
         {
             self.error(format!(
                 "async residual algebraic effect{} `{}` require poll/resume handler specialization, which is not implemented yet",
@@ -606,7 +605,7 @@ impl Analyzer {
             .iter()
             .cloned()
             .zip(&closure.captures)
-            .map(|(name, capture)| (name, capture.place.ty.clone()))
+            .map(|(name, capture)| (name, capture.place.ty.clone(), capture_pass_mode(capture)))
             .collect::<Vec<_>>();
         let metadata = AsyncFutureInfo {
             resume: closure.function,
@@ -1232,22 +1231,22 @@ impl Analyzer {
         name: &str,
         resume_body: &Expr,
         resume_function: &str,
-        resume_captures: &[(String, Ty)],
+        resume_captures: &[(String, Ty, PassMode)],
     ) {
         let future = self.async_futures[name].clone();
         debug_assert!(future.awaited.is_none());
         debug_assert!(future
             .capture_modes
             .iter()
-            .all(|mode| *mode == PassMode::Copy));
+            .all(|mode| matches!(mode, PassMode::Copy | PassMode::Move)));
         let Some(output_source) = self.source_type_for_ty(&future.output) else {
             return;
         };
         let Some(resume_parameters) = resume_captures
             .iter()
-            .map(|(name, ty)| {
+            .map(|(name, ty, mode)| {
                 Some(Param {
-                    mode: PassMode::Copy,
+                    mode: *mode,
                     access: None,
                     modifiers: Vec::new(),
                     region: None,
