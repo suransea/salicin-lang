@@ -120,7 +120,8 @@ Scope:
 - slices and trait-based indexing;
 - standard iteration for arrays, slices, `Box`, and `Vec` where semantically applicable;
 - complete `Vec` ownership, borrowing, growth, and iterator cleanup behavior;
-- a deliberate owning-string decision based on library pressure rather than syntax;
+- the [accepted minimum owning-string model](string-design.md): private `Vec(u8)` storage with an
+  always-valid UTF-8 invariant, before adding literal or character syntax;
 - small host-independent utilities that can be expressed over the existing runtime ABI.
 
 Exit conditions:
@@ -128,6 +129,8 @@ Exit conditions:
 - collection APIs use source-backed traits rather than compiler name checks;
 - mutable and consuming iterators have alias, invalidation, and cleanup tests;
 - no container operation requires implicit allocation or hidden effect-row widening;
+- owning strings validate byte input, preserve failed input ownership, and expose no safe mutable
+  byte view;
 - at least one nontrivial library-style example uses collections, errors, traits, and modules.
 
 ## Milestone TYPE1: Complete static abstraction where libraries need it

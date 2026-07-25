@@ -6,6 +6,11 @@ subset.
 
 ## Unreleased
 
+- Accepted the minimum owning string model for LIB1. `String` will privately own `Vec(u8)` storage
+  with an always-valid UTF-8 invariant, byte-based length and capacity, shared-only byte views, and
+  a consuming validation error that retains the original allocation. Character scalars, borrowed
+  `Str`, indexing, Unicode algorithms, and general string literal expressions remain separate
+  gated designs.
 - Added the source-backed, access-polymorphic `Index(Key)` protocol. User types, Array, Slice, and
   Vec now support bracket reads, explicit shared/mutable element borrows, and assignment through
   one `index(A)` method. Receiver and key evaluation remains single-shot, temporary loans end with

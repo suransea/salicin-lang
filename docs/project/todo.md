@@ -17,7 +17,7 @@ Priority meanings:
 
 Current milestone: **M0 release baseline**
 
-Next task: **LIB-STRING-DESIGN-1**
+Next task: **LIB-STRING-1**
 
 ### P0 control-source queue
 
@@ -110,7 +110,14 @@ Entry gate: **M0-QUALITY-1** and **M0-AUDIT-1**
   - Cover ordered and swap removal, insertion, append, reversal, truncation, and capacity changes.
   - Preserve resource ownership across reallocation and mutation without duplicate drops.
   - Invalidate consumed vectors and clean the unyielded iterator suffix exactly once.
-- [ ] **LIB-STRING-DESIGN-1: Decide the minimum owning string model**
+- [x] **LIB-STRING-DESIGN-1: Decide the minimum owning string model**
+  - Use a private `Vec(u8)` representation with an always-valid UTF-8 invariant.
+  - Keep lengths and capacities byte-based and mutable byte views unavailable to safe code.
+  - Preserve failed input ownership through `FromUtf8Error`.
+- [ ] **LIB-STRING-1: Implement the minimum owning string model**
+  - Add validation, byte views/conversion, invariant-preserving mutation, and allocation behavior
+    specified by [the accepted design](string-design.md).
+  - Cover invalid UTF-8 boundaries, consuming ownership, reallocation, and exactly-once cleanup.
 - [ ] **LIB-EXAMPLE-1: Add a nontrivial library-style native example**
 
 Each library task requires ownership, aliasing, allocation-failure, bounds, and cleanup behavior to

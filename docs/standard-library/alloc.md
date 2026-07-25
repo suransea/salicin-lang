@@ -49,4 +49,11 @@ widening the caller's effect row.
 Container fields remain private so safe code cannot forge ownership metadata. Allocation operations
 ultimately use the ABI documented in [runtime.md](../runtime.md).
 
+The accepted minimum owning text model is a private `Vec(u8)` wrapper whose initialized bytes are
+always valid UTF-8. Length and capacity are byte-based; safe code receives only shared byte views,
+and invalid consuming conversion preserves the original vector in its error value. The complete
+contract and explicitly deferred text features are recorded in the
+[owning string design](../project/string-design.md). The implementation remains tracked as
+`LIB-STRING-1`.
+
 See [standard-library organization](README.md) for the prelude and alias policy.
