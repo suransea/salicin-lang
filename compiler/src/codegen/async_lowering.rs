@@ -28,7 +28,7 @@ impl Analyzer {
                 infer_effects: true,
                 ..ClosureEffectContext::default()
             },
-            ClosureCapturePolicy::Lexical,
+            ClosureCapturePolicy::AsyncOwned,
             context,
         );
         let HirExprKind::LocalClosure(closure) = lowered.kind else {
@@ -78,15 +78,23 @@ impl Analyzer {
                 name: continuation.name,
                 ty: source_ty,
             };
+            let continuation_has_await = split_async_source(&continuation.body).has_await;
+            let continuation_body = if continuation_has_await {
+                Expr::Async {
+                    body: Box::new(continuation.body),
+                }
+            } else {
+                continuation.body
+            };
             let lowered = self.lower_local_closure(
                 &[parameter],
-                &continuation.body,
+                &continuation_body,
                 None,
                 ClosureEffectContext {
                     infer_effects: true,
                     ..ClosureEffectContext::default()
                 },
-                ClosureCapturePolicy::Lexical,
+                ClosureCapturePolicy::AsyncOwned,
                 context,
             );
             let HirExprKind::LocalClosure(closure) = lowered.kind else {
@@ -105,8 +113,14 @@ impl Analyzer {
                 return super::lower::error_expr();
             }
             awaited.continuation = Some(closure.function);
-            awaited.continuation_output = Some(closure.result);
+            awaited.continuation_output = Some(closure.result.clone());
             awaited.continuation_unsafe_effect = closure.unsafe_effect;
+            if continuation_has_await {
+                let Some(next) = self.resolve_awaited_future(&closure.result) else {
+                    return super::lower::error_expr();
+                };
+                awaited.next = Some(Box::new(next));
+            }
             continuation_captures = closure.captures;
         }
 
@@ -134,50 +148,7 @@ impl Analyzer {
         )];
 
         for (index, capture) in closure.captures.iter().enumerate() {
-            let (ty, value) = match capture.mode {
-                ClosureCaptureMode::Shared => {
-                    let ty = Ty::Reference {
-                        pointee: Box::new(capture.place.ty.clone()),
-                        mutable: false,
-                        region: None,
-                    };
-                    (
-                        ty.clone(),
-                        HirExpr {
-                            ty,
-                            kind: HirExprKind::Borrow {
-                                place: capture.place.clone(),
-                                mutable: false,
-                            },
-                        },
-                    )
-                }
-                ClosureCaptureMode::Mutable => {
-                    let ty = Ty::Reference {
-                        pointee: Box::new(capture.place.ty.clone()),
-                        mutable: true,
-                        region: None,
-                    };
-                    (
-                        ty.clone(),
-                        HirExpr {
-                            ty,
-                            kind: HirExprKind::Borrow {
-                                place: capture.place.clone(),
-                                mutable: true,
-                            },
-                        },
-                    )
-                }
-                ClosureCaptureMode::Move => (
-                    capture.place.ty.clone(),
-                    capture
-                        .value
-                        .as_deref()
-                        .cloned()
-                        .expect("move capture materializes its value"),
-                ),
-            };
+            let (ty, value) = materialize_async_capture(capture);
             fields.push(FieldLayout {
                 name: format!("capture.{index}"),
                 ty,
@@ -202,10 +173,19 @@ impl Analyzer {
         if let Some(awaited) = awaited.as_mut() {
             awaited.continuation_capture_modes = continuation_captures
                 .iter()
-                .map(|capture| capture_mode(capture.mode))
+                .map(capture_pass_mode)
                 .collect();
             awaited.continuation_fields = continuation_fields;
             awaited.continuation_capture_types = continuation_capture_types;
+        }
+        if let Some(next) = awaited.as_mut().and_then(|awaited| awaited.next.as_mut()) {
+            let field = fields.len();
+            fields.push(FieldLayout {
+                name: "awaited.next".to_owned(),
+                ty: next.ty.clone(),
+                access: access.clone(),
+            });
+            next.field = field;
         }
         let awaited_field = awaited.as_ref().map(|awaited| {
             let field = fields.len();
@@ -229,27 +209,30 @@ impl Analyzer {
         let output = awaited
             .as_ref()
             .map(|awaited| {
-                awaited
-                    .continuation_output
-                    .clone()
-                    .unwrap_or_else(|| awaited.output.clone())
+                awaited.next.as_ref().map_or_else(
+                    || {
+                        awaited
+                            .continuation_output
+                            .clone()
+                            .unwrap_or_else(|| awaited.output.clone())
+                    },
+                    |next| next.output.clone(),
+                )
             })
             .unwrap_or_else(|| closure.result.clone());
         let unsafe_effect = closure.unsafe_effect
-            || awaited
-                .as_ref()
-                .is_some_and(|awaited| awaited.unsafe_effect || awaited.continuation_unsafe_effect);
+            || awaited.as_ref().is_some_and(|awaited| {
+                awaited.unsafe_effect
+                    || awaited.continuation_unsafe_effect
+                    || awaited.next.as_ref().is_some_and(|next| next.unsafe_effect)
+            });
         let metadata = AsyncFutureInfo {
             resume: closure.function,
             output,
             unsafe_effect,
             throws_error: closure.throws_error,
             custom_effects: closure.custom_effects,
-            capture_modes: closure
-                .captures
-                .iter()
-                .map(|capture| capture_mode(capture.mode))
-                .collect(),
+            capture_modes: closure.captures.iter().map(capture_pass_mode).collect(),
             awaited: awaited.map(|mut awaited| {
                 awaited.field = awaited_field.expect("awaited state has a field");
                 awaited
@@ -333,6 +316,7 @@ impl Analyzer {
             continuation_capture_modes: Vec::new(),
             continuation_fields: Vec::new(),
             continuation_capture_types: Vec::new(),
+            next: None,
         })
     }
 
@@ -431,13 +415,15 @@ impl Analyzer {
                 let ty = layout.fields[field].ty.clone();
                 let place = async_field_place(0, self_ty.clone(), field, ty.clone());
                 match mode {
-                    PassMode::Borrow | PassMode::MutBorrow => HirArgument::Copy(HirExpr {
-                        ty,
-                        kind: HirExprKind::Read {
-                            place,
-                            kind: HirReadKind::Copy,
-                        },
-                    }),
+                    PassMode::Borrow | PassMode::MutBorrow | PassMode::Copy => {
+                        HirArgument::Copy(HirExpr {
+                            ty,
+                            kind: HirExprKind::Read {
+                                place,
+                                kind: HirReadKind::Copy,
+                            },
+                        })
+                    }
                     PassMode::Move => HirArgument::Move(HirExpr {
                         ty: ty.clone(),
                         kind: HirExprKind::RawTake(Box::new(HirExpr {
@@ -448,7 +434,7 @@ impl Analyzer {
                             kind: HirExprKind::RawAddress { place },
                         })),
                     }),
-                    PassMode::Inferred | PassMode::Copy => {
+                    PassMode::Inferred => {
                         unreachable!("async capture modes are normalized while materializing state")
                     }
                 }
@@ -501,6 +487,16 @@ impl Analyzer {
 }
 
 fn materialize_async_capture(capture: &ClosureCapture) -> (Ty, HirExpr) {
+    if capture.by_value {
+        return (
+            capture.place.ty.clone(),
+            capture
+                .value
+                .as_deref()
+                .cloned()
+                .expect("by-value async capture materializes its value"),
+        );
+    }
     match capture.mode {
         ClosureCaptureMode::Shared => {
             let ty = Ty::Reference {
@@ -547,8 +543,11 @@ fn materialize_async_capture(capture: &ClosureCapture) -> (Ty, HirExpr) {
     }
 }
 
-fn capture_mode(mode: ClosureCaptureMode) -> PassMode {
-    match mode {
+fn capture_pass_mode(capture: &ClosureCapture) -> PassMode {
+    if capture.by_value {
+        return PassMode::Copy;
+    }
+    match capture.mode {
         ClosureCaptureMode::Shared => PassMode::Borrow,
         ClosureCaptureMode::Mutable => PassMode::MutBorrow,
         ClosureCaptureMode::Move => PassMode::Move,
@@ -603,8 +602,55 @@ fn suspended_poll_body(
             value: Box::new(resume),
         },
     };
-    let cold_poll = poll_awaited(self_ty, poll_ty, poll_name, output, awaited, 1);
-    let resumed_poll = poll_awaited(self_ty, poll_ty, poll_name, output, awaited, 2);
+    let cold_poll = poll_awaited(
+        self_ty,
+        poll_ty,
+        poll_name,
+        output,
+        awaited,
+        AwaitPollState::new(1, 3, 2),
+    );
+    let resumed_poll = poll_awaited(
+        self_ty,
+        poll_ty,
+        poll_name,
+        output,
+        awaited,
+        AwaitPollState::new(2, 4, 2),
+    );
+    let waiting_branch = if let Some(next) = &awaited.next {
+        HirExpr {
+            ty: poll_ty.clone(),
+            kind: HirExprKind::If {
+                condition: Box::new(state_is(self_ty, 1)),
+                then_branch: Box::new(resumed_poll),
+                else_branch: Some(Box::new(HirExpr {
+                    ty: poll_ty.clone(),
+                    kind: HirExprKind::If {
+                        condition: Box::new(state_is(self_ty, 2)),
+                        then_branch: Box::new(poll_awaited(
+                            self_ty,
+                            poll_ty,
+                            poll_name,
+                            output,
+                            next,
+                            AwaitPollState::new(5, 6, 3),
+                        )),
+                        else_branch: Some(Box::new(trap())),
+                    },
+                })),
+            },
+        }
+    } else {
+        HirExpr {
+            ty: poll_ty.clone(),
+            kind: HirExprKind::If {
+                condition: Box::new(state_is(self_ty, 1)),
+                then_branch: Box::new(resumed_poll),
+                else_branch: Some(Box::new(trap())),
+            },
+        }
+    };
     HirExpr {
         ty: poll_ty.clone(),
         kind: HirExprKind::If {
@@ -619,15 +665,25 @@ fn suspended_poll_body(
                     Some(Box::new(cold_poll)),
                 ),
             }),
-            else_branch: Some(Box::new(HirExpr {
-                ty: poll_ty.clone(),
-                kind: HirExprKind::If {
-                    condition: Box::new(state_is(self_ty, 1)),
-                    then_branch: Box::new(resumed_poll),
-                    else_branch: Some(Box::new(trap())),
-                },
-            })),
+            else_branch: Some(Box::new(waiting_branch)),
         },
+    }
+}
+
+#[derive(Clone, Copy)]
+struct AwaitPollState {
+    output_local: usize,
+    next_output_local: usize,
+    completed: i128,
+}
+
+impl AwaitPollState {
+    fn new(output_local: usize, next_output_local: usize, completed: i128) -> Self {
+        Self {
+            output_local,
+            next_output_local,
+            completed,
+        }
     }
 }
 
@@ -637,7 +693,7 @@ fn poll_awaited(
     poll_name: &str,
     parent_output: &Ty,
     awaited: &AwaitedFutureInfo,
-    output_local: usize,
+    state: AwaitPollState,
 ) -> HirExpr {
     let child_place = async_field_place(0, self_ty.clone(), awaited.field, awaited.ty.clone());
     let child_reference = Ty::Reference {
@@ -661,7 +717,7 @@ fn poll_awaited(
         },
     };
     let output_place = HirPlace {
-        local: output_local,
+        local: state.output_local,
         root_ty: awaited.output.clone(),
         projections: Vec::new(),
         dynamic_index: None,
@@ -697,7 +753,7 @@ fn poll_awaited(
     {
         let place = async_field_place(0, self_ty.clone(), *field, ty.clone());
         continuation_arguments.push(match mode {
-            PassMode::Borrow | PassMode::MutBorrow => HirArgument::Copy(HirExpr {
+            PassMode::Borrow | PassMode::MutBorrow | PassMode::Copy => HirArgument::Copy(HirExpr {
                 ty: ty.clone(),
                 kind: HirExprKind::Read {
                     place,
@@ -714,7 +770,7 @@ fn poll_awaited(
                     kind: HirExprKind::RawAddress { place },
                 })),
             }),
-            PassMode::Inferred | PassMode::Copy => {
+            PassMode::Inferred => {
                 unreachable!("async continuation capture modes are normalized")
             }
         });
@@ -735,6 +791,56 @@ fn poll_awaited(
         },
         None => awaited_output,
     };
+    let ready_body = if let Some(next) = &awaited.next {
+        let next_place = async_field_place(0, self_ty.clone(), next.field, next.ty.clone());
+        let initialize_next = HirExpr {
+            ty: Ty::Unit,
+            kind: HirExprKind::RawInit {
+                pointer: Box::new(HirExpr {
+                    ty: Ty::Pointer {
+                        pointee: Box::new(next.ty.clone()),
+                        mutable: true,
+                    },
+                    kind: HirExprKind::RawAddress { place: next_place },
+                }),
+                value: Box::new(completed_value),
+            },
+        };
+        HirExpr {
+            ty: poll_ty.clone(),
+            kind: HirExprKind::Block(
+                vec![
+                    HirStmt::Expr(take_child),
+                    HirStmt::Expr(initialize_next),
+                    HirStmt::Expr(set_state(self_ty, 2)),
+                ],
+                Some(Box::new(poll_awaited(
+                    self_ty,
+                    poll_ty,
+                    poll_name,
+                    parent_output,
+                    next,
+                    AwaitPollState::new(state.next_output_local, state.next_output_local + 100, 3),
+                ))),
+            ),
+        }
+    } else {
+        HirExpr {
+            ty: poll_ty.clone(),
+            kind: HirExprKind::Block(
+                vec![
+                    HirStmt::Expr(take_child),
+                    HirStmt::Expr(set_state(self_ty, state.completed)),
+                ],
+                Some(Box::new(poll_ready(
+                    poll_ty,
+                    poll_name,
+                    parent_output,
+                    completed_value,
+                ))),
+            ),
+        }
+    };
     HirExpr {
         ty: poll_ty.clone(),
         kind: HirExprKind::Match {
@@ -749,28 +855,14 @@ fn poll_awaited(
                 HirMatchArm {
                     matcher: HirMatcher::Variant(1),
                     bindings: vec![HirPatternBinding {
-                        id: output_local,
+                        id: state.output_local,
                         name: "awaited.output".to_owned(),
                         ty: awaited.output.clone(),
                         path: vec![1],
                         moves: true,
                     }],
                     guard: None,
-                    body: HirExpr {
-                        ty: poll_ty.clone(),
-                        kind: HirExprKind::Block(
-                            vec![
-                                HirStmt::Expr(take_child),
-                                HirStmt::Expr(set_state(self_ty, 2)),
-                            ],
-                            Some(Box::new(poll_ready(
-                                poll_ty,
-                                poll_name,
-                                parent_output,
-                                completed_value,
-                            ))),
-                        ),
-                    },
+                    body: ready_body,
                 },
             ],
         },
@@ -886,6 +978,7 @@ pub(super) struct AwaitedFutureInfo {
     pub(super) continuation_capture_modes: Vec<PassMode>,
     pub(super) continuation_fields: Vec<usize>,
     pub(super) continuation_capture_types: Vec<Ty>,
+    pub(super) next: Option<Box<AwaitedFutureInfo>>,
 }
 
 struct AsyncSourcePlan {

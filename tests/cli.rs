@@ -3079,7 +3079,7 @@ fn tail_await_forwards_a_ready_child_future() {
 }
 
 #[test]
-fn tail_await_resumes_after_a_pending_child_poll() {
+fn non_tail_await_resumes_after_a_pending_child_poll() {
     let output = salic()
         .arg("run")
         .arg(fixture("pass", "async_await_pending.sc"))
@@ -3105,6 +3105,26 @@ fn completing_an_await_drops_the_child_future_once() {
         .arg(fixture("pass", "async_await_complete_drop.sc"))
         .output()
         .expect("run completed async child cleanup fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
+fn multiple_sequential_awaits_resume_through_nested_segments() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "async_await_multiple.sc"))
+        .output()
+        .expect("run multiple async await fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
+fn cancelling_multiple_awaits_drops_only_the_active_segment_state() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "async_await_multiple_cancel.sc"))
+        .output()
+        .expect("run multiple async cancellation fixture");
     assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
 }
 

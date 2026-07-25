@@ -555,7 +555,8 @@ evaluated on the first parent poll, the child future is retained across `Poll.Pe
 `Poll.Ready(value)` completes the parent with `value`. Completion or cancellation drops the stored
 child exactly once. One linear non-tail form, `let value = await child`, may execute ordinary
 continuation code after Ready; the continuation's captures remain owned by the parent while
-suspended. Multiple awaits, awaits nested in control flow, and other residual-effect cases are not
+suspended. Multiple sequential bindings compose recursively and preserve earlier Ready values
+across later Pending states. Awaits nested in control flow and other residual-effect cases are not
 implemented yet.
 
 `unsafe` is an authority effect. `unsafe { ... }` authorizes operations whose contracts cannot be

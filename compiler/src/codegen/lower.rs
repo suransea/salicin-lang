@@ -181,6 +181,7 @@ pub(super) fn closure_info_for_callable(ty: &Ty) -> Option<ClosureInfo> {
                 PassMode::MutBorrow => ClosureCaptureMode::Mutable,
                 PassMode::Move | PassMode::Copy | PassMode::Inferred => ClosureCaptureMode::Move,
             },
+            by_value: false,
             value: None,
             forwarded: None,
         })

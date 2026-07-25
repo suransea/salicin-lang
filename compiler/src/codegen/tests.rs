@@ -7214,6 +7214,17 @@ let main(): i32 = {
 
     compile_text(
         r#"
+let main(): i32 = {
+  let value = 42
+  let future = async { value }
+  value
+}
+"#,
+    )
+    .expect("a Copy async capture must be stored by value without moving its source");
+
+    compile_text(
+        r#"
 let Future = std.async.Future
 
 let main(): i32 = {
@@ -7240,6 +7251,22 @@ let main(): i32 = {
     assert!(diagnostics
         .iter()
         .all(|diagnostic| !diagnostic.message.contains("$lang$")));
+
+    let diagnostics = compile_text(
+        r#"
+let main(): i32 = {
+  let future = async {
+    if true { await child() } else { 0 }
+  }
+  0
+}
+let child() = { async { 1 } }
+"#,
+    )
+    .expect_err("await nested in control flow must remain an explicit lowering boundary");
+    assert!(diagnostics.iter().any(|diagnostic| diagnostic
+        .message
+        .contains("suspension nested in control flow is not implemented yet")));
 }
 
 #[test]

@@ -136,8 +136,9 @@ The no-suspension polling transition returns `Poll.Ready` once, traps on repoll,
 inferred residual `Unsafe` requirement. One tail-position `await` stores its child across Pending,
 resumes from Ready, and drops the child exactly once on completion or cancellation. A single
 non-tail await may bind the Ready output and run a linear continuation with state-owned captures.
-Multiple and control-flow awaits, algebraic residual-effect specialization, and self-referential
-suspension rules are not implemented.
+Multiple sequential awaits compose while retaining earlier outputs and dropping only the active
+segment on cancellation. Control-flow awaits, algebraic residual-effect specialization, and
+self-referential suspension rules are not implemented.
 
 ## Modules, Packages, and FFI
 

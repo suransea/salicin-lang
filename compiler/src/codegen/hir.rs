@@ -357,6 +357,7 @@ pub(super) struct HirProgram {
 pub(super) struct AsyncStateLayout {
     pub(super) owned_capture_fields: Vec<usize>,
     pub(super) suspended_fields: Vec<usize>,
+    pub(super) chained_fields: Vec<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -877,12 +878,14 @@ pub(super) enum ClosureCaptureMode {
 pub(super) enum ClosureCapturePolicy {
     Lexical,
     HandlerOwned,
+    AsyncOwned,
 }
 
 #[derive(Debug, Clone)]
 pub(super) struct ClosureCapture {
     pub(super) place: HirPlace,
     pub(super) mode: ClosureCaptureMode,
+    pub(super) by_value: bool,
     pub(super) value: Option<Box<HirExpr>>,
     pub(super) forwarded: Option<ForwardedClosureCapture>,
 }

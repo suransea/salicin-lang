@@ -6390,6 +6390,12 @@ impl Analyzer {
                                         .collect()
                                 })
                                 .unwrap_or_default(),
+                            chained_fields: future
+                                .awaited
+                                .as_ref()
+                                .and_then(|awaited| awaited.next.as_ref())
+                                .map(|next| vec![next.field])
+                                .unwrap_or_default(),
                         },
                     )
                 })
@@ -8771,7 +8777,9 @@ impl Analyzer {
             Expr::DoBlock { body } => self.lower_do_block(body, expected, context),
             Expr::Async { body } => self.lower_async_expression(body, context),
             Expr::Await(_) => {
-                self.error("`await` is only lowered as part of an async state machine");
+                self.error(
+                    "`await` currently requires tail position or a direct `let` initializer in an async block; suspension nested in control flow is not implemented yet",
+                );
                 error_expr()
             }
             Expr::Throw(value) => self.lower_throw(value, context),
@@ -9462,6 +9470,14 @@ impl Analyzer {
                     capture.mode = ClosureCaptureMode::Move;
                 }
             }
+        } else if capture_policy == ClosureCapturePolicy::AsyncOwned {
+            for capture in &mut capture_uses {
+                if outer.lookup(&capture.name).is_some_and(|local| {
+                    local.capability == LocalCapability::Owned && !self.is_copy_type(&local.ty)
+                }) {
+                    capture.mode = ClosureCaptureMode::Move;
+                }
+            }
         }
         let mut reconstructed_inspections = Vec::new();
         if deferred_handler_continuation {
@@ -9635,7 +9651,7 @@ impl Analyzer {
                     if !matches!(
                         local.ty,
                         Ty::Struct(_) | Ty::Enum(_) | Ty::Callable(_) | Ty::Continuation { .. }
-                    ) =>
+                    ) && capture_policy != ClosureCapturePolicy::AsyncOwned =>
                 {
                     self.error(format!(
                         "FnOnce move capture `{name}` must be a nominal root local for now"
@@ -9656,7 +9672,21 @@ impl Analyzer {
                 loan: None,
                 indirect: false,
             };
+            let async_copy_capture = capture_policy == ClosureCapturePolicy::AsyncOwned
+                && capture.mode == ClosureCaptureMode::Shared
+                && local.capability == LocalCapability::Owned
+                && self.is_copy_type(&local.ty);
             let (parameter_mode, capability, mutable, value) = match capture.mode {
+                ClosureCaptureMode::Shared if async_copy_capture => (
+                    PassMode::Copy,
+                    LocalCapability::Owned,
+                    false,
+                    Some(Box::new(self.access_place(
+                        place.clone(),
+                        AccessKind::Copy,
+                        outer,
+                    ))),
+                ),
                 ClosureCaptureMode::Shared => {
                     if !deferred_handler_continuation {
                         place.loan = self.acquire_loan(&place, LoanKind::Shared, true, outer);
@@ -9673,7 +9703,10 @@ impl Analyzer {
                 ClosureCaptureMode::Move => {
                     let value = self.access_place(place.clone(), AccessKind::Move, outer);
                     let keeps_mutability = deferred_handler_continuation
-                        || capture_policy == ClosureCapturePolicy::HandlerOwned;
+                        || matches!(
+                            capture_policy,
+                            ClosureCapturePolicy::HandlerOwned | ClosureCapturePolicy::AsyncOwned
+                        );
                     (
                         PassMode::Move,
                         LocalCapability::Owned,
@@ -9685,6 +9718,7 @@ impl Analyzer {
             captures.push(ClosureCapture {
                 place,
                 mode: capture.mode,
+                by_value: async_copy_capture,
                 value,
                 forwarded: None,
             });

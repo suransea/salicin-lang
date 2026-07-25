@@ -284,7 +284,9 @@ remains pure. Residual algebraic effects are rejected until generated poll/resum
 handler specialization. A single tail-position `await` creates its child on the first parent poll,
 stores it across `Pending`, and completes the parent from `Ready`; cancellation drops a stored child
 exactly once. One non-tail `let value = await child` may continue with a linear suffix whose captures
-are retained in parent state. Multiple and control-flow suspension lowering remains compiler work.
+are retained in parent state. Sequential awaits compose through nested continuation futures and
+preserve earlier results across later Pending states. Suspension nested in control flow remains
+compiler work.
 
 ```sc fragment
 pub let do(E: effect, T: type)

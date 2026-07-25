@@ -34,6 +34,10 @@ subset.
   continuation code. Values captured by that continuation remain in parent state across
   suspension; Ready transfers them into the continuation, while cancellation drops owned captures
   exactly once.
+- Composed linear continuation segments recursively, allowing multiple sequential awaits to
+  preserve earlier Ready values across later Pending states. Each parent keeps only its active
+  nested future, cancellation follows that state chain, Copy captures are stored by value without
+  consuming their source, and non-Copy captures transfer ownership into the future.
 - Declared `Continuation(Input, Output)` and `EffectCallable(Input, Output, Answer)` as bodyless
   type forms, matching their compiler-owned representations instead of describing them as empty
   structures. Lang-item validation now requires the exact type-form declarations.

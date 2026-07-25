@@ -31,7 +31,8 @@ requirement is inferred onto `poll`; residual algebraic effects are rejected unt
 poll/resume functions enter handler specialization. One tail-position `await` now stores and polls
 its child across `Pending`, resumes on `Ready`, and drops the child on completion or cancellation.
 A single non-tail `let value = await child` also preserves continuation captures and executes its
-linear suffix after Ready. Multiple suspension points, control-flow suspension, and the remaining
+linear suffix after Ready. Multiple sequential awaits compose recursively while preserving earlier
+Ready values and active-state cancellation. Suspension nested in control flow and the remaining
 residual-effect cases remain the current task.
 
 ## Later
