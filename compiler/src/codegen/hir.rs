@@ -311,12 +311,21 @@ pub(super) struct HirProgram {
     pub(super) enums: Vec<EnumLayout>,
     pub(super) globals: Vec<HirGlobal>,
     pub(super) functions: Vec<HirFunction>,
+    pub(super) foreign_functions: Vec<HirForeignFunction>,
     pub(super) drop_methods: HashMap<Ty, String>,
     pub(super) box_pointees: HashMap<String, Ty>,
     pub(super) array_types: HashSet<Ty>,
     pub(super) tuple_types: HashSet<Ty>,
     pub(super) continuation_adapters: Vec<ContinuationAdapter>,
     pub(super) effect_callable_adapters: Vec<EffectCallableAdapter>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct HirForeignFunction {
+    pub(super) name: String,
+    pub(super) link_name: String,
+    pub(super) params: Vec<Ty>,
+    pub(super) result: Ty,
 }
 
 #[derive(Debug, Clone)]
@@ -350,6 +359,13 @@ pub(super) struct RuntimeHandlerAction {
 }
 
 impl HirProgram {
+    pub(super) fn foreign_link_name(&self, name: &str) -> Option<&str> {
+        self.foreign_functions
+            .iter()
+            .find(|function| function.name == name)
+            .map(|function| function.link_name.as_str())
+    }
+
     pub(super) fn struct_layout(&self, name: &str) -> Option<&StructLayout> {
         self.structs.iter().find(|layout| layout.name == name)
     }

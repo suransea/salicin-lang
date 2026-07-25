@@ -5579,6 +5579,7 @@ impl Analyzer {
     }
 
     fn analyze_target(&mut self, require_entry_point: bool) -> Option<HirProgram> {
+        self.validate_foreign_declarations();
         for name in self.global_order.clone() {
             self.lower_global(&name);
         }
@@ -5621,6 +5622,26 @@ impl Analyzer {
                 .map(|name| self.hir_globals[name].clone())
                 .collect(),
             functions,
+            foreign_functions: self
+                .function_order
+                .iter()
+                .filter_map(|name| {
+                    let function = &self.functions[name];
+                    let foreign = function.foreign.as_ref()?;
+                    let signature = self.signatures.get(name)?;
+                    Some(HirForeignFunction {
+                        name: name.clone(),
+                        link_name: foreign.link_name.clone(),
+                        params: signature
+                            .groups
+                            .iter()
+                            .flatten()
+                            .map(|parameter| parameter.ty.clone())
+                            .collect(),
+                        result: signature.result.clone()?,
+                    })
+                })
+                .collect(),
             drop_methods: self
                 .trait_impls
                 .iter()
@@ -5650,6 +5671,37 @@ impl Analyzer {
             continuation_adapters: self.continuation_adapters.clone(),
             effect_callable_adapters: self.effect_callable_adapters.clone(),
         })
+    }
+
+    fn validate_foreign_declarations(&mut self) {
+        let mut links = HashMap::<String, String>::new();
+        for name in self.function_order.clone() {
+            let Some(foreign) = self.functions[&name].foreign.clone() else {
+                continue;
+            };
+            self.current_origin = self.function_origins.get(&name).cloned().map(Box::new);
+            if name == "main" {
+                self.error("foreign function `main` cannot be the Salicin entry point");
+            }
+            if matches!(
+                foreign.link_name.as_str(),
+                "main" | "salicin_alloc" | "salicin_dealloc"
+            ) || foreign.link_name.starts_with("llvm.")
+                || foreign.link_name.starts_with("sali.")
+            {
+                self.error(format!(
+                    "foreign function `{name}` uses reserved link symbol `{}`",
+                    foreign.link_name
+                ));
+            }
+            if let Some(previous) = links.insert(foreign.link_name.clone(), name.clone()) {
+                self.error(format!(
+                    "foreign functions `{previous}` and `{name}` use the same link symbol `{}`",
+                    foreign.link_name
+                ));
+            }
+        }
+        self.current_origin = None;
     }
 
     fn validate_function_templates(&mut self) {

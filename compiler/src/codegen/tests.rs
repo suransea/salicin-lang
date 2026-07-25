@@ -93,6 +93,7 @@ fn origin(package: usize, module_path: &[&str]) -> ItemOrigin {
 fn function(name: &str, groups: Vec<Vec<Param>>, result: Type, body: Expr) -> Item {
     Item::Function(Function {
         name: name.to_owned(),
+        foreign: None,
         compile_groups: Vec::new(),
         groups,
         return_type: Some(result),

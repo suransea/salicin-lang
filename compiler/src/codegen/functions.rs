@@ -40,6 +40,37 @@ impl Analyzer {
         self.function_states
             .insert(name.to_owned(), ResolutionState::Resolving);
         let function = self.functions[name].clone();
+        if function.foreign.is_some() {
+            let signature = self.signatures[name].clone();
+            let result = signature.result.clone().unwrap_or(Ty::Error);
+            let mut valid = signature.groups.len() == 1
+                && signature.throws_error.is_none()
+                && signature.custom_effects.is_empty();
+            for parameter in signature.groups.iter().flatten() {
+                if !matches!(parameter.mode, PassMode::Inferred)
+                    || !foreign_parameter_type_is_valid(&parameter.ty)
+                {
+                    self.error(format!(
+                        "foreign function `{name}` parameter `{}` has unsupported C ABI type `{}`",
+                        parameter.name,
+                        self.diagnostic_type_name(&parameter.ty)
+                    ));
+                    valid = false;
+                }
+            }
+            if !foreign_result_type_is_valid(&result) {
+                self.error(format!(
+                    "foreign function `{name}` has unsupported C ABI result type `{}`",
+                    self.diagnostic_type_name(&result)
+                ));
+                valid = false;
+            }
+            self.function_states
+                .insert(name.to_owned(), ResolutionState::Resolved);
+            let resolved = if valid { result } else { Ty::Error };
+            self.set_function_result(name, resolved.clone());
+            return resolved;
+        }
         let signature = self.signatures[name].clone();
         let mut context = LowerCtx::for_function(
             name,
@@ -512,4 +543,12 @@ impl Analyzer {
         self.function_order.push(canonical.clone());
         Some(canonical)
     }
+}
+
+fn foreign_parameter_type_is_valid(ty: &Ty) -> bool {
+    ty.is_integer() || matches!(ty, Ty::Pointer { .. })
+}
+
+fn foreign_result_type_is_valid(ty: &Ty) -> bool {
+    *ty == Ty::Unit || foreign_parameter_type_is_valid(ty)
 }

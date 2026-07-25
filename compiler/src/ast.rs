@@ -229,6 +229,9 @@ pub struct Field {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     pub name: String,
+    /// Present only for a source `extern` declaration. Foreign functions have
+    /// no Salicin body and always require the `Unsafe` effect at call sites.
+    pub foreign: Option<ForeignFunction>,
     /// Compile-time groups retain their source grouping but are erased before
     /// runtime calling convention lowering.
     pub compile_groups: Vec<Vec<CompileParam>>,
@@ -239,6 +242,17 @@ pub struct Function {
     pub effects: FunctionEffects,
     pub where_predicates: Vec<WherePredicate>,
     pub body: Option<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForeignFunction {
+    pub abi: ForeignAbi,
+    pub link_name: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForeignAbi {
+    C,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]

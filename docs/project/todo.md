@@ -17,7 +17,7 @@ Priority meanings:
 
 Current milestone: **M0 release baseline**
 
-Next task: **M0-FFI-1**
+Next task: **M0-QUALITY-1**
 
 ### P0 control-source queue
 
@@ -58,7 +58,7 @@ handler or async expansion is admitted.
   - Lower the declared narrow, wide, and target-sized runtime integer types.
   - Cover layout, arithmetic, conversion boundaries, diagnostics, and native execution.
 
-- [ ] **M0-FFI-1: Implement the frozen bounded C FFI slice**
+- [x] **M0-FFI-1: Implement the frozen bounded C FFI slice**
   - Define admissible C ABI signatures and require `unsafe` at foreign call sites.
   - Add parser, semantic, linking, diagnostic, and native round-trip tests.
 

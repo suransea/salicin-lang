@@ -6,6 +6,11 @@ subset.
 
 ## Unreleased
 
+- Added the bounded M0 C FFI import path. `extern "C"` blocks preserve validated optional
+  `@link_name` symbols, admit one runtime parameter group over integer scalars and raw pointers,
+  require `unsafe` at every imported call, and emit direct LLVM declarations. Native libc tests
+  cover scalar and pointer round trips; diagnostics reject private ABI types, currying, unsupported
+  ABIs, and duplicate or compiler-reserved symbols.
 - Lowered all twelve declared runtime integer types through source identity, inference, ownership,
   target layout, operator dispatch, and LLVM emission. `isize` and `usize` track the native target
   pointer width without becoming aliases, integer literals cover `i128::MIN` and all of `u128`,

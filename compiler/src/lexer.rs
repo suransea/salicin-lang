@@ -40,6 +40,7 @@ pub enum TokenKind {
     False,
     Ident(String),
     RegionName(String),
+    String(String),
     Integer(u128),
     LParen,
     RParen,
@@ -87,6 +88,7 @@ pub enum TokenKind {
     ShrEqual,
     QuestionDot,
     QuestionQuestion,
+    At,
     Eof,
 }
 
@@ -184,6 +186,8 @@ impl Lexer {
             let column = self.column;
             let kind = if ch.is_ascii_digit() {
                 self.number()?
+            } else if ch == '"' {
+                self.string()?
             } else if ch == '\'' {
                 self.region_name()?
             } else if ch == '_' || is_xid_start(ch) {
@@ -266,6 +270,7 @@ impl Lexer {
                     '^' => TokenKind::Caret,
                     '?' if self.take('.') => TokenKind::QuestionDot,
                     '?' if self.take('?') => TokenKind::QuestionQuestion,
+                    '@' => TokenKind::At,
                     '/' if self.take('=') => TokenKind::SlashEqual,
                     '/' => TokenKind::Slash,
                     _ => {
@@ -448,6 +453,42 @@ impl Lexer {
             name.push(self.bump().expect("peeked character exists"));
         }
         Ok(TokenKind::RegionName(name.nfc().collect()))
+    }
+
+    fn string(&mut self) -> Result<TokenKind, LexError> {
+        let line = self.line;
+        let column = self.column;
+        self.bump();
+        let mut value = String::new();
+        while let Some(ch) = self.bump() {
+            match ch {
+                '"' => return Ok(TokenKind::String(value)),
+                '\\' => {
+                    let escaped = self.bump().ok_or_else(|| {
+                        self.error("unterminated string literal".into(), line, column)
+                    })?;
+                    value.push(match escaped {
+                        '"' => '"',
+                        '\\' => '\\',
+                        'n' => '\n',
+                        'r' => '\r',
+                        't' => '\t',
+                        _ => {
+                            return Err(self.error(
+                                format!("unsupported string escape `\\{escaped}`"),
+                                line,
+                                column,
+                            ));
+                        }
+                    });
+                }
+                '\n' => {
+                    return Err(self.error("unterminated string literal".into(), line, column));
+                }
+                _ => value.push(ch),
+            }
+        }
+        Err(self.error("unterminated string literal".into(), line, column))
     }
 
     fn peek(&self) -> Option<char> {

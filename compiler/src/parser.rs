@@ -3,10 +3,10 @@ use std::{collections::HashSet, fmt};
 use crate::ast::{
     default_trait_self_parameter, AssociatedKind, AssociatedTypeBinding, BinaryOp, Binding,
     CallArg, CompileParam, CompileParamDefault, CompileParamKind, DomainDef, EffectDef, EnumDef,
-    Expr, ExtendDef, ExtendMember, Field, Function, FunctionEffects, Item, MatchArm, Param,
-    PassMode, Pattern, PatternField, PatternFields, Program, Stmt, StructDef, TraitDef,
-    TraitMember, Type, TypeAliasDef, TypeArg, TypeFormDef, USizeConst, UnaryOp, UseDecl,
-    VariantDef, VariantFields, Visibility, WherePredicate,
+    Expr, ExtendDef, ExtendMember, Field, ForeignAbi, ForeignFunction, Function, FunctionEffects,
+    Item, MatchArm, Param, PassMode, Pattern, PatternField, PatternFields, Program, Stmt,
+    StructDef, TraitDef, TraitMember, Type, TypeAliasDef, TypeArg, TypeFormDef, USizeConst,
+    UnaryOp, UseDecl, VariantDef, VariantFields, Visibility, WherePredicate,
 };
 use crate::lexer::{lex, LexError, Token, TokenKind};
 
@@ -79,6 +79,22 @@ impl Parser {
                 uses.push(self.qualified_alias_declaration(visibility)?);
             } else if self.at_context_ident("use") {
                 uses.extend(self.use_declaration(visibility)?);
+            } else if self.at_context_ident("extern") {
+                let start = self.current().clone();
+                for function in self.extern_declaration()? {
+                    items.push(Item::Function(function));
+                    item_visibilities.push(visibility);
+                    item_origins.push(crate::ast::ItemOrigin {
+                        source: Some(Box::new(crate::ast::SourceLocation {
+                            path: None,
+                            line: start.line,
+                            column: start.column,
+                            end_line: start.end_line,
+                            end_column: start.end_column,
+                        })),
+                        ..crate::ast::ItemOrigin::default()
+                    });
+                }
             } else {
                 if visibility != Visibility::Private && self.at(&TokenKind::Extend) {
                     return Err(self.error_here("`extend` declarations cannot have visibility"));
@@ -112,6 +128,106 @@ impl Parser {
             item_origins,
             uses,
         ))
+    }
+
+    fn extern_declaration(&mut self) -> Result<Vec<Function>, ParseError> {
+        self.advance();
+        let TokenKind::String(abi) = self.current().kind.clone() else {
+            return Err(self.error_here("expected ABI string after `extern`"));
+        };
+        self.advance();
+        if abi != "C" {
+            return Err(self.error_here(format!(
+                "unsupported foreign ABI `{abi}`; only `extern \"C\"` is available"
+            )));
+        }
+        self.expect(&TokenKind::LBrace, "`{` after foreign ABI")?;
+        self.skip_separators();
+
+        let mut functions = Vec::new();
+        while !self.take(&TokenKind::RBrace) {
+            let mut link_name = None;
+            if self.take(&TokenKind::At) {
+                let attribute = self.expect_ident("foreign function attribute")?;
+                if attribute != "link_name" {
+                    return Err(self.error_here(format!(
+                        "unsupported foreign function attribute `@{attribute}`"
+                    )));
+                }
+                self.expect(&TokenKind::LParen, "`(` after `@link_name`")?;
+                let TokenKind::String(value) = self.current().kind.clone() else {
+                    return Err(self.error_here("`@link_name` requires a string argument"));
+                };
+                self.advance();
+                self.expect(&TokenKind::RParen, "`)` after `@link_name`")?;
+                link_name = Some(value);
+                self.skip_separators();
+            }
+
+            self.expect(&TokenKind::Let, "`let` in foreign declaration")?;
+            let name = self.declaration_name()?;
+            let (compile_groups, groups) = self.declaration_groups(false, &[])?;
+            if !compile_groups.is_empty() {
+                return Err(self.error_here("foreign functions cannot be generic"));
+            }
+            if groups.len() != 1 {
+                return Err(
+                    self.error_here("C ABI functions require exactly one runtime parameter group")
+                );
+            }
+            self.expect(&TokenKind::Colon, "`:` before foreign function result type")?;
+            let result = self.function_result_type()?;
+            if self.at_context_ident("with") {
+                return Err(self.error_here(
+                    "foreign declarations acquire `Unsafe` implicitly and cannot declare effects",
+                ));
+            }
+            if self.at(&TokenKind::Equal) {
+                return Err(self.error_here("foreign function declarations cannot have a body"));
+            }
+            let link_name = link_name.unwrap_or_else(|| name.clone());
+            let mut bytes = link_name.bytes();
+            let valid_start = bytes.next().is_some_and(|byte| {
+                byte.is_ascii_alphabetic() || matches!(byte, b'_' | b'.' | b'$')
+            });
+            if !link_name.is_ascii()
+                || !valid_start
+                || bytes.any(|byte| {
+                    !(byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'$'))
+                })
+            {
+                return Err(self.error_here(format!(
+                    "foreign link name `{link_name}` must be a non-empty ASCII linker symbol"
+                )));
+            }
+            functions.push(Function {
+                name,
+                foreign: Some(ForeignFunction {
+                    abi: ForeignAbi::C,
+                    link_name,
+                }),
+                compile_groups: Vec::new(),
+                groups,
+                return_type: Some(result),
+                effects: FunctionEffects {
+                    unsafe_effect: true,
+                    ..FunctionEffects::default()
+                },
+                where_predicates: Vec::new(),
+                body: None,
+            });
+
+            if !self.at(&TokenKind::RBrace) && !self.at_separator() {
+                return Err(
+                    self.error_here("expected a newline or `;` after foreign function declaration")
+                );
+            }
+            self.skip_separators();
+        }
+        if functions.is_empty() {
+            return Err(self.error_here("foreign declaration block cannot be empty"));
+        }
+        Ok(functions)
     }
 
     fn qualified_alias_declaration_follows(&self) -> bool {
@@ -372,6 +488,7 @@ impl Parser {
         if !self.at(&TokenKind::Equal) && (!compile_groups.is_empty() || !groups.is_empty()) {
             return Ok(Item::Function(Function {
                 name,
+                foreign: None,
                 compile_groups,
                 groups,
                 return_type: annotation,
@@ -476,6 +593,7 @@ impl Parser {
                 let body = self.expression(true)?;
                 return Ok(Item::Function(Function {
                     name,
+                    foreign: None,
                     compile_groups,
                     groups,
                     return_type: None,
@@ -492,6 +610,7 @@ impl Parser {
             let body = self.block()?;
             Ok(Item::Function(Function {
                 name,
+                foreign: None,
                 compile_groups,
                 groups,
                 return_type: annotation,
@@ -576,6 +695,7 @@ impl Parser {
             }
             operations.push(Function {
                 name: operation,
+                foreign: None,
                 compile_groups: operation_compile_groups,
                 groups,
                 return_type,
@@ -844,6 +964,7 @@ impl Parser {
         if !self.at(&TokenKind::Equal) && (!compile_groups.is_empty() || !groups.is_empty()) {
             return Ok(ExtendMember::Function(Function {
                 name,
+                foreign: None,
                 compile_groups,
                 groups,
                 return_type: annotation,
@@ -878,6 +999,7 @@ impl Parser {
             let body = self.block()?;
             Ok(ExtendMember::Function(Function {
                 name,
+                foreign: None,
                 compile_groups,
                 groups,
                 return_type: annotation,
@@ -2113,6 +2235,7 @@ impl Parser {
 
         Ok(TraitMember::Function(Function {
             name,
+            foreign: None,
             compile_groups,
             groups,
             return_type,
@@ -5597,6 +5720,7 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::False => "`false`",
         TokenKind::RegionName(_) => "a region name",
         TokenKind::Ident(_) => "an identifier",
+        TokenKind::String(_) => "a string",
         TokenKind::Integer(_) => "an integer",
         TokenKind::LParen => "`(`",
         TokenKind::RParen => "`)`",
@@ -5644,6 +5768,7 @@ fn describe(kind: &TokenKind) -> &'static str {
         TokenKind::ShrEqual => "`>>=`",
         TokenKind::QuestionQuestion => "`??`",
         TokenKind::QuestionDot => "`?.`",
+        TokenKind::At => "`@`",
         TokenKind::Eof => "end of file",
     }
 }
@@ -6505,6 +6630,27 @@ mod tests {
             );
             assert_eq!((error.line, error.column), (1, 13));
         }
+    }
+
+    #[test]
+    fn parses_bounded_c_foreign_declarations() {
+        let program = parse(
+            "pub extern \"C\" {\n\
+               @link_name(\"abs\")\n\
+               let c_abs(value: i32): i32\n\
+             }\n",
+        )
+        .unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected foreign function");
+        };
+        let foreign = function.foreign.as_ref().expect("foreign metadata");
+        assert_eq!(foreign.abi, ForeignAbi::C);
+        assert_eq!(foreign.link_name, "abs");
+        assert!(function.effects.unsafe_effect);
+        assert!(function.body.is_none());
+        assert_eq!(function.groups.len(), 1);
+        assert_eq!(program.item_visibilities[0], Visibility::Public);
     }
 
     #[test]

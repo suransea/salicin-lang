@@ -37,7 +37,7 @@ source file is named.
 | Deterministic cleanup | cleanup planner/verifier unit suite and `pass/drop_*` fixtures | planner invariant tests plus partial-move and invalid cleanup source diagnostics | structured exit, partial aggregate, match payload, closure, array, and ledger drop tests | **Covered** |
 | `Option`, `Result`, `Throws(Error)`, `try`, and `throw` | standard container, throws, coalesce, chain, and result fixture suites | return/error mismatch, invalid try/throw context, and ambiguity diagnostics | result/throws/coalesce/chain native CLI tests | **Covered** |
 | `Unsafe`, `unsafe`, and raw primitives behind authority | raw pointer, allocator, layout-query, and access-family fixtures | `fail/raw_*` validates authority, mutability, layout, type, and ownership boundaries | raw pointer, allocator, replacement ABI, invalid layout, and trap CLI tests | **Covered** |
-| C FFI | No parser, AST, semantic, ABI, or emitter implementation | No rejection contract or diagnostic fixtures | None | **Missing**, `M0-FFI-1`; stable external ABI remains outside M0 |
+| Bounded C FFI imports | `extern "C"` blocks with optional `@link_name`; `pass/ffi_c_abs.sc`, `pass/ffi_c_memset.sc` | `fail/ffi_*` covers unsafe authority, ABI/type/group restrictions, duplicate/reserved symbols, and unsupported ABIs | `c_ffi_scalars_and_raw_pointers_link_and_run_natively` links libc scalar and raw-pointer calls | **Covered** for M0 imports; stable exports and `@repr(C)` aggregates remain in post-M0 `ABI-1` |
 | Binary/library targets and native LLVM emission | check/emit/build/run, explicit targets, default targets, and library dependency tests | output collision, target selection, manifest, dependency, and cycle diagnostics | shorthand native build, package binaries, dependencies, and ledger | **Covered** |
 | Diagnostics suitable for source-level debugging | Stable source-name fragments, defining declaration positions, local initializer positions, and end-exclusive expression-root ranges, including trailing source-closure calls, are asserted across parser, CLI, and codegen tests | Broad fail fixture corpus checks semantic rejection and rejects generated `$...` names | N/A | **Covered** |
 
@@ -45,7 +45,5 @@ source file is named.
 
 The matrix creates these release-blocking tasks without changing the frozen scope:
 
-1. `M0-FFI-1`: implement the bounded C FFI slice promised by M0, including ABI admissibility,
-   unsafe calls, linking, diagnostics, and native round trips.
-`M0-QUALITY-1` cannot close merely because the current suite is green; the implementation gaps
-above must either be completed or pass the M0 change gate.
+The implementation gaps identified by this audit are closed. `M0-QUALITY-1` now owns the clean
+release gate rather than redefining any missing capability.

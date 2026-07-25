@@ -2526,6 +2526,66 @@ fn primitive_scalar_overflows_and_conversions_are_diagnosed() {
 }
 
 #[test]
+fn c_ffi_scalars_and_raw_pointers_link_and_run_natively() {
+    let fixtures = ["ffi_c_abs.sc", "ffi_c_memset.sc"];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+
+    let source = fs::read_to_string(fixture("pass", "ffi_c_abs.sc")).expect("read FFI fixture");
+    let ir = compile_source(&source).expect("compile FFI fixture");
+    assert!(ir.contains("declare i32 @abs(i32)"));
+    assert!(ir.contains("call i32 @abs(i32"));
+    assert!(!ir.contains("define i32 @abs"));
+}
+
+#[test]
+fn c_ffi_rejects_unsafe_calls_and_private_abi_types() {
+    let cases = [
+        (
+            "ffi_unsafe_call.sc",
+            "call to unsafe function `c_abs` requires an `unsafe` handler",
+        ),
+        (
+            "ffi_borrow_parameter.sc",
+            "has unsupported C ABI type `borrow i32`",
+        ),
+        (
+            "ffi_bool_result.sc",
+            "has unsupported C ABI result type `bool`",
+        ),
+        (
+            "ffi_curried.sc",
+            "C ABI functions require exactly one runtime parameter group",
+        ),
+        ("ffi_unsupported_abi.sc", "unsupported foreign ABI `system`"),
+        (
+            "ffi_duplicate_link_name.sc",
+            "use the same link symbol `abs`",
+        ),
+        (
+            "ffi_reserved_link_name.sc",
+            "uses reserved link symbol `salicin_alloc`",
+        ),
+    ];
+    for (name, expected) in cases {
+        let source = fs::read_to_string(fixture("fail", name)).expect("read FFI failure fixture");
+        let diagnostics = check_source(&source).expect_err("FFI failure fixture passed");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains(expected)),
+            "{name} did not contain `{expected}`: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn raise_and_unwrap_operators_run_through_standard_and_custom_protocols() {
     let fixtures = [
         "raise_result.sc",

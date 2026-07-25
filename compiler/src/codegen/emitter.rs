@@ -431,6 +431,22 @@ impl<'a> Emitter<'a> {
                 fields.join(", ")
             ));
         }
+        for function in &self.program.foreign_functions {
+            let parameters = function
+                .params
+                .iter()
+                .map(llvm_value_type)
+                .collect::<Result<Vec<_>, _>>()?
+                .join(", ");
+            output.push_str(&format!(
+                "declare {} @{}({parameters})\n",
+                llvm_return_type(&function.result)?,
+                function.link_name
+            ));
+        }
+        if !self.program.foreign_functions.is_empty() {
+            output.push('\n');
+        }
         let callable_types = self.callable_types();
         for callable_ty in &callable_types {
             let Ty::Callable(callable) = callable_ty else {
@@ -1796,7 +1812,12 @@ impl<'a> FunctionEmitter<'a> {
             }
             HirExprKind::Function(name) => Ok(Operand {
                 ty: expression.ty.clone(),
-                value: Some(format!("@{}", function_symbol(name))),
+                value: Some(format!(
+                    "@{}",
+                    self.program
+                        .foreign_link_name(name)
+                        .map_or_else(|| function_symbol(name), ToOwned::to_owned)
+                )),
             }),
             HirExprKind::ConstructStruct { name, fields } => {
                 let cleanup_depth = self.drop_slots.len();
@@ -2089,7 +2110,9 @@ impl<'a> FunctionEmitter<'a> {
                 let call = format!(
                     "call {} @{}({})",
                     llvm_return_type(&expression.ty)?,
-                    function_symbol(function),
+                    self.program
+                        .foreign_link_name(function)
+                        .map_or_else(|| function_symbol(function), ToOwned::to_owned),
                     emitted_arguments.join(", ")
                 );
                 if expression.ty == Ty::Unit {

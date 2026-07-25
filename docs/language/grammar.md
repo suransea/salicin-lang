@@ -249,12 +249,15 @@ where T: Display {
 entity_alias = [ visibility ], "let", IDENT, "=", qualified_path ;
 
 extern_decl = "extern", STRING,
-              ( "{", separators, { extern_function_decl, separators }, "}"
-              | let_decl ) ;
+              "{", separators, { extern_function_decl, separators }, "}" ;
 
 extern_function_decl = { attribute }, "let", IDENT, parameter_group,
                        ":", type_expr ;
 ```
+
+M0 implements the block form for C imports. It accepts `@link_name("ascii_symbol")`; imported
+functions have exactly one runtime parameter group and no body. Source-defined C exports belong to
+the later external-ABI design and are not accepted by this grammar slice.
 
 模块级纯限定路径绑定是透明实体别名。它保留目标的名义身份、重载集和声明类别；
 `pub let` 与 `pub(package) let` 分别建立相应可见性的重导出。多个名称使用多个普通绑定，
