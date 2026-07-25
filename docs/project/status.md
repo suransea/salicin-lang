@@ -175,7 +175,11 @@ distinct starting state retains move-only continuation captures if the
 factory aborts; factory locals still use ordinary lexical cleanup. Pending
 repolls only the active stored child, each Ready transition destroys that
 child before constructing the next, and completion, error, or cancellation
-cleans each initialized field once.
+cleans each initialized field once. A one-shot `if` or `match` can select
+between direct-tail children of one concrete future type when the selected
+factory retains the residual row. Selection runs once and cancellation drops
+only that child. Residual heterogeneous branch-future enums are rejected
+before LLVM generation.
 One tail-position `await` stores its child across Pending,
 resumes from Ready, and drops the child exactly once on completion or cancellation. A single
 non-tail await may bind the Ready output and run a linear continuation with state-owned captures.
@@ -205,7 +209,7 @@ Conditions are currently pure and `while` remains unit-valued. Move-only continu
 now packed into `Continue(Carry)` and restored into their parent fields before the next iteration;
 completion and cancellation consume or drop each field once. Move-only values required by the
 iteration factory or condition still require a more general carry transform. Residual effects in
-later sequential segments, branches, or loops are not implemented.
+later sequential segments, heterogeneous or wrapped-state branches, and loops are not implemented.
 Iterations with multiple top-level sequential awaits use a private iteration future; its final
 `Break(Output)` may depend on any awaited binding, and cancellation follows its nested active-child
 chain without retaining completed children. A recurring loop with no break uses the standard

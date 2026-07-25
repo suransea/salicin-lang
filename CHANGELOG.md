@@ -6,6 +6,13 @@ subset.
 
 ## Unreleased
 
+- Specialized residual one-shot `if` and `match` selection when every
+  direct-tail branch produces the same concrete child future type. Only the
+  selected effectful factory runs, and Pending, Ready, cancellation, and drop
+  retain exactly that child. Residual heterogeneous branch-future enums now
+  receive a source diagnostic instead of reaching LLVM with unresolved effect
+  operations.
+
 ## 0.194.0 - 2026-07-26
 
 - Added shared and mutable borrowed captures to suspended residual futures.

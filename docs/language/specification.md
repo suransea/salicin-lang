@@ -678,8 +678,14 @@ ordinary region and alias constraints. An `if` or `match` may place one tail awa
 when every child future has the same Output; concrete child types may differ. The condition,
 scrutinee, and guards run once before suspension, and cancellation drops only the selected child.
 Branch-local linear statements may surround await, and a non-suspending branch completes
-immediately when selected. Residual effects in later sequential segments, branches, or loops are
-not implemented yet.
+immediately when selected. Under residual specialization, a one-shot `if` or
+`match` may select direct-tail children of the same concrete future type. The
+selected child factory may use the first segment's residual row; selection and
+factory evaluation occur once, and Pending, Ready, or cancellation retains
+only the selected child. A residual branch whose child types differ, or whose
+linear prefix or suffix requires a wrapped branch-local future, is rejected
+before code generation. Residual effects in later sequential segments and
+loops are not implemented yet.
 
 `unsafe` is an authority effect. `unsafe { ... }` authorizes operations whose contracts cannot be
 verified by the safe type and ownership rules; it does not disable type checking or cleanup.

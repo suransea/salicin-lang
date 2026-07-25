@@ -518,6 +518,10 @@ impl Analyzer {
         let supports_suspended_residual = awaited.as_ref().is_some_and(|awaited| {
             awaited.loop_step.is_none()
                 && awaited.loop_condition.is_none()
+                && !matches!(
+                    &awaited.ty,
+                    Ty::Enum(name) if name.starts_with("$async$branch$")
+                )
                 && closure
                     .captures
                     .iter()

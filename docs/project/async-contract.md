@@ -106,8 +106,13 @@ its residual effects. Each Ready transition destroys its completed child
 before constructing the next. Completion, error, and cancellation each
 destroy every initialized child, retained local, and continuation capture
 once. A borrow of storage retained in the same future remains rejected as
-self-referential. Residual effects in later segments, branches, and loops
-remain outside this slice.
+self-referential. A one-shot `if` or `match` may select between direct-tail
+children of the same concrete future type while the selected child factory
+retains the first-segment residual row. Selection and that factory execute
+once; Pending, Ready, and cancellation touch only the selected child.
+Heterogeneous branch-future enums and wrapped branch-local state remain
+unsupported with residual effects. Residual effects in later segments and
+loops likewise remain outside this slice.
 
 ## State Machines
 

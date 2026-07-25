@@ -3361,6 +3361,7 @@ fn suspended_residual_async_effects_specialize_and_cancel() {
         "async_residual_retained_await.sc",
         "async_residual_nested_await.sc",
         "async_residual_borrow_await.sc",
+        "async_residual_branch_await.sc",
     ]) {
         assert_eq!(
             output.status.code(),
@@ -3380,6 +3381,23 @@ fn suspended_residual_async_effects_specialize_and_cancel() {
         String::from_utf8_lossy(&conflict.stderr).contains("borrowed"),
         "{}",
         output_text(&conflict)
+    );
+
+    let heterogeneous = salic()
+        .arg("check")
+        .arg(fixture("fail", "async_residual_heterogeneous_branch.sc"))
+        .output()
+        .expect("check heterogeneous residual async branch");
+    assert!(
+        !heterogeneous.status.success(),
+        "{}",
+        output_text(&heterogeneous)
+    );
+    assert!(
+        String::from_utf8_lossy(&heterogeneous.stderr)
+            .contains("requires poll/resume handler specialization for this suspension shape"),
+        "{}",
+        output_text(&heterogeneous)
     );
 
     let recurring = salic()
