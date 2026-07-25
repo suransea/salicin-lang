@@ -17,7 +17,7 @@ Priority meanings:
 
 Current milestone: **TYPE1 static abstraction**
 
-Next task: **TYPE-EQ-1**
+Next task: **TYPE-CALLABLE-1**
 
 ### P0 control-source queue
 
@@ -138,7 +138,10 @@ Entry gate: concrete requirements from LIB1
   - Replace the Copy-value Slice iterator boundary with shared and mutable element borrows.
   - Preserve source access, receiver-region shortening, alias exclusion, escape rejection, and
     exactly-once iterator cleanup.
-- [ ] **TYPE-EQ-1: Add bounded constructor-equation solving**
+- [x] **TYPE-EQ-1: Add bounded constructor-equation solving**
+  - Bind GAT equation parameters explicitly on the associated name in a where predicate.
+  - Require exact parameter groups and kinds, compare alpha-normalized alias-expanded applications,
+    and bound recursive rewriting to 32 expansions.
 - [ ] **TYPE-CALLABLE-1: Bridge capturing callables into source protocols**
 - [ ] **TYPE-TRAIT-METHOD-1: Support coherent generic trait methods**
 - [x] **TYPE-CONST-NOMINAL-1: Extend compile-time scalar arguments to nominal types and type aliases**

@@ -2389,11 +2389,13 @@ fn validate_item_api(
                     diagnostics,
                 );
                 for binding in &predicate.associated_types {
+                    let binding_types =
+                        compile_parameter_names(&binding.compile_groups, &bound_types);
                     validate_exposed_type(
                         &binding.ty,
                         extension_boundary,
                         source_path,
-                        &bound_types,
+                        &binding_types,
                         &format!(
                             "extension where predicate {} associated type `{}`",
                             index + 1,
@@ -2497,11 +2499,12 @@ fn validate_function_api(
             diagnostics,
         );
         for binding in &predicate.associated_types {
+            let binding_types = compile_parameter_names(&binding.compile_groups, &bound_types);
             validate_exposed_type(
                 &binding.ty,
                 boundary,
                 source_path,
-                &bound_types,
+                &binding_types,
                 &format!(
                     "{description} where predicate {} associated type `{}`",
                     index + 1,
@@ -2957,7 +2960,7 @@ impl Resolver {
             self.rewrite_type(&mut predicate.subject, context, &trait_types);
             self.rewrite_type(&mut predicate.trait_ref, context, &trait_types);
             for binding in &mut predicate.associated_types {
-                self.rewrite_type(&mut binding.ty, context, &trait_types);
+                self.rewrite_associated_binding(binding, context, &trait_types);
             }
         }
         for member in &mut definition.members {
@@ -2994,7 +2997,7 @@ impl Resolver {
             self.rewrite_type(&mut predicate.subject, context, &header_type_scope);
             self.rewrite_type(&mut predicate.trait_ref, context, &header_type_scope);
             for binding in &mut predicate.associated_types {
-                self.rewrite_type(&mut binding.ty, context, &header_type_scope);
+                self.rewrite_associated_binding(binding, context, &header_type_scope);
             }
         }
 
@@ -3053,7 +3056,7 @@ impl Resolver {
             self.rewrite_type(&mut predicate.subject, context, &type_scope);
             self.rewrite_type(&mut predicate.trait_ref, context, &type_scope);
             for binding in &mut predicate.associated_types {
-                self.rewrite_type(&mut binding.ty, context, &type_scope);
+                self.rewrite_associated_binding(binding, context, &type_scope);
             }
         }
         if let Some(body) = &mut function.body {
@@ -3085,6 +3088,17 @@ impl Resolver {
                 }
             }
         }
+    }
+
+    fn rewrite_associated_binding(
+        &mut self,
+        binding: &mut crate::ast::AssociatedTypeBinding,
+        context: ResolveContext<'_>,
+        outer_types: &HashSet<String>,
+    ) {
+        self.rewrite_compile_parameter_types(&mut binding.compile_groups, context, outer_types);
+        let type_scope = compile_parameter_names(&binding.compile_groups, outer_types);
+        self.rewrite_type(&mut binding.ty, context, &type_scope);
     }
 
     fn rewrite_parameter(

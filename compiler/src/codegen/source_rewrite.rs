@@ -1324,7 +1324,7 @@ pub(super) fn substitute_function_types(
         substitute_type_parameters(&mut predicate.subject, substitutions);
         substitute_type_parameters(&mut predicate.trait_ref, substitutions);
         for binding in &mut predicate.associated_types {
-            substitute_type_parameters(&mut binding.ty, substitutions);
+            substitute_associated_binding(binding, substitutions);
         }
     }
     if let Some(body) = &mut function.body {
@@ -1339,8 +1339,135 @@ pub(super) fn substitute_where_predicate(
     substitute_type_parameters(&mut predicate.subject, substitutions);
     substitute_type_parameters(&mut predicate.trait_ref, substitutions);
     for binding in &mut predicate.associated_types {
-        substitute_type_parameters(&mut binding.ty, substitutions);
+        substitute_associated_binding(binding, substitutions);
     }
+}
+
+pub(super) fn substitute_associated_type_equations(
+    function: &mut Function,
+    equations: &HashMap<String, (Vec<CompileParam>, Type)>,
+) -> Result<(), String> {
+    for parameter in function.groups.iter_mut().flatten() {
+        rewrite_associated_equation_type(&mut parameter.ty, equations, 0)?;
+    }
+    if let Some(result) = &mut function.return_type {
+        rewrite_associated_equation_type(result, equations, 0)?;
+    }
+    if let Some(error) = &mut function.effects.throws {
+        rewrite_associated_equation_type(error, equations, 0)?;
+    }
+    for effect in &mut function.effects.custom {
+        rewrite_associated_equation_type(effect, equations, 0)?;
+    }
+    for predicate in &mut function.where_predicates {
+        rewrite_associated_equation_type(&mut predicate.subject, equations, 0)?;
+        rewrite_associated_equation_type(&mut predicate.trait_ref, equations, 0)?;
+        for binding in &mut predicate.associated_types {
+            rewrite_associated_equation_type(&mut binding.ty, equations, 0)?;
+        }
+    }
+    Ok(())
+}
+
+fn rewrite_associated_equation_type(
+    ty: &mut Type,
+    equations: &HashMap<String, (Vec<CompileParam>, Type)>,
+    depth: usize,
+) -> Result<(), String> {
+    const MAX_EQUATION_DEPTH: usize = 32;
+    if depth > MAX_EQUATION_DEPTH {
+        return Err(format!(
+            "associated type equation expansion exceeds depth {MAX_EQUATION_DEPTH}"
+        ));
+    }
+    match ty {
+        Type::Named(name, arguments) if equations.contains_key(name) => {
+            for argument in arguments.iter_mut() {
+                rewrite_associated_equation_type(argument, equations, depth)?;
+            }
+            let (parameters, source) = &equations[name];
+            if arguments.len() != parameters.len() {
+                return Err(format!(
+                    "associated type equation `{name}` expects {} argument{}, found {}",
+                    parameters.len(),
+                    if parameters.len() == 1 { "" } else { "s" },
+                    arguments.len()
+                ));
+            }
+            let substitutions = parameters
+                .iter()
+                .zip(arguments.iter())
+                .map(|(parameter, argument)| (parameter.name.clone(), argument.clone()))
+                .collect::<HashMap<_, _>>();
+            let mut replacement = source.clone();
+            substitute_type_parameters(&mut replacement, &substitutions);
+            rewrite_associated_equation_type(&mut replacement, equations, depth + 1)?;
+            *ty = replacement;
+        }
+        Type::Named(_, arguments) => {
+            for argument in arguments {
+                rewrite_associated_equation_type(argument, equations, depth)?;
+            }
+        }
+        Type::NamedArgs(_, arguments) => {
+            for argument in arguments {
+                rewrite_associated_equation_type(&mut argument.ty, equations, depth)?;
+            }
+        }
+        Type::Borrow { pointee, .. }
+        | Type::Array(pointee, _)
+        | Type::ArrayApplication {
+            element: pointee, ..
+        } => rewrite_associated_equation_type(pointee, equations, depth)?,
+        Type::Tuple(fields) => {
+            for field in fields {
+                rewrite_associated_equation_type(field, equations, depth)?;
+            }
+        }
+        Type::Function {
+            groups,
+            effects,
+            result,
+        } => {
+            for parameter in groups.iter_mut().flatten() {
+                rewrite_associated_equation_type(parameter, equations, depth)?;
+            }
+            if let Some(error) = &mut effects.throws {
+                rewrite_associated_equation_type(error, equations, depth)?;
+            }
+            for effect in &mut effects.custom {
+                rewrite_associated_equation_type(effect, equations, depth)?;
+            }
+            rewrite_associated_equation_type(result, equations, depth)?;
+        }
+        Type::I8
+        | Type::I16
+        | Type::I32
+        | Type::I64
+        | Type::I128
+        | Type::ISize
+        | Type::U8
+        | Type::U16
+        | Type::U32
+        | Type::U64
+        | Type::U128
+        | Type::USize
+        | Type::Bool
+        | Type::Unit
+        | Type::CompileUSize(_) => {}
+    }
+    Ok(())
+}
+
+fn substitute_associated_binding(
+    binding: &mut crate::ast::AssociatedTypeBinding,
+    substitutions: &HashMap<String, Type>,
+) {
+    let mut scoped = substitutions.clone();
+    for parameter in binding.compile_groups.iter().flatten() {
+        scoped.remove(&parameter.name);
+    }
+    substitute_type_parameters(&mut binding.ty, &scoped);
 }
 
 fn substitute_parameter_types(parameter: &mut Param, substitutions: &HashMap<String, Type>) {

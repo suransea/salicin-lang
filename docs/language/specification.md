@@ -411,6 +411,19 @@ where T: Produce(Item = i32) = {
 Generic associated constructors retain their parameter groups and kinds. Their receiver region can
 determine a yielded type, as in `Iterator.Item(R)`.
 
+Where predicates can equate a generic associated constructor with a type expression by declaring
+alpha-renamable binders on the left:
+
+```sc fragment
+let borrow_item(T: type)(value: T): ()
+where T: Iterator(Item(R: region) = borrow(R)(i32)) = { ... }
+```
+
+The binder groups and kinds must exactly match the associated declaration. The right side may use
+outer compile-time parameters and its own binders. Transparent aliases are expanded before
+comparison. Equation rewriting is direct, uses at most 32 nested expansions, and does not infer
+missing binders or reorder groups.
+
 An implementation is legal only in the package that owns the trait or the nominal target. Two
 applicable implementations with the same static key are rejected.
 

@@ -6,6 +6,9 @@ subset.
 
 ## Unreleased
 
+- Added bounded generic associated-constructor equalities in where predicates, including explicit
+  binder groups, alpha normalization, transparent-alias comparison, and terminating signature
+  rewriting.
 - Migrated `Iterator` to the region-indexed `Item(R)` GAT and added access-preserving
   `SliceIter(A)(T)`. Shared slice iteration now yields borrows for non-`Copy` elements, mutable
   iteration yields exclusive element borrows, and each result is shortened to the active

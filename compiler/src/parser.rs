@@ -1047,14 +1047,25 @@ impl Parser {
         let mut labeled = 0;
         if self.take(&TokenKind::LParen) && !self.take(&TokenKind::RParen) {
             loop {
-                if matches!(self.current().kind, TokenKind::Ident(_))
-                    && self.at_offset(1, &TokenKind::Equal)
-                {
+                let starts_associated_binding = matches!(self.current().kind, TokenKind::Ident(_))
+                    && (self.at_offset(1, &TokenKind::Equal)
+                        || (self.at_offset(1, &TokenKind::LParen)
+                            && matches!(
+                                self.tokens.get(self.index + 2).map(|token| &token.kind),
+                                Some(TokenKind::Ident(_)) | Some(TokenKind::RegionName(_))
+                            )
+                            && self.at_offset(3, &TokenKind::Colon)));
+                if starts_associated_binding {
                     saw_associated = true;
                     let binding = self.expect_ident("an associated type name")?;
+                    let mut compile_groups = Vec::new();
+                    while self.at(&TokenKind::LParen) {
+                        compile_groups.push(self.compile_parameter_group()?);
+                    }
                     self.expect(&TokenKind::Equal, "`=` in associated type equality")?;
                     associated_types.push(AssociatedTypeBinding {
                         name: binding,
+                        compile_groups,
                         ty: self.type_expr()?,
                     });
                 } else {
@@ -4717,8 +4728,7 @@ fn normalize_and_validate_scopes(items: &mut [Item]) -> Result<(), String> {
                     validate_type_regions(&predicate.subject, &regions)?;
                     validate_type_regions(&predicate.trait_ref, &regions)?;
                     for binding in &mut predicate.associated_types {
-                        normalize_type_region_qualifiers(&mut binding.ty, &regions, &accesses)?;
-                        validate_type_regions(&binding.ty, &regions)?;
+                        validate_associated_binding_scopes(binding, &regions, &accesses, &empty)?;
                     }
                 }
                 for member in &mut extension.members {
@@ -4876,9 +4886,7 @@ fn validate_function_scopes(
         validate_type_effects(&predicate.subject, &effects)?;
         validate_type_effects(&predicate.trait_ref, &effects)?;
         for binding in &mut predicate.associated_types {
-            normalize_type_region_qualifiers(&mut binding.ty, &regions, &accesses)?;
-            validate_type_regions(&binding.ty, &regions)?;
-            validate_type_effects(&binding.ty, &effects)?;
+            validate_associated_binding_scopes(binding, &regions, &accesses, &effects)?;
         }
     }
     if let Some(body) = &mut function.body {
@@ -4887,6 +4895,28 @@ fn validate_function_scopes(
         validate_expr_accesses(body, &accesses)?;
     }
     Ok(())
+}
+
+fn validate_associated_binding_scopes(
+    binding: &mut AssociatedTypeBinding,
+    outer_regions: &HashSet<String>,
+    outer_accesses: &HashSet<String>,
+    effects: &HashSet<String>,
+) -> Result<(), String> {
+    reject_parameter_modifier_parameters(
+        &binding.compile_groups,
+        &format!("associated type equality `{}`", binding.name),
+    )?;
+    reject_effect_parameters(
+        &binding.compile_groups,
+        &format!("associated type equality `{}`", binding.name),
+    )?;
+    let regions = declared_regions(&binding.compile_groups, outer_regions)?;
+    let accesses = declared_accesses(&binding.compile_groups, outer_accesses)?;
+    normalize_type_region_qualifiers(&mut binding.ty, &regions, &accesses)?;
+    validate_type_regions(&binding.ty, &regions)?;
+    validate_type_accesses(&binding.ty, &accesses)?;
+    validate_type_effects(&binding.ty, effects)
 }
 
 fn normalize_borrow_region_qualifier(
@@ -8380,6 +8410,32 @@ mod tests {
         assert_eq!(
             function.where_predicates[1].associated_types[0].ty,
             Type::Named("T".into(), Vec::new())
+        );
+    }
+
+    #[test]
+    fn parses_generic_associated_type_equalities() {
+        let program = parse(
+            "let lend(T: type)(value: T): T\n\
+             where T: Lender(Item(A: access)(R: region) = borrow(A)(R)(i32)) = { value }\n",
+        )
+        .unwrap();
+        let Item::Function(function) = &program.items[0] else {
+            panic!("expected a generic function");
+        };
+        let binding = &function.where_predicates[0].associated_types[0];
+        assert_eq!(binding.name, "Item");
+        assert_eq!(binding.compile_groups.len(), 2);
+        assert!(binding.compile_groups[0][0].kind.is_access());
+        assert_eq!(binding.compile_groups[1][0].kind, CompileParamKind::Region);
+        assert_eq!(
+            binding.ty,
+            Type::Borrow {
+                mutable: false,
+                access: Some("A".into()),
+                region: Some("R".into()),
+                pointee: Box::new(Type::I32),
+            }
         );
     }
 

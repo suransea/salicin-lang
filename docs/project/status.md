@@ -56,6 +56,7 @@ Implemented type-system features include:
 - labeled arguments, overload selection, and trailing closures;
 - generic nominal types, aliases, inherent extensions, and trait implementations;
 - associated types and generic associated constructors;
+- bounded generic associated-constructor equality predicates;
 - static trait and operator dispatch;
 - trait inheritance predicates and first-order associated-type equality predicates.
 
@@ -63,8 +64,8 @@ Generic associated constructors preserve parameter kinds and groups in trait dec
 implementations. Standard iterator contracts use `Item(R: region): type`, allowing an item type to
 depend on the receiver-borrow region.
 
-Bounded constructor-equation solving, captured callable bridging, fully coherent generic trait
-methods, and improved constructor diagnostics remain active TYPE1 work.
+Captured callable bridging, fully coherent generic trait methods, and improved constructor
+diagnostics remain active TYPE1 work.
 
 ## Ownership and Borrowing
 

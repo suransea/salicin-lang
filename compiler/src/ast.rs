@@ -276,10 +276,11 @@ pub struct WherePredicate {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AssociatedTypeBinding {
     pub name: String,
+    pub compile_groups: Vec<Vec<CompileParam>>,
     pub ty: Type,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CompileParam {
     pub name: String,
     pub kind: CompileParamKind,

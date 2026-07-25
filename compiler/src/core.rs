@@ -2715,6 +2715,7 @@ fn valid_for(function: &Function) -> bool {
             trait_ref: Type::Named("core.iter.IntoIterator".to_owned(), Vec::new()),
             associated_types: vec![crate::ast::AssociatedTypeBinding {
                 name: "IntoIter".to_owned(),
+                compile_groups: Vec::new(),
                 ty: named_type("Iter"),
             }],
         },
@@ -2723,6 +2724,7 @@ fn valid_for(function: &Function) -> bool {
             trait_ref: Type::Named("core.iter.Iterator".to_owned(), Vec::new()),
             associated_types: vec![crate::ast::AssociatedTypeBinding {
                 name: "Item".to_owned(),
+                compile_groups: Vec::new(),
                 ty: named_type("Item"),
             }],
         },

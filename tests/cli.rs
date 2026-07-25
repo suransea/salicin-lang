@@ -1470,7 +1470,11 @@ fn where_trait_bounds_enable_abstract_method_dispatch() {
 
 #[test]
 fn where_associated_equalities_enable_operator_dispatch() {
-    let fixtures = ["where_operator_output.sc", "where_associated_method.sc"];
+    let fixtures = [
+        "where_operator_output.sc",
+        "where_associated_method.sc",
+        "where_gat_equality.sc",
+    ];
     for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
         assert_eq!(
             output.status.code(),
@@ -1503,6 +1507,30 @@ fn where_associated_equalities_enable_operator_dispatch() {
         "{}",
         output_text(&output)
     );
+
+    for (fixture_name, expected) in [
+        ("where_gat_equality_mismatch.sc", "not satisfied"),
+        (
+            "where_gat_equality_group_mismatch.sc",
+            "parameter-group shape",
+        ),
+        (
+            "where_gat_equality_kind_mismatch.sc",
+            "parameter-group shape",
+        ),
+    ] {
+        let output = salic()
+            .arg("check")
+            .arg(fixture("fail", fixture_name))
+            .output()
+            .expect("reject an invalid generic associated type equality");
+        assert!(!output.status.success(), "{}", output_text(&output));
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{}",
+            output_text(&output)
+        );
+    }
 }
 
 #[test]

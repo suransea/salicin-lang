@@ -1306,6 +1306,7 @@ impl Analyzer {
         let mut member_names = HashSet::new();
         let mut associated_types = Vec::new();
         let mut associated_type_kinds = HashMap::new();
+        let mut associated_type_parameter_groups = HashMap::new();
         let mut associated_type_parameters = HashMap::new();
         let mut associated_parameter_schemas = HashSet::new();
         let mut associated_parameter_counts = HashMap::new();
@@ -1364,6 +1365,8 @@ impl Analyzer {
                             name.clone(),
                             compile_groups.iter().flatten().cloned().collect(),
                         );
+                        associated_type_parameter_groups
+                            .insert(name.clone(), compile_groups.clone());
                         CompileParamKind::TypeConstructor { parameter_count }
                     };
                     if associated_kind == AssociatedKind::Parameters {
@@ -1436,6 +1439,7 @@ impl Analyzer {
                 where_predicates: definition.where_predicates,
                 associated_types,
                 associated_type_kinds,
+                associated_type_parameter_groups,
                 associated_type_parameters,
                 associated_parameter_schemas,
                 associated_parameter_counts,
@@ -1591,6 +1595,7 @@ impl Analyzer {
             .filter(|name| schema.associated_type_kinds[*name] == CompileParamKind::Type)
             .map(|name| crate::ast::AssociatedTypeBinding {
                 name: name.clone(),
+                compile_groups: Vec::new(),
                 ty: Type::Named(name.clone(), Vec::new()),
             })
             .collect();
@@ -5017,11 +5022,7 @@ impl Analyzer {
             .collect::<HashMap<_, _>>();
         let mut predicates = extension.where_predicates.clone();
         for predicate in &mut predicates {
-            substitute_type_parameters(&mut predicate.subject, &substitutions);
-            substitute_type_parameters(&mut predicate.trait_ref, &substitutions);
-            for binding in &mut predicate.associated_types {
-                substitute_type_parameters(&mut binding.ty, &substitutions);
-            }
+            substitute_where_predicate(predicate, &substitutions);
         }
         if predicates
             .iter()
@@ -5206,7 +5207,7 @@ impl Analyzer {
                 }
             }
             for binding in &predicate.associated_types {
-                if self.source_type_is_concrete(&binding.ty) {
+                if binding.compile_groups.is_empty() && self.source_type_is_concrete(&binding.ty) {
                     let ty = self.lower_source_type(&binding.ty);
                     extension_access =
                         self.restrict_access_boundary_to_type(&extension_access, &ty, &origin);
@@ -5806,11 +5807,7 @@ impl Analyzer {
             }
             let mut predicates = extension.where_predicates.clone();
             for predicate in &mut predicates {
-                substitute_type_parameters(&mut predicate.subject, &substitutions);
-                substitute_type_parameters(&mut predicate.trait_ref, &substitutions);
-                for binding in &mut predicate.associated_types {
-                    substitute_type_parameters(&mut binding.ty, &substitutions);
-                }
+                substitute_where_predicate(predicate, &substitutions);
             }
             if predicates
                 .iter()
@@ -5866,11 +5863,7 @@ impl Analyzer {
             substitutions.insert(extension.element_parameter.clone(), element_source.clone());
             let mut predicates = extension.where_predicates.clone();
             for predicate in &mut predicates {
-                substitute_type_parameters(&mut predicate.subject, &substitutions);
-                substitute_type_parameters(&mut predicate.trait_ref, &substitutions);
-                for binding in &mut predicate.associated_types {
-                    substitute_type_parameters(&mut binding.ty, &substitutions);
-                }
+                substitute_where_predicate(predicate, &substitutions);
             }
             if predicates
                 .iter()
@@ -5905,11 +5898,7 @@ impl Analyzer {
                 substitute_type_parameters(trait_ref, &substitutions);
             }
             for predicate in &mut extension.where_predicates {
-                substitute_type_parameters(&mut predicate.subject, &substitutions);
-                substitute_type_parameters(&mut predicate.trait_ref, &substitutions);
-                for binding in &mut predicate.associated_types {
-                    substitute_type_parameters(&mut binding.ty, &substitutions);
-                }
+                substitute_where_predicate(predicate, &substitutions);
             }
             for member in &mut extension.members {
                 match member {
@@ -6034,11 +6023,7 @@ impl Analyzer {
         }
         let mut predicates = extension.where_predicates.clone();
         for predicate in &mut predicates {
-            substitute_type_parameters(&mut predicate.subject, &substitutions);
-            substitute_type_parameters(&mut predicate.trait_ref, &substitutions);
-            for binding in &mut predicate.associated_types {
-                substitute_type_parameters(&mut binding.ty, &substitutions);
-            }
+            substitute_where_predicate(predicate, &substitutions);
         }
         if predicates
             .iter()
@@ -6419,7 +6404,9 @@ impl Analyzer {
                     }
                 }
                 for binding in &predicate.associated_types {
-                    self.lower_source_type(&binding.ty);
+                    if binding.compile_groups.is_empty() {
+                        self.lower_source_type(&binding.ty);
+                    }
                 }
                 if matches!(&predicate.trait_ref, Type::Named(name, arguments)
                     if name == self.lang_item_name(LangItemKind::Copy) && arguments.is_empty())
@@ -6521,11 +6508,21 @@ impl Analyzer {
                 .iter()
                 .map(|argument| self.lower_source_type(argument))
                 .collect::<Vec<_>>();
-            let associated_types = predicate
-                .associated_types
-                .iter()
-                .map(|binding| (binding.name.clone(), self.lower_source_type(&binding.ty)))
-                .collect::<HashMap<_, _>>();
+            let mut equations = HashMap::new();
+            let mut associated_types = HashMap::new();
+            let mut associated_type_sources = HashMap::new();
+            for binding in &predicate.associated_types {
+                let Some((parameters, source)) =
+                    self.normalized_associated_type_equation(&schema, binding)
+                else {
+                    continue;
+                };
+                if parameters.is_empty() {
+                    associated_types.insert(binding.name.clone(), self.lower_source_type(&source));
+                }
+                associated_type_sources.insert(binding.name.clone(), source.clone());
+                equations.insert(binding.name.clone(), (parameters, source));
+            }
             if self_ty == Ty::Error
                 || arguments.contains(&Ty::Error)
                 || associated_types.values().any(|ty| *ty == Ty::Error)
@@ -6550,13 +6547,15 @@ impl Analyzer {
                 substitutions.insert(parameter.name.clone(), argument.clone());
             }
             for binding in &predicate.associated_types {
-                substitutions.insert(binding.name.clone(), binding.ty.clone());
+                if binding.compile_groups.is_empty() {
+                    substitutions.insert(binding.name.clone(), binding.ty.clone());
+                }
             }
             let mut methods = HashMap::new();
             let associated_types_complete = schema
                 .associated_types
                 .iter()
-                .all(|name| associated_types.contains_key(name));
+                .all(|name| associated_type_sources.contains_key(name));
             for method_id in schema
                 .method_order
                 .iter()
@@ -6565,6 +6564,14 @@ impl Analyzer {
                 let declaration = &schema.methods[method_id];
                 let mut method = declaration.clone();
                 substitute_function_types(&mut method, &substitutions);
+                if let Err(diagnostic) =
+                    substitute_associated_type_equations(&mut method, &equations)
+                {
+                    self.error(format!(
+                        "invalid associated type equation in where predicate of `{function}`: {diagnostic}"
+                    ));
+                    continue;
+                }
                 let canonical = assumed_trait_method_name(function, &key, method_id);
                 let groups = method
                     .groups
@@ -6615,12 +6622,51 @@ impl Analyzer {
                 TraitImplInfo {
                     key,
                     associated_types,
-                    associated_type_sources: HashMap::new(),
+                    associated_type_sources,
                     methods,
                     access: schema.access,
                 },
             );
         }
+    }
+
+    fn normalized_associated_type_equation(
+        &self,
+        schema: &TraitSchema,
+        binding: &crate::ast::AssociatedTypeBinding,
+    ) -> Option<(Vec<CompileParam>, Type)> {
+        let expected = schema
+            .associated_type_parameters
+            .get(&binding.name)
+            .cloned()
+            .unwrap_or_default();
+        let actual = binding
+            .compile_groups
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+        if expected.len() != actual.len()
+            || expected
+                .iter()
+                .zip(&actual)
+                .any(|(expected, actual)| expected.kind != actual.kind)
+        {
+            return None;
+        }
+        let substitutions = actual
+            .iter()
+            .zip(&expected)
+            .map(|(actual, expected)| {
+                (
+                    actual.name.clone(),
+                    Type::Named(expected.name.clone(), Vec::new()),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        let mut source = binding.ty.clone();
+        substitute_type_parameters(&mut source, &substitutions);
+        Some((expected, source))
     }
 
     fn validate_where_predicate_shapes(
@@ -6665,18 +6711,52 @@ impl Analyzer {
                         binding.name
                     ));
                     valid = false;
-                } else if schema.associated_type_kinds[&binding.name] != CompileParamKind::Type {
-                    self.error(format!(
-                        "generic associated type equality `{name}.{}` in where predicate of {owner} is not supported yet",
-                        binding.name
-                    ));
-                    valid = false;
                 } else if !associated.insert(binding.name.clone()) {
                     self.error(format!(
                         "duplicate associated type equality `{name}.{}` in where predicate of {owner}",
                         binding.name
                     ));
                     valid = false;
+                } else {
+                    let expected_groups = schema
+                        .associated_type_parameter_groups
+                        .get(&binding.name)
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]);
+                    if expected_groups.len() != binding.compile_groups.len()
+                        || expected_groups.iter().zip(&binding.compile_groups).any(
+                            |(expected, actual)| {
+                                expected.len() != actual.len()
+                                    || expected
+                                        .iter()
+                                        .zip(actual)
+                                        .any(|(expected, actual)| expected.kind != actual.kind)
+                            },
+                        )
+                    {
+                        self.error(format!(
+                            "associated type equality `{name}.{}` in where predicate of {owner} has a parameter-group shape that does not match its declaration",
+                            binding.name
+                        ));
+                        valid = false;
+                    }
+                    let mut parameter_names = HashSet::new();
+                    for parameter in binding.compile_groups.iter().flatten() {
+                        if parameter.default.is_some() {
+                            self.error(format!(
+                                "associated type equality `{name}.{}` parameter `{}` cannot have a default",
+                                binding.name, parameter.name
+                            ));
+                            valid = false;
+                        }
+                        if !parameter_names.insert(parameter.name.clone()) {
+                            self.error(format!(
+                                "duplicate parameter `{}` in associated type equality `{name}.{}`",
+                                parameter.name, binding.name
+                            ));
+                            valid = false;
+                        }
+                    }
                 }
             }
         }
@@ -6888,6 +6968,7 @@ impl Analyzer {
             let associated_types = predicate
                 .associated_types
                 .iter()
+                .filter(|binding| binding.compile_groups.is_empty())
                 .map(|binding| (binding.name.clone(), self.lower_source_type(&binding.ty)))
                 .collect::<HashMap<_, _>>();
             if subject == Ty::Error
@@ -6901,19 +6982,29 @@ impl Analyzer {
                 if name == self.lang_item_name(LangItemKind::Copy) && arguments.is_empty() {
                     self.is_copy_type(&subject)
                 } else {
-                    self.trait_impls
-                        .get(&TraitImplKey {
-                            self_ty: subject.clone(),
-                            trait_ref: TraitRefKey {
-                                name: name.clone(),
-                                arguments,
-                            },
-                        })
-                        .is_some_and(|implementation| {
-                            associated_types.iter().all(|(name, expected)| {
-                                implementation.associated_types.get(name) == Some(expected)
+                    let schema = self.traits.get(name).cloned();
+                    schema.is_some_and(|schema| {
+                        self.trait_impls
+                            .get(&TraitImplKey {
+                                self_ty: subject.clone(),
+                                trait_ref: TraitRefKey {
+                                    name: name.clone(),
+                                    arguments,
+                                },
                             })
-                        })
+                            .cloned()
+                            .is_some_and(|implementation| {
+                                associated_types.iter().all(|(name, expected)| {
+                                    implementation.associated_types.get(name) == Some(expected)
+                                }) && predicate.associated_types.iter().all(|binding| {
+                                    self.concrete_associated_equation_holds(
+                                        &implementation,
+                                        &schema,
+                                        binding,
+                                    )
+                                })
+                            })
+                    })
                 };
             if !satisfied {
                 self.error(format!(
@@ -6942,6 +7033,7 @@ impl Analyzer {
         let associated_types = predicate
             .associated_types
             .iter()
+            .filter(|binding| binding.compile_groups.is_empty())
             .map(|binding| (binding.name.clone(), self.lower_source_type(&binding.ty)))
             .collect::<HashMap<_, _>>();
         if subject == Ty::Error
@@ -6953,6 +7045,9 @@ impl Analyzer {
         if name == self.lang_item_name(LangItemKind::Copy) && arguments.is_empty() {
             return self.is_copy_type(&subject);
         }
+        let Some(schema) = self.traits.get(name).cloned() else {
+            return false;
+        };
         self.trait_impls
             .get(&TraitImplKey {
                 self_ty: subject,
@@ -6961,11 +7056,59 @@ impl Analyzer {
                     arguments,
                 },
             })
+            .cloned()
             .is_some_and(|implementation| {
                 associated_types.iter().all(|(name, expected)| {
                     implementation.associated_types.get(name) == Some(expected)
+                }) && predicate.associated_types.iter().all(|binding| {
+                    self.concrete_associated_equation_holds(&implementation, &schema, binding)
                 })
             })
+    }
+
+    fn concrete_associated_equation_holds(
+        &mut self,
+        implementation: &TraitImplInfo,
+        schema: &TraitSchema,
+        binding: &crate::ast::AssociatedTypeBinding,
+    ) -> bool {
+        if binding.compile_groups.is_empty() {
+            return true;
+        }
+        let Some((parameters, mut expected)) =
+            self.normalized_associated_type_equation(schema, binding)
+        else {
+            return false;
+        };
+        let Some(mut actual) = implementation
+            .associated_type_sources
+            .get(&binding.name)
+            .cloned()
+        else {
+            return false;
+        };
+        let Type::Named(_, arguments) = &mut actual else {
+            return false;
+        };
+        arguments.extend(
+            parameters
+                .iter()
+                .map(|parameter| Type::Named(parameter.name.clone(), Vec::new())),
+        );
+        let mut diagnostics = Vec::new();
+        expand_alias_type(
+            &mut actual,
+            &self.type_aliases,
+            &mut Vec::new(),
+            &mut diagnostics,
+        );
+        expand_alias_type(
+            &mut expected,
+            &self.type_aliases,
+            &mut Vec::new(),
+            &mut diagnostics,
+        );
+        diagnostics.is_empty() && actual == expected
     }
 
     fn probe_expr_ty(&self, expression: &Expr, hint: Option<&Ty>, context: &LowerCtx) -> TypeProbe {
