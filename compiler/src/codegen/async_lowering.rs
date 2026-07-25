@@ -20,7 +20,7 @@ impl Analyzer {
         body: &Expr,
         context: &mut super::flow::LowerCtx,
     ) -> HirExpr {
-        let source_plan = multiple_await_recurring_loop_source(body, self.next_async_future)
+        let mut source_plan = multiple_await_recurring_loop_source(body, self.next_async_future)
             .or_else(|| simple_recurring_async_loop_source(body, self.next_async_future))
             .unwrap_or_else(|| split_async_source(body));
         if !source_plan.has_await {
@@ -116,7 +116,10 @@ impl Analyzer {
                     }
                 };
             }
-            if let Some(output) = output {
+            if let Some(mut output) = output {
+                if output == Ty::Never {
+                    output = Ty::Enum(self.lang_item_name(LangItemKind::Never).to_owned());
+                }
                 if source_plan.loop_condition.is_some() && output != Ty::Unit {
                     self.error(
                         "value-producing `break` is not allowed in a recurring async `while`",
@@ -192,6 +195,32 @@ impl Analyzer {
         } else {
             None
         };
+        let mut loop_carry_names = Vec::new();
+        let mut loop_carry_types = Vec::new();
+        if loop_step.is_none() {
+            if let Some(source) = source_plan.loop_step.as_ref() {
+                for name in &source.carry_names {
+                    let Some(local) = context.lookup(name) else {
+                        continue;
+                    };
+                    if !self.is_copy_type(&local.ty) {
+                        loop_carry_names.push(name.clone());
+                        loop_carry_types.push(local.ty.clone());
+                    }
+                }
+                if !loop_carry_names.is_empty() {
+                    let carry =
+                        Expr::Tuple(loop_carry_names.iter().cloned().map(Expr::Name).collect());
+                    if let Some(continuation) = source_plan.continuation.as_mut() {
+                        rewrite_async_loop_continue_carry(
+                            &mut continuation.body,
+                            &source.continue_constructor,
+                            &carry,
+                        );
+                    }
+                }
+            }
+        }
         if loop_step.is_none() {
             loop_step = match (&source_plan.loop_step, awaited.as_ref()) {
                 (Some(source), Some(awaited)) => {
@@ -228,7 +257,11 @@ impl Analyzer {
                         return super::lower::error_expr();
                     }
                     Some(self.register_async_loop_step(
-                        Ty::Unit,
+                        if loop_carry_types.is_empty() {
+                            Ty::Unit
+                        } else {
+                            Ty::Tuple(loop_carry_types.clone())
+                        },
                         output,
                         source.continue_constructor.clone(),
                         source.break_constructor.clone(),
@@ -302,6 +335,7 @@ impl Analyzer {
             loop_condition_captures = closure.captures;
         }
         let mut continuation_captures = Vec::new();
+        let mut loop_carry_capture_indices = Vec::new();
         if let (Some(awaited), Some(continuation)) = (awaited.as_mut(), source_plan.continuation) {
             if continuation.mutable {
                 self.error("an await result used after suspension cannot be mutable yet");
@@ -367,17 +401,30 @@ impl Analyzer {
             let HirExprKind::LocalClosure(closure) = lowered.kind else {
                 return lowered;
             };
-            if loop_step.is_some()
-                && closure
-                    .captures
-                    .iter()
-                    .map(capture_pass_mode)
-                    .any(|mode| mode == PassMode::Move)
-            {
-                self.error(
-                    "a recurring async loop with move-only loop-carried state requires generated `Continue(Carry)` transfer, which is not lowered yet",
-                );
-                return super::lower::error_expr();
+            if loop_step.is_some() {
+                for (name, capture) in closure.capture_names.iter().zip(&closure.captures) {
+                    if capture_pass_mode(capture) == PassMode::Move
+                        && !loop_carry_names.contains(name)
+                    {
+                        self.error(format!(
+                            "move-only async loop capture `{name}` is not available on every `continue` path"
+                        ));
+                        return super::lower::error_expr();
+                    }
+                }
+                for name in &loop_carry_names {
+                    let Some(index) = closure
+                        .capture_names
+                        .iter()
+                        .position(|capture| capture == name)
+                    else {
+                        self.error(format!(
+                            "move-only async loop carry `{name}` is not available to its continuation"
+                        ));
+                        return super::lower::error_expr();
+                    };
+                    loop_carry_capture_indices.push(index);
+                }
             }
             let async_effect = self.lang_item_name(LangItemKind::AsyncEffect);
             if closure.throws_error.is_some()
@@ -464,6 +511,11 @@ impl Analyzer {
             loop_condition_capture_types.push(ty);
         }
         if let Some(awaited) = awaited.as_mut() {
+            awaited.loop_carry_fields = loop_carry_capture_indices
+                .iter()
+                .map(|index| continuation_fields[*index])
+                .collect();
+            awaited.loop_carry_types = loop_carry_types.clone();
             awaited.continuation_capture_modes = continuation_captures
                 .iter()
                 .map(capture_pass_mode)
@@ -634,6 +686,8 @@ impl Analyzer {
             next: None,
             loop_step: None,
             loop_condition: None,
+            loop_carry_fields: Vec::new(),
+            loop_carry_types: Vec::new(),
         })
     }
 
@@ -1699,6 +1753,46 @@ fn poll_async_loop_step(
             value: Box::new(loop_resume.clone()),
         },
     };
+    let initialize_carry = awaited
+        .loop_carry_fields
+        .iter()
+        .zip(&awaited.loop_carry_types)
+        .enumerate()
+        .map(|(index, (field, ty))| {
+            let value = HirExpr {
+                ty: ty.clone(),
+                kind: HirExprKind::Read {
+                    place: HirPlace {
+                        local: continue_local,
+                        root_ty: step.carry.clone(),
+                        projections: vec![index],
+                        dynamic_index: None,
+                        ty: ty.clone(),
+                        capability: LocalCapability::Owned,
+                        root_mutable: false,
+                        loan: None,
+                        indirect: false,
+                    },
+                    kind: HirReadKind::Move,
+                },
+            };
+            HirStmt::Expr(HirExpr {
+                ty: Ty::Unit,
+                kind: HirExprKind::RawInit {
+                    pointer: Box::new(HirExpr {
+                        ty: Ty::Pointer {
+                            pointee: Box::new(ty.clone()),
+                            mutable: true,
+                        },
+                        kind: HirExprKind::RawAddress {
+                            place: async_field_place(0, self_ty.clone(), *field, ty.clone()),
+                        },
+                    }),
+                    value: Box::new(value),
+                },
+            })
+        })
+        .collect::<Vec<_>>();
     let break_value = HirExpr {
         ty: step.output.clone(),
         kind: HirExprKind::Read {
@@ -1719,10 +1813,11 @@ fn poll_async_loop_step(
     let continue_poll = HirExpr {
         ty: Ty::Never,
         kind: HirExprKind::Block(
-            vec![
-                HirStmt::Expr(initialize_child),
-                HirStmt::Expr(set_state(self_ty, 1)),
-            ],
+            initialize_carry
+                .into_iter()
+                .chain(std::iter::once(HirStmt::Expr(initialize_child)))
+                .chain(std::iter::once(HirStmt::Expr(set_state(self_ty, 1))))
+                .collect(),
             Some(Box::new(HirExpr {
                 ty: Ty::Never,
                 kind: HirExprKind::Continue,
@@ -1960,6 +2055,8 @@ pub(super) struct AwaitedFutureInfo {
     pub(super) next: Option<Box<AwaitedFutureInfo>>,
     pub(super) loop_step: Option<AsyncLoopStepInfo>,
     pub(super) loop_condition: Option<AsyncLoopConditionInfo>,
+    pub(super) loop_carry_fields: Vec<usize>,
+    pub(super) loop_carry_types: Vec<Ty>,
 }
 
 #[derive(Debug, Clone)]
@@ -2012,6 +2109,7 @@ struct AsyncLoopStepSource {
     break_value: Expr,
     output_hint: Option<Ty>,
     probe_awaits: Vec<(String, Expr)>,
+    carry_names: Vec<String>,
     continue_constructor: String,
     break_constructor: String,
 }
@@ -2248,6 +2346,7 @@ fn multiple_await_recurring_loop_source(body: &Expr, id: usize) -> Option<AsyncS
             break_value,
             output_hint: None,
             probe_awaits,
+            carry_names: Vec::new(),
             continue_constructor,
             break_constructor,
         }),
@@ -2305,8 +2404,11 @@ fn simple_recurring_async_loop_source(body: &Expr, id: usize) -> Option<AsyncSou
         simple_loop_decision,
     )?;
     let break_value = match (&then_control, &else_control) {
-        (SimpleLoopControl::Break(value), control) if control.continues() => value.clone(),
-        (control, SimpleLoopControl::Break(value)) if control.continues() => value.clone(),
+        (SimpleLoopControl::Break(value), control) if control.continues() => Some(value.clone()),
+        (control, SimpleLoopControl::Break(value)) if control.continues() => Some(value.clone()),
+        (then_control, else_control) if then_control.continues() && else_control.continues() => {
+            None
+        }
         _ => return None,
     };
     let continue_constructor = format!("$async$loop$continue${id}");
@@ -2318,9 +2420,13 @@ fn simple_recurring_async_loop_source(body: &Expr, id: usize) -> Option<AsyncSou
         )
     };
     let continue_step = construct(&continue_constructor, Expr::Unit);
-    let break_step = construct(&break_constructor, break_value.clone());
+    let break_step = break_value
+        .as_ref()
+        .map(|value| construct(&break_constructor, value.clone()));
     let lower_control = |control: SimpleLoopControl| match control {
-        SimpleLoopControl::Break(_) => break_step.clone(),
+        SimpleLoopControl::Break(_) => break_step
+            .clone()
+            .expect("a source break has an internal break constructor"),
         SimpleLoopControl::Continue => continue_step.clone(),
         SimpleLoopControl::Fallthrough(expression) => Expr::Block(
             vec![Stmt::Expr(expression)],
@@ -2344,9 +2450,16 @@ fn simple_recurring_async_loop_source(body: &Expr, id: usize) -> Option<AsyncSou
         retained: Vec::new(),
         loop_step: Some(AsyncLoopStepSource {
             binding: binding.name.clone(),
-            break_value,
-            output_hint: None,
+            break_value: break_value.clone().unwrap_or(Expr::Unit),
+            output_hint: break_value.is_none().then_some(Ty::Never),
             probe_awaits: Vec::new(),
+            carry_names: {
+                let mut names = decision.map(referenced_names).unwrap_or_default();
+                names.remove(&binding.name);
+                let mut names = names.into_iter().collect::<Vec<_>>();
+                names.sort();
+                names
+            },
             continue_constructor,
             break_constructor,
         }),
@@ -2440,6 +2553,21 @@ fn is_simple_loop_fallthrough(expression: &Expr) -> bool {
         }
     });
     supported
+}
+
+fn rewrite_async_loop_continue_carry(expression: &mut Expr, constructor: &str, carry: &Expr) {
+    super::source_rewrite::visit_expr_mut(expression, &mut |expression| {
+        let Expr::Call(callee, arguments) = expression.unlocated_mut() else {
+            return;
+        };
+        if !matches!(callee.unlocated(), Expr::Name(name) if name == constructor) {
+            return;
+        }
+        let [argument] = arguments.as_mut_slice() else {
+            return;
+        };
+        argument.value = carry.clone();
+    });
 }
 
 fn split_async_source(body: &Expr) -> AsyncSourcePlan {

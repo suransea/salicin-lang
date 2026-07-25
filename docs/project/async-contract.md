@@ -156,6 +156,12 @@ completed iterations are never retained or dropped again. Loop-carried borrows r
 the same `Move` rule as every other value stored across `await`; in particular, an iteration cannot
 return a borrow into its own storage as `Carry`.
 
+Move-only parent values referenced by the post-await continuation are explicit fields of `Carry`.
+The continuation moves them into every reachable `Continue`, and the parent reinitializes their
+state fields before constructing the next child. A `Break` path instead consumes or drops them in
+that continuation. A source loop with no reachable `Break` uses the standard uninhabited `Never`
+type as `Output`; the internal break variant cannot be constructed.
+
 ## Ownership And Cancellation
 
 An anonymous future is an owned resource unless all of its stored state is structurally `Copy` and

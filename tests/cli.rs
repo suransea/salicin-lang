@@ -3224,6 +3224,26 @@ fn recurring_async_loop_composes_multiple_iteration_awaits() {
 }
 
 #[test]
+fn recurring_async_loop_transfers_move_only_carry() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "async_await_loop_move_carry.sc"))
+        .output()
+        .expect("run move-only async loop carry fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
+fn recurring_async_loop_without_break_has_never_output() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "async_await_infinite_loop.sc"))
+        .output()
+        .expect("run unpolled infinite async loop fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn cancelling_an_async_loop_drops_completed_and_active_children_once() {
     let output = salic()
         .arg("run")

@@ -72,6 +72,9 @@ subset.
   child, skip rechecks while that child is Pending, and finish directly when the condition is false.
   Iterations with multiple sequential awaits lower to one finite iteration future, infer break
   outputs from all awaited bindings, and cancel only the active nested child chain.
+  Move-only continuation state transfers through `Continue(Carry)` and is restored before the next
+  iteration, with exact completion and cancellation cleanup. Loops without a reachable break use
+  uninhabited `Never` output.
 - Declared `Continuation(Input, Output)` and `EffectCallable(Input, Output, Answer)` as bodyless
   type forms, matching their compiler-owned representations instead of describing them as empty
   structures. Lang-item validation now requires the exact type-form declarations.

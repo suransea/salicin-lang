@@ -9,7 +9,7 @@ let main(): i32 = {
       }
     }
   }
-  0
+  42
 }
 
 let child() = {

@@ -42,12 +42,14 @@ already hoist their suspension without recursive state, including false or suspe
 fallthrough, and value-producing `break`. A `loop` with one await and a boolean
 break/continue decision now reuses one child slot through a private step enum and poll-local HIR
 loop. Its `Break(Output)` path now preserves inferred value outputs, including move-only values;
-an omitted `else` or a non-suspending branch body forms the fallthrough backedge. Generalize that
-path to explicit move-only `Carry`. An iteration with multiple sequential suspension points lowers
-to one non-recursive iteration future whose final output is the step outcome. Recurring pre-test
-and post-test `while` loops re-evaluate a pure condition before constructing the next iteration;
-value-producing `break` remains invalid because `while` is unit-valued. Residual algebraic-effect
-specialization is a separate follow-up task.
+an omitted `else` or a non-suspending branch body forms the fallthrough backedge. Move-only values
+used by the continuation are transferred through `Continue(Carry)` and restored into parent state.
+An iteration with multiple sequential suspension points lowers to one non-recursive iteration
+future whose final output is the step outcome. A loop without `break` has `Never` output. Recurring
+pre-test and post-test `while` loops re-evaluate a pure condition before constructing the next
+iteration; value-producing `break` remains invalid because `while` is unit-valued. Generalize
+suspension placement beyond the current top-level linear iteration forms. Residual
+algebraic-effect specialization is a separate follow-up task.
 
 Loop completion requires an allocation-free reusable iteration state. The generated iteration
 returns an internal `Continue(Carry)` or `Break(Output)` outcome, transfers loop-carried values by
