@@ -257,6 +257,11 @@ fn normalize_type_labeled_arguments(
         Type::Borrow { pointee, .. } => {
             normalize_type_labeled_arguments(pointee, constructor_parameters, diagnostics)
         }
+        Type::Tuple(fields) => {
+            for field in fields {
+                normalize_type_labeled_arguments(field, constructor_parameters, diagnostics);
+            }
+        }
         Type::Array(element, _) => {
             normalize_type_labeled_arguments(element, constructor_parameters, diagnostics)
         }
@@ -469,7 +474,7 @@ fn normalize_expr_labeled_type_arguments(
         Expr::Member(base, _) | Expr::ChainMember(base, _) => {
             normalize_expr_labeled_type_arguments(base, constructor_parameters, diagnostics)
         }
-        Expr::Array(elements) => {
+        Expr::Array(elements) | Expr::Tuple(elements) => {
             for element in elements {
                 normalize_expr_labeled_type_arguments(element, constructor_parameters, diagnostics);
             }
@@ -878,6 +883,11 @@ pub(super) fn expand_alias_type(
 ) {
     match source {
         Type::Borrow { pointee, .. } => expand_alias_type(pointee, aliases, stack, diagnostics),
+        Type::Tuple(fields) => {
+            for field in fields {
+                expand_alias_type(field, aliases, stack, diagnostics);
+            }
+        }
         Type::Array(element, _) => expand_alias_type(element, aliases, stack, diagnostics),
         Type::ArrayApplication { element, .. } => {
             expand_alias_type(element, aliases, stack, diagnostics)
@@ -1071,7 +1081,7 @@ fn expand_expr_aliases(
         Expr::Member(base, _) | Expr::ChainMember(base, _) => {
             expand_expr_aliases(base, aliases, diagnostics)
         }
-        Expr::Array(elements) => {
+        Expr::Array(elements) | Expr::Tuple(elements) => {
             for element in elements {
                 expand_expr_aliases(element, aliases, diagnostics);
             }
@@ -1384,7 +1394,7 @@ pub(super) fn substitute_self_expression_target(expression: &mut Expr, target: &
         Expr::Member(base, _) | Expr::ChainMember(base, _) => {
             substitute_self_expression_target(base, target)
         }
-        Expr::Array(elements) => {
+        Expr::Array(elements) | Expr::Tuple(elements) => {
             for element in elements {
                 substitute_self_expression_target(element, target);
             }
@@ -1546,7 +1556,7 @@ pub(super) fn rewrite_abstract_self_qualified_methods(expression: &mut Expr) {
         Expr::Member(base, _) | Expr::ChainMember(base, _) => {
             rewrite_abstract_self_qualified_methods(base)
         }
-        Expr::Array(elements) => {
+        Expr::Array(elements) | Expr::Tuple(elements) => {
             for element in elements {
                 rewrite_abstract_self_qualified_methods(element);
             }
@@ -1701,7 +1711,7 @@ pub(super) fn substitute_expr_types(expression: &mut Expr, substitutions: &HashM
             }
         }
         Expr::ChainMember(base, _) => substitute_expr_types(base, substitutions),
-        Expr::Array(elements) => {
+        Expr::Array(elements) | Expr::Tuple(elements) => {
             for element in elements {
                 substitute_expr_types(element, substitutions);
             }
@@ -1812,7 +1822,7 @@ pub(super) fn source_type_expression(source: &Type) -> Expr {
         Type::U64 => Expr::Name("u64".to_owned()),
         Type::Bool => Expr::Name("bool".to_owned()),
         Type::CompileUSize(value) => Expr::Integer(i128::from(*value)),
-        Type::Borrow { .. } | Type::Function { .. } => Expr::Type(source.clone()),
+        Type::Borrow { .. } | Type::Tuple(_) | Type::Function { .. } => Expr::Type(source.clone()),
         Type::Array(element, length) => Expr::Call(
             Box::new(Expr::Call(
                 Box::new(Expr::Name("Array".to_owned())),
@@ -1900,6 +1910,11 @@ pub(super) fn substitute_type_parameters(ty: &mut Type, substitutions: &HashMap<
                 }
             }
             substitute_type_parameters(pointee, substitutions)
+        }
+        Type::Tuple(fields) => {
+            for field in fields {
+                substitute_type_parameters(field, substitutions);
+            }
         }
         Type::Array(element, _) => substitute_type_parameters(element, substitutions),
         Type::ArrayApplication {
@@ -2124,7 +2139,7 @@ pub(super) fn rewrite_handler_returns(expression: &mut Expr, return_name: &str) 
         Expr::Member(base, _) | Expr::ChainMember(base, _) => {
             rewrite_handler_returns(base, return_name)
         }
-        Expr::Array(elements) => {
+        Expr::Array(elements) | Expr::Tuple(elements) => {
             for element in elements {
                 rewrite_handler_returns(element, return_name);
             }
@@ -2241,7 +2256,7 @@ pub(super) fn rewrite_static_function_values(
                 rewrite_static_function_values(&mut field.value, replacements);
             }
         }
-        Expr::Array(elements) => {
+        Expr::Array(elements) | Expr::Tuple(elements) => {
             for element in elements {
                 rewrite_static_function_values(element, replacements);
             }
@@ -2387,7 +2402,7 @@ fn visit_expr_mut_ordered(
                 visit_expr_mut_ordered(&mut field.value, visitor, preorder);
             }
         }
-        Expr::Array(elements) => {
+        Expr::Array(elements) | Expr::Tuple(elements) => {
             for element in elements {
                 visit_expr_mut_ordered(element, visitor, preorder);
             }
@@ -2739,7 +2754,7 @@ fn hygienic_rename_expr(
         Expr::Member(base, _) | Expr::ChainMember(base, _) => {
             hygienic_rename_expr(base, prefix, next, scopes)
         }
-        Expr::Array(elements) => {
+        Expr::Array(elements) | Expr::Tuple(elements) => {
             for element in elements {
                 hygienic_rename_expr(element, prefix, next, scopes);
             }
@@ -2845,6 +2860,11 @@ fn hygienic_rename_pattern(
     scopes: &mut [HashMap<String, String>],
 ) {
     match pattern {
+        Pattern::Tuple(patterns) => {
+            for pattern in patterns {
+                hygienic_rename_pattern(pattern, prefix, next, scopes);
+            }
+        }
         Pattern::Binding(name) => {
             let renamed = format!("{prefix}{}${}", *next, name);
             *next += 1;
@@ -2873,6 +2893,11 @@ fn hygienic_rename_pattern(
 
 pub(super) fn collect_pattern_binding_names(pattern: &Pattern, names: &mut HashSet<String>) {
     match pattern {
+        Pattern::Tuple(patterns) => {
+            for pattern in patterns {
+                collect_pattern_binding_names(pattern, names);
+            }
+        }
         Pattern::Binding(name) => {
             names.insert(name.clone());
         }
@@ -2895,6 +2920,7 @@ pub(super) fn collect_pattern_binding_names(pattern: &Pattern, names: &mut HashS
 
 pub(super) fn pattern_contains_binding(pattern: &Pattern) -> bool {
     match pattern {
+        Pattern::Tuple(patterns) => patterns.iter().any(pattern_contains_binding),
         Pattern::Binding(_) => true,
         Pattern::Constructor { fields, .. } => match fields {
             PatternFields::Unit => false,
@@ -2919,6 +2945,12 @@ pub(super) fn pattern_for_suspended_guard(pattern: &Pattern, guard: &Expr) -> Pa
 
 fn pattern_retaining_bindings(pattern: &Pattern, retained: &HashSet<String>) -> Pattern {
     match pattern {
+        Pattern::Tuple(patterns) => Pattern::Tuple(
+            patterns
+                .iter()
+                .map(|pattern| pattern_retaining_bindings(pattern, retained))
+                .collect(),
+        ),
         Pattern::Binding(name) if retained.contains(name) => pattern.clone(),
         Pattern::Binding(_) => Pattern::Wildcard,
         Pattern::Constructor { path, fields } => Pattern::Constructor {
@@ -3014,7 +3046,7 @@ fn expression_mentions_any_name(expression: &Expr, names: &HashSet<String>) -> b
         Expr::Member(base, _) | Expr::ChainMember(base, _) => {
             expression_mentions_any_name(base, names)
         }
-        Expr::Array(elements) => elements
+        Expr::Array(elements) | Expr::Tuple(elements) => elements
             .iter()
             .any(|element| expression_mentions_any_name(element, names)),
         Expr::Index { base, index } => {

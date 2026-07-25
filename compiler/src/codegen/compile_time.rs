@@ -133,6 +133,17 @@ pub(super) fn source_effect_identity(effect: &Type) -> String {
         Type::U64 => "u64".to_owned(),
         Type::Bool => "bool".to_owned(),
         Type::Unit => "()".to_owned(),
+        Type::Tuple(fields) => {
+            let mut rendered = fields
+                .iter()
+                .map(source_effect_identity)
+                .collect::<Vec<_>>()
+                .join(", ");
+            if fields.len() == 1 {
+                rendered.push(',');
+            }
+            format!("({rendered})")
+        }
         Type::CompileUSize(value) => value.to_string(),
         Type::ArrayApplication {
             constructor,
@@ -207,6 +218,9 @@ pub(super) fn source_type_mentions_any_name(source: &Type, names: &HashSet<Strin
                     .any(|argument| source_type_mentions_any_name(&argument.ty, names))
         }
         Type::Borrow { pointee, .. } => source_type_mentions_any_name(pointee, names),
+        Type::Tuple(fields) => fields
+            .iter()
+            .any(|field| source_type_mentions_any_name(field, names)),
         Type::Array(element, _) => source_type_mentions_any_name(element, names),
         Type::ArrayApplication {
             element, length, ..

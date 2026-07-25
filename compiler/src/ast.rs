@@ -348,6 +348,7 @@ pub enum Type {
     U64,
     Bool,
     Unit,
+    Tuple(Vec<Type>),
     Borrow {
         mutable: bool,
         access: Option<String>,
@@ -425,6 +426,7 @@ pub enum Pattern {
     Integer(i128),
     Bool(bool),
     Binding(String),
+    Tuple(Vec<Pattern>),
     Constructor {
         path: Vec<String>,
         fields: PatternFields,
@@ -456,6 +458,7 @@ pub enum Expr {
         value: Box<Expr>,
     },
     Unit,
+    Tuple(Vec<Expr>),
     /// Compiler-internal representation of a compile-time type argument after
     /// substitution. User source does not parse directly to this node.
     Type(Type),

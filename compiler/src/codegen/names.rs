@@ -67,6 +67,13 @@ pub(super) fn canonical_type_encoding(ty: &Ty) -> String {
         Ty::U64 => "u64".to_owned(),
         Ty::Bool => "bool".to_owned(),
         Ty::Unit => "unit".to_owned(),
+        Ty::Tuple(fields) => {
+            let mut encoded = format!("tuple{}:", fields.len());
+            for field in fields {
+                push_canonical_component(&mut encoded, &canonical_type_encoding(field));
+            }
+            encoded
+        }
         Ty::Pointer { pointee, mutable } => {
             let mut encoded = if *mutable { "mutptr" } else { "ptr" }.to_owned();
             push_canonical_component(&mut encoded, &canonical_type_encoding(pointee));

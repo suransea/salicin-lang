@@ -310,7 +310,7 @@ pub(super) fn rewrite_handler_loop_control(
         Expr::Member(base, _) | Expr::ChainMember(base, _) => {
             rewrite_handler_loop_control(base, recursive_name, break_name, nested_loop_depth)
         }
-        Expr::Array(elements) => {
+        Expr::Array(elements) | Expr::Tuple(elements) => {
             for element in elements {
                 rewrite_handler_loop_control(
                     element,
@@ -441,7 +441,7 @@ pub(super) fn collect_internal_recursion_tokens(expression: &Expr, tokens: &mut 
         Expr::Member(base, _) | Expr::ChainMember(base, _) => {
             collect_internal_recursion_tokens(base, tokens)
         }
-        Expr::Array(elements) => {
+        Expr::Array(elements) | Expr::Tuple(elements) => {
             for element in elements {
                 collect_internal_recursion_tokens(element, tokens);
             }
@@ -746,7 +746,7 @@ pub(super) fn handler_expression_children(expression: &Expr) -> Vec<&Expr> {
             children
         }
         Expr::StructLiteral { fields, .. } => fields.iter().map(|field| &field.value).collect(),
-        Expr::Array(elements) => elements.iter().collect(),
+        Expr::Array(elements) | Expr::Tuple(elements) => elements.iter().collect(),
         Expr::Index { base, index } => vec![base, index],
         Expr::Block(statements, tail) => {
             let mut children = statements
@@ -984,7 +984,7 @@ pub(super) fn rewrite_handler_chain_wrappers(
                 );
             }
         }
-        Expr::Array(elements) => {
+        Expr::Array(elements) | Expr::Tuple(elements) => {
             for element in elements {
                 rewrite_handler_chain_wrappers(
                     element,
@@ -2339,6 +2339,19 @@ impl Analyzer {
                     continuation(
                         analyzer,
                         Expr::Array(values.into_iter().map(|value| value.value).collect()),
+                    )
+                });
+                self.transform_handler_arguments(arguments, Vec::new(), handler, resume, completed)
+            }
+            Expr::Tuple(elements) => {
+                let arguments = elements
+                    .into_iter()
+                    .map(|value| CallArg { label: None, value })
+                    .collect();
+                let completed: SourceArgumentsContinuation = Rc::new(move |analyzer, values| {
+                    continuation(
+                        analyzer,
+                        Expr::Tuple(values.into_iter().map(|value| value.value).collect()),
                     )
                 });
                 self.transform_handler_arguments(arguments, Vec::new(), handler, resume, completed)

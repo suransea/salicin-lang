@@ -2566,6 +2566,7 @@ impl Parser {
     fn function_type_or_unit(&mut self) -> Result<Type, ParseError> {
         let mut groups = Vec::new();
         let mut group = Vec::new();
+        let mut first_group_had_comma = false;
         if !self.take(&TokenKind::RParen) {
             loop {
                 if self.ident_followed_by_colon() {
@@ -2574,6 +2575,7 @@ impl Parser {
                 }
                 group.push(self.type_expr()?);
                 if self.take(&TokenKind::Comma) {
+                    first_group_had_comma = true;
                     if self.take(&TokenKind::RParen) {
                         break;
                     }
@@ -2618,8 +2620,15 @@ impl Parser {
         }
 
         if !self.take(&TokenKind::Colon) {
-            if groups.len() == 1 && groups[0].is_empty() {
-                return Ok(Type::Unit);
+            if groups.len() == 1 {
+                let mut fields = groups.pop().expect("one parenthesized type group");
+                if fields.is_empty() {
+                    return Ok(Type::Unit);
+                }
+                if first_group_had_comma {
+                    return Ok(Type::Tuple(fields));
+                }
+                return Ok(fields.pop().expect("one grouped type"));
             }
             return Err(self.error_here("function types require `:` before the result type"));
         }
@@ -2830,12 +2839,34 @@ impl Parser {
                 self.advance();
                 Ok(Pattern::Wildcard)
             }
+            TokenKind::LParen => self.tuple_or_grouped_pattern(),
             TokenKind::Ident(_) | TokenKind::Root | TokenKind::Super => self.named_pattern(),
             _ => Err(self.error_at(
                 &token,
                 format!("expected a pattern, found {}", describe(&token.kind)),
             )),
         }
+    }
+
+    fn tuple_or_grouped_pattern(&mut self) -> Result<Pattern, ParseError> {
+        self.expect(&TokenKind::LParen, "`(` before tuple pattern")?;
+        if self.take(&TokenKind::RParen) {
+            return Err(self.error_here("empty tuple patterns are written as `_`"));
+        }
+        let first = self.pattern()?;
+        if !self.take(&TokenKind::Comma) {
+            self.expect(&TokenKind::RParen, "`)` after parenthesized pattern")?;
+            return Ok(first);
+        }
+        let mut fields = vec![first];
+        while !self.take(&TokenKind::RParen) {
+            fields.push(self.pattern()?);
+            if !self.take(&TokenKind::Comma) {
+                self.expect(&TokenKind::RParen, "`)` after tuple pattern")?;
+                break;
+            }
+        }
+        Ok(Pattern::Tuple(fields))
     }
 
     fn named_pattern(&mut self) -> Result<Pattern, ParseError> {
@@ -3183,6 +3214,12 @@ impl Parser {
                     if self.at(&TokenKind::Super) && Self::is_super_path_expression(&expression) {
                         self.advance();
                         "super".to_owned()
+                    } else if matches!(self.current().kind, TokenKind::Integer(_)) {
+                        let TokenKind::Integer(index) = self.current().kind else {
+                            unreachable!()
+                        };
+                        self.advance();
+                        index.to_string()
                     } else {
                         self.expect_relative_path_segment("a member name after `.`")?
                     };
@@ -3579,9 +3616,20 @@ impl Parser {
                 if self.take(&TokenKind::RParen) {
                     return Ok(Expr::Unit);
                 }
-                let expression = self.expression(true)?;
-                self.expect(&TokenKind::RParen, "`)`")?;
-                Ok(expression)
+                let first = self.expression(true)?;
+                if !self.take(&TokenKind::Comma) {
+                    self.expect(&TokenKind::RParen, "`)` after parenthesized expression")?;
+                    return Ok(first);
+                }
+                let mut fields = vec![first];
+                while !self.take(&TokenKind::RParen) {
+                    fields.push(self.expression(true)?);
+                    if !self.take(&TokenKind::Comma) {
+                        self.expect(&TokenKind::RParen, "`)` after tuple literal")?;
+                        break;
+                    }
+                }
+                Ok(Expr::Tuple(fields))
             }
             TokenKind::LBracket => self.array_literal(),
             TokenKind::Do => {
@@ -4700,6 +4748,12 @@ fn normalize_type_region_qualifiers(
         Type::Array(element, _) | Type::ArrayApplication { element, .. } => {
             normalize_type_region_qualifiers(element, regions, accesses)
         }
+        Type::Tuple(fields) => {
+            for field in fields {
+                normalize_type_region_qualifiers(field, regions, accesses)?;
+            }
+            Ok(())
+        }
         Type::Function {
             groups,
             effects,
@@ -4814,7 +4868,7 @@ fn normalize_expr_region_qualifiers(
         Expr::Member(base, _) | Expr::ChainMember(base, _) => {
             normalize_expr_region_qualifiers(base, regions, accesses)
         }
-        Expr::Array(elements) => {
+        Expr::Array(elements) | Expr::Tuple(elements) => {
             for element in elements {
                 normalize_expr_region_qualifiers(element, regions, accesses)?;
             }
@@ -4907,6 +4961,12 @@ fn validate_type_effects(ty: &Type, effects: &HashSet<String>) -> Result<(), Str
         | Type::ArrayApplication {
             element: pointee, ..
         } => validate_type_effects(pointee, effects),
+        Type::Tuple(fields) => {
+            for field in fields {
+                validate_type_effects(field, effects)?;
+            }
+            Ok(())
+        }
         Type::Function {
             groups,
             effects: function_effects,
@@ -4969,6 +5029,12 @@ fn validate_type_accesses(ty: &Type, accesses: &HashSet<String>) -> Result<(), S
         }
         Type::Array(element, _) | Type::ArrayApplication { element, .. } => {
             validate_type_accesses(element, accesses)
+        }
+        Type::Tuple(fields) => {
+            for field in fields {
+                validate_type_accesses(field, accesses)?;
+            }
+            Ok(())
         }
         Type::Function {
             groups,
@@ -5063,7 +5129,7 @@ fn validate_expr_accesses(expression: &Expr, accesses: &HashSet<String>) -> Resu
         Expr::Member(base, _) | Expr::ChainMember(base, _) => {
             validate_expr_accesses(base, accesses)
         }
-        Expr::Array(elements) => {
+        Expr::Array(elements) | Expr::Tuple(elements) => {
             for element in elements {
                 validate_expr_accesses(element, accesses)?;
             }
@@ -5177,6 +5243,12 @@ fn validate_type_regions(ty: &Type, regions: &HashSet<String>) -> Result<(), Str
         Type::Array(element, _) | Type::ArrayApplication { element, .. } => {
             validate_type_regions(element, regions)
         }
+        Type::Tuple(fields) => {
+            for field in fields {
+                validate_type_regions(field, regions)?;
+            }
+            Ok(())
+        }
         Type::Function {
             groups,
             effects,
@@ -5289,7 +5361,7 @@ fn validate_expr_regions(expression: &Expr, regions: &HashSet<String>) -> Result
             Ok(())
         }
         Expr::Member(base, _) | Expr::ChainMember(base, _) => validate_expr_regions(base, regions),
-        Expr::Array(elements) => {
+        Expr::Array(elements) | Expr::Tuple(elements) => {
             for element in elements {
                 validate_expr_regions(element, regions)?;
             }

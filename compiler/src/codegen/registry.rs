@@ -499,6 +499,11 @@ pub(super) fn collect_nominal_type_dependencies(
     output: &mut Vec<String>,
 ) {
     match ty {
+        Type::Tuple(fields) => {
+            for field in fields {
+                collect_nominal_type_dependencies(field, nominal_names, bound, output);
+            }
+        }
         Type::Borrow { pointee, .. } => {
             collect_nominal_type_dependencies(pointee, nominal_names, bound, output)
         }
@@ -633,6 +638,13 @@ fn impl_type_pattern(
     side: u8,
 ) -> ImplTypePattern {
     match source {
+        Type::Tuple(fields) => ImplTypePattern::Named(
+            format!("$tuple${}", fields.len()),
+            fields
+                .iter()
+                .map(|field| impl_type_pattern(field, variables, side))
+                .collect(),
+        ),
         Type::I32 => ImplTypePattern::I32,
         Type::I64 => ImplTypePattern::I64,
         Type::U32 => ImplTypePattern::U32,
@@ -799,6 +811,11 @@ fn impl_pattern_contains_variable(
 
 pub(super) fn substitute_self_type(ty: &mut Type, target: &str) {
     match ty {
+        Type::Tuple(fields) => {
+            for field in fields {
+                substitute_self_type(field, target);
+            }
+        }
         Type::Borrow { pointee, .. } => substitute_self_type(pointee, target),
         Type::Array(element, _) | Type::ArrayApplication { element, .. } => {
             substitute_self_type(element, target)

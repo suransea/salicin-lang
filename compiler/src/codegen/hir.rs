@@ -11,6 +11,7 @@ pub(super) enum Ty {
     U64,
     Bool,
     Unit,
+    Tuple(Vec<Ty>),
     Pointer {
         pointee: Box<Ty>,
         mutable: bool,
@@ -138,6 +139,19 @@ impl fmt::Display for Ty {
             Self::U64 => f.write_str("u64"),
             Self::Bool => f.write_str("bool"),
             Self::Unit => f.write_str("()"),
+            Self::Tuple(fields) => {
+                f.write_str("(")?;
+                for (index, ty) in fields.iter().enumerate() {
+                    if index != 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{ty}")?;
+                }
+                if fields.len() == 1 {
+                    f.write_str(",")?;
+                }
+                f.write_str(")")
+            }
             Self::Pointer { pointee, mutable } => {
                 write!(
                     f,
@@ -267,6 +281,7 @@ pub(super) struct HirProgram {
     pub(super) drop_methods: HashMap<Ty, String>,
     pub(super) box_pointees: HashMap<String, Ty>,
     pub(super) array_types: HashSet<Ty>,
+    pub(super) tuple_types: HashSet<Ty>,
     pub(super) continuation_adapters: Vec<ContinuationAdapter>,
     pub(super) effect_callable_adapters: Vec<EffectCallableAdapter>,
 }
@@ -322,6 +337,7 @@ impl HirProgram {
     pub(super) fn needs_drop(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Array(element, _) => self.needs_drop(element),
+            Ty::Tuple(fields) => fields.iter().any(|field| self.needs_drop(field)),
             Ty::Pointer { .. } | Ty::Reference { .. } => false,
             Ty::Struct(name) => {
                 self.box_pointee(name).is_some()
@@ -500,6 +516,7 @@ pub(super) enum HirExprKind {
     Integer(i128),
     Bool(bool),
     Unit,
+    Tuple(Vec<HirExpr>),
     Array(Vec<HirExpr>),
     Index {
         base: Box<HirExpr>,

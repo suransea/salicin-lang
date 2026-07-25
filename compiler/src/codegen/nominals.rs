@@ -998,6 +998,12 @@ impl Analyzer {
             Ty::Pointer { pointee, .. } | Ty::Reference { pointee, .. } | Ty::Array(pointee, _) => {
                 1 + self.nominal_type_complexity_with_seen(pointee, seen)
             }
+            Ty::Tuple(fields) => {
+                1 + fields
+                    .iter()
+                    .map(|field| self.nominal_type_complexity_with_seen(field, seen))
+                    .sum::<usize>()
+            }
             Ty::Function(function) => 1 + self.function_type_complexity(function, seen),
             Ty::Callable(callable) => {
                 1 + self.function_type_complexity(&callable.signature, seen)

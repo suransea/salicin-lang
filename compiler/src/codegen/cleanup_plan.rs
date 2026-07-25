@@ -412,6 +412,15 @@ impl<'a> HirCleanupPlanner<'a> {
     ) -> Result<CleanupMovePathId, Diagnostic> {
         let path = self.register_move_path(place.clone(), parent, self.program.needs_drop(ty))?;
         match ty {
+            Ty::Tuple(fields) => {
+                for (index, field_ty) in fields.iter().enumerate() {
+                    let index = u32::try_from(index).map_err(|_| {
+                        self.diagnostic(format!("tuple index {index} does not fit in u32"))
+                    })?;
+                    let child = place.clone().project(CleanupProjection::TupleIndex(index));
+                    self.register_typed_move_path(child, Some(path), field_ty, visiting)?;
+                }
+            }
             Ty::Array(element, length) => {
                 for index in 0..*length {
                     let child = place
@@ -579,6 +588,20 @@ impl<'a> HirCleanupPlanner<'a> {
         let mut ty = &place.root_ty;
         for projection in &place.projections {
             match ty {
+                Ty::Tuple(fields) => {
+                    let index = u32::try_from(*projection).map_err(|_| {
+                        self.diagnostic(format!(
+                            "tuple projection {projection} does not fit in u32"
+                        ))
+                    })?;
+                    cleanup_place = cleanup_place.project(CleanupProjection::TupleIndex(index));
+                    ty = fields.get(*projection).ok_or_else(|| {
+                        self.diagnostic(format!(
+                            "tuple projection {projection} is out of bounds for length {}",
+                            fields.len()
+                        ))
+                    })?;
+                }
                 Ty::Struct(name) => {
                     let field = u32::try_from(*projection).map_err(|_| {
                         self.diagnostic(format!(
@@ -751,7 +774,12 @@ impl<'a> HirCleanupPlanner<'a> {
     fn is_resource_ty(ty: &Ty) -> bool {
         matches!(
             ty,
-            Ty::Array(_, _) | Ty::Struct(_) | Ty::Enum(_) | Ty::Function(_) | Ty::Callable(_)
+            Ty::Tuple(_)
+                | Ty::Array(_, _)
+                | Ty::Struct(_)
+                | Ty::Enum(_)
+                | Ty::Function(_)
+                | Ty::Callable(_)
         )
     }
 
@@ -936,6 +964,33 @@ impl<'a> HirCleanupPlanner<'a> {
                     };
                     current = match current {
                         Some(cursor) => self.walk_expr(element, cursor, element_use)?,
+                        None => None,
+                    };
+                }
+                if let Some(cursor) = current {
+                    self.initialize_result(cursor, &result_use)?;
+                }
+                current
+            }
+            HirExprKind::Tuple(fields) => {
+                let mut current = Some(cursor);
+                for (index, field) in fields.iter().enumerate() {
+                    let field_use = match &result_use {
+                        ResultUse::Store(destination) => {
+                            let index = u32::try_from(index).map_err(|_| {
+                                self.diagnostic(format!(
+                                    "tuple result index {index} does not fit in u32"
+                                ))
+                            })?;
+                            ResultUse::Store(self.project_destination(
+                                destination,
+                                CleanupProjection::TupleIndex(index),
+                            )?)
+                        }
+                        ResultUse::Discard => ResultUse::Discard,
+                    };
+                    current = match current {
+                        Some(cursor) => self.walk_expr(field, cursor, field_use)?,
                         None => None,
                     };
                 }
@@ -1500,8 +1555,12 @@ impl<'a> HirCleanupPlanner<'a> {
                 else {
                     return Ok(None);
                 };
-                let source_place = CleanupPlace::local(base_local)
-                    .project(CleanupProjection::Field(*index as u32));
+                let projection = if matches!(base.ty, Ty::Tuple(_)) {
+                    CleanupProjection::TupleIndex(*index as u32)
+                } else {
+                    CleanupProjection::Field(*index as u32)
+                };
+                let source_place = CleanupPlace::local(base_local).project(projection);
                 let source = CleanupDestination {
                     path: self.lookup_move_path(&source_place)?,
                     place: source_place,
@@ -2098,6 +2157,56 @@ impl<'a> HirCleanupPlanner<'a> {
 
         let mut source_place = CleanupPlace::local(scrutinee_local);
         if !binding.path.is_empty() {
+            if let (HirMatcher::All, Ty::Tuple(_)) = (matcher, scrutinee_ty) {
+                let mut ty = scrutinee_ty;
+                for projection in &binding.path {
+                    match ty {
+                        Ty::Tuple(fields) => {
+                            let index = u32::try_from(*projection).map_err(|_| {
+                                self.diagnostic("tuple pattern index does not fit in u32")
+                            })?;
+                            source_place =
+                                source_place.project(CleanupProjection::TupleIndex(index));
+                            ty = fields.get(*projection).ok_or_else(|| {
+                                self.diagnostic("tuple pattern index is out of bounds")
+                            })?;
+                        }
+                        Ty::Struct(name) => {
+                            let index = u32::try_from(*projection).map_err(|_| {
+                                self.diagnostic("nested pattern field does not fit in u32")
+                            })?;
+                            source_place = source_place.project(CleanupProjection::Field(index));
+                            ty = &self
+                                .program
+                                .struct_layout(name)
+                                .and_then(|layout| layout.fields.get(*projection))
+                                .ok_or_else(|| {
+                                    self.diagnostic(format!(
+                                        "nested pattern field {projection} is invalid for `{name}`"
+                                    ))
+                                })?
+                                .ty;
+                        }
+                        Ty::Array(element, length)
+                            if u64::try_from(*projection).is_ok_and(|index| index < *length) =>
+                        {
+                            source_place = source_place
+                                .project(CleanupProjection::ConstantIndex(*projection as u64));
+                            ty = element;
+                        }
+                        _ => {
+                            return Err(self.diagnostic(format!(
+                                "tuple pattern path continues through non-aggregate `{ty}`"
+                            )));
+                        }
+                    }
+                }
+                let source = CleanupDestination {
+                    path: self.lookup_move_path(&source_place)?,
+                    place: source_place,
+                };
+                return self.transfer(cursor, &source, destination, TransferKind::Initialize);
+            }
             let HirMatcher::Variant(variant) = matcher else {
                 return Err(self.diagnostic(
                     "moving a projected pattern binding requires a concrete enum variant",
@@ -2131,10 +2240,47 @@ impl<'a> HirCleanupPlanner<'a> {
             source_place = source_place
                 .project(CleanupProjection::Downcast(variant))
                 .project(CleanupProjection::Field(field));
-            for field in &binding.path[1..] {
-                let field = u32::try_from(*field)
-                    .map_err(|_| self.diagnostic("nested pattern field does not fit in u32"))?;
-                source_place = source_place.project(CleanupProjection::Field(field));
+            let mut ty = &variant_layout.fields[field as usize].ty;
+            for projection in &binding.path[1..] {
+                match ty {
+                    Ty::Tuple(fields) => {
+                        let index = u32::try_from(*projection).map_err(|_| {
+                            self.diagnostic("nested tuple pattern index does not fit in u32")
+                        })?;
+                        source_place = source_place.project(CleanupProjection::TupleIndex(index));
+                        ty = fields.get(*projection).ok_or_else(|| {
+                            self.diagnostic("nested tuple pattern index is out of bounds")
+                        })?;
+                    }
+                    Ty::Struct(name) => {
+                        let index = u32::try_from(*projection).map_err(|_| {
+                            self.diagnostic("nested pattern field does not fit in u32")
+                        })?;
+                        source_place = source_place.project(CleanupProjection::Field(index));
+                        ty = &self
+                            .program
+                            .struct_layout(name)
+                            .and_then(|layout| layout.fields.get(*projection))
+                            .ok_or_else(|| {
+                                self.diagnostic(format!(
+                                    "nested pattern field {projection} is invalid for `{name}`"
+                                ))
+                            })?
+                            .ty;
+                    }
+                    Ty::Array(element, length)
+                        if u64::try_from(*projection).is_ok_and(|index| index < *length) =>
+                    {
+                        source_place = source_place
+                            .project(CleanupProjection::ConstantIndex(*projection as u64));
+                        ty = element;
+                    }
+                    _ => {
+                        return Err(self.diagnostic(format!(
+                            "nested pattern path continues through non-aggregate `{ty}`"
+                        )));
+                    }
+                }
             }
         }
         let source = CleanupDestination {

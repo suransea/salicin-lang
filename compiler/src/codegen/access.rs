@@ -250,6 +250,9 @@ impl Analyzer {
             visited: &mut HashSet<String>,
         ) -> AccessBoundary {
             match ty {
+                Ty::Tuple(fields) => fields.iter().fold(access, |access, field| {
+                    visit(analyzer, access, field, fallback_origin, visited)
+                }),
                 Ty::Array(element, _) => visit(analyzer, access, element, fallback_origin, visited),
                 Ty::Pointer { pointee, .. } => {
                     visit(analyzer, access, pointee, fallback_origin, visited)
@@ -354,6 +357,11 @@ impl Analyzer {
         diagnostics: &mut Vec<String>,
     ) {
         match ty {
+            Ty::Tuple(fields) => {
+                for field in fields {
+                    self.collect_type_api_leaks(field, exposed, description, visited, diagnostics);
+                }
+            }
             Ty::Array(element, _) => {
                 self.collect_type_api_leaks(element, exposed, description, visited, diagnostics)
             }

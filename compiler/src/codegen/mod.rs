@@ -173,6 +173,7 @@ struct Analyzer {
     handler_frame_parameter_modes: HashMap<String, Vec<PassMode>>,
     hir_globals: HashMap<String, HirGlobal>,
     array_types: HashSet<Ty>,
+    tuple_types: HashSet<Ty>,
     continuation_adapters: Vec<ContinuationAdapter>,
     effect_callable_adapters: Vec<EffectCallableAdapter>,
     runtime_handler_actions: HashMap<(String, usize, usize), RuntimeHandlerAction>,
@@ -254,6 +255,7 @@ impl Analyzer {
             handler_frame_parameter_modes: HashMap::new(),
             hir_globals: HashMap::new(),
             array_types: HashSet::new(),
+            tuple_types: HashSet::new(),
             continuation_adapters: Vec::new(),
             effect_callable_adapters: Vec::new(),
             runtime_handler_actions: HashMap::new(),
@@ -1615,6 +1617,18 @@ impl Analyzer {
         compile_parameters: &HashMap<String, CompileParamKind>,
     ) -> bool {
         match source {
+            Type::Tuple(fields) => {
+                let mut valid = true;
+                for field in fields {
+                    valid &= self.validate_trait_source_type(
+                        trait_name,
+                        member_name,
+                        field,
+                        compile_parameters,
+                    );
+                }
+                valid
+            }
             Type::Named(wrapper, schemas)
                 if matches!(
                     wrapper.as_str(),
@@ -2042,6 +2056,9 @@ impl Analyzer {
             Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => true,
             Type::CompileUSize(_) => false,
             Type::Borrow { pointee, .. } => self.source_type_is_concrete(pointee),
+            Type::Tuple(fields) => fields
+                .iter()
+                .all(|field| self.source_type_is_concrete(field)),
             Type::Array(element, _) => self.source_type_is_concrete(element),
             Type::ArrayApplication {
                 constructor,
@@ -2092,6 +2109,9 @@ impl Analyzer {
             Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool | Type::Unit => true,
             Type::CompileUSize(_) => false,
             Type::Borrow { pointee, .. } => self.source_type_is_abstract_or_concrete(pointee),
+            Type::Tuple(fields) => fields
+                .iter()
+                .all(|field| self.source_type_is_abstract_or_concrete(field)),
             Type::Array(element, _) => self.source_type_is_abstract_or_concrete(element),
             Type::ArrayApplication {
                 constructor,
@@ -2563,6 +2583,21 @@ impl Analyzer {
         visiting: &mut Vec<String>,
     ) -> Option<Type> {
         match source {
+            Type::Tuple(fields) => Some(Type::Tuple(
+                fields
+                    .iter()
+                    .map(|field| {
+                        self.normalize_trait_impl_type(
+                            trait_name,
+                            field,
+                            raw,
+                            base_substitutions,
+                            normalized,
+                            visiting,
+                        )
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+            )),
             Type::Borrow {
                 mutable,
                 access,
@@ -5552,6 +5587,7 @@ impl Analyzer {
                 .map(|(name, instance)| (name.clone(), instance.key.arguments[0].clone()))
                 .collect(),
             array_types: self.array_types.clone(),
+            tuple_types: self.tuple_types.clone(),
             continuation_adapters: self.continuation_adapters.clone(),
             effect_callable_adapters: self.effect_callable_adapters.clone(),
         })
@@ -6281,6 +6317,33 @@ impl Analyzer {
                 .map_or(TypeProbe::Defaultable(Ty::I32), TypeProbe::Known),
             Expr::Bool(_) => TypeProbe::Known(Ty::Bool),
             Expr::Unit => TypeProbe::Known(Ty::Unit),
+            Expr::Tuple(fields) => {
+                let expected_fields = match hint {
+                    Some(Ty::Tuple(expected)) if expected.len() == fields.len() => Some(expected),
+                    _ => None,
+                };
+                let mut defaultable = false;
+                let mut types = Vec::with_capacity(fields.len());
+                for (index, field) in fields.iter().enumerate() {
+                    match self.probe_expr_ty(
+                        field,
+                        expected_fields.and_then(|expected| expected.get(index)),
+                        context,
+                    ) {
+                        TypeProbe::Known(ty) | TypeProbe::KnownSource(ty, _) => types.push(ty),
+                        TypeProbe::Defaultable(ty) => {
+                            defaultable = true;
+                            types.push(ty);
+                        }
+                        TypeProbe::Unsupported => return TypeProbe::Unsupported,
+                    }
+                }
+                if defaultable {
+                    TypeProbe::Defaultable(Ty::Tuple(types))
+                } else {
+                    TypeProbe::Known(Ty::Tuple(types))
+                }
+            }
             Expr::Name(name) => {
                 if let Some(local) = context.lookup(name) {
                     self.probe_reference_hint(expression, local.ty.clone(), hint, context)
@@ -6444,6 +6507,18 @@ impl Analyzer {
                     }
                 }
                 match self.probe_expr_ty(base, None, context) {
+                    TypeProbe::Known(Ty::Tuple(fields))
+                    | TypeProbe::KnownSource(Ty::Tuple(fields), _) => {
+                        let Ok(index) = member.parse::<usize>() else {
+                            return TypeProbe::Unsupported;
+                        };
+                        fields
+                            .get(index)
+                            .cloned()
+                            .map_or(TypeProbe::Unsupported, |field| {
+                                self.probe_reference_hint(expression, field, hint, context)
+                            })
+                    }
                     TypeProbe::Known(Ty::Struct(name))
                     | TypeProbe::KnownSource(Ty::Struct(name), _) => {
                         self.probe_struct_field_ty(expression, &name, member, hint, context)
@@ -6596,16 +6671,16 @@ impl Analyzer {
                     ty => Some(ty.clone()),
                 }
             }
-            Expr::Member(base, member) => {
-                let Ty::Struct(name) = self.probe_place_ty(base, context)? else {
-                    return None;
-                };
-                self.struct_layouts
+            Expr::Member(base, member) => match self.probe_place_ty(base, context)? {
+                Ty::Tuple(fields) => fields.get(member.parse::<usize>().ok()?).cloned(),
+                Ty::Struct(name) => self
+                    .struct_layouts
                     .get(&name)
                     .and_then(|layout| layout.fields.iter().find(|field| field.name == *member))
                     .filter(|field| Self::access_boundary_allows(&context.origin, &field.access))
-                    .map(|field| field.ty.clone())
-            }
+                    .map(|field| field.ty.clone()),
+                _ => None,
+            },
             Expr::Index { base, index } => {
                 let Ty::Array(element, length) = self.probe_place_ty(base, context)? else {
                     return None;
@@ -7266,6 +7341,39 @@ impl Analyzer {
                 ty: Ty::Unit,
                 kind: HirExprKind::Unit,
             },
+            Expr::Tuple(fields) => {
+                let expected_fields = match expected {
+                    Some(Ty::Tuple(expected_fields)) if expected_fields.len() == fields.len() => {
+                        Some(expected_fields.as_slice())
+                    }
+                    Some(Ty::Error) | None => None,
+                    Some(expected) => {
+                        self.error(format!(
+                            "tuple literal of length {} cannot be used where `{}` is expected",
+                            fields.len(),
+                            self.diagnostic_type_name(expected)
+                        ));
+                        None
+                    }
+                };
+                let lowered = fields
+                    .iter()
+                    .enumerate()
+                    .map(|(index, field)| {
+                        self.lower_expr(
+                            field,
+                            expected_fields.and_then(|expected| expected.get(index)),
+                            context,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let ty = Ty::Tuple(lowered.iter().map(|field| field.ty.clone()).collect());
+                self.tuple_types.insert(ty.clone());
+                HirExpr {
+                    ty,
+                    kind: HirExprKind::Tuple(lowered),
+                }
+            }
             Expr::Array(elements) => self.lower_array_literal(elements, expected, context),
             Expr::Name(name) => {
                 if let Some(local) = context.lookup(name).cloned() {
@@ -8827,6 +8935,13 @@ impl Analyzer {
     ) -> bool {
         match expression {
             Expr::Type(_) | Expr::Unit | Expr::Integer(_) | Expr::Bool(_) => true,
+            Expr::Tuple(fields) => {
+                let mut valid = true;
+                for field in fields {
+                    valid &= self.scan_simple_closure_captures(field, bound, outer, captures);
+                }
+                valid
+            }
             Expr::Name(name) => {
                 if !bound.contains(name) && outer.lookup(name).is_some() {
                     record_closure_capture(captures, name, ClosureCaptureMode::Shared);

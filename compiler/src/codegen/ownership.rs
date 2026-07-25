@@ -78,6 +78,9 @@ impl Analyzer {
             | Ty::Error => true,
             Ty::Reference { mutable, .. } => !mutable,
             Ty::Array(element, _) => self.type_is_copy_with_nominals(element, valid),
+            Ty::Tuple(fields) => fields
+                .iter()
+                .all(|field| self.type_is_copy_with_nominals(field, valid)),
             Ty::Enum(name) if name == self.lang_item_name(LangItemKind::Never) => true,
             Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 | Ty::Bool | Ty::Struct(_) | Ty::Enum(_) => {
                 valid.contains(ty)
@@ -115,6 +118,9 @@ impl Analyzer {
         let result = has_custom_drop
             || match ty {
                 Ty::Array(element, _) => self.type_needs_drop_inner(element, visiting),
+                Ty::Tuple(fields) => fields
+                    .iter()
+                    .any(|field| self.type_needs_drop_inner(field, visiting)),
                 Ty::Pointer { .. } | Ty::Reference { .. } => false,
                 Ty::Struct(name) => {
                     self.box_pointee_type(name).is_some()
@@ -181,6 +187,12 @@ impl Analyzer {
                     if u64::try_from(*projection).is_ok_and(|index| index < *length) =>
                 {
                     element
+                }
+                Ty::Tuple(fields) => {
+                    let Some(field) = fields.get(*projection) else {
+                        return false;
+                    };
+                    field
                 }
                 _ => return false,
             };

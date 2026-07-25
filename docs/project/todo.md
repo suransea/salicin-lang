@@ -17,7 +17,7 @@ Priority meanings:
 
 Current milestone: **M0 release baseline**
 
-Next task: **M0-TUPLE-1**
+Next task: **M0-SCALAR-1**
 
 ### P0 control-source queue
 
@@ -50,7 +50,7 @@ handler or async expansion is admitted.
   - Add positive native Unicode identifier and multiline source fixtures.
   - Add stable diagnostics for malformed or disallowed source/module spellings.
 
-- [ ] **M0-TUPLE-1: Implement the frozen non-unit tuple slice**
+- [x] **M0-TUPLE-1: Implement the frozen non-unit tuple slice**
   - Cover tuple types, literals, projection, patterns, ownership, and cleanup.
   - Add positive, negative, diagnostic, and native evidence.
 

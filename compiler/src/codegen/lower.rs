@@ -348,6 +348,7 @@ pub(super) fn nominal_name(ty: &Ty) -> Option<&str> {
     match ty {
         Ty::Struct(name) | Ty::Enum(name) => Some(name),
         Ty::Array(element, _) => nominal_name(element),
+        Ty::Tuple(fields) => fields.iter().find_map(nominal_name),
         _ => None,
     }
 }
@@ -358,6 +359,9 @@ pub(super) fn ty_contains_nominal(ty: &Ty, nominal: &str) -> bool {
         Ty::Pointer { pointee, .. } | Ty::Reference { pointee, .. } | Ty::Array(pointee, _) => {
             ty_contains_nominal(pointee, nominal)
         }
+        Ty::Tuple(fields) => fields
+            .iter()
+            .any(|field| ty_contains_nominal(field, nominal)),
         Ty::Function(function) => function_ty_contains_nominal(function, nominal),
         Ty::Callable(callable) => {
             function_ty_contains_nominal(&callable.signature, nominal)

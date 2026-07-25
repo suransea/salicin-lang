@@ -233,7 +233,7 @@ impl Analyzer {
             HirExprKind::Return(Some(value)) => {
                 self.validate_reference_escape_value(value, expected, context);
             }
-            HirExprKind::Array(values) => {
+            HirExprKind::Array(values) | HirExprKind::Tuple(values) => {
                 for value in values {
                     self.validate_explicit_reference_returns(value, expected, context);
                 }

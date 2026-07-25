@@ -2425,6 +2425,54 @@ fn every_pass_fixture_checks_successfully() {
 }
 
 #[test]
+fn tuple_types_literals_projection_patterns_and_cleanup_run_natively() {
+    let fixtures = ["tuple_basics.sc", "tuple_resource_drop.sc"];
+    for (name, output) in native_fixture_outputs_in_parallel(&fixtures) {
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+}
+
+#[test]
+fn tuple_diagnostics_are_source_level_and_specific() {
+    let cases = [
+        (
+            "tuple_pattern_length_mismatch.sc",
+            "tuple pattern length mismatch: expected 2, found 1",
+        ),
+        (
+            "tuple_projection_out_of_bounds.sc",
+            "tuple index 2 is out of bounds for tuple of length 2",
+        ),
+        (
+            "tuple_projection_named.sc",
+            "tuple projection requires a decimal index, found `left`",
+        ),
+    ];
+    for (name, expected) in cases {
+        let source = fs::read_to_string(fixture("fail", name)).expect("read tuple failure fixture");
+        let diagnostics =
+            check_source(&source).expect_err("tuple failure fixture unexpectedly passed");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains(expected)),
+            "{name} did not contain `{expected}`: {diagnostics:?}"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| !diagnostic.contains('$')),
+            "{name} leaked an internal name: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn raise_and_unwrap_operators_run_through_standard_and_custom_protocols() {
     let fixtures = [
         "raise_result.sc",

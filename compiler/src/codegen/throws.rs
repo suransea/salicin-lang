@@ -522,7 +522,7 @@ impl Analyzer {
             Expr::Member(base, _) | Expr::ChainMember(base, _) => {
                 self.expression_uses_standard_throws_identity(base, identity, context)
             }
-            Expr::Array(elements) => elements.iter().any(|element| {
+            Expr::Array(elements) | Expr::Tuple(elements) => elements.iter().any(|element| {
                 self.expression_uses_standard_throws_identity(element, identity, context)
             }),
             Expr::StructLiteral { fields, .. } => fields.iter().any(|field| {
@@ -672,7 +672,7 @@ impl Analyzer {
             Expr::Member(base, _) | Expr::ChainMember(base, _) => {
                 self.try_body_uses_dedicated_throws_call(base, context)
             }
-            Expr::Array(elements) => elements
+            Expr::Array(elements) | Expr::Tuple(elements) => elements
                 .iter()
                 .any(|element| self.try_body_uses_dedicated_throws_call(element, context)),
             Expr::StructLiteral { fields, .. } => fields
@@ -1289,7 +1289,7 @@ impl Analyzer {
             Expr::Member(base, _) | Expr::ChainMember(base, _) => {
                 self.collect_escaping_throws(base, context, errors)
             }
-            Expr::Array(elements) => {
+            Expr::Array(elements) | Expr::Tuple(elements) => {
                 for element in elements {
                     self.collect_escaping_throws(element, context, errors);
                 }

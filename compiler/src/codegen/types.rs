@@ -28,6 +28,16 @@ impl Analyzer {
             Type::U64 => Ty::U64,
             Type::Bool => Ty::Bool,
             Type::Unit => Ty::Unit,
+            Type::Tuple(fields) => {
+                let tuple = Ty::Tuple(
+                    fields
+                        .iter()
+                        .map(|field| self.lower_source_type(field))
+                        .collect(),
+                );
+                self.tuple_types.insert(tuple.clone());
+                tuple
+            }
             Type::Function {
                 groups,
                 effects,
@@ -314,6 +324,12 @@ impl Analyzer {
             Ty::U64 => Some(Type::U64),
             Ty::Bool => Some(Type::Bool),
             Ty::Unit => Some(Type::Unit),
+            Ty::Tuple(fields) => Some(Type::Tuple(
+                fields
+                    .iter()
+                    .map(|field| self.source_type_for_ty(field))
+                    .collect::<Option<Vec<_>>>()?,
+            )),
             Ty::Array(element, length) => Some(Type::ArrayApplication {
                 constructor: self.lang_item_name(LangItemKind::ArrayTypeForm).to_owned(),
                 element: Box::new(self.source_type_for_ty(element)?),
@@ -441,6 +457,17 @@ impl Analyzer {
             Ty::U64 => "u64".to_owned(),
             Ty::Bool => "bool".to_owned(),
             Ty::Unit => "()".to_owned(),
+            Ty::Tuple(fields) => {
+                let mut rendered = fields
+                    .iter()
+                    .map(|field| self.diagnostic_type_name(field))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if fields.len() == 1 {
+                    rendered.push(',');
+                }
+                format!("({rendered})")
+            }
             Ty::Array(element, length) => {
                 format!("Array({})({length})", self.diagnostic_type_name(element))
             }
@@ -1218,6 +1245,12 @@ impl Analyzer {
             Type::U64 => Some(Ty::U64),
             Type::Bool => Some(Ty::Bool),
             Type::Unit => Some(Ty::Unit),
+            Type::Tuple(fields) => Some(Ty::Tuple(
+                fields
+                    .iter()
+                    .map(|field| self.probe_source_ty(field))
+                    .collect::<Option<Vec<_>>>()?,
+            )),
             Type::Function {
                 groups,
                 effects,

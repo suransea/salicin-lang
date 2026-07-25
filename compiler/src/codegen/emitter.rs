@@ -74,12 +74,14 @@ impl ConstantEvaluator<'_> {
             HirExprKind::LayoutQuery { queried, kind } => {
                 Some(ConstValue::LayoutQuery(queried.clone(), *kind))
             }
-            HirExprKind::Array(elements) => Some(ConstValue::Aggregate(
-                elements
-                    .iter()
-                    .map(|element| self.evaluate_expr(element, locals))
-                    .collect::<Option<Vec<_>>>()?,
-            )),
+            HirExprKind::Array(elements) | HirExprKind::Tuple(elements) => {
+                Some(ConstValue::Aggregate(
+                    elements
+                        .iter()
+                        .map(|element| self.evaluate_expr(element, locals))
+                        .collect::<Option<Vec<_>>>()?,
+                ))
+            }
             HirExprKind::Index { base, index, .. } => {
                 let ConstValue::Aggregate(elements) = self.evaluate_expr(base, locals)? else {
                     self.error("invalid array value in constant expression");
@@ -538,6 +540,11 @@ impl<'a> Emitter<'a> {
     fn callable_types(&self) -> Vec<Ty> {
         fn collect(ty: &Ty, types: &mut HashSet<Ty>) {
             match ty {
+                Ty::Tuple(fields) => {
+                    for field in fields {
+                        collect(field, types);
+                    }
+                }
                 Ty::Array(element, _) => collect(element, types),
                 Ty::Function(function) => {
                     for parameter in function.groups.iter().flatten() {
@@ -628,6 +635,9 @@ impl<'a> Emitter<'a> {
         for ty in &self.program.array_types {
             self.collect_drop_glue_type(ty, &mut types);
         }
+        for ty in &self.program.tuple_types {
+            self.collect_drop_glue_type(ty, &mut types);
+        }
         for layout in &self.program.structs {
             let ty = Ty::Struct(layout.name.clone());
             if self.program.needs_drop(&ty) {
@@ -659,6 +669,11 @@ impl<'a> Emitter<'a> {
             return;
         }
         match ty {
+            Ty::Tuple(fields) => {
+                for field in fields {
+                    self.collect_drop_glue_type(field, types);
+                }
+            }
             Ty::Array(element, _) => self.collect_drop_glue_type(element, types),
             Ty::Struct(name) => {
                 if let Some(pointee) = self.program.box_pointee(name) {
@@ -730,6 +745,19 @@ impl<'a> Emitter<'a> {
             }
         }
         match ty {
+            Ty::Tuple(fields) => {
+                let aggregate_ty = llvm_value_type(ty)?;
+                for (index, field) in fields.iter().enumerate() {
+                    if !self.program.needs_drop(field) {
+                        continue;
+                    }
+                    output.push_str(&format!(
+                        "  %field.{index} = getelementptr inbounds {aggregate_ty}, ptr %value, i32 0, i32 {index}\n  call void @{}(ptr %field.{index})\n",
+                        drop_glue_symbol(field)
+                    ));
+                }
+                output.push_str("  ret void\n}\n");
+            }
             Ty::Struct(name) => {
                 let layout = self.program.struct_layout(name).ok_or_else(|| {
                     Diagnostic::new(format!("internal error: missing struct layout `{name}`"))
@@ -1158,6 +1186,26 @@ impl<'a> FunctionEmitter<'a> {
         self.instruction(format!("store i1 true, ptr {flag}"));
         let mut children = Vec::new();
         if !self.program.drop_methods.contains_key(&ty) {
+            if let Ty::Tuple(fields) = &ty {
+                let aggregate_ty = llvm_value_type(&ty)?;
+                for (index, field) in fields.iter().enumerate() {
+                    if !self.program.needs_drop(field) {
+                        continue;
+                    }
+                    let field_pointer = self.fresh_register();
+                    self.instruction(format!(
+                        "{field_pointer} = getelementptr inbounds {aggregate_ty}, ptr {pointer}, i32 0, i32 {index}"
+                    ));
+                    let mut field_projections = projections.clone();
+                    field_projections.push(index);
+                    children.push(self.build_drop_slot(
+                        local,
+                        field.clone(),
+                        field_pointer,
+                        field_projections,
+                    )?);
+                }
+            }
             if let Ty::Array(element, length) = &ty {
                 let aggregate_ty = llvm_value_type(&ty)?;
                 for index in 0..*length {
@@ -1474,6 +1522,31 @@ impl<'a> FunctionEmitter<'a> {
                         "{register} = insertvalue {aggregate_ty} {aggregate}, {} {}, {index}",
                         llvm_value_type(&element.ty)?,
                         element.value()?
+                    ));
+                    aggregate = register;
+                }
+                self.release_drop_slots(cleanup_depth);
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: Some(aggregate),
+                })
+            }
+            HirExprKind::Tuple(fields) => {
+                let cleanup_depth = self.drop_slots.len();
+                let aggregate_ty = llvm_value_type(&expression.ty)?;
+                let mut aggregate = "zeroinitializer".to_owned();
+                for (index, field) in fields.iter().enumerate() {
+                    let field = self.emit_expr(field)?;
+                    if self.terminated {
+                        self.drop_slots.truncate(cleanup_depth);
+                        return Ok(Operand::never());
+                    }
+                    self.hold_operand_for_early_exit(&field)?;
+                    let register = self.fresh_register();
+                    self.instruction(format!(
+                        "{register} = insertvalue {aggregate_ty} {aggregate}, {} {}, {index}",
+                        llvm_field_type(&field.ty)?,
+                        field.value()?
                     ));
                     aggregate = register;
                 }
@@ -3134,6 +3207,9 @@ impl<'a> FunctionEmitter<'a> {
         scrutinee: &HirExpr,
         arms: &[HirMatchArm],
     ) -> Result<Operand, Diagnostic> {
+        if matches!(scrutinee.ty, Ty::Tuple(_)) {
+            return self.emit_tuple_match(expression, scrutinee, arms);
+        }
         let inspects_borrowed_storage = matches!(
             scrutinee.kind,
             HirExprKind::Read {
@@ -3286,6 +3362,137 @@ impl<'a> FunctionEmitter<'a> {
         })
     }
 
+    fn emit_tuple_match(
+        &mut self,
+        expression: &HirExpr,
+        scrutinee: &HirExpr,
+        arms: &[HirMatchArm],
+    ) -> Result<Operand, Diagnostic> {
+        let inspects_borrowed_storage = matches!(
+            scrutinee.kind,
+            HirExprKind::Read {
+                kind: HirReadKind::Inspect,
+                ..
+            }
+        );
+        let scrutinee = self.emit_expr(scrutinee)?;
+        if self.terminated {
+            return Ok(Operand::never());
+        }
+        let match_cleanup_depth = self.drop_slots.len();
+        let mut match_drop_slot = None;
+        if self.program.needs_drop(&scrutinee.ty) && !inspects_borrowed_storage {
+            let ty = llvm_value_type(&scrutinee.ty)?;
+            let pointer = self.entry_alloca(&ty, "tuple match scrutinee");
+            self.instruction(format!("store {ty} {}, ptr {pointer}", scrutinee.value()?));
+            self.register_drop_slot(None, scrutinee.ty.clone(), pointer)?;
+            match_drop_slot = self.drop_slots.last().cloned();
+        }
+        let merge_label = self.fresh_label("match.end");
+        let invalid_label = self.fresh_label("match.invalid");
+        let labels = (0..arms.len())
+            .map(|_| self.fresh_label("match.candidate"))
+            .collect::<Vec<_>>();
+        if let Some(first) = labels.first() {
+            self.terminate(format!("br label %{first}"));
+        } else {
+            self.terminate(format!("br label %{invalid_label}"));
+        }
+
+        let mut incoming = Vec::new();
+        for (index, arm) in arms.iter().enumerate() {
+            self.start_block(&labels[index]);
+            let candidate_cleanup_depth = self.drop_slots.len();
+            if arm.guard.is_none() {
+                if let Some(root) = &match_drop_slot {
+                    self.prepare_tuple_pattern_ownership(root, &arm.bindings)?;
+                }
+            }
+            self.emit_pattern_bindings(&scrutinee, &arm.bindings, arm.guard.is_none())?;
+            if let Some(guard) = &arm.guard {
+                let guard = self.emit_expr(guard)?;
+                if !self.terminated {
+                    let body_label = self.fresh_label("match.body");
+                    let false_label = labels
+                        .get(index + 1)
+                        .cloned()
+                        .unwrap_or_else(|| invalid_label.clone());
+                    self.terminate(format!(
+                        "br i1 {}, label %{body_label}, label %{false_label}",
+                        guard.value()?
+                    ));
+                    self.start_block(&body_label);
+                    if let Some(root) = &match_drop_slot {
+                        self.prepare_tuple_pattern_ownership(root, &arm.bindings)?;
+                    }
+                    self.activate_pattern_binding_ownership(&arm.bindings)?;
+                }
+            }
+            let body = self.emit_expr(&arm.body)?;
+            if !self.terminated {
+                self.emit_cleanup_range(match_cleanup_depth)?;
+                let predecessor = self.current_label.clone();
+                self.terminate(format!("br label %{merge_label}"));
+                incoming.push((body, predecessor));
+            }
+            self.drop_slots.truncate(candidate_cleanup_depth);
+        }
+        self.start_block(&invalid_label);
+        self.terminate("unreachable");
+        if incoming.is_empty() {
+            self.drop_slots.truncate(match_cleanup_depth);
+            self.terminated = true;
+            return Ok(Operand::never());
+        }
+        self.drop_slots.truncate(match_cleanup_depth);
+        self.start_block(&merge_label);
+        if expression.ty == Ty::Unit {
+            return Ok(Operand::unit());
+        }
+        if incoming.len() == 1 {
+            return Ok(incoming.pop().expect("one tuple match result").0);
+        }
+        let register = self.fresh_register();
+        let incoming = incoming
+            .iter()
+            .map(|(operand, label)| Ok(format!("[{}, %{label}]", operand.value()?)))
+            .collect::<Result<Vec<_>, Diagnostic>>()?
+            .join(", ");
+        self.instruction(format!(
+            "{register} = phi {} {incoming}",
+            llvm_value_type(&expression.ty)?
+        ));
+        Ok(Operand {
+            ty: expression.ty.clone(),
+            value: Some(register),
+        })
+    }
+
+    fn prepare_tuple_pattern_ownership(
+        &mut self,
+        root: &RuntimeDropSlot,
+        bindings: &[HirPatternBinding],
+    ) -> Result<(), Diagnostic> {
+        let Ty::Tuple(_) = &root.ty else {
+            return Err(Diagnostic::new(
+                "internal error: tuple ownership preparation has non-tuple root",
+            ));
+        };
+        let mut updates = Vec::new();
+        for binding in bindings {
+            if !binding.moves {
+                continue;
+            }
+            Self::collect_place_flag_updates(root, &binding.path, false, false, &mut updates);
+        }
+        updates.sort();
+        updates.dedup();
+        for (flag, value) in updates {
+            self.instruction(format!("store i1 {value}, ptr {flag}"));
+        }
+        Ok(())
+    }
+
     fn prepare_match_pattern_ownership(
         &mut self,
         root: &RuntimeDropSlot,
@@ -3343,9 +3550,28 @@ impl<'a> FunctionEmitter<'a> {
                 "internal error: match split custom Drop type `{ty}`"
             )));
         }
+        if let Ty::Tuple(fields) = ty {
+            let aggregate_ty = llvm_value_type(ty)?;
+            for (index, field) in fields.iter().enumerate() {
+                if !self.program.needs_drop(field) {
+                    continue;
+                }
+                let child_paths = moved_paths
+                    .iter()
+                    .filter(|path| path.first() == Some(&index))
+                    .map(|path| path[1..].to_vec())
+                    .collect::<Vec<_>>();
+                let child_pointer = self.fresh_register();
+                self.instruction(format!(
+                    "{child_pointer} = getelementptr inbounds {aggregate_ty}, ptr {pointer}, i32 0, i32 {index}"
+                ));
+                self.register_match_remainder(field, child_pointer, &child_paths)?;
+            }
+            return Ok(());
+        }
         let Ty::Struct(name) = ty else {
             return Err(Diagnostic::new(format!(
-                "internal error: match move path descends through non-struct `{ty}`"
+                "internal error: match move path descends through non-aggregate `{ty}`"
             )));
         };
         let fields = self
@@ -3916,6 +4142,14 @@ fn llvm_value_type(ty: &Ty) -> Result<String, Diagnostic> {
         Ty::I32 | Ty::U32 => Ok("i32".to_owned()),
         Ty::I64 | Ty::U64 => Ok("i64".to_owned()),
         Ty::Bool => Ok("i1".to_owned()),
+        Ty::Tuple(fields) => Ok(format!(
+            "{{ {} }}",
+            fields
+                .iter()
+                .map(llvm_field_type)
+                .collect::<Result<Vec<_>, _>>()?
+                .join(", ")
+        )),
         Ty::Array(element, length) => Ok(format!("[{length} x {}]", llvm_value_type(element)?)),
         Ty::Pointer { .. } | Ty::Reference { .. } | Ty::Function(_) => Ok("ptr".to_owned()),
         Ty::Struct(name) | Ty::Enum(name) => Ok(format!("%{}", type_symbol(name))),
@@ -3960,6 +4194,12 @@ fn zero_const(ty: &Ty, program: &HirProgram) -> Option<ConstValue> {
         Ty::I32 | Ty::I64 | Ty::U32 | Ty::U64 => Some(ConstValue::Integer(0)),
         Ty::Bool => Some(ConstValue::Bool(false)),
         Ty::Unit => Some(ConstValue::Unit),
+        Ty::Tuple(fields) => Some(ConstValue::Aggregate(
+            fields
+                .iter()
+                .map(|field| zero_const(field, program))
+                .collect::<Option<Vec<_>>>()?,
+        )),
         Ty::Pointer { .. } | Ty::Reference { .. } => None,
         Ty::Array(element, length) => {
             let length = usize::try_from(*length).ok()?;
@@ -4023,6 +4263,25 @@ fn const_ir(value: &ConstValue, ty: &Ty, program: &HirProgram) -> Result<String,
                 })
                 .collect::<Result<Vec<_>, Diagnostic>>()?;
             Ok(format!("[{}]", elements.join(", ")))
+        }
+        (ConstValue::Aggregate(values), Ty::Tuple(fields)) => {
+            if values.len() != fields.len() {
+                return Err(Diagnostic::new(
+                    "internal error: constant tuple length does not match its type",
+                ));
+            }
+            let values = values
+                .iter()
+                .zip(fields)
+                .map(|(value, field)| {
+                    Ok(format!(
+                        "{} {}",
+                        llvm_field_type(field)?,
+                        const_ir(value, field, program)?
+                    ))
+                })
+                .collect::<Result<Vec<_>, Diagnostic>>()?;
+            Ok(format!("{{ {} }}", values.join(", ")))
         }
         (ConstValue::Aggregate(values), Ty::Struct(name)) => {
             let layout = program.struct_layout(name).ok_or_else(|| {

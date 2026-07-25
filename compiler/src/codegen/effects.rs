@@ -802,7 +802,9 @@ pub(super) fn do_block_requires_function_boundary(expression: &Expr) -> bool {
         Expr::StructLiteral { fields, .. } => fields
             .iter()
             .any(|field| do_block_requires_function_boundary(&field.value)),
-        Expr::Array(elements) => elements.iter().any(do_block_requires_function_boundary),
+        Expr::Array(elements) | Expr::Tuple(elements) => {
+            elements.iter().any(do_block_requires_function_boundary)
+        }
         Expr::Index { base, index } => {
             do_block_requires_function_boundary(base) || do_block_requires_function_boundary(index)
         }

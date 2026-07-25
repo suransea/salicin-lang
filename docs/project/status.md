@@ -19,16 +19,18 @@ those effects. The remaining compiler-only surface should stay limited to featur
 need authority or primitive control-flow lowering.
 
 The [M0 conformance audit](m0-conformance.md) identifies current release-blocking core gaps.
-Non-unit tuples and C FFI have specification surface but no compiler implementation. Runtime
-primitive lowering currently covers `i32`, `i64`, `u32`, `u64`, and `bool`, while the core bundle
-also declares narrower, wider, and target-sized integer names. Source identifiers follow Unicode
+Structural non-unit tuples are implemented across types, literals, decimal projection, patterns,
+ownership, cleanup, and native LLVM emission. C FFI still has specification surface but no compiler
+implementation. Runtime primitive lowering currently covers `i32`, `i64`, `u32`, `u64`, and
+`bool`, while the core bundle also declares narrower, wider, and target-sized integer names.
+Source identifiers follow Unicode
 XID and normalize to NFC, while file-module names remain portable ASCII snake_case. Semantic
 diagnostics retain each defining file,
 top-level declaration position, local initializer position, and end-exclusive ordinary
 expression-root range through module resolution and specialization, including trailing
 source-closure calls. A repository-wide gate rejects generated `$...` names in fail-fixture
 diagnostics.
-These are M0 gaps, not implemented extensions.
+The remaining scalar and C FFI omissions are M0 gaps, not implemented extensions.
 
 The unit type has one source spelling, `()`; the former `void` alias is removed before 1.0. The
 uninhabited prelude enum is spelled `Never`; the former lowercase `never` spelling has no

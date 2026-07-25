@@ -2486,6 +2486,19 @@ fn validate_exposed_type(
     diagnostics: &mut Vec<String>,
 ) {
     match ty {
+        Type::Tuple(fields) => {
+            for field in fields {
+                validate_exposed_type(
+                    field,
+                    exposed,
+                    source_path,
+                    bound_types,
+                    description,
+                    nominal_boundaries,
+                    diagnostics,
+                );
+            }
+        }
         Type::Borrow { pointee, .. } => validate_exposed_type(
             pointee,
             exposed,
@@ -3066,6 +3079,11 @@ impl Resolver {
         type_scope: &HashSet<String>,
     ) {
         match ty {
+            Type::Tuple(fields) => {
+                for field in fields {
+                    self.rewrite_type(field, context, type_scope);
+                }
+            }
             Type::Borrow { pointee, .. } => self.rewrite_type(pointee, context, type_scope),
             Type::Array(element, _) => self.rewrite_type(element, context, type_scope),
             Type::ArrayApplication {
@@ -3230,7 +3248,7 @@ impl Resolver {
             Expr::ChainMember(base, _) => {
                 self.rewrite_expr(base, context, type_scope, value_scope);
             }
-            Expr::Array(elements) => {
+            Expr::Array(elements) | Expr::Tuple(elements) => {
                 for element in elements {
                     self.rewrite_expr(element, context, type_scope, value_scope);
                 }
@@ -3401,6 +3419,11 @@ impl Resolver {
         bindings: &mut HashSet<String>,
     ) {
         match pattern {
+            Pattern::Tuple(patterns) => {
+                for pattern in patterns {
+                    self.rewrite_pattern(pattern, context, value_scope, bindings);
+                }
+            }
             Pattern::Binding(name) => {
                 bindings.insert(name.clone());
             }
@@ -5486,7 +5509,7 @@ let main(): i32 = { Option {} }
                     }
                 }
                 Expr::Member(base, _) => visit(base, names),
-                Expr::Array(elements) => {
+                Expr::Array(elements) | Expr::Tuple(elements) => {
                     for element in elements {
                         visit(element, names);
                     }

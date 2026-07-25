@@ -6,6 +6,11 @@ subset.
 
 ## Unreleased
 
+- Implemented structural non-unit tuples across parsing, type inference, diagnostics, ownership,
+  cleanup planning, and LLVM emission. Tuple types and literals use the frozen trailing-comma
+  distinction, decimal projections are places, and tuple patterns delay non-`Copy` moves until
+  their guard succeeds. Native tests cover projection, destructuring, partial moves, root rebuild,
+  guarded fallback, and deterministic resource cleanup.
 - Semantic diagnostics now retain defining source paths, declaration positions, and executable
   expression ranges through module resolution, generic instantiation, trait dispatch, and handler
   lowering, including local initializers and trailing source-closure calls. Single-file CLI errors

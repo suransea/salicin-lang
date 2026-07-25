@@ -128,6 +128,25 @@ impl Analyzer {
             return error_expr();
         }
         if let Some(place) = place {
+            if let Ty::Tuple(fields) = &place.ty {
+                let Ok(index) = member.parse::<usize>() else {
+                    self.error(format!(
+                        "tuple projection requires a decimal index, found `{member}`"
+                    ));
+                    return error_expr();
+                };
+                let Some(field_ty) = fields.get(index).cloned() else {
+                    self.error(format!(
+                        "tuple index {index} is out of bounds for tuple of length {}",
+                        fields.len()
+                    ));
+                    return error_expr();
+                };
+                let mut field_place = place;
+                field_place.projections.push(index);
+                field_place.ty = field_ty;
+                return self.access_place(field_place, AccessKind::Auto, context);
+            }
             if let Ty::Struct(target) | Ty::Enum(target) = &place.ty {
                 if self
                     .inherent_members
@@ -197,6 +216,34 @@ impl Analyzer {
         }
 
         let base = self.lower_expr(base, None, context);
+        if let Ty::Tuple(fields) = &base.ty {
+            let Ok(index) = member.parse::<usize>() else {
+                self.error(format!(
+                    "tuple projection requires a decimal index, found `{member}`"
+                ));
+                return error_expr();
+            };
+            let Some(field_ty) = fields.get(index).cloned() else {
+                self.error(format!(
+                    "tuple index {index} is out of bounds for tuple of length {}",
+                    fields.len()
+                ));
+                return error_expr();
+            };
+            if self.type_needs_drop(&base.ty) {
+                self.error(
+                    "taking a field from a temporary tuple that needs drop is not supported",
+                );
+                return error_expr();
+            }
+            return HirExpr {
+                ty: field_ty,
+                kind: HirExprKind::Field {
+                    base: Box::new(base),
+                    index,
+                },
+            };
+        }
         let Ty::Struct(struct_name) = &base.ty else {
             self.error(format!(
                 "member access requires a struct value, found `{}`",

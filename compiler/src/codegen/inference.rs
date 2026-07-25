@@ -262,6 +262,34 @@ impl Analyzer {
             Type::U64 => (*actual == Ty::U64).then_some(false).ok_or_else(mismatch),
             Type::Bool => (*actual == Ty::Bool).then_some(false).ok_or_else(mismatch),
             Type::Unit => (*actual == Ty::Unit).then_some(false).ok_or_else(mismatch),
+            Type::Tuple(fields) => {
+                let Ty::Tuple(actual_fields) = actual else {
+                    return Err(mismatch());
+                };
+                if fields.len() != actual_fields.len() {
+                    return Err(mismatch());
+                }
+                let source_fields = match actual_source {
+                    Some(Type::Tuple(fields)) if fields.len() == actual_fields.len() => {
+                        Some(fields.as_slice())
+                    }
+                    _ => None,
+                };
+                let mut changed = false;
+                for (index, (field, actual_field)) in
+                    fields.iter().zip(actual_fields).enumerate()
+                {
+                    changed |= self.unify_template_ty(
+                        field,
+                        actual_field,
+                        source_fields.and_then(|fields| fields.get(index)),
+                        compile_parameters,
+                        inferred,
+                        origin,
+                    )?;
+                }
+                Ok(changed)
+            }
             Type::Borrow {
                 mutable,
                 access,
@@ -745,6 +773,12 @@ impl Analyzer {
             Type::U64 => Some(Ty::U64),
             Type::Bool => Some(Ty::Bool),
             Type::Unit => Some(Ty::Unit),
+            Type::Tuple(fields) => Some(Ty::Tuple(
+                fields
+                    .iter()
+                    .map(|field| self.resolved_template_ty(field, compile_parameters, inferred))
+                    .collect::<Option<Vec<_>>>()?,
+            )),
             Type::Borrow {
                 mutable,
                 access,

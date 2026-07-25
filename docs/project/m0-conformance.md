@@ -23,7 +23,7 @@ source file is named.
 | Logical newlines, declarations, and lexical scopes | Lexer/parser newline tests; `pass/logical_newlines.sc`; `pass/block_mutation.sc`; `local_bindings_shadow_imports_without_hiding_them_from_outer_scopes` | Parser separator tests; scope and import fail fixtures | `pass/logical_newlines.sc`, `run_supports_grouped_calls_and_unit_main`, `pass/block_mutation.sc` | **Covered** |
 | Modules, packages, local dependencies, and explicit visibility | File-module, facade-use, package-target, and dependency CLI tests | Module path, import, package boundary, manifest, and dependency diagnostics | `local_path_dependency_runs_only_its_library_and_writes_a_stable_lockfile`, module/package native tests | **Covered** |
 | Immutable/mutable bindings and implemented primitive scalars | `pass/block_mutation.sc`; scalar operator fixture families | type mismatch, invalid operator, division/remainder and shift diagnostics | scalar/operator CLI test families | **Partial**: runtime lowering currently covers `i32`, `i64`, `u32`, `u64`, and `bool`; `M0-SCALAR-1` owns the declared remaining widths |
-| Tuples and unit | Unit parameters/results are covered throughout parser, ABI, and CLI tests | Unit misuse receives ordinary type diagnostics | `run_supports_grouped_calls_and_unit_main` | **Missing** for non-unit tuple types, literals, fields, and patterns; `M0-TUPLE-1` |
+| Tuples and unit | `pass/tuple_basics.sc` covers structural types, literals, singleton syntax, projection, and patterns | `fail/tuple_*` covers pattern arity, projection shape/bounds, and move errors with source-level diagnostics | `tuple_types_literals_projection_patterns_and_cleanup_run_natively`, including guarded non-`Copy` fallback and partial aggregate cleanup | **Covered** |
 | Fixed arrays | `pass/array_*`; array type/length inference tests | `fail/array_*` with bounds, ownership, type, and alias diagnostics | `m1_loops_and_arrays_run_with_expected_result`, dynamic bounds trap and resource-drop tests | **Covered** |
 | Nominal structs and enums | `pass/struct_*`, `pass/enum_match.sc`, generic nominal fixtures | struct, enum, layout, field, constructor, and recursive-layout fail fixtures | `m1_struct_programs_run_with_expected_result`, `m1_match_and_partial_programs_run_with_expected_result` | **Covered** |
 | Exhaustive patterns and structured control flow | match/guard/if-let/while/loop/for fixture families | non-exhaustive, unreachable/invalid pattern, branch move, loop backedge, and scope fail fixtures | match, loop, array, iterator, cleanup, and ledger CLI tests | **Covered** |
@@ -45,11 +45,9 @@ source file is named.
 
 The matrix creates these release-blocking tasks without changing the frozen scope:
 
-1. `M0-TUPLE-1`: implement and test non-unit tuple types, values, projection, patterns, ownership,
-   and cleanup.
-2. `M0-SCALAR-1`: either lower every declared M0 primitive scalar width and target-sized integer,
+1. `M0-SCALAR-1`: either lower every declared M0 primitive scalar width and target-sized integer,
    or narrow declarations and the frozen scope through the formal change gate.
-3. `M0-FFI-1`: implement the bounded C FFI slice promised by M0, including ABI admissibility,
+2. `M0-FFI-1`: implement the bounded C FFI slice promised by M0, including ABI admissibility,
    unsafe calls, linking, diagnostics, and native round trips.
 `M0-QUALITY-1` cannot close merely because the current suite is green; the implementation gaps
 above must either be completed or pass the M0 change gate.

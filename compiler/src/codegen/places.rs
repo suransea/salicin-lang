@@ -109,6 +109,30 @@ impl Analyzer {
             }
             Expr::Member(base, field_name) => {
                 let mut place = self.lower_place(base, context)?;
+                if let Ty::Tuple(fields) = &place.ty {
+                    let Ok(index) = field_name.parse::<usize>() else {
+                        self.error(format!(
+                            "tuple projection requires a decimal index, found `{field_name}`"
+                        ));
+                        return None;
+                    };
+                    let Some(field_ty) = fields.get(index).cloned() else {
+                        self.error(format!(
+                            "tuple index {index} is out of bounds for tuple of length {}",
+                            fields.len()
+                        ));
+                        return None;
+                    };
+                    if place.dynamic_index.is_some() {
+                        self.error(
+                            "tuple projection after a dynamic indexed place is not supported",
+                        );
+                        return None;
+                    }
+                    place.projections.push(index);
+                    place.ty = field_ty;
+                    return Some(place);
+                }
                 let Ty::Struct(struct_name) = &place.ty else {
                     self.error(format!(
                         "field `{field_name}` cannot be selected on value of type `{}`",
