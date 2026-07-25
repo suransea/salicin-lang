@@ -5,8 +5,9 @@ use crate::ast::{
     CallArg, CompileParam, CompileParamDefault, CompileParamKind, DomainDef, EffectDef, EnumDef,
     Expr, ExtendDef, ExtendMember, Field, ForeignAbi, ForeignFunction, Function, FunctionEffects,
     Item, MatchArm, Param, PassMode, Pattern, PatternField, PatternFields, Program, Stmt,
-    StructDef, TraitDef, TraitMember, Type, TypeAliasDef, TypeArg, TypeFormDef, USizeConst,
-    UnaryOp, UseDecl, VariantDef, VariantFields, Visibility, WherePredicate,
+    StructDef, StructRepresentation, TraitDef, TraitMember, Type, TypeAliasDef, TypeArg,
+    TypeFormDef, USizeConst, UnaryOp, UseDecl, VariantDef, VariantFields, Visibility,
+    WherePredicate,
 };
 use crate::lexer::{lex, LexError, Token, TokenKind};
 
@@ -2005,30 +2006,31 @@ impl Parser {
         compile_groups: Vec<Vec<CompileParam>>,
     ) -> Result<StructDef, ParseError> {
         self.expect(&TokenKind::Struct, "`struct`")?;
-        let derives = self.struct_options()?;
+        let (representation, derives) = self.struct_options()?;
         self.expect(&TokenKind::LBrace, "`{` after `struct`")?;
         let fields = self.braced_type_fields()?;
         Ok(StructDef {
             name,
             compile_groups,
+            representation,
             derives,
             fields,
         })
     }
 
-    fn struct_options(&mut self) -> Result<Vec<String>, ParseError> {
+    fn struct_options(&mut self) -> Result<(StructRepresentation, Vec<String>), ParseError> {
         if !self.take(&TokenKind::LParen) {
-            return Ok(Vec::new());
+            return Ok((StructRepresentation::Salicin, Vec::new()));
         }
+        let mut representation = StructRepresentation::Salicin;
         let mut derives = Vec::new();
         if self.take(&TokenKind::RParen) {
-            return Ok(derives);
+            return Ok((representation, derives));
         }
         loop {
             let option = self.expect_ident("a struct option name")?;
-            self.expect(&TokenKind::Colon, "`:` after struct option name")?;
-            match option.as_str() {
-                "derive" => {
+            if self.take(&TokenKind::Colon) {
+                if option == "derive" {
                     let derive = self.expect_ident("a derive name")?;
                     if derive != "Copy" {
                         return Err(self.error_here(format!(
@@ -2039,12 +2041,20 @@ impl Parser {
                         return Err(self.error_here(format!("duplicate struct derive `{derive}`")));
                     }
                     derives.push(derive);
-                }
-                _ => {
+                } else {
                     return Err(self.error_here(format!(
                         "unknown struct option `{option}`; expected `derive`"
                     )));
                 }
+            } else if option == "c" {
+                if representation == StructRepresentation::C {
+                    return Err(self.error_here("duplicate struct representation `c`"));
+                }
+                representation = StructRepresentation::C;
+            } else {
+                return Err(self.error_here(format!(
+                    "unsupported struct representation `{option}`; only `c` is available"
+                )));
             }
             if self.take(&TokenKind::Comma) {
                 if self.take(&TokenKind::RParen) {
@@ -2055,7 +2065,7 @@ impl Parser {
                 break;
             }
         }
-        Ok(derives)
+        Ok((representation, derives))
     }
 
     fn enum_definition(
@@ -6473,6 +6483,35 @@ mod tests {
             VariantFields::Named(fields)
                 if fields[0].ty == Type::Named("T".into(), Vec::new())
         ));
+    }
+
+    #[test]
+    fn parses_c_struct_representation_independently_of_derives() {
+        let program = parse(
+            "let Timespec = struct(c) { seconds: i64, nanoseconds: i64 }\n\
+             let Pair = struct(derive: Copy, c) { left: i32, right: i32 }\n",
+        )
+        .unwrap();
+
+        let Item::Struct(timespec) = &program.items[0] else {
+            panic!("expected C representation struct");
+        };
+        assert_eq!(timespec.representation, StructRepresentation::C);
+        assert!(timespec.derives.is_empty());
+
+        let Item::Struct(pair) = &program.items[1] else {
+            panic!("expected derived C representation struct");
+        };
+        assert_eq!(pair.representation, StructRepresentation::C);
+        assert_eq!(pair.derives, ["Copy"]);
+
+        for source in [
+            "let Bad = struct(system) { value: i32 }\n",
+            "let Bad = struct(c, c) { value: i32 }\n",
+        ] {
+            let error = parse(source).unwrap_err();
+            assert!(error.message.contains("struct representation"));
+        }
     }
 
     #[test]

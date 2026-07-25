@@ -38,6 +38,7 @@ impl Analyzer {
 
     pub(super) fn build_struct_layout(&mut self, name: &str, definition: StructDef) {
         let owner_access = self.nominal_access_or_internal(name);
+        let source_name = self.diagnostic_type_name(&super::hir::Ty::Struct(name.to_owned()));
         let mut seen = HashSet::new();
         let mut fields = Vec::new();
         for field in definition.fields {
@@ -59,6 +60,8 @@ impl Analyzer {
             name.to_owned(),
             StructLayout {
                 name: name.to_owned(),
+                source_name,
+                representation: definition.representation,
                 fields,
             },
         );

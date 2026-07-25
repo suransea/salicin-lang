@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use crate::ast::{BinaryOp, ItemOrigin, PassMode, Type, UnaryOp, Visibility};
+use crate::ast::{BinaryOp, ItemOrigin, PassMode, StructRepresentation, Type, UnaryOp, Visibility};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) enum Ty {
@@ -320,6 +320,8 @@ pub(super) struct FieldLayout {
 #[derive(Debug, Clone)]
 pub(super) struct StructLayout {
     pub(super) name: String,
+    pub(super) source_name: String,
+    pub(super) representation: StructRepresentation,
     pub(super) fields: Vec<FieldLayout>,
 }
 

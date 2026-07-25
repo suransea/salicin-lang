@@ -195,8 +195,16 @@ pub enum ExtendMember {
 pub struct StructDef {
     pub name: String,
     pub compile_groups: Vec<Vec<CompileParam>>,
+    pub representation: StructRepresentation,
     pub derives: Vec<String>,
     pub fields: Vec<Field>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum StructRepresentation {
+    #[default]
+    Salicin,
+    C,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

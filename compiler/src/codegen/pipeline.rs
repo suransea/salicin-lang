@@ -6,11 +6,12 @@
 
 use std::collections::HashMap;
 
-use crate::ast::Program;
+use crate::ast::{Program, StructRepresentation};
 use crate::cleanup::CleanupPlan;
 
 use super::cleanup_plan::build_and_verify_cleanup_plans;
 use super::emitter::{evaluate_globals, ConstValue, Emitter};
+use super::hir::Ty;
 use super::{Analyzer, Diagnostic, HirProgram};
 
 struct AnalyzedProgram {
@@ -79,12 +80,31 @@ fn analyze(
 
 fn validate_sized_value_positions(program: &HirProgram) -> Result<(), Vec<Diagnostic>> {
     let mut diagnostics = Vec::new();
+    let struct_representations = program
+        .structs
+        .iter()
+        .map(|layout| (layout.name.as_str(), layout.representation))
+        .collect::<HashMap<_, _>>();
     for layout in &program.structs {
+        if layout.representation == StructRepresentation::C && layout.fields.is_empty() {
+            diagnostics.push(Diagnostic::new(format!(
+                "C representation struct `{}` cannot be empty",
+                layout.source_name
+            )));
+        }
         for field in &layout.fields {
             if !field.ty.is_sized_value() {
                 diagnostics.push(Diagnostic::new(format!(
                     "field `{}.{}` has unsized type `{}`; store a borrow or pointer instead",
                     layout.name, field.name, field.ty
+                )));
+            }
+            if layout.representation == StructRepresentation::C
+                && !c_field_type_is_valid(&field.ty, &struct_representations)
+            {
+                diagnostics.push(Diagnostic::new(format!(
+                    "field `{}.{}` has type `{}`, which is not valid in `struct(c)`",
+                    layout.source_name, field.name, field.ty
                 )));
             }
         }
@@ -146,6 +166,23 @@ fn validate_sized_value_positions(program: &HirProgram) -> Result<(), Vec<Diagno
         Ok(())
     } else {
         Err(diagnostics)
+    }
+}
+
+fn c_field_type_is_valid(
+    ty: &Ty,
+    struct_representations: &HashMap<&str, StructRepresentation>,
+) -> bool {
+    match ty {
+        ty if ty.is_integer() => true,
+        Ty::Pointer { .. } => true,
+        Ty::Array(element, length) => {
+            *length != 0 && c_field_type_is_valid(element, struct_representations)
+        }
+        Ty::Struct(name) => {
+            struct_representations.get(name.as_str()) == Some(&StructRepresentation::C)
+        }
+        _ => false,
     }
 }
 

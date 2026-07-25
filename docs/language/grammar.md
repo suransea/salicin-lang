@@ -174,9 +174,16 @@ effect_operation =
     ":", type_expr, [ with_clause ] ;
 
 struct_decl =
-    "struct", "{", separators,
+    "struct", [ struct_options ], "{", separators,
     { [ visibility ], IDENT, ":", type_expr, [ "," ], separators },
     "}" ;
+
+struct_options =
+    "(", struct_option, { ",", struct_option }, [ "," ], ")" ;
+
+struct_option =
+    contextual("c")
+  | contextual("derive"), ":", IDENT ;
 
 enum_decl =
     "enum", "{", separators,
@@ -463,6 +470,11 @@ match_case =
     block_contents,
     "}" ;
 ```
+
+`c` selects the C data representation and may appear at most once. It is
+orthogonal to named options such as `derive: Copy`; for example,
+`struct(c, derive: Copy) { ... }`. Empty option lists retain the ordinary
+Salicin representation.
 
 ```ebnf
 pattern =

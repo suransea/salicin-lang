@@ -71,8 +71,9 @@ introduce `@` syntax, and `foreign` is not a variant of `builtin`.
 
 ## Next Milestone: ABI And Compiler Definitions
 
-This milestone starts when residual async polling is complete, before formatter,
-LSP, package, or incremental-compilation work.
+This milestone starts after the direct-tail suspended residual async slice,
+before the remaining async shapes, formatter, LSP, package, or
+incremental-compilation work.
 
 Exit conditions:
 

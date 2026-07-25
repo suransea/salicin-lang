@@ -662,6 +662,8 @@ impl Analyzer {
             name.clone(),
             StructLayout {
                 name: name.clone(),
+                source_name: name.clone(),
+                representation: crate::ast::StructRepresentation::Salicin,
                 fields,
             },
         );

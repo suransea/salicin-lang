@@ -400,6 +400,25 @@ let origin = Point { x: 0, y: 0 }
 Fields are initialized left to right. Every required field must appear exactly once. Field access
 preserves the ownership and borrow state of the base.
 
+`struct(c)` selects the target C aggregate representation as part of the type
+constructor:
+
+```sc fragment
+let Timespec = struct(c) {
+  seconds: i64,
+  nanoseconds: i64,
+}
+```
+
+It is not a general representation modifier. A C-representation struct must
+be non-empty, and each concrete field must be an integer, a raw pointer, a
+non-zero fixed array of another valid C field type, or another `struct(c)`.
+In particular, `bool`, borrows, tuples, enums, and ordinary Salicin structs
+are rejected because their layout is not part of this C data contract.
+Generic `struct(c)` constructors are validated after their compile-time
+arguments are instantiated. The target's ordinary non-packed C alignment and
+padding rules determine `size_of` and `align_of`.
+
 Enums are nominal closed sums:
 
 ```sc fragment

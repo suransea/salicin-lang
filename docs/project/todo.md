@@ -13,51 +13,32 @@ Priority meanings:
 - **P2**: accepted later work whose entry gate is not open;
 - **Deferred**: requires a new design decision.
 
-## Current
+## Current: ABI And Compiler Definitions
 
-- [ ] **ASYNC-EFFECT-1: Specialize generated polling through residual handlers**
-
-`MOVE-TRAIT-1`, `ASYNC-STATE-1`, `ASYNC-POLL-1`, `ASYNC-CANCEL-1`, `ASYNC-BORROW-1`, and
-`ASYNC-CONTROL-1`, and `ASYNC-EXEC-1` are complete. Generated futures preserve relocation, branch-local state,
-sequential and nested suspension, reusable loop iterations, move-only carry, and exact completion
-or cancellation cleanup. Recurring `loop`, pre-test `while`, and post-test `while` cover false
-exits, explicit `continue`, fallthrough, value output, `Never` output, heterogeneous branch
-children, multiple suspension points, and allocation-free child-slot reuse.
-The ordinary zero-field `core.async.Spin` executor polls one owned `Future(E)` until `Ready`
-without implicit allocation or runtime selection.
-
-Async bodies without suspension that are captureless or retain by-value
-`Copy`, move-only, shared-borrow, or mutable-borrow captures now retain a
-custom residual row, including standard `Throws(Error)`, and specialize their
-generated poll/resume source through an enclosing handler. Generic bounds
-such as `F: Future(E, Output = T)` infer `E` from the concrete implementation,
-and effectful trait-method calls participate in handler inlining. Ready
-`Throws` futures run success, error, and move-capture cleanup paths through
-ordinary `try`.
-
-The first suspended slice is complete for one direct tail await with no
-retained local or continuation state and only by-value `Copy` or move-only
-captures. Custom effects and standard `Throws(Error)` specialize through the
-enclosing handler; a Pending repoll does not replay child construction, and
-Ready, error, and cancellation paths clean initialized state exactly once.
-
-The remaining task extends that specialization across post-await
-continuations, retained locals, branches, loops, and borrowed suspended
-captures. Generated `Future(E)` implementations must preserve handler
-ownership and one-shot continuation rules while keeping construction cold.
-`Unsafe` remains the ordinary residual-poll baseline.
-
-## Next: ABI And Compiler Definitions
-
-- [ ] **ABI-REP-1: Replace legacy C representation syntax with `struct(c)`**
 - [ ] **ABI-FOREIGN-1: Replace grouped extern declarations with per-declaration `foreign(c, ...)`**
 - [ ] **BUILTIN-1: Mark every compiler-owned core definition with private `builtin()` initializers**
 
-These tasks begin immediately after `ASYNC-EFFECT-1`. They must remove `rep c`, `@link_name`, and
-`extern "C"` without introducing `@` syntax. `foreign` calls implicitly require `Unsafe`;
+`ABI-REP-1` is complete: `struct(c)` is the only C data representation
+constructor, composes with ordinary struct options, preserves target C
+alignment and padding, validates concrete generic instances, and rejects
+empty or representation-unstable fields with source-level diagnostics.
+
+The remaining ABI tasks remove `@link_name` and `extern "C"` without
+introducing `@` syntax. `foreign` calls implicitly require `Unsafe`;
 `builtin()` is a complete declaration marker typed by the declaration annotation and must be
 eliminated before code generation. Trait requirements remain bodyless, and user opaque types are
 outside `BUILTIN-1`.
+
+## Async Follow-Up
+
+- [ ] **ASYNC-EFFECT-1: Extend residual specialization beyond direct tail await**
+
+Non-suspending futures support `Copy`, move-only, shared-borrow, and
+mutable-borrow captures. The first suspended slice supports one direct tail
+await with no retained local or continuation state and by-value `Copy` or
+move-only captures. Remaining work covers post-await continuations, retained
+locals, branches, loops, and borrowed suspended captures while preserving
+handler ownership, cold construction, and one-shot cleanup.
 
 ## Later
 

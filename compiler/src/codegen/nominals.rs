@@ -956,6 +956,8 @@ impl Analyzer {
                     canonical.clone(),
                     StructLayout {
                         name: canonical.clone(),
+                        source_name: template_name.to_owned(),
+                        representation: self.struct_templates[template_name].representation,
                         fields: Vec::new(),
                     },
                 );

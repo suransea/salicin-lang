@@ -6,6 +6,13 @@ subset.
 
 ## Unreleased
 
+- Added `struct(c)` as the dedicated C data representation constructor.
+  Concrete layouts accept integers, raw pointers, non-zero fixed arrays, and
+  nested C structs; reject empty or representation-unstable fields with
+  source-level paths; preserve target C size and alignment; and validate
+  generic instances after compile-time substitution. The option composes
+  independently with `derive: Copy`.
+
 ## 0.189.0 - 2026-07-26
 
 - Specialized the first suspended residual async shape: one direct tail await

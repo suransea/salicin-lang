@@ -105,6 +105,9 @@ Implemented data and control features include:
   curried groups, methods, and trailing closures, with application binding
   above infix operators and logical newlines ending the call;
 - nominal structs and closed enums;
+- target-layout `struct(c)` data with recursive field validation for integers,
+  raw pointers, non-zero fixed arrays, nested C structs, and concrete generic
+  instances;
 - tuple, struct, enum, literal, binding, and wildcard patterns;
 - exhaustive `match` with guards;
 - `if`, `loop`, `while`, post-test loops, and `for`;

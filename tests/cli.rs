@@ -3076,6 +3076,37 @@ fn primitive_scalar_overflows_and_conversions_are_diagnosed() {
 }
 
 #[test]
+fn c_struct_representation_preserves_layout_and_rejects_invalid_fields() {
+    for (name, output) in batched_native_fixture_outputs(&["c_struct_layout.sc"]) {
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "{name} failed:\n{}",
+            output_text(&output)
+        );
+    }
+
+    for (name, expected) in [
+        ("c_struct_bool_field.sc", "not valid in `struct(c)`"),
+        ("c_struct_borrow_field.sc", "not valid in `struct(c)`"),
+        ("c_struct_empty.sc", "cannot be empty"),
+        ("c_struct_generic_invalid.sc", "not valid in `struct(c)`"),
+        ("c_struct_salicin_field.sc", "not valid in `struct(c)`"),
+        ("c_struct_zero_length_array.sc", "not valid in `struct(c)`"),
+    ] {
+        let source =
+            fs::read_to_string(fixture("fail", name)).expect("read C struct failure fixture");
+        let diagnostics = check_source(&source).expect_err("C struct failure fixture passed");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains(expected)),
+            "{name} did not contain `{expected}`: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn c_ffi_scalars_and_raw_pointers_link_and_run_natively() {
     let fixtures = ["ffi_c_abs.sc", "ffi_c_memset.sc"];
     for (name, output) in batched_native_fixture_outputs(&fixtures) {
