@@ -322,7 +322,10 @@ impl Analyzer {
             Type::Named(name, arguments) if arguments.is_empty() => {
                 if self.struct_defs.contains_key(name) || self.async_futures.contains_key(name) {
                     Ty::Struct(name.clone())
-                } else if self.enum_defs.contains_key(name) {
+                } else if self.enum_defs.contains_key(name)
+                    || (name.starts_with("$async$loop$step$")
+                        && self.enum_layouts.contains_key(name))
+                {
                     Ty::Enum(name.clone())
                 } else if self.struct_templates.contains_key(name)
                     || self.enum_templates.contains_key(name)
@@ -487,6 +490,8 @@ impl Analyzer {
                     || self.abstract_type_parameters.contains_key(name)
                     || self.struct_defs.contains_key(name)
                     || self.enum_defs.contains_key(name)
+                    || (name.starts_with("$async$loop$step$")
+                        && self.enum_layouts.contains_key(name))
                 {
                     Some(Type::Named(name.clone(), Vec::new()))
                 } else {

@@ -143,6 +143,12 @@ A pre-test `while` evaluates its condition before constructing the first iterati
 implementation requires a recurring condition to be pure; residual handler specialization is a
 separate milestone.
 
+When one source iteration contains multiple sequential suspension points, it is lowered to a
+finite, non-recursive iteration future. That child owns only the currently active nested segment
+and eventually produces the same step outcome. Its `Break(Output)` type is inferred after binding
+each awaited `Future.Output` in source order. Cancelling the parent delegates cleanup through this
+finite child chain.
+
 Values declared inside an iteration are owned by that iteration. On `continue`, `break`, or
 fallthrough, values not transferred into the step outcome are dropped before the control transfer.
 Dropping the parent while suspended drops only the active iteration and then the parent fields;

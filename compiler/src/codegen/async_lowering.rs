@@ -20,7 +20,8 @@ impl Analyzer {
         body: &Expr,
         context: &mut super::flow::LowerCtx,
     ) -> HirExpr {
-        let source_plan = simple_recurring_async_loop_source(body, self.next_async_future)
+        let source_plan = multiple_await_recurring_loop_source(body, self.next_async_future)
+            .or_else(|| simple_recurring_async_loop_source(body, self.next_async_future))
             .unwrap_or_else(|| split_async_source(body));
         if !source_plan.has_await {
             if let Some(loop_source) = recurring_suspended_loop_source(body) {
@@ -67,6 +68,67 @@ impl Analyzer {
                     retained.referent.as_deref().expect("checked retained referent")
                 ));
                 return super::lower::error_expr();
+            }
+        }
+        let mut loop_step = None;
+        if let Some(source) = source_plan.loop_step.as_ref() {
+            let mut output = source.output_hint.clone();
+            if output.is_none() && !source.probe_awaits.is_empty() {
+                let mut probe_context = context.clone();
+                for (binding, child) in &source.probe_awaits {
+                    let child_ty = match self.probe_expr_ty(child, None, &probe_context) {
+                        TypeProbe::Known(ty)
+                        | TypeProbe::KnownSource(ty, _)
+                        | TypeProbe::Defaultable(ty) => ty,
+                        TypeProbe::Unsupported => {
+                            self.error(
+                                "an await operand in a recurring async iteration has a type that cannot be inferred",
+                            );
+                            return super::lower::error_expr();
+                        }
+                    };
+                    let Some(awaited) = self.resolve_awaited_future(&child_ty) else {
+                        return super::lower::error_expr();
+                    };
+                    let id = probe_context.fresh_local();
+                    probe_context.insert_local(
+                        binding.clone(),
+                        super::flow::LocalInfo {
+                            id,
+                            ty: awaited.output,
+                            mutable: false,
+                            capability: LocalCapability::Owned,
+                            alias: None,
+                            partial: None,
+                            closure: None,
+                        },
+                    );
+                }
+                output = match self.probe_expr_ty(&source.break_value, None, &probe_context) {
+                    TypeProbe::Known(ty)
+                    | TypeProbe::KnownSource(ty, _)
+                    | TypeProbe::Defaultable(ty) => Some(ty),
+                    TypeProbe::Unsupported => {
+                        self.error(
+                            "value-producing `break` in a recurring async iteration has an output type that cannot be inferred",
+                        );
+                        return super::lower::error_expr();
+                    }
+                };
+            }
+            if let Some(output) = output {
+                if source_plan.loop_condition.is_some() && output != Ty::Unit {
+                    self.error(
+                        "value-producing `break` is not allowed in a recurring async `while`",
+                    );
+                    return super::lower::error_expr();
+                }
+                loop_step = Some(self.register_async_loop_step(
+                    Ty::Unit,
+                    output,
+                    source.continue_constructor.clone(),
+                    source.break_constructor.clone(),
+                ));
             }
         }
         self.async_factory_depth += 1;
@@ -130,48 +192,51 @@ impl Analyzer {
         } else {
             None
         };
-        let loop_step = match (&source_plan.loop_step, awaited.as_ref()) {
-            (Some(source), Some(awaited)) => {
-                let mut probe_context = context.clone();
-                let id = probe_context.fresh_local();
-                probe_context.insert_local(
-                    source.binding.clone(),
-                    super::flow::LocalInfo {
-                        id,
-                        ty: awaited.output.clone(),
-                        mutable: false,
-                        capability: LocalCapability::Owned,
-                        alias: None,
-                        partial: None,
-                        closure: None,
-                    },
-                );
-                let output = match self.probe_expr_ty(&source.break_value, None, &probe_context) {
-                    TypeProbe::Known(ty)
-                    | TypeProbe::KnownSource(ty, _)
-                    | TypeProbe::Defaultable(ty) => ty,
-                    TypeProbe::Unsupported => {
-                        self.error(
+        if loop_step.is_none() {
+            loop_step = match (&source_plan.loop_step, awaited.as_ref()) {
+                (Some(source), Some(awaited)) => {
+                    let mut probe_context = context.clone();
+                    let id = probe_context.fresh_local();
+                    probe_context.insert_local(
+                        source.binding.clone(),
+                        super::flow::LocalInfo {
+                            id,
+                            ty: awaited.output.clone(),
+                            mutable: false,
+                            capability: LocalCapability::Owned,
+                            alias: None,
+                            partial: None,
+                            closure: None,
+                        },
+                    );
+                    let output = match self.probe_expr_ty(&source.break_value, None, &probe_context)
+                    {
+                        TypeProbe::Known(ty)
+                        | TypeProbe::KnownSource(ty, _)
+                        | TypeProbe::Defaultable(ty) => ty,
+                        TypeProbe::Unsupported => {
+                            self.error(
                             "value-producing `break` in a recurring async loop has an output type that cannot be inferred",
+                        );
+                            return super::lower::error_expr();
+                        }
+                    };
+                    if source_plan.loop_condition.is_some() && output != Ty::Unit {
+                        self.error(
+                            "value-producing `break` is not allowed in a recurring async `while`",
                         );
                         return super::lower::error_expr();
                     }
-                };
-                if source_plan.loop_condition.is_some() && output != Ty::Unit {
-                    self.error(
-                        "value-producing `break` is not allowed in a recurring async `while`",
-                    );
-                    return super::lower::error_expr();
+                    Some(self.register_async_loop_step(
+                        Ty::Unit,
+                        output,
+                        source.continue_constructor.clone(),
+                        source.break_constructor.clone(),
+                    ))
                 }
-                Some(self.register_async_loop_step(
-                    Ty::Unit,
-                    output,
-                    source.continue_constructor.clone(),
-                    source.break_constructor.clone(),
-                ))
-            }
-            _ => None,
-        };
+                _ => None,
+            };
+        }
         if let (Some(awaited), Some(loop_step)) = (awaited.as_mut(), loop_step.as_ref()) {
             awaited.loop_step = Some(loop_step.clone());
         }
@@ -1945,6 +2010,8 @@ struct AsyncRetainedSource {
 struct AsyncLoopStepSource {
     binding: String,
     break_value: Expr,
+    output_hint: Option<Ty>,
+    probe_awaits: Vec<(String, Expr)>,
     continue_constructor: String,
     break_constructor: String,
 }
@@ -2078,6 +2145,116 @@ fn iteration_body_definitely_exits(expression: &Expr) -> bool {
     }
 }
 
+fn multiple_await_recurring_loop_source(body: &Expr, id: usize) -> Option<AsyncSourcePlan> {
+    let loop_expression = match body.unlocated() {
+        Expr::Loop { .. } | Expr::While { .. } => body,
+        Expr::Block(statements, Some(tail)) if statements.is_empty() => tail,
+        Expr::Block(statements, None) => {
+            let [Stmt::Expr(expression)] = statements.as_slice() else {
+                return None;
+            };
+            expression
+        }
+        _ => return None,
+    };
+    let (loop_body, loop_condition) = match loop_expression.unlocated() {
+        Expr::Loop { body } => (body.as_ref(), None),
+        Expr::While {
+            condition,
+            body,
+            post_test,
+        } => (
+            body.as_ref(),
+            Some(AsyncLoopConditionSource {
+                expression: (**condition).clone(),
+                post_test: *post_test,
+            }),
+        ),
+        _ => return None,
+    };
+    let Expr::Block(statements, tail) = loop_body.unlocated() else {
+        return None;
+    };
+    let (iteration_statements, decision) = match (statements.as_slice(), tail.as_deref()) {
+        (statements, Some(decision)) => (statements, Some(decision)),
+        ([prefix @ .., Stmt::Expr(decision)], None) => (prefix, Some(decision)),
+        (statements, None) if loop_condition.is_some() => (statements, None),
+        _ => return None,
+    };
+    let probe_awaits = iteration_statements
+        .iter()
+        .filter_map(|statement| {
+            let Stmt::Let(binding) = statement else {
+                return None;
+            };
+            let Expr::Await(child) = binding.value.unlocated() else {
+                return None;
+            };
+            Some((binding.name.clone(), (**child).clone()))
+        })
+        .collect::<Vec<_>>();
+    if probe_awaits.len() < 2 {
+        return None;
+    }
+
+    let continue_constructor = format!("$async$loop$continue${id}");
+    let break_constructor = format!("$async$loop$break${id}");
+    let construct = |name: &str, value: Expr| {
+        Expr::Call(
+            Box::new(Expr::Name(name.to_owned())),
+            vec![crate::ast::CallArg { label: None, value }],
+        )
+    };
+    let continue_step = construct(&continue_constructor, Expr::Unit);
+    let (rewritten_decision, break_value) = if let Some(decision) = decision {
+        let (condition, then_control, else_control) = simple_loop_decision(decision)?;
+        let break_value = match (&then_control, &else_control) {
+            (SimpleLoopControl::Break(value), control) if control.continues() => value.clone(),
+            (control, SimpleLoopControl::Break(value)) if control.continues() => value.clone(),
+            _ => return None,
+        };
+        let break_step = construct(&break_constructor, break_value.clone());
+        let lower_control = |control: SimpleLoopControl| match control {
+            SimpleLoopControl::Break(_) => break_step.clone(),
+            SimpleLoopControl::Continue => continue_step.clone(),
+            SimpleLoopControl::Fallthrough(expression) => Expr::Block(
+                vec![Stmt::Expr(expression)],
+                Some(Box::new(continue_step.clone())),
+            ),
+        };
+        (
+            Expr::If {
+                condition: Box::new(condition),
+                then_branch: Box::new(lower_control(then_control)),
+                else_branch: Some(Box::new(lower_control(else_control))),
+            },
+            break_value,
+        )
+    } else {
+        (continue_step, Expr::Unit)
+    };
+    Some(AsyncSourcePlan {
+        factory_body: Expr::Async {
+            body: Box::new(Expr::Block(
+                iteration_statements.to_vec(),
+                Some(Box::new(rewritten_decision)),
+            )),
+        },
+        has_await: true,
+        continuation: None,
+        retained: Vec::new(),
+        loop_step: Some(AsyncLoopStepSource {
+            binding: String::new(),
+            break_value,
+            output_hint: None,
+            probe_awaits,
+            continue_constructor,
+            break_constructor,
+        }),
+        loop_condition,
+    })
+}
+
 fn simple_recurring_async_loop_source(body: &Expr, id: usize) -> Option<AsyncSourcePlan> {
     let loop_expression = match body.unlocated() {
         Expr::Loop { .. } | Expr::While { .. } => body,
@@ -2168,6 +2345,8 @@ fn simple_recurring_async_loop_source(body: &Expr, id: usize) -> Option<AsyncSou
         loop_step: Some(AsyncLoopStepSource {
             binding: binding.name.clone(),
             break_value,
+            output_hint: None,
+            probe_awaits: Vec::new(),
             continue_constructor,
             break_constructor,
         }),

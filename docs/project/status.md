@@ -159,7 +159,10 @@ the next child. Recurring pre-test and post-test `while` loops invoke a reusable
 the pre-test condition can finish without constructing a child, a Pending child does not recheck
 the condition, and each completed backedge rechecks it before constructing the next child.
 Conditions are currently pure and `while` remains unit-valued. Move-only carry, general loop
-bodies, and algebraic residual-effect specialization are not implemented.
+bodies, and algebraic residual-effect specialization are not implemented. Iterations with multiple
+top-level sequential awaits use a private iteration future; its final `Break(Output)` may depend on
+any awaited binding, and cancellation follows its nested active-child chain without retaining
+completed children.
 
 ## Modules, Packages, and FFI
 
