@@ -16,6 +16,9 @@ subset.
   original `Vec(u8)` allocation, shared byte views cannot mutate the representation, and append,
   clear, reserve, and byte recovery preserve ownership and cleanup. Added `Vec.take()` to transfer
   a complete allocation while replacing its receiver with an empty vector.
+- Added the multi-module native `examples/inventory` LIB1 acceptance package. It composes owning
+  UTF-8 strings, recoverable invalid-byte errors, a vector of non-`Copy` products, consuming
+  iteration, and user-defined valuation/summary traits, and exits with status 42.
 - Added the source-backed, access-polymorphic `Index(Key)` protocol. User types, Array, Slice, and
   Vec now support bracket reads, explicit shared/mutable element borrows, and assignment through
   one `index(A)` method. Receiver and key evaluation remains single-shot, temporary loans end with

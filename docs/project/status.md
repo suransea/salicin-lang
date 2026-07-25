@@ -76,6 +76,12 @@ UTF-8 invariant. Safe construction validates consumed bytes and retains the orig
 byte-based length/capacity, reserve, clear, append, and consuming byte recovery preserve the
 invariant and ordinary deterministic cleanup. Mutable byte views, indexing, `Str`, character
 scalars, Unicode algorithms, and general string literal expressions are not implemented.
+
+The LIB1 vertical slice is exercised by the native `examples/inventory` package. Its separate
+parser, model, catalog, and binary modules transfer validated `String` names into non-`Copy`
+products, collect them in `Vec`, dispatch through user-defined valuation and summary traits,
+consume the collection in source order, and recover the original byte allocation from an invalid
+UTF-8 `Result` path. The acceptance program exits with status 42.
 The pointer family supports core-owned source extensions through a concrete non-nominal method
 owner. `extend(A: access, T: type) Ptr(A)(T)` applies to shared and mutable pointers, while
 `extend(T: type) Ptr(mut)(T)` is a direct mutable specialization. The standard declarations expose

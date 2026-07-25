@@ -135,7 +135,7 @@ Exit conditions:
 
 ## Milestone TYPE1: Complete static abstraction where libraries need it
 
-Priority: after LIB1 identifies concrete requirements
+Priority: active after LIB1 exit conditions were met
 
 Purpose: finish the higher-kinded and callable bridges already justified by standard-library code.
 

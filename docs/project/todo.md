@@ -15,9 +15,9 @@ Priority meanings:
 
 ## Current focus
 
-Current milestone: **M0 release baseline**
+Current milestone: **TYPE1 static abstraction**
 
-Next task: **LIB-EXAMPLE-1**
+Next task: **TYPE-GAT-1**
 
 ### P0 control-source queue
 
@@ -118,7 +118,10 @@ Entry gate: **M0-QUALITY-1** and **M0-AUDIT-1**
   - Add validation, byte views/conversion, invariant-preserving mutation, and allocation behavior
     specified by [the accepted design](string-design.md).
   - Cover invalid UTF-8 boundaries, consuming ownership, reallocation, and exactly-once cleanup.
-- [ ] **LIB-EXAMPLE-1: Add a nontrivial library-style native example**
+- [x] **LIB-EXAMPLE-1: Add a nontrivial library-style native example**
+  - `examples/inventory` composes `String`, `Vec`, `Result`, user traits, and file modules.
+  - Its native acceptance path validates owning UTF-8 conversion, recoverable invalid bytes,
+    consuming collection iteration, trait dispatch, and cleanup before returning 42.
 
 Each library task requires ownership, aliasing, allocation-failure, bounds, and cleanup behavior to
 be explicit where applicable.

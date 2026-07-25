@@ -409,6 +409,25 @@ fn ledger_example_exercises_the_m0_core_as_a_complete_program() {
 }
 
 #[test]
+fn inventory_example_exercises_lib1_across_modules() {
+    let package = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/inventory");
+
+    let checked = salic()
+        .arg("check")
+        .arg(&package)
+        .output()
+        .expect("check LIB1 inventory example");
+    assert!(checked.status.success(), "{}", output_text(&checked));
+
+    let output = salic()
+        .arg("run")
+        .arg(&package)
+        .output()
+        .expect("run LIB1 inventory example");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn effectful_for_preserves_iterator_state_and_cleanup() {
     let fixtures = ["for_throws.sc", "for_throws_cleanup.sc"];
     for (_fixture_name, output) in native_fixture_outputs_in_parallel(&fixtures) {
