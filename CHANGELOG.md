@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.195.0 - 2026-07-26
+
 - Specialized residual one-shot `if` and `match` selection when every
   direct-tail branch produces the same concrete child future type. Only the
   selected effectful factory runs, and Pending, Ready, cancellation, and drop
