@@ -181,8 +181,10 @@ factory retains the residual row. Direct `if` and `match` selection may use
 heterogeneous concrete children: the complete source selection retains
 pattern payload scope and move-only selector ownership through handler
 specialization, while pure bridges initialize the private active-variant
-state. Selection runs once and cancellation drops only the selected child.
-Wrapped branch state remains diagnostic before LLVM generation.
+state. Those bridges also assemble retained continuation locals with the
+selected child before the existing atomic start transition. Selection runs
+once; Ready and cancellation drop only the selected child and each
+initialized retained value once.
 One tail-position `await` stores its child across Pending,
 resumes from Ready, and drops the child exactly once on completion or cancellation. A single
 non-tail await may bind the Ready output and run a linear continuation with state-owned captures.
@@ -212,7 +214,7 @@ Conditions are currently pure and `while` remains unit-valued. Move-only continu
 now packed into `Continue(Carry)` and restored into their parent fields before the next iteration;
 completion and cancellation consume or drop each field once. Move-only values required by the
 iteration factory or condition still require a more general carry transform. Residual effects in
-later sequential segments, wrapped-state branches, and loops are not implemented.
+later sequential segments and loops are not implemented.
 Iterations with multiple top-level sequential awaits use a private iteration future; its final
 `Break(Output)` may depend on any awaited binding, and cancellation follows its nested active-child
 chain without retaining completed children. A recurring loop with no break uses the standard

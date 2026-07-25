@@ -525,7 +525,7 @@ impl Analyzer {
                 && (!heterogeneous_branch
                     || match &awaited.ty {
                         Ty::Enum(name) => self.enum_layouts.get(name).is_some_and(|layout| {
-                            heterogeneous_match_factory(
+                            heterogeneous_branch_factory(
                                 &source_plan.factory_body,
                                 layout.variants.len(),
                             )
@@ -1543,15 +1543,18 @@ impl Analyzer {
         let Some(output_source) = self.source_type_for_ty(&future.output) else {
             return;
         };
-        let branch_factory = match (&awaited.ty, &awaited.factory_output) {
-            (Ty::Enum(branch_name), factory_output)
-                if branch_name.starts_with("$async$branch$") && factory_output == &awaited.ty =>
-            {
+        let branch_factory = match &awaited.ty {
+            Ty::Enum(branch_name) if branch_name.starts_with("$async$branch$") => {
                 self.enum_layouts.get(branch_name).and_then(|layout| {
-                    heterogeneous_match_factory(resume_body, layout.variants.len()).map(
-                        |selection| {
-                            (
+                    heterogeneous_branch_factory(resume_body, layout.variants.len()).and_then(
+                        |(prefix, selection, retained)| {
+                            if retained.len() != awaited.retained_types.len() {
+                                return None;
+                            }
+                            Some((
+                                prefix,
                                 selection,
+                                retained,
                                 layout
                                     .variants
                                     .iter()
@@ -1564,7 +1567,7 @@ impl Analyzer {
                                             .clone()
                                     })
                                     .collect::<Vec<_>>(),
-                            )
+                            ))
                         },
                     )
                 })
@@ -1826,23 +1829,40 @@ impl Analyzer {
             body: *then_branch,
         });
         let mut branch_start_helpers = Vec::new();
-        if let (Ty::Enum(branch_name), Some((_, branch_types))) =
+        if let (Ty::Enum(branch_name), Some((_, _, _, branch_types))) =
             (&awaited.ty, branch_factory.as_ref())
         {
             for (variant, branch_ty) in branch_types.iter().enumerate() {
                 let helper = format!("{start_helper}$branch${variant}");
                 let local = 50_100 + variant;
+                let retained_locals = awaited
+                    .retained_types
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| 51_000 + variant * 100 + index)
+                    .collect::<Vec<_>>();
+                let mut signature_parameters = vec![ParamSig {
+                    name: "segment".to_owned(),
+                    ty: branch_ty.clone(),
+                    mode: PassMode::Move,
+                }];
+                signature_parameters.extend(
+                    awaited
+                        .retained_types
+                        .iter()
+                        .zip(&awaited.retained_modes)
+                        .enumerate()
+                        .map(|(index, (ty, mode))| ParamSig {
+                            name: format!("retained.{index}"),
+                            ty: ty.clone(),
+                            mode: *mode,
+                        }),
+                );
+                signature_parameters.push(self_parameter.clone());
                 self.signatures.insert(
                     helper.clone(),
                     FunctionSig {
-                        groups: vec![vec![
-                            ParamSig {
-                                name: "segment".to_owned(),
-                                ty: branch_ty.clone(),
-                                mode: PassMode::Move,
-                            },
-                            self_parameter.clone(),
-                        ]],
+                        groups: vec![signature_parameters],
                         unsafe_effect: false,
                         throws_error: None,
                         custom_effects: Vec::new(),
@@ -1852,6 +1872,39 @@ impl Analyzer {
                 let branch_source = self
                     .source_type_for_ty(branch_ty)
                     .expect("heterogeneous async branch has a source type");
+                let mut source_parameters = vec![Param {
+                    mode: PassMode::Move,
+                    access: None,
+                    modifiers: Vec::new(),
+                    region: None,
+                    name: "segment".to_owned(),
+                    ty: branch_source,
+                }];
+                source_parameters.extend(
+                    awaited
+                        .retained_types
+                        .iter()
+                        .zip(&awaited.retained_modes)
+                        .enumerate()
+                        .map(|(index, (ty, mode))| Param {
+                            mode: *mode,
+                            access: None,
+                            modifiers: Vec::new(),
+                            region: None,
+                            name: format!("retained.{index}"),
+                            ty: self
+                                .source_type_for_ty(ty)
+                                .expect("retained async branch state has a source type"),
+                        }),
+                );
+                source_parameters.push(Param {
+                    mode: PassMode::Inferred,
+                    access: None,
+                    modifiers: Vec::new(),
+                    region: None,
+                    name: "self".to_owned(),
+                    ty: self_source_reference.clone(),
+                });
                 self.functions.insert(
                     helper.clone(),
                     Function {
@@ -1859,24 +1912,7 @@ impl Analyzer {
                         foreign: None,
                         builtin: false,
                         compile_groups: Vec::new(),
-                        groups: vec![vec![
-                            Param {
-                                mode: PassMode::Move,
-                                access: None,
-                                modifiers: Vec::new(),
-                                region: None,
-                                name: "segment".to_owned(),
-                                ty: branch_source,
-                            },
-                            Param {
-                                mode: PassMode::Inferred,
-                                access: None,
-                                modifiers: Vec::new(),
-                                region: None,
-                                name: "self".to_owned(),
-                                ty: self_source_reference.clone(),
-                            },
-                        ]],
+                        groups: vec![source_parameters],
                         return_type: Some(Type::Named(
                             self.lang_item_name(LangItemKind::Poll).to_owned(),
                             vec![output_source.clone()],
@@ -1914,6 +1950,41 @@ impl Analyzer {
                         fields: vec![(0, segment)],
                     },
                 };
+                let retained = awaited
+                    .retained_types
+                    .iter()
+                    .zip(&awaited.retained_modes)
+                    .zip(&retained_locals)
+                    .map(|((ty, mode), local)| HirExpr {
+                        ty: ty.clone(),
+                        kind: HirExprKind::Read {
+                            place: HirPlace {
+                                local: *local,
+                                root_ty: ty.clone(),
+                                projections: Vec::new(),
+                                dynamic_index: None,
+                                ty: ty.clone(),
+                                capability: LocalCapability::Owned,
+                                root_mutable: false,
+                                loan: None,
+                                indirect: false,
+                            },
+                            kind: if *mode == PassMode::Copy {
+                                HirReadKind::Copy
+                            } else {
+                                HirReadKind::Move
+                            },
+                        },
+                    })
+                    .collect::<Vec<_>>();
+                let bundle = if retained.is_empty() {
+                    branch
+                } else {
+                    HirExpr {
+                        ty: awaited.factory_output.clone(),
+                        kind: HirExprKind::Tuple(std::iter::once(branch).chain(retained).collect()),
+                    }
+                };
                 let self_value = HirExpr {
                     ty: self_reference.clone(),
                     kind: HirExprKind::Read {
@@ -1931,31 +2002,43 @@ impl Analyzer {
                         kind: HirReadKind::Copy,
                     },
                 };
+                let mut params = vec![HirParam {
+                    id: local,
+                    name: "segment".to_owned(),
+                    ty: (*branch_ty).clone(),
+                    mode: PassMode::Move,
+                }];
+                params.extend(
+                    awaited
+                        .retained_types
+                        .iter()
+                        .zip(&awaited.retained_modes)
+                        .zip(&retained_locals)
+                        .enumerate()
+                        .map(|(index, ((ty, mode), local))| HirParam {
+                            id: *local,
+                            name: format!("retained.{index}"),
+                            ty: ty.clone(),
+                            mode: *mode,
+                        }),
+                );
+                params.push(HirParam {
+                    id: 0,
+                    name: "self".to_owned(),
+                    ty: self_reference.clone(),
+                    mode: PassMode::Inferred,
+                });
+                let mut arguments = vec![HirArgument::Move(bundle)];
+                arguments.push(HirArgument::Copy(self_value));
                 self.lifted_functions.push(HirFunction {
                     name: helper.clone(),
-                    params: vec![
-                        HirParam {
-                            id: local,
-                            name: "segment".to_owned(),
-                            ty: (*branch_ty).clone(),
-                            mode: PassMode::Move,
-                        },
-                        HirParam {
-                            id: 0,
-                            name: "self".to_owned(),
-                            ty: self_reference.clone(),
-                            mode: PassMode::Inferred,
-                        },
-                    ],
+                    params,
                     result: poll_ty.clone(),
                     body: HirExpr {
                         ty: poll_ty.clone(),
                         kind: HirExprKind::Call {
                             function: start_helper.clone(),
-                            arguments: vec![
-                                HirArgument::Move(branch),
-                                HirArgument::Copy(self_value),
-                            ],
+                            arguments,
                             consumed_callable: None,
                             diverges: false,
                         },
@@ -2139,66 +2222,70 @@ impl Analyzer {
             Box::new(Expr::Name(resume_function.to_owned())),
             resume_arguments(),
         );
-        let branch_resume = branch_factory.as_ref().map(|(selection, _)| {
-            let helper = format!("{resume_function}$branch$select");
-            let mut parameters = resume_parameters.clone();
-            parameters.push(Param {
-                mode: PassMode::Inferred,
-                access: None,
-                modifiers: Vec::new(),
-                region: None,
-                name: "self".to_owned(),
-                ty: self_source_reference.clone(),
+        let branch_resume = branch_factory
+            .as_ref()
+            .map(|(prefix, selection, retained, _)| {
+                let helper = format!("{resume_function}$branch$select");
+                let mut parameters = resume_parameters.clone();
+                parameters.push(Param {
+                    mode: PassMode::Inferred,
+                    access: None,
+                    modifiers: Vec::new(),
+                    region: None,
+                    name: "self".to_owned(),
+                    ty: self_source_reference.clone(),
+                });
+                let mut signature_parameters = resume_captures
+                    .iter()
+                    .map(|(name, ty, mode)| ParamSig {
+                        name: name.clone(),
+                        ty: ty.clone(),
+                        mode: *mode,
+                    })
+                    .collect::<Vec<_>>();
+                signature_parameters.push(self_parameter.clone());
+                self.signatures.insert(
+                    helper.clone(),
+                    FunctionSig {
+                        groups: vec![signature_parameters],
+                        unsafe_effect: future.unsafe_effect,
+                        throws_error: future.throws_error.clone(),
+                        custom_effects: future
+                            .custom_effects
+                            .iter()
+                            .filter(|effect| {
+                                effect.as_str() != self.lang_item_name(LangItemKind::AsyncEffect)
+                            })
+                            .cloned()
+                            .collect(),
+                        result: Some(poll_ty.clone()),
+                    },
+                );
+                self.functions.insert(
+                    helper.clone(),
+                    Function {
+                        name: helper.clone(),
+                        foreign: None,
+                        builtin: false,
+                        compile_groups: Vec::new(),
+                        groups: vec![parameters],
+                        return_type: Some(Type::Named(
+                            self.lang_item_name(LangItemKind::Poll).to_owned(),
+                            vec![output_source.clone()],
+                        )),
+                        effects: effects.clone(),
+                        where_predicates: Vec::new(),
+                        body: Some(wrap_heterogeneous_branch_factory(
+                            prefix.clone(),
+                            selection.clone(),
+                            retained,
+                            &branch_start_helpers,
+                        )),
+                    },
+                );
+                self.function_origins.insert(helper.clone(), origin.clone());
+                helper
             });
-            let mut signature_parameters = resume_captures
-                .iter()
-                .map(|(name, ty, mode)| ParamSig {
-                    name: name.clone(),
-                    ty: ty.clone(),
-                    mode: *mode,
-                })
-                .collect::<Vec<_>>();
-            signature_parameters.push(self_parameter.clone());
-            self.signatures.insert(
-                helper.clone(),
-                FunctionSig {
-                    groups: vec![signature_parameters],
-                    unsafe_effect: future.unsafe_effect,
-                    throws_error: future.throws_error.clone(),
-                    custom_effects: future
-                        .custom_effects
-                        .iter()
-                        .filter(|effect| {
-                            effect.as_str() != self.lang_item_name(LangItemKind::AsyncEffect)
-                        })
-                        .cloned()
-                        .collect(),
-                    result: Some(poll_ty.clone()),
-                },
-            );
-            self.functions.insert(
-                helper.clone(),
-                Function {
-                    name: helper.clone(),
-                    foreign: None,
-                    builtin: false,
-                    compile_groups: Vec::new(),
-                    groups: vec![parameters],
-                    return_type: Some(Type::Named(
-                        self.lang_item_name(LangItemKind::Poll).to_owned(),
-                        vec![output_source.clone()],
-                    )),
-                    effects: effects.clone(),
-                    where_predicates: Vec::new(),
-                    body: Some(wrap_heterogeneous_match_factory(
-                        selection.clone(),
-                        &branch_start_helpers,
-                    )),
-                },
-            );
-            self.function_origins.insert(helper.clone(), origin.clone());
-            helper
-        });
         let state = || Expr::Member(Box::new(self_value()), "state".to_owned());
         let cold_poll = if let Some(branch_resume) = branch_resume {
             let mut arguments = resume_arguments();
@@ -4162,27 +4249,60 @@ fn branch_await_future(expression: &Expr) -> Option<Expr> {
         })
 }
 
-fn heterogeneous_match_factory(expression: &Expr, variants: usize) -> Option<Expr> {
+fn heterogeneous_branch_factory(
+    expression: &Expr,
+    variants: usize,
+) -> Option<(Vec<Stmt>, Expr, Vec<Expr>)> {
     match expression.unlocated() {
-        Expr::Block(statements, Some(tail)) if statements.is_empty() => {
-            heterogeneous_match_factory(tail, variants)
-        }
         Expr::Match { arms, .. } if !arms.is_empty() && arms.len() == variants => {
-            Some(expression.clone())
+            Some((Vec::new(), expression.clone(), Vec::new()))
         }
+        Expr::Block(statements, Some(tail)) => match tail.unlocated() {
+            Expr::Match { arms, .. } if !arms.is_empty() && arms.len() == variants => {
+                Some((statements.clone(), (**tail).clone(), Vec::new()))
+            }
+            Expr::Tuple(fields) if !fields.is_empty() => {
+                let selection = fields.first()?;
+                let Expr::Match { arms, .. } = selection.unlocated() else {
+                    return None;
+                };
+                if arms.is_empty() || arms.len() != variants {
+                    return None;
+                }
+                Some((statements.clone(), selection.clone(), fields[1..].to_vec()))
+            }
+            _ => None,
+        },
         _ => None,
     }
 }
 
-fn wrap_heterogeneous_match_factory(mut expression: Expr, starts: &[String]) -> Expr {
-    match expression.unlocated_mut() {
-        Expr::Block(statements, Some(tail)) if statements.is_empty() => {
-            **tail = wrap_heterogeneous_match_factory((**tail).clone(), starts);
-        }
+fn wrap_heterogeneous_branch_factory(
+    prefix: Vec<Stmt>,
+    mut selection: Expr,
+    retained: &[Expr],
+    starts: &[String],
+) -> Expr {
+    match selection.unlocated_mut() {
         Expr::Match { arms, .. } => {
             debug_assert_eq!(arms.len(), starts.len());
             for (variant, (arm, start)) in arms.iter_mut().zip(starts).enumerate() {
                 let binding = format!("$async$branch$value${variant}");
+                let arguments = std::iter::once(CallArg {
+                    label: None,
+                    value: Expr::Name(binding.clone()),
+                })
+                .chain(
+                    retained
+                        .iter()
+                        .cloned()
+                        .map(|value| CallArg { label: None, value }),
+                )
+                .chain(std::iter::once(CallArg {
+                    label: None,
+                    value: Expr::Name("self".to_owned()),
+                }))
+                .collect();
                 arm.body = Expr::Block(
                     vec![Stmt::Let(crate::ast::Binding {
                         mutable: false,
@@ -4193,23 +4313,18 @@ fn wrap_heterogeneous_match_factory(mut expression: Expr, starts: &[String]) -> 
                     })],
                     Some(Box::new(Expr::Call(
                         Box::new(Expr::Name(start.clone())),
-                        vec![
-                            CallArg {
-                                label: None,
-                                value: Expr::Name(binding),
-                            },
-                            CallArg {
-                                label: None,
-                                value: Expr::Name("self".to_owned()),
-                            },
-                        ],
+                        arguments,
                     ))),
                 );
             }
         }
         _ => unreachable!("validated heterogeneous async factory is a match"),
     }
-    expression
+    if prefix.is_empty() {
+        selection
+    } else {
+        Expr::Block(prefix, Some(Box::new(selection)))
+    }
 }
 
 fn tail_await_operand(expression: &Expr) -> Option<Expr> {

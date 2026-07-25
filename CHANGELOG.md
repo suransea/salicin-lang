@@ -6,6 +6,13 @@ subset.
 
 ## Unreleased
 
+- Allowed heterogeneous residual `if` and `match` selection to retain
+  continuation locals across the selected await. Each pure branch bridge now
+  reconstructs the complete private `(selected child, retained...)` bundle;
+  Ready and cancellation coverage verifies exactly-once cleanup for both the
+  active variant and move-only retained state, while self-referential bundles
+  remain rejected by structural `Move`.
+
 ## 0.197.0 - 2026-07-26
 
 - Extended heterogeneous residual async branch specialization from direct

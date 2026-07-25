@@ -3384,6 +3384,26 @@ fn suspended_residual_async_effects_specialize_and_cancel() {
         output_text(&conflict)
     );
 
+    let self_reference = salic()
+        .arg("check")
+        .arg(fixture(
+            "fail",
+            "async_residual_heterogeneous_wrapped_self_reference.sc",
+        ))
+        .output()
+        .expect("check wrapped heterogeneous residual self-reference");
+    assert!(
+        !self_reference.status.success(),
+        "{}",
+        output_text(&self_reference)
+    );
+    assert!(
+        String::from_utf8_lossy(&self_reference.stderr)
+            .contains("self-referential and cannot implement `Move`"),
+        "{}",
+        output_text(&self_reference)
+    );
+
     let recurring = salic()
         .arg("check")
         .arg(fixture("fail", "async_residual_loop_await.sc"))

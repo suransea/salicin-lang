@@ -113,9 +113,12 @@ also produce heterogeneous concrete child types. The complete selection
 expression remains source-typed through the residual handler, including
 pattern payload bindings and a moved selector; each selected concrete child
 is then transferred through a pure bridge into the private active-variant
-state. Selection and the chosen factory execute once; Pending, Ready, and
-cancellation touch only the selected child. Wrapped branch-local state,
-residual effects in later segments, and loops remain outside this slice.
+state. When pre-await locals are live in the continuation, the same bridge
+constructs the complete `(selected child, retained...)` bundle so the child
+and retained fields enter the suspended state atomically. Selection and the
+chosen factory execute once; Pending, Ready, and cancellation touch only the
+selected child, while every initialized retained value is cleaned exactly
+once. Residual effects in later segments and loops remain outside this slice.
 
 ## State Machines
 

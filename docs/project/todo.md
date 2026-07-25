@@ -25,9 +25,10 @@ retained locals must preserve structural `Move`. One-shot branches support
 same-type direct-tail child factories. Direct `if` and `match` selection also
 support heterogeneous concrete children, pattern payload bindings, and a
 move-only selector by selecting before the private branch enum is initialized.
-Wrapped branch-local state remains. Remaining work also covers residual
-effects in later segments and loops while preserving handler ownership, cold
-construction, and one-shot cleanup.
+The branch bridge can atomically initialize that selected child together with
+move-only or `Copy` locals retained by the continuation. Remaining work covers
+residual effects in later segments and loops while preserving handler
+ownership, cold construction, and one-shot cleanup.
 
 ## P1: ABI Review And Interoperability
 
