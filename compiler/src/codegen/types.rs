@@ -277,6 +277,16 @@ impl Analyzer {
                 }
             }
             Type::Named(name, arguments)
+                if self.is_lang_item_name(name, LangItemKind::SliceTypeForm) =>
+            {
+                if let [element] = arguments.as_slice() {
+                    Ty::Slice(Box::new(self.lower_source_type(element)))
+                } else {
+                    self.error(format!("type `{name}` expects exactly one type argument"));
+                    Ty::Error
+                }
+            }
+            Type::Named(name, arguments)
                 if name == self.lang_item_name(LangItemKind::Continuation) =>
             {
                 if arguments.len() != 2 {
@@ -437,6 +447,10 @@ impl Analyzer {
                 region: region.clone(),
                 pointee: Box::new(self.source_type_for_ty(pointee)?),
             }),
+            Ty::Slice(element) => Some(Type::Named(
+                self.lang_item_name(LangItemKind::SliceTypeForm).to_owned(),
+                vec![self.source_type_for_ty(element)?],
+            )),
             Ty::Struct(name) | Ty::Enum(name) => {
                 if is_compile_value_marker(name) {
                     if let Some(constructor) = type_constructor_from_marker(name) {
@@ -556,6 +570,7 @@ impl Analyzer {
             Ty::Array(element, length) => {
                 format!("Array({})({length})", self.diagnostic_type_name(element))
             }
+            Ty::Slice(element) => format!("Slice({})", self.diagnostic_type_name(element)),
             Ty::Pointer { pointee, mutable } => format!(
                 "{}({})",
                 if *mutable { "Ptr(mut)" } else { "Ptr" },
@@ -1459,6 +1474,14 @@ impl Analyzer {
                     pointee: Box::new(self.probe_source_ty(pointee)?),
                     mutable: matches!(access, "mut" | ACCESS_MUT_MARKER),
                 })
+            }
+            Type::Named(name, arguments)
+                if self.is_lang_item_name(name, LangItemKind::SliceTypeForm) =>
+            {
+                let [element] = arguments.as_slice() else {
+                    return None;
+                };
+                Some(Ty::Slice(Box::new(self.probe_source_ty(element)?)))
             }
             Type::Named(name, arguments)
                 if arguments.is_empty()

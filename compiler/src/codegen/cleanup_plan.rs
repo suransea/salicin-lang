@@ -557,6 +557,7 @@ impl<'a> HirCleanupPlanner<'a> {
             | Ty::Unit
             | Ty::Pointer { .. }
             | Ty::Reference { .. }
+            | Ty::Slice(_)
             | Ty::Never
             | Ty::Function(_)
             | Ty::EffectRow { .. }

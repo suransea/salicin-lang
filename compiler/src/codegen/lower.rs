@@ -394,7 +394,7 @@ pub(super) fn signed_integer_min(ty: &Ty) -> Option<i128> {
 pub(super) fn nominal_name(ty: &Ty) -> Option<&str> {
     match ty {
         Ty::Struct(name) | Ty::Enum(name) => Some(name),
-        Ty::Array(element, _) => nominal_name(element),
+        Ty::Array(element, _) | Ty::Slice(element) => nominal_name(element),
         Ty::Tuple(fields) => fields.iter().find_map(nominal_name),
         _ => None,
     }
@@ -403,9 +403,10 @@ pub(super) fn nominal_name(ty: &Ty) -> Option<&str> {
 pub(super) fn ty_contains_nominal(ty: &Ty, nominal: &str) -> bool {
     match ty {
         Ty::Struct(name) | Ty::Enum(name) => name == nominal,
-        Ty::Pointer { pointee, .. } | Ty::Reference { pointee, .. } | Ty::Array(pointee, _) => {
-            ty_contains_nominal(pointee, nominal)
-        }
+        Ty::Pointer { pointee, .. }
+        | Ty::Reference { pointee, .. }
+        | Ty::Slice(pointee)
+        | Ty::Array(pointee, _) => ty_contains_nominal(pointee, nominal),
         Ty::Tuple(fields) => fields
             .iter()
             .any(|field| ty_contains_nominal(field, nominal)),

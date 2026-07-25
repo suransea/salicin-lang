@@ -317,6 +317,7 @@ impl Analyzer {
         let mut names = HashMap::<String, HashSet<TopLevelNamespace>>::new();
         for (kind, namespaces) in [
             (LangItemKind::ArrayTypeForm, &[TopLevelNamespace::Type][..]),
+            (LangItemKind::SliceTypeForm, &[TopLevelNamespace::Type][..]),
             (
                 LangItemKind::PtrTypeForm,
                 &[TopLevelNamespace::Type, TopLevelNamespace::Function][..],
@@ -7595,7 +7596,13 @@ impl Analyzer {
                     _ => None,
                 });
                 if let Some((pointee, expected_mutable, expected_region)) = &returned_reference {
-                    self.require_same_type(&place.ty, pointee, "returned borrow pointee");
+                    let array_unsizes_to_slice = matches!(
+                        (&place.ty, pointee),
+                        (Ty::Array(actual, _), Ty::Slice(expected)) if actual == expected
+                    );
+                    if !array_unsizes_to_slice {
+                        self.require_same_type(&place.ty, pointee, "returned borrow pointee");
+                    }
                     if *expected_mutable && !*mutable {
                         self.error(if context.reference_value_depth > 0 {
                             "borrow kind mismatch: expected mutable borrow, found shared borrow"

@@ -185,6 +185,7 @@ pub enum LangItemKind {
     BorrowTypeForm,
     BorrowValueForm,
     ArrayTypeForm,
+    SliceTypeForm,
     PtrTypeForm,
     PtrValueForm,
     SizeOf,
@@ -208,7 +209,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 77] = [
+    const ALL: [Self; 78] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -266,6 +267,7 @@ impl LangItemKind {
         Self::BorrowTypeForm,
         Self::BorrowValueForm,
         Self::ArrayTypeForm,
+        Self::SliceTypeForm,
         Self::PtrTypeForm,
         Self::PtrValueForm,
         Self::SizeOf,
@@ -347,6 +349,7 @@ impl LangItemKind {
             Self::BorrowTypeForm => "borrow",
             Self::BorrowValueForm => "borrow",
             Self::ArrayTypeForm => "Array",
+            Self::SliceTypeForm => "Slice",
             Self::PtrTypeForm | Self::PtrValueForm => "Ptr",
             Self::SizeOf => "size_of",
             Self::AlignOf => "align_of",
@@ -382,6 +385,7 @@ impl LangItemKind {
             Self::AccessType | Self::Bool => "enum",
             Self::BorrowTypeForm
             | Self::ArrayTypeForm
+            | Self::SliceTypeForm
             | Self::PtrTypeForm
             | Self::I8
             | Self::I16
@@ -501,6 +505,7 @@ impl LangItemKind {
             | Self::BorrowTypeForm
             | Self::BorrowValueForm
             | Self::ArrayTypeForm
+            | Self::SliceTypeForm
             | Self::PtrTypeForm
             | Self::PtrValueForm
             | Self::SizeOf
@@ -638,6 +643,7 @@ pub struct LangItems {
     borrow_type_form: LangItem,
     borrow_value_form: LangItem,
     array_type_form: LangItem,
+    slice_type_form: LangItem,
     ptr_type_form: LangItem,
     ptr_value_form: LangItem,
     size_of: LangItem,
@@ -824,6 +830,9 @@ impl LangItems {
     pub const fn array_type_form(&self) -> &LangItem {
         &self.array_type_form
     }
+    pub const fn slice_type_form(&self) -> &LangItem {
+        &self.slice_type_form
+    }
     pub const fn continuation(&self) -> &LangItem {
         &self.continuation
     }
@@ -932,6 +941,7 @@ impl LangItems {
             LangItemKind::BorrowTypeForm => &self.borrow_type_form,
             LangItemKind::BorrowValueForm => &self.borrow_value_form,
             LangItemKind::ArrayTypeForm => &self.array_type_form,
+            LangItemKind::SliceTypeForm => &self.slice_type_form,
             LangItemKind::PtrTypeForm => &self.ptr_type_form,
             LangItemKind::PtrValueForm => &self.ptr_value_form,
             LangItemKind::SizeOf => &self.size_of,
@@ -1161,6 +1171,7 @@ impl CoreBundle {
             &mut lang_items.borrow_type_form,
             &mut lang_items.borrow_value_form,
             &mut lang_items.array_type_form,
+            &mut lang_items.slice_type_form,
             &mut lang_items.ptr_type_form,
             &mut lang_items.ptr_value_form,
             &mut lang_items.size_of,
@@ -1505,6 +1516,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         borrow_type_form: item(LangItemKind::BorrowTypeForm),
         borrow_value_form: item(LangItemKind::BorrowValueForm),
         array_type_form: item(LangItemKind::ArrayTypeForm),
+        slice_type_form: item(LangItemKind::SliceTypeForm),
         ptr_type_form: item(LangItemKind::PtrTypeForm),
         ptr_value_form: item(LangItemKind::PtrValueForm),
         size_of: item(LangItemKind::SizeOf),
@@ -1644,6 +1656,9 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         }
         (LangItemKind::ArrayTypeForm, Item::TypeForm(definition)) => {
             validate_array_type_form(definition, diagnostics)
+        }
+        (LangItemKind::SliceTypeForm, Item::TypeForm(definition)) => {
+            validate_slice_type_form(definition, diagnostics)
         }
         (LangItemKind::Bool, Item::Enum(definition)) => validate_closed_enum(
             "bool",
@@ -1874,6 +1889,16 @@ fn validate_array_type_form(definition: &TypeFormDef, diagnostics: &mut Vec<Stri
         diagnostics.push(
             "lang item `Array` type form must have shape `pub let Array(T: type)(L: usize): type`"
                 .to_owned(),
+        );
+    }
+}
+
+fn validate_slice_type_form(definition: &TypeFormDef, diagnostics: &mut Vec<String>) {
+    let valid = definition.compile_groups == vec![vec![type_parameter("T")]]
+        && definition.values.is_empty();
+    if !valid {
+        diagnostics.push(
+            "lang item `Slice` type form must have shape `pub let Slice(T: type): type`".to_owned(),
         );
     }
 }
@@ -3335,6 +3360,7 @@ pub let Shr(Rhs: type) = trait {
                     format!("core::borrow::{}", kind.source_name())
                 }
                 LangItemKind::ArrayTypeForm
+                | LangItemKind::SliceTypeForm
                 | LangItemKind::PtrTypeForm
                 | LangItemKind::PtrValueForm
                 | LangItemKind::SizeOf
@@ -3421,6 +3447,7 @@ pub let Shr(Rhs: type) = trait {
                 LangItemKind::AccessType => vec!["borrow"],
                 LangItemKind::BorrowTypeForm | LangItemKind::BorrowValueForm => vec!["borrow"],
                 LangItemKind::ArrayTypeForm
+                | LangItemKind::SliceTypeForm
                 | LangItemKind::PtrTypeForm
                 | LangItemKind::PtrValueForm
                 | LangItemKind::SizeOf
@@ -3496,7 +3523,7 @@ pub let Shr(Rhs: type) = trait {
     fn pointer_and_layout_lang_items_require_memory_contracts() {
         let modules = edition_2026_test_modules(&[("memory", "")]);
         let error = CoreBundle::from_modules(Edition::Edition2026, &modules).unwrap_err();
-        for name in ["Array", "Ptr", "size_of", "align_of"] {
+        for name in ["Array", "Slice", "Ptr", "size_of", "align_of"] {
             assert!(
                 error
                     .diagnostics()
@@ -3514,6 +3541,10 @@ pub let Shr(Rhs: type) = trait {
                     "pub let Array(T: type)\n  (L: usize): type",
                     "pub let Array(T: type, L: usize): type",
                 ),
+            ),
+            (
+                "Slice",
+                EDITION_2026_MEMORY.replace("pub let Slice(T: type): type", "pub let Slice: type"),
             ),
             (
                 "Ptr",

@@ -138,6 +138,11 @@ pub(super) fn canonical_type_encoding(ty: &Ty) -> String {
             push_canonical_component(&mut encoded, &element);
             encoded
         }
+        Ty::Slice(element) => {
+            let mut encoded = String::from("slice");
+            push_canonical_component(&mut encoded, &canonical_type_encoding(element));
+            encoded
+        }
         Ty::Struct(name) => {
             let mut encoded = String::from("struct");
             push_canonical_component(&mut encoded, name);

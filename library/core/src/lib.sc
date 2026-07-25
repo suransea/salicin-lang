@@ -17,6 +17,7 @@ pub let usize = core.primitives.usize
 pub let Option = core.option.Option
 pub let Result = core.result.Result
 pub let Array = core.memory.Array
+pub let Slice = core.memory.Slice
 pub let Ptr = core.memory.Ptr
 pub let size_of = core.memory.size_of
 pub let align_of = core.memory.align_of

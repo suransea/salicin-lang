@@ -561,7 +561,7 @@ impl<'a> Emitter<'a> {
                         collect(field, types);
                     }
                 }
-                Ty::Array(element, _) => collect(element, types),
+                Ty::Array(element, _) | Ty::Slice(element) => collect(element, types),
                 Ty::Function(function) => {
                     for parameter in function.groups.iter().flatten() {
                         collect(parameter, types);
@@ -738,6 +738,7 @@ impl<'a> Emitter<'a> {
             | Ty::Unit
             | Ty::Pointer { .. }
             | Ty::Reference { .. }
+            | Ty::Slice(_)
             | Ty::Never
             | Ty::Function(_)
             | Ty::EffectRow { .. }
@@ -2593,6 +2594,34 @@ impl<'a> FunctionEmitter<'a> {
             HirExprKind::Partial { captures, .. } => {
                 self.emit_callable_environment(expression, captures)
             }
+            HirExprKind::Borrow { place, .. }
+                if matches!(
+                    &expression.ty,
+                    Ty::Reference {
+                        pointee,
+                        ..
+                    } if matches!(pointee.as_ref(), Ty::Slice(_))
+                ) =>
+            {
+                let Ty::Array(_, length) = &place.ty else {
+                    return Err(Diagnostic::new(
+                        "slice borrow requires an array place in the first slice implementation",
+                    ));
+                };
+                let pointer = self.emit_place_address(place)?;
+                let pointer_value = self.fresh_register();
+                self.instruction(format!(
+                    "{pointer_value} = insertvalue {{ ptr, i64 }} poison, ptr {pointer}, 0"
+                ));
+                let slice = self.fresh_register();
+                self.instruction(format!(
+                    "{slice} = insertvalue {{ ptr, i64 }} {pointer_value}, i64 {length}, 1"
+                ));
+                Ok(Operand {
+                    ty: expression.ty.clone(),
+                    value: Some(slice),
+                })
+            }
             HirExprKind::Borrow { place, .. } if matches!(expression.ty, Ty::Reference { .. }) => {
                 Ok(Operand {
                     ty: expression.ty.clone(),
@@ -4194,6 +4223,12 @@ fn llvm_value_type(ty: &Ty) -> Result<String, Diagnostic> {
                 .join(", ")
         )),
         Ty::Array(element, length) => Ok(format!("[{length} x {}]", llvm_value_type(element)?)),
+        Ty::Slice(_) => Err(Diagnostic::new(
+            "internal error: unsized `Slice` has no first-class LLVM representation",
+        )),
+        Ty::Reference { pointee, .. } if matches!(pointee.as_ref(), Ty::Slice(_)) => {
+            Ok("{ ptr, i64 }".to_owned())
+        }
         Ty::Pointer { .. } | Ty::Reference { .. } | Ty::Function(_) => Ok("ptr".to_owned()),
         Ty::Struct(name) | Ty::Enum(name) => Ok(format!("%{}", type_symbol(name))),
         Ty::Callable(_) => Ok(format!("%{}", type_symbol(&canonical_type_encoding(ty)))),
@@ -4254,7 +4289,7 @@ fn zero_const(ty: &Ty, program: &HirProgram) -> Option<ConstValue> {
                 .map(|field| zero_const(field, program))
                 .collect::<Option<Vec<_>>>()?,
         )),
-        Ty::Pointer { .. } | Ty::Reference { .. } => None,
+        Ty::Pointer { .. } | Ty::Reference { .. } | Ty::Slice(_) => None,
         Ty::Array(element, length) => {
             let length = usize::try_from(*length).ok()?;
             Some(ConstValue::Aggregate(

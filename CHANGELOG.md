@@ -6,6 +6,10 @@ subset.
 
 ## Unreleased
 
+- Introduced the unsized, non-prelude `Slice(T)` core identity and the first safe fat-borrow path.
+  Region-bound shared or mutable Array borrows can unsize to `borrow(A)(R)(Slice(T))`, preserving
+  the original loan while lowering as `{ pointer, length }`; bare Slice values remain
+  representation-less. Slice accessors and Vec conversion remain in `LIB-SLICE-1`.
 - Added executable documentation fencing. Every Salicin Markdown block is now classified as a
   checked source unit, a non-standalone normative fragment, an explicitly deferred design, or an
   intentional failure; the CLI suite rejects unclassified/unterminated fences and compiles every

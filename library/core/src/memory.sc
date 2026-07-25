@@ -5,6 +5,9 @@
 pub let Array(T: type)
   (L: usize): type
 
+/// Dynamically sized contiguous sequence viewed through a borrow.
+pub let Slice(T: type): type
+
 /// Raw pointer type with access `A` and pointee `T`.
 pub let Ptr(A: access = shared)
   (T: type): type

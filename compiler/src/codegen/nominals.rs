@@ -996,9 +996,10 @@ impl Analyzer {
                         .map(|argument| self.nominal_type_complexity_with_seen(argument, seen))
                         .sum::<usize>()
             }
-            Ty::Pointer { pointee, .. } | Ty::Reference { pointee, .. } | Ty::Array(pointee, _) => {
-                1 + self.nominal_type_complexity_with_seen(pointee, seen)
-            }
+            Ty::Pointer { pointee, .. }
+            | Ty::Reference { pointee, .. }
+            | Ty::Slice(pointee)
+            | Ty::Array(pointee, _) => 1 + self.nominal_type_complexity_with_seen(pointee, seen),
             Ty::Tuple(fields) => {
                 1 + fields
                     .iter()

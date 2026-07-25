@@ -539,4 +539,40 @@ mod tests {
         compile_source(source)
             .expect("generic inherent methods should combine outer and member parameters");
     }
+
+    #[test]
+    fn slice_is_a_non_prelude_unsized_core_type() {
+        check_library_source(
+            "let Slice = std.Slice\n\
+             let inspect(R: region)(values: borrow(R)(Slice(i32))): u64 = { 0 }\n",
+        )
+        .expect("borrowed Slice types should be accepted");
+
+        let diagnostics = check_library_source(
+            "let inspect(R: region)(values: borrow(R)(Slice(i32))): u64 = { 0 }\n",
+        )
+        .expect_err("Slice must require an ordinary standard-library alias");
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.contains("let Slice = std.Slice")));
+    }
+
+    #[test]
+    fn arrays_unsize_to_region_bound_slice_borrows() {
+        let ir = compile_source(
+            "let Slice = std.Slice\n\
+             let view(R: region)\n\
+               (values: borrow(R)(Array(i32)(3))): borrow(R)(Slice(i32)) = {\n\
+               borrow(values)\n\
+             }\n\
+             let main(): i32 = {\n\
+               let values = [40, 1, 1]\n\
+               let slice = view(borrow(values))\n\
+               42\n\
+             }\n",
+        )
+        .expect("array borrow should unsize to a slice borrow");
+        assert!(ir.contains("{ ptr, i64 }"), "{ir}");
+        assert!(ir.contains("insertvalue { ptr, i64 }"), "{ir}");
+    }
 }

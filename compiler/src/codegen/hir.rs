@@ -29,6 +29,7 @@ pub(super) enum Ty {
         mutable: bool,
         region: Option<String>,
     },
+    Slice(Box<Ty>),
     Array(Box<Ty>, u64),
     Struct(String),
     Enum(String),
@@ -208,6 +209,7 @@ impl fmt::Display for Ty {
                     write!(f, "{qualifier} {pointee}")
                 }
             }
+            Self::Slice(element) => write!(f, "Slice({element})"),
             Self::Array(element, length) => write!(f, "Array({element})({length})"),
             Self::Struct(name) | Self::Enum(name) => f.write_str(name),
             Self::Never => f.write_str("Never"),
@@ -387,7 +389,7 @@ impl HirProgram {
         match ty {
             Ty::Array(element, _) => self.needs_drop(element),
             Ty::Tuple(fields) => fields.iter().any(|field| self.needs_drop(field)),
-            Ty::Pointer { .. } | Ty::Reference { .. } => false,
+            Ty::Pointer { .. } | Ty::Reference { .. } | Ty::Slice(_) => false,
             Ty::Struct(name) => {
                 self.box_pointee(name).is_some()
                     || self.drop_methods.contains_key(ty)

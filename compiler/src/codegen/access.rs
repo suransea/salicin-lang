@@ -253,7 +253,9 @@ impl Analyzer {
                 Ty::Tuple(fields) => fields.iter().fold(access, |access, field| {
                     visit(analyzer, access, field, fallback_origin, visited)
                 }),
-                Ty::Array(element, _) => visit(analyzer, access, element, fallback_origin, visited),
+                Ty::Array(element, _) | Ty::Slice(element) => {
+                    visit(analyzer, access, element, fallback_origin, visited)
+                }
                 Ty::Pointer { pointee, .. } => {
                     visit(analyzer, access, pointee, fallback_origin, visited)
                 }
@@ -370,7 +372,7 @@ impl Analyzer {
                     self.collect_type_api_leaks(field, exposed, description, visited, diagnostics);
                 }
             }
-            Ty::Array(element, _) => {
+            Ty::Array(element, _) | Ty::Slice(element) => {
                 self.collect_type_api_leaks(element, exposed, description, visited, diagnostics)
             }
             Ty::Pointer { pointee, .. } => {

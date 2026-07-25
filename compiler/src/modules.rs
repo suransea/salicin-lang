@@ -357,6 +357,7 @@ const CORE_ROOT_EXPORTS: &[(&str, &str)] = &[
     ("Drop", "core::marker::Drop"),
     ("Option", "core::option::Option"),
     ("Result", "core::result::Result"),
+    ("Slice", "core::memory::Slice"),
 ];
 const CORE_NEVER_EXPORTS: &[&str] = &["Never"];
 const CORE_MARKER_EXPORTS: &[&str] = &["Copy", "Drop"];
@@ -415,7 +416,7 @@ const CORE_PRIMITIVE_EXPORTS: &[&str] = &[
 const CORE_DOMAIN_EXPORTS: &[&str] = &["type", "region", "effect", "parameters"];
 const CORE_PASSING_EXPORTS: &[&str] = &["copy", "move"];
 const CORE_BORROW_EXPORTS: &[&str] = &["access", "borrow"];
-const CORE_MEMORY_EXPORTS: &[&str] = &["Array", "Ptr", "size_of", "align_of"];
+const CORE_MEMORY_EXPORTS: &[&str] = &["Array", "Slice", "Ptr", "size_of", "align_of"];
 const CORE_CONTROL_EXPORTS: &[&str] = &[
     "Break", "Continue", "Return", "Attempt", "break", "continue", "return", "do", "try", "throw",
     "unsafe", "loop", "while", "if", "match", "for",
@@ -430,6 +431,7 @@ const STD_ROOT_EXPORTS: &[(&str, &str)] = &[
     ("Drop", "core::marker::Drop"),
     ("Option", "core::option::Option"),
     ("Result", "core::result::Result"),
+    ("Slice", "core::memory::Slice"),
 ];
 
 const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
