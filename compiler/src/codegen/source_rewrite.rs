@@ -1198,6 +1198,47 @@ pub(super) fn erase_region_parameters(program: &mut Program) {
     }
 
     fn erase_function(function: &mut Function) {
+        let region_names = function
+            .compile_groups
+            .iter()
+            .flatten()
+            .filter(|parameter| parameter.kind == CompileParamKind::Region)
+            .enumerate()
+            .map(|(index, parameter)| {
+                (
+                    parameter.name.clone(),
+                    format!("$function$region$binder${index}"),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        if !region_names.is_empty() {
+            for group in &mut function.groups {
+                for parameter in group {
+                    alpha_rename_method_type(&mut parameter.ty, &region_names);
+                    if let Some(region) = &mut parameter.region {
+                        if let Some(replacement) = region_names.get(region) {
+                            *region = replacement.clone();
+                        }
+                    }
+                }
+            }
+            if let Some(result) = &mut function.return_type {
+                alpha_rename_method_type(result, &region_names);
+            }
+            if let Some(error) = &mut function.effects.throws {
+                alpha_rename_method_type(error, &region_names);
+            }
+            for effect in &mut function.effects.custom {
+                alpha_rename_method_type(effect, &region_names);
+            }
+            for predicate in &mut function.where_predicates {
+                alpha_rename_method_type(&mut predicate.subject, &region_names);
+                alpha_rename_method_type(&mut predicate.trait_ref, &region_names);
+                for binding in &mut predicate.associated_types {
+                    alpha_rename_method_type(&mut binding.ty, &region_names);
+                }
+            }
+        }
         erase_groups(&mut function.compile_groups);
     }
 
@@ -1329,6 +1370,188 @@ pub(super) fn substitute_function_types(
     }
     if let Some(body) = &mut function.body {
         substitute_expr_types(body, substitutions);
+    }
+}
+
+pub(super) fn alpha_normalize_method_compile_binders(function: &mut Function) {
+    let mut names = HashMap::new();
+    for (group_index, group) in function.compile_groups.iter().enumerate() {
+        for (parameter_index, parameter) in group.iter().enumerate() {
+            names.insert(
+                parameter.name.clone(),
+                format!("$method$binder${group_index}${parameter_index}"),
+            );
+        }
+    }
+    if names.is_empty() {
+        return;
+    }
+
+    for group in &mut function.compile_groups {
+        for parameter in group {
+            parameter.name = names[&parameter.name].clone();
+            if let Some(default) = &mut parameter.default {
+                match default {
+                    crate::ast::CompileParamDefault::Name(name)
+                    | crate::ast::CompileParamDefault::Region(name) => {
+                        if let Some(replacement) = names.get(name) {
+                            *name = replacement.clone();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for group in &mut function.groups {
+        for parameter in group {
+            alpha_rename_method_type(&mut parameter.ty, &names);
+            if let Some(access) = &mut parameter.access {
+                if let Some(replacement) = names.get(access) {
+                    *access = replacement.clone();
+                }
+            }
+            for modifier in &mut parameter.modifiers {
+                if let Some(replacement) = names.get(modifier) {
+                    *modifier = replacement.clone();
+                }
+            }
+            if let Some(region) = &mut parameter.region {
+                if let Some(replacement) = names.get(region) {
+                    *region = replacement.clone();
+                }
+            }
+        }
+    }
+    if let Some(result) = &mut function.return_type {
+        alpha_rename_method_type(result, &names);
+    }
+    if let Some(error) = &mut function.effects.throws {
+        alpha_rename_method_type(error, &names);
+    }
+    for effect in &mut function.effects.custom {
+        alpha_rename_method_type(effect, &names);
+    }
+    for parameter in &mut function.effects.parameters {
+        if let Some(replacement) = names.get(parameter) {
+            *parameter = replacement.clone();
+        }
+    }
+    for predicate in &mut function.where_predicates {
+        alpha_rename_method_type(&mut predicate.subject, &names);
+        alpha_rename_method_type(&mut predicate.trait_ref, &names);
+        for binding in &mut predicate.associated_types {
+            alpha_rename_method_type(&mut binding.ty, &names);
+            for group in &mut binding.compile_groups {
+                for parameter in group {
+                    if let Some(default) = &mut parameter.default {
+                        match default {
+                            crate::ast::CompileParamDefault::Name(name)
+                            | crate::ast::CompileParamDefault::Region(name) => {
+                                if let Some(replacement) = names.get(name) {
+                                    *name = replacement.clone();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn alpha_rename_method_type(ty: &mut Type, names: &HashMap<String, String>) {
+    match ty {
+        Type::Tuple(elements) => {
+            for element in elements {
+                alpha_rename_method_type(element, names);
+            }
+        }
+        Type::Borrow {
+            access,
+            region,
+            pointee,
+            ..
+        } => {
+            if let Some(access) = access {
+                if let Some(replacement) = names.get(access) {
+                    *access = replacement.clone();
+                }
+            }
+            if let Some(region) = region {
+                if let Some(replacement) = names.get(region) {
+                    *region = replacement.clone();
+                }
+            }
+            alpha_rename_method_type(pointee, names);
+        }
+        Type::Array(element, _) => alpha_rename_method_type(element, names),
+        Type::ArrayApplication {
+            constructor,
+            element,
+            length,
+        } => {
+            if let Some(replacement) = names.get(constructor) {
+                *constructor = replacement.clone();
+            }
+            alpha_rename_method_type(element, names);
+            if let crate::ast::USizeConst::Parameter(parameter) = length {
+                if let Some(replacement) = names.get(parameter) {
+                    *parameter = replacement.clone();
+                }
+            }
+        }
+        Type::Function {
+            groups,
+            effects,
+            result,
+        } => {
+            for parameter in groups.iter_mut().flatten() {
+                alpha_rename_method_type(parameter, names);
+            }
+            if let Some(error) = &mut effects.throws {
+                alpha_rename_method_type(error, names);
+            }
+            for effect in &mut effects.custom {
+                alpha_rename_method_type(effect, names);
+            }
+            for parameter in &mut effects.parameters {
+                if let Some(replacement) = names.get(parameter) {
+                    *parameter = replacement.clone();
+                }
+            }
+            alpha_rename_method_type(result, names);
+        }
+        Type::Named(name, arguments) => {
+            if let Some(replacement) = names.get(name) {
+                *name = replacement.clone();
+            }
+            for argument in arguments {
+                alpha_rename_method_type(argument, names);
+            }
+        }
+        Type::NamedArgs(name, arguments) => {
+            if let Some(replacement) = names.get(name) {
+                *name = replacement.clone();
+            }
+            for argument in arguments {
+                alpha_rename_method_type(&mut argument.ty, names);
+            }
+        }
+        Type::I8
+        | Type::I16
+        | Type::I32
+        | Type::I64
+        | Type::I128
+        | Type::ISize
+        | Type::U8
+        | Type::U16
+        | Type::U32
+        | Type::U64
+        | Type::U128
+        | Type::USize
+        | Type::Bool
+        | Type::Unit
+        | Type::CompileUSize(_) => {}
     }
 }
 

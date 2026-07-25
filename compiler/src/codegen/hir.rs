@@ -283,10 +283,28 @@ impl Ty {
 }
 
 fn display_region_argument(region: &str) -> String {
-    if region.chars().next().is_some_and(char::is_uppercase) {
+    if region.starts_with('$') {
+        "'_".to_owned()
+    } else if region.chars().next().is_some_and(char::is_uppercase) {
         region.to_owned()
     } else {
         format!("'{region}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Ty;
+
+    #[test]
+    fn internal_region_names_are_anonymous_in_diagnostics() {
+        let ty = Ty::Reference {
+            pointee: Box::new(Ty::I32),
+            mutable: false,
+            region: Some("$function$region$binder$0".to_owned()),
+        };
+
+        assert_eq!(ty.to_string(), "borrow('_) i32");
     }
 }
 

@@ -957,9 +957,6 @@ impl Parser {
             self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::Equal]);
         }
         let where_predicates = self.where_clause()?;
-        if !where_predicates.is_empty() {
-            return Err(self.error_here("where clauses on extend members are not supported yet"));
-        }
         self.take_newlines_if_followed_by(&[TokenKind::Equal]);
         if !self.at(&TokenKind::Equal) && (!compile_groups.is_empty() || !groups.is_empty()) {
             return Ok(ExtendMember::Function(Function {
@@ -2229,9 +2226,6 @@ impl Parser {
 
         self.take_newlines_if_followed_by(&[TokenKind::Where, TokenKind::Equal]);
         let where_predicates = self.where_clause()?;
-        if !where_predicates.is_empty() {
-            return Err(self.error_here("where clauses on trait members are not supported yet"));
-        }
         self.take_newlines_if_followed_by(&[TokenKind::Equal]);
         let body = if self.take(&TokenKind::Equal) {
             if !self.at(&TokenKind::LBrace) {

@@ -1588,6 +1588,252 @@ let main(): i32 = { Boxed { value: 40 }.apply(i32)(2) }
 }
 
 #[test]
+fn generic_trait_method_binders_are_alpha_equivalent() {
+    compile_text(
+        r#"
+let Choose = trait {
+  let choose(Value: type)(self: borrow(Self))(move value: Value): Value
+}
+let Boxed(T: type) = struct { value: T }
+extend Boxed(i32): Choose {
+  let choose(Result: type)(self: borrow(Self))(move value: Result): Result = {
+    value
+  }
+}
+let main(): i32 = { Boxed(i32) { value: 0 }.choose(i32)(42) }
+"#,
+    )
+    .expect("method type binders should compare by position and kind");
+
+    compile_text(
+        r#"
+let Choose = trait {
+  let choose(Value: type)(self: borrow(Self))(move value: Value): Value
+}
+let Boxed(T: type) = struct { value: T }
+extend(Item: type) Boxed(Item): Choose {
+  let choose(Result: type)(self: borrow(Self))(move value: Result): Result = {
+    value
+  }
+}
+let main(): i32 = { Boxed(i32) { value: 0 }.choose(i32)(42) }
+"#,
+    )
+    .expect("blanket implementation method binders should be alpha-equivalent");
+}
+
+#[test]
+fn generic_trait_method_effect_usize_and_where_binders_are_alpha_equivalent() {
+    compile_text(
+        r#"
+let Run = trait {
+  let run(E: effect)(self: borrow(Self))(action: (): i32 with(E)): i32 with(E)
+}
+let Runner = struct {}
+extend Runner: Run {
+  let run(F: effect)(self: borrow(Self))(action: (): i32 with(F)): i32 with(F) = {
+    action()
+  }
+}
+let main(): i32 = { Runner {}.run(pure)({ 42 }) }
+"#,
+    )
+    .expect("method effect binders should be alpha-equivalent");
+
+    compile_text(
+        r#"
+let First = trait {
+  let first(N: usize)(self: borrow(Self))(values: Array(i32)(N)): i32
+}
+let Picker = struct {}
+extend Picker: First {
+  let first(L: usize)(self: borrow(Self))(values: Array(i32)(L)): i32 = {
+    42
+  }
+}
+let main(): i32 = { Picker {}.first(1)([42]) }
+"#,
+    )
+    .expect("method usize binders should be alpha-equivalent");
+
+    compile_resolved_text(
+        r#"
+let Copy = std.Copy
+let Select = trait {
+  let select(Value: type)(self: borrow(Self))(move value: Value): Value
+    where Value: Copy
+}
+let Selector = struct {}
+extend Selector: Select {
+  let select(Result: type)(self: borrow(Self))(move value: Result): Result
+    where Result: Copy = { value }
+}
+let main(): i32 = { Selector {}.select(i32)(42) }
+"#,
+    )
+    .expect("method where predicates should alpha-normalize their binders");
+
+    compile_text(
+        r#"
+let View = trait {
+  let view(A: access)(R: region)
+    (self: borrow(A)(R)(Self))(): borrow(A)(R)(i32)
+}
+let Cell = struct { value: i32 }
+extend Cell: View {
+  let view(B: access)(S: region)
+    (self: borrow(B)(S)(Self))(): borrow(B)(S)(i32) = {
+    borrow(B)(self.value)
+  }
+}
+let read(value: borrow(i32)): i32 = { value }
+let main(): i32 = {
+  let cell = Cell { value: 42 }
+  let value = cell.view(shared)()
+  read(value)
+}
+"#,
+    )
+    .expect("method access and region binders should be alpha-equivalent");
+
+    compile_text(
+        r#"
+let Identity = trait {
+  let identity(Value: type)(self: borrow(Self))(move value: Value): Value = {
+    value
+  }
+}
+let Unit = struct {}
+extend Unit: Identity {}
+let main(): i32 = { Unit {}.identity(i32)(42) }
+"#,
+    )
+    .expect("default generic trait methods should instantiate through the selected implementation");
+}
+
+#[test]
+fn trait_implementation_cannot_strengthen_generic_method_predicates() {
+    let errors = compile_resolved_text(
+        r#"
+let Copy = std.Copy
+let Select = trait {
+  let select(Value: type)(self: borrow(Self))(move value: Value): Value
+}
+let Selector = struct {}
+extend Selector: Select {
+  let select(Result: type)(self: borrow(Self))(move value: Result): Result
+    where Result: Copy = { value }
+}
+let main(): i32 = { 0 }
+"#,
+    )
+    .expect_err("an implementation must not strengthen a method contract");
+    assert!(errors.iter().any(|error| {
+        error.message.contains("Select.select") && error.message.contains("signature mismatch")
+    }));
+}
+
+#[test]
+fn constructor_trait_method_binders_are_alpha_equivalent() {
+    compile_text(
+        r#"
+let Choose = trait(Self: (Item: type): type) {
+  let choose(Value: type)
+    (move self: Self(Value))
+    (move value: Value): Self(Value)
+}
+let Boxed(T: type) = struct { value: T }
+extend Boxed: Choose {
+  let choose(Result: type)
+    (move self: Boxed(Result))
+    (move value: Result): Boxed(Result) = {
+    Boxed(Result) { value: value }
+  }
+}
+let main(): i32 = {
+  Boxed(i32) { value: 0 }.choose(i32)(42).value
+}
+"#,
+    )
+    .expect("constructor trait method binders should be alpha-equivalent");
+}
+
+#[test]
+fn generic_trait_method_binders_cannot_capture_implementation_binders() {
+    let errors = compile_text(
+        r#"
+let Choose = trait {
+  let choose(Value: type)(self: borrow(Self))(move value: Value): Value
+}
+let Boxed(T: type) = struct { value: T }
+extend(Item: type) Boxed(Item): Choose {
+  let choose(Item: type)(self: borrow(Self))(move value: Item): Item = {
+    value
+  }
+}
+let main(): i32 = { 0 }
+"#,
+    )
+    .expect_err("a method binder must not capture an implementation binder");
+    assert!(errors.iter().any(|error| {
+        error.message.contains("Choose.choose")
+            && error.message.contains("redeclares")
+            && error.message.contains("Item")
+    }));
+}
+
+#[test]
+fn generic_trait_method_associated_equalities_follow_alpha_renaming() {
+    compile_text(
+        r#"
+let HasItem = trait {
+  let Item: type
+}
+let Select = trait {
+  let select(Value: type)(self: borrow(Self))(move value: Value): Value
+    where Value: HasItem(Item = i32)
+}
+let Wrapped = struct { value: i32 }
+extend Wrapped: HasItem {
+  let Item = i32
+}
+let Selector = struct {}
+extend Selector: Select {
+  let select(Result: type)(self: borrow(Self))(move value: Result): Result
+    where Result: HasItem(Item = i32) = {
+    value
+  }
+}
+let main(): i32 = {
+  Selector {}.select(Wrapped)(Wrapped { value: 42 }).value
+}
+"#,
+    )
+    .expect("associated equalities should survive method binder alpha-normalization");
+}
+
+#[test]
+fn generic_trait_method_binder_kinds_must_match() {
+    let errors = compile_text(
+        r#"
+let Choose = trait {
+  let choose(Value: type)(self: borrow(Self))(): i32
+}
+let Selector = struct {}
+extend Selector: Choose {
+  let choose(Length: usize)(self: borrow(Self))(): i32 = { 42 }
+}
+let main(): i32 = { 0 }
+"#,
+    )
+    .expect_err("method binder kinds are part of the trait contract");
+    assert!(errors.iter().any(|error| {
+        error.message.contains("Choose.choose")
+            && error.message.contains("compile-time parameter groups")
+    }));
+}
+
+#[test]
 fn noncapturing_closure_arguments_can_fill_function_parameters() {
     compile_text(
         r#"

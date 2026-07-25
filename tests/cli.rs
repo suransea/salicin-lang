@@ -1632,6 +1632,45 @@ edition = "2026"
 }
 
 #[test]
+fn generic_trait_methods_dispatch_across_file_modules() {
+    let project = TestDirectory::new();
+    project.write(
+        "salicin.toml",
+        r#"[package]
+name = "generic-trait-method-modules"
+version = "0.1.0"
+edition = "2026"
+"#,
+    );
+    project.write(
+        "src/main.sc",
+        "let main(): i32 = {\n  api.Cell.new().choose(i32)(42)\n}\n",
+    );
+    project.write(
+        "src/api.sc",
+        "pub(package) let Choose = trait {\n\
+           let choose(Value: type)(self: borrow(Self))(move value: Value): Value\n\
+         }\n\
+         pub(package) let Cell = struct {}\n\
+         extend Cell: Choose {\n\
+           let choose(Result: type)(self: borrow(Self))(move value: Result): Result = {\n\
+             value\n\
+           }\n\
+         }\n\
+         extend Cell {\n\
+           let new(): Cell = { Cell {} }\n\
+         }\n",
+    );
+
+    let output = salic()
+        .arg("run")
+        .arg(&project.0)
+        .output()
+        .expect("run package with a generic trait method");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn inherent_extensions_cannot_be_added_outside_the_defining_package() {
     let project = TestDirectory::new();
     project.write(

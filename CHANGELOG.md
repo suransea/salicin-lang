@@ -6,6 +6,12 @@ subset.
 
 ## Unreleased
 
+- Made generic trait method binders alpha-equivalent across concrete, blanket, constructor, and
+  default implementations. Method-level where predicates and associated equalities are now parsed
+  and checked as part of the trait contract; implementations cannot strengthen them. Type, effect,
+  `usize`, `access`, and region binders normalize by group and position, while method binders cannot
+  capture implementation-header binders. Static dispatch remains monomorphized and works across
+  file modules.
 - Bridged capturing closure arguments into statically known source callees by specializing callable
   parameters into ordinary shared, mutable, or moved capture parameters. `Chain`, `Coalesce`, and
   higher-order calls preserve laziness, cleanup, effect rows, source evaluation order, and

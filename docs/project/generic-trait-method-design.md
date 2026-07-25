@@ -1,6 +1,6 @@
 # Coherent Generic Trait Methods
 
-Status: accepted implementation design for `TYPE-TRAIT-METHOD-1`
+Status: implemented by `TYPE-TRAIT-METHOD-1`
 
 ## Goal
 
@@ -99,3 +99,8 @@ Generated validation and monomorphization names must not appear.
 - rejection of kind/group mismatches, binder capture, strengthened predicates, overlap, and
   underconstrained calls;
 - cross-module static dispatch and deterministic monomorphization.
+
+Compiler and native tests cover concrete, blanket, constructor, default, and cross-module method
+templates. Type, effect, `usize`, `access`, and erased region binders are alpha-normalized before
+contract comparison. Method where predicates and associated equalities are retained as part of the
+implementation contract.

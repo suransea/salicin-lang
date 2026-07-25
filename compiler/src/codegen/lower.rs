@@ -228,7 +228,9 @@ pub(super) fn display_region(region: Option<&str>) -> String {
 }
 
 pub(super) fn display_region_argument(region: &str) -> String {
-    if region.chars().next().is_some_and(char::is_uppercase) {
+    if region.starts_with('$') {
+        "'_".to_owned()
+    } else if region.chars().next().is_some_and(char::is_uppercase) {
         region.to_owned()
     } else {
         format!("'{region}")

@@ -73,6 +73,23 @@ fn primitive_scalar_type(ty: &Ty) -> bool {
     ty.is_integer() || *ty == Ty::Bool
 }
 
+fn method_compile_parameter_groups_match(expected: &Function, actual: &Function) -> bool {
+    let mut expected = expected.clone();
+    let mut actual = actual.clone();
+    alpha_normalize_method_compile_binders(&mut expected);
+    alpha_normalize_method_compile_binders(&mut actual);
+    compile_parameter_groups_match(&expected.compile_groups, &actual.compile_groups)
+}
+
+fn generic_method_contracts_match(expected: &Function, actual: &Function) -> bool {
+    let mut expected = expected.clone();
+    let mut actual = actual.clone();
+    alpha_normalize_method_compile_binders(&mut expected);
+    alpha_normalize_method_compile_binders(&mut actual);
+    source_function_shapes_match(&expected, &actual)
+        && expected.where_predicates == actual.where_predicates
+}
+
 #[cfg(test)]
 use cleanup_plan::{HirCleanupPlanner, MAX_CLEANUP_MOVE_PATHS};
 
@@ -1661,8 +1678,12 @@ impl Analyzer {
             );
             let mut template = method.clone();
             template.name = canonical.clone();
+            let method_compile_groups = std::mem::take(&mut template.compile_groups);
             template.compile_groups = vec![compile_parameters.clone()];
+            template.compile_groups.extend(method_compile_groups);
+            let method_predicates = std::mem::take(&mut template.where_predicates);
             template.where_predicates = vec![predicate.clone()];
+            template.where_predicates.extend(method_predicates);
             substitute_function_types(&mut template, &self_substitution);
             if let Some(body) = &mut template.body {
                 rewrite_abstract_self_qualified_methods(body);
@@ -3390,7 +3411,7 @@ impl Analyzer {
                     substitute_self_expression_target(body, target_name);
                 }
             }
-            if !compile_parameter_groups_match(&expected.compile_groups, &function.compile_groups) {
+            if !method_compile_parameter_groups_match(&expected, &function) {
                 self.error(format!(
                     "trait method `{}.{method_name}` signature mismatch: compile-time parameter groups do not match the trait declaration",
                     key.trait_ref.name
@@ -3419,7 +3440,7 @@ impl Analyzer {
                     valid = false;
                     continue;
                 }
-            } else if !source_function_shapes_match(&expected, &function) {
+            } else if !generic_method_contracts_match(&expected, &function) {
                 self.error(format!(
                     "trait method `{}.{method_name}` signature mismatch",
                     key.trait_ref.name
@@ -3704,11 +3725,8 @@ impl Analyzer {
             }
             substitute_function_types(&mut function, &substitutions);
             if schema_function_has_receiver(&expected) != schema_function_has_receiver(&function)
-                || !compile_parameter_groups_match(
-                    &expected.compile_groups,
-                    &function.compile_groups,
-                )
-                || !source_function_shapes_match(&expected, &function)
+                || !method_compile_parameter_groups_match(&expected, &function)
+                || !generic_method_contracts_match(&expected, &function)
             {
                 self.error(format!(
                     "constructor trait method `{}.{method_name}` signature mismatch in implementation for `{}`",
@@ -4601,11 +4619,8 @@ impl Analyzer {
                 continue;
             }
             if schema_function_has_receiver(&expected) != schema_function_has_receiver(&function)
-                || !compile_parameter_groups_match(
-                    &expected.compile_groups,
-                    &function.compile_groups,
-                )
-                || !source_function_shapes_match(&expected, &function)
+                || !method_compile_parameter_groups_match(&expected, &function)
+                || !generic_method_contracts_match(&expected, &function)
             {
                 self.error(format!(
                     "constructor trait method `{}.{method_name}` signature mismatch in implementation for `{}`",
@@ -4760,6 +4775,34 @@ impl Analyzer {
         trait_arguments: &[Type],
         extension: &ExtendDef,
     ) -> bool {
+        let outer_binders = extension
+            .compile_groups
+            .iter()
+            .flatten()
+            .map(|parameter| parameter.name.as_str())
+            .collect::<HashSet<_>>();
+        let mut binders_valid = true;
+        for member in &extension.members {
+            let ExtendMember::Function(function) = member else {
+                continue;
+            };
+            if let Some(parameter) = function
+                .compile_groups
+                .iter()
+                .flatten()
+                .find(|parameter| outer_binders.contains(parameter.name.as_str()))
+            {
+                self.error(format!(
+                    "trait method `{trait_name}.{}` redeclares implementation compile-time parameter `{}`",
+                    function.name, parameter.name
+                ));
+                binders_valid = false;
+            }
+        }
+        if !binders_valid {
+            return false;
+        }
+
         let mut expected_substitutions = schema
             .compile_parameters
             .iter()
@@ -4898,7 +4941,7 @@ impl Analyzer {
                 continue;
             }
             let mut actual = actual.clone();
-            if !compile_parameter_groups_match(&expected.compile_groups, &actual.compile_groups) {
+            if !method_compile_parameter_groups_match(&expected, &actual) {
                 self.error(format!(
                     "trait method `{trait_name}.{method_name}` signature mismatch in generic implementation: compile-time parameter groups do not match the trait declaration"
                 ));
@@ -4920,7 +4963,7 @@ impl Analyzer {
                 valid = false;
                 continue;
             }
-            if !source_function_shapes_match(&expected, &actual) {
+            if !generic_method_contracts_match(&expected, &actual) {
                 self.error(format!(
                     "trait method `{trait_name}.{method_name}` signature mismatch in generic implementation"
                 ));
@@ -6611,6 +6654,46 @@ impl Analyzer {
                 let declaration = &schema.methods[method_id];
                 let mut method = declaration.clone();
                 substitute_function_types(&mut method, &substitutions);
+                let mut method_substitutions = HashMap::new();
+                for (index, parameter) in method.compile_groups.iter().flatten().enumerate() {
+                    let value = match parameter.kind.clone() {
+                        CompileParamKind::Type => {
+                            let marker = generic_parameter_marker(
+                                &format!("{function}${method_id}"),
+                                index,
+                                &parameter.name,
+                            );
+                            self.abstract_type_parameters
+                                .insert(marker.clone(), parameter.name.clone());
+                            Type::Named(marker, Vec::new())
+                        }
+                        CompileParamKind::USize => Type::CompileUSize(0),
+                        CompileParamKind::Effect => {
+                            Type::Named(EFFECT_UNSAFE_MARKER.to_owned(), Vec::new())
+                        }
+                        CompileParamKind::ParameterModifier => {
+                            Type::Named(PARAMETER_MODIFIER_MOVE_MARKER.to_owned(), Vec::new())
+                        }
+                        CompileParamKind::Named(compile_type) => {
+                            let Some(member) = self
+                                .closed_type_values
+                                .get(&compile_type)
+                                .and_then(|members| members.first())
+                            else {
+                                continue;
+                            };
+                            Type::Named(closed_value_marker(&compile_type, member), Vec::new())
+                        }
+                        CompileParamKind::Region
+                        | CompileParamKind::Parameters
+                        | CompileParamKind::ParameterPack
+                        | CompileParamKind::TypeConstructor { .. }
+                        | CompileParamKind::EffectConstructor { .. } => continue,
+                    };
+                    method_substitutions.insert(parameter.name.clone(), value);
+                }
+                substitute_function_types(&mut method, &method_substitutions);
+                method.compile_groups.clear();
                 if let Err(diagnostic) =
                     substitute_associated_type_equations(&mut method, &equations)
                 {

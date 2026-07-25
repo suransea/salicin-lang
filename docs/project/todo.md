@@ -17,7 +17,7 @@ Priority meanings:
 
 Current milestone: **TYPE1 static abstraction**
 
-Next task: **TYPE-TRAIT-METHOD-1**
+Next task: **TYPE-CALLABLE-EFFECT-1**
 
 ### P0 control-source queue
 
@@ -146,7 +146,7 @@ Entry gate: concrete requirements from LIB1
   - Implement the accepted [static specialization design](callable-bridge-design.md).
   - Preserve capture ownership, source-order evaluation, lazy invocation, effect rows, and
     source-level diagnostics across `Chain`, `Coalesce`, and higher-order protocols.
-- [ ] **TYPE-TRAIT-METHOD-1: Support coherent generic trait methods**
+- [x] **TYPE-TRAIT-METHOD-1: Support coherent generic trait methods**
   - Implement the accepted [coherence design](generic-trait-method-design.md).
   - Alpha-normalize method binders and compare complete signatures and method predicates.
 - [ ] **TYPE-CALLABLE-EFFECT-1: Unify generic custom-effect callable materialization**
