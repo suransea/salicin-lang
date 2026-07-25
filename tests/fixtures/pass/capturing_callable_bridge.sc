@@ -16,7 +16,7 @@ extend Resource: Drop {
 
 let consume(move resource: Resource): i32 = { resource.value }
 
-let ignore(move action: (): i32): i32 = { 30 }
+let ignore(move action: (): i32): i32 = { 29 }
 
 let once(move action: (): i32): i32 = { action() }
 
@@ -25,11 +25,7 @@ let repeat(move action: (): ()): () = {
   action()
 }
 
-let effect_once(move action: (): i32 with(Ask)): i32 with(Ask) = {
-  action()
-}
-
-let unsafe_once(E: effect)(move action: (): i32 with(E)): i32 with(E) = {
+let effect_once(E: effect)(move action: (): i32 with(E)): i32 with(E) = {
   action()
 }
 
@@ -52,12 +48,15 @@ let main(): i32 = {
   })
 
   let captured = 0
+  let effect_resource = Resource { counter: counter, value: 1 }
   let effectful = Ask.handle value { (resume) -> resume(3) } action {
-    effect_once({ Ask.value() + captured })
+    effect_once(Ask)({
+      Ask.value() + captured + consume(effect_resource) - 1
+    })
   }
 
   let unsafe_effect = unsafe {
-    unsafe_once(Unsafe)({ *counter - *counter })
+    effect_once(Unsafe)({ *counter - *counter })
   }
   let drops = unsafe { *counter }
   unsafe {

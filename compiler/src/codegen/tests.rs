@@ -5027,6 +5027,56 @@ let main(): i32 = { unsafe { accept_unsafe(pure)() } }
 }
 
 #[test]
+fn generic_custom_effect_materializes_a_direct_capturing_action() {
+    compile_resolved_text(
+        r#"
+let Ask = effect {
+  let value(): i32
+}
+
+let forward(E: effect)(move action: (): i32 with(E)): i32 with(E) = {
+  action()
+}
+
+let main(): i32 = {
+  Ask.handle value { (resume) -> resume(42) } action {
+    let captured = 0
+    forward(Ask)({ Ask.value() + captured })
+  }
+}
+"#,
+    )
+    .expect("a concrete custom effect should materialize a generic capturing action");
+
+    let errors = compile_resolved_text(
+        r#"
+let Ask = effect {
+  let value(): i32
+}
+
+let Tell = effect {
+  let value(): i32
+}
+
+let forward(E: effect)(move action: (): i32 with(E)): i32 with(E) = {
+  action()
+}
+
+let main(): i32 = {
+  Ask.handle value { (resume) -> resume(42) } action {
+    forward(Tell)({ Ask.value() })
+  }
+}
+"#,
+    )
+    .expect_err("a selected unrelated effect must not be discharged by the current handler");
+    assert!(errors.iter().any(|error| {
+        error.message.contains("requires custom effect `Tell`")
+            || error.message.contains("unhandled custom effects")
+    }));
+}
+
+#[test]
 fn unsafe_effects_are_declared_forwarded_and_handled_at_calls() {
     let ir = compile_resolved_text(
         r#"

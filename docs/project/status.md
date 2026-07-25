@@ -115,6 +115,7 @@ Implemented algebraic-effect support includes:
 - single-use continuations;
 - cleanup on resumption and abandonment;
 - captured effectful closures;
+- capturing callable arguments specialized after generic custom-effect rows become concrete;
 - source-backed `Throws(Error)`, `throw`, and `try`;
 - composition of standard error and unsafe effects.
 
@@ -189,7 +190,6 @@ modules, owning strings, vectors, results, user traits, resource transfer, itera
 
 The principal incomplete areas are:
 
-- callable materialization after a generic custom effect becomes concrete;
 - concise diagnostics for underconstrained constructor and effect inference;
 - host-facing `std` APIs;
 - complete asynchronous execution;

@@ -21,15 +21,11 @@ end-to-end capability at a time and preserve:
 
 ## Current Milestone: Static Abstraction
 
-The current milestone closes the remaining interaction between generic effect rows and capturing
-callables, then improves diagnostics at kind and constructor boundaries.
+The current milestone improves diagnostics at kind and constructor boundaries now that generic
+effect rows and capturing callables share one materialization path.
 
 Exit conditions:
 
-- a callable whose effect row contains a generic custom effect can be materialized after the effect
-  argument becomes concrete;
-- callable identity, capture ownership, and one-shot consumption remain stable through
-  specialization and handler lowering;
 - constructor and compile-time argument errors identify the source binder, expected kind, and
   conflicting argument;
 - generic associated constructors and generic trait methods require no runtime dictionaries.

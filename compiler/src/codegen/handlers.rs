@@ -3595,6 +3595,21 @@ impl Analyzer {
             None => return Some(Err(())),
         };
         let mut matched_effect = false;
+        for parameter in &template.effects.parameters {
+            let Some(inferred_effect) = inferred.get(parameter) else {
+                continue;
+            };
+            let Ty::EffectRow { custom_effects, .. } = &inferred_effect.ty else {
+                continue;
+            };
+            if custom_effects
+                .iter()
+                .any(|effect| effect == &source_effect_identity(handled_effect))
+            {
+                matched_effect = true;
+                break;
+            }
+        }
         for effect in &template.effects.custom {
             let mut effect = effect.clone();
             let substitutions = inferred
@@ -3739,6 +3754,16 @@ impl Analyzer {
             .any(|effect| source_effect_identity(effect) == handler.identity)
         {
             return None;
+        }
+        if runtime_group_start > 0 {
+            if let Some(materialized) = self.materialize_direct_handler_action(&name, &groups) {
+                return Some(self.transform_handler_expr(
+                    materialized,
+                    handler,
+                    resume,
+                    continuation,
+                ));
+            }
         }
         if groups
             .iter()

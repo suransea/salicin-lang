@@ -492,7 +492,9 @@ let result = try {
 ```
 
 Effects compose in one row. Handling one effect preserves all unhandled effects. Effect parameters
-are compile-time row variables and are instantiated before runtime lowering.
+are compile-time row variables and are instantiated before runtime lowering. Once instantiated, a
+capturing closure passed to a parameter with that row follows the same ownership, materialization,
+and handling rules as a closure whose concrete effect was written directly.
 
 `unsafe` is an authority effect. `unsafe { ... }` authorizes operations whose contracts cannot be
 verified by the safe type and ownership rules; it does not disable type checking or cleanup.

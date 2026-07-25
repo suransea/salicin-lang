@@ -6,6 +6,10 @@ subset.
 
 ## Unreleased
 
+- Materialized direct capturing callable arguments after generic custom-effect parameters resolve
+  to a concrete row. Handler lowering now recognizes instantiated effect parameters, reuses the
+  concrete action-specialization path before CPS conversion, preserves moved captures and
+  exactly-once cleanup, and rejects unrelated selected effects.
 - Reorganized the documentation around single sources of truth for language semantics, grammar,
   implementation status, roadmap direction, and unfinished work. The English specification now
   reflects the current domain and region models, stale milestone and completed-design documents

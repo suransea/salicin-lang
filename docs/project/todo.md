@@ -15,15 +15,6 @@ Priority meanings:
 
 ## Current
 
-- [ ] **TYPE-CALLABLE-EFFECT-1: Materialize generic custom-effect callables**
-  - Reconcile callable annotations after a generic effect argument is instantiated.
-  - Accept direct capturing closures passed to a callable parameter with the selected custom
-    effect.
-  - Preserve callable identity, capture ownership, one-shot consumption, and source diagnostics
-    through CPS conversion.
-  - Cover concrete and generic effects, capturing and non-capturing actions, rejection paths, and
-    native cleanup.
-
 - [ ] **TYPE-DIAG-1: Improve kind and constructor diagnostics**
   - Name the source binder and expected compile-time kind.
   - Distinguish arity, group, kind, and inference failures.
@@ -38,8 +29,7 @@ Priority meanings:
 - [ ] **ASYNC-BORROW-1: Reject first-version self-referential states**
 - [ ] **ASYNC-EXEC-1: Provide one explicit minimal executor**
 
-Async implementation starts only after `TYPE-CALLABLE-EFFECT-1` is complete and
-`ASYNC-CONTRACT-1` is accepted.
+Async implementation starts only after `ASYNC-CONTRACT-1` is accepted.
 
 ## Later
 
