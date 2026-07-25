@@ -246,6 +246,7 @@ struct Analyzer {
     runtime_handler_actions: HashMap<(String, usize, usize), RuntimeHandlerAction>,
     async_futures: HashMap<String, async_lowering::AsyncFutureInfo>,
     next_async_future: usize,
+    async_factory_depth: usize,
     diagnostics: Vec<Diagnostic>,
     current_origin: Option<Box<ItemOrigin>>,
 }
@@ -337,6 +338,7 @@ impl Analyzer {
             runtime_handler_actions: HashMap::new(),
             async_futures: HashMap::new(),
             next_async_future: 0,
+            async_factory_depth: 0,
             diagnostics: Vec::new(),
             current_origin: None,
         };
@@ -9295,7 +9297,7 @@ impl Analyzer {
             } => {
                 let condition = self.lower_expr(condition, Some(&Ty::Bool), context);
                 let entry_flow = context.flow.clone();
-                let (then_branch, else_branch, exit_flows) = if let Some(else_ast) =
+                let (mut then_branch, mut else_branch, exit_flows) = if let Some(else_ast) =
                     else_branch.as_ref()
                 {
                     let (then_branch, then_flow, else_branch, else_flow) = if expected.is_some() {
@@ -9303,6 +9305,12 @@ impl Analyzer {
                             self.lower_expr_from_flow(then_branch, expected, &entry_flow, context);
                         let (else_branch, else_flow) =
                             self.lower_expr_from_flow(else_ast, expected, &entry_flow, context);
+                        (then_branch, then_flow, else_branch, else_flow)
+                    } else if self.async_factory_depth > 0 {
+                        let (then_branch, then_flow) =
+                            self.lower_expr_from_flow(then_branch, None, &entry_flow, context);
+                        let (else_branch, else_flow) =
+                            self.lower_expr_from_flow(else_ast, None, &entry_flow, context);
                         (then_branch, then_flow, else_branch, else_flow)
                     } else if is_unconstrained_integer(then_branch)
                         && !is_unconstrained_integer(else_ast)
@@ -9352,6 +9360,32 @@ impl Analyzer {
                     (then_branch, None, vec![then_flow, entry_flow])
                 };
                 context.flow = FlowState::join(&exit_flows);
+                if let Some(else_value) = else_branch.as_mut() {
+                    if then_branch.ty != else_value.ty {
+                        if let Some(branch_name) = self.register_async_branch_future(&[
+                            then_branch.ty.clone(),
+                            else_value.ty.clone(),
+                        ]) {
+                            let branch_ty = Ty::Enum(branch_name.clone());
+                            then_branch = HirExpr {
+                                ty: branch_ty.clone(),
+                                kind: HirExprKind::ConstructEnum {
+                                    name: branch_name.clone(),
+                                    variant: 0,
+                                    fields: vec![(0, then_branch)],
+                                },
+                            };
+                            **else_value = HirExpr {
+                                ty: branch_ty,
+                                kind: HirExprKind::ConstructEnum {
+                                    name: branch_name,
+                                    variant: 1,
+                                    fields: vec![(0, (**else_value).clone())],
+                                },
+                            };
+                        }
+                    }
+                }
                 let ty = if let Some(else_branch) = &else_branch {
                     self.unify_types(&then_branch.ty, &else_branch.ty, "branches of `if`")
                 } else {

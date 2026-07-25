@@ -7289,6 +7289,40 @@ let child() = { async { 1 } }
     assert!(diagnostics
         .iter()
         .any(|diagnostic| diagnostic.message.contains("cannot implement `Move`")));
+
+    let diagnostics = compile_text(
+        r#"
+let Poll = std.async.Poll
+let Future = std.async.Future
+let Number = struct {}
+let Flag = struct {}
+extend Number: Future(()) {
+  let Output = i32
+  let poll(R: region)(self: borrow(mut)(R)(Self))(): Poll(i32) = {
+    Poll(i32).Ready(42)
+  }
+}
+extend Flag: Future(()) {
+  let Output = bool
+  let poll(R: region)(self: borrow(mut)(R)(Self))(): Poll(bool) = {
+    Poll(bool).Ready(true)
+  }
+}
+let main(): i32 = {
+  let future = async {
+    if true { await Number {} } else { await Flag {} }
+  }
+  0
+}
+"#,
+    )
+    .expect_err("control-flow await branches must agree on their output");
+    assert!(diagnostics.iter().any(|diagnostic| diagnostic
+        .message
+        .contains("must produce the same `Future.Output` type")));
+    assert!(diagnostics
+        .iter()
+        .all(|diagnostic| !diagnostic.message.contains("$async$branch$")));
 }
 
 #[test]

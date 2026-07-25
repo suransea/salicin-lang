@@ -5,9 +5,9 @@ use crate::core::LangItemKind;
 
 use super::hir::{
     AccessBoundary, AssignmentKind, ClosureCapture, ClosureCaptureMode, ClosureCapturePolicy,
-    ClosureEffectContext, FieldLayout, FunctionSig, HirArgument, HirExpr, HirExprKind, HirFunction,
-    HirMatchArm, HirMatcher, HirParam, HirPatternBinding, HirPlace, HirReadKind, HirStmt,
-    LocalCapability, ParamSig, StructLayout, Ty,
+    ClosureEffectContext, EnumLayout, FieldLayout, FunctionSig, HirArgument, HirExpr, HirExprKind,
+    HirFunction, HirMatchArm, HirMatcher, HirParam, HirPatternBinding, HirPlace, HirReadKind,
+    HirStmt, LocalCapability, ParamSig, StructLayout, Ty, VariantLayout,
 };
 use super::names::trait_method_name;
 use super::registry::{NominalKind, TraitImplInfo, TraitImplKey, TraitRefKey};
@@ -37,6 +37,7 @@ impl Analyzer {
                 return super::lower::error_expr();
             }
         }
+        self.async_factory_depth += 1;
         let lowered = self.lower_local_closure(
             &[],
             &source_plan.factory_body,
@@ -48,6 +49,7 @@ impl Analyzer {
             ClosureCapturePolicy::AsyncOwned,
             context,
         );
+        self.async_factory_depth -= 1;
         let HirExprKind::LocalClosure(closure) = lowered.kind else {
             return lowered;
         };
@@ -393,6 +395,215 @@ impl Analyzer {
             retained_modes: Vec::new(),
             next: None,
         })
+    }
+
+    pub(super) fn register_async_branch_future(&mut self, branch_types: &[Ty]) -> Option<String> {
+        if self.async_factory_depth == 0 || branch_types.len() < 2 {
+            return None;
+        }
+        let origin = self
+            .current_origin
+            .as_deref()
+            .cloned()
+            .unwrap_or_else(ItemOrigin::default);
+        let future_trait = self.lang_item_name(LangItemKind::Future).to_owned();
+        if branch_types.iter().any(|ty| {
+            self.trait_method_candidates(ty, "poll", &origin)
+                .into_iter()
+                .filter(|candidate| candidate.trait_ref.name == future_trait)
+                .count()
+                != 1
+        }) {
+            return None;
+        }
+        let futures = branch_types
+            .iter()
+            .map(|ty| self.resolve_awaited_future(ty))
+            .collect::<Option<Vec<_>>>()?;
+        let output = futures.first()?.output.clone();
+        if futures.iter().any(|future| future.output != output) {
+            self.error("control-flow await branches must produce the same `Future.Output` type");
+            return None;
+        }
+        let poll_ty = futures.first()?.poll_ty.clone();
+        if futures.iter().any(|future| future.poll_ty != poll_ty) {
+            self.error("control-flow await branches resolved incompatible `Poll` result types");
+            return None;
+        }
+
+        let name = format!("$async$branch${}", self.next_async_future);
+        self.next_async_future += 1;
+        let access = AccessBoundary {
+            visibility: Visibility::Private,
+            origin,
+        };
+        let mut payload_offset = 0;
+        let variants = branch_types
+            .iter()
+            .enumerate()
+            .map(|(index, ty)| {
+                let variant = VariantLayout {
+                    name: format!("Branch{index}"),
+                    fields: vec![FieldLayout {
+                        name: "future".to_owned(),
+                        ty: ty.clone(),
+                        access: access.clone(),
+                    }],
+                    payload_offset,
+                    named: false,
+                };
+                payload_offset += 1;
+                variant
+            })
+            .collect::<Vec<_>>();
+        self.enum_layouts.insert(
+            name.clone(),
+            EnumLayout {
+                name: name.clone(),
+                variants: variants.clone(),
+            },
+        );
+        self.enum_order.push(name.clone());
+        self.nominal_accesses.insert(name.clone(), access.clone());
+
+        let self_ty = Ty::Enum(name.clone());
+        let self_reference = Ty::Reference {
+            pointee: Box::new(self_ty.clone()),
+            mutable: true,
+            region: None,
+        };
+        let unsafe_effect = futures.iter().any(|future| future.unsafe_effect);
+        let effect_row = Ty::EffectRow {
+            unsafe_effect,
+            throws_error: None,
+            custom_effects: Vec::new(),
+        };
+        let trait_key = TraitImplKey {
+            self_ty: self_ty.clone(),
+            trait_ref: TraitRefKey {
+                name: future_trait,
+                arguments: vec![effect_row],
+            },
+        };
+        let poll_function = trait_method_name(&trait_key, "poll");
+        self.signatures.insert(
+            poll_function.clone(),
+            FunctionSig {
+                groups: vec![
+                    vec![ParamSig {
+                        name: "self".to_owned(),
+                        ty: self_reference.clone(),
+                        mode: PassMode::Inferred,
+                    }],
+                    Vec::new(),
+                ],
+                unsafe_effect,
+                throws_error: None,
+                custom_effects: Vec::new(),
+                result: Some(poll_ty.clone()),
+            },
+        );
+        self.function_accesses
+            .insert(poll_function.clone(), access.clone());
+        self.inherent_members
+            .entry(name.clone())
+            .or_default()
+            .methods
+            .insert("poll".to_owned(), poll_function.clone());
+        self.trait_impl_headers.insert(trait_key.clone());
+        self.trait_methods_by_receiver
+            .entry((self_ty.clone(), "poll".to_owned()))
+            .or_default()
+            .push(trait_key.clone());
+        let output_source = self.source_type_for_ty(&output)?;
+        self.trait_impls.insert(
+            trait_key.clone(),
+            TraitImplInfo {
+                key: trait_key,
+                associated_types: HashMap::from([("Output".to_owned(), output.clone())]),
+                associated_type_sources: HashMap::from([("Output".to_owned(), output_source)]),
+                methods: HashMap::from([("poll".to_owned(), poll_function.clone())]),
+                access,
+            },
+        );
+
+        let scrutinee_place = HirPlace {
+            local: 0,
+            root_ty: self_ty.clone(),
+            projections: Vec::new(),
+            dynamic_index: None,
+            ty: self_ty.clone(),
+            capability: LocalCapability::MutParam,
+            root_mutable: true,
+            loan: None,
+            indirect: true,
+        };
+        let arms = futures
+            .iter()
+            .zip(&variants)
+            .enumerate()
+            .map(|(index, (future, variant))| {
+                let child_place = HirPlace {
+                    local: 0,
+                    root_ty: self_ty.clone(),
+                    projections: vec![1 + variant.payload_offset],
+                    dynamic_index: None,
+                    ty: future.ty.clone(),
+                    capability: LocalCapability::MutParam,
+                    root_mutable: true,
+                    loan: None,
+                    indirect: true,
+                };
+                HirMatchArm {
+                    matcher: HirMatcher::Variant(index),
+                    bindings: Vec::new(),
+                    guard: None,
+                    body: HirExpr {
+                        ty: poll_ty.clone(),
+                        kind: HirExprKind::Call {
+                            function: future.poll_function.clone(),
+                            arguments: vec![HirArgument::Copy(HirExpr {
+                                ty: Ty::Reference {
+                                    pointee: Box::new(future.ty.clone()),
+                                    mutable: true,
+                                    region: None,
+                                },
+                                kind: HirExprKind::Borrow {
+                                    place: child_place,
+                                    mutable: true,
+                                },
+                            })],
+                            consumed_callable: None,
+                            diverges: false,
+                        },
+                    },
+                }
+            })
+            .collect();
+        self.lifted_functions.push(HirFunction {
+            name: poll_function,
+            params: vec![HirParam {
+                id: 0,
+                name: "self".to_owned(),
+                ty: self_reference,
+                mode: PassMode::Inferred,
+            }],
+            result: poll_ty.clone(),
+            body: HirExpr {
+                ty: poll_ty,
+                kind: HirExprKind::Match {
+                    scrutinee: Box::new(HirExpr {
+                        ty: self_ty,
+                        kind: HirExprKind::Read {
+                            place: scrutinee_place,
+                            kind: HirReadKind::Inspect,
+                        },
+                    }),
+                    arms,
+                },
+            },
+        });
+        Some(name)
     }
 
     fn register_future_poll(&mut self, name: &str) {

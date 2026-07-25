@@ -561,9 +561,10 @@ generated state and follow normal Copy, Move, and drop rules. A borrow of anothe
 including through a borrow alias chain, is rejected because it would make the generated future
 self-referential and therefore non-`Move`. Borrows of external storage remain subject to their
 ordinary region and alias constraints. An `if` or `match` may place one tail await in every branch
-when branch selection produces one concrete child-future type; the condition, scrutinee, and guards
-run once before suspension. Heterogeneous branch futures, branch-local statements before await,
-loop suspension, and other residual-effect cases are not implemented yet.
+when every child future has the same Output; concrete child types may differ. The condition,
+scrutinee, and guards run once before suspension, and cancellation drops only the selected child.
+Branch-local statements before await, loop suspension, and other residual-effect cases are not
+implemented yet.
 
 `unsafe` is an authority effect. `unsafe { ... }` authorizes operations whose contracts cannot be
 verified by the safe type and ownership rules; it does not disable type checking or cleanup.

@@ -33,8 +33,9 @@ unhandled `Unsafe` requirement is inferred onto `poll`.
 The current task must lower suspension points nested in `if`, `match`, and loop control flow while
 preserving branch-local liveness and deterministic cancellation. Homogeneous `if` and `match`
 branches whose bodies are a single tail await now hoist selection before one shared suspension.
-Heterogeneous child futures, branch-local prefixes, and loop suspension remain. Residual
-algebraic-effect specialization is a separate follow-up task.
+Branches may use different concrete child-future types when their Output agrees; a private
+active-variant future dispatches polling and cancellation. Branch-local prefixes and loop
+suspension remain. Residual algebraic-effect specialization is a separate follow-up task.
 
 ## Later
 

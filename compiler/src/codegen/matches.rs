@@ -325,6 +325,9 @@ impl Analyzer {
             context.guard_move_restricted = previous_guard_restrictions;
             let guard_flow = guard.as_ref().map(|_| context.flow.clone());
             let branch_expected = expected.or_else(|| {
+                if self.async_factory_depth > 0 {
+                    return None;
+                }
                 result_ty
                     .as_ref()
                     .filter(|ty| **ty != Ty::Error && !self.is_uninhabited_type(ty))
@@ -340,9 +343,13 @@ impl Analyzer {
                 }
             }
 
-            result_ty = Some(match result_ty {
-                Some(current) => self.unify_types(&current, &body.ty, "match arm results"),
-                None => body.ty.clone(),
+            result_ty = Some(if self.async_factory_depth > 0 {
+                result_ty.unwrap_or_else(|| body.ty.clone())
+            } else {
+                match result_ty {
+                    Some(current) => self.unify_types(&current, &body.ty, "match arm results"),
+                    None => body.ty.clone(),
+                }
             });
             if guard.is_none() {
                 match matcher {
@@ -375,6 +382,38 @@ impl Analyzer {
         }
         if arms.is_empty() && !layout.variants.is_empty() {
             self.error("match must contain at least one arm");
+        }
+        if self.async_factory_depth > 0 && !lowered_arms.is_empty() {
+            let branch_types = lowered_arms
+                .iter()
+                .map(|arm| arm.body.ty.clone())
+                .collect::<Vec<_>>();
+            if branch_types.windows(2).any(|pair| pair[0] != pair[1]) {
+                if let Some(branch_name) = self.register_async_branch_future(&branch_types) {
+                    let branch_ty = Ty::Enum(branch_name.clone());
+                    for (variant, arm) in lowered_arms.iter_mut().enumerate() {
+                        arm.body = HirExpr {
+                            ty: branch_ty.clone(),
+                            kind: HirExprKind::ConstructEnum {
+                                name: branch_name.clone(),
+                                variant,
+                                fields: vec![(0, arm.body.clone())],
+                            },
+                        };
+                    }
+                    result_ty = Some(branch_ty);
+                } else {
+                    result_ty =
+                        Some(branch_types.iter().skip(1).fold(
+                            branch_types[0].clone(),
+                            |current, branch| {
+                                self.unify_types(&current, branch, "match arm results")
+                            },
+                        ));
+                }
+            } else {
+                result_ty = branch_types.first().cloned();
+            }
         }
         HirExpr {
             ty: result_ty.unwrap_or({

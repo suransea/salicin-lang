@@ -49,6 +49,9 @@ subset.
   remain region-checked and keep their ordinary alias restrictions.
 - Hoisted a tail await over homogeneous `if` and `match` branches, evaluating branch selection once
   before the selected child enters the existing Pending, Ready, and cancellation state machine.
+- Added compiler-owned active-variant futures for heterogeneous `if` and `match` child types with a
+  common Output. Poll and cancellation borrow or drop only the selected variant, and mismatched
+  branch outputs receive a source-level diagnostic.
 - Declared `Continuation(Input, Output)` and `EffectCallable(Input, Output, Answer)` as bodyless
   type forms, matching their compiler-owned representations instead of describing them as empty
   structures. Lang-item validation now requires the exact type-form declarations.
