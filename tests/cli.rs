@@ -3069,6 +3069,16 @@ fn cold_async_future_polls_once_and_rejects_repolling() {
 }
 
 #[test]
+fn spin_executor_polls_one_future_until_ready() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "async_spin_executor.sc"))
+        .output()
+        .expect("run spin executor fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn tail_await_forwards_a_ready_child_future() {
     let output = salic()
         .arg("run")

@@ -28,6 +28,23 @@ pub let Executor = trait {
   where F: Future(E, Output = T)
 }
 
+/// Minimal allocation-free executor that polls one future until completion.
+pub let Spin = struct {}
+
+extend Spin: Executor {
+  let run(E: effect, F: type, T: type)
+    (self: borrow(mut)(Self))
+    (move future: F): T with(E)
+  where F: Future(E, Output = T) = {
+    let mut current = future
+    loop {
+      match current.poll()
+        { Ready(value) -> break(value) }
+        { Pending -> continue() }
+    }
+  }
+}
+
 /// Constructs a cold compiler-generated future without running `action`.
 pub let async(E: effect, F: type, T: type)
   (move action: (): T with(core.async.Async, E)): F

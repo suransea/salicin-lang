@@ -20,6 +20,10 @@ subset.
   Their first poll transfers captures and returns the standard `Poll.Ready(T)` variant; completed
   states suppress capture cleanup and trap on a second poll. Generic `Future` bounds and native
   owned-capture polling are covered by regression tests.
+- Added the ordinary zero-field `core.async.Spin` executor. It owns and repeatedly polls one
+  `Future(E)` until `Ready` without allocation or implicit runtime selection. Public trait methods
+  now remain callable through generic dispatch even when the concrete implementation type is
+  private to the caller's package.
 - Inferred an unhandled `Unsafe` requirement from a cold async body without suspension and
   attached it to the generated `Future(Unsafe)` polling contract. Future construction remains
   cold and pure, while polling requires an unsafe handler. Residual algebraic effects are rejected

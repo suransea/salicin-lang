@@ -17,16 +17,14 @@ Priority meanings:
 
 - [ ] **ASYNC-EFFECT-1: Specialize generated polling through residual handlers**
 
-## Next
-
-- [ ] **ASYNC-EXEC-1: Provide one explicit minimal executor**
-
 `MOVE-TRAIT-1`, `ASYNC-STATE-1`, `ASYNC-POLL-1`, `ASYNC-CANCEL-1`, `ASYNC-BORROW-1`, and
-`ASYNC-CONTROL-1` are complete. Generated futures preserve relocation, branch-local state,
+`ASYNC-CONTROL-1`, and `ASYNC-EXEC-1` are complete. Generated futures preserve relocation, branch-local state,
 sequential and nested suspension, reusable loop iterations, move-only carry, and exact completion
 or cancellation cleanup. Recurring `loop`, pre-test `while`, and post-test `while` cover false
 exits, explicit `continue`, fallthrough, value output, `Never` output, heterogeneous branch
 children, multiple suspension points, and allocation-free child-slot reuse.
+The ordinary zero-field `core.async.Spin` executor polls one owned `Future(E)` until `Ready`
+without implicit allocation or runtime selection.
 
 The current task must remove the source-level rejection of residual `Throws` and custom algebraic
 effects in async bodies and continuations. Generated `Future(E)` implementations must specialize

@@ -229,9 +229,8 @@ impl Analyzer {
             .filter(|candidate| {
                 self.trait_impls
                     .get(*candidate)
-                    .is_some_and(|implementation| {
-                        Self::access_boundary_allows(origin, &implementation.access)
-                    })
+                    .and_then(|implementation| self.traits.get(&implementation.key.trait_ref.name))
+                    .is_some_and(|schema| Self::access_boundary_allows(origin, &schema.access))
             })
             .cloned()
             .collect()

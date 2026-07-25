@@ -105,6 +105,7 @@ Implemented data and control features include:
 - cold compiler-generated futures with a typed pure `Future` implementation, one-shot
   `Poll.Ready` transition, inferred residual `Unsafe`, state-aware capture transfer, cancellation
   cleanup, completed-state repoll traps, and one tail-position child suspension;
+- the explicit allocation-free `core.async.Spin` executor for one owned future;
 - checked arithmetic, comparisons, bitwise operations, shifts, and compound assignment;
 - deterministic left-to-right evaluation;
 - optional chaining, coalescing, error propagation, and forced unwrap.
@@ -170,6 +171,8 @@ uninhabited `Never` as its output.
 For unit-valued general iteration bodies, the compiler rewrites control exits at the current loop
 depth into early iteration-future step returns and distributes normal fallthrough across nested
 `if` and `match` exits. Nested loops and nested async blocks remain separate control boundaries.
+`core.async.Spin` is an ordinary zero-field library value implementing `Executor`; it repeatedly
+polls one owned future until `Ready` and introduces no implicit allocation or runtime selection.
 
 ## Modules, Packages, and FFI
 

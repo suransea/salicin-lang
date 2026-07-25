@@ -275,7 +275,9 @@ not ordinary source-level standard-library functions.
 
 `core.async` makes the asynchronous model explicit in source. `Future(E)` is a `Move` trait with an
 associated `Output` and a mutable-borrowing `poll` method returning `Poll`. `Executor.run` is
-explicit; constructing a cold future does not select or run an executor. `async` and `await` are
+explicit, and the ordinary zero-field `Spin` implementation repeatedly polls one owned future
+until `Ready` without allocation. Constructing a cold future does not select or run an executor.
+`async` and `await` are
 validated compiler-provided functions whose declarations expose their effect rows and
 `Future(E, Output = T)` relationship. Compiler-generated futures without suspension already
 implement the inferred `Future(E)` instance and transition from cold state to `Poll.Ready` exactly

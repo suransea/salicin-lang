@@ -422,7 +422,9 @@ const CORE_EFFECT_EXPORTS: &[&str] = &["Continuation", "EffectCallable", "Handle
 const CORE_RESULT_EXPORTS: &[&str] = &["Result"];
 const CORE_ERROR_EXPORTS: &[&str] = &["Throws", "try", "throw"];
 const CORE_UNSAFE_EXPORTS: &[&str] = &["Unsafe", "unsafe"];
-const CORE_ASYNC_EXPORTS: &[&str] = &["Async", "Poll", "Future", "Executor", "async", "await"];
+const CORE_ASYNC_EXPORTS: &[&str] = &[
+    "Async", "Poll", "Future", "Executor", "Spin", "async", "await",
+];
 const CORE_PRIMITIVE_EXPORTS: &[&str] = &[
     "bool", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
 ];
@@ -544,6 +546,7 @@ const STD_MODULE_EXPORTS: &[(&str, &str, &str)] = &[
     ("async", "Poll", "core::async::Poll"),
     ("async", "Future", "core::async::Future"),
     ("async", "Executor", "core::async::Executor"),
+    ("async", "Spin", "core::async::Spin"),
     ("async", "async", "core::async::async"),
     ("async", "await", "core::async::await"),
     ("effect", "Continuation", "core::effect::Continuation"),

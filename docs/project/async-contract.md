@@ -206,8 +206,9 @@ separate design for construction, projection, drop, and unsafe escape.
 
 ## Executor
 
-The initial executor is an ordinary library value implementing `Executor`. Its `run` method polls
-one future repeatedly until `Ready` and returns the output.
+The initial executor is the ordinary zero-field library value `core.async.Spin`. It implements
+`Executor`; its `run` method owns and polls one future repeatedly until `Ready`, then returns the
+output.
 
 `Pending` grants permission to poll again but does not imply a wake notification. This bounded spin
 executor is sufficient to validate state transitions, nested awaits, cancellation, and effects. A
