@@ -152,8 +152,9 @@ Recurring suspension is classified by loop kind, condition/body location, `conti
 and value-producing `break`. A unit-output `loop` with one await followed by a boolean
 `break()`/`continue()` decision now uses a private `Continue(next_child) | Break(())` step enum.
 Its poll transition reinitializes one child slot and consumes consecutive immediately-ready
-iterations in an HIR loop; move-only carry, general loop bodies, and algebraic residual-effect
-specialization are not implemented.
+iterations in an HIR loop. Completed children are destroyed before reuse, while cancellation drops
+only the active suspended child. Move-only carry, general loop bodies, and algebraic
+residual-effect specialization are not implemented.
 
 ## Modules, Packages, and FFI
 

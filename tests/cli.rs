@@ -3174,6 +3174,16 @@ fn await_reuses_one_child_slot_across_loop_backedges() {
 }
 
 #[test]
+fn cancelling_an_async_loop_drops_completed_and_active_children_once() {
+    let output = salic()
+        .arg("run")
+        .arg(fixture("pass", "async_await_loop_cancel.sc"))
+        .output()
+        .expect("run async loop cancellation fixture");
+    assert_eq!(output.status.code(), Some(42), "{}", output_text(&output));
+}
+
+#[test]
 fn cancelling_a_control_flow_await_drops_only_the_selected_child() {
     let output = salic()
         .arg("run")

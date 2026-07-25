@@ -64,7 +64,9 @@ subset.
 - Added the first reusable async loop backedge. A unit-output loop with one await and a boolean
   break/continue decision lowers to a private `Continue(next_child) | Break(())` step enum; polling
   reinitializes one child field across Pending and consumes consecutive immediately-ready
-  iterations in an HIR loop without recursive future layout or host-stack recursion.
+  iterations in an HIR loop without recursive future layout or host-stack recursion. Completed
+  iteration children are destroyed before slot reuse, and cancelling a suspended loop drops only
+  the active child.
 - Declared `Continuation(Input, Output)` and `EffectCallable(Input, Output, Answer)` as bodyless
   type forms, matching their compiler-owned representations instead of describing them as empty
   structures. Lang-item validation now requires the exact type-form declarations.
