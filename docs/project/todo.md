@@ -15,25 +15,24 @@ Priority meanings:
 
 ## Current
 
-- [ ] **ASYNC-POLL-1: Implement typed polling transitions**
+- [ ] **ASYNC-BORROW-1: Reject first-version self-referential states**
 
 ## Next
 
-- [ ] **ASYNC-CANCEL-1: Drop initialized state on cancellation**
-- [ ] **ASYNC-BORROW-1: Reject first-version self-referential states**
+- [ ] **ASYNC-CONTROL-1: Lower suspension nested in control flow**
+- [ ] **ASYNC-EFFECT-1: Specialize generated polling through residual handlers**
 - [ ] **ASYNC-EXEC-1: Provide one explicit minimal executor**
 
-`MOVE-TRAIT-1` and `ASYNC-STATE-1` are complete. Cold async blocks now materialize compiler-owned
-nominal state, preserve owned captures across relocation, and drop unpolled captures on
-cancellation. The no-suspension transition now implements `Future((), Output = T)`, returns
-`Poll.Ready(T)` once, and suppresses completed-state capture cleanup. An unhandled `Unsafe`
-requirement is inferred onto `poll`; residual algebraic effects are rejected until generated
-poll/resume functions enter handler specialization. One tail-position `await` now stores and polls
-its child across `Pending`, resumes on `Ready`, and drops the child on completion or cancellation.
-A single non-tail `let value = await child` also preserves continuation captures and executes its
-linear suffix after Ready. Multiple sequential awaits compose recursively while preserving earlier
-Ready values and active-state cancellation. Suspension nested in control flow and the remaining
-residual-effect cases remain the current task.
+`MOVE-TRAIT-1`, `ASYNC-STATE-1`, `ASYNC-POLL-1`, and `ASYNC-CANCEL-1` are complete. Cold async
+blocks materialize compiler-owned nominal state, preserve owned captures across relocation, and
+drop initialized cold or suspended state exactly once. Typed polling returns `Poll.Ready(T)` once,
+retains a child across `Pending`, resumes linear sequential awaits, and traps on completed-state
+repoll. An unhandled `Unsafe` requirement is inferred onto `poll`.
+
+The current task must reject borrows that would make generated state self-referential while
+continuing to permit region-checked borrows of external storage. Control-flow suspension and
+residual algebraic-effect specialization are separate follow-up lowering tasks; their current
+rejection boundaries remain source-level and tested.
 
 ## Later
 

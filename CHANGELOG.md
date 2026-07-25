@@ -38,6 +38,9 @@ subset.
   preserve earlier Ready values across later Pending states. Each parent keeps only its active
   nested future, cancellation follows that state chain, Copy captures are stored by value without
   consuming their source, and non-Copy captures transfer ownership into the future.
+- Completed the typed polling and deterministic cancellation milestones for cold and linearly
+  suspended futures. Control-flow suspension and residual handler specialization now remain
+  explicit follow-up tasks rather than open-ended parts of the polling transition milestone.
 - Declared `Continuation(Input, Output)` and `EffectCallable(Input, Output, Answer)` as bodyless
   type forms, matching their compiler-owned representations instead of describing them as empty
   structures. Lang-item validation now requires the exact type-form declarations.
