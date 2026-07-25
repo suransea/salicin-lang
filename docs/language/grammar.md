@@ -54,7 +54,7 @@ separators = { separator } ;
 source_file = separators, { item, separators }, EOF ;
 
 item = { attribute }, [ visibility ],
-       ( use_decl | let_decl | extend_decl | extern_block ) ;
+       ( let_decl | extend_decl | extern_block ) ;
 
 attribute  = "@", IDENT, [ "(", [ attribute_args ], ")" ] ;
 visibility = "pub", [ "(", "package", ")" ] ;
@@ -250,13 +250,9 @@ Positional trait arguments precede associated bindings. A generic associated con
 declares its local binders on the left, for example
 `Item(R: region) = borrow(R)(T)`.
 
-### 2.6 Imports and Foreign Declarations
+### 2.6 Foreign Declarations
 
 ```ebnf
-use_decl =
-    contextual("use"), path,
-    [ contextual("as"), IDENT ] ;
-
 extern_block =
     contextual("extern"), STRING,
     "{", separators,
@@ -270,6 +266,9 @@ foreign_function =
     { runtime_parameter_group },
     ":", type_expr ;
 ```
+
+The grammar has no import declaration. A qualified path may be used directly, or an ordinary
+`let` declaration may give a declaration or module path a local alias.
 
 ## 3. Types
 

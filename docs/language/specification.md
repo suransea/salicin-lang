@@ -25,6 +25,13 @@ Salicin is a statically typed, statically compiled language with:
 Every expression has a type. `()` is the sole unit type and unit value. `Never` is the prelude's
 ordinary uninhabited enum and coerces to any expected type.
 
+Language syntax is source-backed unless this specification explicitly calls it primitive. A
+source-backed construct resolves to a canonical declaration in the edition's `core` library. The
+implementation validates that declaration's module identity and exact contract before granting
+syntax-directed lowering; spelling the same name in user code grants no special behavior. Such
+lowering may avoid ordinary call or closure allocation, but must remain observationally equivalent
+to the validated declaration, including evaluation order, effects, ownership, and cleanup.
+
 ## 2. Lexical Rules
 
 Identifiers are case-sensitive, follow Unicode XID rules, and are compared after NFC
@@ -438,7 +445,9 @@ An implementation is legal only in the package that owns the trait or the nomina
 applicable implementations with the same static key are rejected.
 
 Operators are syntax for methods of validated source traits. Ordinary methods with the same name
-cannot intercept operator dispatch.
+cannot intercept operator dispatch. In particular, prefix `!value` invokes the validated
+`core.ops.bit.Not.not` contract; this is distinct from the postfix propagation operator described
+in section 11.
 
 ## 9. Blocks and Control Flow
 
@@ -456,9 +465,30 @@ let absolute = if value < 0 {
 }
 ```
 
+The principal source contracts in `core.control` are:
+
+```sc fragment
+pub let if(E: effect, T: type)
+  (condition: bool)
+  (move then: (): T with(E))
+  (move else: (): T with(E)): T with(E)
+
+pub let while(E: effect)
+  (move condition: (): bool with(E))
+  (move do: (): () with(E)): () with(E)
+```
+
+The surface forms supply their branch, condition, and body blocks as lazy callable groups. The
+canonical declarations for `do`, `loop`, `match`, and `for` are validated in the same way.
+`break`, `continue`, and `return` resolve to the canonical `core.control` functions, which introduce
+the corresponding `Break(T)`, `Continue`, or `Return(T)` effect before the enclosing construct
+handles it. A same-named user declaration cannot redirect any of these forms. The complete
+contracts and their lowering obligations are specified in [Control-flow contracts](control-flow.md).
+
 `loop { ... }` repeats until `break(value)`. All reachable breaks from one loop agree on the result
 type. `while`, `do ... while`, and `for` have unit result. `for` obtains an iterator through
-`IntoIterator` and repeatedly calls `Iterator.next`.
+the validated source traits `core.iter.IntoIterator` and `core.iter.Iterator`, then repeatedly calls
+`Iterator.next`.
 
 `return(value)` exits the nearest named function or closure. `break(value)` exits the nearest
 loop. `continue()` starts its next iteration. These exits have type `Never`.
@@ -507,14 +537,40 @@ and handling rules as a closure whose concrete effect was written directly.
 `unsafe` is an authority effect. `unsafe { ... }` authorizes operations whose contracts cannot be
 verified by the safe type and ownership rules; it does not disable type checking or cleanup.
 
+The contextual forms `try { ... }`, `throw(error)`, and `unsafe { ... }` target validated source
+declarations in `core.error` and `core.unsafe`. Their declarations expose the effect introduced or
+handled and the remainder row that is forwarded. User declarations with the same spelling remain
+ordinary declarations.
+
 ## 11. Propagation Operators
 
-`!` propagates an error through the active `Throws(Error)` effect. `!!` forcefully unwraps a
-supported optional or result value and traps when no success value exists.
+Postfix `value!` invokes the validated source trait `core.flow.Raise`:
+
+```sc fragment
+pub let Raise = trait {
+  let Output: type
+  let Error: type
+  let raise(move self): Output with(core.error.Throws(Error))
+}
+```
+
+It propagates the stored error through the active `Throws(Error)` effect. Postfix `value!!` invokes
+the separately validated `core.flow.Unwrap` contract:
+
+```sc fragment
+pub let Unwrap = trait {
+  let Output: type
+  let unwrap(move self): Output
+}
+```
+
+It forcefully unwraps a supported optional or result value and traps when no success value exists.
+Neither postfix operator is name-based, and neither can be intercepted by a same-named inherent
+method or user trait. Prefix `!value` is instead the `Not` operator described in section 8.
 
 `?.` performs conditional chaining through the source-declared `Chain` protocol. `??` performs
-fallback selection through `Coalesce`. Their right-hand transforms or fallback bodies are lazy and
-run only on the corresponding path.
+fallback selection through `Coalesce`. Both protocols are validated `core.flow` traits. Their
+right-hand transforms or fallback bodies are lazy and run only on the corresponding path.
 
 The root `core.Option` and `core.Result` types follow the same ownership rule as user protocols:
 payloads are moved, copied, or borrowed according to the surrounding expression and expected type.
@@ -522,16 +578,18 @@ payloads are moved, copied, or borrowed according to the surrounding expression 
 ## 12. Modules and Packages
 
 A source file defines a module. A directory module is rooted at its `mod.sc`; sibling `.sc` files
-define child modules. Paths use `.` in source:
+define child modules. Paths use `.` in source. There is no `use` declaration: code either keeps a
+qualified path or introduces a transparent alias with ordinary `let`:
 
 ```sc fragment
-use package.geometry.Point
-use root.support
-use super.shared
+let Point = package.geometry.Point
+let support = root.support
+let shared = super.shared
 ```
 
 `self`, `super`, and `root` begin lookup at the current module, parent module, and package root.
-A dependency package name may begin an absolute dependency path.
+A dependency package name may begin an absolute dependency path. An alias has the visibility of its
+`let` declaration; `pub let` and `pub(package) let` therefore provide explicit facade exports.
 
 Project metadata lives in `salicin.toml`. A library target starts at `src/lib.sc`; a binary target
 starts at `src/main.sc`. Local dependency resolution is recorded in `salicin.lock`.
