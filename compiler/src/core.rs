@@ -146,6 +146,7 @@ pub enum LangItemKind {
     U64,
     U128,
     USize,
+    Move,
     Copy,
     Drop,
     Add,
@@ -212,7 +213,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    const ALL: [Self; 79] = [
+    const ALL: [Self; 80] = [
         Self::Option,
         Self::Result,
         Self::Never,
@@ -229,6 +230,7 @@ impl LangItemKind {
         Self::U64,
         Self::U128,
         Self::USize,
+        Self::Move,
         Self::Copy,
         Self::Drop,
         Self::Add,
@@ -312,6 +314,7 @@ impl LangItemKind {
             Self::U64 => "u64",
             Self::U128 => "u128",
             Self::USize => "usize",
+            Self::Move => "Move",
             Self::Copy => "Copy",
             Self::Drop => "Drop",
             Self::Add => "Add",
@@ -416,6 +419,7 @@ impl LangItemKind {
             | Self::Match
             | Self::For => "function",
             Self::Handle
+            | Self::Move
             | Self::Copy
             | Self::Drop
             | Self::Add
@@ -484,6 +488,7 @@ impl LangItemKind {
             | Self::U64
             | Self::U128
             | Self::USize
+            | Self::Move
             | Self::Copy
             | Self::Drop
             | Self::PartialOrdering
@@ -609,6 +614,7 @@ pub struct LangItems {
     u64_type: LangItem,
     u128_type: LangItem,
     usize_type: LangItem,
+    move_trait: LangItem,
     copy: LangItem,
     drop: LangItem,
     add: LangItem,
@@ -704,6 +710,10 @@ impl LangItems {
 
     pub const fn copy(&self) -> &LangItem {
         &self.copy
+    }
+
+    pub const fn move_trait(&self) -> &LangItem {
+        &self.move_trait
     }
 
     pub const fn drop(&self) -> &LangItem {
@@ -912,6 +922,7 @@ impl LangItems {
             LangItemKind::U64 => &self.u64_type,
             LangItemKind::U128 => &self.u128_type,
             LangItemKind::USize => &self.usize_type,
+            LangItemKind::Move => &self.move_trait,
             LangItemKind::Copy => &self.copy,
             LangItemKind::Drop => &self.drop,
             LangItemKind::Add => &self.add,
@@ -1144,6 +1155,7 @@ impl CoreBundle {
             &mut lang_items.u64_type,
             &mut lang_items.u128_type,
             &mut lang_items.usize_type,
+            &mut lang_items.move_trait,
             &mut lang_items.copy,
             &mut lang_items.drop,
             &mut lang_items.add,
@@ -1490,6 +1502,7 @@ fn validate_program(edition: Edition, program: &Program) -> Result<LangItems, Co
         u64_type: item(LangItemKind::U64),
         u128_type: item(LangItemKind::U128),
         usize_type: item(LangItemKind::USize),
+        move_trait: item(LangItemKind::Move),
         copy: item(LangItemKind::Copy),
         drop: item(LangItemKind::Drop),
         add: item(LangItemKind::Add),
@@ -1659,6 +1672,7 @@ fn validate_item_shape(kind: LangItemKind, item: &Item, diagnostics: &mut Vec<St
         (LangItemKind::PartialOrdering, Item::Enum(definition)) => {
             validate_partial_ordering(definition, diagnostics)
         }
+        (LangItemKind::Move, Item::Trait(definition)) => validate_move(definition, diagnostics),
         (LangItemKind::Copy, Item::Trait(definition)) => validate_copy(definition, diagnostics),
         (LangItemKind::Drop, Item::Trait(definition)) => validate_drop(definition, diagnostics),
         (LangItemKind::UnsafeEffect | LangItemKind::ThrowsEffect, Item::Effect(definition)) => {
@@ -3062,16 +3076,44 @@ fn validate_partial_ordering(definition: &EnumDef, diagnostics: &mut Vec<String>
     }
 }
 
+fn validate_move(definition: &TraitDef, diagnostics: &mut Vec<String>) {
+    if !move_trait_has_required_shape(definition) {
+        diagnostics.push("lang item `Move` must have shape `pub let Move = trait {}`".to_owned());
+    }
+}
+
+/// Check the relocation marker contract shared by core and ownership lowering.
+pub(crate) fn move_trait_has_required_shape(definition: &TraitDef) -> bool {
+    trait_has_default_self(definition)
+        && definition.compile_groups.is_empty()
+        && definition.where_predicates.is_empty()
+        && definition.members.is_empty()
+}
+
 fn validate_copy(definition: &TraitDef, diagnostics: &mut Vec<String>) {
     if !copy_trait_has_required_shape(definition) {
-        diagnostics.push("lang item `Copy` must have shape `pub let Copy = trait {}`".to_owned());
+        diagnostics.push(
+            "lang item `Copy` must have shape `pub let Copy = trait where Self: Move {}`"
+                .to_owned(),
+        );
     }
 }
 
 /// Check the marker contract shared by core bootstrapping and ownership lowering.
 pub(crate) fn copy_trait_has_required_shape(definition: &TraitDef) -> bool {
+    let [predicate] = definition.where_predicates.as_slice() else {
+        return false;
+    };
     trait_has_default_self(definition)
         && definition.compile_groups.is_empty()
+        && predicate.subject == named_type("Self")
+        && matches!(
+            &predicate.trait_ref,
+            Type::Named(name, arguments)
+                if arguments.is_empty()
+                    && matches!(name.as_str(), "Move" | "core.marker.Move" | "core::marker::Move")
+        )
+        && predicate.associated_types.is_empty()
         && definition.members.is_empty()
 }
 
@@ -3278,6 +3320,7 @@ mod tests {
 pub let Option(T: type) = enum { Some(T), None }
 pub let Result(E: type)(T: type) = enum { Ok(T), Err(E) }
 pub let Never = enum {}
+pub let Move = trait {}
 "#,
             copy_declaration,
             r#"
@@ -3417,7 +3460,7 @@ pub let Index(Key: type) = trait {
                 | LangItemKind::USize => {
                     format!("core::primitives::{}", kind.source_name())
                 }
-                LangItemKind::Copy | LangItemKind::Drop => {
+                LangItemKind::Move | LangItemKind::Copy | LangItemKind::Drop => {
                     format!("core::marker::{}", kind.source_name())
                 }
                 LangItemKind::Add
@@ -3519,7 +3562,7 @@ pub let Index(Key: type) = trait {
                 | LangItemKind::U64
                 | LangItemKind::U128
                 | LangItemKind::USize => vec!["primitives"],
-                LangItemKind::Copy | LangItemKind::Drop => vec!["marker"],
+                LangItemKind::Move | LangItemKind::Copy | LangItemKind::Drop => vec!["marker"],
                 LangItemKind::Add
                 | LangItemKind::Sub
                 | LangItemKind::Mul
@@ -3920,7 +3963,9 @@ pub let Rem(Rhs: type) = trait {
   let Output: type
   let rem(self)(rhs: Rhs): Output
 }
-pub let Copy = trait {}
+pub let Move = trait {}
+pub let Copy = trait
+where Self: Move {}
 pub let Drop = trait {
   let drop(self: borrow(mut)(Self))(): ()
 }
@@ -3986,26 +4031,27 @@ pub let Index(Key: type) = trait {
         let bundle = CoreBundle::from_source(Edition::Edition2026, source).unwrap();
 
         assert_eq!(bundle.lang_items().rem().item_index(), 0);
-        assert_eq!(bundle.lang_items().copy().item_index(), 1);
-        assert_eq!(bundle.lang_items().drop().item_index(), 2);
-        assert_eq!(bundle.lang_items().add().item_index(), 3);
-        assert_eq!(bundle.lang_items().never().item_index(), 4);
-        assert_eq!(bundle.lang_items().option().item_index(), 5);
-        assert_eq!(bundle.lang_items().result().item_index(), 6);
-        assert_eq!(bundle.lang_items().div().item_index(), 7);
-        assert_eq!(bundle.lang_items().sub().item_index(), 8);
-        assert_eq!(bundle.lang_items().mul().item_index(), 9);
-        assert_eq!(bundle.lang_items().eq().item_index(), 10);
-        assert_eq!(bundle.lang_items().partial_ordering().item_index(), 11);
-        assert_eq!(bundle.lang_items().partial_ord().item_index(), 12);
-        assert_eq!(bundle.lang_items().neg().item_index(), 13);
-        assert_eq!(bundle.lang_items().not().item_index(), 14);
-        assert_eq!(bundle.lang_items().bit_and().item_index(), 15);
-        assert_eq!(bundle.lang_items().bit_or().item_index(), 16);
-        assert_eq!(bundle.lang_items().bit_xor().item_index(), 17);
-        assert_eq!(bundle.lang_items().shl().item_index(), 18);
-        assert_eq!(bundle.lang_items().shr().item_index(), 19);
-        assert_eq!(bundle.lang_items().index().item_index(), 20);
+        assert_eq!(bundle.lang_items().move_trait().item_index(), 1);
+        assert_eq!(bundle.lang_items().copy().item_index(), 2);
+        assert_eq!(bundle.lang_items().drop().item_index(), 3);
+        assert_eq!(bundle.lang_items().add().item_index(), 4);
+        assert_eq!(bundle.lang_items().never().item_index(), 5);
+        assert_eq!(bundle.lang_items().option().item_index(), 6);
+        assert_eq!(bundle.lang_items().result().item_index(), 7);
+        assert_eq!(bundle.lang_items().div().item_index(), 8);
+        assert_eq!(bundle.lang_items().sub().item_index(), 9);
+        assert_eq!(bundle.lang_items().mul().item_index(), 10);
+        assert_eq!(bundle.lang_items().eq().item_index(), 11);
+        assert_eq!(bundle.lang_items().partial_ordering().item_index(), 12);
+        assert_eq!(bundle.lang_items().partial_ord().item_index(), 13);
+        assert_eq!(bundle.lang_items().neg().item_index(), 14);
+        assert_eq!(bundle.lang_items().not().item_index(), 15);
+        assert_eq!(bundle.lang_items().bit_and().item_index(), 16);
+        assert_eq!(bundle.lang_items().bit_or().item_index(), 17);
+        assert_eq!(bundle.lang_items().bit_xor().item_index(), 18);
+        assert_eq!(bundle.lang_items().shl().item_index(), 19);
+        assert_eq!(bundle.lang_items().shr().item_index(), 20);
+        assert_eq!(bundle.lang_items().index().item_index(), 21);
         for kind in LangItemKind::ALL {
             let item = bundle.lang_items().get(kind);
             assert_eq!(
@@ -4021,6 +4067,7 @@ pub let Index(Key: type) = trait {
 let Option(T: type) = enum { Some(T), None }
 pub let Result = struct { value: i32 }
 pub let Never = enum { Reachable }
+pub let Move = trait {}
 pub let Copy(T: type) = trait {}
 pub let Add(Rhs: type) = trait {
   let add(self)(rhs: Rhs): Rhs
@@ -4087,17 +4134,17 @@ pub let Drop = trait {
             error.diagnostics(),
             [
                 "lang item `Option` must be `pub`, found private visibility",
-                "unexpected declaration `Extra` at item 6",
+                "unexpected declaration `Extra` at item 7",
                 "lang item `Result` must be enum, found struct",
                 "lang item `Never` must have shape `pub let Never = enum {}`",
-                "lang item `Copy` must have shape `pub let Copy = trait {}`",
+                "lang item `Copy` must have shape `pub let Copy = trait where Self: Move {}`",
                 "lang item `Add` must have shape `pub let Add(Rhs: type) = trait { let Output: type; let add(self)(rhs: Rhs): Output }`",
                 "missing lang item `Index`",
             ]
         );
         assert_eq!(
             error.to_string(),
-            "invalid embedded core bundle for edition 2026\n- lang item `Option` must be `pub`, found private visibility\n- unexpected declaration `Extra` at item 6\n- lang item `Result` must be enum, found struct\n- lang item `Never` must have shape `pub let Never = enum {}`\n- lang item `Copy` must have shape `pub let Copy = trait {}`\n- lang item `Add` must have shape `pub let Add(Rhs: type) = trait { let Output: type; let add(self)(rhs: Rhs): Output }`\n- missing lang item `Index`"
+            "invalid embedded core bundle for edition 2026\n- lang item `Option` must be `pub`, found private visibility\n- unexpected declaration `Extra` at item 7\n- lang item `Result` must be enum, found struct\n- lang item `Never` must have shape `pub let Never = enum {}`\n- lang item `Copy` must have shape `pub let Copy = trait where Self: Move {}`\n- lang item `Add` must have shape `pub let Add(Rhs: type) = trait { let Output: type; let add(self)(rhs: Rhs): Output }`\n- missing lang item `Index`"
         );
     }
 
@@ -4170,6 +4217,7 @@ pub let Shr(Rhs: type) = trait {
             [
                 "duplicate lang item `Option` appears 2 times",
                 "missing lang item `Result`",
+                "missing lang item `Move`",
                 "missing lang item `Copy`",
                 "missing lang item `Drop`",
                 "missing lang item `Index`",
@@ -4191,10 +4239,35 @@ pub let Shr(Rhs: type) = trait {
 
             assert_eq!(
                 error.diagnostics(),
-                ["lang item `Copy` must have shape `pub let Copy = trait {}`"],
+                ["lang item `Copy` must have shape `pub let Copy = trait where Self: Move {}`"],
                 "unexpected diagnostic for `{declaration}`"
             );
         }
+    }
+
+    #[test]
+    fn rejects_malformed_move_traits_and_copy_without_move_supertrait() {
+        for malformed in [
+            "pub let Move(T: type) = trait {}",
+            "pub let Move = trait { let Item: type }",
+            "pub let Move = trait where Self: Copy {}",
+        ] {
+            let source = core_source_with_copy("pub let Copy = trait\nwhere Self: Move {}")
+                .replacen("pub let Move = trait {}", malformed, 1);
+            let error = CoreBundle::from_source(Edition::Edition2026, &source).unwrap_err();
+            assert_eq!(
+                error.diagnostics(),
+                ["lang item `Move` must have shape `pub let Move = trait {}`"],
+                "unexpected diagnostic for `{malformed}`"
+            );
+        }
+
+        let source = core_source_with_copy("pub let Copy = trait {}");
+        let error = CoreBundle::from_source(Edition::Edition2026, &source).unwrap_err();
+        assert_eq!(
+            error.diagnostics(),
+            ["lang item `Copy` must have shape `pub let Copy = trait where Self: Move {}`"]
+        );
     }
 
     #[test]
@@ -4207,11 +4280,12 @@ pub let Shr(Rhs: type) = trait {
         ];
 
         for declaration in malformed_declarations {
-            let source = core_source_with_copy("pub let Copy = trait {}").replacen(
-                "pub let Drop = trait {\n  let drop(self: borrow(mut)(Self))(): ()\n}",
-                declaration,
-                1,
-            );
+            let source = core_source_with_copy("pub let Copy = trait\nwhere Self: Move {}")
+                .replacen(
+                    "pub let Drop = trait {\n  let drop(self: borrow(mut)(Self))(): ()\n}",
+                    declaration,
+                    1,
+                );
             let error = CoreBundle::from_source(Edition::Edition2026, &source).unwrap_err();
             assert_eq!(
                 error.diagnostics(),
@@ -4227,7 +4301,9 @@ pub let Shr(Rhs: type) = trait {
 pub let Option(T: type) = enum { Some(T), None }
 pub let Result(E: type)(T: type) = enum { Ok(T), Err(E) }
 pub let Never = enum {}
-pub let Copy = trait {}
+pub let Move = trait {}
+pub let Copy = trait
+where Self: Move {}
 pub let Drop = trait {
   let drop(self: borrow(mut)(Self))(): ()
 }
@@ -4312,11 +4388,12 @@ pub let Index(Key: type) = trait {
             "pub let PartialOrdering = enum { Less, Equal, Greater }",
             "pub let PartialOrdering = enum { Less, Equal, Greater, Unknown }",
         ] {
-            let source = core_source_with_copy("pub let Copy = trait {}").replacen(
-                "pub let PartialOrdering = enum { Less, Equal, Greater, Unordered }",
-                declaration,
-                1,
-            );
+            let source = core_source_with_copy("pub let Copy = trait\nwhere Self: Move {}")
+                .replacen(
+                    "pub let PartialOrdering = enum { Less, Equal, Greater, Unordered }",
+                    declaration,
+                    1,
+                );
             let error = CoreBundle::from_source(Edition::Edition2026, &source).unwrap_err();
             assert_eq!(
                 error.diagnostics(),
@@ -4340,7 +4417,8 @@ pub let Index(Key: type) = trait {
                 "lang item `Not` must have shape `pub let Not = trait { let Output: type; let not(self)(): Output }`",
             ),
         ] {
-            let source = core_source_with_copy("pub let Copy = trait {}").replacen(
+            let source =
+                core_source_with_copy("pub let Copy = trait\nwhere Self: Move {}").replacen(
                 original,
                 malformed,
                 1,
@@ -4364,7 +4442,8 @@ pub let Index(Key: type) = trait {
                 "lang item `Shr` must have shape `pub let Shr(Rhs: type) = trait { let Output: type; let shr(self)(rhs: Rhs): Output }`",
             ),
         ] {
-            let source = core_source_with_copy("pub let Copy = trait {}").replacen(
+            let source =
+                core_source_with_copy("pub let Copy = trait\nwhere Self: Move {}").replacen(
                 original,
                 malformed,
                 1,

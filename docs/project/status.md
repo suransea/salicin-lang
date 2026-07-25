@@ -77,6 +77,8 @@ The semantic analyzer implements:
 
 - explicit `copy`, `move`, shared borrow, and mutable borrow parameter modes;
 - type-directed default copy or move behavior;
+- source-backed structural `Move`, with `Copy` inheriting relocation capability;
+- relocation checks at owned place reads while preserving direct in-place initialization;
 - whole-value and field-sensitive move tracking;
 - shared-loan overlap and mutable-loan exclusion;
 - reborrowing with region shortening;

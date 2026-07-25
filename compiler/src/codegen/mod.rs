@@ -15,7 +15,7 @@ use crate::ast::{
     VariantFields, Visibility, WherePredicate,
 };
 use crate::core::{
-    copy_trait_has_required_shape, drop_trait_has_required_shape,
+    copy_trait_has_required_shape, drop_trait_has_required_shape, move_trait_has_required_shape,
     operator_trait_has_required_shape, unary_operator_trait_has_required_shape, CoreBundle,
     LangItemKind, LangItems,
 };
@@ -1242,10 +1242,18 @@ impl Analyzer {
         origin: ItemOrigin,
     ) {
         let mut valid = true;
+        if definition.name == self.lang_item_name(LangItemKind::Move)
+            && !move_trait_has_required_shape(&definition)
+        {
+            self.error("`Move` language trait must have shape `let Move = trait {}`");
+            valid = false;
+        }
         if definition.name == self.lang_item_name(LangItemKind::Copy)
             && !copy_trait_has_required_shape(&definition)
         {
-            self.error("`Copy` language trait must have shape `let Copy = trait {}`");
+            self.error(
+                "`Copy` language trait must have shape `let Copy = trait where Self: Move {}`",
+            );
             valid = false;
         }
         if definition.name == self.lang_item_name(LangItemKind::Drop)
@@ -7109,7 +7117,9 @@ impl Analyzer {
                 continue;
             }
             let satisfied =
-                if name == self.lang_item_name(LangItemKind::Copy) && arguments.is_empty() {
+                if name == self.lang_item_name(LangItemKind::Move) && arguments.is_empty() {
+                    self.is_move_type(&subject)
+                } else if name == self.lang_item_name(LangItemKind::Copy) && arguments.is_empty() {
                     self.is_copy_type(&subject)
                 } else {
                     let schema = self.traits.get(name).cloned();
@@ -7171,6 +7181,9 @@ impl Analyzer {
             || associated_types.values().any(|ty| *ty == Ty::Error)
         {
             return false;
+        }
+        if name == self.lang_item_name(LangItemKind::Move) && arguments.is_empty() {
+            return self.is_move_type(&subject);
         }
         if name == self.lang_item_name(LangItemKind::Copy) && arguments.is_empty() {
             return self.is_copy_type(&subject);

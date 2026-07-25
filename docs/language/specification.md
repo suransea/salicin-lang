@@ -292,7 +292,7 @@ explicit parameters.
 Every runtime parameter has a passing mode:
 
 - `copy` duplicates a `Copy` value;
-- `move` transfers ownership;
+- `move` transfers ownership of a `Move` value;
 - `borrow` creates a shared loan;
 - `borrow(mut)` creates an exclusive loan.
 
@@ -304,6 +304,12 @@ let update(T: type)(value: borrow(mut)(T)): () = { ... }
 
 An omitted mode uses the type's default: `Copy` values are copied and resource values are moved.
 An explicit mode always takes precedence.
+
+`Move` is a source-backed structural auto marker. Scalars, borrows, raw pointers, and aggregates
+whose owned members are all `Move` may be relocated. `Copy` inherits `Move`; duplicating a value
+therefore always implies that either resulting value may also be relocated. Parameter transfer,
+return, assignment from an existing place, and movement into reallocating storage require `Move`.
+Direct in-place initialization does not relocate an existing value and does not require it.
 
 A moved binding cannot be read, moved, or borrowed again. Moving one field leaves other fields
 usable, but the aggregate cannot be used as a whole until reinitialized. Assignment drops the old

@@ -1,4 +1,5 @@
 pub let Never = core.never.Never
+pub let Move = core.marker.Move
 pub let Copy = core.marker.Copy
 pub let Drop = core.marker.Drop
 pub let bool = core.primitives.bool

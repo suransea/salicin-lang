@@ -282,7 +282,12 @@ impl Analyzer {
                 }
             }
             AccessKind::Move => {
-                if place.capability != LocalCapability::Owned {
+                if !self.is_move_type(&place.ty) {
+                    let ty = self.diagnostic_type_name(&place.ty);
+                    self.error(format!(
+                        "type `{ty}` does not implement Move and cannot be relocated"
+                    ));
+                } else if place.capability != LocalCapability::Owned {
                     self.error("cannot move out of a borrowed value");
                 } else if self.projected_place_crosses_custom_drop(&place) {
                     self.error(

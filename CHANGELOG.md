@@ -6,6 +6,10 @@ subset.
 
 ## Unreleased
 
+- Added the source-backed structural `core.marker.Move` auto marker, made `Copy` inherit `Move`,
+  and enforce relocation capability at owned place moves while leaving direct in-place
+  initialization unconstrained. Generic `where T: Move` bounds and ordinary resource relocation
+  are covered by semantic tests.
 - Accepted the initial async contract: source-backed structural `Move`, cold anonymous
   `Future(E)` state machines, explicit polling and spin execution, deterministic cancellation,
   residual effect forwarding, and explicit future erasure. The first slice rejects self-referential

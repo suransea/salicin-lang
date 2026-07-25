@@ -348,6 +348,7 @@ const ALLOC_EXPORTS: &[(&str, &str)] = &[
 
 const CORE_PRELUDE_EXPORTS: &[(&str, &str)] = &[
     ("Never", "core::never::Never"),
+    ("Move", "core::marker::Move"),
     ("Copy", "core::marker::Copy"),
     ("Drop", "core::marker::Drop"),
     ("Array", "core::memory::Array"),
@@ -359,6 +360,7 @@ const CORE_PRELUDE_EXPORTS: &[(&str, &str)] = &[
 ];
 const CORE_ROOT_EXPORTS: &[(&str, &str)] = &[
     ("Never", "core::never::Never"),
+    ("Move", "core::marker::Move"),
     ("Copy", "core::marker::Copy"),
     ("Drop", "core::marker::Drop"),
     ("Option", "core::option::Option"),
@@ -366,7 +368,7 @@ const CORE_ROOT_EXPORTS: &[(&str, &str)] = &[
     ("Slice", "core::memory::Slice"),
 ];
 const CORE_NEVER_EXPORTS: &[&str] = &["Never"];
-const CORE_MARKER_EXPORTS: &[&str] = &["Copy", "Drop"];
+const CORE_MARKER_EXPORTS: &[&str] = &["Move", "Copy", "Drop"];
 const CORE_ARITH_EXPORTS: &[&str] = &["Add", "Sub", "Mul", "Div", "Rem", "Neg"];
 const CORE_BIT_EXPORTS: &[&str] = &["BitAnd", "BitOr", "BitXor", "Shl", "Shr", "Not"];
 const CORE_ASSIGN_EXPORTS: &[&str] = &[

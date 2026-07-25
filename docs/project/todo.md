@@ -15,21 +15,19 @@ Priority meanings:
 
 ## Current
 
-- [ ] **MOVE-TRAIT-1: Add the source-backed structural Move marker**
-  - Validate `core.marker.Move` and make `Copy` inherit it.
-  - Require `Move` for relocation through parameters, returns, assignment, and storage growth.
-  - Preserve direct in-place initialization as the future boundary for non-`Move` values.
-  - Cover structural derivation, generic bounds, diagnostics, and existing resource behavior.
+- [ ] **ASYNC-STATE-1: Lower cold async blocks to state machines**
+  - Introduce compiler-generated future state without exposing a `Pin` placeholder.
+  - Require generated state to satisfy `Move`; reject first-version self-referential suspension.
+  - Preserve initialized-field state for later polling and cancellation cleanup.
 
 ## Next
 
-- [ ] **ASYNC-STATE-1: Lower cold async blocks to state machines**
 - [ ] **ASYNC-POLL-1: Implement typed polling transitions**
 - [ ] **ASYNC-CANCEL-1: Drop initialized state on cancellation**
 - [ ] **ASYNC-BORROW-1: Reject first-version self-referential states**
 - [ ] **ASYNC-EXEC-1: Provide one explicit minimal executor**
 
-Async state-machine lowering starts only after `MOVE-TRAIT-1` is complete.
+`MOVE-TRAIT-1` is complete. Async lowering now uses its relocation boundary.
 
 ## Later
 

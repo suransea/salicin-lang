@@ -7151,7 +7151,6 @@ let Cell(T: type) = struct { value: T }
 let Reader = trait {
   let read(self: borrow(Self))(copy value: Cell(i32)): i32
 }
-
 let Host = struct { value: i32 }
 extend Host: Reader {
   let read(self: borrow(Self))(copy value: Cell(i32)): i32 = { self.value + value.value }
@@ -7165,6 +7164,30 @@ let main(): i32 = {
 "#,
     )
     .expect("trait schemas must see concrete Copy implementations collected later in source");
+}
+
+#[test]
+fn structural_move_accepts_resources_and_generic_relocation() {
+    compile_text(
+        r#"
+let Resource = struct { value: i32 }
+extend Resource: Drop {
+  let drop(self: borrow(mut)(Self))(): () = { () }
+}
+
+let relocate(T: type)(move value: T): T
+where T: Move = {
+  value
+}
+
+let main(): i32 = {
+  let resource = Resource { value: 42 }
+  let relocated = relocate(Resource)(resource)
+  relocated.value
+}
+"#,
+    )
+    .expect("ordinary resources must satisfy the structural Move marker");
 }
 
 #[test]

@@ -106,6 +106,72 @@ impl Analyzer {
         self.type_is_copy_with_nominals(ty, &self.copy_nominals)
     }
 
+    pub(super) fn is_move_type(&self, ty: &Ty) -> bool {
+        self.type_is_move_inner(ty, &mut HashSet::new())
+    }
+
+    fn type_is_move_inner(&self, ty: &Ty, visiting: &mut HashSet<Ty>) -> bool {
+        if self.trait_impl_headers.iter().any(|key| {
+            key.self_ty == *ty
+                && key.trait_ref.name == self.lang_item_name(LangItemKind::Move)
+                && key.trait_ref.arguments.is_empty()
+        }) {
+            return true;
+        }
+        if !visiting.insert(ty.clone()) {
+            return true;
+        }
+        let result = match ty {
+            Ty::Slice(_) => false,
+            Ty::Array(element, _) => self.type_is_move_inner(element, visiting),
+            Ty::Tuple(fields) => fields
+                .iter()
+                .all(|field| self.type_is_move_inner(field, visiting)),
+            Ty::Struct(name) => self.struct_layouts.get(name).is_none_or(|layout| {
+                layout
+                    .fields
+                    .iter()
+                    .all(|field| self.type_is_move_inner(&field.ty, visiting))
+            }),
+            Ty::Enum(name) => self.enum_layouts.get(name).is_none_or(|layout| {
+                layout.variants.iter().all(|variant| {
+                    variant
+                        .fields
+                        .iter()
+                        .all(|field| self.type_is_move_inner(&field.ty, visiting))
+                })
+            }),
+            Ty::Callable(callable) => callable.captures.iter().all(|capture| {
+                matches!(capture.mode, PassMode::Borrow | PassMode::MutBorrow)
+                    || self.type_is_move_inner(&capture.ty, visiting)
+            }),
+            Ty::Unit
+            | Ty::Pointer { .. }
+            | Ty::Reference { .. }
+            | Ty::Function(_)
+            | Ty::EffectRow { .. }
+            | Ty::Continuation { .. }
+            | Ty::EffectCallable { .. }
+            | Ty::I8
+            | Ty::I16
+            | Ty::I32
+            | Ty::I64
+            | Ty::I128
+            | Ty::ISize
+            | Ty::U8
+            | Ty::U16
+            | Ty::U32
+            | Ty::U64
+            | Ty::U128
+            | Ty::USize
+            | Ty::Bool
+            | Ty::Never
+            | Ty::Error => true,
+        };
+        visiting.remove(ty);
+        result
+    }
+
     fn box_pointee_type(&self, name: &str) -> Option<&Ty> {
         self.nominal_instances.get(name).and_then(|instance| {
             (instance.key.kind == NominalKind::Struct

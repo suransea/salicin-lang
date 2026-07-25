@@ -6,16 +6,16 @@ validates declarations that have language-defined roles.
 
 ## Modules
 
-`core.lib` is the root facade. It only re-exports the public root surface: `Never`, `Copy`, `Drop`,
-`Option`, and `Result`.
+`core.lib` is the root facade. It only re-exports the public root surface: `Never`, `Move`, `Copy`,
+`Drop`, `Option`, and `Result`.
 
 `core.prelude` is also only a facade and contains the deliberately small implicit surface:
 
 - the uninhabited `Never` type
-- the `Copy` and `Drop` traits
+- the `Move`, `Copy`, and `Drop` traits
 
-The definitions live in focused modules. `core.never` owns `Never`, `core.marker` owns `Copy` and
-`Drop`, and `core.option` and `core.result` own fundamental ordinary data types that are
+The definitions live in focused modules. `core.never` owns `Never`, `core.marker` owns `Move`,
+`Copy`, and `Drop`, and `core.option` and `core.result` own fundamental ordinary data types that are
 intentionally not prelude names:
 
 ```sc fragment
@@ -33,6 +33,11 @@ pub let Result(E: type)
 
 Naming `Option` or `Result` requires an ordinary root alias such as
 `let Option = std.Option` or `let Result = std.Result`.
+
+`Move` is an automatically satisfied structural marker for relocatable values. `Copy` has the
+supertrait constraint `where Self: Move`, while `Drop` remains independent: an owning resource may
+be movable without being copyable. Source code does not need handwritten `Move` implementations
+for ordinary aggregates.
 Operators and syntax that lower through these identities use the validated standard-library
 declarations directly; aliasing is only required when source code writes the short names.
 
