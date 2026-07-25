@@ -25,6 +25,11 @@ subset.
   cold and pure, while polling requires an unsafe handler. Residual algebraic effects are rejected
   at the async expression until generated poll/resume functions participate in handler
   specialization.
+- Lowered one tail-position `await` into a real parent/child polling state machine. The first poll
+  creates and stores the child future, `Pending` preserves it for the next poll, and `Ready`
+  transfers the output and completes the parent. Suspended cancellation and successful completion
+  each drop the child exactly once. Source implementations of `Future(())` now normalize the pure
+  effect argument when checking the trait contract.
 - Declared `Continuation(Input, Output)` and `EffectCallable(Input, Output, Answer)` as bodyless
   type forms, matching their compiler-owned representations instead of describing them as empty
   structures. Lang-item validation now requires the exact type-form declarations.

@@ -7201,7 +7201,7 @@ let main(): i32 = {
 }
 
 #[test]
-fn async_blocks_materialize_cold_state_but_await_remains_a_polling_boundary() {
+fn async_blocks_materialize_cold_state_and_tail_await_future_values() {
     compile_text(
         r#"
 let main(): i32 = {
@@ -7212,21 +7212,31 @@ let main(): i32 = {
     )
     .expect("an async block without suspension must materialize cold state");
 
-    let diagnostics = compile_text(
+    compile_text(
         r#"
+let Future = std.async.Future
+
 let main(): i32 = {
   let future = async { await child() }
   0
 }
-let child(): i32 = { 1 }
+let child() = { async { 1 } }
 "#,
     )
-    .expect_err("await polling transitions are not implemented yet");
-    assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic
-            .message
-            .contains("`await` is only lowered as part of an async state machine")
-    }));
+    .expect("tail await must materialize a suspended parent future");
+
+    let diagnostics = compile_text(
+        r#"
+let main(): i32 = {
+  let future = async { await 1 }
+  0
+}
+"#,
+    )
+    .expect_err("await operands must implement Future");
+    assert!(diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.message.contains("does not implement `Future`")));
     assert!(diagnostics
         .iter()
         .all(|diagnostic| !diagnostic.message.contains("$lang$")));
@@ -7296,6 +7306,28 @@ let main(): i32 = {
     assert!(diagnostics
         .iter()
         .any(|diagnostic| diagnostic.message.contains("requires an `unsafe` handler")));
+}
+
+#[test]
+fn tail_await_forwards_the_child_futures_unsafe_effect() {
+    compile_text(
+        r#"
+let Future = std.async.Future
+let Unsafe = std.unsafe.Unsafe
+
+let dangerous(): i32 with(Unsafe) = { unsafe { 42 } }
+
+let main(): i32 = { unsafe {
+  let mut future = async {
+    await async { dangerous() }
+  }
+  match future.poll()
+    { Ready(value) -> value }
+    { Pending -> 0 }
+} }
+"#,
+    )
+    .expect("tail await must forward the child future's residual Unsafe effect");
 }
 
 #[test]

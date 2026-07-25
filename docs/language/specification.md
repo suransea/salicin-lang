@@ -550,8 +550,11 @@ polling that completed future again traps. The completed state no longer drops t
 captures. An unhandled `Unsafe` requirement is inferred from the body and attached to the
 generated future's `poll` contract; creating the future remains pure, while polling requires an
 unsafe handler. Residual algebraic effects are rejected until generated poll/resume functions
-participate in handler specialization. `await`, `Poll.Pending`, and other residual-effect cases
-are not implemented yet.
+participate in handler specialization. One tail-position `await` is implemented: its operand is
+evaluated on the first parent poll, the child future is retained across `Poll.Pending`, and
+`Poll.Ready(value)` completes the parent with `value`. Completion or cancellation drops the stored
+child exactly once. Non-tail and multiple awaits, plus other residual-effect cases, are not
+implemented yet.
 
 `unsafe` is an authority effect. `unsafe { ... }` authorizes operations whose contracts cannot be
 verified by the safe type and ownership rules; it does not disable type checking or cleanup.

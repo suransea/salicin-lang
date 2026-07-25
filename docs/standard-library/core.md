@@ -281,8 +281,9 @@ validated compiler-provided functions whose declarations expose their effect row
 implement the inferred `Future(E)` instance and transition from cold state to `Poll.Ready` exactly
 once. `E` may currently be empty or `Unsafe`; polling enforces that requirement while construction
 remains pure. Residual algebraic effects are rejected until generated poll/resume functions enter
-handler specialization. Pending transitions and suspension lowering remain compiler
-responsibilities.
+handler specialization. A single tail-position `await` creates its child on the first parent poll,
+stores it across `Pending`, and completes the parent from `Ready`; cancellation drops a stored child
+exactly once. General non-tail and multiple-suspension lowering remains compiler work.
 
 ```sc fragment
 pub let do(E: effect, T: type)

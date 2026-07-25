@@ -2359,6 +2359,40 @@ impl Analyzer {
         }
     }
 
+    fn normalize_concrete_trait_argument(
+        &self,
+        parameter: &CompileParam,
+        source: &Type,
+    ) -> Option<Type> {
+        if parameter.kind != CompileParamKind::Effect {
+            return self.source_type_is_concrete(source).then(|| source.clone());
+        }
+        if matches!(source, Type::Unit)
+            || matches!(source, Type::Named(name, arguments) if (name == "()" || name == "pure") && arguments.is_empty())
+        {
+            return Some(effect_row_source(false, None, &[]));
+        }
+        if effect_row_from_source(source).is_some() {
+            return Some(source.clone());
+        }
+        if self.is_standard_unsafe_effect_source(source) {
+            return Some(effect_row_source(true, None, &[]));
+        }
+        let Type::Named(name, arguments) = source else {
+            return None;
+        };
+        self.effects.contains(name).then(|| {
+            effect_row_source(
+                false,
+                None,
+                std::slice::from_ref(&source_effect_identity(&Type::Named(
+                    name.clone(),
+                    arguments.clone(),
+                ))),
+            )
+        })
+    }
+
     fn resolve_trait_impl_target(&mut self, source: &Type) -> Option<Ty> {
         if matches!(
             source,
@@ -2784,19 +2818,30 @@ impl Analyzer {
             ));
             return None;
         }
-        if source_arguments.iter().any(|argument| {
-            !(self.source_type_is_concrete(argument)
-                || self.instantiating_generic_trait_extension > 0
-                    && self.source_type_is_abstract_or_concrete(argument))
-        }) {
+        let normalized_arguments = schema
+            .compile_parameters
+            .iter()
+            .zip(source_arguments)
+            .map(|(parameter, argument)| {
+                self.normalize_concrete_trait_argument(parameter, argument)
+                    .or_else(|| {
+                        (self.instantiating_generic_trait_extension > 0
+                            && self.source_type_is_abstract_or_concrete(argument))
+                        .then(|| argument.clone())
+                    })
+            })
+            .collect::<Option<Vec<_>>>();
+        let Some(normalized_arguments) = normalized_arguments else {
             self.error(format!(
                 "generic trait implementation of `{name}` is not supported; trait arguments must be concrete"
             ));
             return None;
-        }
+        };
         let mut arguments = Vec::new();
         let mut substitutions = HashMap::new();
-        for (parameter, source_argument) in schema.compile_parameters.iter().zip(source_arguments) {
+        for (parameter, source_argument) in
+            schema.compile_parameters.iter().zip(&normalized_arguments)
+        {
             let argument = self.lower_source_type(source_argument);
             if argument == Ty::Error {
                 return None;
@@ -6319,6 +6364,11 @@ impl Analyzer {
                                     (*mode == PassMode::Move).then_some(index + 1)
                                 })
                                 .collect(),
+                            suspended_fields: future
+                                .awaited
+                                .as_ref()
+                                .map(|awaited| vec![awaited.field])
+                                .unwrap_or_default(),
                         },
                     )
                 })

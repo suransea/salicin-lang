@@ -803,7 +803,7 @@ impl<'a> Emitter<'a> {
                 let aggregate_ty = llvm_value_type(ty)?;
                 if let Some(async_state) = self.program.async_states.get(name) {
                     output.push_str(&format!(
-                        "  %state.ptr = getelementptr inbounds {aggregate_ty}, ptr %value, i32 0, i32 0\n  %state = load i32, ptr %state.ptr\n  %cold = icmp eq i32 %state, 0\n  br i1 %cold, label %drop.cold, label %drop.done\ndrop.cold:\n"
+                        "  %state.ptr = getelementptr inbounds {aggregate_ty}, ptr %value, i32 0, i32 0\n  %state = load i32, ptr %state.ptr\n  switch i32 %state, label %drop.done [ i32 0, label %drop.cold i32 1, label %drop.suspended ]\ndrop.cold:\n"
                     ));
                     for index in &async_state.owned_capture_fields {
                         let field = &layout.fields[*index];
@@ -812,6 +812,17 @@ impl<'a> Emitter<'a> {
                         }
                         output.push_str(&format!(
                             "  %field.{index} = getelementptr inbounds {aggregate_ty}, ptr %value, i32 0, i32 {index}\n  call void @{}(ptr %field.{index})\n",
+                            drop_glue_symbol(&field.ty)
+                        ));
+                    }
+                    output.push_str("  br label %drop.done\ndrop.suspended:\n");
+                    for index in &async_state.suspended_fields {
+                        let field = &layout.fields[*index];
+                        if !self.program.needs_drop(&field.ty) {
+                            continue;
+                        }
+                        output.push_str(&format!(
+                            "  %suspended.field.{index} = getelementptr inbounds {aggregate_ty}, ptr %value, i32 0, i32 {index}\n  call void @{}(ptr %suspended.field.{index})\n",
                             drop_glue_symbol(&field.ty)
                         ));
                     }
