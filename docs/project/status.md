@@ -134,9 +134,10 @@ explicit state word and their captured fields. The generated state satisfies str
 relocating or cancelling an unpolled future transfers or drops owned captures exactly once.
 The no-suspension polling transition returns `Poll.Ready` once, traps on repoll, and enforces an
 inferred residual `Unsafe` requirement. One tail-position `await` stores its child across Pending,
-resumes from Ready, and drops the child exactly once on completion or cancellation. Non-tail and
-multiple awaits, algebraic residual-effect specialization, and self-referential suspension rules
-are not implemented.
+resumes from Ready, and drops the child exactly once on completion or cancellation. A single
+non-tail await may bind the Ready output and run a linear continuation with state-owned captures.
+Multiple and control-flow awaits, algebraic residual-effect specialization, and self-referential
+suspension rules are not implemented.
 
 ## Modules, Packages, and FFI
 

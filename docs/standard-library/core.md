@@ -283,7 +283,8 @@ once. `E` may currently be empty or `Unsafe`; polling enforces that requirement 
 remains pure. Residual algebraic effects are rejected until generated poll/resume functions enter
 handler specialization. A single tail-position `await` creates its child on the first parent poll,
 stores it across `Pending`, and completes the parent from `Ready`; cancellation drops a stored child
-exactly once. General non-tail and multiple-suspension lowering remains compiler work.
+exactly once. One non-tail `let value = await child` may continue with a linear suffix whose captures
+are retained in parent state. Multiple and control-flow suspension lowering remains compiler work.
 
 ```sc fragment
 pub let do(E: effect, T: type)

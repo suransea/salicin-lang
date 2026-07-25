@@ -3,6 +3,7 @@ let Future = std.async.Future
 let Unsafe = std.unsafe.Unsafe
 
 let Step = struct { counter: Ptr(mut)(i32) }
+let Resource = struct { counter: Ptr(mut)(i32) }
 
 extend Step: Drop {
   let drop(self: borrow(mut)(Self))(): () = { unsafe {
@@ -10,13 +11,21 @@ extend Step: Drop {
   } }
 }
 
+extend Resource: Drop {
+  let drop(self: borrow(mut)(Self))(): () = { unsafe {
+    *self.counter = *self.counter + 1
+  } }
+}
+
+let consume(move resource: Resource): () = { () }
+
 extend Step: Future(()) {
   let Output = i32
 
   let poll(R: region)
     (self: borrow(mut)(R)(Self))
     (): Poll(i32) = {
-    Poll(i32).Ready(41)
+    Poll(i32).Ready(40)
   }
 }
 
@@ -33,8 +42,11 @@ let main(): i32 = { unsafe {
   *counter = 0
 
   let value = do {
+    let resource = Resource { counter: counter }
     let mut future = async {
-      await Step { counter: counter }
+      let value = await Step { counter: counter }
+      consume(resource)
+      value
     }
     match future.poll()
       { Pending -> 0 }

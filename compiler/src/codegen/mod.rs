@@ -6363,11 +6363,32 @@ impl Analyzer {
                                 .filter_map(|(index, mode)| {
                                     (*mode == PassMode::Move).then_some(index + 1)
                                 })
+                                .chain(future.awaited.iter().flat_map(|awaited| {
+                                    awaited
+                                        .continuation_capture_modes
+                                        .iter()
+                                        .zip(&awaited.continuation_fields)
+                                        .filter_map(|(mode, field)| {
+                                            (*mode == PassMode::Move).then_some(*field)
+                                        })
+                                }))
                                 .collect(),
                             suspended_fields: future
                                 .awaited
                                 .as_ref()
-                                .map(|awaited| vec![awaited.field])
+                                .map(|awaited| {
+                                    std::iter::once(awaited.field)
+                                        .chain(
+                                            awaited
+                                                .continuation_capture_modes
+                                                .iter()
+                                                .zip(&awaited.continuation_fields)
+                                                .filter_map(|(mode, field)| {
+                                                    (*mode == PassMode::Move).then_some(*field)
+                                                }),
+                                        )
+                                        .collect()
+                                })
                                 .unwrap_or_default(),
                         },
                     )

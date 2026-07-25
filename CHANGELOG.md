@@ -30,6 +30,10 @@ subset.
   transfers the output and completes the parent. Suspended cancellation and successful completion
   each drop the child exactly once. Source implementations of `Future(())` now normalize the pure
   effect argument when checking the trait contract.
+- Extended a single `await` to a linear `let value = await child` segment followed by ordinary
+  continuation code. Values captured by that continuation remain in parent state across
+  suspension; Ready transfers them into the continuation, while cancellation drops owned captures
+  exactly once.
 - Declared `Continuation(Input, Output)` and `EffectCallable(Input, Output, Answer)` as bodyless
   type forms, matching their compiler-owned representations instead of describing them as empty
   structures. Lang-item validation now requires the exact type-form declarations.

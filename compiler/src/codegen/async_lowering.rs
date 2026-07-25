@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
-use crate::ast::{Expr, ItemOrigin, PassMode, Visibility};
+use crate::ast::{Expr, ItemOrigin, Param, PassMode, Stmt, Visibility};
 use crate::core::LangItemKind;
 
 use super::hir::{
-    AccessBoundary, AssignmentKind, ClosureCaptureMode, ClosureCapturePolicy, ClosureEffectContext,
-    FieldLayout, FunctionSig, HirArgument, HirExpr, HirExprKind, HirFunction, HirMatchArm,
-    HirMatcher, HirParam, HirPatternBinding, HirPlace, HirReadKind, HirStmt, LocalCapability,
-    ParamSig, StructLayout, Ty,
+    AccessBoundary, AssignmentKind, ClosureCapture, ClosureCaptureMode, ClosureCapturePolicy,
+    ClosureEffectContext, FieldLayout, FunctionSig, HirArgument, HirExpr, HirExprKind, HirFunction,
+    HirMatchArm, HirMatcher, HirParam, HirPatternBinding, HirPlace, HirReadKind, HirStmt,
+    LocalCapability, ParamSig, StructLayout, Ty,
 };
 use super::names::trait_method_name;
 use super::registry::{NominalKind, TraitImplInfo, TraitImplKey, TraitRefKey};
@@ -19,13 +19,10 @@ impl Analyzer {
         body: &Expr,
         context: &mut super::flow::LowerCtx,
     ) -> HirExpr {
-        let (closure_body, has_tail_await) = match replace_tail_await(body) {
-            Some(body) => (body, true),
-            None => (body.clone(), false),
-        };
+        let source_plan = split_async_source(body);
         let lowered = self.lower_local_closure(
             &[],
-            &closure_body,
+            &source_plan.factory_body,
             None,
             ClosureEffectContext {
                 infer_effects: true,
@@ -52,7 +49,7 @@ impl Analyzer {
             ));
             return super::lower::error_expr();
         }
-        let awaited = if has_tail_await {
+        let mut awaited = if source_plan.has_await {
             let Some(awaited) = self.resolve_awaited_future(&closure.result) else {
                 return super::lower::error_expr();
             };
@@ -60,6 +57,58 @@ impl Analyzer {
         } else {
             None
         };
+        let mut continuation_captures = Vec::new();
+        if let (Some(awaited), Some(continuation)) = (awaited.as_mut(), source_plan.continuation) {
+            if continuation.mutable {
+                self.error("an await result used after suspension cannot be mutable yet");
+                return super::lower::error_expr();
+            }
+            let Some(source_ty) = self.source_type_for_ty(&awaited.output) else {
+                self.error(format!(
+                    "await output type `{}` cannot be represented in a continuation parameter",
+                    awaited.output
+                ));
+                return super::lower::error_expr();
+            };
+            let parameter = Param {
+                mode: PassMode::Inferred,
+                access: None,
+                modifiers: Vec::new(),
+                region: None,
+                name: continuation.name,
+                ty: source_ty,
+            };
+            let lowered = self.lower_local_closure(
+                &[parameter],
+                &continuation.body,
+                None,
+                ClosureEffectContext {
+                    infer_effects: true,
+                    ..ClosureEffectContext::default()
+                },
+                ClosureCapturePolicy::Lexical,
+                context,
+            );
+            let HirExprKind::LocalClosure(closure) = lowered.kind else {
+                return lowered;
+            };
+            let async_effect = self.lang_item_name(LangItemKind::AsyncEffect);
+            if closure.throws_error.is_some()
+                || closure
+                    .custom_effects
+                    .iter()
+                    .any(|effect| effect.as_str() != async_effect)
+            {
+                self.error(
+                    "async continuation residual Throws and algebraic effects require poll/resume handler specialization, which is not implemented yet",
+                );
+                return super::lower::error_expr();
+            }
+            awaited.continuation = Some(closure.function);
+            awaited.continuation_output = Some(closure.result);
+            awaited.continuation_unsafe_effect = closure.unsafe_effect;
+            continuation_captures = closure.captures;
+        }
 
         let name = format!("$async$state${}", self.next_async_future);
         self.next_async_future += 1;
@@ -136,6 +185,28 @@ impl Analyzer {
             });
             values.push((index + 1, value));
         }
+        let mut continuation_fields = Vec::new();
+        let mut continuation_capture_types = Vec::new();
+        for (index, capture) in continuation_captures.iter().enumerate() {
+            let (ty, value) = materialize_async_capture(capture);
+            let field = fields.len();
+            fields.push(FieldLayout {
+                name: format!("continuation.capture.{index}"),
+                ty: ty.clone(),
+                access: access.clone(),
+            });
+            values.push((field, value));
+            continuation_fields.push(field);
+            continuation_capture_types.push(ty);
+        }
+        if let Some(awaited) = awaited.as_mut() {
+            awaited.continuation_capture_modes = continuation_captures
+                .iter()
+                .map(|capture| capture_mode(capture.mode))
+                .collect();
+            awaited.continuation_fields = continuation_fields;
+            awaited.continuation_capture_types = continuation_capture_types;
+        }
         let awaited_field = awaited.as_ref().map(|awaited| {
             let field = fields.len();
             fields.push(FieldLayout {
@@ -157,12 +228,17 @@ impl Analyzer {
         self.struct_order.push(name.clone());
         let output = awaited
             .as_ref()
-            .map(|awaited| awaited.output.clone())
+            .map(|awaited| {
+                awaited
+                    .continuation_output
+                    .clone()
+                    .unwrap_or_else(|| awaited.output.clone())
+            })
             .unwrap_or_else(|| closure.result.clone());
         let unsafe_effect = closure.unsafe_effect
             || awaited
                 .as_ref()
-                .is_some_and(|awaited| awaited.unsafe_effect);
+                .is_some_and(|awaited| awaited.unsafe_effect || awaited.continuation_unsafe_effect);
         let metadata = AsyncFutureInfo {
             resume: closure.function,
             output,
@@ -172,11 +248,7 @@ impl Analyzer {
             capture_modes: closure
                 .captures
                 .iter()
-                .map(|capture| match capture.mode {
-                    ClosureCaptureMode::Shared => PassMode::Borrow,
-                    ClosureCaptureMode::Mutable => PassMode::MutBorrow,
-                    ClosureCaptureMode::Move => PassMode::Move,
-                })
+                .map(|capture| capture_mode(capture.mode))
                 .collect(),
             awaited: awaited.map(|mut awaited| {
                 awaited.field = awaited_field.expect("awaited state has a field");
@@ -255,6 +327,12 @@ impl Analyzer {
             poll_function,
             unsafe_effect: signature.unsafe_effect,
             field: 0,
+            continuation: None,
+            continuation_output: None,
+            continuation_unsafe_effect: false,
+            continuation_capture_modes: Vec::new(),
+            continuation_fields: Vec::new(),
+            continuation_capture_types: Vec::new(),
         })
     }
 
@@ -422,6 +500,61 @@ impl Analyzer {
     }
 }
 
+fn materialize_async_capture(capture: &ClosureCapture) -> (Ty, HirExpr) {
+    match capture.mode {
+        ClosureCaptureMode::Shared => {
+            let ty = Ty::Reference {
+                pointee: Box::new(capture.place.ty.clone()),
+                mutable: false,
+                region: None,
+            };
+            (
+                ty.clone(),
+                HirExpr {
+                    ty,
+                    kind: HirExprKind::Borrow {
+                        place: capture.place.clone(),
+                        mutable: false,
+                    },
+                },
+            )
+        }
+        ClosureCaptureMode::Mutable => {
+            let ty = Ty::Reference {
+                pointee: Box::new(capture.place.ty.clone()),
+                mutable: true,
+                region: None,
+            };
+            (
+                ty.clone(),
+                HirExpr {
+                    ty,
+                    kind: HirExprKind::Borrow {
+                        place: capture.place.clone(),
+                        mutable: true,
+                    },
+                },
+            )
+        }
+        ClosureCaptureMode::Move => (
+            capture.place.ty.clone(),
+            capture
+                .value
+                .as_deref()
+                .cloned()
+                .expect("move capture materializes its value"),
+        ),
+    }
+}
+
+fn capture_mode(mode: ClosureCaptureMode) -> PassMode {
+    match mode {
+        ClosureCaptureMode::Shared => PassMode::Borrow,
+        ClosureCaptureMode::Mutable => PassMode::MutBorrow,
+        ClosureCaptureMode::Move => PassMode::Move,
+    }
+}
+
 fn ready_poll_body(
     self_ty: &Ty,
     poll_ty: &Ty,
@@ -502,7 +635,7 @@ fn poll_awaited(
     self_ty: &Ty,
     poll_ty: &Ty,
     poll_name: &str,
-    output: &Ty,
+    parent_output: &Ty,
     awaited: &AwaitedFutureInfo,
     output_local: usize,
 ) -> HirExpr {
@@ -529,10 +662,10 @@ fn poll_awaited(
     };
     let output_place = HirPlace {
         local: output_local,
-        root_ty: output.clone(),
+        root_ty: awaited.output.clone(),
         projections: Vec::new(),
         dynamic_index: None,
-        ty: output.clone(),
+        ty: awaited.output.clone(),
         capability: LocalCapability::Owned,
         root_mutable: false,
         loan: None,
@@ -547,6 +680,60 @@ fn poll_awaited(
             },
             kind: HirExprKind::RawAddress { place: child_place },
         })),
+    };
+    let awaited_output = HirExpr {
+        ty: awaited.output.clone(),
+        kind: HirExprKind::Read {
+            place: output_place,
+            kind: HirReadKind::Move,
+        },
+    };
+    let mut continuation_arguments = Vec::new();
+    for ((field, mode), ty) in awaited
+        .continuation_fields
+        .iter()
+        .zip(&awaited.continuation_capture_modes)
+        .zip(&awaited.continuation_capture_types)
+    {
+        let place = async_field_place(0, self_ty.clone(), *field, ty.clone());
+        continuation_arguments.push(match mode {
+            PassMode::Borrow | PassMode::MutBorrow => HirArgument::Copy(HirExpr {
+                ty: ty.clone(),
+                kind: HirExprKind::Read {
+                    place,
+                    kind: HirReadKind::Copy,
+                },
+            }),
+            PassMode::Move => HirArgument::Move(HirExpr {
+                ty: ty.clone(),
+                kind: HirExprKind::RawTake(Box::new(HirExpr {
+                    ty: Ty::Pointer {
+                        pointee: Box::new(ty.clone()),
+                        mutable: true,
+                    },
+                    kind: HirExprKind::RawAddress { place },
+                })),
+            }),
+            PassMode::Inferred | PassMode::Copy => {
+                unreachable!("async continuation capture modes are normalized")
+            }
+        });
+    }
+    continuation_arguments.push(HirArgument::Move(awaited_output.clone()));
+    let completed_value = match &awaited.continuation {
+        Some(continuation) => HirExpr {
+            ty: awaited
+                .continuation_output
+                .clone()
+                .expect("async continuation has an output"),
+            kind: HirExprKind::Call {
+                function: continuation.clone(),
+                arguments: continuation_arguments,
+                consumed_callable: None,
+                diverges: parent_output == &Ty::Never,
+            },
+        },
+        None => awaited_output,
     };
     HirExpr {
         ty: poll_ty.clone(),
@@ -564,7 +751,7 @@ fn poll_awaited(
                     bindings: vec![HirPatternBinding {
                         id: output_local,
                         name: "awaited.output".to_owned(),
-                        ty: output.clone(),
+                        ty: awaited.output.clone(),
                         path: vec![1],
                         moves: true,
                     }],
@@ -579,14 +766,8 @@ fn poll_awaited(
                             Some(Box::new(poll_ready(
                                 poll_ty,
                                 poll_name,
-                                output,
-                                HirExpr {
-                                    ty: output.clone(),
-                                    kind: HirExprKind::Read {
-                                        place: output_place,
-                                        kind: HirReadKind::Move,
-                                    },
-                                },
+                                parent_output,
+                                completed_value,
                             ))),
                         ),
                     },
@@ -699,19 +880,85 @@ pub(super) struct AwaitedFutureInfo {
     pub(super) poll_function: String,
     pub(super) unsafe_effect: bool,
     pub(super) field: usize,
+    pub(super) continuation: Option<String>,
+    pub(super) continuation_output: Option<Ty>,
+    pub(super) continuation_unsafe_effect: bool,
+    pub(super) continuation_capture_modes: Vec<PassMode>,
+    pub(super) continuation_fields: Vec<usize>,
+    pub(super) continuation_capture_types: Vec<Ty>,
 }
 
-fn replace_tail_await(body: &Expr) -> Option<Expr> {
+struct AsyncSourcePlan {
+    factory_body: Expr,
+    has_await: bool,
+    continuation: Option<AsyncContinuationSource>,
+}
+
+struct AsyncContinuationSource {
+    name: String,
+    mutable: bool,
+    body: Expr,
+}
+
+fn split_async_source(body: &Expr) -> AsyncSourcePlan {
     let mut body = body.clone();
     match body.unlocated_mut() {
-        Expr::Await(operand) => return Some((**operand).clone()),
-        Expr::Block(_, Some(tail)) => {
-            let Expr::Await(operand) = tail.unlocated() else {
-                return None;
+        Expr::Await(operand) => {
+            return AsyncSourcePlan {
+                factory_body: (**operand).clone(),
+                has_await: true,
+                continuation: None,
             };
-            **tail = (**operand).clone();
         }
-        _ => return None,
+        Expr::Block(_, Some(tail)) => {
+            if let Expr::Await(operand) = tail.unlocated() {
+                **tail = (**operand).clone();
+                return AsyncSourcePlan {
+                    factory_body: body,
+                    has_await: true,
+                    continuation: None,
+                };
+            }
+        }
+        _ => {}
     }
-    Some(body)
+    let Expr::Block(statements, tail) = body.unlocated() else {
+        return AsyncSourcePlan {
+            factory_body: body,
+            has_await: false,
+            continuation: None,
+        };
+    };
+    let Some((position, binding, operand)) =
+        statements
+            .iter()
+            .enumerate()
+            .find_map(|(position, statement)| {
+                let Stmt::Let(binding) = statement else {
+                    return None;
+                };
+                let Expr::Await(operand) = binding.value.unlocated() else {
+                    return None;
+                };
+                Some((position, binding, operand))
+            })
+    else {
+        return AsyncSourcePlan {
+            factory_body: body,
+            has_await: false,
+            continuation: None,
+        };
+    };
+    AsyncSourcePlan {
+        factory_body: Expr::Block(
+            statements[..position].to_vec(),
+            Some(Box::new((**operand).clone())),
+        ),
+        has_await: true,
+        continuation: Some(AsyncContinuationSource {
+            name: binding.name.clone(),
+            mutable: binding.mutable,
+            body: Expr::Block(statements[position + 1..].to_vec(), tail.clone()),
+        }),
+    }
 }

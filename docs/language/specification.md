@@ -553,7 +553,9 @@ unsafe handler. Residual algebraic effects are rejected until generated poll/res
 participate in handler specialization. One tail-position `await` is implemented: its operand is
 evaluated on the first parent poll, the child future is retained across `Poll.Pending`, and
 `Poll.Ready(value)` completes the parent with `value`. Completion or cancellation drops the stored
-child exactly once. Non-tail and multiple awaits, plus other residual-effect cases, are not
+child exactly once. One linear non-tail form, `let value = await child`, may execute ordinary
+continuation code after Ready; the continuation's captures remain owned by the parent while
+suspended. Multiple awaits, awaits nested in control flow, and other residual-effect cases are not
 implemented yet.
 
 `unsafe` is an authority effect. `unsafe { ... }` authorizes operations whose contracts cannot be

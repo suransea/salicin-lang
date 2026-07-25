@@ -13,14 +13,16 @@ extend Step: Future(()) {
       self.polls = 1
       Poll(i32).Pending
     } else {
-      Poll(i32).Ready(42)
+      Poll(i32).Ready(41)
     }
   }
 }
 
 let main(): i32 = {
+  let offset = 1
   let mut future = async {
-    await Step { polls: 0 }
+    let value = await Step { polls: 0 }
+    value + offset
   }
   let first = match future.poll()
     { Pending -> 1 }
