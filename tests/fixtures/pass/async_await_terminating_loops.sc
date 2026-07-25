@@ -25,6 +25,30 @@ let step(value: i32): Step = {
   Step { polled: false, value: value }
 }
 
+let Condition = struct {
+  polled: bool,
+  value: bool
+}
+
+extend Condition: Future(()) {
+  let Output = bool
+
+  let poll(R: region)
+    (self: borrow(mut)(R)(Self))
+    (): Poll(bool) = {
+    if self.polled {
+      Poll(bool).Ready(self.value)
+    } else {
+      self.polled = true
+      Poll(bool).Pending
+    }
+  }
+}
+
+let condition(value: bool): Condition = {
+  Condition { polled: false, value: value }
+}
+
 let main(): i32 = {
   let mut value_loop = async {
     loop {
@@ -61,5 +85,18 @@ let main(): i32 = {
     { Pending -> 0 }
     { Ready(_) -> 1 }
 
-  loop_value + loop_pending + while_pending + while_ready + false_ready - 2
+  let mut awaited_condition = async {
+    while { await condition(false) } {
+      break()
+    }
+  }
+  let condition_pending = match awaited_condition.poll()
+    { Pending -> 1 }
+    { Ready(_) -> 0 }
+  let condition_ready = match awaited_condition.poll()
+    { Pending -> 0 }
+    { Ready(_) -> 1 }
+
+  loop_value + loop_pending + while_pending + while_ready + false_ready + condition_pending +
+    condition_ready - 4
 }

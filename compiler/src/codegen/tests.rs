@@ -7252,6 +7252,31 @@ let main(): i32 = {
         .iter()
         .all(|diagnostic| !diagnostic.message.contains("$lang$")));
 
+    let diagnostics = compile_text(
+        r#"
+let main(): i32 = {
+  let future = async {
+    loop {
+      let value = await child()
+      if value == 0 { continue() } else { () }
+    }
+  }
+  0
+}
+let child() = { async { 1 } }
+"#,
+    )
+    .expect_err("a recurring suspended loop still requires iteration-state lowering");
+    assert!(diagnostics.iter().any(|diagnostic| diagnostic
+        .message
+        .contains("requires reusable iteration-state lowering")));
+    assert!(diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.message.contains("through `continue`")));
+    assert!(diagnostics
+        .iter()
+        .all(|diagnostic| !diagnostic.message.contains("$async$")));
+
     compile_text(
         r#"
 let main(): i32 = {

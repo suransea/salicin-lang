@@ -37,8 +37,10 @@ Branches may use different concrete child-future types when their Output agrees;
 active-variant future dispatches polling and cancellation. Branches may contain linear local
 prefixes and continuations, and branches without an await become immediate Ready futures. Loop
 suspension with a reachable backedge remains. Loops proven to exit on their first entered iteration
-already hoist their suspension without recursive state, including false pre-test `while`
-conditions. Residual algebraic-effect specialization is a separate follow-up task.
+already hoist their suspension without recursive state, including false or suspended pre-test
+`while` conditions. Recurring loops are classified by loop kind, suspension location, `continue`,
+fallthrough, and value-producing `break`; this source plan must now drive generated iteration
+state. Residual algebraic-effect specialization is a separate follow-up task.
 
 Loop completion requires an allocation-free reusable iteration state. The generated iteration
 returns an internal `Continue(Carry)` or `Break(Output)` outcome, transfers loop-carried values by

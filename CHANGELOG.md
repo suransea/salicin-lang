@@ -57,8 +57,10 @@ subset.
   suspension are represented as immediate Ready futures.
 - Preserved contextual `await` while parsing `while` and `do ... while` control blocks, which use
   trailing-closure surface syntax without creating a closure boundary. Loops proven to exit on
-  their first entered iteration now hoist suspension into the existing state machine; false
-  pre-test conditions complete immediately, and child and enclosing future outputs may differ.
+  their first entered iteration now hoist suspension into the existing state machine; false or
+  suspended pre-test conditions complete without a backedge, and child and enclosing future
+  outputs may differ. Recurring loops receive a source-level iteration-state diagnostic that
+  identifies their suspension and backedge forms.
 - Declared `Continuation(Input, Output)` and `EffectCallable(Input, Output, Answer)` as bodyless
   type forms, matching their compiler-owned representations instead of describing them as empty
   structures. Lang-item validation now requires the exact type-form declarations.

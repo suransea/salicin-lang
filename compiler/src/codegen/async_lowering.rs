@@ -20,6 +20,36 @@ impl Analyzer {
         context: &mut super::flow::LowerCtx,
     ) -> HirExpr {
         let source_plan = split_async_source(body);
+        if !source_plan.has_await {
+            if let Some(loop_source) = recurring_suspended_loop_source(body) {
+                let suspension = match (loop_source.condition_suspends, loop_source.body_suspends) {
+                    (true, true) => "condition and body",
+                    (true, false) => "condition",
+                    (false, true) => "body",
+                    (false, false) => unreachable!("a suspended loop has a suspension source"),
+                };
+                let exits = [
+                    loop_source.has_continue.then_some("`continue`"),
+                    loop_source.has_fallthrough.then_some("fallthrough"),
+                    loop_source
+                        .has_value_break
+                        .then_some("value-producing `break`"),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>();
+                let backedge = match exits.as_slice() {
+                    [] => "loop backedges are".to_owned(),
+                    [exit] => format!("loop backedge through {exit} is"),
+                    _ => format!("loop backedges through {} are", exits.join(", ")),
+                };
+                self.error(format!(
+                    "`await` in a recurring {} {suspension} requires reusable iteration-state lowering; {backedge} not lowered yet",
+                    loop_source.kind.description(),
+                ));
+                return super::lower::error_expr();
+            }
+        }
         for retained in &source_plan.retained {
             if retained.borrowed
                 && retained.referent.as_ref().is_some_and(|referent| {
@@ -1358,6 +1388,130 @@ struct AsyncRetainedSource {
     borrowed: bool,
 }
 
+#[derive(Clone, Copy)]
+enum AsyncLoopKind {
+    Loop,
+    While,
+    DoWhile,
+}
+
+impl AsyncLoopKind {
+    fn description(self) -> &'static str {
+        match self {
+            Self::Loop => "`loop`",
+            Self::While => "pre-test `while`",
+            Self::DoWhile => "post-test `while`",
+        }
+    }
+}
+
+struct AsyncLoopSuspensionSource {
+    kind: AsyncLoopKind,
+    condition_suspends: bool,
+    body_suspends: bool,
+    has_continue: bool,
+    has_fallthrough: bool,
+    has_value_break: bool,
+}
+
+fn recurring_suspended_loop_source(expression: &Expr) -> Option<AsyncLoopSuspensionSource> {
+    match expression.unlocated() {
+        Expr::Loop { body } if terminating_loop_iteration(body).is_none() => {
+            let body_suspends = split_async_source(body).has_await;
+            body_suspends.then(|| async_loop_source(AsyncLoopKind::Loop, false, true, body))
+        }
+        Expr::While {
+            condition,
+            body,
+            post_test,
+        } if terminating_loop_iteration(body).is_none() => {
+            let condition_suspends = split_async_source(condition).has_await;
+            let body_suspends = split_async_source(body).has_await;
+            (condition_suspends || body_suspends).then(|| {
+                async_loop_source(
+                    if *post_test {
+                        AsyncLoopKind::DoWhile
+                    } else {
+                        AsyncLoopKind::While
+                    },
+                    condition_suspends,
+                    body_suspends,
+                    body,
+                )
+            })
+        }
+        Expr::Block(statements, tail) => statements
+            .iter()
+            .find_map(|statement| match statement {
+                Stmt::Let(binding) => recurring_suspended_loop_source(&binding.value),
+                Stmt::Expr(expression) => recurring_suspended_loop_source(expression),
+            })
+            .or_else(|| tail.as_deref().and_then(recurring_suspended_loop_source)),
+        _ => None,
+    }
+}
+
+fn async_loop_source(
+    kind: AsyncLoopKind,
+    condition_suspends: bool,
+    body_suspends: bool,
+    body: &Expr,
+) -> AsyncLoopSuspensionSource {
+    let recursive_name = "$async$loop$analysis$continue";
+    let break_name = "$handler$loop$break$async-analysis";
+    let mut rewritten = body.clone();
+    super::handlers::rewrite_handler_loop_control(&mut rewritten, recursive_name, break_name, 0);
+    let mut has_continue = false;
+    let mut has_value_break = false;
+    super::source_rewrite::visit_expr_mut(&mut rewritten, &mut |expression| {
+        if matches!(expression.unlocated(), Expr::Name(name) if name == recursive_name) {
+            has_continue = true;
+        }
+        if let Some((name, value)) =
+            super::handlers::internal_handler_loop_break_argument(expression.unlocated())
+        {
+            if name == break_name && !matches!(value.unlocated(), Expr::Unit) {
+                has_value_break = true;
+            }
+        }
+    });
+    AsyncLoopSuspensionSource {
+        kind,
+        condition_suspends,
+        body_suspends,
+        has_continue,
+        has_fallthrough: !iteration_body_definitely_exits(body),
+        has_value_break,
+    }
+}
+
+fn iteration_body_definitely_exits(expression: &Expr) -> bool {
+    match expression.unlocated() {
+        Expr::Break(_) | Expr::Continue | Expr::Return(_) => true,
+        Expr::Block(statements, tail) => tail.as_deref().map_or_else(
+            || {
+                statements.last().is_some_and(|statement| match statement {
+                    Stmt::Expr(expression) => iteration_body_definitely_exits(expression),
+                    Stmt::Let(_) => false,
+                })
+            },
+            iteration_body_definitely_exits,
+        ),
+        Expr::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => {
+            iteration_body_definitely_exits(then_branch)
+                && iteration_body_definitely_exits(else_branch)
+        }
+        Expr::Match { arms, .. } if !arms.is_empty() => arms
+            .iter()
+            .all(|arm| iteration_body_definitely_exits(&arm.body)),
+        _ => false,
+    }
+}
+
 fn split_async_source(body: &Expr) -> AsyncSourcePlan {
     let mut body = body.clone();
     match body.unlocated_mut() {
@@ -1587,17 +1741,32 @@ fn hoist_control_await(expression: &Expr) -> Option<Expr> {
             if break_value.is_some() {
                 return None;
             }
-            let iteration = branch_await_future(&iteration)?;
             if *post_test {
-                Some(iteration)
-            } else {
-                Some(Expr::If {
+                return branch_await_future(&iteration);
+            }
+            let condition_future = branch_await_future(condition);
+            let iteration_future = branch_await_future(&iteration);
+            match (condition_future, iteration_future) {
+                (None, Some(iteration)) => Some(Expr::If {
                     condition: condition.clone(),
                     then_branch: Box::new(iteration),
                     else_branch: Some(Box::new(Expr::Async {
                         body: Box::new(Expr::Unit),
                     })),
-                })
+                }),
+                (Some(condition), None) => Some(Expr::Async {
+                    body: Box::new(Expr::Block(
+                        vec![Stmt::Let(crate::ast::Binding {
+                            mutable: false,
+                            name: "$async$while$condition".to_owned(),
+                            annotation: None,
+                            value: Expr::Await(Box::new(condition)),
+                            value_source: None,
+                        })],
+                        Some(Box::new(Expr::Unit)),
+                    )),
+                }),
+                _ => None,
             }
         }
         _ => None,

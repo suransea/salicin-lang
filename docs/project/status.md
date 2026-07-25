@@ -147,8 +147,10 @@ private active-variant future polls or cancels only the selected child. Branch-l
 prefixes and continuations retain their own suspension state; a branch without await becomes an
 immediate Ready future. A `loop` or `while` proven to exit on its first entered iteration hoists
 its suspension into the same state machine; false pre-test conditions complete immediately, and a
-child Output may differ from the enclosing future Output. Loop backedge suspension and algebraic
-residual-effect specialization are not implemented.
+pre-test condition may itself suspend. A child Output may differ from the enclosing future Output.
+Recurring suspension is classified by loop kind, condition/body location, `continue`, fallthrough,
+and value-producing `break`, but reusable backedge state and algebraic residual-effect
+specialization are not implemented.
 
 ## Modules, Packages, and FFI
 
