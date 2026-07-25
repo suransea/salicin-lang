@@ -58,7 +58,6 @@ mod throws;
 mod types;
 
 use compile_time::*;
-use effects::*;
 use flow::*;
 use handlers::*;
 use hir::*;
@@ -12060,126 +12059,6 @@ impl Analyzer {
             ty: expression.ty.clone(),
             kind: HirExprKind::Block(statements, Some(Box::new(expression))),
         }
-    }
-
-    fn require_same_type(&mut self, actual: &Ty, expected: &Ty, context: impl fmt::Display) {
-        if type_is_assignable(actual, expected)
-            || self.is_uninhabited_type(actual)
-            || *actual == Ty::Error
-            || *expected == Ty::Error
-        {
-            return;
-        }
-        let expected = self.diagnostic_type_name(expected);
-        let actual = self.diagnostic_type_name(actual);
-        self.error(format!(
-            "type mismatch for {context}: expected `{expected}`, found `{actual}`"
-        ));
-    }
-
-    fn require_function_effects(&mut self, name: &str, context: &LowerCtx) {
-        let Some(effects) = self
-            .functions
-            .get(name)
-            .map(|function| function.effects.clone())
-        else {
-            return;
-        };
-        let display_name = self.diagnostic_function_name(name);
-        if self.function_effects_unsafe(&effects) && context.unsafe_depth == 0 {
-            self.error(format!(
-                "call to unsafe function `{display_name}` requires an `unsafe` handler"
-            ));
-        }
-        let required = self.function_effects_custom_identities(&effects);
-        let missing = required
-            .iter()
-            .filter(|effect| !context.active_custom_effects.contains(*effect))
-            .cloned()
-            .collect::<Vec<_>>();
-        if !missing.is_empty() {
-            self.report_missing_custom_effects(format!("call to `{display_name}`"), missing);
-        }
-    }
-
-    fn report_missing_custom_effects(&mut self, prefix: String, missing: Vec<String>) {
-        if missing.len() == 1 {
-            if let Some(display) = self.standard_throws_diagnostic_name(&missing[0]) {
-                self.error(format!(
-                    "{prefix} requires `{display}`; handle it with `try {{ ... }}` or propagate it from the current function"
-                ));
-                return;
-            }
-        }
-        self.error(format!(
-            "{prefix} requires custom effect{} `{}`",
-            if missing.len() == 1 { "" } else { "s" },
-            missing.join(", ")
-        ));
-    }
-
-    fn diagnostic_function_name(&self, name: &str) -> String {
-        if let Some(operation) = name.strip_prefix("$effect$operation$") {
-            let operation = operation
-                .rsplit_once('$')
-                .map_or(operation, |(operation, _)| operation);
-            if let Some((effect, member)) = operation.rsplit_once('$') {
-                return format!("{effect}.{member}");
-            }
-        }
-        if let Some(inherent) = name.strip_prefix("$generic$inherent$") {
-            let inherent = inherent.split("$overload$").next().unwrap_or(inherent);
-            if let Some((target, member)) = inherent.split_once("::function::") {
-                return format!("{target}.{member}");
-            }
-        }
-        let source = self
-            .function_instances
-            .get(name)
-            .map_or(name, |instance| instance.key.template.as_str());
-        source
-            .split("$overload$")
-            .next()
-            .unwrap_or(source)
-            .rsplit("::")
-            .next()
-            .unwrap_or(source)
-            .to_owned()
-    }
-
-    fn standard_throws_diagnostic_name(&self, identity: &str) -> Option<String> {
-        let source = source_type_from_identity(identity)?;
-        let error =
-            standard_throws_error_source(&source, self.lang_item_name(LangItemKind::ThrowsEffect))?;
-        let error = self
-            .probe_source_ty(&error)
-            .map(|error| self.diagnostic_type_name(&error))
-            .or_else(|| source_type_expression_name(&source_type_expression(&error)))?;
-        Some(format!("Throws({error})"))
-    }
-
-    fn unify_types(&mut self, left: &Ty, right: &Ty, context: impl fmt::Display) -> Ty {
-        if left == right {
-            return left.clone();
-        }
-        if self.is_uninhabited_type(left) {
-            return right.clone();
-        }
-        if self.is_uninhabited_type(right) {
-            return left.clone();
-        }
-        if *left == Ty::Error || *right == Ty::Error {
-            return Ty::Error;
-        }
-        self.error(format!(
-            "type mismatch for {context}: `{left}` and `{right}` cannot be unified"
-        ));
-        Ty::Error
-    }
-
-    fn is_uninhabited_type(&self, ty: &Ty) -> bool {
-        *ty == Ty::Never
-            || matches!(ty, Ty::Enum(name) if self.enum_layouts.get(name).is_some_and(|layout| layout.variants.is_empty()))
     }
 
     fn error(&mut self, message: impl Into<String>) {

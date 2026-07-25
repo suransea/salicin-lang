@@ -3,9 +3,40 @@ use std::fmt;
 use crate::ast::PassMode;
 
 use super::{
-    CallableKind, ConstructorTraitImplKey, FunctionInstanceKey, NominalInstanceKey, NominalKind,
-    TraitImplKey, Ty,
+    Analyzer, CallableKind, ConstructorTraitImplKey, FunctionInstanceKey, NominalInstanceKey,
+    NominalKind, TraitImplKey, Ty,
 };
+
+impl Analyzer {
+    pub(super) fn diagnostic_function_name(&self, name: &str) -> String {
+        if let Some(operation) = name.strip_prefix("$effect$operation$") {
+            let operation = operation
+                .rsplit_once('$')
+                .map_or(operation, |(operation, _)| operation);
+            if let Some((effect, member)) = operation.rsplit_once('$') {
+                return format!("{effect}.{member}");
+            }
+        }
+        if let Some(inherent) = name.strip_prefix("$generic$inherent$") {
+            let inherent = inherent.split("$overload$").next().unwrap_or(inherent);
+            if let Some((target, member)) = inherent.split_once("::function::") {
+                return format!("{target}.{member}");
+            }
+        }
+        let source = self
+            .function_instances
+            .get(name)
+            .map_or(name, |instance| instance.key.template.as_str());
+        source
+            .split("$overload$")
+            .next()
+            .unwrap_or(source)
+            .rsplit("::")
+            .next()
+            .unwrap_or(source)
+            .to_owned()
+    }
+}
 
 pub(super) fn function_instance_name(key: &FunctionInstanceKey) -> String {
     let mut canonical = String::from("$mono$fn$");

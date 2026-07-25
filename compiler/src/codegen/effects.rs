@@ -9,6 +9,7 @@ use crate::core::LangItemKind;
 
 use super::compile_time::{
     source_effect_identities, source_effect_identity, source_effect_source_map,
+    source_type_from_identity,
 };
 use super::flow::LowerCtx;
 use super::handlers::{
@@ -24,6 +25,62 @@ use super::source_rewrite::{source_effect_expression_identity, substitute_functi
 use super::Analyzer;
 
 impl Analyzer {
+    pub(super) fn require_function_effects(&mut self, name: &str, context: &LowerCtx) {
+        let Some(effects) = self
+            .functions
+            .get(name)
+            .map(|function| function.effects.clone())
+        else {
+            return;
+        };
+        let display_name = self.diagnostic_function_name(name);
+        if self.function_effects_unsafe(&effects) && context.unsafe_depth == 0 {
+            self.error(format!(
+                "call to unsafe function `{display_name}` requires an `unsafe` handler"
+            ));
+        }
+        let required = self.function_effects_custom_identities(&effects);
+        let missing = required
+            .iter()
+            .filter(|effect| !context.active_custom_effects.contains(*effect))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            self.report_missing_custom_effects(format!("call to `{display_name}`"), missing);
+        }
+    }
+
+    pub(super) fn report_missing_custom_effects(&mut self, prefix: String, missing: Vec<String>) {
+        if missing.len() == 1 {
+            if let Some(display) = self.standard_throws_diagnostic_name(&missing[0]) {
+                self.error(format!(
+                    "{prefix} requires `{display}`; handle it with `try {{ ... }}` or propagate it from the current function"
+                ));
+                return;
+            }
+        }
+        self.error(format!(
+            "{prefix} requires custom effect{} `{}`",
+            if missing.len() == 1 { "" } else { "s" },
+            missing.join(", ")
+        ));
+    }
+
+    fn standard_throws_diagnostic_name(&self, identity: &str) -> Option<String> {
+        let source = source_type_from_identity(identity)?;
+        let error =
+            standard_throws_error_source(&source, self.lang_item_name(LangItemKind::ThrowsEffect))?;
+        let error = self
+            .probe_source_ty(&error)
+            .map(|error| self.diagnostic_type_name(&error))
+            .or_else(|| {
+                super::source_rewrite::source_type_expression_name(
+                    &super::source_rewrite::source_type_expression(&error),
+                )
+            })?;
+        Some(format!("Throws({error})"))
+    }
+
     pub(super) fn is_standard_unsafe_effect_source(&self, effect: &Type) -> bool {
         matches!(
             effect,

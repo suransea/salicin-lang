@@ -42,8 +42,9 @@ The implementation lives under `compiler/src`:
   - `constructors.rs` lowers struct literals, struct and enum construction, field argument
     validation, and context-sensitive short enum variant resolution.
   - `emitter.rs` evaluates global constants and emits textual LLVM IR.
-  - `effects.rs` owns source-level support state, effect identity helpers, effect-forwarding
-    `do` lowering, effect operation lowering, and handler entry lowering.
+  - `effects.rs` owns source-level support state, effect identity helpers, call-site effect
+    requirements and diagnostics, effect-forwarding `do` lowering, effect operation lowering,
+    and handler entry lowering.
   - `fallible.rs` defines standard `Option`/`Result` short-circuit container metadata, inference
     helpers, and throws-result return-boundary lowering shared by `??`, `?.`, `try`, and `throw`.
   - `flow.rs` tracks local scopes, move initialization alternatives, lexical loans, and lowering
@@ -62,8 +63,8 @@ The implementation lives under `compiler/src`:
   - `matches.rs` lowers scalar and enum `match` expressions and owns pattern binding validation.
   - `members.rs` lowers value and type member access, including associated constants, unit enum
     variants, and field diagnostics.
-  - `names.rs` centralizes stable symbol, monomorphization instance, trait-method, and canonical
-    type encodings.
+  - `names.rs` centralizes stable symbol, monomorphization instance, trait-method, canonical type,
+    and source-level diagnostic function-name encodings.
   - `nominals.rs` owns generic nominal snapshots, struct/enum constructor inference, type-head and
     instance resolution, recursive validation, materialization, and nominal complexity guards.
   - `operators.rs` centralizes operator-syntax bindings, candidate selection, type probes, and HIR
@@ -88,8 +89,9 @@ The implementation lives under `compiler/src`:
   - `throws.rs` probes custom-effect call rows to identify dedicated and standard throws sources,
     infers context-free `try { ... }` `Result(E)(T)` types, and lowers `try { ... }`, `throw`, and
     automatic throws propagation return-boundary wrappers.
-  - `types.rs` lowers and renders source-level type syntax, compile-time type arguments, and
-    non-diagnostic source/nominal type probes used by inference and expression lowering.
+  - `types.rs` lowers and renders source-level type syntax, enforces type compatibility and
+    unification, recognizes uninhabited types, and owns compile-time type arguments plus
+    source/nominal type probes used by inference and expression lowering.
   - `tests.rs` contains the large codegen regression suite.
 - `main.rs` implements the `salic` command-line interface.
 

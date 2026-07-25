@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 
 use crate::ast::{
     CallArg, CompileParam, CompileParamKind, Expr, FunctionEffects, Type, USizeConst, VariantFields,
@@ -20,6 +21,50 @@ use super::source_rewrite::substitute_type_parameters;
 use super::Analyzer;
 
 impl Analyzer {
+    pub(super) fn require_same_type(
+        &mut self,
+        actual: &Ty,
+        expected: &Ty,
+        context: impl fmt::Display,
+    ) {
+        if super::hir::type_is_assignable(actual, expected)
+            || self.is_uninhabited_type(actual)
+            || *actual == Ty::Error
+            || *expected == Ty::Error
+        {
+            return;
+        }
+        let expected = self.diagnostic_type_name(expected);
+        let actual = self.diagnostic_type_name(actual);
+        self.error(format!(
+            "type mismatch for {context}: expected `{expected}`, found `{actual}`"
+        ));
+    }
+
+    pub(super) fn unify_types(&mut self, left: &Ty, right: &Ty, context: impl fmt::Display) -> Ty {
+        if left == right {
+            return left.clone();
+        }
+        if self.is_uninhabited_type(left) {
+            return right.clone();
+        }
+        if self.is_uninhabited_type(right) {
+            return left.clone();
+        }
+        if *left == Ty::Error || *right == Ty::Error {
+            return Ty::Error;
+        }
+        self.error(format!(
+            "type mismatch for {context}: `{left}` and `{right}` cannot be unified"
+        ));
+        Ty::Error
+    }
+
+    pub(super) fn is_uninhabited_type(&self, ty: &Ty) -> bool {
+        *ty == Ty::Never
+            || matches!(ty, Ty::Enum(name) if self.enum_layouts.get(name).is_some_and(|layout| layout.variants.is_empty()))
+    }
+
     pub(super) fn lower_source_type(&mut self, source: &Type) -> Ty {
         match source {
             Type::I8 => Ty::I8,

@@ -6,6 +6,10 @@ subset.
 
 ## Unreleased
 
+- Continued the `Analyzer` boundary split without changing data ownership: type compatibility and
+  unification now live in `types.rs`, call-site effect requirements in `effects.rs`, and source-level
+  diagnostic function naming in `names.rs`. Existing exact-diagnostic and deterministic-IR tests
+  preserve behavior across the move.
 - Closed the M0 deterministic-output gate. Repeated clean compiler builds now produce
   byte-identical diagnostics, LLVM symbol order, generated IR, and regenerated dependency
   lockfiles; handler action selection, handler result probing, and recursive generic nominal

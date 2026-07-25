@@ -17,7 +17,7 @@ Priority meanings:
 
 Current milestone: **M0 release baseline**
 
-Next task: **COMPILER-SPLIT-1**
+Next task: **DOC-CHECK-1**
 
 ### P0 control-source queue
 
@@ -80,7 +80,7 @@ handler or async expansion is admitted.
   - Compare diagnostics, LLVM symbols, lockfiles, and generated IR across repeated clean builds.
   - Remove hash-map iteration order from user-visible output.
 
-- [ ] **COMPILER-SPLIT-1: Continue the Analyzer boundary split**
+- [x] **COMPILER-SPLIT-1: Continue the Analyzer boundary split**
   - Move behavior behind existing `codegen/` module ownership boundaries.
   - Keep source rewriting, HIR construction, cleanup planning, and emission phase-separated.
   - Require behavior-preserving tests before data-ownership refactors.
