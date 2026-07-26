@@ -6,6 +6,8 @@ subset.
 
 ## Unreleased
 
+## 0.202.0 - 2026-07-26
+
 - Exported concrete primary-package `pub` functions and non-Unit globals with
   package-qualified native symbols carrying ABI fingerprints for parameter
   modes, normalized types, results, and effects. Stable `name@version`
